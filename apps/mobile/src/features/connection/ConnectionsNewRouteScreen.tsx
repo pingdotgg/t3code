@@ -251,7 +251,7 @@ function PairingForm({
               <PairingInputRow
                 label={gt("Address")}
                 keyboardType="url"
-                placeholder="192.168.1.100:3773"
+                placeholder="host.tailnet.ts.net"
                 value={hostInput}
                 onChangeText={handleHostChange}
               />
@@ -281,7 +281,7 @@ function PairingForm({
                       { environment: linked.label },
                     )
                   : gt(
-                      "For machines on your local network or tailnet. The machine keeps its own provider credentials.",
+                      "Connect directly via Tailscale (https://host.tailnet.ts.net or http://100.x.y.z:3773) or your local network. You can also paste a full pairing URL.",
                     ))}
             </Text>
           </View>

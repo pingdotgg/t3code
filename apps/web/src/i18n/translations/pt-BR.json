@@ -25,6 +25,7 @@
   "986b0873f913a840": "A política de {organization} não permite tarefas de webhook.",
   "eebc538e25b09fe2": "A política de {organization} não permite importar cookies do navegador.",
   "7642a133db05f164": "A política de {organization} não permite abrir os servidores locais desta máquina em outros dispositivos.",
+  "e0856d6a402ad821": "A política de {organization} não permite comandos de layout de worktree de projetos.",
   "39f6771b49f9b3b6": "Usar padrão",
   "45bb0e90e1c42046": "Quando você voltar",
   "d8fa0a55446bbb0d": "Antes de o cache expirar (beta)",
@@ -71,6 +72,7 @@
   "cd03eb1b84271c02": "Agente",
   "bfe1a60f3f9c60fb": "Turno {turn} · {what}",
   "dfdaa6255a416140": "Resumo de {turns, plural, one {{turns} turno recente} other {{turns} turnos recentes}}, {textTurns, plural, =0 {sem texto das mensagens} one {com o texto das mensagens do último turno} other {com o texto das mensagens dos últimos {textTurns} turnos}}{truncated, select, yes {, encurtado para caber} other {}}",
+  "260c6b45f52d2f27": "Adiciona o texto das suas mensagens e das respostas do agente {textTurns, plural, one {no último turno} other {nos últimos {textTurns} turnos}}.",
   "afac52a5cc2dc801": "Não foi possível enviar sua resposta. Tente novamente.",
   "79d776428f4d0650": "Não foi possível carregar o arquivo. Reconecte e tente novamente.",
   "3ea34cbb1ca5ba9b": "Pré-visualização cancelada.",
@@ -1342,9 +1344,9 @@
   "a9b663922945a4fa": "Esta conexão não pode abrir um editor neste ambiente.",
   "868596d482a1a2bd": "Abrir",
   "f58caaa68c09fbeb": "Abrir com",
+  "75b6d7c3bc9c72da": "Não foi possível abrir no {editor}",
   "415d9fed5542d278": "Não foi possível abrir o arquivo",
   "1d1bbe5b700afe63": "Não foi possível mostrar o arquivo",
-  "75b6d7c3bc9c72da": "Não foi possível abrir no {editor}",
   "31dc19d033af2774": "Não foi possível abrir o link.",
   "029d8d0201aed231": "Não foi possível abrir as Configurações do Sistema.",
   "9af3083226778d3c": "O Open VSX retornou detalhes de tema malformados.",
@@ -1524,6 +1526,8 @@
   "4eb599c7f36c99ba": "Esse arquivo de tema não é um JSON válido.",
   "29a5ff50ce55c4f9": "Tema do VS Code",
   "10348092dfed8b11": "Esse tema do VS Code não tem a cor \"editor.background\", então não há base para criar uma paleta.",
+  "206811f6f441bfc7": "Este projeto prepara os worktrees com um comando próprio, que ninguém aprovou como está escrito agora. Esta conexão não pode aprová-lo: aprove-o em um cliente que possa usar o terminal.",
+  "b8087c9a70c26da9": "Não foi possível aprovar o comando de layout de worktree.",
   "6dff8d487001c6cf": "Responsivo",
   "f5f61c338cc5aeb5": "Barra de dispositivos do navegador",
   "3b4eb5b5ec5e60cb": "Predefinição de dispositivo do navegador",
@@ -1978,13 +1982,16 @@
   "7af7f00b85cc2930": "Confirmar ação",
   "8b418a02b73f49b8": "Esta ação exige sua confirmação.",
   "e74139c17fab1fa1": "Confirmar",
+  "4a18481bea4b4ad5": "Novo dispositivo conectado a {environmentLabel}",
+  "4144ab6aa487528a": "{device} se conectou pelo {product}. Não foi você? Revise.",
+  "a10cfdb27152c757": "{count, plural, one {{count} dispositivo se conectou} other {{count} dispositivos se conectaram}} pelo {product}. Não foi você? Revise.",
+  "4672f332c89dbcd9": "Revisar",
   "775a3e99e2638341": "Um dispositivo quer se conectar a {environmentLabel}",
   "a8befcb9f1c61f60": "{device}. Aprove apenas se ele mostrar o código {code}.",
   "ac48cc297029db41": "Aprovar",
   "c12ca3fea745def0": "Não foi possível aprovar o dispositivo",
   "af63f05ed2f5eeb3": "Negar",
   "b735bab216b27041": "Não foi possível negar o dispositivo",
-  "4672f332c89dbcd9": "Revisar",
   "913fc23f62321556": "Escolha uma data e hora válidas no futuro.",
   "9485a52216cfc0d5": "Informe uma duração positiva.",
   "9bc551235d78e133": "Tipo de agendamento",
@@ -2239,7 +2246,7 @@
   "ae659281075cedc6": "Nenhum computador conectado",
   "3ad17519c118edf8": "Ligue-o novamente ou conecte outro computador.",
   "1fa714c0c7855545": "Seus agentes rodam no seu computador.",
-  "5ba39b13f1bfe4f5": "Seus agentes rodam no seu computador. Inicie o T3 Code nele primeiro.",
+  "0f6de77ab7711da2": "Your agents run on your computer. Start T3 Code there and pair over Tailscale or your local network.",
   "0e2f68b7c6915c72": "Abrir Ambientes",
   "6b4bbecf3df324fa": "Tentar entrar novamente",
   "83be7aade7ff6360": "Conectado",
@@ -2698,6 +2705,24 @@
   "a707abf0a4a73ffa": "Fechar terminal ({shortcut})",
   "9206ecf328948f90": "Fechar terminal",
   "9b1326a11cfe3308": "Ainda não há sessões de terminal nesta thread.",
+  "49eda70cfd56e621": "Executado quando uma thread em worktree começa e quando a pasta dela é restaurada",
+  "188ccaa1199f5611": "Executado quando o worktree de uma thread é removido",
+  "7e8476e7306acabe": "Permitir que este projeto execute seus comandos de worktree?",
+  "8e11914556fd8b13": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " prepara as threads em worktree com comandos próprios de ",
+    {
+      "t": "code",
+      "i": 2,
+      "c": "t3.json"
+    },
+    ". Eles são executados na máquina deste ambiente com as suas permissões, fora de qualquer sandbox de agente. Você será perguntado de novo sempre que o texto deles mudar."
+  ],
+  "46807acd02a4ff72": "Aprovar e continuar",
   "2ac142f34e5dabc2": "Repositórios no novo worktree: {selection}",
   "c514773a8031f00b": "Filtrar repositórios",
   "e32b730f6d27753f": "Escolha os repositórios em que esta thread trabalha",
@@ -2737,9 +2762,9 @@
   "db7b3a938c45e56c": "Atualização {version} pronta para baixar",
   "9a951140b69ba740": "Baixando atualização ({percent}%)",
   "7fdece033260e9fb": "Baixando atualização",
+  "52e1d4a487c0cf4b": "Falha ao instalar {version}. Clique para tentar novamente.",
   "09ef51903e99e876": "Atualização baixada. Clique para reiniciar e instalar.",
   "d62631cab06d2b80": "Atualização {version} baixada. Clique para reiniciar e instalar.",
-  "52e1d4a487c0cf4b": "Falha ao instalar {version}. Clique para tentar novamente.",
   "78a04e0e625c0990": "Falha na atualização",
   "c24de5eb69373a55": "Esta build {build} ignora as versões {track}. Revise o canal de atualização em Configurações para concluir a troca.",
   "b02ae45a6109c93b": "Atualizado",
@@ -3326,9 +3351,6 @@
   "b90e87f4b7125237": "Detalhes",
   "16dc67f5429d8bae": "Trabalho em segundo plano",
   "2188eee8f81b0f51": "Abrir subagente",
-  "ec9e0be8ec693302": "Recolher todas as pastas",
-  "b791dd86f7991cc0": "Expandir todas as pastas",
-  "55b936e3014e16c8": "Abrir diff",
   "28bb7ce40dfd349a": "A saída do terminal não pode ser adicionada à resposta de uma pergunta.",
   "801cb8edea94b8f6": "Responda ou dispense a pergunta primeiro e depois adicione ao chat.",
   "aa5507f20d94d5a9": "Atualize este servidor para enviar arquivos com respostas a perguntas",
@@ -3642,10 +3664,10 @@
   "4e0710d19dfc2e7e": "Enviar este relatório para a equipe do T3?",
   "87d0ae0723ba75d1": "Isto é tudo o que sai da sua máquina. Nada é enviado até você clicar em Enviar.",
   "bf19826f81484328": "Incluir a conversa",
-  "260c6b45f52d2f27": "Adiciona o texto das suas mensagens e das respostas do agente {textTurns, plural, one {no último turno} other {nos últimos {textTurns} turnos}}.",
   "ddb7e6f8ce99e657": "Somente quem pode executar agentes nesta máquina pode enviar ou recusar o relatório.",
   "03c1eb603c112f47": "Não enviar",
   "653405e4ed498d9f": "Enviar",
+  "76cf478e5674fd12": "{count, plural, one {{count} correspondência} other {{count} correspondências}}",
   "262955d6eb632f9b": "A API da área de transferência não está disponível ao copiar o link de convidado.",
   "f1a4f2b04cdbb4ef": "Falha ao copiar o link de convidado para a área de transferência.",
   "cf3490a604e44d31": "Não foi possível criar um link de convidado.",
@@ -3794,15 +3816,6 @@
     " foi fechado"
   ],
   "dff97202cbdaec5b": "Mostrar app",
-  "705cf2b2ee4e0e42": [
-    "O app ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " saiu da página e foi interrompido"
-  ],
   "796b81c4875c4feb": [
     "O app ",
     {
@@ -3817,6 +3830,15 @@
       "v": "v"
     },
     " mais recente neste ambiente. Atualize o servidor para usá-lo."
+  ],
+  "705cf2b2ee4e0e42": [
+    "O app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " saiu da página e foi interrompido"
   ],
   "5ef18e4d39b398bf": [
     "Não foi possível carregar o app ",
@@ -4564,6 +4586,7 @@
       "c": "”"
     }
   ],
+  "91aadfc843c600de": "Verificar conta Google",
   "a2aaca7ff8310186": "Abrir chat",
   "a3048aaa541b7744": "Atividade",
   "4a3cbccb2beedeb0": "imagem",
@@ -4641,7 +4664,6 @@
   "7f0f9b1ee42892db": "A saída não está mais disponível.",
   "e470bb79fa74a6ae": "Imagem da saída da ferramenta",
   "e8c80b6d40c0944c": "Resultado da pesquisa",
-  "76cf478e5674fd12": "{count, plural, one {{count} correspondência} other {{count} correspondências}}",
   "8d1906900b5c95c7": [
     "saída ",
     {
@@ -4650,6 +4672,7 @@
       "v": "v"
     }
   ],
+  "55b936e3014e16c8": "Abrir diff",
   "83c29850641c8935": "Na fila",
   "8402f099f88fd0e0": "Executando",
   "c5f5b73e92221a6a": "Aguardando",
@@ -5531,6 +5554,8 @@
   "1601d7e39a52c48f": "Tentar carregar o diff novamente",
   "b7b137472adb6989": "Pré-visualização parcial do diff",
   "f0d79aa56f06663f": "Este arquivo é grande demais para ser mostrado por inteiro. As contagens incluem todas as alterações.",
+  "ec9e0be8ec693302": "Recolher todas as pastas",
+  "b791dd86f7991cc0": "Expandir todas as pastas",
   "7fdde2b893ba1b9d": "Removido",
   "e58ce271d835b447": "Adicionado",
   "07b9970b662ab70d": "Mostrar o código Mermaid",
@@ -6652,8 +6677,6 @@
   "1b381201aba745c2": "Nenhuma verificação informada",
   "a6d75a4380173c60": "Abrir verificações: {summary}",
   "be3d1766bad18693": "Verificações: {summary}",
-  "425e4a3d6c5c2867": "{count, plural, one {{count} com falha} other {{count} com falha}}",
-  "fd63b391898889f9": "{count, plural, one {{count} aguardando ação} other {{count} aguardando ação}}",
   "cb116c139cdace98": "Nenhuma verificação informada",
   "60b56e201607c7ec": "Os detalhes das verificações estão desatualizados. Atualize o pull request para atualizá-los.",
   "e74cd4e960cbb5e5": "As linhas não alteradas não estão disponíveis em um arquivo com linhas cortadas.",
@@ -6668,8 +6691,8 @@
   "e545fcdb83e2c36a": "Adicionar à revisão",
   "2250f241daadd71b": "Adicionar ao agente",
   "be9b06fae29cc07a": "Todos os commits",
-  "5ef391d5403d7bdd": "{count, plural, one {Mostrar mais ({count} restante)} other {Mostrar mais ({count} restantes)}}",
   "ccd5fc4db08374d7": "{count, plural, one {{count} arquivo de teste oculto} other {{count} arquivos de teste ocultos}}",
+  "5ef391d5403d7bdd": "{count, plural, one {Mostrar mais ({count} restante)} other {Mostrar mais ({count} restantes)}}",
   "c12871955b159db4": "vistos no {app}",
   "98b353c208fd7977": "vistos",
   "d65b870952bbe4f0": "Estas marcações ficam aqui, não no host",
@@ -7035,19 +7058,27 @@
     }
   ],
   "ce703d4ba40dc9b4": "Mesclando a pilha...",
+  "8a883c4fbc127b68": "Ativando o merge automático da pilha...",
   "ac7feb9c583b02a0": "Fazendo rebase da pilha...",
   "cb0f63bbb0b68d94": "Não foi possível mesclar a pilha",
+  "5fb2a26ae31e8983": "Não foi possível ativar o merge automático da pilha",
   "c8a943fa15a56b2b": "Não foi possível fazer rebase da pilha",
   "ec22caeb8b949ed1": "O host recusou o rebase. Um rebase para no primeiro commit que não se aplica sem conflitos.",
   "ead3e2bac1a8d231": "Pedido de merge da pilha concluído",
+  "986d0dcbf4dd0098": "Merge automático da pilha ativado",
   "d7079b5ac269c65e": "Rebase da pilha feito",
   "5631b32be0ce48d3": "{host} mesclou a pilha ou a adicionou à fila de merge.",
+  "f3ed1f63c8a3eef2": "{host} vai mesclar a pilha até o #{number} quando os requisitos forem atendidos.",
+  "bd536a0a1754f6cb": "Não foi possível cancelar o merge automático da pilha",
+  "bb90ac3b2f3a72d5": "O host recusou o cancelamento do merge automático. Atualize e tente novamente.",
   "2d3b55018a54287e": "Verificando a pilha com o host…",
   "eea55205e46d2e3d": "Pilha {number}, camada {position} de {size}",
   "b6f729119107a145": "{count, plural, one {Mesclar a pilha até o '#'{number} em {base} ({count} {term, select, mr {merge request} cr {solicitação de alteração} other {pull request}})} other {Mesclar a pilha até o '#'{number} em {base} ({count} {term, select, mr {merge requests} cr {solicitações de alteração} other {pull requests}})}}",
   "d4bfcdc6bb7676a3": "{count, plural, one {Mesclar {count} {term, select, mr {merge request} cr {solicitação de alteração} other {pull request}}?} other {Mesclar {count} {term, select, mr {merge requests} cr {solicitações de alteração} other {pull requests}}?}}",
+  "9c28753c777c37b7": "{count, plural, one {Mesclar automaticamente {count} {term, select, mr {merge request} cr {solicitação de alteração} other {pull request}}?} other {Mesclar automaticamente {count} {term, select, mr {merge requests} cr {solicitações de alteração} other {pull requests}}?}}",
   "b9f2a24a3757f6c9": "{count, plural, one {Fazer rebase de {count} {term, select, mr {merge request} cr {solicitação de alteração} other {pull request}}?} other {Fazer rebase de {count} {term, select, mr {merge requests} cr {solicitações de alteração} other {pull requests}}?}}",
   "d1bcf19eb2753fff": "Mescla o #{number} e as camadas não mescladas abaixo dele em {base} usando {method}. {host} verifica as regras antes de mesclá-las ou enfileirá-las e faz rebase do restante da pilha depois do merge.",
+  "a86b49982e18784d": "Mescla o #{number} e as camadas não mescladas abaixo dele em {base} usando {method} quando todas atenderem aos requisitos de {host}. Isso pode acontecer imediatamente.",
   "31d2f22f5a282719": "Faz rebase dos branches remotos, de baixo para cima, sobre {base}. Isso reescreve o histórico dos branches e pode reiniciar as verificações. Se uma camada falhar, as atualizações anteriores permanecem.",
   "a0adf78733c368ae": "Mesclar pilha",
   "140dc384c58b74f3": "Fazer rebase da pilha",
@@ -7082,8 +7113,19 @@
     },
     ")"
   ],
+  "b1afda5c964deee4": [
+    "Merge automático da pilha (",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ")"
+  ],
+  "33d18dda74f6d7b3": "Cancelar merge automático da pilha",
   "30440f98e929440a": "Fazer rebase da pilha",
   "13718a03e3144142": "Todas as camadas a mesclar precisam estar abertas e prontas para revisão.",
+  "012c67c7f1a99e33": "Merge automático da pilha",
   "4aafe1baf113088a": "Mesclar pilha",
   "0292da19054f2a04": "Carregando a pilha…",
   "583869e6df57abeb": "Este pull request não está mais em uma pilha.",
@@ -7311,6 +7353,9 @@
   "9b0647af63a7d8c1": "Aprovou alterações anteriores",
   "abe99679224fea5e": "Solicitou mudanças em alterações anteriores",
   "6b31ad910278ff72": "Revisão de alterações anteriores descartada",
+  "425e4a3d6c5c2867": "{count, plural, one {{count} com falha} other {{count} com falha}}",
+  "fd63b391898889f9": "{count, plural, one {{count} aguardando ação} other {{count} aguardando ação}}",
+  "948185631ef288e6": "{count, plural, one {{count} em execução} other {{count} em execução}}",
   "aaf22207b2f18c45": "{workflows, plural, one {{workflows} workflow} other {{workflows} workflows}} e {checks, plural, one {{checks} verificação} other {{checks} verificações}} aguardando ação",
   "c51411813ebafcc1": "{count, plural, one {{count} workflow aguardando aprovação} other {{count} workflows aguardando aprovação}}",
   "4946778c8e18a1db": "{count, plural, one {{count} verificação aguardando ação} other {{count} verificações aguardando ação}}",
@@ -7449,10 +7494,10 @@
   "65b1d784a5e84254": "Pareie esta máquina novamente por outro endereço, como o nome dela no Tailscale. Ele se junta às rotas existentes em vez de adicionar uma segunda máquina.",
   "e1cb1c8599e84e26": "Crie um código de pareamento em {environment}, em Configurações → Compartilhamento e acesso ou com `t3 auth pairing create`, e insira-o aqui.",
   "1bea4864d46d70d0": "Parear outro ambiente com este cliente.",
-  "9b24ef052b321e57": "Informe o host do backend e um código de pareamento.",
+  "090064823c4e6045": "Connect via Tailscale, LAN, or pairing URL.",
   "3e20f17f71edf0ad": "Usa a configuração SSH local, o agent e túneis para o backend.",
   "e147ee6a5a38e6cd": "Host",
-  "5e11277c0af743da": "Cole uma URL de pareamento completa aqui para preencher os dois campos automaticamente.",
+  "064369f80f096c96": "Supports Tailscale (https://host.tailnet.ts.net or http://100.x.y.z:3773), LAN addresses, or a full pairing URL.",
   "4573320c3e8ab4b7": "Esta máquina está na sua conta do T3 Connect. Use-a como rota alternativa.",
   "7a790e431eace2aa": "Adicionar T3 Connect",
   "5cb52026e1ff75f1": "Host ou alias SSH",
@@ -7548,6 +7593,7 @@
   "e4e5b75bba51396c": "Token Bearer (opcional)",
   "e62cedcbcdbafc75": "Chave de gerenciamento",
   "f1b3d0634ec035cb": "Rótulo (opcional)",
+  "b35256ca61016104": "Adicionar fonte",
   "52814dd6f7d0a15c": "Adicionar hub",
   "27b770d3402abfa2": "Avançado",
   "584595dfcadab699": "Arte",
@@ -7557,6 +7603,7 @@
   "d5dc7576fd468be7": "Confortável",
   "3141408bf3874e64": "Larga",
   "831badd18b64547e": "Total",
+  "6287212fed0deec6": "Igual ao chat",
   "a96255594ebf2ce3": "Palavra",
   "1ee44eb65708a8aa": "Barras",
   "7670f789e0d8672a": "Só os temas integrados mostram arte, então este tema mostra a pílula de versão.",
@@ -7574,12 +7621,11 @@
   "03338c6aec8edacd": "Define até que largura as mensagens e o editor de mensagens podem crescer em telas grandes.",
   "92785adb251da88c": "Redefinir a largura do chat para o padrão",
   "4d457bcce0c0e272": "Largura do chat",
-  "7d7f65967cc821e3": "Largura da pré-visualização HTML",
+  "81f3a196537bbee0": "Confortável (padrão)",
   "70ce0af7f78d5957": "Permite que as pré-visualizações HTML de um chat fiquem mais largas que as mensagens, que continuam centralizadas.",
   "f2b119bf02ae2558": "Redefinir a largura da pré-visualização HTML para o padrão",
-  "6287212fed0deec6": "Igual ao chat",
+  "7d7f65967cc821e3": "Largura da pré-visualização HTML",
   "dc8e85ea0364649c": "Igual ao chat (padrão)",
-  "81f3a196537bbee0": "Confortável (padrão)",
   "e79e5388f669495f": "Mostra o esforço de raciocínio no editor de mensagens pelo nome, como Alto, ou como barras.",
   "7f0365c7e4e8bcbf": "Redefinir a exibição do esforço para o padrão",
   "14bf40f765172a50": "Exibição do esforço",
@@ -8144,6 +8190,8 @@
   "814d5e26041ae64b": "{count, plural, one {{count} cliente} other {{count} clientes}}",
   "df40538b2b895b76": "{count, plural, one {{count} link de pareamento} other {{count} links de pareamento}}",
   "6ecdf1472c1b189c": "Abre o app hospedado, sem instalação",
+  "88760b95aee5f6e7": "Tailscale HTTPS: reachable across your tailnet",
+  "4deeadbd7b729d13": "Tailscale IP: reachable across your tailnet",
   "d585dd679d4cc063": "Dispositivos na mesma rede",
   "43c36a26d25fba3a": "Dispositivos na sua rede privada",
   "35dba68d5e15dc72": "Acessível de qualquer lugar",
@@ -8209,6 +8257,7 @@
   "a09aff32ef3d89c7": "Desativar o acesso à rede?",
   "161e8b5715b55fdc": "Permita que seus outros dispositivos se conectem ao T3 Code pela rede. Pareie os dispositivos para dar acesso a eles. O T3 Code será reiniciado.",
   "a3fe8c741fd5c391": "Os dispositivos conectados pela sua rede local serão desconectados. Os túneis existentes, como T3 Connect ou Tailscale HTTPS, continuam funcionando. O T3 Code será reiniciado.",
+  "6daaa0a8ae12b32b": "Devices connected over your local network will disconnect. Tailscale HTTPS keeps working. T3 Code will restart.",
   "3e02da0c3a5d5b6c": "Reiniciar e ativar",
   "b806f0521f52c70a": "Reiniciar e desativar",
   "4d47ff0966e2b0eb": "Desativar o WSL e voltar para o Windows?",
@@ -8379,7 +8428,6 @@
   "e6886a7f77b73a8e": "{platform} indisponível",
   "b0b7610d9860d18d": "Não configurado nesta máquina.",
   "f5b66c481aa3e4df": "Editar",
-  "b35256ca61016104": "Adicionar fonte",
   "3b20ef0670ae4b0b": "Máquina via SSH",
   "121ccffacb6b8c6d": "Expo Simulators",
   "130b55a1410a8030": "Pool do Simlock (alfa)",
@@ -8773,9 +8821,13 @@
   "ed83b25c71c98a20": "Escolha um ou mais {scope}s do {tracker} para cada projeto. As issues deles aparecem ao lado das do repositório, e os agentes criam novas issues no primeiro, a menos que outro seja pedido.",
   "19c2d5e81ff8f89a": "{scope} do {tracker} para {project}",
   "68e061510b765772": "Não vinculado",
+  "99d51127f573296b": "Outra conta",
+  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}.",
+  "99963c0142e17f00": "Para a nova conta do {tracker}.",
   "a2d95d39d3398bda": "Credencial recusada",
   "9eae463720500113": "Armazenado no servidor.",
   "b6e27ab2537ef874": "Criar um",
+  "6d8e4ebc889bace9": "Adicionar conta",
   "13ef526271b0f5d4": "Limpar todas as condições",
   "d1938a629f039515": "Remover condição",
   "84a605b241ce65b7": "Remover grupo e as condições dele",
@@ -8921,6 +8973,10 @@
   "f0e853acd2006d53": "Ambientes vinculados",
   "ef10c2dff987f3ea": "Execute workflows de várias etapas a partir de arquivos na pasta workflows da pasta T3 deste servidor. Abra-os pela paleta de comandos. Enquanto estiver desativado, nada dessa pasta é executado; as execuções aguardam até que seja ativado novamente.",
   "2dadb2359422121c": "Workflows",
+  "933dabf0700708af": "Quantas execuções ignoradas cada workflow mantém no histórico. Execuções ignoradas mais antigas são excluídas; execuções que fizeram algo são sempre mantidas.",
+  "f172d7e5deb24f75": "Redefinir execuções ignoradas mantidas para o padrão",
+  "ba94015389f327bc": "Execuções ignoradas mantidas",
+  "d52b3d6bf9f2a013": "Misto",
   "13e86eb5d8287a71": "Mostra uma próxima mensagem prevista no editor vazio após um turno do Claude ou do Codex. Tab a usa. Cada uma é uma requisição extra em cache no seu plano. Requer Codex 0.165+. As threads do Claude são atualizadas ao reiniciar.",
   "d4b2a2ec812aafb0": "Sugerir próximo prompt",
   "298c7150a7621c80": "Hosts de dispositivos Simlock",
@@ -8928,7 +8984,6 @@
   "f9904f78d3003f58": "Checkout rápido de worktree",
   "9c2f647882522302": "As máquinas selecionadas usam modos diferentes de feedback dos agentes.",
   "31bbf7bf8c0a5279": "Feedback dos agentes",
-  "d52b3d6bf9f2a013": "Misto",
   "ec7623deed751c05": [
     "Compartilhe uma thread com um convidado que a acompanha ao vivo no navegador e envia mensagens que você aprova. Requer T3 Connect: entre e vincule esta máquina em",
     " ",
@@ -9267,6 +9322,28 @@
   "d2ad2df4c015f417": "A regra de agrupamento define como cada checkout entra nos grupos de projetos da barra lateral. Alterá-la pode mover um checkout para outro projeto.",
   "0bdf6ae2117b6c23": "Não encontrou uma configuração? Mantenha este projeto selecionado acima e vá para qualquer outra página de configurações.",
   "3310e10f1efdc9bd": "Escolher ícone",
+  "a9cb97fca6a6576b": "Comando de criação",
+  "90f45a354884ccdd": "Comando de remoção",
+  "0cdc8cdbed3e5eae": "Layout de worktree",
+  "c17b25519e2b194e": "Não foi possível carregar os comandos de layout de worktree",
+  "78e308ada516928b": "Não foi possível aprovar o comando",
+  "a0c772d32a233da6": "Não foi possível revogar a aprovação",
+  "5ccd5614c65f8d1f": "Revogar a aprovação do comando {kind}",
+  "80c3794a5fa12f3a": "Aprovar o comando {kind}",
+  "f206891e124c77b0": [
+    "O ",
+    {
+      "t": "code",
+      "i": 1,
+      "c": "t3.json"
+    },
+    " deste projeto prepara as threads em worktree com comandos próprios. Eles são executados na máquina deste ambiente com as suas permissões e somente como aprovados aqui: um comando cujo texto muda precisa de aprovação de novo."
+  ],
+  "8e73b883d41d4102": "Desativado",
+  "f6a91589456cca50": "Aprovado",
+  "c92657bb7f2293ff": "Precisa de aprovação",
+  "f1e5c1be1ac92361": "Aprovar",
+  "fcb5f3c4d4753326": "Esta conexão não pode aprovar comandos. Use um cliente que possa usar o terminal.",
   "65ccf4f8e049003e": "Escolha um projeto para gerenciar o nome, o ícone, os checkouts e as ações dele.",
   "067beea7d8f6e2c9": "Mostrar todos os ambientes",
   "1bf6da50131340d4": "Matiz da cor de destaque",
@@ -11140,7 +11217,6 @@
   "b0d0aebadc521ed1": "Exclui as capturas do navegador salvas após esta quantidade de dias. Links de capturas mais antigas deixarão de abrir.",
   "fe4208562792c313": "Excluir logs rotacionados antigos",
   "8debac9c8e9cff47": "Exclui os arquivos de log rotacionados inativos após esta quantidade de dias. Os logs atuais são mantidos.",
-  "8e73b883d41d4102": "Desativado",
   "80d58a3fd4e4212a": "Projeto",
   "de770505be25f1ff": "Pasta",
   "ada7b9a4d96959d2": "Thread",
@@ -11871,9 +11947,6 @@
   "6826fa9579c22035": "beta compartilhar convidado convite link colega acompanhar t3 connect túnel",
   "f10c06cba0cdf7fe": "beta vincular outra máquina vps par agentes trabalham lá delegar",
   "bc0b409d89ce086e": "beta workflow execuções duráveis automação etapas agendamento webhook pasta",
-  "933dabf0700708af": "Quantas execuções ignoradas cada workflow mantém no histórico. Execuções ignoradas mais antigas são excluídas; execuções que fizeram algo são sempre mantidas.",
-  "f172d7e5deb24f75": "Redefinir execuções ignoradas mantidas para o padrão",
-  "ba94015389f327bc": "Execuções ignoradas mantidas",
   "4b2669dcdb7d3776": "workflow histórico retenção excluir antigas execuções ignoradas webhook history retention skipped runs",
   "4a21cf825a2045b0": "beta tab autocompletar prever próxima mensagem claude codex texto fantasma",
   "fea2dc36585c4a20": "Hosts de dispositivos Simlock (alfa)",
@@ -12051,7 +12124,6 @@
   "9c73aa0c2e2b4e7d": "Escolher atalho",
   "300a948f90c4d75c": "Voltar",
   "2a50e229df85d553": "Avançar",
-  "8aa6404c8018ea67": "Início do T3 Code",
   "8e9626aa27cb188a": "Issues",
   "9d2fc1003e82feb1": "Uso",
   "20283eb1dd6119f9": "{count, plural, one {{count} anexo} other {{count} anexos}}",
@@ -12164,14 +12236,12 @@
   "c1a9fe8e24876f1d": "{count, plural, one {{count} thread em execução será interrompida.} other {{count} threads em execução serão interrompidas.}}",
   "ecdf5f108ecc71d0": "{count, plural, one {{count} pode retomar após a reinicialização.} other {{count} podem retomar após a reinicialização.}}",
   "0576c87870fb6389": "Atualizar",
-  "948185631ef288e6": "{count, plural, one {{count} em execução} other {{count} em execução}}",
   "3d9a2f6b9c114039": "Provedores",
   "f4baf8deafbb227d": "Ignorado",
   "f938bb483eb3d189": "reinicia por último",
+  "f13e08bd3614112e": "atualize o T3 Code nessa máquina",
   "9bca02be2b4d612a": "não conectado",
   "2dcc418b6a13b83c": "precisa de atualização manual",
-  "f13e08bd3614112e": "atualize o T3 Code nessa máquina",
-  "3c3348c36a2695af": "mude o canal de atualização nessa máquina",
   "fa8faa732a2688ef": "no canal {channel}",
   "e65649675cb4cbaa": "desativado",
   "a1e7c08d9ef315c7": "ainda carregando",
@@ -12188,6 +12258,7 @@
   "3ac986d604a2ad62": "Este app não pode mudar: o servidor dele não está conectado, então o banco de dados não pode ser verificado.",
   "3bbb6e9ade0cf7e1": "execute `{command}` lá",
   "e7194946af611278": "roda uma build de pré-visualização",
+  "3c3348c36a2695af": "mude o canal de atualização nessa máquina",
   "f5eac23351c99297": "mude o app para Mac naquele Mac",
   "d7444fbde9a80f04": "<1 min",
   "09c1af20e9323765": "Reiniciar em {seconds} s",
@@ -12544,9 +12615,14 @@
   "dd7a1e58c2553933": "acorda em {duration}",
   "95cc952724dd7310": "prestes a acordar",
   "3cc34921c0128593": "em execução",
-  "e777db2880f53a46": "ninguém respondeu",
   "dc90739d391a5e67": "Você disse {choice}",
+  "4e96712d839ccbff": "{who} disse {choice}",
+  "e777db2880f53a46": "ninguém respondeu",
+  "201490988858b511": "retirada por {by}",
   "389f2563b5b763fd": "Etapas rápidas",
+  "99451a5d2d40440f": "Retirada por {by}.",
+  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
+  "92e129bf413a1220": "retirada",
   "a41c8d758121ad81": "em espera",
   "9db248b770096984": "aguardou",
   "c76124517af28686": "em execução há {duration}",
@@ -12582,6 +12658,49 @@
   "8bffb377e2a6a7de": "sua versão não está mais registrada",
   "f92d9132f7b85d1a": "Carregando etapas…",
   "6ebc59f64c761a49": "Nada ainda.",
+  "19097cfb8f5a79cf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " disse",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    "."
+  ],
+  "e7bbf693910057bf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " disse",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    ": ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
   "a759dccd157d7dae": [
     "Você disse",
     " ",
@@ -12615,6 +12734,15 @@
       "v": "v"
     }
   ],
+  "3759768c5d342c22": [
+    "respondida",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "c98009be9a273b31": "Abrir execução",
   "c8eb9be36d4d51ad": [
     "Thread em ",
@@ -12640,6 +12768,14 @@
   ],
   "02dfe6c63fd0b8a1": "Adicionar um motivo",
   "19abd94828a3bdbc": "Perguntar ao agente primeiro",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " precisa de um motivo."
+  ],
   "a18721fa8f328361": "Precisam de você",
   "bbf24e7920c1e86b": "Em execução",
   "8d6e18d2ad832db6": "Todas",
@@ -12654,13 +12790,23 @@
   "b6409289e0c9a4dd": "Workflow",
   "035cb02ca1ae4952": "Todos os workflows ({count})",
   "8eeb9cb07d7c59e1": "Tipo de pergunta",
-  "e4d1316c85ed7066": "Nenhuma pergunta desse tipo aguarda você.",
   "e2131cbec8accfe3": "Todos os tipos",
   "46d614fa7b4bf1e5": "Execuções de workflow",
   "1c635faa2fb45b8b": "Ainda não foi executado.",
+  "e4d1316c85ed7066": "Nenhuma pergunta desse tipo aguarda você.",
   "156ff7b625287a1e": "Ocultar puladas",
   "69b985b97ab45e6b": "Mostrar puladas ({count})",
   "2400254d362de84d": "Carregando execuções de workflow…",
+  "cae5c3205c01d062": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "Um arquivo de workflow tem um problema."
+    },
+    " ",
+    "A última versão que carregou continua em execução."
+  ],
+  "ed8ce6ebc73dc12d": "Abrir o arquivo",
   "145e1f7503ba3b2c": [
     "Este ambiente não tem nenhuma execução com esse link.",
     " ",
@@ -12686,16 +12832,6 @@
       "c": "Leia o guia"
     }
   ],
-  "cae5c3205c01d062": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": "Um arquivo de workflow tem um problema."
-    },
-    " ",
-    "A última versão que carregou continua em execução."
-  ],
-  "ed8ce6ebc73dc12d": "Abrir o arquivo",
   "5d8d278ff828102d": "Todos os workflows",
   "3b0f1659172107e4": "Todos os tipos",
   "39459da07479f482": "Agente",
@@ -12841,139 +12977,5 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
-  "99d51127f573296b": "Outra conta",
-  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}.",
-  "99963c0142e17f00": "Para a nova conta do {tracker}.",
-  "6d8e4ebc889bace9": "Adicionar conta",
-  "8a883c4fbc127b68": "Ativando o merge automático da pilha...",
-  "5fb2a26ae31e8983": "Não foi possível ativar o merge automático da pilha",
-  "986d0dcbf4dd0098": "Merge automático da pilha ativado",
-  "f3ed1f63c8a3eef2": "{host} vai mesclar a pilha até o #{number} quando os requisitos forem atendidos.",
-  "bd536a0a1754f6cb": "Não foi possível cancelar o merge automático da pilha",
-  "bb90ac3b2f3a72d5": "O host recusou o cancelamento do merge automático. Atualize e tente novamente.",
-  "9c28753c777c37b7": "{count, plural, one {Mesclar automaticamente {count} {term, select, mr {merge request} cr {solicitação de alteração} other {pull request}}?} other {Mesclar automaticamente {count} {term, select, mr {merge requests} cr {solicitações de alteração} other {pull requests}}?}}",
-  "a86b49982e18784d": "Mescla o #{number} e as camadas não mescladas abaixo dele em {base} usando {method} quando todas atenderem aos requisitos de {host}. Isso pode acontecer imediatamente.",
-  "b1afda5c964deee4": [
-    "Merge automático da pilha (",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    ")"
-  ],
-  "33d18dda74f6d7b3": "Cancelar merge automático da pilha",
-  "012c67c7f1a99e33": "Merge automático da pilha",
-  "4a18481bea4b4ad5": "Novo dispositivo conectado a {environmentLabel}",
-  "4144ab6aa487528a": "{device} se conectou pelo {product}. Não foi você? Revise.",
-  "a10cfdb27152c757": "{count, plural, one {{count} dispositivo se conectou} other {{count} dispositivos se conectaram}} pelo {product}. Não foi você? Revise.",
-  "e0856d6a402ad821": "A política de {organization} não permite comandos de layout de worktree de projetos.",
-  "206811f6f441bfc7": "Este projeto prepara os worktrees com um comando próprio, que ninguém aprovou como está escrito agora. Esta conexão não pode aprová-lo: aprove-o em um cliente que possa usar o terminal.",
-  "b8087c9a70c26da9": "Não foi possível aprovar o comando de layout de worktree.",
-  "49eda70cfd56e621": "Executado quando uma thread em worktree começa e quando a pasta dela é restaurada",
-  "188ccaa1199f5611": "Executado quando o worktree de uma thread é removido",
-  "7e8476e7306acabe": "Permitir que este projeto execute seus comandos de worktree?",
-  "8e11914556fd8b13": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " prepara as threads em worktree com comandos próprios de ",
-    {
-      "t": "code",
-      "i": 2,
-      "c": "t3.json"
-    },
-    ". Eles são executados na máquina deste ambiente com as suas permissões, fora de qualquer sandbox de agente. Você será perguntado de novo sempre que o texto deles mudar."
-  ],
-  "46807acd02a4ff72": "Aprovar e continuar",
-  "a9cb97fca6a6576b": "Comando de criação",
-  "90f45a354884ccdd": "Comando de remoção",
-  "78e308ada516928b": "Não foi possível aprovar o comando",
-  "a0c772d32a233da6": "Não foi possível revogar a aprovação",
-  "0cdc8cdbed3e5eae": "Layout de worktree",
-  "c17b25519e2b194e": "Não foi possível carregar os comandos de layout de worktree",
-  "5ccd5614c65f8d1f": "Revogar a aprovação do comando {kind}",
-  "80c3794a5fa12f3a": "Aprovar o comando {kind}",
-  "f206891e124c77b0": [
-    "O ",
-    {
-      "t": "code",
-      "i": 1,
-      "c": "t3.json"
-    },
-    " deste projeto prepara as threads em worktree com comandos próprios. Eles são executados na máquina deste ambiente com as suas permissões e somente como aprovados aqui: um comando cujo texto muda precisa de aprovação de novo."
-  ],
-  "f6a91589456cca50": "Aprovado",
-  "c92657bb7f2293ff": "Precisa de aprovação",
-  "f1e5c1be1ac92361": "Aprovar",
-  "fcb5f3c4d4753326": "Esta conexão não pode aprovar comandos. Use um cliente que possa usar o terminal.",
-  "4e96712d839ccbff": "{who} disse {choice}",
-  "19097cfb8f5a79cf": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " disse",
-    " ",
-    {
-      "t": "span",
-      "i": 2,
-      "c": {
-        "i": 3,
-        "k": "_gt_value_3",
-        "v": "v"
-      }
-    },
-    "."
-  ],
-  "e7bbf693910057bf": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " disse",
-    " ",
-    {
-      "t": "span",
-      "i": 2,
-      "c": {
-        "i": 3,
-        "k": "_gt_value_3",
-        "v": "v"
-      }
-    },
-    ": ",
-    {
-      "i": 4,
-      "k": "_gt_value_4",
-      "v": "v"
-    }
-  ],
-  "3759768c5d342c22": [
-    "respondida",
-    " ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "e114d37b32ab0dc7": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " precisa de um motivo."
-  ],
-  "91aadfc843c600de": "Verificar conta Google",
-  "201490988858b511": "retirada por {by}",
-  "99451a5d2d40440f": "Retirada por {by}.",
-  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
-  "92e129bf413a1220": "retirada"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
 }

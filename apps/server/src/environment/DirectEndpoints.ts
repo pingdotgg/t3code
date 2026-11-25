@@ -92,12 +92,16 @@ export function resolveBoundEndpoints(input: {
         (address) =>
           isAdvertisableAddress(address) || (NodeNet.isIPv6(address) && isTailnetHost(address)),
       );
-  return [...new Set(addresses)]
+  const endpoints: Array<ServerDirectEndpoint> = [...new Set(addresses)]
     .filter((address) => !input.onCloudVm || tailscaleAddresses.has(address))
     .map((address) => ({
       kind: tailscaleAddresses.has(address) ? "tailnet" : "lan",
       httpBaseUrl: `http://${formatHostForUrl(address)}:${input.port}/`,
     }));
+  endpoints.sort((left, right) =>
+    left.kind === right.kind ? 0 : left.kind === "tailnet" ? -1 : 1,
+  );
+  return endpoints;
 }
 
 const SYSFS_NET = "/sys/class/net";
@@ -204,7 +208,9 @@ export const make = Effect.gen(function* () {
       }),
     ];
     const servedUrl = yield* Ref.get(servedEndpoint);
-    if (Option.isSome(servedUrl)) endpoints.push({ kind: "tailnet", httpBaseUrl: servedUrl.value });
+    if (Option.isSome(servedUrl)) {
+      endpoints.unshift({ kind: "tailnet", httpBaseUrl: servedUrl.value });
+    }
     return endpoints;
   });
 

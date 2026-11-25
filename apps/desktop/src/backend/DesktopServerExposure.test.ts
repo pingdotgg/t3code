@@ -171,6 +171,10 @@ describe("DesktopServerExposure", () => {
           endpoints.map((endpoint) => endpoint.httpBaseUrl),
           ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/", "http://100.74.126.34:4173/"],
         );
+        assert.equal(
+          endpoints.find((endpoint) => endpoint.isDefault)?.httpBaseUrl,
+          "http://100.74.126.34:4173/",
+        );
         assert.deepEqual(yield* serverExposure.getAdvertisedEndpoints, endpoints);
         assert.equal(statusReads, 1);
       }),

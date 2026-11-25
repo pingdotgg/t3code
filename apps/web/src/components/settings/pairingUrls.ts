@@ -1,4 +1,8 @@
-import { buildHostedPairingUrl } from "../../hostedPairing";
+import {
+  buildHostedPairingUrl,
+  hasExplicitHostedAppUrl,
+  isHostedStaticApp,
+} from "../../hostedPairing";
 import { setPairingTokenOnUrl } from "@t3tools/shared/remote";
 
 export function resolveDesktopPairingUrl(endpointUrl: string, credential: string): string {
@@ -8,6 +12,10 @@ export function resolveDesktopPairingUrl(endpointUrl: string, credential: string
 }
 
 export function resolveHostedPairingUrl(endpointUrl: string, credential: string): string | null {
+  if (!hasExplicitHostedAppUrl() && !isHostedStaticApp()) {
+    return null;
+  }
+
   const url = new URL(endpointUrl);
   if (url.protocol !== "https:") {
     return null;

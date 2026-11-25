@@ -846,16 +846,10 @@ function ConnectionsSettingsContent({
   const visibleDesktopAdvertisedEndpoints = tailscaleHttpsEndpoint
     ? [...visibleDesktopNetworkAdvertisedEndpoints, tailscaleHttpsEndpoint]
     : visibleDesktopNetworkAdvertisedEndpoints;
-  const defaultDesktopNetworkAdvertisedEndpoint = selectPairingEndpoint(
-    visibleDesktopNetworkAdvertisedEndpoints,
+  const defaultDesktopAdvertisedEndpoint = selectPairingEndpoint(
+    visibleDesktopAdvertisedEndpoints,
     defaultAdvertisedEndpointKey,
   );
-  const defaultDesktopAdvertisedEndpoint =
-    defaultDesktopNetworkAdvertisedEndpoint ??
-    selectPairingEndpoint(
-      tailscaleHttpsEndpoint ? [tailscaleHttpsEndpoint] : [],
-      defaultAdvertisedEndpointKey,
-    );
   const defaultDesktopAdvertisedEndpointKey = defaultDesktopAdvertisedEndpoint
     ? endpointDefaultPreferenceKey(defaultDesktopAdvertisedEndpoint)
     : null;
@@ -1533,9 +1527,13 @@ function ConnectionsSettingsContent({
                     ? gt(
                         "Let your other devices connect to T3 Code over the network. Pair devices to give them access. T3 Code will restart.",
                       )
-                    : gt(
-                        "Devices connected over your local network will disconnect. Existing tunnels, such as T3 Connect or Tailscale HTTPS, keep working. T3 Code will restart.",
-                      )}
+                    : hasCloudPublicConfig()
+                      ? gt(
+                          "Devices connected over your local network will disconnect. Existing tunnels, such as T3 Connect or Tailscale HTTPS, keep working. T3 Code will restart.",
+                        )
+                      : gt(
+                          "Devices connected over your local network will disconnect. Tailscale HTTPS keeps working. T3 Code will restart.",
+                        )}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

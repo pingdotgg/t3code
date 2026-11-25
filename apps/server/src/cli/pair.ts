@@ -7,7 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
+import {
+  formatHostForUrl,
+  isSharedAddressSpaceHost,
+  isWildcardHost,
+} from "@t3tools/shared/hostClassification";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
@@ -31,6 +35,7 @@ import { Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import { hasCloudPublicConfig } from "../cloud/publicConfig.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -77,7 +82,9 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
       ...(this.inLinkedWorktree
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
-      `Start one with \`${this.serveCommand}\`, or connect this machine with T3 Connect: \`${this.connectCommand}\`.`,
+      hasCloudPublicConfig
+        ? `Start one with \`${this.serveCommand}\`, or connect this machine with T3 Connect: \`${this.connectCommand}\`.`
+        : `Start one with \`${this.serveCommand}\`.`,
     ].join("\n");
   }
 }
@@ -582,13 +589,20 @@ export const pairCommand = Command.make("pair", {
         notes.push(...resolved.notes);
       } else {
         pairingBaseUrl = resolveDirectPairingBaseUrl(target.state, yield* HostProcess.Platform);
-        if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
+        const pairingHostname = new URL(pairingBaseUrl).hostname;
+        if (isLoopbackHost(pairingHostname)) {
           notes.push(
             "This URL is only reachable from this machine. To reach it from your other devices, run `t3 up`, or re-run with --tailscale.",
           );
+        } else if (isSharedAddressSpaceHost(pairingHostname)) {
+          notes.push(
+            "This URL uses your Tailscale IP. For HTTPS over MagicDNS, re-run with --tailscale.",
+          );
         } else if (target.state.privateNetworkOnly) {
           notes.push(
-            "This URL works only from this machine's local network. From elsewhere, re-run with --tailscale or use T3 Connect.",
+            hasCloudPublicConfig
+              ? "This URL works only from this machine's local network. From elsewhere, re-run with --tailscale or use T3 Connect."
+              : "This URL works only from this machine's local network. From elsewhere, re-run with --tailscale.",
           );
         }
         if (target.variant === "dev" && target.state.devUrl === undefined) {
