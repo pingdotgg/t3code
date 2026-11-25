@@ -43,12 +43,12 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
         const end = nodes[endIndex];
         if (!start || !end) continue;
         const range = container.ownerDocument.createRange();
-        if (start.node.nodeType === Node.TEXT_NODE) {
+        if (start.node.nodeType === 3) {
           range.setStart(start.node, match.start - start.start);
         } else {
           range.setStartBefore(start.node);
         }
-        if (end.node.nodeType === Node.TEXT_NODE) {
+        if (end.node.nodeType === 3) {
           range.setEnd(end.node, match.end - end.start);
         } else {
           range.setEndAfter(end.node);
@@ -70,9 +70,7 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
       const tag = element?.tagName.toLowerCase() ?? "";
       if (tag === "br") {
         const next = node.nextSibling;
-        const separator = threadFindLineBreakText(
-          next?.nodeType === Node.TEXT_NODE ? next.nodeValue : null,
-        );
+        const separator = threadFindLineBreakText(next?.nodeType === 3 ? next.nodeValue : null);
         if (separator) {
           const start = text.length;
           text += separator;
