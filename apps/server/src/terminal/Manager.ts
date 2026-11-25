@@ -3781,7 +3781,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             },
           });
         }
-        if (event.type === "cleared") pending = TERMINAL_SEQUENCE_GROUND;
         if (event.type !== "output" || pending === TERMINAL_SEQUENCE_GROUND) return listener(event);
         const continuation = skipTerminalSnapshotContinuation(pending, event.data);
         pending = continuation.state;
