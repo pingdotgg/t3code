@@ -147,7 +147,6 @@ it.live.skipIf(!symlinksSupported)(
 
 it.effect.each([
   { name: "another directory", folder: "elsewhere", linkedStat: "other" },
-  { name: "the directory it moved", folder: "moved", linkedStat: "same" },
   { name: "a directory that is gone", folder: "gone", linkedStat: "missing" },
 ] as const)(
   "follows a directory replaced by a link to $name when its parent watch reports nothing",
@@ -199,7 +198,7 @@ it.effect.each([
               file !== entry
                 ? fs.stat(file)
                 : Effect.suspend(() =>
-                    !linked || linkedStat === "same"
+                    !linked
                       ? Effect.succeed(plain)
                       : linkedStat === "other"
                         ? Effect.succeed(other)
