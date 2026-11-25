@@ -4489,13 +4489,10 @@ function piLegacyRetainedBranch(listing: PiSessionListing, targetId: string, com
     const entry = listing.entries.get(id);
     if (entry?.timestamp == null) return undefined;
     if (entry.isUserMessage && entry.timestamp >= completedAt) return { history, entryId: id };
-    if (entry.timestamp > completedAt) {
-      // Pi only forks before user messages. Later settings can stay in the file,
-      // but later conversation entries make this branch unsafe to recover.
-      if (!entry.isSessionMetadata) return undefined;
-    } else {
-      history.push(id);
-    }
+    if (entry.timestamp <= completedAt) history.push(id);
+    // Pi only forks before user messages. Later settings can stay in the file,
+    // but later conversation entries make this branch unsafe to recover.
+    else if (!entry.isSessionMetadata) return undefined;
   }
   return { history, entryId: undefined };
 }
