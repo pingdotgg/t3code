@@ -751,19 +751,18 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           Effect.orElseSucceed(() => null),
         );
       }
+      const download = isGenericFile && !isVideo && inlinePreviewMimeType === undefined;
+      // A client-named type is kept only where it cannot make the bytes render as a document.
+      const mimeType =
+        inlinePreviewMimeType ??
+        (isVideo ? videoMimeType : download ? input.resource.mimeType : undefined);
       claims = {
         version: 1,
         kind: "attachment",
         attachmentId: input.resource.attachmentId,
-        ...(isGenericFile && !isVideo && inlinePreviewMimeType === undefined
-          ? { download: true }
-          : {}),
+        ...(download ? { download: true } : {}),
         ...(input.resource.fileName !== undefined ? { fileName: input.resource.fileName } : {}),
-        ...(inlinePreviewMimeType !== undefined
-          ? { mimeType: inlinePreviewMimeType }
-          : input.resource.mimeType !== undefined
-            ? { mimeType: isVideo ? videoMimeType : input.resource.mimeType }
-            : {}),
+        ...(mimeType !== undefined ? { mimeType } : {}),
         ...(input.resource.renderIntent === "mcp-app" && inlinePreviewMimeType === "text/html"
           ? { renderIntent: "mcp-app" as const }
           : {}),
