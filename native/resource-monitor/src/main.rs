@@ -1085,7 +1085,7 @@ mod tests {
         assert!(process.cpu_percent.is_finite());
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     #[test]
     fn keeps_command_lines_and_memory_out_of_the_discovery_table() {
         let mut collector = Collector::new();
