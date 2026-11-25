@@ -7192,6 +7192,106 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live(
+    "preserves lastCatalogKey across a same-session MCP credential reload with an unchanged catalog",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+        const instanceId = ProviderInstanceId.make("acp-test-mcp-rotate-catalog-key");
+        const threadId = ThreadId.make("thread-acp-mcp-rotate-catalog-key");
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const setMcp = (ordinal: number) =>
+          mcpSessions.set({
+            environmentId: EnvironmentId.make("environment-acp-mcp-rotate-catalog-key"),
+            threadId,
+            providerSessionId: `mcp-session-acp-rotate-catalog-key-${ordinal}`,
+            providerInstanceId: instanceId,
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: `Bearer acp-catalog-run-${ordinal}-token`,
+            browserToolsAvailable: false,
+          });
+        yield* setMcp(1);
+        const publications: Array<{
+          readonly catalogKey: string;
+          readonly lastCatalogKey: string | null | undefined;
+        }> = [];
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            onSessionConfigurationUpdate: (configOptions, modeState, modelState, updateOptions) =>
+              Effect.sync(() => {
+                const catalogKey = JSON.stringify({ configOptions, modeState, modelState });
+                publications.push({
+                  catalogKey,
+                  lastCatalogKey: updateOptions?.lastCatalogKey,
+                });
+                return catalogKey;
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              protocolEvents,
+            }),
+          },
+          selfInvocation,
+          clientTerminals: {},
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-mcp-rotate-catalog-key"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.isAbove(publications.length, 0);
+        const preReloadCount = publications.length;
+        const preReloadKey = publications.at(-1)!.catalogKey;
+        assert.isNull(publications[0]!.lastCatalogKey);
+
+        yield* pollProtocolMethods(protocolEvents);
+        yield* setMcp(2);
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+
+        const methodsAfterRotate = yield* pollProtocolMethods(protocolEvents);
+        assert.isTrue(
+          methodsAfterRotate.includes("session/load") ||
+            methodsAfterRotate.includes("session/resume"),
+          `expected session/load or session/resume after token rotation, got ${JSON.stringify(methodsAfterRotate)}`,
+        );
+
+        const postReloadPublications = publications.slice(preReloadCount);
+        assert.isAbove(postReloadPublications.length, 0);
+        for (const publication of postReloadPublications) {
+          assert.equal(publication.catalogKey, preReloadKey);
+          assert.equal(publication.lastCatalogKey, preReloadKey);
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("a snapshot load records its MCP credential, so the next turn does not reload", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

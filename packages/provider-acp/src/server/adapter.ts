@@ -2414,8 +2414,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           rootForegroundWork = undefined;
           agentRequests.clear();
           nativeChildren.clear();
-          yield* Ref.set(activeSessionSetup, setup);
-          yield* resetPublishedCatalogKey;
+          const previousSetup = yield* Ref.getAndSet(activeSessionSetup, setup);
+          if (previousSetup === null || previousSetup.sessionId !== setup.sessionId) {
+            yield* resetPublishedCatalogKey;
+          }
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
