@@ -29,6 +29,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 import "~/index.css";
 
@@ -54,6 +55,7 @@ import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { collectThreadFindRanges } from "./threadFindHighlights";
 import { toastManager } from "../ui/toast";
+import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import type { CitedHistory } from "./citationProcedure";
 import type { TimelineNavigation } from "./timelineViewport";
 import { rememberTimelinePosition } from "./timelineScrollAnchoring";
@@ -95,6 +97,26 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
       stubbedAsset.url
         ? args[1].map(() => stubbedAsset.url)
         : actual.useAssetUrls(...args)) as typeof actual.useAssetUrls,
+  };
+});
+
+const previewAccess = vi.hoisted(() => ({ granted: false }));
+vi.mock(import("~/browser/previewRuntime"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    isPreviewAvailableFor: ((...args) =>
+      previewAccess.granted ||
+      actual.isPreviewAvailableFor(...args)) as typeof actual.isPreviewAvailableFor,
+  };
+});
+vi.mock(import("~/state/session"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    readEnvironmentScope: ((...args) =>
+      previewAccess.granted ||
+      actual.readEnvironmentScope(...args)) as typeof actual.readEnvironmentScope,
   };
 });
 
@@ -480,6 +502,41 @@ describe("MessagesTimeline work rows", () => {
     expect(output).toBeDefined();
     expect(output!.closest('[role="button"]')).toBeNull();
     expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toContain(output);
+  });
+  it("opens a web search result in the thread's Browser when links open in T3 Code", async () => {
+    setup();
+    previewAccess.granted = true;
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, browserLinkTarget: "app" });
+    onTestFinished(() => {
+      previewAccess.granted = false;
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    });
+    await using screen = await renderTimeline([
+      work("web-search", {
+        label: "https://example.com/",
+        tone: "tool",
+        itemType: "web_search",
+        projectedItem: v2Item("web_search", {
+          id: "web-search",
+          patterns: ["https://example.com/"],
+          results: [{ url: "https://example.com/", title: "Example Domain" }],
+        }),
+      }),
+    ]);
+    await click(screen.button("Web search"));
+    const link = [...screen.container.querySelectorAll("a")].find(
+      (anchor) => anchor.textContent === "Example Domain",
+    );
+    expect(link).toBeDefined();
+    // A _blank click the app leaves to the browser goes to Electron's popup handler, which
+    // sends it to the system browser.
+    let followedNatively = true;
+    await act(async () => {
+      followedNatively = link!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }),
+      );
+    });
+    expect(followedNatively).toBe(false);
   });
 });
 
