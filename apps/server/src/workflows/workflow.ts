@@ -365,7 +365,21 @@ export const sleep = Effect.fn("workflow.sleep")(function* (
   });
 });
 
-export const Woke = Schema.Struct({ expired: Schema.Boolean, value: Schema.Json });
+export const Woke = Schema.Struct({
+  expired: Schema.Boolean,
+  value: Schema.Json,
+  /** Ended unanswered from outside the run, which reads it as a timeout. */
+  withdrawn: Schema.optional(
+    Schema.Struct({ by: Schema.String, reason: Schema.NullOr(Schema.String) }),
+  ),
+});
+const closedDetail = (woke: typeof Woke.Type) => {
+  if (woke.withdrawn !== undefined) {
+    const { by, reason } = woke.withdrawn;
+    return `withdrawn by ${by}${reason === null ? "" : `: ${reason}`}`;
+  }
+  return woke.expired ? "timed out" : null;
+};
 export const wakeOf = (name: string) => DurableDeferred.make(`wait/${name}`, { success: Woke });
 const finite = [Schema.isFinite()] as const;
 // JSON carries a bare `Schema.Number` as a number or the text "Infinity", "-Infinity" or "NaN",
@@ -449,6 +463,38 @@ interface WaitOptions<A, I> {
   readonly watch?: Schema.Json | undefined;
 }
 
+/**
+ * A signal's value as a question's wait receives it: with who sent it and when, as the server saw
+ * them. What the value itself says of those is the sender's word and is dropped. Undefined for a
+ * wait that is not a question, a value that is no answer, and a question asked before answers
+ * kept who gave them, whose closed schema would refuse the stamp.
+ */
+export const answerStamped = (
+  wait: { readonly request: boolean; readonly schemaJson: string },
+  value: Schema.Json,
+  sender: WorkflowStore.SignalSender,
+): Schema.JsonObject | undefined => {
+  if (!wait.request || typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  if (!wait.schemaJson.includes('"answeredAt"')) return undefined;
+  const {
+    answeredBy: _by,
+    answeredBySession: _session,
+    answeredAt: _at,
+    ...given
+  } = value as Schema.JsonObject;
+  return {
+    ...given,
+    ...(sender.answeredBy === undefined ? {} : { answeredBy: sender.answeredBy }),
+    // A question asked before answers kept the session has a closed schema without it.
+    ...(sender.answeredBySession === undefined || !wait.schemaJson.includes('"answeredBySession"')
+      ? {}
+      : { answeredBySession: sender.answeredBySession }),
+    answeredAt: sender.answeredAt,
+  };
+};
+
 const sameAddress = (left: WorkflowStore.SignalAddress, right: WorkflowStore.SignalAddress) =>
   "runId" in left
     ? "runId" in right && left.runId === right.runId && left.wait === right.wait
@@ -462,6 +508,10 @@ const waitClaimed = Effect.fnUntraced(function* <A, I>(
 ): Effect.fn.Return<Option.Option<A>, StepFailed, InRun> {
   const here: WorkflowStore.SignalAddress = { runId: run.runId, wait: name };
   const schema = jsonSchemaOf(options.returns);
+  const question = {
+    request: options.request !== undefined,
+    schemaJson: WorkflowStore.jsonText(schema),
+  };
   const codec = Schema.toCodecJson(options.returns);
   const decode = Schema.decodeEffect(codec);
   const fits = (value: Schema.Json) => Effect.result(decode(value));
@@ -479,7 +529,15 @@ const waitClaimed = Effect.fnUntraced(function* <A, I>(
     while (true) {
       const early = yield* run.store.mailNext(addresses, passed);
       if (early === undefined) return;
-      const value = WorkflowStore.jsonValue(early.valueJson);
+      const sent = WorkflowStore.jsonValue(early.valueJson);
+      // An answer is its sender's as the server recorded on receiving it. One kept before signals
+      // kept that has no name, and its time is this one.
+      const value =
+        answerStamped(
+          question,
+          sent,
+          early.sender ?? { answeredAt: DateTime.formatIso(yield* DateTime.now) },
+        ) ?? sent;
       if (Result.isFailure(yield* fits(value))) {
         // Kept when it went to a channel: another run, or another version, may read it.
         if (sameAddress(early.address, here)) yield* run.store.mailDelete(early.signalId);
@@ -514,7 +572,7 @@ const waitClaimed = Effect.fnUntraced(function* <A, I>(
         workflow: run.workflow,
         key: options.channel,
         token: firstToken,
-        schemaJson: WorkflowStore.jsonText(schema),
+        schemaJson: question.schemaJson,
         requestJson: options.request === undefined ? null : WorkflowStore.jsonText(options.request),
         watchJson: options.watch === undefined ? null : WorkflowStore.jsonText(options.watch),
         deadline,
@@ -548,8 +606,12 @@ const waitClaimed = Effect.fnUntraced(function* <A, I>(
       name: `wait/${name}/close`,
       execute: Effect.gen(function* () {
         yield* run.store.waitClosed(run.runId, name);
-        yield* run.store.stepEnded(run.runId, name, "completed", woke.expired ? "timed out" : null);
+        yield* run.store.stepEnded(run.runId, name, "completed", closedDetail(woke));
         if (!woke.expired) yield* run.store.stepResult(run.runId, name, woke.value);
+        // Kept as data, so the history can say who withdrew the question and why.
+        else if (woke.withdrawn !== undefined) {
+          yield* run.store.stepResult(run.runId, name, { withdrawn: woke.withdrawn });
+        }
         yield* run.store.runResumed(run.runId);
       }),
     });

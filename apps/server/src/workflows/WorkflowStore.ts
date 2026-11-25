@@ -27,6 +27,16 @@ export type SignalAddress =
   | { readonly runId: string; readonly wait: string }
   | { readonly workflow: string; readonly channel: string };
 
+/**
+ * Who sent a signal and when it was received, as the server saw it. A question's answer is stamped
+ * with this and with nothing the signal's own value says about them.
+ */
+export interface SignalSender {
+  readonly answeredBy?: string | undefined;
+  readonly answeredBySession?: string | undefined;
+  readonly answeredAt: string;
+}
+
 /** The run that invoked another, and the wait in it that hears how the other ended. */
 export interface RunParent {
   readonly runId: string;
@@ -150,6 +160,15 @@ const REFERENCE_TITLE_KEPT = 300;
 const idsKeptUntil = Effect.map(DateTime.now, (at) =>
   DateTime.formatIso(DateTime.addDuration(at, SIGNAL_IDS_KEPT)),
 );
+const senderText = (sender: SignalSender) =>
+  jsonText({
+    ...(sender.answeredBy === undefined ? {} : { answeredBy: sender.answeredBy }),
+    ...(sender.answeredBySession === undefined
+      ? {}
+      : { answeredBySession: sender.answeredBySession }),
+    answeredAt: sender.answeredAt,
+  });
+const senderOf = (text: string) => jsonValue(text) as unknown as SignalSender;
 // A tuple, so no name or key can be read as part of the other.
 const mailAddress = (address: SignalAddress) =>
   JSON.stringify(
@@ -345,6 +364,8 @@ export class WorkflowStore extends Context.Service<
       readonly address: SignalAddress;
       readonly valueJson: string;
       readonly expiresAt: string;
+      /** Kept beside the value, never in it: the wait that takes the signal may be a question. */
+      readonly sender: SignalSender;
     }) => Effect.Effect<void>;
     /** The oldest signal kept for any of these addresses, but `passed`. It stays until `mailDelete`. */
     readonly mailNext: (
@@ -355,9 +376,13 @@ export class WorkflowStore extends Context.Service<
           readonly signalId: string;
           readonly valueJson: string;
           readonly address: SignalAddress;
+          /** Undefined for a signal kept before signals kept their sender. */
+          readonly sender: SignalSender | undefined;
         }
       | undefined
     >;
+    /** Who sent the kept signal and when it came. Undefined when none is kept, or it kept neither. */
+    readonly mailSender: (signalId: string) => Effect.Effect<SignalSender | undefined>;
     readonly mailDelete: (signalId: string) => Effect.Effect<void>;
     readonly mailExpire: Effect.Effect<void>;
     readonly run: (runId: string) => Effect.Effect<RunRow | undefined>;
@@ -455,14 +480,19 @@ export const make = Effect.gen(function* () {
       SELECT request_json, opened_at FROM workflow_waits WHERE run_id = ${runId} AND name = ${name}
     `.pipe(Effect.orDie);
     if (wait === undefined || wait.request_json === null) return;
-    const expired =
-      woke !== null &&
-      typeof woke === "object" &&
-      (woke as { readonly expired?: unknown }).expired === true;
+    const claim =
+      woke !== null && typeof woke === "object"
+        ? (woke as { readonly expired?: unknown; readonly withdrawn?: unknown })
+        : {};
     yield* tell(runId, `${runId}:${name}:${wait.opened_at}`, at, {
       type: "workflow.input_resolved",
       step: name,
-      resolution: expired ? "expired" : "answered",
+      resolution:
+        claim.withdrawn !== undefined
+          ? "withdrawn"
+          : claim.expired === true
+            ? "expired"
+            : "answered",
     });
   });
 
@@ -712,6 +742,8 @@ export const make = Effect.gen(function* () {
               ? Effect.flatMap(now, (at) => questionClaimed(runId, name, woke, at))
               : Effect.void,
           ),
+          // A paused run is not woken, so nothing else would tell a watcher the wait is taken.
+          Effect.tap((taken) => (taken ? PubSub.publish(changes, runId) : Effect.void)),
         ),
     ),
     waitsToWake: Effect.gen(function* () {
@@ -772,7 +804,10 @@ export const make = Effect.gen(function* () {
           ),
           Effect.orDie,
         );
-      if (outcome === "delivered") yield* questionClaimed(runId, name, woke, at);
+      if (outcome === "delivered") {
+        yield* questionClaimed(runId, name, woke, at);
+        yield* PubSub.publish(changes, runId);
+      }
       return outcome;
     }),
     prunable: Effect.fn("WorkflowStore.prunable")(function* (before, limit) {
@@ -1026,8 +1061,11 @@ export const make = Effect.gen(function* () {
         .withTransaction(
           Effect.andThen(
             sql`
-              INSERT INTO workflow_mail (signal_id, address, value_json, expires_at)
-              VALUES (${mail.signalId}, ${mailAddress(mail.address)}, ${mail.valueJson}, ${mail.expiresAt})
+              INSERT INTO workflow_mail (signal_id, address, value_json, expires_at, sender_json)
+              VALUES (
+                ${mail.signalId}, ${mailAddress(mail.address)}, ${mail.valueJson},
+                ${mail.expiresAt}, ${senderText(mail.sender)}
+              )
               ON CONFLICT (signal_id) DO NOTHING
             `,
             // A copy kept by a retry that raced the first delivery outlives no receipt of it.
@@ -1041,16 +1079,32 @@ export const make = Effect.gen(function* () {
     }),
     mailNext: Effect.fn("WorkflowStore.mailNext")(function* (addresses, passed = new Set()) {
       for (const address of addresses) {
-        const rows = yield* sql<{ signal_id: string; value_json: string }>`
-          SELECT signal_id, value_json FROM workflow_mail
+        const rows = yield* sql<{
+          signal_id: string;
+          value_json: string;
+          sender_json: string | null;
+        }>`
+          SELECT signal_id, value_json, sender_json FROM workflow_mail
           WHERE address = ${mailAddress(address)} ORDER BY rowid
         `.pipe(Effect.orDie);
         const mail = rows.find((row) => !passed.has(row.signal_id));
         if (mail !== undefined) {
-          return { signalId: mail.signal_id, valueJson: mail.value_json, address };
+          return {
+            signalId: mail.signal_id,
+            valueJson: mail.value_json,
+            address,
+            sender: mail.sender_json === null ? undefined : senderOf(mail.sender_json),
+          };
         }
       }
       return undefined;
+    }),
+    mailSender: Effect.fn("WorkflowStore.mailSender")(function* (signalId) {
+      const rows = yield* sql<{ sender_json: string | null }>`
+        SELECT sender_json FROM workflow_mail WHERE signal_id = ${signalId}
+      `.pipe(Effect.orDie);
+      const kept = rows[0]?.sender_json;
+      return kept === undefined || kept === null ? undefined : senderOf(kept);
     }),
     mailDelete: Effect.fn("WorkflowStore.mailDelete")(function* (signalId) {
       yield* sql`DELETE FROM workflow_mail WHERE signal_id = ${signalId}`.pipe(Effect.orDie);
@@ -1108,8 +1162,8 @@ export const make = Effect.gen(function* () {
       return yield* (
         status === undefined
           ? // Skipped runs are counted apart, so a trigger that skips most of what it brings does
-            // not push the runs that did something out of the list. A run with a question open is
-            // listed however old, since what waits on a person is built from this list.
+            // not push the runs that did something out of the list. A paused run or one with a
+            // question open is listed however old, since what waits on a person is built from it.
             sql<RunSummaryRow>`
               SELECT ${summaryColumns} FROM (
                 SELECT ${summaryColumns} FROM workflow_runs
@@ -1124,7 +1178,7 @@ export const make = Effect.gen(function* () {
               )
               UNION
               SELECT ${summaryColumns} FROM workflow_runs
-              WHERE run_id IN (
+              WHERE status = 'paused' OR run_id IN (
                 SELECT run_id FROM workflow_waits
                 WHERE request_json IS NOT NULL AND signalled_at IS NULL
               )

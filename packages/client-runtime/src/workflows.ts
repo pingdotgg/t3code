@@ -17,10 +17,24 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
+export interface WorkflowQuestionChoice {
+  readonly value: string;
+  /** What picking it does. */
+  readonly description: string | null;
+  /** The server refuses it without a reason. */
+  readonly requireReason: boolean;
+}
+
+export interface WorkflowQuestionLink {
+  readonly label: string;
+  readonly url: string;
+}
+
 export interface WorkflowQuestionView {
   readonly title: string;
-  readonly choices: ReadonlyArray<string>;
+  readonly choices: ReadonlyArray<WorkflowQuestionChoice>;
   readonly body: string | null;
+  readonly links: ReadonlyArray<WorkflowQuestionLink>;
 }
 
 function field(value: unknown, key: string): unknown {
@@ -29,20 +43,46 @@ function field(value: unknown, key: string): unknown {
     : undefined;
 }
 
+const text = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() !== "" ? value : null;
+
+const isWebUrl = (url: string) => {
+  const protocol = URL.parse(url)?.protocol;
+  return protocol === "https:" || protocol === "http:";
+};
+
 /**
  * What a question shows. `request` is whatever the workflow handed `ask`, so a part that is
  * missing or of another shape is left out instead of failing the whole list.
  */
 export function readWorkflowQuestion(question: WorkflowQuestion): WorkflowQuestionView {
-  const title = field(question.request, "title");
   const choices = field(question.request, "choices");
-  const body = field(field(question.request, "data"), "body");
+  const details = field(question.request, "choiceDetails");
+  const links = field(question.request, "links");
+  const detailOf = (value: string) =>
+    Array.isArray(details) ? details.find((detail) => field(detail, "value") === value) : undefined;
   return {
-    title: typeof title === "string" && title.trim() !== "" ? title : question.name,
+    title: text(field(question.request, "title")) ?? question.name,
     choices: Array.isArray(choices)
-      ? choices.filter((choice): choice is string => typeof choice === "string")
+      ? choices
+          .filter((choice): choice is string => typeof choice === "string")
+          .map((value) => {
+            const detail = detailOf(value);
+            return {
+              value,
+              description: text(field(detail, "description")),
+              requireReason: field(detail, "requireReason") === true,
+            };
+          })
       : [],
-    body: typeof body === "string" && body.trim() !== "" ? body : null,
+    body: text(field(field(question.request, "data"), "body")),
+    links: Array.isArray(links)
+      ? links.flatMap((link) => {
+          const label = text(field(link, "label"));
+          const url = field(link, "url");
+          return label !== null && typeof url === "string" && isWebUrl(url) ? [{ label, url }] : [];
+        })
+      : [],
   };
 }
 
@@ -616,15 +656,47 @@ const openEnd = (beat: WorkflowBeat) =>
   beat.status === "running" ? Number.POSITIVE_INFINITY : beat.endMs;
 
 /** What a person answered a question with, when a step's result is such an answer. */
-export function workflowAnswer(
-  result: WorkflowStep["result"],
-): { readonly choice: string; readonly reason: string | null } | null {
+export function workflowAnswer(result: WorkflowStep["result"]): {
+  readonly choice: string;
+  readonly reason: string | null;
+  /** The client, tool or agent thread that answered, by name; null on an answer kept before this. */
+  readonly answeredBy: string | null;
+  /** The client session that answered; null for a tool, an agent, or an answer kept before this. */
+  readonly answeredBySession: string | null;
+  readonly answeredAt: string | null;
+} | null {
   const choice = field(result, "choice");
-  const reason = field(result, "reason");
   return typeof choice === "string"
-    ? { choice, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null }
+    ? {
+        choice,
+        reason: text(field(result, "reason")),
+        answeredBy: text(field(result, "answeredBy")),
+        answeredBySession: text(field(result, "answeredBySession")),
+        answeredAt: text(field(result, "answeredAt")),
+      }
     : null;
 }
+
+/** Who withdrew a question unanswered, and why, when a step's result says so. */
+export function workflowWithdrawal(
+  result: WorkflowStep["result"],
+): { readonly by: string; readonly reason: string | null } | null {
+  const withdrawn = field(result, "withdrawn");
+  const by = field(withdrawn, "by");
+  const reason = field(withdrawn, "reason");
+  return typeof by === "string"
+    ? { by, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null }
+    : null;
+}
+
+/**
+ * Whether the client whose session on the run's environment is `sessionId` gave `answer`. Decided
+ * by session, never by name: two browsers share "Chrome on Linux" and every phone its app's name.
+ */
+export const isOwnWorkflowAnswer = (
+  answer: { readonly answeredBySession: string | null },
+  sessionId: string | null | undefined,
+): boolean => answer.answeredBySession !== null && answer.answeredBySession === sessionId;
 
 /** Steps that were under way at the same time, shown side by side. */
 export interface WorkflowTogether {

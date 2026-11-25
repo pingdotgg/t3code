@@ -616,6 +616,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "ACP Registry",
+    snapshotOmitsDisplayName: true,
     supportsMultipleInstances: true,
     hasDefaultInstance: false,
   },

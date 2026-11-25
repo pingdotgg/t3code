@@ -1,8 +1,9 @@
-import type {
-  WorkflowQuestion,
-  WorkflowRun,
-  WorkflowRunReference,
-  WorkflowStep,
+import {
+  applyWorkflowRunsUpdate,
+  type WorkflowQuestion,
+  type WorkflowRun,
+  type WorkflowRunReference,
+  type WorkflowStep,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -16,7 +17,9 @@ import {
   listedWorkflowRuns,
   readWorkflowQuestion,
   workflowAgentSummary,
+  isOwnWorkflowAnswer,
   workflowAnswer,
+  workflowWithdrawal,
   workflowChip,
   workflowFlowFocus,
   workflowPausedBeat,
@@ -352,6 +355,30 @@ describe("the list of runs", () => {
   });
 });
 
+describe("applyWorkflowRunsUpdate", () => {
+  it("keeps the list a fresh snapshot would show, newest run and oldest question first", () => {
+    const first = applyWorkflowRunsUpdate(undefined, {
+      workflows: [],
+      runs: [run("c", { startedAt: at(3) }), run("b", { startedAt: at(2) }), run("a")],
+      questions: [question("b"), question("c")],
+    });
+    const later = { ...question("d"), askedAt: at(2) };
+    const next = applyWorkflowRunsUpdate(first, {
+      _tag: "changed",
+      runs: [run("b", { startedAt: at(2), status: "completed" }), run("d", { startedAt: at(4) })],
+      removed: ["a"],
+      questions: [later, question("c", { title: "Ship now?" })],
+      closed: [{ runId: "b", name: "approve" }],
+    });
+    expect(next.runs.map((entry) => [entry.runId, entry.status])).toEqual([
+      ["d", "running"],
+      ["c", "running"],
+      ["b", "completed"],
+    ]);
+    expect(next.questions).toEqual([question("c", { title: "Ship now?" }), later]);
+  });
+});
+
 describe("workflowRunRefreshKey", () => {
   it("reads an ended run again only when it changes, and one under way on any change", () => {
     const snapshot = (runs: ReadonlyArray<WorkflowRun>) => ({ workflows: [], runs, questions: [] });
@@ -534,11 +561,42 @@ describe("readWorkflowQuestion", () => {
       readWorkflowQuestion(
         question("r", { title: "Ship it?", choices: ["yes", 2], data: { body: "Diff is small." } }),
       ),
-    ).toEqual({ title: "Ship it?", choices: ["yes"], body: "Diff is small." });
+    ).toEqual({
+      title: "Ship it?",
+      choices: [{ value: "yes", description: null, requireReason: false }],
+      body: "Diff is small.",
+      links: [],
+    });
     expect(readWorkflowQuestion(question("r", null))).toEqual({
       title: "approve",
       choices: [],
       body: null,
+      links: [],
+    });
+  });
+
+  it("reads what each choice does, which need a reason, and the links that open on the web", () => {
+    expect(
+      readWorkflowQuestion(
+        question("r", {
+          title: "Build this?",
+          choices: ["Yes", "No"],
+          choiceDetails: [{ value: "No", description: "It is closed", requireReason: true }],
+          links: [
+            { label: "The request", url: "https://example.com/1" },
+            { label: "Script", url: "javascript:alert(1)" },
+            { label: " ", url: "https://example.com/2" },
+          ],
+        }),
+      ),
+    ).toEqual({
+      title: "Build this?",
+      choices: [
+        { value: "Yes", description: null, requireReason: false },
+        { value: "No", description: "It is closed", requireReason: true },
+      ],
+      body: null,
+      links: [{ label: "The request", url: "https://example.com/1" }],
     });
   });
 });
@@ -548,13 +606,42 @@ describe("workflowAnswer", () => {
     expect(workflowAnswer({ choice: "Ship", reason: " " })).toEqual({
       choice: "Ship",
       reason: null,
+      answeredBy: null,
+      answeredBySession: null,
+      answeredAt: null,
     });
-    expect(workflowAnswer({ choice: "Hold", reason: "Too risky" })).toEqual({
+    expect(
+      workflowAnswer({
+        choice: "Hold",
+        reason: "Too risky",
+        answeredBy: "t3 workflow signal",
+        answeredAt: "2026-11-24T10:00:00.000Z",
+      }),
+    ).toEqual({
       choice: "Hold",
       reason: "Too risky",
+      answeredBy: "t3 workflow signal",
+      answeredBySession: null,
+      answeredAt: "2026-11-24T10:00:00.000Z",
     });
     expect(workflowAnswer("done")).toBeNull();
     expect(workflowAnswer(null)).toBeNull();
+  });
+
+  it("calls an answer the viewer's own by its session, never by its name", () => {
+    const own = (result: Record<string, string>, sessionId: string | null | undefined) =>
+      isOwnWorkflowAnswer(workflowAnswer({ choice: "Yes", ...result })!, sessionId);
+    const fromBrowser = { answeredBy: "Chrome on Linux", answeredBySession: "session-a" };
+    expect(own(fromBrowser, "session-a")).toBe(true);
+    // Another browser the server gives the same name.
+    expect(own(fromBrowser, "session-b")).toBe(false);
+    // An agent and the CLI answer as a thread or a tool, which no viewer is.
+    expect(own({ answeredBy: "Fix the login bug" }, "session-a")).toBe(false);
+    expect(own({ answeredBy: "t3 workflow signal" }, "session-a")).toBe(false);
+    // An answer kept before answers recorded a session, and a viewer whose own is not known.
+    expect(own({ answeredBy: "Chrome on Linux" }, "session-a")).toBe(false);
+    expect(own({}, undefined)).toBe(false);
+    expect(own(fromBrowser, null)).toBe(false);
   });
 });
 
@@ -627,5 +714,19 @@ describe("workflowOneLine", () => {
     expect(workflowOneLine("- See [the issue](https://x.test/2) first")).toBe(
       "See the issue first",
     );
+  });
+});
+
+describe("workflowWithdrawal", () => {
+  it("reads who withdrew a question, and why, off its result", () => {
+    expect(
+      workflowWithdrawal({ withdrawn: { by: "t3 CLI", reason: "settled elsewhere" } }),
+    ).toEqual({ by: "t3 CLI", reason: "settled elsewhere" });
+    expect(workflowWithdrawal({ withdrawn: { by: "run r1", reason: null } })).toEqual({
+      by: "run r1",
+      reason: null,
+    });
+    expect(workflowWithdrawal({ choice: "Ship" })).toBeNull();
+    expect(workflowWithdrawal(null)).toBeNull();
   });
 });
