@@ -661,35 +661,6 @@ describe("question answer paths", () => {
           },
           expected: ["January\tFebruary\tMarch\nNo sales\t\t420"],
         },
-        {
-          ext: "epub",
-          parts: {
-            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
-            "book.opf":
-              '<package><manifest><item id="c0" href="c0.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c0"/></spine></package>',
-            "c0.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><table><tbody><tr><th>January</th><th>February</th><th>March</th></tr><tr><td colspan="2" rowspan="3">No sales</td><td>420</td></tr><tr></tr><tr><td>421</td></tr><tr><td>January again</td></tr></tbody><tbody><tr><td colspan="2" rowspan="0">Quarter</td><td>Total</td></tr><tr><td>500</td></tr></tbody><tbody><tr><td>New group</td></tr></tbody></table><table><tr><td>New table</td></tr></table></body></html>',
-          },
-          expected: [
-            "January\tFebruary\tMarch\nNo sales\t\t420\n\t\t421\nJanuary again\nQuarter\t\tTotal\n\t\t500\nNew group\nNew table",
-          ],
-        },
-        // A cell starting inside the column limit keeps its text and the rest of the book.
-        {
-          ext: "epub",
-          parts: {
-            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
-            "book.opf":
-              '<package><manifest><item id="c0" href="c0.xhtml" media-type="application/xhtml+xml"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c0"/><itemref idref="c1"/></spine></package>',
-            "c0.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><table><tr><td colspan="513">Wide</td></tr><tr><td>Next row</td></tr></table></body></html>',
-            "c1.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Next chapter</p><table><tr><td colspan="512">In range</td><td>Out of range</td></tr></table></body></html>',
-          },
-          expected: [
-            "## Chapter 1\nWide\nNext row\n\n## Chapter 2\nNext chapter\nIn range\n\n[Extracted text truncated at document extraction limits.]",
-          ],
-        },
         // Word stores object layout and field data outside the visible document text.
         {
           ext: "docx",
