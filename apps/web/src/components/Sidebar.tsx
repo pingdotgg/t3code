@@ -3021,7 +3021,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         dispatchProjectScopeMenu({ type: "open-changed", open: false });
         const returnFocus = projectScopeReturnFocusRef.current;
         projectScopeReturnFocusRef.current = null;
-        (returnFocus?.isConnected ? returnFocus : projectScopeTriggerRef.current)?.focus();
+        // The mobile sheet stays open, so focus must stay inside it.
+        const target = !isMobile && returnFocus?.isConnected ? returnFocus : null;
+        target?.focus();
+        if (document.activeElement !== target) projectScopeTriggerRef.current?.focus();
         return;
       }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
@@ -3050,6 +3053,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     orderedRowKeys,
     projectGroups.length,
     projectScopeMenuState.open,
+    projectScopeReturnFocusRef,
     routeRowKey,
     routeThreadRef,
     setOpenMobile,
