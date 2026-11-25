@@ -7,6 +7,8 @@
 # number it has already seen. Needs the App Store Connect .p8 at ~/.appstoreconnect/private_keys/
 # and an Admin-role key; see ../ROTATION.md.
 set -euo pipefail
+# CocoaPods crashes without a UTF-8 locale, and expo prebuild still exits 0 when it does.
+export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
