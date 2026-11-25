@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  activeThreadSortKey,
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
+  sortActiveThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentId } from "@t3tools/contracts";
 
@@ -245,5 +247,35 @@ describe("computeThreadMoveAvailability matches the reference planner", () => {
     });
     const reference = referenceAvailability(ordered, allThreads, WRITABLE);
     expect(Object.fromEntries(batch)).toEqual(Object.fromEntries(reference));
+  });
+});
+
+describe("createThreadMovePlanner new threads", () => {
+  it("keeps a thread created later above one moved to the top", () => {
+    const row = (id: string, createdAt: string): OrderRow => ({
+      id: id as OrderRow["id"],
+      environmentId: "env" as OrderRow["environmentId"],
+      pinOrderKey: null,
+      activeOrderKey: null,
+      createdAt,
+      unsettledAt: null,
+      pinnedAt: null,
+    });
+    const a = row("a", "2026-11-20T10:30:00.000Z");
+    const b = row("b", "2026-11-20T10:20:00.000Z");
+    const plan = createThreadMovePlanner({
+      ordered: [a, b],
+      section: "active",
+      reorderableEnvironmentIds: new Set(["env" as EnvironmentId]),
+    })("env:b", "up");
+    expect(plan).toHaveLength(1);
+    const moved = { ...b, activeOrderKey: plan![0]!.orderKey };
+    expect(activeThreadSortKey(moved) < activeThreadSortKey(a)).toBe(true);
+    const created = row("new", "2026-11-20T10:40:00.000Z");
+    expect(sortActiveThreadsByOrderKey([a, moved, created]).map((thread) => thread.id)).toEqual([
+      "new",
+      "b",
+      "a",
+    ]);
   });
 });

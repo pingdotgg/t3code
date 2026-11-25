@@ -122,7 +122,8 @@ On web and desktop, the list also animates section changes made with thread acti
 preference. While dragging, rows follow the insertion gap without replaying a second transition
 after the drop.
 
-New threads appear above the active threads you have arranged. Settling clears a thread's active
+New threads appear above the active threads you have arranged, including one you dragged to the
+top, and the rest keep their order. Settling clears a thread's active
 position, so using **Un-settle** returns it to the top. Pinning and snoozing preserve its active
 position until you move it again. Thread activity does not change the order. The settled shelf
 continues to use settlement time.
@@ -167,11 +168,17 @@ Turn on **Settings → Labs → Boring sidebar (group by project)** on web and d
 threads in a folder for each project. Pinned projects come first. A project with no active
 threads has no folder unless it is pinned or you pick it in the project filter. An archived
 project's folder comes last and shows only while it has active threads. Click a folder to open or
-close it. A closed folder shows how many threads it holds, and a dot when one of them
-needs you. Use the pen button on a folder, or right-click it, to start a thread in that project.
-Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
-can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
-section is off. Each device keeps its own choice.
+close it. Drag a folder by its name to reorder it within its section. Pinned folders stay above
+unpinned folders, and archived folders stay last. The first reorder switches
+**Settings → General → Project order** to **Manual** on that client. In Manual order, a new
+project's folder appears above the other unpinned folders, which keep their order. A closed folder shows
+how many threads it holds, and a dot when one of them needs you. Use the pen button on a
+folder, or right-click it, to start a thread in that project.
+Drag a thread within its folder to change its order. Threads keep the active list's saved order,
+so sending a message or a finished turn does not move them, and a new thread starts at the top of
+its folder. Pinned threads stay above the folders, and Snoozed and Settled stay below them. Other
+drags in this mode only mention a thread in the composer, and the Working section is off. Each
+device keeps its own choice.
 
 ## Settle finished work
 

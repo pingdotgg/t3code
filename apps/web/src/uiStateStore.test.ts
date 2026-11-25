@@ -84,12 +84,70 @@ describe("uiStateStore pure functions", () => {
     const keyALocal = "env-local:proj-a";
     const keyARemote = "env-remote:proj-a";
     const keyB = "env-local:proj-b";
-    const keyC = "env-local:proj-c";
-    const currentOrder = [keyALocal, keyARemote, keyB, keyC];
+    const keyCLocal = "env-local:proj-c";
+    const keyCRemote = "env-remote:proj-c";
+    const disconnected = "env-disconnected:proj-d";
+    const currentOrder = [keyALocal, keyARemote, keyB, keyCLocal, keyCRemote];
 
-    const next = reorderProjects(makeUiState(), currentOrder, [keyALocal, keyARemote], [keyC]);
+    const next = reorderProjects(
+      makeUiState({ projectOrder: [disconnected] }),
+      currentOrder,
+      [keyALocal, keyARemote],
+      [keyCLocal, keyCRemote],
+    );
 
-    expect(next.projectOrder).toEqual([keyB, keyC, keyALocal, keyARemote]);
+    // None of the shown projects had a saved place, so they were listed above the saved
+    // (disconnected) one and keep that place once saved.
+    expect(next.projectOrder).toEqual([
+      keyB,
+      keyCLocal,
+      keyCRemote,
+      keyALocal,
+      keyARemote,
+      disconnected,
+    ]);
+  });
+
+  it("saves projects shown first without a saved place where they were shown", () => {
+    const state = makeUiState({ projectOrder: ["offline", "s1", "s2"] });
+    // A new project is listed above the saved ones.
+    expect(reorderProjects(state, ["new", "s1", "s2"], ["s2"], ["s1"]).projectOrder).toEqual([
+      "offline",
+      "new",
+      "s2",
+      "s1",
+    ]);
+    expect(reorderProjects(state, ["new", "s1", "s2"], ["new"], ["s1"]).projectOrder).toEqual([
+      "offline",
+      "s1",
+      "new",
+      "s2",
+    ]);
+    expect(reorderProjects(state, ["new", "s1", "s2"], ["s2"], ["new"]).projectOrder).toEqual([
+      "offline",
+      "s2",
+      "new",
+      "s1",
+    ]);
+  });
+
+  it("moves a project whose saved place is a legacy folder entry", () => {
+    const state = makeUiState({ projectOrder: ["legacy-a", "b"] });
+    const legacyKeyById = new Map([["a", "legacy-a"]]);
+    expect(
+      reorderProjects(state, ["c", "a", "b"], ["b"], ["c"], legacyKeyById).projectOrder,
+    ).toEqual(["b", "c", "a"]);
+  });
+
+  it("keeps a hidden project's saved place when other projects move", () => {
+    const next = reorderProjects(
+      makeUiState({ projectOrder: ["a", "offline-b", "c", "d"] }),
+      ["a", "c", "d"],
+      ["d"],
+      ["c"],
+    );
+
+    expect(next.projectOrder).toEqual(["a", "offline-b", "d", "c"]);
   });
 });
 

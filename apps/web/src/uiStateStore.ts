@@ -321,6 +321,7 @@ export function reorderProjects(
   currentProjectOrder: readonly string[],
   draggedProjectIds: readonly string[],
   targetProjectIds: readonly string[],
+  legacyKeyById: ReadonlyMap<string, string> = new Map(),
 ): UiState {
   if (draggedProjectIds.length === 0) {
     return state;
@@ -331,32 +332,42 @@ export function reorderProjects(
     return state;
   }
 
-  const originalTargetIndex = currentProjectOrder.findIndex((id) => targetSet.has(id));
-  if (originalTargetIndex < 0) {
+  const sourceIndex = currentProjectOrder.findIndex((id) => draggedSet.has(id));
+  const targetIndex = currentProjectOrder.findIndex((id) => targetSet.has(id));
+  if (sourceIndex < 0 || targetIndex < 0) {
     return state;
   }
 
-  const projectOrder = [...currentProjectOrder];
-
-  const removed: string[] = [];
-  let draggedBeforeTarget = 0;
-  for (let i = projectOrder.length - 1; i >= 0; i--) {
-    if (draggedSet.has(projectOrder[i]!)) {
-      removed.unshift(projectOrder.splice(i, 1)[0]!);
-      if (i < originalTargetIndex) {
-        draggedBeforeTarget++;
-      }
-    }
-  }
-  if (removed.length === 0) {
-    return state;
-  }
-
-  const insertIndex = originalTargetIndex - Math.max(0, draggedBeforeTarget - 1);
-  projectOrder.splice(insertIndex, 0, ...removed);
+  const dragged = currentProjectOrder.filter((id) => draggedSet.has(id));
+  const projectOrder = currentProjectOrder.filter((id) => !draggedSet.has(id));
+  const insertIndex =
+    sourceIndex < targetIndex
+      ? projectOrder.findLastIndex((id) => targetSet.has(id)) + 1
+      : projectOrder.findIndex((id) => targetSet.has(id));
+  projectOrder.splice(insertIndex, 0, ...dragged);
+  // Refill the saved slots of shown projects in their new order, so projects that are not
+  // shown right now (for example on a disconnected environment) keep their saved place.
+  // Shown projects with no saved place were listed first, so they take room before the
+  // first saved slot.
+  const loaded = new Set(currentProjectOrder);
+  // A legacy folder entry is the saved slot of the shown projects at that path.
+  const saved = new Set(state.projectOrder);
+  const savedOrder = state.projectOrder.flatMap((id) =>
+    loaded.has(id)
+      ? [id]
+      : currentProjectOrder.some((key) => legacyKeyById.get(key) === id)
+        ? currentProjectOrder.filter((key) => legacyKeyById.get(key) === id && !saved.has(key))
+        : [id],
+  );
+  const firstSlot = savedOrder.findIndex((id) => loaded.has(id));
+  const insertAt = firstSlot === -1 ? 0 : firstSlot;
+  const unsavedCount = projectOrder.length - savedOrder.filter((id) => loaded.has(id)).length;
+  let next = unsavedCount;
+  const merged = savedOrder.map((id) => (loaded.has(id) ? projectOrder[next++]! : id));
+  merged.splice(insertAt, 0, ...projectOrder.slice(0, unsavedCount));
   return {
     ...state,
-    projectOrder,
+    projectOrder: merged,
   };
 }
 
@@ -371,6 +382,7 @@ interface UiStateStore extends UiState {
     currentProjectOrder: readonly string[],
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
+    legacyKeyById?: ReadonlyMap<string, string>,
   ) => void;
 }
 
@@ -387,9 +399,15 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),
-  reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds) =>
+  reorderProjects: (currentProjectOrder, draggedProjectIds, targetProjectIds, legacyKeyById) =>
     set((state) =>
-      reorderProjects(state, currentProjectOrder, draggedProjectIds, targetProjectIds),
+      reorderProjects(
+        state,
+        currentProjectOrder,
+        draggedProjectIds,
+        targetProjectIds,
+        legacyKeyById,
+      ),
     ),
 }));
 

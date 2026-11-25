@@ -15,6 +15,7 @@ import {
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
   orderItemsByPreferredIds,
+  orderProjectsByManualOrder,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
   resolveSidebarRowStatus,
@@ -26,6 +27,7 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  resolveSidebarFolderDropTarget,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
@@ -43,11 +45,12 @@ import {
 } from "./Sidebar.logic";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
+  activeOrderFloorKey,
   activeThreadSortKey,
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { resolveProjectExpanded } from "../uiStateStore";
+import { legacyProjectCwdPreferenceKey, resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 
@@ -218,6 +221,68 @@ describe("orderItemsByPreferredIds", () => {
       "physical-a",
       "physical-b",
     ]);
+  });
+});
+
+describe("orderProjectsByManualOrder", () => {
+  const project = (environmentId: string, workspaceRoot: string, createdAt: string) => ({
+    environmentId: EnvironmentId.make(environmentId),
+    workspaceRoot,
+    createdAt,
+  });
+  const keyOf = (item: ReturnType<typeof project>) => `${item.environmentId}:${item.workspaceRoot}`;
+  const saved1 = project("local", "/work/saved-1", "2026-11-01T00:00:00.000Z");
+  const saved2 = project("local", "/work/saved-2", "2026-11-02T00:00:00.000Z");
+  const saved3 = project("local", "/work/saved-3", "2026-11-03T00:00:00.000Z");
+  const added = project("local", "/work/added", "2026-11-20T00:00:00.000Z");
+  const addedLater = project("local", "/work/added-later", "2026-11-21T00:00:00.000Z");
+  const projectOrder = [saved3, saved1, saved2].map(keyOf);
+
+  it("puts a project with no saved place first and shifts saved ones down in order", () => {
+    // The server lists projects oldest first, so a new one arrives last.
+    const ordered = orderProjectsByManualOrder({
+      projects: [saved1, saved2, saved3, added],
+      projectOrder,
+    });
+    expect(ordered.map(keyOf)).toEqual([added, saved3, saved1, saved2].map(keyOf));
+    expect(
+      orderProjectsByManualOrder({
+        projects: [saved1, added, saved2, saved3, addedLater],
+        projectOrder,
+      }).map(keyOf),
+    ).toEqual([addedLater, added, saved3, saved1, saved2].map(keyOf));
+  });
+
+  it("counts a legacy folder preference as a saved place", () => {
+    expect(
+      orderProjectsByManualOrder({
+        projects: [saved1, saved2, added],
+        projectOrder: [legacyProjectCwdPreferenceKey("/work/saved-2"), keyOf(saved1)],
+      }).map(keyOf),
+    ).toEqual([added, saved2, saved1].map(keyOf));
+  });
+
+  it("leaves a folder in place when a new project joins it", () => {
+    const remoteCopy = project("remote", "/work/saved-1", "2026-11-22T00:00:00.000Z");
+    const ordered = orderProjectsByManualOrder({
+      projects: [saved1, saved2, saved3, added, remoteCopy],
+      projectOrder,
+      groupKey: (item) => item.workspaceRoot,
+    });
+    // Folders take the place of their first member, so saved-1's folder keeps its place.
+    expect(ordered.map(keyOf)).toEqual([added, saved3, saved1, saved2, remoteCopy].map(keyOf));
+    // Without the grouping key the copy counts as a new project of its own.
+    expect(orderProjectsByManualOrder({ projects: [saved1, remoteCopy], projectOrder })[0]).toBe(
+      remoteCopy,
+    );
+  });
+
+  it("lists every project newest first before any is arranged", () => {
+    expect(
+      orderProjectsByManualOrder({ projects: [saved1, added, saved2], projectOrder: [] }).map(
+        keyOf,
+      ),
+    ).toEqual([added, saved2, saved1].map(keyOf));
   });
 });
 
@@ -1725,6 +1790,108 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "t3code", threads: ["a", "b"] },
       { projectKey: "fleet", threads: [] },
     ]);
+  });
+});
+
+describe("resolveSidebarFolderDropTarget", () => {
+  // Folder A holds a1..a3 and folder B holds b1..b2, interleaved in the Active order.
+  const activeOrder = ["a1", "b1", "a2", "b2", "a3"];
+  const folderA = ["a1", "a2", "a3"];
+  const drop = (activeKey: string, overKey: string, folderKeys = folderA) =>
+    resolveSidebarFolderDropTarget({
+      folderKeys,
+      activeOrder,
+      pinnedOrder: ["p1"],
+      activeKey,
+      overKey,
+    });
+
+  it("moves a thread next to its new folder neighbour and leaves other folders alone", () => {
+    expect(drop("a3", "a1")).toEqual({
+      section: "active",
+      pinnedOrder: ["p1"],
+      activeOrder: ["a3", "a1", "b1", "a2", "b2"],
+    });
+    expect(drop("a1", "a3")?.activeOrder).toEqual(["b1", "a2", "b2", "a3", "a1"]);
+    expect(drop("a1", "a2")?.activeOrder).toEqual(["b1", "a2", "b2", "a1", "a3"]);
+  });
+
+  it("refuses a drop on another folder's thread or on itself", () => {
+    expect(drop("a1", "b1")).toBeNull();
+    expect(drop("a1", "a1")).toBeNull();
+    expect(drop("b1", "a1")).toBeNull();
+  });
+
+  it("keeps a new thread above one dragged to the top of its folder", () => {
+    const rows = activeOrder.map((key, index) => ({
+      id: key,
+      createdAt: new Date(Date.UTC(2026, 2, 9, 10 - index)).toISOString(),
+      activeOrderKey: null as string | null,
+    }));
+    const plan = planSidebarThreadDrop({
+      activeKey: "a3",
+      activeSection: "active",
+      target: drop("a3", "a1")!,
+      pinnedOrder: ["p1"],
+      pinnedKeysById: new Map(),
+      activeOrder,
+      activeKeysById: new Map(rows.map((row) => [row.id, activeThreadSortKey(row)])),
+      activeReorderableKeys: new Set(activeOrder),
+      activeFloorKey: activeOrderFloorKey(rows),
+    });
+    expect(plan.kind).toBe("move-active");
+    if (plan.kind !== "move-active") return;
+    const keys = new Map(plan.assignments.map(({ id, orderKey }) => [id, orderKey]));
+    const moved = rows.map((row) => ({ ...row, activeOrderKey: keys.get(row.id) ?? null }));
+    const created = { id: "a-new", createdAt: "2026-03-09T11:00:00.000Z", activeOrderKey: null };
+    expect(
+      sortActiveThreadsByOrderKey([...moved, created])
+        .map((row) => row.id)
+        .filter((id) => id.startsWith("a")),
+    ).toEqual(["a-new", "a3", "a1", "a2"]);
+  });
+});
+
+describe("new threads above dropped ones", () => {
+  const at = (minute: number) => new Date(Date.UTC(2026, 10, 20, 10, minute)).toISOString();
+  type Row = { id: string; createdAt: string; activeOrderKey?: string | null };
+  const sortedIds = (rows: readonly Row[]) =>
+    sortActiveThreadsByOrderKey(rows).map((row) => row.id);
+  const plan = (
+    rows: readonly Row[],
+    activeKey: string,
+    activeOrder: readonly string[],
+    activeSection: "active" | "pinned" = "active",
+  ) =>
+    planSidebarThreadDrop({
+      activeKey,
+      activeSection,
+      target: { section: "active", pinnedOrder: [], activeOrder },
+      pinnedOrder: activeSection === "pinned" ? [activeKey] : [],
+      pinnedKeysById: new Map(),
+      activeOrder: sortedIds(
+        rows.filter((row) => activeSection === "active" || row.id !== activeKey),
+      ),
+      activeKeysById: new Map(rows.map((row) => [row.id, activeThreadSortKey(row)])),
+      activeReorderableKeys: new Set(rows.map((row) => row.id)),
+      activeFloorKey: activeOrderFloorKey(rows.filter((row) => row.id !== "p")),
+    });
+  const apply = (rows: readonly Row[], result: ReturnType<typeof planSidebarThreadDrop>) => {
+    expect(result.kind).toBe("move-active");
+    if (result.kind !== "move-active") return rows;
+    const keys = new Map(result.assignments.map(({ id, orderKey }) => [id, orderKey]));
+    return rows.map((row) =>
+      keys.has(row.id) ? { ...row, activeOrderKey: keys.get(row.id)! } : row,
+    );
+  };
+  const a = { id: "a", createdAt: at(30) };
+  const b = { id: "b", createdAt: at(20) };
+  const created = { id: "new", createdAt: at(40) };
+
+  it("keeps a new Active thread above one unpinned onto the top", () => {
+    const pinned = { id: "p", createdAt: at(0) };
+    const moved = apply([a, b, pinned], plan([a, b, pinned], "p", ["p", "a", "b"], "pinned"));
+    expect(sortedIds([...moved, created])).toEqual(["new", "p", "a", "b"]);
   });
 });
 

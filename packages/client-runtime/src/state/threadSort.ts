@@ -192,8 +192,10 @@ export function planPinnedReorder(input: {
   /** Include retained keys from hidden rows; only orderedIds receive writes. */
   readonly keysById: ReadonlyMap<string, string | null | undefined>;
   readonly movedId: string;
+  /** Lowest key the move may take when there is room above its lower neighbor. */
+  readonly floorKey?: string | null | undefined;
 }): ReadonlyArray<{ readonly id: string; readonly orderKey: string }> {
-  const { orderedIds, keysById, movedId } = input;
+  const { orderedIds, keysById, movedId, floorKey } = input;
   const visibleIds = new Set(orderedIds);
   const reservedKeys = new Set(
     [...keysById].flatMap(([id, key]) => (!visibleIds.has(id) && key != null ? [key] : [])),
@@ -207,7 +209,13 @@ export function planPinnedReorder(input: {
   const beforeUsable = beforeId === null || beforeKey != null;
   const afterUsable = afterId === null || afterKey != null;
   if (beforeUsable && afterUsable) {
-    let key = pinOrderKeyBetween(beforeKey, afterKey);
+    const lowerKey =
+      floorKey != null &&
+      (beforeKey === null || beforeKey < floorKey) &&
+      (afterKey === null || floorKey < afterKey)
+        ? floorKey
+        : beforeKey;
+    let key = pinOrderKeyBetween(lowerKey, afterKey);
     while (key !== null && reservedKeys.has(key)) key = pinOrderKeyBetween(key, afterKey);
     if (key !== null) return [{ id: movedId, orderKey: key }];
   }
@@ -269,9 +277,31 @@ export function activeThreadSortKey(thread: {
   readonly activeOrderKey?: string | null | undefined;
 }): string {
   if (thread.activeOrderKey != null) return thread.activeOrderKey;
-  let value =
-    IMPLIED_KEY_MAX_MS -
-    Math.min(Math.max(activeThreadAnchorTimestampMs(thread), 0), IMPLIED_KEY_MAX_MS);
+  return impliedActiveOrderKey(activeThreadAnchorTimestampMs(thread));
+}
+
+/**
+ * Lowest Active key a move should take so that a thread created later still lands above it.
+ * Implied keys shrink as time passes, so a key at or above the implied key one millisecond
+ * after the newest of these threads stays below every thread anchored after them. It reads
+ * the threads' own server timestamps, so the client clock plays no part.
+ */
+export function activeOrderFloorKey(
+  threads: Iterable<{
+    readonly createdAt: string;
+    readonly unsettledAt?: string | null | undefined;
+  }>,
+): string | null {
+  let newest: number | null = null;
+  for (const thread of threads) {
+    const anchor = activeThreadAnchorTimestampMs(thread);
+    if (newest === null || anchor > newest) newest = anchor;
+  }
+  return newest === null ? null : impliedActiveOrderKey(newest + 1);
+}
+
+function impliedActiveOrderKey(anchorMs: number): string {
+  let value = IMPLIED_KEY_MAX_MS - Math.min(Math.max(anchorMs, 0), IMPLIED_KEY_MAX_MS);
   let digits = "";
   for (let index = 0; index < IMPLIED_KEY_WIDTH; index += 1) {
     digits = String.fromCharCode(97 + (value % 26)) + digits;

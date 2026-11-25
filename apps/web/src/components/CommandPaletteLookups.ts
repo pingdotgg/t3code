@@ -7,12 +7,12 @@ import { useGT } from "gt-react";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useClientSettings } from "../hooks/useSettings";
-import { getProjectOrderKey } from "@t3tools/client-runtime/state/project-grouping";
+import { deriveLogicalProjectKeyFromSettings } from "@t3tools/client-runtime/state/project-grouping";
 import { useProjects, useVisibleThreadShells } from "../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
-import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
-import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
+import { useUiStateStore } from "../uiStateStore";
+import { orderProjectsByManualOrder, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 
 // Each helper reads its own source hook so the compiler caches the derived value on that
 // source. Taking the source as an argument instead leaves the helper hook-free, and the
@@ -69,14 +69,10 @@ export function useSortedProjectGroups(environmentLabelById: ReadonlyMap<Environ
     sidebarProjectGroupingMode: clientSettings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: clientSettings.sidebarProjectGroupingOverrides,
   };
-  const orderedProjects = orderItemsByPreferredIds({
-    items: projects,
-    preferredIds: projectOrder,
-    getId: getProjectOrderKey,
-    getPreferenceIds: (project) => [
-      getProjectOrderKey(project),
-      legacyProjectCwdPreferenceKey(project.workspaceRoot),
-    ],
+  const orderedProjects = orderProjectsByManualOrder({
+    projects,
+    projectOrder,
+    groupKey: (project) => deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
   });
   const unsortedProjectGroups = buildSidebarProjectSnapshots({
     projects: clientSettings.sidebarProjectSortOrder === "manual" ? orderedProjects : projects,

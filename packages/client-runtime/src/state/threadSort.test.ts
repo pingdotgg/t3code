@@ -2,6 +2,7 @@ import { RunId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  activeOrderFloorKey,
   activeThreadSortKey,
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
@@ -338,5 +339,84 @@ describe("sortActiveThreadsByOrderKey", () => {
     const keys = new Map(assignments.map((assignment) => [assignment.id, assignment.orderKey]));
     const updated = threads.map((thread) => ({ ...thread, activeOrderKey: keys.get(thread.id) }));
     expect(sortActiveThreadsByOrderKey(updated).map((thread) => thread.id)).toEqual(orderedIds);
+  });
+});
+
+describe("new threads above arranged ones", () => {
+  type ActiveRow = {
+    readonly id: string;
+    readonly createdAt: string;
+    readonly unsettledAt?: string | null;
+    readonly activeOrderKey?: string | null;
+  };
+  const at = (minute: number, ms = 0) =>
+    `2026-11-20T10:${String(minute).padStart(2, "0")}:00.${String(ms).padStart(3, "0")}Z`;
+  const ids = (rows: readonly ActiveRow[]) => sortActiveThreadsByOrderKey(rows).map((r) => r.id);
+  // Moves one row the way a drop does: one write, keys from the shown order.
+  const drop = (rows: readonly ActiveRow[], movedId: string, toIndex: number) => {
+    const order = ids(rows).filter((id) => id !== movedId);
+    order.splice(toIndex, 0, movedId);
+    const assignments = planPinnedReorder({
+      orderedIds: order,
+      keysById: new Map(rows.map((row) => [row.id, activeThreadSortKey(row)])),
+      movedId,
+      floorKey: activeOrderFloorKey(rows),
+    });
+    expect(assignments.map((assignment) => assignment.id)).toEqual([movedId]);
+    const keys = new Map(assignments.map((assignment) => [assignment.id, assignment.orderKey]));
+    const moved = rows.map((row) =>
+      keys.has(row.id) ? { ...row, activeOrderKey: keys.get(row.id)! } : row,
+    );
+    expect(ids(moved)).toEqual(order);
+    return moved;
+  };
+  const a = { id: "a", createdAt: at(30) };
+  const b = { id: "b", createdAt: at(20) };
+  const c = { id: "c", createdAt: at(10) };
+
+  it("puts a new thread above one dragged to the top", () => {
+    const moved = drop([a, b], "b", 0);
+    expect(ids(moved)).toEqual(["b", "a"]);
+    // One millisecond after the newest thread is enough.
+    const created = { id: "new", createdAt: at(30, 1) };
+    expect(ids([...moved, created])).toEqual(["new", "b", "a"]);
+  });
+
+  it("puts a new thread above drops in the middle and at the bottom", () => {
+    const created = { id: "new", createdAt: at(40) };
+    expect(ids([...drop([a, b, c], "c", 1), created])).toEqual(["new", "a", "c", "b"]);
+    expect(ids([...drop([a, b, c], "a", 2), created])).toEqual(["new", "b", "c", "a"]);
+  });
+
+  it("keeps the guarantee across repeated top drops and reopened threads", () => {
+    let rows: readonly ActiveRow[] = [a, b, c];
+    rows = drop(rows, "c", 0);
+    rows = drop(rows, "b", 0);
+    rows = drop(rows, "a", 1);
+    expect(ids(rows)).toEqual(["b", "a", "c"]);
+    const reopened = { id: "reopened", createdAt: at(0), unsettledAt: at(45) };
+    expect(ids([...rows, { id: "new", createdAt: at(40) }, reopened])).toEqual([
+      "reopened",
+      "new",
+      "b",
+      "a",
+      "c",
+    ]);
+  });
+
+  it("keeps an older top key above new threads until that thread is moved", () => {
+    // Before the floor, a top drop wrote a short key such as "0n".
+    const legacy = { id: "legacy", createdAt: at(0), activeOrderKey: "0n" };
+    const created = { id: "new", createdAt: at(40) };
+    expect(ids([legacy, a, b, created])).toEqual(["legacy", "new", "a", "b"]);
+    // A drop just below it still lands under later threads.
+    expect(ids([...drop([legacy, a, b], "b", 1), created])).toEqual(["legacy", "new", "b", "a"]);
+    // Moving it once writes a key that new threads pass.
+    expect(ids([...drop([legacy, a, b], "legacy", 0), created])).toEqual([
+      "new",
+      "legacy",
+      "a",
+      "b",
+    ]);
   });
 });

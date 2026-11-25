@@ -1,5 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
+  activeOrderFloorKey,
   activeThreadSortKey,
   generateSpreadPinOrderKeys,
   pinOrderKeyBetween,
@@ -103,11 +104,13 @@ export function createThreadMovePlanner(input: {
       .filter((row) => input.reorderableEnvironmentIds.has(row.environmentId))
       .map(rowId),
   );
+  // A thread created after the move still lands above it.
+  const floorKey = input.section === "active" ? activeOrderFloorKey(input.ordered) : null;
   return (movedId: string, direction: ThreadMoveDestination) => {
     if (!writableIds.has(movedId)) return null;
     const nextIds = threadOrderAfterMove(orderedIds, movedId, direction);
     if (nextIds === null) return null;
-    const assignments = planPinnedReorder({ orderedIds: nextIds, keysById, movedId });
+    const assignments = planPinnedReorder({ orderedIds: nextIds, keysById, movedId, floorKey });
     return assignments === null ||
       assignments.length === 0 ||
       assignments.some((assignment) => !writableIds.has(assignment.id))
