@@ -14,6 +14,7 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { ComposerEffortColumn } from "./ComposerModelEffort";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 
 it("keeps each registry image when adding a model from another ACP agent", async () => {
@@ -175,6 +176,78 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await expect.element(page.getByRole("radio", { name: "Medium" })).toHaveFocus();
   await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
+});
+
+it("names a row and the docked header in full on hover", async () => {
+  const instanceId = ProviderInstanceId.make("opencode-zen");
+  const entries = deriveProviderInstanceEntries([
+    {
+      instanceId,
+      driver: ProviderDriverKind.make("opencode"),
+      displayName: "OpenCode Zen",
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    },
+  ]);
+  const longSubProvider = "Alibaba Cloud International Model Studio";
+  const options = new Map([
+    [
+      instanceId,
+      [
+        { slug: "glm-5.3", name: "GLM-5.3", subProvider: longSubProvider },
+        { slug: "kimi-k2-0905", name: "Kimi K2 0905", shortName: "Kimi K2", subProvider: "Pi" },
+        { slug: "qwen-max", name: "Qwen Max" },
+      ],
+    ],
+  ]);
+
+  await using screen = await render(
+    <ProviderModelPicker
+      environmentId={null}
+      activeInstanceId={instanceId}
+      model="kimi-k2-0905"
+      lockedProvider={null}
+      instanceEntries={entries}
+      modelOptionsByInstance={options}
+      triggerAriaLabel="Choose model"
+      onInstanceModelChange={() => {}}
+      getModelDisabledReason={(_, model) => (model === "qwen-max" ? "Not here." : null)}
+      effortColumn={<ComposerEffortColumn traits={null} />}
+    />,
+  );
+  await screen.getByRole("button", { name: "Choose model" }).click();
+
+  // A disabled row's reason tooltip still names the model.
+  await userEvent.hover(page.getByRole("option", { name: /Qwen Max/ }));
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(
+      "Not here.Qwen Max · OpenCode Zen · qwen-max",
+    ),
+  );
+
+  const option = page.getByRole("option", { name: /GLM-5\.3/ });
+  await expect.element(option).toBeVisible();
+  await userEvent.hover(option.getByText(longSubProvider));
+  await vi.waitFor(() =>
+    expect(
+      [...document.querySelectorAll('[data-slot="tooltip-popup"]')].map((el) => el.textContent),
+    ).toContain(`GLM-5.3 · ${longSubProvider} · OpenCode Zen · glm-5.3`),
+  );
+
+  // The header shows the short name; its hover names the full model and slug.
+  await userEvent.hover(page.getByText("Kimi K2", { exact: true }).last());
+  await vi.waitFor(() =>
+    expect(
+      [...document.querySelectorAll('[data-slot="tooltip-popup"]')].map((el) => el.textContent),
+    ).toContain("Kimi K2 0905 · kimi-k2-0905"),
+  );
 });
 
 it("lists a model reported twice by one provider once, with contiguous jump shortcuts", async () => {

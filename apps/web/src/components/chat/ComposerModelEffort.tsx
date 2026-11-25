@@ -557,9 +557,17 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
                 ? gt("Options", { $context: "heading for model options" })
                 : gt("Effort", { $context: "heading for reasoning effort levels" }))}
           </span>
-          <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
-            {picker.modelLabel}
-          </span>
+          <Tooltip>
+            <TooltipTrigger
+              tabIndex={-1}
+              render={<span className="ms-auto min-w-0 truncate text-muted-foreground text-xs" />}
+            >
+              {picker.modelLabel}
+            </TooltipTrigger>
+            <TooltipPopup side="top" align="end">
+              {picker.modelTitle}
+            </TooltipPopup>
+          </Tooltip>
         </div>
       </div>
       {/* pt-2.5 puts the first level on the same line as the first model. */}
