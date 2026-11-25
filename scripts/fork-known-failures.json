@@ -188,5 +188,20 @@
     "file": "apps/web/src/components/chat/ExpandedImageDialog.browser.test.tsx",
     "test": "scrolling pans the image while Ctrl+wheel zooms around the pointer",
     "reason": "Upstream v0.1.12 Chromium also reports vertical movement on a horizontal wheel step."
+  },
+  {
+    "file": "apps/web/test/appScenarios.renders.tsx",
+    "test": "app-stream-assistant-turn",
+    "reason": "Upstream v0.1.12 also records no MarkdownParagraph renders for the streamed paragraphs."
+  },
+  {
+    "file": "apps/web/test/appScenarios.renders.tsx",
+    "test": "app-switch-thread",
+    "reason": "Upstream v0.1.12 also measures five sidebar row renders instead of two."
+  },
+  {
+    "file": "apps/web/test/appScenarios.renders.tsx",
+    "test": "app-open-thread-from-draft",
+    "reason": "Upstream v0.1.12 also measures five sidebar row renders instead of one."
   }
 ]
