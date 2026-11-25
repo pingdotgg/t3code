@@ -36,7 +36,7 @@ import {
   UsersIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { useContext, useState, type ReactNode } from "react";
+import { useContext, useState, type MouseEvent, type ReactNode } from "react";
 
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { m } from "~/i18n/messages";
@@ -445,6 +445,10 @@ export function IssueDetailPanel({
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
   const openLink = useOpenLink(threadRef);
+  const openLinkOnClick = (url: string) => (event: MouseEvent) => {
+    event.preventDefault();
+    void openLink(url, { event }).catch(console.error);
+  };
   const [editing, setEditing] = useState<"title" | "body" | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -902,6 +906,7 @@ export function IssueDetailPanel({
                           render={
                             <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
                           }
+                          onClick={openLinkOnClick(item.comment.url)}
                         >
                           {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
                         </InlineButton>
