@@ -6,16 +6,16 @@ No. A harness is what turns an LLM into an agent: it gives the model tools, a wa
 
 Chef = LLM. Kitchen = harness. T3 Code = the restaurant that lets you bring whatever kitchen you want. Our MCP is a cookbook we hand the kitchen, but the chef won't open it unless you tell them to :) I wrote the long version here: [What is a harness?](https://t3.gg/blog/post/what-is-a-harness)
 
-Bring your own: Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity, Pi, or Muse Code. [Provider setup](./install.md#providers)
+Bring your own: Claude Code, Codex, Cursor, Grok Build, OpenCode, Google Antigravity, Kiro, Pi, Muse Code, or fx. [Provider setup](./install.md#providers)
 
 ## Why use T3 Code instead of Claude Code or the Codex app?
 
 We were inspired by the Codex desktop app, Conductor, Claude Desktop, and Cursor Glass, but none met our bar. What you get:
 
 - Bring your own sub. Claude, Codex, and whatever else you already have installed.
-- Best in class remote. Run `npx t3 up` on any box and drive it from anywhere.
+- Best in class remote. Run `t3 up` on any box and drive it from anywhere.
 - Best in class mobile app.
-- Truly 100% open source. If we go the wrong direction, fork it.
+- Truly 100% open source code (MIT). If we go the wrong direction, fork it under your own branding.
 
 Every harness feels nearly identical in here, so you can stop worrying about harnesses and focus on building :) [Install](./install.md)
 
@@ -25,7 +25,11 @@ Yes.
 
 ## How much does T3 Code cost?
 
-Nothing. There's no way to pay us to use T3 Code. You bring your own sub. It is free and open source (MIT). You still pay your provider like you already do. T3 Connect is free too, for now. Every account can connect up to 3 machines running T3 Code. Phones and browsers that connect to them do not count. Need more? Link a paid T3 Chat account. [More machines](#can-i-connect-more-than-3-machines-with-t3-connect) We don't want to charge for this, but if the bill gets unacceptable we may have to change course. If you hit limits or have issues, you can always fork it, self host, or use Tailscale. [Install](./install.md)
+Nothing. There's no way to pay us to use T3 Code. You bring your own sub. The source code is free and open source (MIT). You still pay your provider like you already do. T3 Connect is free too, for now. Every account can connect up to 3 machines running T3 Code. Phones and browsers that connect to them do not count. Need more? Link a paid T3 Chat account. [More machines](#can-i-connect-more-than-3-machines-with-t3-connect) We don't want to charge for this, but if the bill gets unacceptable we may have to change course. If you hit limits or have issues, you can always fork the source code (under your own branding), self host, or use Tailscale. [Install](./install.md)
+
+## Can I fork or redistribute T3 Code?
+
+Yes, for the source code. The [MIT License](../../LICENSE) applies only to the source code, not to the T3 Code name, wordmark, logos, or branding. If you publish a fork or custom build, you must replace T3 Code's branding with your own and make it unmistakably clear that your project is unofficial and not affiliated with T3 Tools, Inc. Using the T3 Code name, wordmark, logo, or branding without being explicitly clear that your project is unofficial, or indicating that an unofficial project is an official version of T3 Code, is unlawful and will be pursued to the full extent of the law. See [TRADEMARK.md](../../TRADEMARK.md).
 
 ## Can I connect more than 3 machines with T3 Connect?
 
@@ -33,11 +37,11 @@ Yes. Link your T3 Chat account and T3 Connect raises your limit: up to 10 machin
 
 ## Why is my Claude 5-hour limit draining so fast?
 
-T3 Code drives Claude through Anthropic's Agent SDK. I confirmed it's a real bug on Anthropic's side: all Agent SDK usage will drain your 5h limits faster than using Claude Code directly. To be clear: this does not affect weekly limits. We have reported it to Anthropic and are hoping for a fix soon. [My post on it](https://x.com/theo/status/2114166439813017873)
+It shouldn't anymore. T3 Code drives Claude through Anthropic's Agent SDK, and Anthropic's 5h meter used to charge Agent SDK usage about 1.7x more than using Claude Code directly. Weekly limits were never affected. Since v0.1.7, Claude in T3 Code drains your 5h limit at the same rate as Claude Code. Still seeing it? [Update T3 Code](./updating.md) on the machine that runs your agents. [My post on it](https://x.com/theo/status/2114166439813017873) · [Tracking issue](https://github.com/pingdotgg/t3code/issues/24649)
 
 ## How do I use T3 Code remotely?
 
-Your agents run wherever T3 Code runs: your desktop, a server, a VPS. You connect to it from anywhere. I do this constantly. Less than 5% of my prompts run on my laptop. Run `npx t3 up` on that machine and you get really good remote support. T3 Connect is the easy path. LAN pairing and Tailscale work too, and [app.t3.codes](https://app.t3.codes) is the web client. [Remote access](./remote-access.md)
+Your agents run wherever T3 Code runs: your desktop, a server, a VPS. You connect to it from anywhere. I do this constantly. Less than 5% of my prompts run on my laptop. Run `t3 up` on that machine and you get really good remote support. T3 Connect is the easy path. LAN pairing and Tailscale work too, and [app.t3.codes](https://app.t3.codes) is the web client. [Remote access](./remote-access.md)
 
 ## How do I use T3 Code on my phone?
 
@@ -77,7 +81,7 @@ Open **Settings → Worktrees → Cleanup** and turn on automatic worktree clean
 
 ## Is there voice input?
 
-Yes. On iPhone and Android, dictation uses on-device speech by default; you can opt in to a paired environment instead. Web and desktop require you to choose an environment first. The transcript goes into your draft for review. See [Voice input](./voice-input.md).
+Yes. On iPhone and Android, dictation uses on-device speech by default, with the option to use a paired environment. On macOS 26 or later, desktop users can choose Apple Speech directly under **On this Mac** or choose an environment. Web and other desktop users can enable dictation by choosing an environment. The transcript goes into your draft for review. See [Voice input](./voice-input.md).
 
 ## Does it work on Windows, Mac, and Linux?
 

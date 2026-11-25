@@ -83,6 +83,18 @@ describe("resolvePendingUserInputAnswer", () => {
     ).toBe("Node.js");
   });
 
+  it("lets an optional text question stay blank", () => {
+    const textQuestion = { id: "notes", options: [] };
+    expect(resolvePendingUserInputAnswer({ ...textQuestion, required: false }, undefined)).toBe("");
+    expect(
+      resolvePendingUserInputAnswer({ ...textQuestion, required: false }, { customAnswer: " " }),
+    ).toBe("");
+    expect(resolvePendingUserInputAnswer(textQuestion, { customAnswer: " " })).toBeNull();
+    expect(
+      resolvePendingUserInputAnswer({ ...textQuestion, required: true }, { customAnswer: "" }),
+    ).toBeNull();
+  });
+
   it("accepts ready attachment-only answers while preserving selected options", () => {
     expect(resolvePendingUserInputAnswer(singleSelectQuestion, { attachmentCount: 1 })).toBe("");
     expect(
@@ -177,4 +189,65 @@ describe("buildPendingUserInputAnswers", () => {
       compat: "Keep the current envelope for one release window",
     });
   });
+
+  it("answers a multi-select question with no options checked as an empty list", () => {
+    const extrasQuestion = {
+      id: "extras",
+      header: "Extras",
+      question: "Which extras do you want?",
+      options: [{ label: "Lint" }, { label: "Tests" }, { label: "CI" }],
+      multiSelect: true,
+    } as const;
+    const uncheckedAgain = togglePendingUserInputOptionSelection(
+      extrasQuestion,
+      togglePendingUserInputOptionSelection(extrasQuestion, undefined, "Lint"),
+      "Lint",
+    );
+    const scope = { selectedOptionValues: ["Node.js"] };
+
+    expect(buildPendingUserInputAnswers([singleSelectQuestion, extrasQuestion], { scope })).toEqual(
+      { scope: "Node.js", extras: [] },
+    );
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, extrasQuestion], {
+        scope,
+        extras: uncheckedAgain,
+      }),
+    ).toEqual({ scope: "Node.js", extras: [] });
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, extrasQuestion], { extras: {} }),
+    ).toBeNull();
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, { ...extrasQuestion, required: true }], {
+        scope,
+      }),
+    ).toBeNull();
+  });
+});
+
+it.each([
+  ["single-select", singleSelectQuestion, ["Orchestration-first"], '"Orchestration-first"'],
+  [
+    "multi-select",
+    {
+      ...singleSelectQuestion,
+      multiSelect: true,
+      options: [{ label: "Server" }, { label: "Web" }],
+    },
+    ["Server", "Web"],
+    '["Server","Web"]',
+  ],
+])("sends a %s answer to a question with the id __proto__", (_kind, question, selected, json) => {
+  const answers = buildPendingUserInputAnswers(
+    [
+      { ...question, id: "__proto__" },
+      { ...singleSelectQuestion, id: "name" },
+    ],
+    {
+      ["__proto__"]: { selectedOptionValues: selected },
+      name: { selectedOptionValues: ["Orchestration-first"] },
+    },
+  );
+
+  expect(JSON.stringify(answers)).toBe(`{"__proto__":${json},"name":"Orchestration-first"}`);
 });

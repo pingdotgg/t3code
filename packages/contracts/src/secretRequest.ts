@@ -3,12 +3,28 @@ import * as Schema from "effect/Schema";
 import { ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
 import { SecretReference } from "./secretReference.ts";
 
+/** The http(s) page a secret card may open, or null for anything else. */
+export function secretRequestPageUrl(value: string): URL | null {
+  // React Native's URL has no `canParse`.
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && url.host !== "" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Server stores the value under a one-use SecretRef; the thread learns only status. */
 export const SecretRequestAnswerInput = Schema.Struct({
   threadId: ThreadId,
   turnItemId: TurnItemId,
   answer: Schema.Union([
     Schema.Struct({ type: Schema.Literal("save"), secret: TrimmedNonEmptyString }),
+    /** A request with `fields`: one value per field name. */
+    Schema.Struct({
+      type: Schema.Literal("save"),
+      values: Schema.Record(Schema.String, TrimmedNonEmptyString),
+    }),
     Schema.Struct({ type: Schema.Literal("decline") }),
     /** Read once through a configured secret provider; only servers advertising `secretRequestReferences` accept it. */
     Schema.Struct({ type: Schema.Literal("reference"), reference: SecretReference }),
@@ -30,6 +46,7 @@ const SECRET_REQUEST_FAILURE_MESSAGES = {
   load_failed: "Could not load the secret request.",
   not_found: "This secret request no longer exists.",
   already_answered: "This secret request was already answered.",
+  fields_mismatch: "This request asks for different values. Update the app and try again.",
   agent_stopped: "The agent that asked has stopped, so this secret can't be used.",
   store_failed: "Could not store the secret.",
   reference_unreadable: "Could not read the secret from the secret provider.",

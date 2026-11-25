@@ -2,7 +2,6 @@ import type { ProviderInstanceId } from "@t3tools/contracts";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type { ProviderUsageScan } from "@t3tools/provider-core/server/usage";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -19,6 +18,7 @@ import * as Semaphore from "effect/Semaphore";
 import {
   CURSOR_ACCOUNT_CACHE_FILE_NAME,
   CURSOR_ACCOUNT_TTL_MS,
+  CURSOR_MIN_FETCH_SPAN_MS,
   cursorFetchRange,
   decodeCursorAccountCaches,
   encodeCursorAccountCaches,
@@ -44,7 +44,6 @@ export class CursorUsageAccounts extends Context.Service<
         readonly instanceId: ProviderInstanceId;
         readonly environment: NodeJS.ProcessEnv;
       }>;
-      readonly keychainUsageEnabled: boolean;
       readonly windowStartMs: number;
       readonly retentionCutoffMs: number;
       readonly awaitRefresh: boolean;
@@ -58,8 +57,6 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const host = yield* ProviderHost.ProviderHost;
   const accountReader = yield* CursorAccountReader.CursorAccountReader;
-  const hostEnvironment = yield* HostProcess.Environment;
-  const platform = yield* HostProcess.Platform;
   const digest = yield* Digest.Digest;
 
   const cachePath = path.join(host.paths.stateDir, CURSOR_ACCOUNT_CACHE_FILE_NAME);
@@ -68,6 +65,8 @@ const make = Effect.gen(function* () {
   /** Failed refreshes share the cache TTL to prevent repeated requests; null means no login. */
   const failures = new Map<string, { readonly atMs: number; readonly error: string | null }>();
   const refreshes = new Map<string, Deferred.Deferred<void>>();
+  /** Widest range the next read asks for, narrowed after failures until the cache is complete. */
+  const fetchSpans = new Map<string, number>();
 
   const ensureLoaded = yield* Effect.cached(
     fileSystem.readFileString(cachePath).pipe(
@@ -108,52 +107,72 @@ const make = Effect.gen(function* () {
   );
   yield* Effect.addFinalizer(() => awaitPersisted);
 
+  const refreshLock = yield* Semaphore.make(2);
   const refreshAccount = Effect.fn("CursorUsageAccounts.refreshAccount")(function* (
     credential: CursorCredentialSource,
     credentialKey: string,
     retentionStartMs: number,
   ) {
     const nowMs = yield* Clock.currentTimeMillis;
-    const fetchMissing = (cache: CursorAccountCache | undefined) => {
-      const range = cursorFetchRange(cache, retentionStartMs, nowMs);
-      return accountReader
-        .read(credential, range.sinceMs, range.untilMs)
-        .pipe(Effect.map((result) => ({ range, result })));
-    };
-    let base = caches.get(credentialKey);
-    let fetched = yield* fetchMissing(base);
-    if (
-      base !== undefined &&
-      fetched.result.accountKey !== null &&
-      fetched.result.accountKey !== base.accountKey
-    ) {
-      caches.delete(credentialKey);
-      cacheDirty = true;
-      base = undefined;
-      fetched = yield* fetchMissing(base);
-    }
-    const { range, result } = fetched;
-    if (result.missing || result.error !== null || result.accountKey === null) {
-      failures.set(credentialKey, {
-        atMs: nowMs,
-        error: result.missing || result.error !== null ? result.error : CURSOR_ACCOUNT_READ_ERROR,
-      });
+    let checkedAccount = false;
+    let span = fetchSpans.get(credentialKey) ?? Number.POSITIVE_INFINITY;
+    // Widen after each success so a span narrowed by earlier failures recovers in a few reads.
+    let widening = true;
+    let widened = false;
+    for (;;) {
+      const base = caches.get(credentialKey);
+      const range = cursorFetchRange(base, retentionStartMs, nowMs, span);
+      const result = yield* accountReader.read(credential, range.sinceMs, range.untilMs);
+      if (
+        !checkedAccount &&
+        base !== undefined &&
+        result.accountKey !== null &&
+        result.accountKey !== base.accountKey
+      ) {
+        caches.delete(credentialKey);
+        cacheDirty = true;
+        checkedAccount = true;
+        continue;
+      }
+      checkedAccount = true;
+      if (result.missing || result.error !== null || result.accountKey === null) {
+        // A large account's full history can outlast the read deadlines; try a narrower range.
+        span = Math.max(CURSOR_MIN_FETCH_SPAN_MS, (range.untilMs - range.sinceMs) / 2);
+        fetchSpans.set(credentialKey, span);
+        if (widened) {
+          // The span before widening just worked: keep going with it instead of failing.
+          widened = false;
+          widening = false;
+          continue;
+        }
+        failures.set(credentialKey, {
+          atMs: nowMs,
+          error: result.missing || result.error !== null ? result.error : CURSOR_ACCOUNT_READ_ERROR,
+        });
+        yield* schedulePersist;
+        return;
+      }
+      const merged = mergeCursorFetch(
+        base,
+        result.accountKey,
+        range,
+        result.records,
+        nowMs,
+        retentionStartMs,
+      );
+      caches.set(credentialKey, merged.cache);
+      failures.delete(credentialKey);
+      if (merged.changed) cacheDirty = true;
       yield* schedulePersist;
-      return;
+      if (merged.cache.sinceMs <= retentionStartMs && merged.cache.untilMs >= nowMs) break;
+      widened = widening && Number.isFinite(span);
+      if (widened) {
+        span *= 2;
+        fetchSpans.set(credentialKey, span);
+      }
     }
-    const merged = mergeCursorFetch(
-      base,
-      result.accountKey,
-      range,
-      result.records,
-      nowMs,
-      retentionStartMs,
-    );
-    caches.set(credentialKey, merged.cache);
-    failures.delete(credentialKey);
-    if (merged.changed) cacheDirty = true;
-    yield* schedulePersist;
-  });
+    fetchSpans.delete(credentialKey);
+  }, refreshLock.withPermit);
 
   const startRefresh = (
     credential: CursorCredentialSource,
@@ -190,44 +209,30 @@ const make = Effect.gen(function* () {
 
   const accountSource = Effect.fn("CursorUsageAccounts.accountSource")(function* (
     credential: CursorCredentialSource,
-    authPath: string,
     windowStartMs: number,
     retentionStartMs: number,
     awaitRefresh: boolean,
   ) {
-    // A Keychain login outlives an uninstalled Cursor, so it also needs Cursor's local directory.
-    const localLogin =
-      typeof credential === "string"
-        ? credential
-        : credential.kind === "keychain"
-          ? path.dirname(authPath)
-          : null;
-    if (
-      localLogin !== null &&
-      !(yield* fileSystem.exists(localLogin).pipe(Effect.orElseSucceed(() => true)))
-    ) {
-      return null;
-    }
     yield* ensureLoaded;
-    const credentialKey =
-      typeof credential === "string"
-        ? credential
-        : credential.kind === "apiKey"
-          ? // A fingerprint, so a replaced key never reads the previous account's cache.
-            `api-key:${Hex.encode(
-              yield* digest.digest(Digest.sha256, new TextEncoder().encode(credential.apiKey)),
-            )}`
-          : "keychain";
+    const credentialKey = `api-key:${Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(credential.apiKey)))}`;
     const nowMs = yield* Clock.currentTimeMillis;
     const recentFailure = failures.get(credentialKey);
     let refreshing = false;
     if (
       (recentFailure === undefined || nowMs - recentFailure.atMs >= CURSOR_ACCOUNT_TTL_MS) &&
-      !isCursorCacheFresh(caches.get(credentialKey), nowMs)
+      !isCursorCacheFresh(caches.get(credentialKey), nowMs, retentionStartMs)
     ) {
       const refresh = yield* startRefresh(credential, credentialKey, retentionStartMs);
-      if (awaitRefresh) yield* Deferred.await(refresh);
-      else refreshing = true;
+      if (awaitRefresh) {
+        yield* Deferred.await(refresh);
+        if (
+          !failures.has(credentialKey) &&
+          !isCursorCacheFresh(caches.get(credentialKey), nowMs, retentionStartMs)
+        ) {
+          const retry = yield* startRefresh(credential, credentialKey, retentionStartMs);
+          yield* Deferred.await(retry);
+        }
+      } else refreshing = true;
     }
 
     const cache = caches.get(credentialKey);
@@ -236,8 +241,7 @@ const make = Effect.gen(function* () {
     if (failureMessage === null) return null;
     if (cache === undefined) {
       return {
-        dir: authPath,
-        // Never combine a local fallback with another server's account-wide history.
+        dir: "cursor-account",
         ...(refreshing
           ? { files: [], refreshing: true }
           : { files: null, message: failureMessage ?? CURSOR_ACCOUNT_READ_ERROR }),
@@ -263,30 +267,7 @@ const make = Effect.gen(function* () {
   });
 
   const scan: CursorUsageAccounts["Service"]["scan"] = Effect.fn("CursorUsageAccounts.scan")(
-    function* ({
-      instances,
-      keychainUsageEnabled,
-      windowStartMs,
-      retentionCutoffMs,
-      awaitRefresh,
-    }) {
-      const home = yield* HostProcess.HomeDirectory;
-      const userHome =
-        (platform === "win32" ? hostEnvironment["USERPROFILE"] : hostEnvironment["HOME"]) || home;
-      const configHome = hostEnvironment["XDG_CONFIG_HOME"]?.trim();
-      const cursorHome =
-        platform === "darwin"
-          ? path.join(userHome, "Library", "Application Support")
-          : platform === "win32"
-            ? hostEnvironment["APPDATA"] || path.join(userHome, "AppData", "Roaming")
-            : configHome && path.isAbsolute(configHome)
-              ? configHome
-              : path.join(userHome, ".config");
-      const authPath =
-        platform === "darwin"
-          ? path.join(userHome, ".cursor", "auth.json")
-          : path.join(cursorHome, platform === "win32" ? "Cursor" : "cursor", "auth.json");
-      // T3's Cursor sign-in and CURSOR_API_KEY name the account the agent uses, so they win.
+    function* ({ instances, windowStartMs, retentionCutoffMs, awaitRefresh }) {
       const apiKeys = yield* Effect.forEach(instances, ({ instanceId, environment }) =>
         environment.CURSOR_API_KEY?.trim()
           ? Effect.succeed(environment.CURSOR_API_KEY.trim())
@@ -302,11 +283,11 @@ const make = Effect.gen(function* () {
           (apiKey) =>
             accountSource(
               { kind: "apiKey", apiKey },
-              authPath,
               windowStartMs,
               retentionCutoffMs,
               awaitRefresh,
             ),
+          { concurrency: 2 },
         );
         // Keys for one account share its source, and a repeated source would count sessions twice.
         // A failed key can hold older records, so a current read wins, then a refresh the client
@@ -323,38 +304,7 @@ const make = Effect.gen(function* () {
         }
         return [...byAccount.values()];
       }
-      const credentialStore = hostEnvironment["AGENT_CLI_CREDENTIAL_STORE"];
-      const loginUnavailable =
-        Boolean(hostEnvironment["CURSOR_AUTH_TOKEN"]?.trim()) || credentialStore === "memory";
-      const useKeychain = platform === "darwin" && credentialStore !== "file";
-      if (useKeychain && !loginUnavailable && !keychainUsageEnabled) {
-        return [
-          {
-            dir: authPath,
-            volumeId: "",
-            files: null,
-            message: "Cursor account usage is off on this environment.",
-            action: "enableCursorKeychain",
-          },
-        ];
-      }
-      if (loginUnavailable) {
-        return [
-          {
-            dir: authPath,
-            files: null,
-            message: "Cursor account history needs a Cursor CLI login on this server.",
-          },
-        ];
-      }
-      const source = yield* accountSource(
-        useKeychain ? { kind: "keychain" } : authPath,
-        authPath,
-        windowStartMs,
-        retentionCutoffMs,
-        awaitRefresh,
-      );
-      return source === null ? [] : [source];
+      return [];
     },
   );
 

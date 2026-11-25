@@ -4,10 +4,12 @@ import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserEvent as DesktopBrowserEventType,
+  type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -15,7 +17,12 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts";
-import { sendPageCommand } from "./GuestInput.ts";
+import {
+  type FrameDetachWatch,
+  type PointerRoute,
+  routeMouseToFrame,
+  sendPageCommand,
+} from "./GuestInput.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
@@ -24,8 +31,23 @@ const AGENT_INPUT_COMMAND =
   /"method":"(?:Input\.|Page\.navigate"|Runtime\.(?:evaluate|callFunctionOn)")/;
 /** The same commands as above, by method, for the relay's sends. */
 const AGENT_INPUT_METHOD = /^(?:Input\.|Page\.navigate$|Runtime\.(?:evaluate|callFunctionOn)$)/;
-const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
+const AGENT_INPUT_WINDOW_MS = 5_000;
+/** A viewer's pointer travelling over the stream activates nothing on the page. */
+const POINTER_TRAVEL = new Set<unknown>(["mouseMoved", "mouseWheel"]);
+const ANNOTATING_MESSAGE =
+  "This page is being annotated in the desktop app. Input resumes when the annotation ends.";
 const FOCUS_IDLE = "5 seconds";
+/** How long a screenshot waits for the client to draw its guest at full detail. */
+const CAPTURE_DRAW_WAIT = "1 second";
+/** Most waits settle within a frame or two of this, so a quick one is never prodded. */
+const PAINT_NUDGE_FIRST_MS = 250;
+/** A long wait, such as a page awaiting a timer, is prodded less often as it goes on. */
+const PAINT_NUDGE_LONGEST_MS = 2_000;
+/** Electron's capture has no deadline and a cold guest can stall one, so a second may follow. */
+const PAINT_NUDGE_IN_FLIGHT = 2;
+/** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
+const FIRST_PAGE_TIMEOUT = "5 seconds";
+const ERR_ABORTED = -3;
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -35,16 +57,69 @@ export interface DesktopBrowserTabKey {
 export interface DesktopBrowserTabDebugger {
   readonly webContents: Electron.WebContents;
   readonly debugger: Electron.Debugger;
+  /** Runs after the server clears the tab's cookies, so state kept beside them goes too. */
+  readonly cookiesCleared?: () => Promise<void>;
+  /** Whether the person at this window is annotating the page, whose overlay is theirs alone. */
+  readonly annotating?: () => boolean;
 }
 
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
+
+const trackFrameSession = (
+  tab: {
+    readonly frameSessions: Map<string, string>;
+    readonly frameDetachListeners: Map<string, Set<() => void>>;
+  },
+  method: string,
+  params: unknown,
+) => {
+  if (method === "Target.attachedToTarget") {
+    const { sessionId, targetInfo } = params as {
+      readonly sessionId?: string;
+      readonly targetInfo?: { readonly targetId?: string; readonly type?: string };
+    };
+    if (targetInfo?.type === "iframe" && targetInfo.targetId && sessionId) {
+      tab.frameSessions.set(targetInfo.targetId, sessionId);
+    }
+  } else if (method === "Target.detachedFromTarget") {
+    const { sessionId } = params as { readonly sessionId?: string };
+    for (const [frameId, frameSession] of tab.frameSessions) {
+      if (frameSession === sessionId) tab.frameSessions.delete(frameId);
+    }
+    if (sessionId === undefined) return;
+    const listeners = tab.frameDetachListeners.get(sessionId);
+    tab.frameDetachListeners.delete(sessionId);
+    for (const listener of listeners ?? []) listener();
+  }
+};
+
+const watchFrameDetach =
+  (tab: {
+    readonly frameSessions: Map<string, string>;
+    readonly frameDetachListeners: Map<string, Set<() => void>>;
+  }): FrameDetachWatch =>
+  (sessionId, listener) => {
+    if (![...tab.frameSessions.values()].includes(sessionId)) {
+      listener();
+      return () => {};
+    }
+    const listeners = tab.frameDetachListeners.get(sessionId) ?? new Set();
+    tab.frameDetachListeners.set(sessionId, listeners);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0 && tab.frameDetachListeners.get(sessionId) === listeners) {
+        tab.frameDetachListeners.delete(sessionId);
+      }
+    };
+  };
 
 interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
   readonly debuggee: DesktopBrowserTabDebugger;
   relay: CdpRelayConnection | null;
   screenshotTurn: object | null;
-  /** Each holds focus and painting while `held` and whoever queued it still waits on it. */
+  /** Each keeps the guest painting while whoever queued it still waits, and focused while `held`. */
   readonly waitingScreenshots: Array<{
     readonly start: () => void;
     readonly live: () => boolean;
@@ -53,14 +128,24 @@ interface AttachedTab {
   downloadDirectory: string | null;
   pendingDownloadGuid: string | null;
   agentInputAt: number;
+  /** When the agent last drove the page with no person's input through a viewer since. */
+  agentLedAt: number;
   focusEmulated: boolean;
   focusChange: Promise<void> | null;
   focusUses: number;
   /** Each pending command, by the extra session waiting on it; the main connection's have none. */
-  readonly focusPending: Map<
-    object,
-    { readonly owner: string | undefined; readonly paints: boolean }
-  >;
+  readonly focusPending: Map<object, string | undefined>;
+  /** Screenshots Chromium was sent and has not answered; each keeps its wake lock until then. */
+  readonly capturing: Set<object>;
+  /** Each wait on the guest's next frame, as whether it still waits; the guest is prodded until none do. */
+  readonly frameWaits: Set<() => boolean>;
+  /** Sessions of the guest's cross-site frames that Chromium attached, by frame id. */
+  readonly frameSessions: Map<string, string>;
+  /** Input sent to a frame session, waiting to learn if the frame detaches first. */
+  readonly frameDetachListeners: Map<string, Set<() => void>>;
+  nudging: Fiber.Fiber<void> | null;
+  /** A wait outlasted its first nudge, so the guest is painted and unthrottled like a capture. */
+  frameStalled: boolean;
   /** Whether the client keeps the guest painting, as published on `painting`. */
   painting: boolean;
   /**
@@ -69,8 +154,8 @@ interface AttachedTab {
    */
   agentUsed: boolean;
   focusReleasing: boolean;
-  /** The sessions streaming the guest; one stopping leaves the others' screencasts running. */
-  readonly screencasts: Set<string | undefined>;
+  /** The sessions sharing the guest's one Chromium screencast; it stops with the last of them. */
+  readonly screencasts: Map<string | undefined, { started: boolean; pending: number }>;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -78,6 +163,8 @@ interface AttachedTab {
     sessionId: string,
   ) => void;
   readonly onNewDocument: () => void;
+  /** Stops waiting for the first page; set until the tab is announced. */
+  stopWaiting: (() => void) | null;
 }
 
 export class DesktopBrowserHost extends Context.Service<
@@ -87,8 +174,13 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
+    readonly loadFailed: (key: DesktopBrowserTabKey, failure: PreviewAutomationLoadError) => void;
     readonly setShown: (key: DesktopBrowserTabKey, shown: boolean | undefined) => void;
+    /** Whether the client draws the guest at full detail while it is captured. */
+    readonly setCaptureDrawn: (key: DesktopBrowserTabKey, drawn: boolean | undefined) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
+    /** Whether what the page does now follows the agent's input, not a viewer's. */
+    readonly agentLedPage: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{
       readonly key: DesktopBrowserTabKey;
@@ -123,6 +215,8 @@ export const make = Effect.gen(function* () {
   // Kept apart from attachment: the renderer can show a webview before its debugger attaches,
   // and the server forgets `shown` on detach, for example while DevTools holds the debugger.
   const shownTabs = new Map<string, boolean>();
+  const drawnTabs = new Set<string>();
+  const drawWaiters = new Map<string, Set<() => void>>();
   const emit = (event: DesktopBrowserEventType) => runFork(PubSub.publish(outbox, event));
 
   const nextScreenshot = (tab: AttachedTab) => {
@@ -142,7 +236,7 @@ export const make = Effect.gen(function* () {
     tab: AttachedTab,
     relay: CdpRelayConnection,
     ownerLive: () => boolean,
-    /** Sends only while `current` holds; holds focus and painting only while `held`. */
+    /** Sends only while `current` holds; holds focus only while `held`. */
     capture: (current: () => boolean, held: boolean) => Promise<unknown>,
   ) =>
     new Promise<unknown>((resolve, reject) => {
@@ -222,7 +316,7 @@ export const make = Effect.gen(function* () {
   };
 
   /**
-   * Electron composites no offscreen guest, so its screenshot or screencast waits for a frame
+   * Electron composites no offscreen guest, so a screenshot, screencast or stalled command waits for a frame
    * that never comes. The client paints the guest behind the app while one is pending; the
    * capture then finishes on its own, and the guest goes back offscreen once none is.
    */
@@ -230,38 +324,132 @@ export const make = Effect.gen(function* () {
     const active =
       tabs.get(keyOf(tab.key)) === tab &&
       (tab.screencasts.size > 0 ||
-        waitingHolds(tab) ||
-        [...tab.focusPending.values()].some((hold) => hold.paints));
+        tab.capturing.size > 0 ||
+        tab.frameStalled ||
+        tab.waitingScreenshots.some((waiting) => waiting.live()));
     if (tab.painting === active) return;
     tab.painting = active;
     runFork(PubSub.publish(painting, { key: tab.key, active }));
   };
 
-  /** A command may wait on the page's next frame, so the guest stays focused until it settles. */
-  const holdFocus = <A>(
+  /** By guest rather than attachment, since reopening DevTools reattaches the same guest. */
+  const nativeCaptures = new WeakMap<Electron.WebContents, number>();
+  const startNudging = (tab: AttachedTab) => {
+    tab.nudging ??= runFork(nudgePaint(tab, PAINT_NUDGE_FIRST_MS));
+  };
+
+  const endNudging = (tab: AttachedTab) => {
+    tab.nudging = null;
+    if (!tab.frameStalled) return;
+    tab.frameStalled = false;
+    syncPainting(tab);
+  };
+
+  /**
+   * A hidden, minimized or covered window (which Electron reports as visible) stops drawing its
+   * guest, so a wait on its next frame never ends. Electron's own capture still draws one.
+   */
+  const nudgePaint = (tab: AttachedTab, delayMs: number): Effect.Effect<void> =>
+    Effect.sleep(delayMs).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          const { webContents } = tab.debuggee;
+          for (const waits of tab.frameWaits) if (!waits()) tab.frameWaits.delete(waits);
+          if (
+            tab.frameWaits.size === 0 ||
+            tabs.get(keyOf(tab.key)) !== tab ||
+            webContents.isDestroyed()
+          ) {
+            endNudging(tab);
+            return Effect.void;
+          }
+          // On Windows a hidden window's throttled guest draws nothing, and capturePage cannot wake it.
+          if (!tab.frameStalled) {
+            tab.frameStalled = true;
+            syncPainting(tab);
+          }
+          const inFlight = nativeCaptures.get(webContents) ?? 0;
+          if (inFlight < PAINT_NUDGE_IN_FLIGHT) {
+            nativeCaptures.set(webContents, inFlight + 1);
+            const settled = () => {
+              nativeCaptures.set(webContents, (nativeCaptures.get(webContents) ?? 1) - 1);
+            };
+            webContents.capturePage().then(settled, settled);
+          }
+          return nudgePaint(tab, Math.min(delayMs * 2, PAINT_NUDGE_LONGEST_MS));
+        }),
+      ),
+    );
+
+  /** Prods the guest while `work` is pending and `waits` holds; one loop serves all of a tab's waits. */
+  const nudgedUntilSettled = <A>(
     tab: AttachedTab,
-    method: string,
-    owner: string | undefined,
+    waits: () => boolean,
     work: () => Promise<A>,
   ) => {
+    tab.frameWaits.add(waits);
+    startNudging(tab);
+    return work().finally(() => {
+      tab.frameWaits.delete(waits);
+      if (tab.frameWaits.size > 0 || tab.nudging === null) return;
+      runFork(Fiber.interrupt(tab.nudging));
+      endNudging(tab);
+    });
+  };
+
+  /** A command may wait on the page's next frame, so the guest stays focused until it settles. */
+  const holdFocus = <A>(tab: AttachedTab, owner: string | undefined, work: () => Promise<A>) => {
     const pending = {};
-    tab.focusPending.set(pending, { owner, paints: method === "Page.captureScreenshot" });
+    tab.focusPending.set(pending, owner);
     tab.focusUses += 1;
     setFocusEmulation(tab, true);
     releaseFocusWhenIdle(tab);
-    syncPainting(tab);
-    return work().finally(() => {
+    // Dropping the hold, at a turn's end or a new document, stops the prods too.
+    return nudgedUntilSettled(tab, () => tab.focusPending.has(pending), work).finally(() => {
       if (!tab.focusPending.delete(pending)) return;
       tab.focusUses += 1;
       releaseFocusWhenIdle(tab);
-      syncPainting(tab);
     });
   };
 
   /**
+   * A scaled guest rasters at its on-screen size until the client draws it at full detail,
+   * and a screenshot taken before that copies the blurred frame. A client that cannot draw
+   * (a hidden window, say) only delays the capture.
+   */
+  const whenDrawn = (tab: AttachedTab) =>
+    new Promise<void>((resolve) => {
+      const id = keyOf(tab.key);
+      const waiters = drawWaiters.get(id) ?? new Set();
+      drawWaiters.set(id, waiters);
+      const done = () => {
+        waiters.delete(done);
+        if (waiters.size === 0 && drawWaiters.get(id) === waiters) drawWaiters.delete(id);
+        resolve();
+      };
+      waiters.add(done);
+      runFork(Effect.sleep(CAPTURE_DRAW_WAIT).pipe(Effect.andThen(Effect.sync(done))));
+    });
+
+  /** Chromium answers a capture, and frees its wake lock, only once the guest paints a frame. */
+  const paintUntilAnswered = <A>(tab: AttachedTab, send: () => Promise<A>) => {
+    const sent = {};
+    tab.capturing.add(sent);
+    syncPainting(tab);
+    const sendNudged = () => nudgedUntilSettled(tab, () => tab.capturing.has(sent), send);
+    // Sent at once when already drawn, so it keeps its place among the commands after it.
+    return (drawnTabs.has(keyOf(tab.key)) ? sendNudged() : whenDrawn(tab).then(sendNudged)).finally(
+      () => {
+        tab.capturing.delete(sent);
+        syncPainting(tab);
+      },
+    );
+  };
+
+  /**
    * Chromium can leave a command unanswered, so the screenshot guard's release points
-   * also end every hold: a released relay has no one waiting, and a new document answers
-   * nothing pending from the old one. A released relay's screencast has no viewer to stop it.
+   * also end every focus hold: a released relay has no one waiting, and a new document
+   * answers nothing pending from the old one. A released relay's screencast has no viewer.
    */
   const dropFocusHolds = (tab: AttachedTab) => {
     tab.focusPending.clear();
@@ -276,11 +464,17 @@ export const make = Effect.gen(function* () {
     dropFocusHolds(tab);
   };
 
+  /** An owner that leaves without stopping would otherwise keep the screencast running unseen. */
+  const leaveScreencast = (tab: AttachedTab, owner: string | undefined) => {
+    if (!tab.screencasts.delete(owner) || tab.screencasts.size > 0) return;
+    void tab.debuggee.debugger.sendCommand("Page.stopScreencast").catch(() => {});
+  };
+
   /** A detached session, such as a closed viewer, waits on nothing it sent. */
   const dropSessionHolds = (tab: AttachedTab, owner: string) => {
-    tab.screencasts.delete(owner);
-    for (const [pending, hold] of tab.focusPending) {
-      if (hold.owner === owner) tab.focusPending.delete(pending);
+    leaveScreencast(tab, owner);
+    for (const [pending, holder] of tab.focusPending) {
+      if (holder === owner) tab.focusPending.delete(pending);
     }
     releaseFocusWhenIdle(tab);
     syncPainting(tab);
@@ -288,7 +482,7 @@ export const make = Effect.gen(function* () {
 
   /**
    * A command the server stopped waiting on, such as a timed-out screenshot or evaluation,
-   * may never settle; the turn's end ends every hold. The agent also sends on its own extra
+   * may never settle; the turn's end ends every focus hold. The agent also sends on its own extra
    * session, so this cannot spare other sessions; a viewer's screencast still holds.
    */
   const endAgentTurn = (threadId: string) => {
@@ -296,7 +490,7 @@ export const make = Effect.gen(function* () {
     for (const tab of tabs.values()) {
       if (tab.key.threadId !== threadId) continue;
       tab.agentUsed = false;
-      // Still sent in turn, so the queue keeps moving, but no longer kept painting.
+      // Still sent in turn, so the queue keeps moving, but no longer kept focused.
       for (const waiting of tab.waitingScreenshots) waiting.held = false;
       dropFocusHolds(tab);
     }
@@ -304,9 +498,33 @@ export const make = Effect.gen(function* () {
 
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
-    const { webContents, debugger: debuggee } = tab.debuggee;
-    const send = (method: string, params: Record<string, unknown>, sessionId?: string) =>
-      sendPageCommand(webContents, debuggee, method, params, sessionId);
+    const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
+    const routeHidden = routeMouseToFrame(debuggee, tab.frameSessions, watchFrameDetach(tab));
+    // Read when the pointer queue reaches the event: a guest the window shows routes its own input.
+    const routeMouse: PointerRoute = (params) =>
+      shownTabs.get(keyOf(tab.key)) === true ? Promise.resolve(null) : routeHidden(params);
+    // The annotation overlay lives in the guest and takes any input sent there as the
+    // person's at this window, so relayed input waits until they finish.
+    const annotated = (method: string) =>
+      method.startsWith("Input.") && tab.debuggee.annotating?.() === true;
+    const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+      // Asked again at each dispatch: an annotation can start while the input waits its turn.
+      const refuseAnnotated = () => {
+        if (annotated(method)) throw new Error(ANNOTATING_MESSAGE);
+      };
+      refuseAnnotated();
+      const result = await sendPageCommand(
+        webContents,
+        debuggee,
+        method,
+        params,
+        sessionId,
+        routeMouse,
+        refuseAnnotated,
+      );
+      if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
+      return result;
+    };
     const detachedOwners = new Set<string>();
     /** Viewers and recordings stream; the agent's own sessions never do. */
     const streamingOwners = new Set<string>();
@@ -314,26 +532,42 @@ export const make = Effect.gen(function* () {
       {
         send: (method, params, sessionId, owner) => {
           // A child session's screencast is not the page's, such as a late one on a detached session.
-          if (sessionId === undefined && method === "Page.startScreencast") {
-            tab.screencasts.add(owner);
+          const stream =
+            sessionId === undefined && method === "Page.startScreencast"
+              ? (tab.screencasts.get(owner) ?? { started: false, pending: 0 })
+              : undefined;
+          if (stream) {
+            stream.pending += 1;
+            tab.screencasts.set(owner, stream);
             if (owner !== undefined) streamingOwners.add(owner);
+            syncPainting(tab);
           } else if (sessionId === undefined && method === "Page.stopScreencast") {
             tab.screencasts.delete(owner);
+            syncPainting(tab);
+            if (tab.screencasts.size > 0) return Promise.resolve({});
           }
+          if (annotated(method)) return Promise.reject(new Error(ANNOTATING_MESSAGE));
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
-          if (
-            AGENT_INPUT_METHOD.test(method) &&
-            (owner === undefined || !streamingOwners.has(owner))
-          ) {
-            tab.agentUsed = true;
+          if (AGENT_INPUT_METHOD.test(method)) {
+            if (owner === undefined || !streamingOwners.has(owner)) {
+              tab.agentUsed = true;
+              tab.agentLedAt = performance.now();
+            } else if (method.startsWith("Input.") && !POINTER_TRAVEL.has(params["type"])) {
+              tab.agentLedAt = Number.NEGATIVE_INFINITY;
+            }
           }
           // Waits for focus emulation; insertText and other non-CDP input would not queue behind it.
           const forward = (current?: () => boolean) => {
             const change = tab.focusChange;
+            const stale = () => tab.relay !== relay || (current !== undefined && !current());
+            const sendUnlessStale = () =>
+              stale()
+                ? Promise.reject(new Error("The page this screenshot was for has moved on."))
+                : send(method, params, sessionId);
             const run = () =>
-              tab.relay === relay && (current === undefined || current())
-                ? send(method, params, sessionId)
-                : Promise.reject(new Error("The page this screenshot was for has moved on."));
+              current === undefined || stale()
+                ? sendUnlessStale()
+                : paintUntilAnswered(tab, sendUnlessStale);
             return change === null ? run() : change.then(run);
           };
           return method === "Page.captureScreenshot"
@@ -342,22 +576,49 @@ export const make = Effect.gen(function* () {
                 relay,
                 () => owner === undefined || !detachedOwners.has(owner),
                 (current, held) =>
-                  held ? holdFocus(tab, method, owner, () => forward(current)) : forward(current),
+                  held ? holdFocus(tab, owner, () => forward(current)) : forward(current),
               )
             : method === "Page.startScreencast"
-              ? holdFocus(tab, method, owner, forward).catch((cause: unknown) => {
-                  // A viewer can outlive a refused stream; nothing is streaming for it.
-                  if (sessionId === undefined && tab.relay === relay) tab.screencasts.delete(owner);
-                  releaseFocusWhenIdle(tab);
-                  syncPainting(tab);
-                  throw cause;
-                })
-              : holdFocus(tab, method, owner, forward);
+              ? holdFocus(tab, owner, forward).then(
+                  (result) => {
+                    if (stream) {
+                      stream.pending -= 1;
+                      stream.started = true;
+                      // A detach's stop can overtake a start still waiting on focus; nobody owns it now.
+                      if (tab.screencasts.get(owner) !== stream && tab.screencasts.size === 0) {
+                        void debuggee.sendCommand("Page.stopScreencast").catch(() => {});
+                      }
+                    }
+                    return result;
+                  },
+                  (cause: unknown) => {
+                    if (stream) stream.pending -= 1;
+                    // A viewer can outlive a refused start; its running or pending stream still holds it.
+                    if (
+                      stream &&
+                      !stream.started &&
+                      stream.pending === 0 &&
+                      tab.relay === relay &&
+                      tab.screencasts.get(owner) === stream
+                    ) {
+                      leaveScreencast(tab, owner);
+                    }
+                    releaseFocusWhenIdle(tab);
+                    syncPainting(tab);
+                    throw cause;
+                  },
+                )
+              : holdFocus(tab, owner, forward);
         },
         sessionDetached: (owner) => {
           detachedOwners.add(owner);
           dropSessionHolds(tab, owner);
         },
+        receivesScreencast: (owner) => tab.screencasts.has(owner),
+        ackScreencastFrame: (frameId) =>
+          void debuggee
+            .sendCommand("Page.screencastFrameAck", { sessionId: frameId })
+            .catch(() => {}),
         targetId: () =>
           debuggee
             .sendCommand("Target.getTargetInfo")
@@ -413,11 +674,19 @@ export const make = Effect.gen(function* () {
     const tab = tabs.get(id);
     if (!tab) return;
     tabs.delete(id);
+    const announced = tab.stopWaiting === null;
+    tab.stopWaiting?.();
     tab.relay = null;
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
+    // Input routed to a frame would wait for a detach event the tab no longer hears.
+    const listeners = [...tab.frameDetachListeners.values()].flatMap((set) => [...set]);
+    tab.frameDetachListeners.clear();
+    // A route resolved after this would find no session and go to the page.
+    tab.frameSessions.clear();
+    for (const listener of listeners) listener();
     syncPainting(tab);
-    emit({ type: "detached", ...key });
+    if (announced) emit({ type: "detached", ...key });
   };
 
   const attach = (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => {
@@ -433,35 +702,84 @@ export const make = Effect.gen(function* () {
       downloadDirectory: null,
       pendingDownloadGuid: null,
       agentInputAt: Number.NEGATIVE_INFINITY,
+      agentLedAt: Number.NEGATIVE_INFINITY,
       focusEmulated: false,
       focusChange: null,
       focusUses: 0,
       focusPending: new Map(),
+      capturing: new Set(),
+      frameWaits: new Set(),
+      frameSessions: new Map(),
+      frameDetachListeners: new Map(),
+      nudging: null,
+      frameStalled: false,
       painting: false,
       agentUsed: false,
       focusReleasing: false,
-      screencasts: new Set(),
+      screencasts: new Map(),
       onMessage: (_event, method, params, sessionId) => {
         if (method === "Page.downloadWillBegin") {
           const guid = (params as { guid?: unknown } | undefined)?.guid;
           tab.pendingDownloadGuid = typeof guid === "string" ? guid : null;
         }
+        trackFrameSession(tab, method, params);
         tab.relay?.event(method, params, sessionId);
       },
       // A screenshot pending when the page loads a new document, a reload included, can
       // stay unanswered. A crashed page lands here once it reloads, well after its renderer died.
       onNewDocument: () => {
-        // Before the next screenshot starts, so its own hold survives.
+        // Before the next screenshot starts, so its own holds survive.
+        tab.capturing.clear();
         dropFocusHolds(tab);
         if (tab.screenshotTurn !== null) nextScreenshot(tab);
       },
+      stopWaiting: null,
     };
     tabs.set(id, tab);
     debuggee.debugger.on("message", tab.onMessage);
     debuggee.webContents.on("did-navigate", tab.onNewDocument);
-    emit({ type: "attached", ...key });
-    const shown = shownTabs.get(id);
-    if (shown !== undefined) emit({ type: "shown", ...key, shown });
+    const announce = () => {
+      emit({ type: "attached", ...key });
+      const shown = shownTabs.get(id);
+      if (shown !== undefined) emit({ type: "shown", ...key, shown });
+    };
+    if (!debuggee.webContents.isLoadingMainFrame()) {
+      announce();
+      return;
+    }
+    // Electron does not pause a guest for the debugger, so Playwright connecting during its first
+    // commit builds its utility world in the discarded document and every wait on it hangs.
+    const { webContents } = debuggee;
+    // ERR_ABORTED is a newer navigation replacing this one, whose commit is still to come.
+    const onFailLoad = (
+      _event: Electron.Event,
+      code: number,
+      _description: string,
+      _url: string,
+      isMainFrame: boolean,
+    ) => {
+      if (isMainFrame && code !== ERR_ABORTED) ready();
+    };
+    const ready = () => {
+      if (tab.stopWaiting === null) return;
+      // The manager's cleanup for a destroyed guest can still be queued behind another tab's attach.
+      if (webContents.isDestroyed()) return detach(key);
+      tab.stopWaiting();
+      announce();
+    };
+    const timeout = runFork(
+      Effect.sleep(FIRST_PAGE_TIMEOUT).pipe(Effect.andThen(Effect.sync(ready))),
+    );
+    tab.stopWaiting = () => {
+      tab.stopWaiting = null;
+      webContents.off("dom-ready", ready);
+      webContents.off("did-stop-loading", ready);
+      webContents.off("did-fail-load", onFailLoad);
+      runFork(Fiber.interrupt(timeout));
+    };
+    webContents.on("dom-ready", ready);
+    webContents.on("did-stop-loading", ready);
+    webContents.on("did-fail-load", onFailLoad);
   };
 
   const setShown = (key: DesktopBrowserTabKey, shown: boolean | undefined) => {
@@ -472,7 +790,22 @@ export const make = Effect.gen(function* () {
     }
     if (shownTabs.get(id) === shown) return;
     shownTabs.set(id, shown);
-    if (tabs.has(id)) emit({ type: "shown", ...key, shown });
+    if (tabs.get(id)?.stopWaiting === null) emit({ type: "shown", ...key, shown });
+  };
+
+  const setCaptureDrawn = (key: DesktopBrowserTabKey, drawn: boolean | undefined) => {
+    const id = keyOf(key);
+    if (!drawn) {
+      drawnTabs.delete(id);
+      return;
+    }
+    drawnTabs.add(id);
+    for (const done of drawWaiters.get(id) ?? []) done();
+    drawWaiters.delete(id);
+  };
+
+  const loadFailed: DesktopBrowserHost["Service"]["loadFailed"] = (key, failure) => {
+    if (tabs.has(keyOf(key))) emit({ type: "loadFailed", ...key, ...failure });
   };
 
   const handleCommandLine = (line: string) =>
@@ -501,7 +834,12 @@ export const make = Effect.gen(function* () {
 
   const humanStartedDownload = (source: Electron.WebContents) => {
     const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
-    return tab !== undefined && performance.now() - tab.agentInputAt > AGENT_DOWNLOAD_WINDOW_MS;
+    return tab !== undefined && performance.now() - tab.agentInputAt > AGENT_INPUT_WINDOW_MS;
+  };
+
+  const agentLedPage = (source: Electron.WebContents) => {
+    const tab = [...tabs.values()].find((candidate) => candidate.debuggee.webContents === source);
+    return tab !== undefined && performance.now() - tab.agentLedAt <= AGENT_INPUT_WINDOW_MS;
   };
 
   const announceAll = Effect.suspend(() => {
@@ -511,6 +849,8 @@ export const make = Effect.gen(function* () {
       [...tabs.values()],
       (tab) => {
         dropRelay(tab);
+        // Announced once its first page is up.
+        if (tab.stopWaiting !== null) return Effect.void;
         const shown = shownTabs.get(keyOf(tab.key));
         return PubSub.publish(outbox, { type: "attached", ...tab.key }).pipe(
           Effect.andThen(
@@ -538,9 +878,12 @@ export const make = Effect.gen(function* () {
     handleCommandLine,
     attach,
     detach,
+    loadFailed,
     setShown,
+    setCaptureDrawn,
     placeDownload,
     humanStartedDownload,
+    agentLedPage,
   });
 });
 

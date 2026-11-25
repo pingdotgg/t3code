@@ -44,7 +44,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   viewedFiles: "environment",
   comment: true,
   actions: [...definition.changeRequestActions],
-  mergeMethods: ["merge", "squash", "rebase"],
+  mergeMethods: ["merge", "squash", "rebase", "fast-forward"],
   updateMethods: ["merge", "rebase"],
   search: false,
   reactions: true,
@@ -368,6 +368,8 @@ export const make = Effect.gen(function* () {
       return {
         ...forgejoChangeRequest(pr),
         headSha: pr.head.sha,
+        mergeCommitSha: pr.merge_commit_sha || null,
+        mergedBy: forgejoActor(pr.merged_by),
         body: pr.body ?? "",
         changedFiles: pr.changed_files ?? 0,
         reviewers: (pr.requested_reviewers ?? []).flatMap((user) => {
@@ -385,6 +387,8 @@ export const make = Effect.gen(function* () {
           merge: repo.allow_merge_commits ?? true,
           squash: repo.allow_squash_merge ?? true,
           rebase: repo.allow_rebase ?? true,
+          // Added in Forgejo 7; older servers cannot fast-forward-only merge.
+          "fast-forward": repo.allow_fast_forward_only_merge ?? false,
         },
       } satisfies ProviderChangeRequestDetail;
     }),
@@ -542,7 +546,16 @@ export const make = Effect.gen(function* () {
               ...input,
               path: `${pullPath(input)}/merge`,
               method: "POST",
-              body: { Do: input.mergeMethod ?? "merge", delete_branch_after_merge: deleteBranch },
+              body: {
+                Do:
+                  input.mergeMethod === "fast-forward"
+                    ? "fast-forward-only"
+                    : (input.mergeMethod ?? "merge"),
+                delete_branch_after_merge: deleteBranch,
+                ...(input.expectedHeadSha === undefined
+                  ? {}
+                  : { head_commit_id: input.expectedHeadSha }),
+              },
             }).pipe(
               Effect.catchTags({
                 // Forgejo merges before deleting the branch, so a refused deletion still merged.
@@ -612,7 +625,7 @@ export const make = Effect.gen(function* () {
                 ? "REQUEST_CHANGES"
                 : "COMMENT",
           body: input.body,
-          commit_id: pr.head.sha,
+          commit_id: input.expectedHeadSha ?? pr.head.sha,
           comments: input.comments.map((comment) => {
             const position = comment.position;
             const old =

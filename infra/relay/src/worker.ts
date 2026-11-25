@@ -71,6 +71,8 @@ import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 import * as T3ChatAccounts from "./t3chat/T3ChatAccounts.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 import * as HookForwarder from "./hooks/HookForwarder.ts";
+import * as ManagedTunnelBinding from "./environments/ManagedTunnelBinding.ts";
+import * as AccountDeletion from "./accounts/AccountDeletion.ts";
 import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
@@ -126,6 +128,13 @@ export const layer = Api.make(
       // to PlanetScale `us-west` the request pays that distance once.
       placement: { region: "aws:us-west-2" },
       domain: relayPublicDomain,
+      // Workers Logs bills per GB, and every request, queue batch, and DO call is
+      // an invocation log. Axiom traces carry the full detail; keep a sample for
+      // crashes and limit errors that never export a span.
+      observability: {
+        enabled: true,
+        logs: { enabled: true, invocationLogs: true, headSamplingRate: 0.01 },
+      },
     })),
     Effect.orDie,
   ),
@@ -164,6 +173,12 @@ export const layer = Api.make(
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
+    const clerkWebhookSigningSecret = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.Redacted("CLERK_WEBHOOK_SIGNING_SECRET")),
+        (value) => Redacted.value(value).trim().length > 0,
+      ),
+    );
     const t3ChatLinkSecret = Option.getOrUndefined(
       Option.filter(
         yield* Config.option(Config.Redacted("T3CHAT_LINK_SECRET")),
@@ -182,7 +197,7 @@ export const layer = Api.make(
       client: { prepare: false },
     });
 
-    const managedEndpointTunnelBinding = yield* Cloudflare.Tunnel.ReadWriteTunnel();
+    const managedEndpointTunnelBinding = yield* ManagedTunnelBinding.ManagedTunnel();
     // Keep Worker custom-domain reconciliation ordered after API zone provisioning.
     yield* yield* relayApiZone.zoneId;
     const managedEndpointDnsBinding = yield* Cloudflare.DNS.ReadWriteDns(managedEndpointZone);
@@ -236,6 +251,7 @@ export const layer = Api.make(
         clerkSecretKey,
         clerkPublishableKey,
         clerkJwtAudience,
+        ...(clerkWebhookSigningSecret ? { clerkWebhookSigningSecret } : {}),
         cloudMintPrivateKey: yield* cloudMintPrivateKey,
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
@@ -292,6 +308,7 @@ export const layer = Api.make(
           EnvironmentPublishSignatures.layer,
           ManagedEndpointReaper.layer,
           HeldHooks.layer,
+          AccountDeletion.layer,
         ),
       ),
       Layer.provideMerge(
@@ -431,6 +448,7 @@ export const layer = Api.make(
         Layer.provide(layerHookRateLimiter),
       ),
       MobileTelemetry.layerApi.pipe(Layer.provide(layerMobileTelemetry)),
+      AccountDeletion.layerApi,
     ).pipe(
       Layer.provideMerge(RelayHttpApi.layerClientAuth),
       Layer.provideMerge(RelayHttpApi.layerDpopClientAuth),
@@ -448,16 +466,9 @@ export const layer = Api.make(
         deadLetterQueue: apnsDeliveryDeadLetterQueue.queueName as unknown as string,
       },
       (stream) =>
-        stream.pipe(
-          Stream.withSpan("relay.apn_delivery_queue.process_batch"),
-          Stream.runForEach((message) =>
-            ApnsDeliveries.ApnsDeliveries.pipe(
-              Effect.flatMap((deliveries) => deliveries.processSignedJob(message.body)),
-              Effect.withSpan("relay.apn_delivery_queue.process_message"),
-            ),
-          ),
-          Effect.provide(layerRuntime),
-        ),
+        Effect.flatMap(ApnsDeliveries.ApnsDeliveries, (deliveries) =>
+          deliveries.processBatch(stream),
+        ).pipe(Effect.provide(layerRuntime)),
     );
 
     yield* Cloudflare.Queues.consumeQueueMessages<unknown>(
@@ -502,6 +513,19 @@ export const layer = Api.make(
                 : Effect.logWarning("Failed to prune expired relay state", { cause }),
             ),
           ),
+          AccountDeletion.AccountDeletion.pipe(
+            Effect.flatMap((accounts) => accounts.processPending.pipe(Effect.timeout("2 minutes"))),
+            Effect.tap((result) =>
+              result.failed > 0
+                ? Effect.logError("Account deletions failed; retrying next sweep", result)
+                : Effect.void,
+            ),
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause)
+                ? Effect.interrupt
+                : Effect.logError("Failed to process account deletions", { cause }),
+            ),
+          ),
           ManagedEndpointReaper.ManagedEndpointReaper.pipe(
             Effect.flatMap((reaper) => reaper.sweep.pipe(Effect.timeout("2 minutes"))),
             Effect.tap((result) =>
@@ -524,7 +548,7 @@ export const layer = Api.make(
             ),
           ),
         ],
-        { concurrency: 3, discard: true },
+        { concurrency: 4, discard: true },
       ).pipe(
         Effect.withSpan("relay.cron.prune_expired_state"),
         Observability.withSchemaErrorSpanAttributes,
@@ -562,7 +586,7 @@ export const layer = Api.make(
         Layer.provideMerge(Cloudflare.Workers.CronEventSourceLive),
         Layer.provideMerge(Cloudflare.Queues.WriteQueueBinding),
         Layer.provideMerge(Cloudflare.Queues.EventSourceLive),
-        Layer.provideMerge(Cloudflare.Tunnel.ReadWriteTunnelBinding),
+        Layer.provideMerge(ManagedTunnelBinding.ManagedTunnelBinding),
         Layer.provideMerge(Cloudflare.DNS.ReadWriteDnsHttp),
         Layer.provideMerge(Cloudflare.Workers.RateLimitBinding),
         Layer.provideMerge(Cloudflare.R2.ReadBucketBinding),

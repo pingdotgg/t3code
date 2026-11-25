@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type {
   EnvironmentId,
   OrchestrationV2ShellSnapshot,
@@ -30,7 +32,7 @@ import {
 const EMPTY_THREADS: ReadonlyArray<OrchestrationV2ThreadShell> = Object.freeze([]);
 const EMPTY_SCOPED_THREAD_REFS: ReadonlyArray<ScopedThreadRef> = Object.freeze([]);
 const EMPTY_THREAD_INDEX: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> = new Map();
-const EMPTY_SUBAGENT_REQUESTS: ReadonlyMap<ThreadId, PendingSubagentRequest> = new Map();
+const EMPTY_SUBAGENT_REQUESTS: ReadonlyMap<ThreadId, never> = new Map<ThreadId, never>();
 const EMPTY_SIDE_CHATS_BY_PARENT: ReadonlyMap<
   ThreadId,
   ReadonlyArray<OrchestrationV2ThreadShell>
@@ -45,9 +47,7 @@ const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
 // parent is no longer waiting on the answer, so it stops counting as input.
 // The activity run stays set when a follow-up is queued behind a blocked run;
 // older servers omit it, so fall back to the latest run's status.
-const isChildRunLive = (
-  thread: Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "status">,
-) =>
+const isChildRunLive = (thread: Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "status">) =>
   thread.activityRunStatus !== undefined
     ? thread.activityRunStatus !== null
     : thread.status === "preparing" ||
@@ -69,6 +69,46 @@ export function isShownUnderParent(
   return !isListedThreadLineage(lineage) || delegatedUnderParent.has(threadKey(ref));
 }
 
+// Subagents, side chats and tasks delegated from a listed parent have no list row,
+// so an open one is represented by its nearest listed ancestor. A broken chain
+// (missing or archived parent, cycle) resolves to the thread itself, which then matches no row.
+export function resolveListedAncestorThreadRef(
+  ref: ScopedThreadRef,
+  threads: readonly Pick<
+    EnvironmentThreadShell,
+    "id" | "environmentId" | "lineage" | "delegatedFrom" | "archivedAt"
+  >[],
+): ScopedThreadRef {
+  const findThread = (target: ScopedThreadRef) =>
+    threads.find(
+      (thread) => thread.id === target.threadId && thread.environmentId === target.environmentId,
+    );
+  const visited = new Set<string>();
+  let current = ref;
+  let thread = findThread(current);
+  while (thread !== undefined) {
+    let parent: ScopedThreadRef;
+    if (!isListedThreadLineage(thread.lineage)) {
+      if (thread.lineage.parentThreadId === null) return ref;
+      parent = { environmentId: thread.environmentId, threadId: thread.lineage.parentThreadId };
+    } else if (thread.delegatedFrom != null) {
+      parent = {
+        environmentId: thread.delegatedFrom.environmentId,
+        threadId: thread.delegatedFrom.threadId,
+      };
+      // Mirrors delegatedUnderParent: a task whose parent is not listed keeps its own row.
+      if (findThread(parent)?.archivedAt !== null) return current;
+    } else {
+      return current;
+    }
+    if (visited.has(threadKey(current))) return ref;
+    visited.add(threadKey(current));
+    current = parent;
+    thread = findThread(current);
+  }
+  return ref;
+}
+
 /** Provider-native
     subagents ask on their parent, so they are skipped. */
 function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentRequest | null {
@@ -85,6 +125,17 @@ function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
   return kind === "user_input" ? "user_input" : "approval";
 }
 
+/** A user-only card keeps its mark through roll-ups; clients see it as user_input. */
+type RolledUpRequest = PendingSubagentRequest | "user_only_input";
+
+const rolledUpRequest = (
+  thread: OrchestrationV2ThreadShell,
+  request: PendingSubagentRequest | null,
+): RolledUpRequest | null =>
+  request === "user_input" && thread.pendingRuntimeRequest?.userOnly === true
+    ? "user_only_input"
+    : request;
+
 /** A side chat asks its user directly, so questions roll up to the parent as well as approvals. */
 function sideChatRequest(thread: OrchestrationV2ThreadShell): PendingSubagentRequest | null {
   const kind = thread.pendingRuntimeRequest?.kind;
@@ -93,6 +144,9 @@ function sideChatRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
   }
   return kind === "user_input" ? "user_input" : "approval";
 }
+
+const asksParent = (thread: OrchestrationV2ThreadShell) =>
+  subagentRequest(thread) !== null || sideChatRequest(thread) !== null;
 
 /**
  * The threads to flag for a subagent's live approval, up its
@@ -104,17 +158,13 @@ function pendingSubagentRequestsByThread(
   threads: ReadonlyArray<OrchestrationV2ThreadShell>,
   delegated: ReadonlyArray<{
     readonly parentThreadId: ThreadId;
-    readonly request: PendingSubagentRequest;
+    readonly request: RolledUpRequest;
   }> = [],
-): ReadonlyMap<ThreadId, PendingSubagentRequest> {
-  const requests = new Map<ThreadId, PendingSubagentRequest>();
+): ReadonlyMap<ThreadId, RolledUpRequest> {
+  const requests = new Map<ThreadId, RolledUpRequest>();
   let byId: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell> | undefined;
-  const flag = (
-    firstParentId: ThreadId | null,
-    request: PendingSubagentRequest,
-    seen: Set<ThreadId>,
-  ) => {
-    // The coordinator answers child questions; only approvals need user attention.
+  const flag = (firstParentId: ThreadId | null, request: RolledUpRequest, seen: Set<ThreadId>) => {
+    // The coordinator answers child questions; approvals and user-only cards need the user.
     if (request === "user_input") return;
     byId ??= new Map(threads.map((thread) => [thread.id, thread] as const));
     let parentId = firstParentId;
@@ -138,7 +188,7 @@ function pendingSubagentRequestsByThread(
       continue;
     }
     if (child.lineage.relationshipToParent !== "subagent") continue;
-    const request = subagentRequest(child);
+    const request = rolledUpRequest(child, subagentRequest(child));
     if (request !== null) flag(parentId, request, new Set([child.id]));
   }
   for (const task of delegated) flag(task.parentThreadId, task.request, new Set());
@@ -146,23 +196,35 @@ function pendingSubagentRequestsByThread(
 }
 
 const sameRequests = (
-  left: ReadonlyMap<ThreadId, PendingSubagentRequest>,
-  right: ReadonlyMap<ThreadId, PendingSubagentRequest>,
+  left: ReadonlyMap<ThreadId, RolledUpRequest>,
+  right: ReadonlyMap<ThreadId, RolledUpRequest>,
 ) =>
   left.size === right.size &&
   [...right].every(([threadId, request]) => left.get(threadId) === request);
 
 export function childThreadInputsTitle(
   children: ReadonlyArray<Pick<EnvironmentThreadShell, "hasPendingApprovals" | "lineage">>,
+  resolve: MFunctionType = mFallback,
 ): string {
   const approvals = children.filter((child) => child.hasPendingApprovals).length;
   const need = approvals === 0 ? "input" : approvals === children.length ? "approval" : "you";
   const sideChats = children.filter((child) => child.lineage.sideChat === true).length;
-  const noun =
-    sideChats === children.length ? "side chat" : sideChats === 0 ? "subagent" : "thread";
-  return children.length === 1
-    ? `${noun === "side chat" ? "Side chat" : "Subagent"} needs ${need}`
-    : `${children.length} ${noun}s need ${need}`;
+  const kind = sideChats === children.length ? "sideChat" : sideChats === 0 ? "subagent" : "thread";
+  const count = children.length;
+  if (count === 1) {
+    return resolve(
+      msg(
+        "{kind, select, sideChat {{need, select, input {Side chat needs input} approval {Side chat needs approval} other {Side chat needs you}}} other {{need, select, input {Subagent needs input} approval {Subagent needs approval} other {Subagent needs you}}}}",
+        { kind, need },
+      ),
+    );
+  }
+  return resolve(
+    msg(
+      "{kind, select, sideChat {{need, select, input {{count} side chats need input} approval {{count} side chats need approval} other {{count} side chats need you}}} subagent {{need, select, input {{count} subagents need input} approval {{count} subagents need approval} other {{count} subagents need you}}} other {{need, select, input {{count} threads need input} approval {{count} threads need approval} other {{count} threads need you}}}}",
+      { kind, need, count: String(count) },
+    ),
+  );
 }
 
 const sameWireThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);
@@ -274,7 +336,7 @@ export function createEnvironmentThreadShellAtoms(input: {
   // environments run for it, so two environments delegating to each other
   // never read each other's totals.
   const localSubagentRequestsAtom = Atom.family((environmentId: EnvironmentId) => {
-    let previous = EMPTY_SUBAGENT_REQUESTS;
+    let previous: ReadonlyMap<ThreadId, RolledUpRequest> = EMPTY_SUBAGENT_REQUESTS;
     return Atom.make((get) => {
       const next = pendingSubagentRequestsByThread(get(environmentThreadsAtom(environmentId)));
       if (sameRequests(previous, next)) return previous;
@@ -305,7 +367,7 @@ export function createEnvironmentThreadShellAtoms(input: {
         else tasks.push(task);
       }
     }
-    let flags = new Map<EnvironmentId, ReadonlyMap<ThreadId, PendingSubagentRequest>>();
+    let flags = new Map<EnvironmentId, ReadonlyMap<ThreadId, RolledUpRequest>>();
     const requestsOf = (environmentId: EnvironmentId) =>
       flags.get(environmentId) ?? get(localSubagentRequestsAtom(environmentId));
     for (let changed = tasksByDelegator.size > 0; changed;) {
@@ -313,7 +375,7 @@ export function createEnvironmentThreadShellAtoms(input: {
       const next = new Map(flags);
       for (const [environmentId, tasks] of tasksByDelegator) {
         const delegated = tasks.flatMap(({ runsIn, thread, parentThreadId }) => {
-          const own = subagentRequest(thread);
+          const own = rolledUpRequest(thread, subagentRequest(thread));
           const nested = requestsOf(runsIn).get(thread.id);
           const request = own === "approval" ? own : (nested ?? own);
           return request === null ? [] : [{ parentThreadId, request }];
@@ -333,11 +395,15 @@ export function createEnvironmentThreadShellAtoms(input: {
   }).pipe(Atom.withLabel("environment-delegated-subagent-requests"));
 
   const pendingSubagentRequestsAtom = Atom.family((environmentId: EnvironmentId) => {
-    let previous = EMPTY_SUBAGENT_REQUESTS;
+    let previous: ReadonlyMap<ThreadId, PendingSubagentRequest> = EMPTY_SUBAGENT_REQUESTS;
     return Atom.make((get) => {
-      const next =
+      const rolledUp =
         get(delegatedSubagentRequestsAtom).get(environmentId) ??
         get(localSubagentRequestsAtom(environmentId));
+      const next = new Map<ThreadId, PendingSubagentRequest>();
+      for (const [threadId, request] of rolledUp) {
+        next.set(threadId, request === "user_only_input" ? "user_input" : request);
+      }
       if (sameRequests(previous, next)) return previous;
       previous = next;
       return next;
@@ -431,12 +497,23 @@ export function createEnvironmentThreadShellAtoms(input: {
     }).pipe(Atom.withLabel(`environment-quiet-thread-shell:${key}`));
   });
 
+  const hasChildThreadInputsAtom = Atom.make((get) => {
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      if (get(environmentThreadsAtom(environmentId)).some(asksParent)) return true;
+    }
+    return false;
+  }).pipe(Atom.withLabel("environment-has-child-thread-inputs"));
+
   // Child approvals and questions are hidden with their sidebar rows. Read their
   // shell summaries, without subscribing to every child transcript. A task
   // delegated to a linked environment is a child too, with its own subagents.
   const childThreadInputsAtomFamily = Atom.family((key: string) => {
     let previous: ReadonlyArray<EnvironmentThreadShell> = [];
     return Atom.make((get) => {
+      if (!get(hasChildThreadInputsAtom)) {
+        if (previous.length !== 0) previous = [];
+        return previous;
+      }
       const children = new Map<
         string,
         Array<{ environmentId: EnvironmentId; thread: OrchestrationV2ThreadShell }>
@@ -472,7 +549,7 @@ export function createEnvironmentThreadShellAtoms(input: {
           if (seen.has(childKey)) continue;
           seen.add(childKey);
           pending.push(childKey);
-          if (subagentRequest(thread) !== null || sideChatRequest(thread) !== null) {
+          if (asksParent(thread)) {
             next.push(
               scopedThread(environmentId, thread, get(pendingSubagentRequestsAtom(environmentId))),
             );
