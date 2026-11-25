@@ -924,7 +924,7 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const powershell = windowsPowerShellPath(yield* HostProcess.Environment);
   const command =
-    '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
+    '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
   const result = yield* processRunner
     .run({
       command: powershell,
@@ -2790,10 +2790,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (!candidate) {
       return yield* (
         lastError ??
-          new PtyAdapter.PtySpawnError({
-            adapter: "terminal-manager",
-            attemptedShells: [],
-          })
+        new PtyAdapter.PtySpawnError({
+          adapter: "terminal-manager",
+          attemptedShells: [],
+        })
       );
     }
 

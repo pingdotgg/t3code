@@ -2,25 +2,36 @@ import {
   buildWorkflowFeed,
   buildWorkflowTimeline,
   workflowAgentSummary,
+  isOwnWorkflowAnswer,
   workflowAnswer,
   type WorkflowBeat,
   type WorkflowRunNode,
 } from "@t3tools/client-runtime/workflows";
-import type { EnvironmentId, WorkflowStep } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { resolveLinkedThreadOpen } from "@t3tools/client-runtime/linked-thread";
+import {
+  EnvironmentId,
+  ThreadId,
+  type ScopedThreadRef,
+  type WorkflowStep,
+} from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { useGT } from "gt-react-native";
+import { T, Var, useGT } from "gt-react-native";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 
+import { RelativeTime } from "../../components/RelativeTime";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { cn } from "../../lib/cn";
 import { useEnvironments } from "../../state/environments";
+import { useLinkedEnvironments } from "../../state/peerLinks";
+import { useOpenLinkedThreadRead } from "../threads/useOpenLinkedThread";
 
 export function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
   if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
@@ -63,18 +74,44 @@ export function Facts(props: {
   );
 }
 
-/** Whether this device can open a thread: only one in an environment it is paired with. */
-export function useCanOpenThread(environmentId: EnvironmentId) {
-  const { environments } = useEnvironments();
-  return (thread: NonNullable<WorkflowBeat["thread"]>) => {
-    const target = thread.environmentId ?? environmentId;
-    return environments.some((environment) => environment.environmentId === target);
+/**
+ * How this device opens a step's thread from a run on `environmentId`: directly where it is paired,
+ * else read-only through the run's environment when that links to it. Null where it can do neither.
+ */
+export function useWorkflowThreadOpener(
+  environmentId: EnvironmentId,
+  openDirect: (thread: ScopedThreadRef) => void,
+  options?: { readonly replace?: boolean },
+) {
+  const { presentationById } = useEnvironments();
+  const linkedEnvironments = useLinkedEnvironments(environmentId);
+  const openLinkedRead = useOpenLinkedThreadRead();
+  return (thread: NonNullable<WorkflowBeat["thread"]>): (() => void) | null => {
+    const ref = scopeThreadRef(
+      thread.environmentId === null ? environmentId : EnvironmentId.make(thread.environmentId),
+      ThreadId.make(thread.threadId),
+    );
+    const own = presentationById.get(ref.environmentId);
+    const label = linkedEnvironments.get(ref.environmentId);
+    const open = resolveLinkedThreadOpen({
+      environmentId: ref.environmentId,
+      viaEnvironmentId: environmentId,
+      own: own && { connected: own.connection.phase === "connected" },
+      linked: label !== undefined,
+    });
+    if (open === "unavailable") return null;
+    if (open === "linked" && label !== undefined) {
+      return () => openLinkedRead(ref, { viaEnvironmentId: environmentId, label }, null, options);
+    }
+    return () => openDirect(ref);
   };
 }
 
 /** All of one step, as its sheet shows it: what it said, its facts, and where to read more. */
 export function BeatCard(props: {
   readonly beat: WorkflowBeat;
+  /** This device's session on the run's environment: an answer it gave reads as yours. */
+  readonly sessionId: string | null;
   /** Null where this device cannot open the step's thread. */
   readonly onOpenThread: ((thread: NonNullable<WorkflowBeat["thread"]>) => void) | null;
   readonly onOpenRun: (runId: string) => void;
@@ -110,6 +147,32 @@ export function BeatCard(props: {
           {answer.reason === null
             ? gt("Answered {choice}", { choice: answer.choice })
             : gt("Answered {choice}: {reason}", { choice: answer.choice, reason: answer.reason })}
+        </Text>
+      )}
+      {answer?.answeredAt == null ? null : (
+        <Text className="text-xs text-foreground-muted">
+          {isOwnWorkflowAnswer(answer, props.sessionId) ? (
+            <T>
+              by you,{" "}
+              <Var>
+                <RelativeTime timestamp={answer.answeredAt} />
+              </Var>
+            </T>
+          ) : answer.answeredBy === null ? (
+            <T>
+              answered{" "}
+              <Var>
+                <RelativeTime timestamp={answer.answeredAt} />
+              </Var>
+            </T>
+          ) : (
+            <T>
+              by <Var>{answer.answeredBy}</Var>,{" "}
+              <Var>
+                <RelativeTime timestamp={answer.answeredAt} />
+              </Var>
+            </T>
+          )}
         </Text>
       )}
       {child === null ? null : (
