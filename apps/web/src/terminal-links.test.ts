@@ -167,6 +167,7 @@ describe("extractTerminalLinks", () => {
     "foo$bar.ts:12:3",
     "+page.svelte:12:4",
     "contact@support.ts:12:3",
+    "./logs/2026-11-25T14:00:05.log",
   ])("keeps the complete relative path %s", (text) => {
     expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
       { kind: "path", text, start: 4, end: 4 + text.length },
@@ -198,6 +199,9 @@ describe("extractTerminalLinks", () => {
     ["/home/dev/app/src/main.c:10:5: error: expected ';'", "/home/dev/app/src/main.c:10:5"],
     ["C:\\dev\\app\\src\\main.c:10:5: error: expected ';'", "C:\\dev\\app\\src\\main.c:10:5"],
     ["wrote ./out/report.txt:", "./out/report.txt"],
+    ["./src/a.js:1:function inner() {", "./src/a.js:1"],
+    ["./src/a.js:4:1:function outer() { inner(); }", "./src/a.js:4:1"],
+    ["/home/dev/app/src/top.rb:2:in `f': boom (RuntimeError)", "/home/dev/app/src/top.rb:2"],
   ])("drops the colon that ends a compiler diagnostic location in %s", (line, text) => {
     const start = line.indexOf(text);
     expect(extractTerminalLinks(line)).toEqual([
