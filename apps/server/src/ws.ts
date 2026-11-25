@@ -2412,7 +2412,7 @@ export const layerWsRpc = (
         [WS_METHODS.workflowsGet]: (input) =>
           workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsAbout]: (input) =>
-          workflows.about(input.subject).pipe(Effect.mapError(toWorkflowRequestError)),
+          workflows.about(input).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsAnswer]: (input) =>
           workflows
             .answer(input.runId, input.name, {

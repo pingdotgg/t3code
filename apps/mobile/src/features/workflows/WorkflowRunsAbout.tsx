@@ -4,7 +4,7 @@ import {
   readWorkflowQuestion,
   workflowRunState,
 } from "@t3tools/client-runtime/workflows";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, WorkflowRunsAboutInput } from "@t3tools/contracts";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useGT, useMessages } from "gt-react-native";
 import { Pressable, View } from "react-native";
@@ -18,10 +18,10 @@ import { serverEnvironment } from "../../state/server";
 import { PullRequestSectionHeading } from "../pull-requests/PullRequestSectionHeading";
 import { WORKFLOW_TONE_CLASS, WorkflowChip } from "./WorkflowsScreen";
 
-/** The workflow runs whose subject is the item at `url`, on its own screen; hidden while none. */
+/** The workflow runs whose subject is `item`, on its own screen; hidden while there are none. */
 export function WorkflowRunsAbout(props: {
   readonly environmentId: EnvironmentId;
-  readonly url: string;
+  readonly item: WorkflowRunsAboutInput;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -31,7 +31,7 @@ export function WorkflowRunsAbout(props: {
     enabled
       ? serverEnvironment.workflowRunsAbout({
           environmentId: props.environmentId,
-          input: { subject: props.url },
+          input: props.item,
         })
       : null,
   );

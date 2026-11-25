@@ -1033,7 +1033,20 @@ export function PullRequestSummaryTab({
             </PullRequestMetaRow>
           ) : null}
         </div>
-        <WorkflowRunsAbout environmentId={environmentId} url={detail.url} />
+        <WorkflowRunsAbout
+          environmentId={environmentId}
+          item={{
+            subject: detail.url,
+            pullRequest: {
+              projectId: reference.projectId,
+              repository: reference.repository,
+              number: reference.number,
+              host:
+                reference.host ??
+                (URL.canParse(detail.url) ? new URL(detail.url).hostname : undefined),
+            },
+          }}
+        />
       </section>
 
       <PullRequestSection

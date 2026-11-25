@@ -3,6 +3,7 @@ import {
   type WorkflowHook,
   WorkflowQuestion,
   type WorkflowRunReference,
+  type WorkflowRunsAboutInput,
   applyWorkflowRunsUpdate,
   type WorkflowRunsSnapshot,
   type WorkflowRunsUpdate,
@@ -128,10 +129,11 @@ export class Workflows extends Context.Service<
       readonly subject?: string;
     }) => Effect.Effect<ReadonlyArray<WorkflowStore.WorkflowRun>, WorkflowInputError>;
     /**
-     * The runs about `subject` (as `list` reads it) and the questions they have open, for the
-     * view of the item itself: the runs list is the newest runs of every subject.
+     * The runs about an item, by its web address (as `list` reads `subject`) or by the issue or
+     * pull request it is, and the questions they have open, for the item's own view: the runs
+     * list is the newest runs of every subject.
      */
-    readonly about: (subject: string) => Effect.Effect<
+    readonly about: (item: WorkflowRunsAboutInput) => Effect.Effect<
       {
         readonly runs: ReadonlyArray<WorkflowStore.WorkflowRun>;
         readonly questions: ReadonlyArray<WorkflowQuestion>;

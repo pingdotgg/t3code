@@ -749,7 +749,13 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                     <LinkedThreads params={params} host={detail.host} />
                     <WorkflowRunsAbout
                       environmentId={issueTarget(params).environmentId}
-                      url={detail.url}
+                      item={{
+                        subject: detail.url,
+                        issue: {
+                          ...issueTarget(params).input,
+                          host: params.host ?? detail.host,
+                        },
+                      }}
                     />
                     <View className="gap-3">
                       <PullRequestSectionHeading>

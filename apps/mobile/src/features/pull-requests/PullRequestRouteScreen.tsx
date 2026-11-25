@@ -63,6 +63,7 @@ import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import {
   EnvironmentId,
+  ProjectId,
   pullRequestConversationThreads,
   type PullRequestDetail,
   type PullRequestListEntry,
@@ -393,7 +394,16 @@ function PullRequestOverview(props: {
       </Animated.View>
       <WorkflowRunsAbout
         environmentId={EnvironmentId.make(props.params.environmentId)}
-        url={pr.url}
+        item={{
+          subject: pr.url,
+          pullRequest: {
+            projectId: ProjectId.make(props.params.projectId),
+            repository: props.params.repository,
+            number: props.params.number,
+            host:
+              props.params.host ?? (URL.canParse(pr.url) ? new URL(pr.url).hostname : undefined),
+          },
+        }}
       />
     </View>
   );

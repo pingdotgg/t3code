@@ -259,8 +259,16 @@ export const WorkflowRunsSubscribeInput = Schema.Struct({
 
 export const WorkflowRunGetInput = Schema.Struct({ runId: Schema.String });
 
-/** Runs whose subject is at this web address, or whose subject's key it is, such as a thread id. */
-export const WorkflowRunsAboutInput = Schema.Struct({ subject: Schema.String });
+/**
+ * Runs whose subject is at the web address `subject`, or is the `issue` or `pullRequest` given:
+ * a listing and an item's own view do not always write one item's address the same way.
+ */
+export const WorkflowRunsAboutInput = Schema.Struct({
+  subject: Schema.String,
+  issue: Schema.optionalKey(IssueRef),
+  pullRequest: Schema.optionalKey(PullRequestRef),
+});
+export type WorkflowRunsAboutInput = typeof WorkflowRunsAboutInput.Type;
 /** Those runs, newest first and 500 at most, with the questions they have open. */
 export const WorkflowRunsAbout = Schema.Struct({
   runs: Schema.Array(WorkflowRun),

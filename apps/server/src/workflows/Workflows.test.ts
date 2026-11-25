@@ -2510,12 +2510,35 @@ it.effect("an item finds its runs past the newest 500 runs of every subject", ()
         }
         const snapshot = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
         assert.isFalse(snapshot.runs.some((run) => run.runId === target.runId));
-        const about = yield* workflows.about(url);
+        const about = yield* workflows.about({ subject: url });
         assert.deepStrictEqual(
           about.runs.map((run) => run.runId),
           [target.runId],
         );
         assert.deepStrictEqual(about.questions, []);
+
+        // Named without its address, the issue is found by what it is, as its own view knows it.
+        const { url: _url, ...unaddressed } = { ...issue, key: "413" };
+        const quiet = yield* workflows.start(
+          "about",
+          { subjects: [unaddressed] },
+          { idempotencyKey: "unaddressed" },
+        );
+        yield* workflows.waitFor(quiet.runId, status("waiting"));
+        const byItem = yield* workflows.about({
+          subject: "https://github.com/acme/app/issues/413/",
+          issue: {
+            projectId: ProjectId.make("p1"),
+            tracker: "github" as never,
+            host: "github.com",
+            scope: "acme/app",
+            key: "413",
+          },
+        });
+        assert.deepStrictEqual(
+          byItem.runs.map((run) => run.runId),
+          [quiet.runId],
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

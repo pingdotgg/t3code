@@ -1152,8 +1152,24 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             });
       return rows.map(toRun);
     }),
-    about: Effect.fn("Workflows.about")(function* (subject) {
-      const runs = (yield* store.runsWhere({ subject })).map(toRun);
+    about: Effect.fn("Workflows.about")(function* (item) {
+      // Keyed as the subject was kept, so an item named without its address is found too.
+      const identity =
+        item.issue !== undefined
+          ? issueReference(item.issue)
+          : item.pullRequest !== undefined
+            ? pullRequestReferenceOf(item.pullRequest, { url: item.subject })
+            : undefined;
+      const found = [
+        ...(yield* store.runsWhere({ subject: item.subject })),
+        ...(identity === undefined
+          ? []
+          : yield* store.runsWhere({ subject: { kind: identity.kind, key: identity.key } })),
+      ];
+      const runs = [...new Map(found.map((row) => [row.run_id, row])).values()]
+        .toSorted((left, right) => (left.started_at < right.started_at ? 1 : -1))
+        .slice(0, 500)
+        .map(toRun);
       const about = new Set(runs.map((run) => run.runId));
       const open = yield* questions;
       return { runs, questions: open.filter((question) => about.has(question.runId)) };

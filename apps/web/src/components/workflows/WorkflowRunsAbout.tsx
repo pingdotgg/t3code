@@ -3,7 +3,7 @@ import {
   groupWorkflowRuns,
   readWorkflowQuestion,
 } from "@t3tools/client-runtime/workflows";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, WorkflowRunsAboutInput } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 
@@ -12,20 +12,18 @@ import { serverEnvironment } from "../../state/server";
 import { useWorkflowEnvironmentIds } from "./useWorkflowEnvironmentIds";
 import { WorkflowChip, WorkflowStateWord } from "./WorkflowRunFeed";
 
-/** The workflow runs whose subject is the item at `url`, on that item's own view. */
+/** The workflow runs whose subject is `item`, on that item's own view. */
 export function WorkflowRunsAbout({
   environmentId,
-  url,
+  item,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly url: string;
+  readonly item: WorkflowRunsAboutInput;
 }) {
   const gt = useGT();
   const enabled = useWorkflowEnvironmentIds().includes(environmentId);
   const about = useEnvironmentQuery(
-    enabled
-      ? serverEnvironment.workflowRunsAbout({ environmentId, input: { subject: url } })
-      : null,
+    enabled ? serverEnvironment.workflowRunsAbout({ environmentId, input: item }) : null,
   );
   if (!about.data || about.data.runs.length === 0) return null;
   const nodes = allWorkflowRunNodes(groupWorkflowRuns([], about.data.runs, about.data.questions));
