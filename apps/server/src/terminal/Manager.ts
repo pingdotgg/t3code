@@ -2881,6 +2881,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       platform === "win32"
         ? Result.succeed(candidate.shell)
         : yield* withShellPreparationTimeout(
+            // The default resolver's fs promises cannot be aborted; an injected resolver is kept as given.
             resolveExecutable === SpawnExecutableResolution.defaultValue()
               ? probeShellExecutable(
                   explicitPath
