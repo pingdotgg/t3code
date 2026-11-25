@@ -1766,6 +1766,92 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("imports older Pi history on a retry behind unreadable sessions", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const sessions = path.join(claudeHomePath, "pi-agent", "sessions", "--workspace--");
+
+        // An extension can persist nested structured data in a tool result.
+        let toolDetails: unknown = "leaf";
+        for (let depth = 0; depth < 130; depth++) toolDetails = { child: toolDetails };
+        const toolCall = encodeTranscriptRecord({
+          type: "message",
+          id: "a2",
+          parentId: "a1",
+          message: {
+            role: "assistant",
+            content: [{ type: "toolCall", id: "call-1", name: "inspect", arguments: {} }],
+          },
+        });
+        const rejectedToolResult = encodeTranscriptRecord({
+          type: "message",
+          id: "a3",
+          parentId: "a2",
+          message: {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "inspect",
+            content: [{ type: "text", text: "Inspected" }],
+            details: toolDetails,
+          },
+        });
+        for (let index = 0; index <= 100; index++) {
+          const id = `session-${index}`;
+          const header = encodeTranscriptRecord({
+            type: "session",
+            version: 3,
+            id,
+            cwd: workspace,
+          });
+          const message = encodeTranscriptRecord({
+            type: "message",
+            id: "a1",
+            parentId: null,
+            message: { role: "user", content: "Review this change" },
+          });
+          const needsTool = index < 100;
+          const reply = encodeTranscriptRecord({
+            type: "message",
+            id: "reply",
+            parentId: needsTool ? "a3" : "a1",
+            message: { role: "assistant", content: [{ type: "text", text: "Looks good" }] },
+          });
+          const records = [
+            header,
+            message,
+            ...(needsTool ? [toolCall, rejectedToolResult] : []),
+            reply,
+          ];
+          yield* writeTranscript({
+            filePath: path.join(sessions, `${id}.jsonl`),
+            contents: records.join("\n") + "\n",
+            mtimeMs: nowMs - (index + 1) * 1_000,
+          });
+        }
+
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const first = yield* scanner.recentThreads(workspace).pipe(Stream.runCollect);
+          const completed = Array.from(first).flatMap((outcome) =>
+            outcome._tag === "Importable" ? [outcome.source] : [],
+          );
+          const second = yield* scanner.recentThreads(workspace, completed).pipe(Stream.runCollect);
+          const imported = [
+            ...completed.map((source) => source.providerSessionId),
+            ...Array.from(second).flatMap((outcome) =>
+              outcome._tag === "Importable" ? [outcome.thread.providerSessionId] : [],
+            ),
+          ];
+          expect(imported).toContain("session-100");
+        }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+      }),
+    );
+
     it.effect("keeps the provider instance that owns a custom session home", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
