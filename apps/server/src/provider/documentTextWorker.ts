@@ -1073,14 +1073,16 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (!midLine) continue;
         part = "\n";
       }
-      const isImageDescription = typeof part !== "string" && "imageDescription" in part;
-      if (typeof part !== "string" && !isImageDescription && started) continue;
-      let raw =
-        typeof part === "string"
-          ? part
-          : isImageDescription
-            ? part.imageDescription
-            : part.fallback;
+      let raw: string;
+      let isImageDescription = false;
+      if (typeof part === "string") raw = part;
+      else if ("imageDescription" in part) {
+        raw = part.imageDescription;
+        isImageDescription = true;
+      } else {
+        if (started) continue;
+        raw = part.fallback;
+      }
       // Resolve image boundaries here, after inline markup has been flattened.
       if (
         (isImageDescription || afterImageDescription) &&
