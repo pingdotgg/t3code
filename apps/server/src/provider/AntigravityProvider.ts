@@ -272,10 +272,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             ...state,
             draft: {
               ...state.draft,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed,
-              }),
+              // A failed read shows as failed, like the managed provider's check publishes it.
+              usageLimits:
+                probed.unavailable?.reason === "probeFailed"
+                  ? probed
+                  : resolveUsageLimitsAfterProbe({ published: state.draft.usageLimits, probed }),
             },
           })),
         ),
@@ -389,6 +390,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     haveSettingsChanged: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
+    // A failed read is shown as failed; the CLI token expires, so old limits would mislead.
+    retainUsageLimitsOnProbeFailure: false,
     enrichSnapshot: ({ publishSnapshot }) =>
       SubscriptionRef.changes(metadata).pipe(
         Stream.runForEach((state) =>
@@ -566,8 +569,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     onSessionStarted,
     onConfigOptionsUpdated,
     onAvailableCommands,
-    // The new sign-in may be another account. Clear and republish its limits so a failed read
-    // cannot fall back to them; the session start then reads the new account's limits.
+    // The new sign-in may be another account. Clear and republish its limits so they are not
+    // shown for it; the session start then reads the new account's limits.
     onSignedIn: resetUsage.pipe(
       Effect.andThen(
         SubscriptionRef.update(metadata, (state) => {
