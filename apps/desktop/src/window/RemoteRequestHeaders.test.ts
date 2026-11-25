@@ -66,10 +66,7 @@ describe("RemoteRequestHeaders", () => {
   });
 
   it("preserves headers for Clerk frontend API requests", () => {
-    for (const url of [
-      "https://clerk.t3.codes/v1/client",
-      "https://CLERK.Lathe.CODES./v1/client",
-    ]) {
+    for (const url of ["https://clerk.t3.codes/v1/client", "https://CLERK.T3.CODES./v1/client"]) {
       const headers = stripDesktopOriginHeaders(packagedPolicy, {
         url,
         webContentsId: 42,

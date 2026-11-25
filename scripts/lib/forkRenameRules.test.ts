@@ -1110,6 +1110,23 @@ describe("FORK_RENAME_RULES", () => {
       '  const upstreamHome = path.join(home, ".t3", "userdata");',
       "kept",
     ],
+    // A test names a storage key or a state folder as the renamed code does.
+    [
+      "apps/web/src/bootstrap.test.ts",
+      '      createStorageStub({ "t3code:chunk-load-reloaded": import.meta.env.APP_VERSION }),',
+      "identifier",
+    ],
+    [
+      "apps/desktop/src/backend/DesktopBackendRecovery.test.ts",
+      '    const records = path.join(appData, "t3code-backend-recovery");',
+      "identifier",
+    ],
+    // An upstream host stays upstream's however a test spells its case.
+    [
+      "apps/desktop/src/window/RemoteRequestHeaders.test.ts",
+      '      "https://CLERK.T3.CODES./v1/client",',
+      "wire-peer",
+    ],
     // The older exported names stay persisted: both spellings are exported.
     ["apps/server/src/x.ts", "      T3CODE_PROJECT_ROOT: root,", "persisted"],
   ])("classifies %s: %s as %s", (path, line, expected) => {

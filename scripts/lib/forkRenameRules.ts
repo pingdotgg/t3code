@@ -485,7 +485,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     class: "wire-peer",
     reason: "Upstream's Connect hosts and Clerk instance, used as-is.",
     token:
-      /(?:^|[^a-z])(?:relay|clerk|app|nightly\\?\.app|preview|ingest)\\?\.t3\\?\.codes|Y2xlcmsudDMuY29kZXMk/,
+      /(?:^|[^a-z])(?:relay|clerk|app|nightly\\?\.app|preview|ingest)\\?\.t3\\?\.codes|(?:^|[^A-Z])(?:RELAY|CLERK|APP|PREVIEW|INGEST)\.T3\.CODES|Y2xlcmsudDMuY29kZXMk/,
   },
   {
     id: "wire-client-protocol",
@@ -1216,7 +1216,7 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
       // lint rule names, command-line flags, systemd unit names, storage keys, DOM
       // attributes and the preview's certificate approvals file.
       !/attribution|user-?agent|userAgent|DISPLAY/i.test(o.line) &&
-      !/\.slice\b|-protect\.conf|:update-everything-result|t3code\/compile-cache|^data-t3code-|t3code-certificate-approvals/.test(
+      !/\.slice\b|-protect\.conf|^["'`]?t3code:[a-z]|t3code\/compile-cache|^data-t3code-|t3code-(?:certificate-approvals|backend-recovery)/.test(
         o.token,
       ) &&
       !/^t3code\/no-/.test(o.token.slice(o.offset)) &&
