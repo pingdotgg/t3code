@@ -544,6 +544,10 @@ export function shouldPublishShellApplicationEvent(
     }
     return true;
   }
+  if (event.type === "thread.detached") {
+    subagentThreadIds.delete(event.threadId);
+    return true;
+  }
   if (event.type === "thread.deleted") {
     // Replay and the live tail overlap; keep known IDs so late events stay filtered.
     return true;
