@@ -1,13 +1,21 @@
+import { EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
+const isEnvironmentId = Schema.is(EnvironmentId);
+
 export interface WorkflowRunLink {
-  readonly env: string;
+  readonly env: EnvironmentId;
   readonly run: string;
 }
 
-/** Matches the app's own root-relative link to a run, as agents write it in chat. */
-export function parseWorkflowRunHref(href: string | undefined): WorkflowRunLink | null {
+// Distinguish malformed run links so callers can keep them out of generic link navigation.
+export function parseWorkflowRunHref(
+  href: string | undefined,
+): WorkflowRunLink | "invalid-environment" | null {
   if (!href?.startsWith("/workflows?")) return null;
   const { searchParams } = new URL(href, "https://example.invalid");
   const env = searchParams.get("env");
   const run = searchParams.get("run");
-  return env && run ? { env, run } : null;
+  if (env === null || !run) return null;
+  return isEnvironmentId(env) ? { env, run } : "invalid-environment";
 }

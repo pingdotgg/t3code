@@ -411,9 +411,15 @@ it("opens workflow run links inside the app", async () => {
   await using screen = await render(
     <ChatMarkdown
       cwd={undefined}
-      text="[Open workflow run](/workflows?env=environment-1&run=run-1)"
+      text={`[Open workflow run](/workflows?env=environment-1&run=run-1)
+
+[Malformed workflow link](/workflows?env=%20&run=run-1)`}
     />,
   );
+  await expect.element(screen.getByText("Malformed workflow link")).toBeVisible();
+  await expect
+    .element(screen.getByRole("link", { name: "Malformed workflow link" }))
+    .not.toBeInTheDocument();
   const link = screen.getByRole("link", { name: "Open workflow run" });
   await expect.element(link).not.toHaveAttribute("target", "_blank");
   await userEvent.click(link);

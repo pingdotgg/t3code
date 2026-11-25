@@ -274,6 +274,7 @@ export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPrese
   } catch {}
 
   const workflowRun = parseWorkflowRunHref(normalized);
+  if (workflowRun === "invalid-environment") return { kind: "link", href: null };
   if (workflowRun) {
     return {
       kind: "workflowRun",

@@ -1328,6 +1328,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       );
     }
     const workflowRun = parseWorkflowRunHref(href);
+    if (workflowRun === "invalid-environment") return <span>{children}</span>;
     if (workflowRun) {
       return (
         <Link

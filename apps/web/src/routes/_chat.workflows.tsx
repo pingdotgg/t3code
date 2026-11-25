@@ -5,7 +5,7 @@ import { WorkflowsPage, type WorkflowsSearch } from "../components/workflows/Wor
 
 export const Route = createFileRoute("/_chat/workflows")({
   validateSearch: (raw: Record<string, unknown>): WorkflowsSearch => ({
-    ...(typeof raw.env === "string" && raw.env ? { env: raw.env.slice(0, 200) } : {}),
+    ...(typeof raw.env === "string" && raw.env ? { env: raw.env } : {}),
     ...(typeof raw.run === "string" && raw.run ? { run: raw.run.slice(0, 200) } : {}),
     ...readWorkflowPane(raw.pane, raw.tab),
     ...(raw.definitions === true || raw.definitions === "true" ? { definitions: true } : {}),

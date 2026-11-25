@@ -12,6 +12,7 @@ import {
 } from "@t3tools/client-runtime/workflows";
 import { EnvironmentId, ThreadId, type WorkflowQuestion } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import * as Schema from "effect/Schema";
 import { T, Var, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
 import { View } from "react-native";
@@ -38,6 +39,8 @@ import {
 } from "./WorkflowStepCard";
 import { WORKFLOW_TONE_CLASS, WorkflowChip } from "./WorkflowsScreen";
 import { WorkflowTimeline } from "./WorkflowTimeline";
+
+const isEnvironmentId = Schema.is(EnvironmentId);
 
 export type WorkflowRunParams = {
   readonly environmentId: string;
@@ -333,10 +336,14 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
 
 /** One run, read from top to bottom: what each agent said, the question it asks, how it ended. */
 export function WorkflowRunRouteScreen({ route }: StaticScreenProps<WorkflowRunParams>) {
-  const environmentId = EnvironmentId.make(route.params.environmentId);
-  const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
+  const { environmentId: routeEnvironmentId } = route.params;
+  const environmentId = isEnvironmentId(routeEnvironmentId) ? routeEnvironmentId : null;
+  const live = useEnvironmentQuery(
+    environmentId === null ? null : serverEnvironment.workflowsLive({ environmentId, input: {} }),
+  );
   const snapshot = live.data;
   const gt = useGT();
+  const error = environmentId === null ? gt("Environment unavailable") : live.error;
   const navigation = useNavigation();
   const groups =
     snapshot === null
@@ -356,11 +363,11 @@ export function WorkflowRunRouteScreen({ route }: StaticScreenProps<WorkflowRunP
           if (navigation.canGoBack()) navigation.goBack();
         }}
       />
-      {snapshot === null ? (
+      {environmentId === null || snapshot === null ? (
         <EmptyState
           variant="plain"
-          title={live.error === null ? gt("Loading the run…") : gt("Could not load the run")}
-          detail={live.error ?? gt("One moment.")}
+          title={error === null ? gt("Loading the run…") : gt("Could not load the run")}
+          detail={error ?? gt("One moment.")}
         />
       ) : node === undefined ? (
         <EmptyState
