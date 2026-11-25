@@ -1657,12 +1657,17 @@ export const layerWithOptions = (
           }
           // Capture runtime identity before yielding; replacements can reuse the session id.
           const probedRuntime = entry.runtime;
-          const hasPendingWork =
-            (probedRuntime.hasPendingBackgroundWork === undefined
+          const providerHasPendingWork =
+            probedRuntime.hasPendingBackgroundWork === undefined
               ? false
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
                   Effect.catchCause(() => Effect.succeed(false)),
-                )) ||
+                );
+          // A quiet subagent can still be running, and closing its process would kill it.
+          const keepProcessForPendingWork =
+            providerHasPendingWork && probedRuntime.backgroundTasksEndWithProcess === true;
+          const hasPendingWork =
+            providerHasPendingWork ||
             // Closing now would skip the archive of a child whose parent has not taken its result.
             Option.isSome(
               yield* Effect.findFirst(entry.idleThreadUnloads.values(), ({ threadId }) =>
@@ -1673,8 +1678,8 @@ export const layerWithOptions = (
             );
           if (hasPendingWork) {
             const now = yield* Clock.currentTimeMillis;
-            const pinnedSinceMs = entry.pinnedSinceMs ?? now;
-            if (now - pinnedSinceMs < maxIdlePinMs) {
+            const pinnedSinceMs = keepProcessForPendingWork ? null : (entry.pinnedSinceMs ?? now);
+            if (pinnedSinceMs === null || now - pinnedSinceMs < maxIdlePinMs) {
               const shouldContinuePin = yield* Ref.modify(sessions, (latest) => {
                 const latestEntry = latest.get(key);
                 if (
@@ -1694,7 +1699,7 @@ export const layerWithOptions = (
               }
               yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-deferred", {
                 providerSessionId: input.providerSessionId,
-                pinnedForMs: now - pinnedSinceMs,
+                pinnedForMs: now - (pinnedSinceMs ?? now),
               });
               // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
               yield* Effect.sleep(Duration.millis(idleTimeoutFor(probedRuntime)));
@@ -1750,9 +1755,7 @@ export const layerWithOptions = (
           ),
         );
 
-      // Provider activity restarts the pin budget, so background work that keeps
-      // reporting progress (a long Claude workflow) is never cut off; only work
-      // that went silent for maxIdlePinMs is released. Progress events can be
+      // Provider activity restarts the pin budget. Progress events can be
       // frequent, so keep this untraced.
       const scheduleIdleReleaseInternal = Effect.fnUntraced(function* (
         providerSessionId: ProviderSessionId,
