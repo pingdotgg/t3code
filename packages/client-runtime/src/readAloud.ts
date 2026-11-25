@@ -61,13 +61,16 @@ export type SpeechPlayback = {
 export type ReadAloudHighlight = ReadAloudPosition & { readonly id: string };
 
 /** Index of the word being spoken at `seconds`: the last one started, or -1 before the first. */
+// A seek to a word's start can land up to an MP3 frame before it; that still counts as the word.
+const WORD_START_TOLERANCE_SECONDS = 0.06;
+
 function wordIndexAt(words: ReadonlyArray<SpeechSynthesisWord>, seconds: number) {
   let low = 0;
   let high = words.length - 1;
   let found = -1;
   while (low <= high) {
     const middle = (low + high) >> 1;
-    if ((words[middle]?.startSeconds ?? Infinity) <= seconds) {
+    if ((words[middle]?.startSeconds ?? Infinity) <= seconds + WORD_START_TOLERANCE_SECONDS) {
       found = middle;
       low = middle + 1;
     } else high = middle - 1;
@@ -148,7 +151,12 @@ export function createTimedWords(input: {
       // @effect-diagnostics-next-line globalTimers:off - Players call this outside an Effect runtime.
       timer = setTimeout(
         refresh,
-        Math.max(0, ((next.startSeconds - clock.seconds) / Math.max(clock.rate, 0.1)) * 1000),
+        Math.max(
+          0,
+          ((next.startSeconds - WORD_START_TOLERANCE_SECONDS - clock.seconds) /
+            Math.max(clock.rate, 0.1)) *
+            1000,
+        ),
       );
   };
   const load = async () => {

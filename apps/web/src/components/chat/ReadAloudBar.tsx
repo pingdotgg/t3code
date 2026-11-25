@@ -51,7 +51,8 @@ export function ReadAloudBar() {
                 <PauseIcon className="fill-current" />
               )}
             </BarButton>
-            <span className="min-w-0 truncate font-medium">
+            {/* The font sits high in its line box; this centers the words on the icon beside them. */}
+            <span className="min-w-0 translate-y-[0.5px] truncate font-medium">
               {state.status === "loading"
                 ? gt("Preparing to read")
                 : paused
@@ -74,25 +75,28 @@ export function ReadAloudBar() {
             <div className="flex w-12 items-center">
               <VoiceWaveform level={paused ? 0 : level} />
             </div>
-            <Select
-              value={String(settings.speed)}
-              onValueChange={(value) => {
-                const speed = Number(value);
-                void updateClientSettings({ readAloud: { ...settings, speed } });
-                void readAloudController.setSpeed(speed);
-              }}
-            >
-              <SelectTrigger size="compact" variant="ghost" aria-label={gt("Read-aloud speed")}>
-                <SelectValue>{settings.speed}×</SelectValue>
-              </SelectTrigger>
-              <SelectPopup>
-                {SPEEDS.map((speed) => (
-                  <SelectItem key={speed} value={String(speed)}>
-                    {speed}×
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
+            {/* As wide as the widest speed, so picking one never moves the waveform. */}
+            <div className="flex w-18 justify-end">
+              <Select
+                value={String(settings.speed)}
+                onValueChange={(value) => {
+                  const speed = Number(value);
+                  void updateClientSettings({ readAloud: { ...settings, speed } });
+                  void readAloudController.setSpeed(speed);
+                }}
+              >
+                <SelectTrigger size="compact" variant="ghost" aria-label={gt("Read-aloud speed")}>
+                  <SelectValue>{settings.speed}×</SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {SPEEDS.map((speed) => (
+                    <SelectItem key={speed} value={String(speed)}>
+                      {speed}×
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
             <BarButton label={gt("Stop reading")} onClick={() => readAloudController.stop()}>
               <SquareIcon className="fill-current" />
             </BarButton>

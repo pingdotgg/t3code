@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { useGT } from "gt-react";
-import { PlayIcon, SquareIcon, Volume2Icon } from "lucide-react";
+import { Volume2Icon } from "lucide-react";
 import { useClientSettings } from "../../hooks/useSettings";
 import { readAloudController, warmReadAloud } from "../../speech/readAloud";
 import { Button } from "../ui/button";
@@ -26,16 +26,12 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
   if (settings.provider === "off") return null;
   const active = state.id === id;
   const stoppable = active && (state.status === "playing" || state.status === "loading");
+  const reading = stoppable || (active && state.status === "paused");
   const label = stoppable
     ? gt("Stop reading")
     : active && state.status === "paused"
       ? gt("Resume reading")
       : gt("Read aloud");
-  const Icon = stoppable
-    ? SquareIcon
-    : active && state.status === "paused"
-      ? PlayIcon
-      : Volume2Icon;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -43,8 +39,10 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
           <Button
             type="button"
             size="xs"
-            variant="ghost-muted"
+            // The player above the composer shows what is being read; this only marks which reply.
+            variant={reading ? "ghost" : "ghost-muted"}
             aria-label={label}
+            aria-pressed={reading}
             onClick={async () => {
               if (stoppable) return readAloudController.stop();
               if (active && state.status === "paused") await readAloudController.resume();
@@ -52,7 +50,7 @@ export function ReadAloudButton({ id, text }: { id: string; text: string }) {
               toastReadAloudError(id, gt("Could not read aloud"));
             }}
           >
-            <Icon className="size-3" />
+            <Volume2Icon className="size-3" />
           </Button>
         }
       />

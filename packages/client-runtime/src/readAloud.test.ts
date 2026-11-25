@@ -401,14 +401,20 @@ it("follows the environment's word timings on the audio clock and estimates them
     await vi.advanceTimersByTimeAsync(0);
     expect(heard).toEqual([{ start: 0, end: 3 }]);
     seconds = 1;
-    // At 2× the next word starts after half a second of wall time.
-    await vi.advanceTimersByTimeAsync(499);
+    // At 2× the next word starts after half a second of wall time, less a little slack.
+    await vi.advanceTimersByTimeAsync(469);
     expect(heard).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1);
     expect(heard).toEqual([
       { start: 0, end: 3 },
       { start: 4, end: 7 },
     ]);
+    // A seek that lands a few milliseconds short of a word, as MP3 seeks do, is on that word.
+    seconds = 0.5;
+    provider.refresh();
+    seconds = 0.98;
+    provider.refresh();
+    expect(heard.at(-1)).toEqual({ start: 4, end: 7 });
     provider.stop();
 
     seconds = 2.5;
