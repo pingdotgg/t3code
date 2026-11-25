@@ -1022,7 +1022,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     // Read on a schedule, so a device missing from the listing fails instead of relisting.
     const host = yield* resolveHost(input.hostId);
     const { state } = yield* SynchronizedRef.get(stateRef);
-    const device = findDevice(state, host.id, input.deviceId);
+    // A refresh can miss a running emulator while its session, and its stream, stay open.
+    const session = state.sessions.find(
+      (entry) => entry.hostId === host.id && entry.deviceId === input.deviceId,
+    );
+    const device =
+      findDevice(state, host.id, input.deviceId) ??
+      (session ? { id: session.deviceId, platform: session.platform, physical: false } : undefined);
     if (!device)
       return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
     const ready = yield* readiness(host.id);

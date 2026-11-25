@@ -845,6 +845,25 @@ describe("Android WebRTC device streams", () => {
     fixture.client.stop();
   });
 
+  it("drops a crop from before a restart when the viewport stream never connects", async () => {
+    const fixture = setup();
+    const { present, pushViewport, viewportSources } = fixture;
+    let video = await streamFrame(fixture, 540, 1200);
+    pushViewport(letterboxed);
+    video.callback?.();
+    fixture.client.stop();
+    video = await streamFrame(fixture, 540, 1200);
+    for (const delay of [1_000, 2_000, 4_000, 0]) {
+      const source = viewportSources.at(-1)!;
+      source.readyState = 2;
+      source.onerror?.();
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    video.callback?.();
+    expect(present).toHaveBeenLastCalledWith(video, 540, 1200);
+    fixture.client.stop();
+  });
+
   it("renews access only when a viewport stream that had connected is refused twice", async () => {
     const fixture = setup();
     const { events, viewportSources } = fixture;

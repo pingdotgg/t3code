@@ -651,6 +651,34 @@ describe("device setup consent", () => {
     }),
   );
 
+  it.effect(
+    "reads the viewport of an open emulator that a refresh missed, not of unknown ones",
+    () =>
+      Effect.gen(function* () {
+        const { service, endDevice } = yield* fixture();
+        yield* service.configure({ enabled: true });
+        const session = yield* service.open({
+          threadId: ThreadId.make("thread-1"),
+          deviceId: "Pixel_API_35",
+          platform: "android",
+        });
+        endDevice();
+        const listed = yield* service.list;
+        expect(listed.sessions.map((entry) => entry.deviceId)).toContain(session.deviceId);
+        expect(listed.devices.map((device) => device.id)).not.toContain(session.deviceId);
+        const open = yield* service
+          .displayViewport({ deviceId: DeviceId.make(session.deviceId) })
+          .pipe(Effect.result);
+        expect(open._tag === "Failure" ? open.failure._tag : "Success").not.toBe(
+          "DeviceNotFoundError",
+        );
+        const unknown = yield* service
+          .displayViewport({ deviceId: DeviceId.make("emulator-5560") })
+          .pipe(Effect.result);
+        expect(unknown._tag === "Failure" && unknown.failure._tag).toBe("DeviceNotFoundError");
+      }),
+  );
+
   it.effect("blocks only emulator video until ffmpeg is usable, then allows retry", () =>
     Effect.gen(function* () {
       const { service, requests, devices, encoderResult } = yield* fixture();

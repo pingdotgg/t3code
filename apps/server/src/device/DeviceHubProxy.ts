@@ -279,15 +279,16 @@ const handler = Effect.gen(function* () {
   }
   if (hubPath === "/t3/display-viewport") {
     if (!requestedDevice) return HttpServerResponse.text("Bad Request", { status: 400 });
-    // Once the stream starts, a device that is not listed could only fail every read unseen.
-    const listed = yield* devices
-      .locateDevice({ hostId: ready.hostId, deviceId: requestedDevice })
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isNone(listed)) return HttpServerResponse.text("Not Found", { status: 404 });
+    const read = devices.displayViewport({ hostId: ready.hostId, deviceId: requestedDevice });
+    // Once the stream starts, an unknown device could only fail every read unseen.
+    const unknown = yield* read.pipe(
+      Effect.as(false),
+      Effect.catchTags({ DeviceNotFoundError: () => Effect.succeed(true) }),
+      Effect.orElseSucceed(() => false),
+    );
+    if (unknown) return HttpServerResponse.text("Not Found", { status: 404 });
     // Pushing the viewport keeps working after the media ticket expires, like the video socket.
-    const viewports = displayViewportUpdates(
-      devices.displayViewport({ hostId: ready.hostId, deviceId: requestedDevice }),
-    ).pipe(Stream.interruptWhen(invalidated));
+    const viewports = displayViewportUpdates(read).pipe(Stream.interruptWhen(invalidated));
     return eventStreamResponse(viewports, (viewport) => encodeViewportEvent({ viewport }));
   }
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.

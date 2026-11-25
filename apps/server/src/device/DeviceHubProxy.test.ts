@@ -3,12 +3,12 @@ import {
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   AuthSessionId,
+  DeviceNotFoundError,
   LOCAL_DEVICE_HOST_ID,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
@@ -91,29 +91,23 @@ const fixture = (
               helpers: { serveSimAxSettings: null, serveSimCli: null },
               ...(upstream ? { upstream } : {}),
             }),
-          locateDevice: (input) =>
-            Effect.succeed(
-              input.deviceId === "missing"
-                ? Option.none()
-                : Option.some({
-                    hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID,
-                    id: input.deviceId,
-                    platform: "android" as const,
-                    name: "Pixel",
-                    version: "Android 14.0",
-                    booted: true,
-                    physical: false,
-                  }),
-            ),
           displayViewport: (input) =>
-            Effect.sync(() => {
+            Effect.suspend(() => {
               viewports.push(input);
-              return {
+              if (input.deviceId === "missing") {
+                return Effect.fail(
+                  new DeviceNotFoundError({
+                    hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID,
+                    deviceId: input.deviceId,
+                  }),
+                );
+              }
+              return Effect.succeed({
                 width: 1080,
                 height: 2400,
                 content: { x: 72, y: 0, width: 936, height: 2400 },
                 touch: { x: 0, y: 0, width: 0.8, height: 0.9 },
-              };
+              });
             }),
           screenshot: (input) =>
             Effect.sync(() => {
@@ -370,13 +364,13 @@ describe("device hub proxy", () => {
     },
   );
 
-  it("refuses the viewport stream for a device that is not listed", async () => {
+  it("refuses the viewport stream for a device that is not known", async () => {
     const { handler, requests, viewports } = fixture([AuthOrchestrationReadScope]);
     const response = await handler(
       new Request("http://t3.test/api/device-hub/t3/display-viewport?device=missing"),
     );
     expect(response.status).toBe(404);
-    expect(viewports).toEqual([]);
+    expect(viewports).toEqual([{ hostId: LOCAL_DEVICE_HOST_ID, deviceId: "missing" }]);
     expect(requests).toEqual([]);
   });
 
@@ -406,7 +400,7 @@ describe("device hub proxy", () => {
       },
     });
     expect(requests).toEqual([]);
-    expect(viewports).toEqual([{ hostId: "lab", deviceId: "emulator-5554" }]);
+    expect(viewports[0]).toEqual({ hostId: "lab", deviceId: "emulator-5554" });
   });
 });
 

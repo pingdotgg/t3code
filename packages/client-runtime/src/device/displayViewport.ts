@@ -146,7 +146,12 @@ export function watchDisplayViewport(options: {
       if (connected) return options.onRefused();
       failedAttempts += 1;
       if (failedAttempts < FIRST_CONNECTION_ATTEMPTS)
-        reconnect(RECONNECT_DELAY_MS * 2 ** (failedAttempts - 1));
+        return reconnect(RECONNECT_DELAY_MS * 2 ** (failedAttempts - 1));
+      // Out of attempts: a crop kept from before this watch would no longer be followed.
+      if (current !== null) {
+        current = null;
+        options.onChange(null);
+      }
     };
     next.onmessage = (event: MessageEvent<string>) => {
       let payload: unknown;
