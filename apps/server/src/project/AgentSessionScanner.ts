@@ -615,16 +615,14 @@ function parseAgentSessionRecords(
   let conversationMessageCount = 0;
   const retainMessage = (
     message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
+    titleText = message.text,
   ) => {
     if (firstUserMessage === undefined && message.role === "user") {
       firstUserMessage = message;
     }
     if (derivedTitle === undefined && message.role === "user") {
-      if (input.source === "claudeAgent") {
-        bareCommandTitle ??= deriveTitle(input.source, message.text);
-      } else {
-        derivedTitle = deriveTitle(input.source, message.text);
-      }
+      derivedTitle = deriveTitle(input.source, titleText);
+      bareCommandTitle ??= deriveTitle(input.source, message.text);
     }
     hasAssistantMessage ||= message.role === "assistant";
     conversationMessageCount += 1;
@@ -666,19 +664,22 @@ function parseAgentSessionRecords(
     if (input.source === "claudeAgent") {
       if (isHiddenClaudeRecord(record)) continue;
       if (record.type !== "user" && record.type !== "assistant") continue;
-      const { text } = claudeVisibleText(record);
+      const { text, titleText } = claudeVisibleText(record);
       if (text.length === 0) continue;
       if (record.type === "assistant") {
         if (record.message?.model?.trim() === CLAUDE_SYNTHETIC_MODEL)
           hasClaudeSyntheticReply = true;
         else hasClaudeModelReply = true;
       }
-      retainMessage({
-        role: record.type,
-        text,
-        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
-        codexResponseUser: false,
-      });
+      retainMessage(
+        {
+          role: record.type,
+          text,
+          createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
+          codexResponseUser: false,
+        },
+        titleText,
+      );
       continue;
     }
 
