@@ -848,7 +848,7 @@ export function workflowStepReferences(
 
 /** A step's time in one shape down a column: 0.3s, 9.7s, 12s, then minutes. */
 export function workflowStepTime(ms: number): string {
-  if (ms < 10_000 && ms % 1000 !== 0) return `${(Math.max(ms, 100) / 1000).toFixed(1)}s`;
+  if (ms < 9_950 && ms % 1000 !== 0) return `${(Math.max(ms, 100) / 1000).toFixed(1)}s`;
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
   return formatDuration(ms);
