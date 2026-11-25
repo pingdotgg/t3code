@@ -4339,6 +4339,21 @@
     },
     " hat ihre Seite verlassen und wurde gestoppt"
   ],
+  "796b81c4875c4feb": [
+    "Die App ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " benötigt einen neueren ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    "-Server in dieser Umgebung. Aktualisiere den Server, um sie zu nutzen."
+  ],
   "5ef18e4d39b398bf": [
     "Die App ",
     {
@@ -4901,6 +4916,7 @@
   "306a6f95ad9d52f7": "Nicht gesendet",
   "11276ab6c58b7a25": "Öffnet den Entwurf im Eingabefeld für neue Aufgaben. Nach links wischen zum Verwerfen.",
   "99950f3a28d425fa": "Wird gesendet, sobald die Umgebung wieder verbunden ist. Öffnet die Aufgabe zum Bearbeiten. Nach links wischen zum Löschen.",
+  "d71048f4fb9cf44a": "Wartet auf Synchronisierung",
   "0a260c7744afd0be": "Wartet",
   "ad78fae7d373cf21": "Arbeitet",
   "be451f475c514b37": "Aufgeweckt-Hinweis schließen",

@@ -3802,6 +3802,21 @@
     },
     " saiu da página e foi interrompido"
   ],
+  "796b81c4875c4feb": [
+    "O app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " precisa de um servidor ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " mais recente neste ambiente. Atualize o servidor para usá-lo."
+  ],
   "5ef18e4d39b398bf": [
     "Não foi possível carregar o app ",
     {
@@ -12074,11 +12089,14 @@
   "37ffec8201f153c1": "Falhou",
   "984b361806ce8d25": "Despertou",
   "c6e8abc00ae470d2": "Pronta",
+  "353b08f4363dbb2c": "Pendente",
   "f31a95961de19433": "Issue {key}: {title}, {state}",
   "2dd9d295c882ef65": "{count, plural, one {{count} issue vinculada} other {{count} issues vinculadas}}",
   "8cf699ae75fd8067": "Fixadas",
   "be451f475c514b37": "Dispensar notificação de despertar",
   "e9ced65134f2f36c": "Despertar thread agora",
+  "374dac09151d4578": "Pendente",
+  "a8f30f631e2b010e": "Aguardando sincronização com o ambiente",
   "aca5896600bf173e": "Você está com outro branch em checkout no momento.",
   "f665b5be60d8c144": [
     "Transferida de ",
@@ -12260,6 +12278,12 @@
   "8bcab2ef61de6518": "Limite de $0",
   "a16b48709357a5a7": "Gerenciar uso",
   "a00e74aaa421c524": "restante",
+  "0e34c3076c08feb2": [
+    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    " ",
+    "em ",
+    { "i": 3, "k": "_gt_value_3", "v": "v" }
+  ],
   "8bd6f07136317c8f": "Nenhum provedor nos ambientes selecionados informa limites de assinatura.",
   "87f5d0c61b335f38": "Veja o uso no ChatGPT com sua conta conectada.",
   "5b4c71b36b979e80": "Custo",

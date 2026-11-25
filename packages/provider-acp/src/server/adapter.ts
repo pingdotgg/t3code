@@ -483,7 +483,8 @@ export interface AcpAdapterV2Flavor {
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
     modelState: EffectAcpSchema.SessionModelState | null | undefined,
-  ) => Effect.Effect<void>;
+    options?: { readonly lastCatalogKey?: string | null },
+  ) => Effect.Effect<string | null | void>;
   readonly onUrlElicitation?: (input: {
     readonly elicitationId: string;
     readonly url: string;
@@ -2360,6 +2361,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.make<AcpSessionRuntime.AcpSessionRuntimeStartResult | null>(null);
         const installedInitializeResult =
           yield* Ref.make<EffectAcpSchema.InitializeResponse | null>(null);
+        const lastPublishedCatalogKey = yield* Ref.make<{
+          readonly epoch: number;
+          readonly key: string | null;
+        }>({ epoch: 0, key: null });
+        const sessionConfigurationPublishPermit = yield* Semaphore.make(1);
+        const resetPublishedCatalogKey = Ref.update(lastPublishedCatalogKey, (current) => ({
+          epoch: current.epoch + 1,
+          key: null,
+        }));
+        // Per-update session config publication shares the enclosing session update/config span.
+        const publishSessionConfiguration = Effect.fnUntraced(function* (
+          targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+        ) {
+          const onSessionConfigurationUpdate = flavor.onSessionConfigurationUpdate;
+          if (onSessionConfigurationUpdate === undefined) return;
+          yield* sessionConfigurationPublishPermit.withPermit(
+            Effect.gen(function* () {
+              const { epoch, key } = yield* Ref.get(lastPublishedCatalogKey);
+              const configOptions = yield* targetRuntime.getConfigOptions;
+              const modeState = yield* targetRuntime.getModeState;
+              const modelState = (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models;
+              const nextKey = yield* onSessionConfigurationUpdate(
+                configOptions,
+                modeState,
+                modelState,
+                { lastCatalogKey: key },
+              );
+              if (nextKey === null || typeof nextKey === "string") {
+                yield* Ref.update(lastPublishedCatalogKey, (current) =>
+                  current.epoch === epoch ? { epoch, key: nextKey } : current,
+                );
+              }
+            }),
+          );
+        });
         const setActiveSessionSetup = Effect.fnUntraced(function* (
           setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
         ) {
@@ -2380,6 +2416,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           nativeChildren.clear();
           yield* Ref.set(activeSessionSetup, setup);
           yield* Ref.set(installedInitializeResult, setup.initializeResult);
+          yield* resetPublishedCatalogKey;
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
@@ -7305,13 +7342,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 notification.update.sessionUpdate === "config_option_update" ||
                 notification.update.sessionUpdate === "current_mode_update"
               ) {
-                yield* (
-                  flavor.onSessionConfigurationUpdate?.(
-                    yield* runtime.getConfigOptions,
-                    yield* runtime.getModeState,
-                    (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-                  ) ?? Effect.void
-                );
+                yield* publishSessionConfiguration(runtime);
               }
               const normalized = flavor.normalizeSessionUpdate?.(notification) ?? notification;
               // Turn projection misses compactions that finish while idle or after settlement.
@@ -7427,6 +7458,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           }
           yield* Ref.set(activeSessionSetup, result);
+          yield* resetPublishedCatalogKey;
           // The selection was configured against the provisional setup's
           // options, so the next turn re-applies it against the real ones.
           yield* Ref.set(activeSelection, null);
@@ -7441,13 +7473,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeBuildConfigurationBySessionId.delete(result.sessionId);
           }
           yield* refreshModelSwitchCapability;
-          yield* (
-            flavor.onSessionConfigurationUpdate?.(
-              yield* targetRuntime.getConfigOptions,
-              yield* targetRuntime.getModeState,
-              result.sessionSetupResult.models,
-            ) ?? Effect.void
-          );
+          yield* publishSessionConfiguration(targetRuntime);
         });
 
         const wireAcpRuntimeHandlers = Effect.fnUntraced(function* (
@@ -8644,13 +8670,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* validateModelSelection(modelSelection);
           yield* Ref.set(configuredModes, yield* readModes);
           yield* Ref.set(configuredRuntimeMode, runtimePolicy.runtimeMode);
-          yield* (
-            flavor.onSessionConfigurationUpdate?.(
-              yield* runtime.getConfigOptions,
-              yield* runtime.getModeState,
-              (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-            ) ?? Effect.void
-          );
+          yield* publishSessionConfiguration(runtime);
         });
 
         yield* configureSession(
@@ -9426,6 +9446,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeMcpAuthorization, undefined);
           yield* Ref.set(activeSessionSetup, null);
+          yield* resetPublishedCatalogKey;
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
           // A failed prompt may have been dropped, so the fresh runtime sends T3's notes again.

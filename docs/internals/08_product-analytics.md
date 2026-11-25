@@ -30,14 +30,15 @@ an authenticated connection does not count as product use.
 
 - Payloads stay strictly to product metadata, closed contract enums, and normalized measurements:
   never attach prompts, file paths, credentials, raw provider payloads, device names, conversation
-  IDs, or user-named provider instance IDs. Model IDs are reported as the provider used them,
-  including custom models; known aliases and routed IDs map to one catalog slug, and a model
-  that is a file path reports only its file name.
+  IDs, or user-named provider instance IDs. Models in the bundled manifest or a vendor's own
+  model list report their catalog slug, with aliases and routed IDs mapped to it. Any other model
+  ID can name a user, a deployment, or a local file, so it reports only `custom:<driver>`.
 - The sole exception is opt-in `agent.feedback`, which
   [`FeedbackService`](../../apps/server/src/feedback/FeedbackService.ts) scrubs of paths, private
   values, and secret-shaped strings, and only attaches bounded conversation traces when the user
-  explicitly previews and sends them. Each report is sent under its own id without `installId`, so
-  it links to no install; reports sent without a preview carry only their categories.
+  explicitly previews and sends them. Each report is sent under its own id without `installId` or
+  host properties, in a request of its own, so it links to no install or other report; reports sent
+  without a preview carry only their categories.
 - Delivery ([`AnalyticsService.ts`](../../apps/server/src/telemetry/AnalyticsService.ts)) attaches a
   UUID per event, backs off on failure, and drops batches after bounded retries so a stuck batch
   cannot loop forever.
