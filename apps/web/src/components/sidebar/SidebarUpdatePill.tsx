@@ -345,6 +345,13 @@ function SidebarUpdateControl() {
     const appCheck = bridge
       .checkForUpdate()
       .then((result) => {
+        // Fork: say so when a manual check finds nothing, instead of silently stopping.
+        if (result.checked && result.state.status === "up-to-date") {
+          toastManager.add(
+            stackedThreadToast({ type: "success", title: gt("You're already up to date.") }),
+          );
+          return;
+        }
         if (result.checked) return;
         toastManager.add(
           stackedThreadToast({
