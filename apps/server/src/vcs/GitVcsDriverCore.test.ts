@@ -726,13 +726,20 @@ it.effect("a worktree launch discovers each repository's common directory once",
       assert.isNotNull(remote);
       const base = yield* driver.fetchWorktreeBaseCommit({ cwd, refName: initialBranch, remote });
       assert.isNotNull(base);
-      yield* driver.createWorktree({
-        cwd,
-        path: worktreePath,
-        refName: base!.commitSha,
-        newRefName: "t3code/launch",
-        baseRefName: `refs/remotes/${base!.remoteRefName}`,
-      });
+      yield* driver.createWorktree(
+        {
+          cwd,
+          path: worktreePath,
+          refName: base!.commitSha,
+          newRefName: "t3code/launch",
+          baseRefName: `refs/remotes/${base!.remoteRefName}`,
+        },
+        { baseBranchName: remote!.branchName },
+      );
+      assert.equal(
+        yield* git(cwd, ["config", "branch.t3code/launch.t3-merge-base"]),
+        initialBranch,
+      );
       yield* driver.renameBranch({
         cwd: worktreePath,
         oldBranch: "t3code/launch",
@@ -741,6 +748,7 @@ it.effect("a worktree launch discovers each repository's common directory once",
 
       // One lookup for the project and one for the new worktree.
       assert.isAtMost(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 2);
+      assert.equal(spawnedArgs.filter((args) => args.at(-1) === "remote").length, 1);
     }),
   ).pipe(Effect.provide(layerTest)),
 );

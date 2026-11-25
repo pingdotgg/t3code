@@ -6009,7 +6009,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       [
         readConfigValue(input.cwd, "checkout.workers"),
         input.newRefName && input.baseRefName
-          ? resolveBranchBase(input.cwd, input.baseRefName)
+          ? options?.baseBranchName === undefined
+            ? resolveBranchBase(input.cwd, input.baseRefName)
+            : Effect.succeed({ baseRef: input.baseRefName, branchName: options.baseBranchName })
           : Effect.succeed(null),
       ],
       { concurrency: "unbounded" },
