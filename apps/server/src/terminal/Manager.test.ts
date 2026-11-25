@@ -3064,7 +3064,6 @@ it.layer(
         ["win32", "C:/Program Files/Git/bin/bash.exe", ["--login", "-i"]],
         ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
         ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
-        ["darwin", "/opt/team\\zsh", undefined],
         ["linux", "/opt/team\\zsh", undefined],
         ["win32", "pwsh.exe", POWERSHELL_ARGS],
       ] as const) {
