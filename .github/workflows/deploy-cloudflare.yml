@@ -4,6 +4,17 @@ name: Deploy Cloudflare (CDN + Website)
 # (tix.penglei.dev) to Cloudflare Workers using CLOUDFLARE_API_TOKEN and
 # CLOUDFLARE_ACCOUNT_ID repository secrets.
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/marketing/**"
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
+      - "infra/cdn-worker/**"
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       target:
@@ -24,9 +35,59 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  detect-changes:
+    name: Detect deploy targets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      cdn: ${{ steps.targets.outputs.cdn }}
+      site: ${{ steps.targets.outputs.site }}
+    steps:
+      - name: Determine targets
+        id: targets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TARGET: ${{ inputs.target }}
+          REPO: ${{ github.repository }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          cdn=false
+          site=false
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$INPUT_TARGET" = "both" ] || [ "$INPUT_TARGET" = "cdn" ] || [ -z "$INPUT_TARGET" ]; then
+              cdn=true
+            fi
+            if [ "$INPUT_TARGET" = "both" ] || [ "$INPUT_TARGET" = "site" ] || [ -z "$INPUT_TARGET" ]; then
+              site=true
+            fi
+          elif [ "$EVENT_NAME" = "release" ]; then
+            site=true
+          else
+            if files=$(gh api "repos/${REPO}/compare/${BEFORE_SHA}...${AFTER_SHA}" --jq '.files[].filename' 2>/dev/null); then
+              while IFS= read -r file; do
+                case "$file" in
+                  infra/cdn-worker/*)
+                    cdn=true
+                    ;;
+                  apps/marketing/*|scripts/install.sh|scripts/install.ps1)
+                    site=true
+                    ;;
+                esac
+              done <<< "$files"
+            else
+              cdn=true
+              site=true
+            fi
+          fi
+          echo "cdn=$cdn" >> "$GITHUB_OUTPUT"
+          echo "site=$site" >> "$GITHUB_OUTPUT"
+
   deploy-cdn:
     name: Deploy CDN (cdn.penglei.dev)
-    if: inputs.target == 'both' || inputs.target == 'cdn' || inputs.target == ''
+    needs: detect-changes
+    if: needs.detect-changes.outputs.cdn == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -47,7 +108,8 @@ jobs:
 
   deploy-site:
     name: Deploy Website (tix.penglei.dev)
-    if: inputs.target == 'both' || inputs.target == 'site' || inputs.target == ''
+    needs: detect-changes
+    if: needs.detect-changes.outputs.site == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
