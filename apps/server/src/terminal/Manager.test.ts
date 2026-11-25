@@ -3305,6 +3305,45 @@ it.layer(
     }),
   );
 
+  it.effect(
+    "keeps a title update hidden when the history limit cuts through the previous title",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        const input = openInput();
+        const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
+        yield* live;
+        const process = ptyAdapter.processes[0]!;
+        // UTF-8 exceeds the wire history budget while the string fits the parser's held text limit.
+        process.emitData("\u001b]0;");
+        yield* live;
+        const titleChunk = "界".repeat(8_192);
+        for (let index = 0; index < 24; index += 1) {
+          process.emitData(titleChunk);
+          yield* live;
+        }
+        // The second OSC's escape ends the first title without a separate terminator.
+        process.emitData("\u001b]0;Build ");
+        yield* live;
+
+        const joining = yield* Stream.toPull(
+          manager.attachOutputStream(
+            { ...input, maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES },
+            "joining",
+          ),
+        );
+        const [event] = yield* joining;
+        if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
+        process.emitData("progress\u0007ready\r\n");
+        const [output] = yield* joining;
+        if (output?.type !== "output") throw new Error("Expected live terminal output");
+
+        const state = terminalSequenceStateAfter(0, event.snapshot.history);
+        const firstVisible = terminalSequenceEnd(state, output.data);
+        expect(output.data.slice(firstVisible)).toBe("ready\r\n");
+      }),
+  );
+
   it.effect("does not replay in-flight output already included in an observer snapshot", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
