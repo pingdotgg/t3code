@@ -268,7 +268,7 @@ export class WorkflowStore extends Context.Service<
     readonly waitsClaimed: (runId: string) => Effect.Effect<ReadonlyArray<WaitRow>>;
     /**
      * Hands one buffered signal to one wait, or to none: the claim and the removal happen
-     * together. `gone` when another wait took the signal, `claimed` when the wait was already woken.
+     * together. `gone` when the signal is expired or absent, `claimed` when the wait was already woken.
      */
     readonly mailDeliver: (
       signalId: string,
@@ -972,10 +972,11 @@ export const make = Effect.gen(function* () {
       `.pipe(Effect.orDie);
     }),
     mailDeliver: Effect.fn("WorkflowStore.mailDeliver")(function* (signalId, runId, name, woke) {
-      const at = yield* now;
+      let at = "";
       const outcome = yield* sql
         .withTransaction(
           Effect.gen(function* () {
+            at = yield* now;
             // A kept copy of an id that already woke a wait straight is spent: it is dropped, so
             // it wakes no second wait and is not offered again.
             const seen = yield* sql`SELECT 1 FROM workflow_signals WHERE signal_id = ${signalId}`;
@@ -990,7 +991,8 @@ export const make = Effect.gen(function* () {
             `;
             if (claimed.length === 0) return "claimed" as const;
             const taken = yield* sql<{ expires_at: string }>`
-              DELETE FROM workflow_mail WHERE signal_id = ${signalId} RETURNING expires_at
+              DELETE FROM workflow_mail
+              WHERE signal_id = ${signalId} AND expires_at > ${at} RETURNING expires_at
             `;
             // Failing undoes the claim: the wait stays open for a signal that is still there.
             const copy = taken[0];
@@ -1288,6 +1290,7 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.orDie);
     }),
     mailNext: Effect.fn("WorkflowStore.mailNext")(function* (addresses, passed = new Set()) {
+      const at = yield* now;
       for (const address of addresses) {
         const rows = yield* sql<{
           signal_id: string;
@@ -1295,7 +1298,7 @@ export const make = Effect.gen(function* () {
           sender_json: string | null;
         }>`
           SELECT signal_id, value_json, sender_json FROM workflow_mail
-          WHERE address = ${mailAddress(address)} ORDER BY rowid
+          WHERE address = ${mailAddress(address)} AND expires_at > ${at} ORDER BY rowid
         `.pipe(Effect.orDie);
         const mail = rows.find((row) => !passed.has(row.signal_id));
         if (mail !== undefined) {
