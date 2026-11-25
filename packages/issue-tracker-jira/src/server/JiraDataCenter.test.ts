@@ -118,6 +118,7 @@ describe("JiraIssueTracker on Data Center", () => {
   it.effect("vets a token against the server it names, sending it as a bearer", () =>
     Effect.gen(function* () {
       const { tracker, requests } = fakeDataCenter({
+        "GET /serverInfo": () => ({ version: "8.21.0", versionNumbers: [8, 21, 0] }),
         "GET /myself": () => user("julius", "Julius"),
         "GET /project": () => [
           { key: "PROJ", name: "Project" },
@@ -136,17 +137,32 @@ describe("JiraIssueTracker on Data Center", () => {
           { key: "OPS", name: "Operations" },
         ],
       });
-      expect(requests.map((request) => request.route).toSorted()).toEqual([
-        "GET /myself",
-        "GET /project",
-      ]);
+      expect(
+        Object.fromEntries(requests.map((request) => [request.route, request.authorization])),
+      ).toEqual({
+        "GET /serverInfo": undefined,
+        "GET /myself": "Bearer pat_new",
+        "GET /project": "Bearer pat_new",
+      });
       expect(new Set(requests.map((request) => request.origin))).toEqual(
         new Set(["https://other.corp:8443/jira"]),
       );
-      expect(requests.map((request) => request.authorization)).toEqual([
-        "Bearer pat_new",
-        "Bearer pat_new",
-      ]);
+    }),
+  );
+
+  it.effect("names the version when a server is too old for access tokens", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeDataCenter({
+        "GET /serverInfo": () => ({ version: "8.13.5", versionNumbers: [8, 13, 5] }),
+        "GET /myself": () => new Response(null, { status: 401 }),
+        "GET /project": () => [],
+      });
+      const api = yield* tracker;
+      const refused = yield* api.probeCredential(STORED).pipe(Effect.flip);
+      expect(refused.detail).toBe(
+        "Jira 8.13.5 has no personal access tokens. T3 Code needs Jira Data Center 8.14 or later.",
+      );
+      expect(requests.map((request) => request.route)).not.toContain("GET /myself");
     }),
   );
 

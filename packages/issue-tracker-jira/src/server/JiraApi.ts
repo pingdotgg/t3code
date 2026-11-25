@@ -160,6 +160,17 @@ const ErrorBody = Schema.fromJsonString(
 );
 const decodeErrorBody = Schema.decodeUnknownOption(ErrorBody);
 
+const ServerInfo = Schema.Struct({
+  version: Schema.optional(Schema.String),
+  versionNumbers: Schema.Array(Schema.Number),
+});
+
+/** Personal access tokens arrived in Jira 8.14. */
+const MIN_DATA_CENTER: readonly [number, number] = [8, 14];
+
+const belowMinimum = ([major = 0, minor = 0]: ReadonlyArray<number>) =>
+  major < MIN_DATA_CENTER[0] || (major === MIN_DATA_CENTER[0] && minor < MIN_DATA_CENTER[1]);
+
 type JiraSite =
   | {
       readonly deployment: "cloud";
@@ -459,6 +470,8 @@ export const make = Effect.gen(function* () {
       readonly query?: Query;
       readonly body?: unknown;
       readonly credential?: IssueTrackerCredential | undefined;
+      /** Sent without the credential, for what Jira answers anyone. */
+      readonly anonymous?: boolean;
     },
   ): Effect.fn.Return<S["Type"], IssueTrackerError, S["DecodingServices"]> {
     yield* Effect.annotateCurrentSpan({ "jira.operation": operation });
@@ -475,9 +488,11 @@ export const make = Effect.gen(function* () {
       },
     ).pipe(
       HttpClientRequest.acceptJson,
-      site.deployment === "cloud"
-        ? HttpClientRequest.basicAuth(site.email, site.token)
-        : HttpClientRequest.bearerToken(site.token),
+      request.anonymous === true
+        ? (unsigned) => unsigned
+        : site.deployment === "cloud"
+          ? HttpClientRequest.basicAuth(site.email, site.token)
+          : HttpClientRequest.bearerToken(site.token),
     );
     const unreachable = (cause: unknown) =>
       fail(operation, "failed", "Jira could not be reached.", { cause });
@@ -535,8 +550,39 @@ export const make = Effect.gen(function* () {
     return { items, truncated: true };
   });
 
-  const myself: JiraApi["Service"]["myself"] = (credential) =>
+  const me = (credential: IssueTrackerCredential | undefined) =>
     send("myself", User, { method: "GET", path: "/myself", credential });
+
+  // A server too old for access tokens rejects one with a bare 401, so connecting names the version.
+  // Jira answers `serverInfo` without sign-in; when a proxy hides it, `/myself` decides.
+  const supportedServer = (credential: IssueTrackerCredential) =>
+    send("myself", ServerInfo, {
+      method: "GET",
+      path: "/serverInfo",
+      credential,
+      anonymous: true,
+    }).pipe(
+      Effect.option,
+      Effect.flatMap((info) =>
+        Option.isSome(info) && belowMinimum(info.value.versionNumbers)
+          ? Effect.fail(
+              fail(
+                "myself",
+                "failed",
+                `Jira ${info.value.version ?? info.value.versionNumbers.join(".")} has no personal access tokens. T3 Code needs Jira Data Center 8.14 or later.`,
+              ),
+            )
+          : Effect.void,
+      ),
+    );
+
+  const myself: JiraApi["Service"]["myself"] = (credential) =>
+    credential === undefined
+      ? me(undefined)
+      : byDeployment("myself", credential, {
+          cloud: () => me(credential),
+          datacenter: () => supportedServer(credential).pipe(Effect.andThen(me(credential))),
+        });
 
   const projects: JiraApi["Service"]["projects"] = (credential) =>
     byDeployment("projects", credential, {
