@@ -1,4 +1,4 @@
-import type { DesktopPreviewColorScheme } from "@t3tools/contracts";
+import type { BrowserImportSource, DesktopPreviewColorScheme } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
 
@@ -42,6 +42,16 @@ export interface PreviewMoreMenuActions {
   readonly find?: () => void;
 }
 
+export interface PreviewMoreMenuCookieImport {
+  readonly sources: ReadonlyArray<BrowserImportSource> | null;
+  readonly importableSources: ReadonlyArray<BrowserImportSource>;
+  readonly denial?: string | undefined;
+  readonly canImport: boolean;
+  readonly environmentConnected: boolean;
+  readonly onLoadSources: () => void;
+  readonly onSelectSource: (source: BrowserImportSource) => void;
+}
+
 interface Props {
   enabled: boolean;
   actions: PreviewMoreMenuActions;
@@ -53,6 +63,7 @@ interface Props {
   profileName: string | undefined;
   findShortcutLabel?: string | null;
   move?: { readonly label: string; readonly onMove: () => void };
+  cookieImport?: PreviewMoreMenuCookieImport;
 }
 
 const MenuTriggerButton = () => {
@@ -93,13 +104,14 @@ export function PreviewMoreMenu({
   profileName,
   findShortcutLabel,
   move,
+  cookieImport,
 }: Props) {
   const gt = useGT();
   const m = useMessages();
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
   const disabled = !enabled;
   return (
-    <Menu>
+    <Menu onOpenChange={(open) => open && cookieImport?.onLoadSources()}>
       <MenuTriggerButton />
       <MenuPopup align="end" sideOffset={6}>
         {actions.find ? (
@@ -200,6 +212,43 @@ export function PreviewMoreMenu({
                 </T>
               </span>
             </MenuGroupLabel>
+          ) : null}
+          {cookieImport ? (
+            <MenuSub>
+              <MenuSubTrigger>
+                <T>Import cookies from</T>
+              </MenuSubTrigger>
+              <MenuSubPopup>
+                {cookieImport.denial !== undefined ? (
+                  <MenuItem disabled>{cookieImport.denial}</MenuItem>
+                ) : cookieImport.sources === null ? (
+                  <MenuItem disabled>
+                    <T>Looking for browsers…</T>
+                  </MenuItem>
+                ) : cookieImport.importableSources.length === 0 ? (
+                  <MenuItem disabled>
+                    <T>No supported browsers found</T>
+                  </MenuItem>
+                ) : (
+                  <>
+                    {cookieImport.importableSources.map((source) => (
+                      <MenuItem
+                        key={source.id}
+                        disabled={!cookieImport.canImport}
+                        onClick={() => cookieImport.onSelectSource(source)}
+                      >
+                        {source.name}
+                      </MenuItem>
+                    ))}
+                    {!cookieImport.environmentConnected ? (
+                      <MenuItem disabled>
+                        <T>Connect to an environment to import cookies</T>
+                      </MenuItem>
+                    ) : null}
+                  </>
+                )}
+              </MenuSubPopup>
+            </MenuSub>
           ) : null}
           <MenuItem onClick={actions.clearCookies}>
             <T>Clear cookies</T>

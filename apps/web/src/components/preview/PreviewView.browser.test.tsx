@@ -1,11 +1,13 @@
 import {
   BUILT_IN_BROWSER_PROFILES,
+  DEFAULT_CLIENT_SETTINGS,
   DEFAULT_BROWSER_PROFILE_ID,
   DEFAULT_PREVIEW_APPEARANCE,
   DEFAULT_PREVIEW_ZOOM_FACTOR,
   EnvironmentId,
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
+  type BrowserImportSource,
 } from "@t3tools/contracts";
 import { type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -35,20 +37,35 @@ const mocks = vi.hoisted(() => ({
   idleDesktopOverlay: false,
   loading: false,
   nativeServerTab: false,
+  sessionProfileId: undefined as string | undefined,
   streamedServerTab: false,
   serverEpoch: null as string | null,
   servers: [] as PreviewableServer[],
   recordingTabIds: new Set<string>(),
   recordingRuntimeTabId: null as string | null,
   recordVisitForThread: vi.fn(),
+  listBrowserImportSources: vi.fn<() => Promise<ReadonlyArray<BrowserImportSource>>>(
+    async () => [],
+  ),
 }));
+
+const TEST_WORK_PROFILE = {
+  id: "profile-work",
+  name: "Work",
+  kind: "persistent" as const,
+};
+
+const TEST_CLIENT_SETTINGS = {
+  ...DEFAULT_CLIENT_SETTINGS,
+  browserProfiles: [TEST_WORK_PROFILE],
+};
 
 const STUB_BROWSER_DEFAULTS = {
   viewport: FILL_PREVIEW_VIEWPORT,
   zoomFactor: DEFAULT_PREVIEW_ZOOM_FACTOR,
   appearance: DEFAULT_PREVIEW_APPEARANCE,
   autoShowFloatingPreview: true,
-  profiles: BUILT_IN_BROWSER_PROFILES,
+  profiles: [...BUILT_IN_BROWSER_PROFILES, TEST_WORK_PROFILE],
   profileId: DEFAULT_BROWSER_PROFILE_ID,
 };
 
@@ -72,6 +89,7 @@ vi.mock(import("./previewBridge"), async (original) => ({
     resetZoom: vi.fn(async () => undefined),
     clearCookies: vi.fn(async () => undefined),
     clearCache: vi.fn(async () => undefined),
+    listBrowserImportSources: mocks.listBrowserImportSources,
     pictureInPicture: {
       open: mocks.openPictureInPicture,
       close: mocks.closePictureInPicture,
@@ -139,6 +157,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
               threadId: "thread-1",
               tabId: "tab-1",
               runtime: mocks.nativeServerTab || mocks.streamedServerTab ? "server" : "desktop",
+              ...(mocks.sessionProfileId ? { profileId: mocks.sessionProfileId } : {}),
               navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
               canGoBack: false,
               canGoForward: false,
@@ -151,7 +170,18 @@ vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
   useEnvironment: (() => ({ label: "WSL" })) as never,
   useEnvironmentHttpBaseUrl: () => "http://172.25.85.75:3773",
-  usePrimaryEnvironmentId: () => null,
+  usePrimaryEnvironmentId: () => EnvironmentId.make("environment-1"),
+  usePrimaryEnvironment: (() => ({
+    environmentId: EnvironmentId.make("environment-1"),
+    label: "This Mac",
+  })) as never,
+}));
+vi.mock(import("~/hooks/useSettings"), async (original) => ({
+  ...(await original()),
+  useClientSettingsHydrated: () => true,
+  getClientSettings: () => TEST_CLIENT_SETTINGS,
+  useClientSettings: ((selector?: (settings: typeof TEST_CLIENT_SETTINGS) => unknown) =>
+    selector ? selector(TEST_CLIENT_SETTINGS) : TEST_CLIENT_SETTINGS) as never,
 }));
 vi.mock(import("~/browser/browserRecording"), async (original) => ({
   ...(await original()),
@@ -237,6 +267,7 @@ function setup() {
   mocks.idleDesktopOverlay = false;
   mocks.loading = false;
   mocks.nativeServerTab = false;
+  mocks.sessionProfileId = undefined;
   mocks.streamedServerTab = false;
   mocks.serverEpoch = null;
   mocks.servers = [];
@@ -463,6 +494,29 @@ describe("PreviewView", () => {
     await expect.element(address).not.toHaveFocus();
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();
+  });
+
+  it("opens the cookie import wizard from the toolbar menu with the active profile preselected", async () => {
+    setup();
+    mocks.sessionProfileId = TEST_WORK_PROFILE.id;
+    mocks.listBrowserImportSources.mockResolvedValue([
+      {
+        id: "chrome",
+        name: "Chrome",
+        profiles: [{ directory: "Default", name: "Personal", cookieCount: 42 }],
+      },
+    ]);
+    await using _screen = await render(view());
+
+    await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
+    await vi.waitFor(() => expect(mocks.listBrowserImportSources).toHaveBeenCalledOnce());
+
+    await userEvent.click(page.getByRole("menuitem", { name: "Import cookies from" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Chrome" }));
+    await expect.element(page.getByRole("heading", { name: "Import from Chrome" })).toBeVisible();
+
+    const workProfileTile = page.getByRole("button", { name: /Work\s+Existing profile/i });
+    await expect.element(workProfileTile).toHaveAttribute("aria-pressed", "true");
   });
 
   it("does not reopen find when the user returns to a tab they left with find open", async () => {

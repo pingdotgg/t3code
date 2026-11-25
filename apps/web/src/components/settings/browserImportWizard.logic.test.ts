@@ -21,6 +21,25 @@ describe("wizard target selection", () => {
     });
   });
 
+  it("preselects the preferred existing profile when it is in the target list", () => {
+    const profiles = [
+      { id: "default", name: "Default" },
+      { id: "profile-work", name: "Work" },
+    ];
+
+    expect(initialTargetSelection(true, profiles, "profile-work")).toEqual({
+      kind: "existing",
+      profileId: "profile-work",
+    });
+    expect(initialTargetSelection(true, profiles, "incognito")).toEqual({
+      kind: "new",
+    });
+    expect(initialTargetSelection(false, profiles, "incognito")).toEqual({
+      kind: "existing",
+      profileId: "default",
+    });
+  });
+
   it("rejects an existing target that is no longer listed", () => {
     expect(
       resolveWizardTarget({ kind: "existing", profileId: "removed" }, "generated", [

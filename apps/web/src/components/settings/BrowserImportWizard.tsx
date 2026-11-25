@@ -47,6 +47,7 @@ interface BrowserImportWizardProps {
   readonly destinationEnvironmentName: string;
   readonly targetProfiles: ReadonlyArray<WizardTargetProfile>;
   readonly canCreateProfile: boolean;
+  readonly preferredTargetProfileId?: string | undefined;
   readonly onImport: (input: {
     readonly sourceProfileDirectory: string;
     readonly target: WizardTarget;
@@ -62,6 +63,7 @@ export function BrowserImportWizard({
   destinationEnvironmentName,
   targetProfiles,
   canCreateProfile,
+  preferredTargetProfileId,
   onImport,
   onRefreshSource,
   onOpenFullDiskAccessSettings,
@@ -75,7 +77,7 @@ export function BrowserImportWizard({
     () => initialSource.profiles[0]?.directory ?? "",
   );
   const [target, setTarget] = useState<WizardTargetSelection>(() =>
-    initialTargetSelection(canCreateProfile, targetProfiles),
+    initialTargetSelection(canCreateProfile, targetProfiles, preferredTargetProfileId),
   );
   const [targetError, setTargetError] = useState<string>();
   const newProfileId = useRef(`profile-${randomUUID()}`);
