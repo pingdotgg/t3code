@@ -1,11 +1,12 @@
-// The pure half of scripts/client-metrics.ts: the JSON it writes, its tables, how two compare, and
-// what a Chromium trace says about forced style and layout inside a click.
+// The pure half of scripts/client-metrics.ts: the JSON it writes, its tables, how two files
+// compare, and the noise floors A/A runs suggest.
 import * as Schema from "effect/Schema";
 
+import { CallSite, TraceStep } from "./client-metrics-trace.ts";
 import { bootstrapMedianDifference, MachineState, round } from "./server-metrics-report.ts";
 
-/** Every case the benchmark can switch to, in the order it visits them. */
-export const CASES = [
+/** Thread switches: each case is its own thread, switched to from a small hub thread. */
+export const SWITCH_CASES = [
   "short",
   "long",
   "working",
@@ -16,7 +17,36 @@ export const CASES = [
   "browser",
   "device",
 ] as const;
+/** Interactions inside one thread, each a few measured steps. */
+export const INTERACTION_CASES = [
+  "type-short",
+  "type-long",
+  "scroll-long",
+  "palette",
+  "pr-tabs",
+  "surfaces",
+  "terminal",
+  "settings",
+] as const;
+/** Every case the benchmark can run, in the order it runs them. */
+export const CASES = [...SWITCH_CASES, ...INTERACTION_CASES] as const;
+export type SwitchCase = (typeof SWITCH_CASES)[number];
+export type InteractionCase = (typeof INTERACTION_CASES)[number];
 export type Case = (typeof CASES)[number];
+export const isSwitchCase = (name: Case): name is SwitchCase =>
+  (SWITCH_CASES as ReadonlyArray<string>).includes(name);
+
+const Count = Schema.Struct({ name: Schema.String, count: Schema.Number });
+/** What React rendered during one step, from the render probe (`--renders`). */
+const Renders = Schema.Struct({
+  commits: Schema.Number,
+  /** Component renders, a bailed-out subtree not counted. */
+  renders: Schema.Number,
+  top: Schema.Array(Count),
+  /** `Component cause`: mount, state#<hook slot>, props:<changed keys>, parent-same-props<-Parent or context. */
+  causes: Schema.Array(Count),
+});
+export type Renders = typeof Renders.Type;
 
 const Switch = Schema.Struct({
   case: Schema.String,
@@ -30,17 +60,31 @@ const Switch = Schema.Struct({
   firstFrameContent: Schema.Boolean,
   /** Summed long-animation-frame duration in the 1.5 s after the click. */
   loafMs: Schema.Number,
+  renders: Schema.optional(Renders),
 });
 export type Switch = typeof Switch.Type;
 
-const Forced = Schema.Struct({
+const Step = Schema.Struct({
   case: Schema.String,
-  clickTaskMs: Schema.Number,
-  /** Style recalculation and layout a script forced inside the click's task. */
-  forcedStyleMs: Schema.Number,
-  forcedLayoutMs: Schema.Number,
+  step: Schema.String,
+  round: Schema.Number,
+  /** Input to next paint: the step's slowest Event Timing entry; null when under 16 ms or none. */
+  paintMs: Schema.NullOr(Schema.Number),
+  /** Summed long-animation-frame duration while the step was watched. */
+  loafMs: Schema.Number,
+  /** Share of 60 Hz frames the page missed while the step was watched. */
+  droppedPct: Schema.Number,
+  renders: Schema.optional(Renders),
 });
-export type Forced = typeof Forced.Type;
+export type Step = typeof Step.Type;
+
+/** DOM a panel case's surface holds once open: deterministic, so a cheap gate on panel weight. */
+const Panel = Schema.Struct({
+  case: Schema.String,
+  panelNodes: Schema.Number,
+  documentNodes: Schema.Number,
+});
+export type Panel = typeof Panel.Type;
 
 const Memory = Schema.Struct({
   label: Schema.String,
@@ -61,17 +105,30 @@ const Idle = Schema.Struct({
 });
 export type Idle = typeof Idle.Type;
 
+const SoakSample = Schema.Struct({
+  iteration: Schema.Number,
+  heapMB: Schema.Number,
+  domNodes: Schema.Number,
+  listeners: Schema.Number,
+});
+export type SoakSample = typeof SoakSample.Type;
+
 const Run = Schema.Struct({
   switches: Schema.Array(Switch),
+  steps: Schema.optional(Schema.Array(Step)),
+  panels: Schema.optional(Schema.Array(Panel)),
   memory: Schema.Array(Memory),
   idle: Schema.Array(Idle),
-  forced: Schema.optional(Schema.Array(Forced)),
+  trace: Schema.optional(Schema.Array(TraceStep)),
+  /** Memory after GC while every case repeats (`--soak`). */
+  soak: Schema.optional(Schema.Array(SoakSample)),
+  /** Cases this checkout could not run, and why. */
+  skipped: Schema.optional(
+    Schema.Array(Schema.Struct({ case: Schema.String, reason: Schema.String })),
+  ),
   machine: Schema.optional(MachineState),
 });
 export type Run = typeof Run.Type;
-
-const CallSite = Schema.Struct({ site: Schema.String, ms: Schema.Number, count: Schema.Number });
-export type CallSite = typeof CallSite.Type;
 
 export const ClientMetrics = Schema.Struct({
   meta: Schema.Record(
@@ -79,10 +136,20 @@ export const ClientMetrics = Schema.Struct({
     Schema.Union([Schema.String, Schema.Number, Schema.Boolean, Schema.Null]),
   ),
   runs: Schema.Array(Run),
-  /** Top call sites of forced style and layout in click tasks, from the last traced run. */
+  /** Top call sites of forced style and layout in input tasks, from the last traced run. */
   callSites: Schema.optional(Schema.Array(CallSite)),
 });
 export type ClientMetrics = typeof ClientMetrics.Type;
+
+/** Per-metric floors from `noise`, which `compare --floors` uses before the defaults. */
+export const Floors = Schema.Struct({
+  platform: Schema.String,
+  floors: Schema.Record(
+    Schema.String,
+    Schema.Struct({ floor: Schema.Number, gate: Schema.Boolean }),
+  ),
+});
+export type Floors = typeof Floors.Type;
 
 /** The cases a `--cases` list names, in benchmark order; an error names unknown ones. */
 export function parseCases(list: string): { cases: ReadonlyArray<Case> } | { error: string } {
@@ -91,11 +158,20 @@ export function parseCases(list: string): { cases: ReadonlyArray<Case> } | { err
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
   if (named.length === 0) return { cases: CASES };
-  const unknown = named.filter((entry) => !(CASES as ReadonlyArray<string>).includes(entry));
+  const groups: Record<string, ReadonlyArray<Case>> = {
+    switches: SWITCH_CASES,
+    interactions: INTERACTION_CASES,
+  };
+  const unknown = named.filter(
+    (entry) => !(CASES as ReadonlyArray<string>).includes(entry) && !(entry in groups),
+  );
   if (unknown.length > 0) {
-    return { error: `unknown cases: ${unknown.join(", ")}; choose from ${CASES.join(", ")}` };
+    return {
+      error: `unknown cases: ${unknown.join(", ")}; choose from switches, interactions, ${CASES.join(", ")}`,
+    };
   }
-  return { cases: CASES.filter((entry) => named.includes(entry)) };
+  const chosen = new Set(named.flatMap((entry): ReadonlyArray<string> => groups[entry] ?? [entry]));
+  return { cases: CASES.filter((entry) => chosen.has(entry)) };
 }
 
 const sorted = (values: ReadonlyArray<number>) => values.toSorted((a, b) => a - b);
@@ -117,14 +193,38 @@ export function median(values: ReadonlyArray<number>) {
 const present = (values: ReadonlyArray<number | null>) =>
   values.filter((value): value is number => value !== null);
 
+/** Least-squares slope of y over x; 0 with fewer than two distinct x. */
+export function slope(points: ReadonlyArray<readonly [number, number]>) {
+  if (points.length < 2) return 0;
+  const mx = points.reduce((sum, [x]) => sum + x, 0) / points.length;
+  const my = points.reduce((sum, [, y]) => sum + y, 0) / points.length;
+  const sxx = points.reduce((sum, [x]) => sum + (x - mx) ** 2, 0);
+  if (sxx === 0) return 0;
+  return points.reduce((sum, [x, y]) => sum + (x - mx) * (y - my), 0) / sxx;
+}
+
+/** Growth per iteration of a soak, past its warm-up sample (the first). */
+export function soakSlopes(samples: ReadonlyArray<SoakSample>) {
+  const settled = samples.slice(1);
+  const fit = (pick: (sample: SoakSample) => number) =>
+    slope(settled.map((sample) => [sample.iteration, pick(sample)] as const));
+  return {
+    heapMB: fit((sample) => sample.heapMB),
+    domNodes: fit((sample) => sample.domNodes),
+    listeners: fit((sample) => sample.listeners),
+  };
+}
+/** Per-iteration growth that reads as a leak rather than noise. */
+export const SOAK_LEAK = { heapMB: 0.05, domNodes: 5, listeners: 1 } as const;
+
 /**
- * Every compared metric of a file, each with one value per sample: per switch for latencies, per
- * run for shares, memory and idle CPU.
+ * Every compared metric of a file, each with one value per sample: per switch or step for
+ * latencies and renders, per run for shares, memory, panels, traces and idle CPU.
  */
 export function flatten(metrics: ClientMetrics): Map<string, number[]> {
   const values = new Map<string, number[]>();
-  const add = (key: string, value: number | null) => {
-    if (value === null || !Number.isFinite(value)) return;
+  const add = (key: string, value: number | null | undefined) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return;
     values.set(key, [...(values.get(key) ?? []), value]);
   };
   for (const run of metrics.runs) {
@@ -135,66 +235,191 @@ export function flatten(metrics: ClientMetrics): Map<string, number[]> {
       add(`${key}.paintMs`, entry.paintMs);
       add(`${key}.contentMs`, entry.contentMs);
       add(`${key}.loafMs`, entry.loafMs);
+      add(`${key}.renders`, entry.renders?.renders);
+      add(`${key}.commits`, entry.renders?.commits);
     }
     for (const [key, entries] of groups) {
       const missed = entries.filter((entry) => !entry.firstFrameContent).length;
       add(`${key}.firstFrameMissPct`, (missed / entries.length) * 100);
     }
-    for (const entry of run.forced ?? []) {
-      add(`forced.${entry.case}.styleLayoutMs`, entry.forcedStyleMs + entry.forcedLayoutMs);
+    for (const entry of run.steps ?? []) {
+      const key = `step.${entry.case}.${entry.step}`;
+      add(`${key}.paintMs`, entry.paintMs);
+      add(`${key}.loafMs`, entry.loafMs);
+      add(`${key}.droppedPct`, entry.droppedPct);
+      add(`${key}.renders`, entry.renders?.renders);
+      add(`${key}.commits`, entry.renders?.commits);
+    }
+    for (const entry of run.panels ?? []) add(`panel.${entry.case}.domNodes`, entry.panelNodes);
+    for (const entry of run.trace ?? []) {
+      add(`trace.${entry.label}.inputTaskMs`, entry.inputTaskMs);
+      add(`trace.${entry.label}.forcedMs`, entry.forcedStyleMs + entry.forcedLayoutMs);
     }
     for (const entry of run.memory) {
       add(`memory.${entry.label}.heapMB`, entry.heapMB);
       add(`memory.${entry.label}.domNodes`, entry.domNodes);
     }
     for (const entry of run.idle) add(`idle.${entry.label}.taskPct`, entry.taskPct);
+    if (run.soak && run.soak.length > 2) {
+      const slopes = soakSlopes(run.soak);
+      add("soak.heapMBPerIteration", slopes.heapMB);
+      add("soak.domNodesPerIteration", slopes.domNodes);
+      add("soak.listenersPerIteration", slopes.listeners);
+    }
   }
   return values;
 }
 
 /** The absolute change a metric must clear, past the relative threshold, to count. */
 export function floorFor(metric: string) {
+  if (metric.startsWith("soak.")) {
+    if (metric.includes("heapMB")) return SOAK_LEAK.heapMB;
+    if (metric.includes("domNodes")) return SOAK_LEAK.domNodes;
+    return SOAK_LEAK.listeners;
+  }
   if (metric.endsWith("Ms")) return 8;
   if (metric.endsWith("MissPct")) return 20;
+  if (metric.endsWith("droppedPct")) return 5;
   if (metric.endsWith("taskPct")) return 1;
   if (metric.endsWith("heapMB")) return 3;
+  if (metric.startsWith("panel.")) return 50;
   if (metric.endsWith("domNodes")) return 500;
+  // Render counts barely move between runs of one commit, so small changes are real.
+  if (metric.endsWith(".renders")) return 5;
+  if (metric.endsWith(".commits")) return 1;
   return 0;
 }
 
 const cell = (value: number | null, digits = 0) =>
   value === null ? "–" : `${round(value, digits)}`;
 
-/** The run's markdown: per case latency, then memory and idle CPU. */
+/** Summed counts over samples, per sample, the largest first. */
+export function topCounts(lists: ReadonlyArray<ReadonlyArray<typeof Count.Type>>, count = 5) {
+  const totals = new Map<string, number>();
+  for (const list of lists) {
+    for (const entry of list) totals.set(entry.name, (totals.get(entry.name) ?? 0) + entry.count);
+  }
+  return [...totals]
+    .toSorted((a, b) => b[1] - a[1])
+    .slice(0, count)
+    .map(([name, total]) => ({ name, count: round(total / Math.max(1, lists.length), 1) }));
+}
+
+const listOf = (entries: ReadonlyArray<{ readonly name: string; readonly count: number }>) =>
+  entries.map((entry) => `${entry.name} ${entry.count}`).join(", ") || "–";
+const weightsOf = (entries: ReadonlyArray<{ readonly name: string; readonly ms: number }>) =>
+  entries.map((entry) => `\`${entry.name}\` ${entry.ms}`).join(", ") || "–";
+
+/** The run's markdown: per case latency, renders, trace breakdown, memory, idle CPU and soak. */
 export function summaryTable(metrics: ClientMetrics) {
   const switches = metrics.runs.flatMap((run) => run.switches);
-  const forced = metrics.runs.flatMap((run) => run.forced ?? []);
+  const steps = metrics.runs.flatMap((run) => run.steps ?? []);
   const lines = [
-    "### Client switch metrics (ms, lower is better)",
+    "### Client metrics (ms, lower is better)",
     "",
     `\`${metrics.meta.commit}\`, ${metrics.runs.length} run(s), ${metrics.meta.platform}, Chromium ${metrics.meta.chromium}`,
-    "",
-    "| case | visit | n | paint p50 | paint p90 | content p50 | not in 1st frame | LoAF p50 | LoAF p90 | forced style+layout p50 |",
-    "| :-- | :-- | --: | --: | --: | --: | --: | --: | --: | --: |",
   ];
-  const cases = [...new Set(switches.map((entry) => entry.case))];
-  for (const name of cases) {
-    for (const visit of ["first", "revisit"] as const) {
-      const rows = switches.filter((entry) => entry.case === name && entry.visit === visit);
-      if (rows.length === 0) continue;
+  if (switches.length > 0) {
+    lines.push(
+      "",
+      "| switch to | visit | n | paint p50 | paint p90 | content p50 | not in 1st frame | LoAF p50 | LoAF p90 |",
+      "| :-- | :-- | --: | --: | --: | --: | --: | --: | --: |",
+    );
+    for (const name of new Set(switches.map((entry) => entry.case))) {
+      for (const visit of ["first", "revisit"] as const) {
+        const rows = switches.filter((entry) => entry.case === name && entry.visit === visit);
+        if (rows.length === 0) continue;
+        const paint = present(rows.map((entry) => entry.paintMs));
+        const content = present(rows.map((entry) => entry.contentMs));
+        const loaf = rows.map((entry) => entry.loafMs);
+        const missed = rows.filter((entry) => !entry.firstFrameContent).length;
+        lines.push(
+          `| ${name} | ${visit} | ${rows.length} | ${cell(median(paint))} | ${cell(percentile(paint, 90))} | ${cell(median(content))} | ${missed}/${rows.length} | ${cell(median(loaf))} | ${cell(percentile(loaf, 90))} |`,
+        );
+      }
+    }
+  }
+  const stepKeys = [...new Set(steps.map((entry) => `${entry.case}\u0000${entry.step}`))];
+  if (stepKeys.length > 0) {
+    lines.push(
+      "",
+      "| interaction | step | n | paint p50 | paint p90 | slow paints | LoAF p50 | LoAF p90 | dropped frames p50 |",
+      "| :-- | :-- | --: | --: | --: | --: | --: | --: | --: |",
+    );
+    for (const key of stepKeys) {
+      const [name, step] = key.split("\u0000") as [string, string];
+      const rows = steps.filter((entry) => entry.case === name && entry.step === step);
       const paint = present(rows.map((entry) => entry.paintMs));
-      const content = present(rows.map((entry) => entry.contentMs));
       const loaf = rows.map((entry) => entry.loafMs);
-      const missed = rows.filter((entry) => !entry.firstFrameContent).length;
-      const forcedMs =
-        visit === "revisit"
-          ? forced
-              .filter((entry) => entry.case === name)
-              .map((entry) => entry.forcedStyleMs + entry.forcedLayoutMs)
-          : [];
       lines.push(
-        `| ${name} | ${visit} | ${rows.length} | ${cell(median(paint))} | ${cell(percentile(paint, 90))} | ${cell(median(content))} | ${missed}/${rows.length} | ${cell(median(loaf))} | ${cell(percentile(loaf, 90))} | ${cell(median(forcedMs), 1)} |`,
+        `| ${name} | ${step} | ${rows.length} | ${cell(median(paint))} | ${cell(percentile(paint, 90))} | ${paint.length}/${rows.length} | ${cell(median(loaf))} | ${cell(percentile(loaf, 90))} | ${cell(median(rows.map((entry) => entry.droppedPct)))}% |`,
       );
+    }
+  }
+  const rendered = [
+    ...switches.map((entry) => ({ key: `switch to ${entry.case} (${entry.visit})`, ...entry })),
+    ...steps.map((entry) => ({ key: `${entry.case}: ${entry.step}`, ...entry })),
+  ].filter((entry) => entry.renders !== undefined);
+  if (rendered.length > 0) {
+    lines.push(
+      "",
+      "| renders per step | n | commits p50 | renders p50 | renders max | top components (mean per step) | top causes |",
+      "| :-- | --: | --: | --: | --: | :-- | :-- |",
+    );
+    for (const key of new Set(rendered.map((entry) => entry.key))) {
+      const rows = rendered.filter((entry) => entry.key === key).map((entry) => entry.renders!);
+      const counts = rows.map((entry) => entry.renders);
+      lines.push(
+        `| ${key} | ${rows.length} | ${cell(median(rows.map((entry) => entry.commits)))} | ${cell(median(counts))} | ${cell(Math.max(...counts))} | ${listOf(topCounts(rows.map((entry) => entry.top)))} | ${listOf(
+          topCounts(
+            rows.map((entry) => entry.causes),
+            3,
+          ),
+        )} |`,
+      );
+    }
+    if (metrics.meta.minified === true) {
+      lines.push(
+        "",
+        "Component names are minified in this build; rerun with `--unminified` to read them.",
+      );
+    }
+  }
+  const panels = metrics.runs.flatMap((run) => run.panels ?? []);
+  if (panels.length > 0) {
+    lines.push(
+      "",
+      "| panel | DOM nodes in the surface | DOM nodes in the page |",
+      "| :-- | --: | --: |",
+    );
+    for (const name of new Set(panels.map((entry) => entry.case))) {
+      const rows = panels.filter((entry) => entry.case === name);
+      lines.push(
+        `| ${name} | ${cell(median(rows.map((entry) => entry.panelNodes)))} | ${cell(median(rows.map((entry) => entry.documentNodes)))} |`,
+      );
+    }
+  }
+  const traced = metrics.runs.at(-1)?.trace ?? [];
+  if (traced.length > 0) {
+    lines.push(
+      "",
+      "| traced step (last run) | windows | input task | forced style | forced layout | sampled JS | long tasks after |",
+      "| :-- | --: | --: | --: | --: | --: | :-- |",
+    );
+    for (const step of traced) {
+      lines.push(
+        `| ${step.label} | ${step.windows} | ${step.inputTaskMs} | ${step.forcedStyleMs} | ${step.forcedLayoutMs} | ${step.sampledMs} | ${step.longTasks.map((task) => `+${task.atMs}: ${task.ms}`).join(", ") || "–"} |`,
+      );
+    }
+    lines.push("", "Where each traced step's input task spent its JS (ms per window):", "");
+    for (const step of traced) {
+      if (step.sampledMs === 0 && step.longTasks.length === 0) continue;
+      lines.push(
+        `- **${step.label}**: self ${weightsOf(step.selfByPackage.slice(0, 4))}; libraries ${weightsOf(step.byPackage.slice(0, 4))}; sources ${weightsOf(step.bySource.slice(0, 5))}`,
+      );
+      for (const task of step.longTasks) {
+        lines.push(`  - long task +${task.atMs} ms, ${task.ms} ms: ${weightsOf(task.top)}`);
+      }
     }
   }
   const memory = metrics.runs.flatMap((run) => run.memory);
@@ -226,6 +451,29 @@ export function summaryTable(metrics: ClientMetrics) {
       );
     }
   }
+  metrics.runs.forEach((run, index) => {
+    if (!run.soak || run.soak.length < 3) return;
+    const slopes = soakSlopes(run.soak);
+    const leaking = (Object.keys(SOAK_LEAK) as Array<keyof typeof SOAK_LEAK>).filter(
+      (key) => slopes[key] > SOAK_LEAK[key],
+    );
+    lines.push(
+      "",
+      `| soak, run ${index + 1}: iteration | heap MB | DOM nodes | listeners |`,
+      "| --: | --: | --: | --: |",
+      ...run.soak.map(
+        (sample) =>
+          `| ${sample.iteration} | ${sample.heapMB} | ${sample.domNodes} | ${sample.listeners} |`,
+      ),
+      `| growth per iteration | ${round(slopes.heapMB, 3)} | ${round(slopes.domNodes, 1)} | ${round(slopes.listeners, 2)} |`,
+      "",
+      leaking.length > 0
+        ? `**Growing:** ${leaking.join(", ")} past ${leaking.map((key) => `${SOAK_LEAK[key]}`).join(", ")} per iteration after warm-up.`
+        : "No growth past the leak bars after warm-up.",
+    );
+  });
+  const skipped = metrics.runs.flatMap((run) => run.skipped ?? []);
+  for (const entry of skipped) lines.push("", `Skipped ${entry.case}: ${entry.reason}`);
   if (metrics.callSites && metrics.callSites.length > 0) {
     lines.push(
       "",
@@ -239,20 +487,30 @@ export function summaryTable(metrics: ClientMetrics) {
   return lines.join("\n");
 }
 
-/** Two files' medians side by side; a metric counts when its bootstrap interval clears both bars. */
-export function compareClientMetrics(before: ClientMetrics, after: ClientMetrics, threshold = 10) {
+/**
+ * Two files' medians side by side; a metric counts when its bootstrap interval clears the
+ * threshold and its floor: the calibrated one from `floors` when given, else the default. A
+ * calibrated metric too noisy to gate on is shown, never counted.
+ */
+export function compareClientMetrics(
+  before: ClientMetrics,
+  after: ClientMetrics,
+  threshold = 10,
+  floors?: Floors,
+) {
   const a = flatten(before);
   const b = flatten(after);
   const lines = [
     "### Client metrics (lower is better)",
     "",
-    `before \`${before.meta.commit}\` (${before.runs.length} runs), after \`${after.meta.commit}\` (${after.runs.length} runs)`,
+    `before \`${before.meta.commit}\` (${before.runs.length} runs), after \`${after.meta.commit}\` (${after.runs.length} runs)${floors ? `, floors calibrated on ${floors.platform}` : ""}`,
     "",
     "| metric | before | after | change | 95% interval | |",
     "| :-- | --: | --: | --: | --: | :-- |",
   ];
   const regressed: string[] = [];
   const improved: string[] = [];
+  const noisy: string[] = [];
   let compared = 0;
   for (const metric of [...new Set([...a.keys(), ...b.keys()])].toSorted()) {
     const x = a.get(metric);
@@ -264,14 +522,18 @@ export function compareClientMetrics(before: ClientMetrics, after: ClientMetrics
       continue;
     }
     compared++;
+    const calibrated = floors?.floors[metric];
     const mx = median(x)!;
     const my = median(y)!;
-    const limit = Math.max(floorFor(metric), (Math.abs(mx) * threshold) / 100);
+    const limit = Math.max(calibrated?.floor ?? floorFor(metric), (Math.abs(mx) * threshold) / 100);
     const repeated = x.length > 1 && y.length > 1;
     const [low, high] = repeated ? bootstrapMedianDifference(x, y) : [my - mx, my - mx];
-    const verdict = low > limit ? "worse" : high < -limit ? "better" : "";
-    if (verdict === "worse") regressed.push(metric);
-    if (verdict === "better") improved.push(metric);
+    const moved = low > limit ? "worse" : high < -limit ? "better" : "";
+    const gated = calibrated?.gate ?? true;
+    const verdict = moved && !gated ? `${moved}, too noisy to gate` : moved;
+    if (moved && !gated) noisy.push(metric);
+    else if (moved === "worse") regressed.push(metric);
+    else if (moved === "better") improved.push(metric);
     const percent = mx === 0 ? (my === 0 ? 0 : Infinity) : ((my - mx) / Math.abs(mx)) * 100;
     const shown = Number.isFinite(percent)
       ? `${percent > 0 ? "+" : ""}${Math.round(percent)}%`
@@ -281,117 +543,71 @@ export function compareClientMetrics(before: ClientMetrics, after: ClientMetrics
       `| ${metric} | ${round(mx, 1)} | ${round(my, 1)} | ${shown} | ${interval} | ${verdict} |`,
     );
   }
-  return { table: lines.join("\n"), regressed, improved, compared };
+  return { table: lines.join("\n"), regressed, improved, noisy, compared };
 }
 
-const StackFrame = Schema.Struct({
-  url: Schema.String,
-  functionName: Schema.optional(Schema.String),
-  lineNumber: Schema.Number,
-  columnNumber: Schema.Number,
-});
-export const TraceEvent = Schema.Struct({
-  name: Schema.optional(Schema.String),
-  ph: Schema.optional(Schema.String),
-  pid: Schema.optional(Schema.Number),
-  tid: Schema.optional(Schema.Number),
-  ts: Schema.optional(Schema.Number),
-  dur: Schema.optional(Schema.Number),
-  args: Schema.optional(
-    Schema.Struct({
-      name: Schema.optional(Schema.String),
-      data: Schema.optional(Schema.Struct({ type: Schema.optional(Schema.String) })),
-      beginData: Schema.optional(
-        Schema.Struct({ stackTrace: Schema.optional(Schema.Array(StackFrame)) }),
-      ),
-    }),
-  ),
-});
-export type TraceEvent = typeof TraceEvent.Type;
-export const Trace = Schema.Union([
-  Schema.Struct({ traceEvents: Schema.Array(TraceEvent) }),
-  Schema.Array(TraceEvent),
-]);
+/** Two significant digits, rounded up, so a derived floor never sits under what was seen. */
+const ceilSignificant = (value: number) => {
+  if (value <= 0) return 0;
+  const step = 10 ** (Math.floor(Math.log10(value)) - 1);
+  return round(Math.ceil(value / step) * step, 6);
+};
 
-/** Maps a 0-based generated position to `file:line`, or undefined outside the build's sourcemaps. */
-export type SourceMapper = (url: string, line: number, column: number) => string | undefined;
+/** An A/A interval wider than this share of a metric's median makes it too noisy to gate on. */
+export const NOISY_SHARE = 0.5;
 
 /**
- * Forced style and layout inside each click's task, the clicks labelled in order. A style or
- * layout event with a JS stack was forced by a script reading layout mid-task; one without ran in
- * the frame's own rendering step. Returns undefined when the trace's clicks do not match `labels`.
+ * Each metric's spread over A/A pairs (one commit against itself) as `compare` sees it: the 95%
+ * interval of the median difference. The floor is half the widest interval or the largest A/A
+ * median difference, whichever is larger, and never under the default floor's order of rounding.
  */
-export function analyzeClickTasks(
-  events: ReadonlyArray<TraceEvent>,
-  labels: ReadonlyArray<string>,
-  mapper: SourceMapper,
-  topSites = 12,
+export function noiseReport(
+  pairs: ReadonlyArray<readonly [ClientMetrics, ClientMetrics]>,
+  platform: string,
 ) {
-  const names = new Map<string, string>();
-  const counts = new Map<string, number>();
-  for (const event of events) {
-    const key = `${event.pid}:${event.tid}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-    if (event.ph === "M" && event.name === "thread_name" && event.args?.name !== undefined) {
-      names.set(key, event.args.name);
+  const found = new Map<string, { medians: number[]; halfWidth: number; aaDifference: number }>();
+  for (const [before, after] of pairs) {
+    const a = flatten(before);
+    const b = flatten(after);
+    for (const [metric, x] of a) {
+      const y = b.get(metric);
+      if (!y) continue;
+      const [low, high] =
+        x.length > 1 && y.length > 1
+          ? bootstrapMedianDifference(x, y)
+          : [median(y)! - median(x)!, median(y)! - median(x)!];
+      const entry = found.get(metric) ?? { medians: [], halfWidth: 0, aaDifference: 0 };
+      entry.medians.push(median([...x, ...y])!);
+      entry.halfWidth = Math.max(entry.halfWidth, (high - low) / 2);
+      entry.aaDifference = Math.max(entry.aaDifference, Math.abs(median(y)! - median(x)!));
+      found.set(metric, entry);
     }
   }
-  const main = [...counts]
-    .filter(([key]) => names.get(key) === "CrRendererMain")
-    .toSorted((a, b) => b[1] - a[1])[0]?.[0];
-  if (main === undefined) return undefined;
-  const onMain = events.filter(
-    (event) => `${event.pid}:${event.tid}` === main && event.ts !== undefined,
-  );
-  const clicks = onMain.filter(
-    (event) => event.name === "EventDispatch" && event.args?.data?.type === "click",
-  );
-  if (clicks.length !== labels.length) return undefined;
-  const tasks = onMain.filter((event) => event.name === "RunTask" && event.ph === "X");
-  const sites = new Map<string, { ms: number; count: number }>();
-  const perClick = clicks.flatMap((click, index) => {
-    const at = click.ts ?? 0;
-    const task = tasks.find(
-      (candidate) => (candidate.ts ?? 0) <= at && (candidate.ts ?? 0) + (candidate.dur ?? 0) >= at,
-    );
-    if (task === undefined) return [];
-    const start = task.ts ?? 0;
-    const end = start + (task.dur ?? 0);
-    let style = 0;
-    let layout = 0;
-    for (const event of onMain) {
-      if (event.ph !== "X" || (event.ts ?? 0) < start || (event.ts ?? 0) > end) continue;
-      if (event.name !== "UpdateLayoutTree" && event.name !== "Layout") continue;
-      const stack = event.args?.beginData?.stackTrace ?? [];
-      if (stack.length === 0) continue;
-      const ms = (event.dur ?? 0) / 1000;
-      if (event.name === "Layout") layout += ms;
-      else style += ms;
-      const site =
-        stack
-          .slice(0, 6)
-          .map(
-            (frame) =>
-              mapper(frame.url, frame.lineNumber - 1, frame.columnNumber - 1) ??
-              `${frame.functionName || "(anonymous)"}@${frame.url.split("/").pop()}`,
-          )
-          .filter((entry, position, all) => all.indexOf(entry) === position)
-          .slice(0, 3)
-          .join(" < ") || "(frame)";
-      const current = sites.get(site) ?? { ms: 0, count: 0 };
-      sites.set(site, { ms: current.ms + ms, count: current.count + 1 });
-    }
-    const forced: Forced = {
-      case: labels[index]!,
-      clickTaskMs: round((task.dur ?? 0) / 1000, 1),
-      forcedStyleMs: round(style, 1),
-      forcedLayoutMs: round(layout, 1),
+  const rows = [...found].toSorted().map(([metric, entry]) => {
+    const middle = median(entry.medians)!;
+    return {
+      metric,
+      median: round(middle, 2),
+      halfWidth: round(entry.halfWidth, 2),
+      aaDifference: round(entry.aaDifference, 2),
+      defaultFloor: floorFor(metric),
+      floor: ceilSignificant(Math.max(entry.halfWidth / 2, entry.aaDifference)),
+      gate: entry.halfWidth <= Math.abs(middle) * NOISY_SHARE || entry.halfWidth === 0,
     };
-    return [forced];
   });
-  const callSites: CallSite[] = [...sites]
-    .toSorted((a, b) => b[1].ms - a[1].ms)
-    .slice(0, topSites)
-    .map(([site, { ms, count }]) => ({ site, ms: round(ms, 1), count }));
-  return { perClick, callSites };
+  const floors: Floors = {
+    platform,
+    floors: Object.fromEntries(
+      rows.map((row) => [row.metric, { floor: row.floor, gate: row.gate }]),
+    ),
+  };
+  const table = [
+    "| metric | median | ± A/A interval | A/A diff | default floor | calibrated floor | gate |",
+    "| :-- | --: | --: | --: | --: | --: | :-: |",
+    ...rows.map(
+      (row) =>
+        `| ${row.metric} | ${row.median} | ${row.halfWidth} | ${row.aaDifference} | ${row.defaultFloor} | ${row.floor}${row.floor > row.defaultFloor ? " ⚠" : ""} | ${row.gate ? "yes" : "no"} |`,
+    ),
+  ].join("\n");
+  return { rows, floors, table };
 }
