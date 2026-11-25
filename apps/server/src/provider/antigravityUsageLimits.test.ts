@@ -65,8 +65,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     summaryStatus?: number;
     /** Per-host summary statuses; hosts not listed fall back to `summaryStatus`. */
     summaryStatusByHost?: Record<string, number>;
-    tokenStatus?: number;
+    accessToken?: string;
     refreshToken?: string;
+    expiry?: string;
     userId?: string;
     userInfoAt?: number;
     missingToken?: boolean;
@@ -79,11 +80,32 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const profileDirectory = yield* fs.makeTempDirectoryScoped();
-  yield* fs.makeDirectory(path.join(profileDirectory, "antigravity-acp"));
-  const tokenPath = path.join(profileDirectory, "antigravity-acp", "acp_token.json");
-  const writeToken = (refreshToken: string) =>
+  const acpDirectory = path.join(profileDirectory, "antigravity-acp");
+  yield* fs.makeDirectory(acpDirectory);
+  const cliTokenPath = path.join(acpDirectory, "antigravity-oauth-token");
+  const legacyTokenPath = path.join(acpDirectory, "acp_token.json");
+  const writeCliToken = (
+    refreshToken: string,
+    accessToken = options.accessToken ?? "access-token",
+    expiry = options.expiry ?? "2099-01-01T00:00:00Z",
+  ) =>
     fs.writeFileString(
-      tokenPath,
+      cliTokenPath,
+      JSON.stringify({
+        token: {
+          access_token: accessToken,
+          token_type: "Bearer",
+          refresh_token: refreshToken,
+          expiry,
+          expires_in: 3600,
+        },
+        auth_method: "consumer",
+        id_token_email: "someone@example.com",
+      }),
+    );
+  const writeLegacyToken = (refreshToken = "legacy-refresh") =>
+    fs.writeFileString(
+      legacyTokenPath,
       JSON.stringify({
         client_id: "client-id",
         client_secret: "client-secret",
@@ -91,26 +113,16 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         project_id: "project-id",
       }),
     );
-  if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
-  const requests: Array<{ url: string; body: string }> = [];
+  if (!options.missingToken) yield* writeCliToken(options.refreshToken ?? "refresh-a");
+  const requests: Array<{ url: string; body: string; authorization: string | undefined }> = [];
   const http = HttpClient.make((request, url, _signal, fiber) =>
     Effect.sync(() => {
       const init = Context.getOrUndefined(fiber.context, FetchHttpClient.RequestInit);
       expect(init?.redirect).toBe("manual");
       const body =
         request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
-      requests.push({ url: request.url, body });
-      if (request.url.endsWith("/token")) {
-        expect(new URLSearchParams(body).get("grant_type")).toBe("refresh_token");
-        return HttpClientResponse.fromWeb(
-          request,
-          Response.json(
-            { access_token: "access-token", expires_in: 3600 },
-            { status: options.tokenStatus ?? 200 },
-          ),
-        );
-      }
-      expect(request.headers.authorization).toBe("Bearer access-token");
+      requests.push({ url: request.url, body, authorization: request.headers.authorization });
+      expect(request.url.endsWith("/token")).toBe(false);
       if (request.url.endsWith("/userinfo")) {
         return HttpClientResponse.fromWeb(
           request,
@@ -119,7 +131,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual(options.missingToken ? {} : { project: "project-id" });
+      expect(JSON.parse(body)).toEqual({});
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -142,7 +154,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     authMethod: options.authMethod ?? "oauth-personal",
     ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(options.keyringSecret) }),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
-  return { ...usage, requests, writeToken, tokenPath };
+  return { ...usage, requests, writeCliToken, writeLegacyToken, cliTokenPath, legacyTokenPath };
 });
 
 describe("Antigravity subscription limits", () => {
@@ -448,7 +460,6 @@ describe("Antigravity subscription limits", () => {
       expect(byId.get("3p-5h")).toMatchObject({ kind: "session", windowDurationMins: 300 });
       expect(byId.get("3p-5h")?.usedPercent).toBeCloseTo(56);
       yield* probe;
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(1);
       expect(
         requests.filter((request) => request.url.endsWith(":retrieveUserQuotaSummary")),
       ).toHaveLength(4);
@@ -568,22 +579,30 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("re-reads changed credentials and clears cached access after sign-out", () =>
+  it.effect("re-reads changed CLI credentials and reports unsupported after sign-out", () =>
     Effect.gen(function* () {
-      const { probe, clear, requests, writeToken, tokenPath } = yield* fixture();
+      const { probe, requests, writeCliToken, cliTokenPath } = yield* fixture({
+        accessToken: "access-a",
+        refreshToken: "refresh-a",
+      });
       const first = yield* probe;
-      yield* writeToken("refresh-b");
+      expect(
+        requests
+          .filter((request) => request.url.endsWith(":retrieveUserQuotaSummary"))
+          .every((request) => request.authorization === "Bearer access-a"),
+      ).toBe(true);
+      const countAfterFirst = requests.length;
+      yield* writeCliToken("refresh-b", "access-b");
       const second = yield* probe;
       expect(second.credentialFingerprint).not.toBe(first.credentialFingerprint);
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(2);
-      yield* (yield* FileSystem.FileSystem).remove(tokenPath);
+      expect(
+        requests
+          .slice(countAfterFirst)
+          .filter((request) => request.url.endsWith(":retrieveUserQuotaSummary"))
+          .every((request) => request.authorization === "Bearer access-b"),
+      ).toBe(true);
+      yield* (yield* FileSystem.FileSystem).remove(cliTokenPath);
       expect((yield* probe).unavailable?.reason).toBe("unsupported");
-      yield* writeToken("refresh-b");
-      yield* probe;
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(3);
-      yield* clear;
-      yield* probe;
-      expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(4);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -653,9 +672,11 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("returns a safe failure when OAuth refresh fails", () =>
+  it.effect("returns a safe failure when the stored CLI sign-in is malformed", () =>
     Effect.gen(function* () {
-      const { probe } = yield* fixture({ tokenStatus: 401 });
+      const fs = yield* FileSystem.FileSystem;
+      const { probe, cliTokenPath } = yield* fixture({ missingToken: true });
+      yield* fs.writeFileString(cliTokenPath, '{"token":{"access_token":""}}');
       const limits = yield* probe;
       expect(limits.windows).toEqual([]);
       expect(limits.unavailable?.reason).toBe("probeFailed");
@@ -663,31 +684,63 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("reads the native CLI's stored sign-in when acp_token.json is absent", () =>
+  it.effect("ignores a leftover acp_token.json and uses the agy CLI's stored sign-in", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const { probe, tokenPath } = yield* fixture({ missingToken: true });
-      // The 1.5.x CLI never writes acp_token.json; without a keyring it stores this file instead.
-      yield* fs.writeFileString(
-        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
-        JSON.stringify({
-          token: {
-            access_token: "access-token",
-            token_type: "Bearer",
-            refresh_token: "refresh-a",
-            expiry: "2099-01-01T00:00:00Z",
-            expires_in: 3600,
-          },
-          auth_method: "consumer",
-          id_token_email: "someone@example.com",
-        }),
-      );
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const { probe, requests, writeLegacyToken, writeCliToken } = yield* fixture({
+        accessToken: "cli-access-token",
+        refreshToken: "cli-refresh",
+      });
+      yield* writeLegacyToken("stale-legacy-refresh");
+
       const limits = yield* probe;
-      expect(limits.unavailable?.message).not.toBe(
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
+      expect(
+        requests
+          .filter((request) => request.url.endsWith(":retrieveUserQuotaSummary"))
+          .every((request) => request.authorization === "Bearer cli-access-token"),
+      ).toBe(true);
+
+      // An expired CLI sign-in reports probeFailed instead of falling back to acp_token.json.
+      yield* writeCliToken("cli-refresh", "cli-access-token", "2026-10-09T12:00:30Z");
+      const countBeforeExpired = requests.length;
+      const expired = yield* probe;
+      expect(expired.unavailable?.reason).toBe("probeFailed");
+      expect(requests).toHaveLength(countBeforeExpired);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("ignores a leftover acp_token.json when no native CLI sign-in is present", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const personal = yield* fixture({ missingToken: true });
+      yield* personal.writeLegacyToken("stale-legacy-refresh");
+      expect((yield* personal.probe).unavailable?.message).toBe(
         "Sign in with Google to see Antigravity limits.",
       );
-      expect(limits.unavailable?.reason).not.toBe("unsupported");
+      expect(personal.requests).toEqual([]);
+
+      const business = yield* fixture({
+        authMethod: "oauth-business",
+        missingToken: true,
+        keyringSecret: JSON.stringify({
+          token: {
+            access_token: "keyring-access-token",
+            refresh_token: "r",
+            expiry: "2026-10-09T14:00:00Z",
+          },
+        }),
+      });
+      yield* business.writeLegacyToken("stale-legacy-refresh");
+      const limits = yield* business.probe;
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
+      expect(
+        business.requests
+          .filter((request) => request.url.endsWith(":retrieveUserQuotaSummary"))
+          .every((request) => request.authorization === "Bearer keyring-access-token"),
+      ).toBe(true);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
