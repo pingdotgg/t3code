@@ -88,17 +88,27 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const readJsonc = (file: string) =>
+  // The raw files, so a caller can tell when the SDK would load a different set.
+  const sources: Array<string | undefined> = [];
+  const readSource = (file: string) =>
     fileSystem.readFileString(file).pipe(
+      Effect.catchIf(
+        (error) => error.reason._tag === "NotFound",
+        () => Effect.undefined,
+      ),
+      Effect.map((contents) => {
+        sources.push(contents);
+        return contents;
+      }),
+    );
+  const readJsonc = (file: string) =>
+    readSource(file).pipe(
       Effect.map((contents): unknown => {
+        if (contents === undefined) return undefined;
         const errors: ParseError[] = [];
         const value: unknown = parseJsonc(contents, errors, { allowTrailingComma: true });
         return errors.length === 0 ? value : null;
       }),
-      Effect.catchIf(
-        (error) => error.reason._tag === "NotFound",
-        () => Effect.void,
-      ),
     );
 
   const hostEnvironment = yield* HostProcess.Environment;
@@ -109,23 +119,14 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
   const projectRoot = Option.isSome(root) && root.value.code === 0 ? root.value.stdout.trim() : cwd;
   const userHome = yield* HostProcess.HomeDirectory;
   const cursorDataDirectory = hostEnvironment.CURSOR_DATA_DIR || path.join(userHome, ".cursor");
-  const loadDisabled = fileSystem
-    .readFileString(
-      path.join(
-        cursorDataDirectory,
-        "projects",
-        cursorProjectSlug(projectRoot),
-        "mcp-disabled.json",
-      ),
-    )
-    .pipe(
-      Effect.catchIf(
-        (error) => error.reason._tag === "NotFound",
-        () => Effect.succeed("[]"),
-      ),
-      Effect.flatMap(decodeDisabledServers),
-      Effect.map((names) => new Set(names)),
-    );
+  // The SDK applies this file to every file-defined server, so it is read even when no override needs it.
+  const disabledFile = yield* readSource(
+    path.join(cursorDataDirectory, "projects", cursorProjectSlug(projectRoot), "mcp-disabled.json"),
+  ).pipe(Effect.result);
+  const loadDisabled = Effect.fromResult(disabledFile).pipe(
+    Effect.flatMap((contents) => decodeDisabledServers(contents ?? "[]")),
+    Effect.map((names) => new Set(names)),
+  );
   let disabled: Set<string> | undefined;
   const variables = new Map([
     ["workspaceFolder", projectRoot],
@@ -173,5 +174,5 @@ export const cursorWorkspaceMcpServers = Effect.fn("cursorWorkspaceMcpServers")(
       }
     }
   }
-  return servers;
+  return { servers, sources };
 });

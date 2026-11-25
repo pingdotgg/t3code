@@ -268,7 +268,7 @@ describe("CursorAdapterV2", () => {
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         );
-        assert.isTrue(sentWithMcpOverride);
+        assert.isFalse(sentWithMcpOverride);
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
         assert.equal(rows[0]?.subagent.model, model ?? null);
@@ -3463,10 +3463,10 @@ describe("CursorAdapterV2", () => {
           },
           "cwd-only": { command: "node", args: ["server.mjs"], cwd: projectRoot },
         };
-        // The agent is created with T3's server only; the resolved servers go with each turn.
-        assert.deepEqual(openedWith?.mcpServers, t3Servers);
+        // The agent opens with the resolved servers, so a turn with unchanged files sends none.
+        assert.deepEqual(openedWith?.mcpServers, { ...expectedServers, ...t3Servers });
         yield* sendTurn(1);
-        assert.deepEqual(sentWith[0], { ...expectedServers, ...t3Servers });
+        assert.isUndefined(sentWith[0]);
         // A server switched off between turns stays off on the next one.
         yield* fileSystem.writeFileString(
           path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
@@ -3501,7 +3501,7 @@ describe("CursorAdapterV2", () => {
           JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),
         );
         yield* fileSystem.remove(path.join(home, ".cursor", "mcp.json"));
-        assert.deepEqual(yield* loadServers(), {});
+        assert.deepEqual((yield* loadServers()).servers, {});
       }).pipe(
         Effect.scoped,
         Effect.provide(

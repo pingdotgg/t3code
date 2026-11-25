@@ -1051,6 +1051,7 @@ interface CursorLiveAgent {
   readonly nativeThreadId: string;
   readonly storeCwd: string;
   readonly session: CursorAgentSdk.CursorAgentSdkSession;
+  readonly mcpServersKey: string | undefined;
 }
 
 export interface CursorAdapterV2Options {
@@ -2744,27 +2745,42 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           }
         };
 
-        const resolveWorkspaceMcpServers = (
+        // `key` names what the SDK loads for this set, so an agent opened with it can skip a send-time
+        // set: that rebuilds every MCP connection, ambient servers included, before the run starts.
+        // Without a key (no cwd, unreadable Cursor state) every turn sends the set.
+        const resolveMcpServers = Effect.fnUntraced(function* (
+          threadId: ThreadId,
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-        ) => {
+        ) {
           const { cwd } = runtimePolicy;
-          return cwd === null
-            ? Effect.succeed({})
-            : cursorWorkspaceMcpServers(cwd, adapterOptions.environment, {
-                includeProject: cursorLoadsProjectConfig(runtimePolicy, platform),
-              }).pipe(
-                Effect.provideService(FileSystem.FileSystem, fileSystem),
-                Effect.provideService(Path.Path, path),
-                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                // Unreadable Cursor state leaves startup to the SDK rather than failing the turn.
-                Effect.catch((cause) =>
-                  Effect.logWarning("orchestration-v2.cursor-workspace-mcp-unresolved", {
-                    cwd,
-                    cause,
-                  }).pipe(Effect.as({})),
-                ),
-              );
-        };
+          const workspace =
+            cwd === null
+              ? undefined
+              : yield* cursorWorkspaceMcpServers(cwd, adapterOptions.environment, {
+                  includeProject: cursorLoadsProjectConfig(runtimePolicy, platform),
+                }).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                  Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                  // Unreadable Cursor state leaves startup to the SDK rather than failing the turn.
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration-v2.cursor-workspace-mcp-unresolved", {
+                      cwd,
+                      cause,
+                    }).pipe(Effect.as(undefined)),
+                  ),
+                );
+          const mcpSession = yield* mcpSessions.read(threadId);
+          const servers = { ...workspace?.servers, ...cursorMcpServers(mcpSession) };
+          return {
+            mcpSession,
+            servers,
+            key:
+              workspace === undefined
+                ? undefined
+                : stableJson({ servers, sources: workspace.sources, cwd }),
+          };
+        });
 
         const openAgent = Effect.fnUntraced(function* (openInput: {
           readonly operation: "create" | "resume";
@@ -2796,16 +2812,20 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* existing.session.close.pipe(Effect.ignore);
             yield* Ref.set(liveAgent, null);
           }
-          const options = makeCursorAgentOptions({
-            ...(apiKey === undefined ? {} : { apiKey }),
-            modelSelection: openInput.modelSelection,
-            models: adapterOptions.getModels?.() ?? [],
-            sdkModels: adapterOptions.getSdkModels?.() ?? [],
-            runtimePolicy: openInput.runtimePolicy,
-            platform,
-            threadId: openInput.threadId,
-            mcpSession: yield* mcpSessions.read(openInput.threadId),
-          });
+          const mcp = yield* resolveMcpServers(openInput.threadId, openInput.runtimePolicy);
+          const options = {
+            ...makeCursorAgentOptions({
+              ...(apiKey === undefined ? {} : { apiKey }),
+              modelSelection: openInput.modelSelection,
+              models: adapterOptions.getModels?.() ?? [],
+              sdkModels: adapterOptions.getSdkModels?.() ?? [],
+              runtimePolicy: openInput.runtimePolicy,
+              platform,
+              threadId: openInput.threadId,
+              mcpSession: mcp.mcpSession,
+            }),
+            ...(Object.keys(mcp.servers).length === 0 ? {} : { mcpServers: mcp.servers }),
+          };
           if (
             platform === "win32" &&
             openInput.runtimePolicy.sandboxPolicy === undefined &&
@@ -2831,6 +2851,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             nativeThreadId: sdkSession.agentId,
             storeCwd,
             session: sdkSession,
+            mcpServersKey: mcp.key,
           } satisfies CursorLiveAgent;
           yield* Ref.set(liveAgent, next);
           return next;
@@ -2979,7 +3000,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               modelSelection: turnInput.modelSelection,
               runtimePolicy: turnInput.runtimePolicy,
             });
-            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            // A send-time set replaces the open-time one, and the workspace servers are read again each
+            // turn from mcp.json and mcp-disabled.json; both merge with settingSources.
+            const turnMcp = yield* resolveMcpServers(turnInput.threadId, turnInput.runtimePolicy);
+            const { mcpSession } = turnMcp;
             const mcpServers = cursorMcpServers(mcpSession);
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
@@ -3046,12 +3070,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const compacted = resume === undefined && prompt === undefined;
             const pendingUpdates: Array<InteractionUpdate> = [];
             let context: ActiveCursorTurn | null = null;
-            // A send-time set replaces the create-time set, so the workspace servers go only here and are
-            // read again each turn from mcp.json and mcp-disabled.json; both merge with settingSources.
-            const turnMcpServers = {
-              ...(yield* resolveWorkspaceMcpServers(turnInput.runtimePolicy)),
-              ...mcpServers,
-            };
+            const sendMcpServers =
+              Object.keys(turnMcp.servers).length > 0 &&
+              (turnMcp.key === undefined || turnMcp.key !== agent.mcpServersKey);
             let starting = true;
             const sdkRun = yield* agent.session
               .send({
@@ -3065,9 +3086,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     adapterOptions.getSdkModels?.() ?? [],
                   ),
                   mode: turnInput.runtimePolicy.interactionMode === "plan" ? "plan" : "agent",
-                  ...(Object.keys(turnMcpServers).length === 0
-                    ? {}
-                    : { mcpServers: turnMcpServers }),
+                  ...(sendMcpServers ? { mcpServers: turnMcp.servers } : {}),
                 },
                 onDelta: (update) => {
                   if (context === null) {
