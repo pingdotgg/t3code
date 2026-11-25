@@ -571,7 +571,6 @@ export class GhosttyTerminalSurface {
   private fontEpoch = 0;
   private pendingFontEpoch: number | null = null;
   private readonly stopObservingResize: () => void;
-  private readonly stopObservingI18n: () => void;
   private readonly scrollbarThumb: HTMLDivElement;
   private snapshot: GhosttySnapshot | null = null;
   private frame = 0;
@@ -669,7 +668,7 @@ export class GhosttyTerminalSurface {
     metrics: GhosttyCellMetrics,
     fontFamily: string,
     options: GhosttyTerminalSurfaceOptions,
-    updateAccessibleNames: () => void,
+    private readonly stopObservingI18n: () => void,
   ) {
     this.mount = mount;
     this.canvas = canvas;
@@ -693,9 +692,6 @@ export class GhosttyTerminalSurface {
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
     this.stopObservingResize = observeResize(mount, () => this.fit());
-    // The language can change while the core loads, before this subscription starts.
-    updateAccessibleNames();
-    this.stopObservingI18n = subscribeI18n(updateAccessibleNames);
   }
 
   static async create(
@@ -737,37 +733,48 @@ export class GhosttyTerminalSurface {
     if (!context) throw new Error("Canvas 2D is unavailable");
     context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
     context.fillRect(0, 0, canvas.width, canvas.height);
-    const fontSize = terminalFontSize(options.font?.size);
+    const stopObservingI18n = subscribeI18n(updateAccessibleNames);
     try {
-      // Load bundled fonts before measuring; fallback metrics would size the wrong grid.
-      await ensureTerminalSymbolsFont();
-    } catch {}
-    const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
-    const metrics = measureGhosttyCell(context, fontSize, fontFamily);
-    const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
-    const core = await GhosttyTerminalCore.create(
-      grid.cols,
-      grid.rows,
-      metrics.width,
-      metrics.height,
-      options.theme,
-      options.onReply,
-    );
-    const surface = new GhosttyTerminalSurface(
-      mount,
-      canvas,
-      input,
-      scrollbar,
-      scrollbarThumb,
-      context,
-      core,
-      metrics,
-      fontFamily,
-      options,
-      updateAccessibleNames,
-    );
-    surface.fit();
-    return surface;
+      const fontSize = terminalFontSize(options.font?.size);
+      try {
+        // Load bundled fonts before measuring; fallback metrics would size the wrong grid.
+        await ensureTerminalSymbolsFont();
+      } catch {}
+      const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
+      const metrics = measureGhosttyCell(context, fontSize, fontFamily);
+      const grid = terminalGridSize(
+        mount.clientWidth,
+        mount.clientHeight,
+        metrics,
+        CONTENT_PADDING,
+      );
+      const core = await GhosttyTerminalCore.create(
+        grid.cols,
+        grid.rows,
+        metrics.width,
+        metrics.height,
+        options.theme,
+        options.onReply,
+      );
+      const surface = new GhosttyTerminalSurface(
+        mount,
+        canvas,
+        input,
+        scrollbar,
+        scrollbarThumb,
+        context,
+        core,
+        metrics,
+        fontFamily,
+        options,
+        stopObservingI18n,
+      );
+      surface.fit();
+      return surface;
+    } catch (error) {
+      stopObservingI18n();
+      throw error;
+    }
   }
 
   setVisible(visible: boolean): void {
