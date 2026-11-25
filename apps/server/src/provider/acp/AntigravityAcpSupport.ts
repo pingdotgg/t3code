@@ -192,8 +192,20 @@ const ANTIGRAVITY_T3_MCP_TITLE = /^Run mcp_t3-code_(?<tool>[A-Za-z0-9_]+)\??$/;
 // rawInput is the tool's own arguments.
 const ANTIGRAVITY_PROXIED_MCP_TITLE = /^MCP Tool (?<tool>[A-Za-z0-9_]+)\??$/;
 
-const isAntigravityT3McpTool = (tool: string): boolean =>
-  T3_MCP_TOOL_NAMES.has(tool) || tool === TOOL_SEARCH || tool === TOOL_CALL;
+const isAntigravityT3McpTool = (
+  tool: string,
+  toolArgs: Record<string, unknown> | undefined,
+): boolean => {
+  if (T3_MCP_TOOL_NAMES.has(tool) || tool === TOOL_SEARCH) return true;
+  if (tool !== TOOL_CALL) return false;
+  const target = typeof toolArgs?.name === "string" ? toolArgs.name.trim() : "";
+  return (
+    target.length > 0 &&
+    target !== TOOL_CALL &&
+    target !== TOOL_SEARCH &&
+    T3_MCP_TOOL_NAMES.has(target)
+  );
+};
 
 function isAntigravityT3McpRequest(request: EffectAcpSchema.RequestPermissionRequest): boolean {
   const title = request.toolCall.title?.trim() ?? "";
@@ -203,12 +215,12 @@ function isAntigravityT3McpRequest(request: EffectAcpSchema.RequestPermissionReq
     return (
       rawInput?.ServerName === "t3-code" &&
       rawInput.ToolName === proxiedTool &&
-      isAntigravityT3McpTool(proxiedTool)
+      isAntigravityT3McpTool(proxiedTool, unknownRecord(rawInput.Arguments))
     );
   }
   if (typeof rawInput?.CommandLine === "string") return false;
   const tool = ANTIGRAVITY_T3_MCP_TITLE.exec(title)?.groups?.tool;
-  return tool !== undefined && isAntigravityT3McpTool(tool);
+  return tool !== undefined && isAntigravityT3McpTool(tool, rawInput);
 }
 
 export function antigravityPermissionDisposition(
