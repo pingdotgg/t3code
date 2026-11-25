@@ -57,7 +57,7 @@ flowchart LR
    - Team-scoped provider configurations.
    - The registry of additional remote environments linked to the team and their per-environment ACLs.
    - Team project assignments, thread ownership (`creatorMemberId`), thread `viewId`, lock state, and per-member follow subscriptions.
-2. **Default team environment.** The Team Server itself is automatically the team's default execution environment.
+2. **Default team environment.** The Team Server can act as the default execution environment for simple/dev setups, or run in **`--team-hub-only` (Control Plane) mode** where an unprivileged runner (`t3runner`) attached over loopback serves as the Default Team Environment (required for true OS-level RBAC enforcement; see [Agent Privilege Containment](#agent-privilege-containment-mcp--hubrunner-os-split)).
 3. **Additional remote environments.** Team owners/admins can register other remote `t3server` instances on the Team Server (building on T3 Code's existing peer-link / remote-environment model in `apps/server/src/peer`).
 4. **Local + remote thread placement.** When starting a new thread on a project assigned to a team, the user can choose:
    - Their **local environment** (the desktop app's bundled server), or
@@ -360,9 +360,38 @@ To prevent this, we combine **two layers of defense**:
   - **`owner` and `admin` users** are permitted to intervene:
     - To preserve strict GitHub credential isolation even when an `owner`/`admin` intervenes, we should offer (and default to) **Interrupt & Start New Turn** (which immediately revokes User A's active turn lease and runs the admin's follow-up under the admin's own identity), and if true mid-turn steering is used by an `owner`/`admin`, immediately **revoke/freeze the original user's GitHub credential lease** for the remainder of that turn so an admin cannot push/act on GitHub using User A's token.
 
-### Residual threat model note (shared OS user)
+### Agent Privilege Containment (MCP + Hub/Runner OS Split)
 
-- Because T3 Code's security boundary is the OS user running the environment ([04_environment-auth.md](../internals/04_environment-auth.md#the-environment-is-the-filesystem-boundary)), agents with shell access in the same OS user share the filesystem/worktree. Per-turn brokering + session recycling prevents accidental cross-user credential leakage and unauthorized steering, while true adversarial multi-tenant isolation would require per-user OS sandboxes/containers (out of scope for initial milestones, noted as a future hardening option).
+Ensuring an agent running on the Default Team Environment (or any shared team environment) **cannot perform actions the triggering member is unauthorized to do** requires closing **two separate attack planes**:
+
+#### Plane 1 — Member-bound, turn-scoped MCP tools (Application layer)
+
+Every agent spawned inside T3 Code receives an injected T3 MCP server (`OrchestratorMcpService.ts` / `McpToolAccess.ts`) exposing `t3_thread_*`, `t3_project_*`, `t3_environment_*`, `delegate_task`, etc.:
+
+- **Bind MCP tokens to `actingMemberId`:** Every turn injects an MCP credential bound strictly to `actingMemberId = turnAuthorMemberId` (never a privileged server/admin token).
+- **Enforce identical RBAC/View/Lock/Env checks:** Every MCP tool handler runs the exact same authorization checks (`canReadThread`, `canPostInThread`, role hierarchy, View rules, Lock state, Environment ACLs) as if that human member called the RPC directly.
+- **Immutable propagation & rotation:** Subagents and delegated tasks inherit `actingMemberId` immutably (narrowing only, never widening). When a different member triggers the next turn on the same thread, the session recycle also rotates the MCP token to the new `actingMemberId`.
+
+#### Plane 2 — Control Plane vs. Execution Runner OS-user split (Host layer)
+
+In T3 Code, the OS user running an environment is the filesystem boundary ([04_environment-auth.md](../internals/04_environment-auth.md#the-environment-is-the-filesystem-boundary)). If coding agents (with shell/file tools) run under the **same OS user** as the Team Server owning the team, an agent triggered by a `regular` member could bypass Plane 1 directly via shell commands (`sqlite3 statev2.sqlite` to read `admin`-only Views or escalate to `owner`, reading `ServerSecretStore` / company OAuth `refresh_token`s / colleagues' GitHub PATs, or running `t3 auth session issue`).
+
+To prevent this **on a single shared company server**, separate the Team Control Plane from the Default Team Environment across two OS users (or containers):
+
+1. **`t3hub` (Control Plane — `--team-hub-only`, data dir `chmod 700 t3hub:t3hub`):**
+   - Owns `statev2.sqlite` (RBAC, Views, invites, transcripts), `ServerSecretStore` (GitHub PATs, company OAuth `refresh_token`s), Team Model Proxy, OAuth Token Lease endpoint, and GitHub per-turn broker.
+   - **Never spawns coding agents or shell terminals directly.**
+2. **`t3runner` (Default Team Environment — unprivileged OS user attached over loopback):**
+   - Runs agent harnesses, terminals, and workspaces for the team.
+   - Has **zero OS filesystem permission** to read `/var/lib/t3hub` and cannot mint sessions on `t3hub`.
+   - Receives only: the turn's member-bound MCP token (`actingMemberId`), ephemeral `access_token` leases (no `refresh_token`), and single-turn GitHub leases.
+
+#### Optional Layer 2 hardening between concurrent teammates on `t3runner`
+
+- The `t3hub`/`t3runner` split completely protects the Team Server, RBAC, secrets, and `admin`-only View transcripts.
+- To also prevent two agents running _concurrently_ on `t3runner` from reading each other's worktree files or inspecting sibling processes on Linux:
+  - Mount `/proc` with `hidepid=2` and keep GitHub credentials in the turn-scoped Unix socket broker (never static process env vars).
+  - Optionally wrap each agent child process in a lightweight Linux **`bwrap` (bubblewrap)** sandbox mounting **only** that thread's worktree, `/tmp`, and its turn broker socket (or run separate runner OS users per trust tier, e.g., `default-runner` vs. `admin-runner` gated by Environment ACL).
 
 ---
 
@@ -432,3 +461,4 @@ The following decisions are locked in for implementation:
 5. **Default View posting policy** — the Default View allows all team members to read and post in each other's threads by default.
 6. **Local-environment isolation & Thread Notes** — no colleague (not even `owner`/`admin`) can execute on another member's local environment; colleagues can read, fork onto an accessible environment, or leave immutable **Notes** (`Note from <pseudo>:`). The owner must explicitly accept, edit (preserving `original_body`), or reject pending notes (with an explicit UI confirmation dialog when the note author is `regular`, while `modo`/`admin`/`owner` authors skip the extra modal), may send an empty prompt once a note is accepted, and any note arriving concurrently with a new turn is ignored by that turn and re-anchored after it.
 7. **Admin-only Team Provider auth & zero-config local execution** — team providers are authenticated solely by `owner`/`admin` on the owning Team Server; teammates never configure provider auth locally. Local team threads automatically provision isolated `team:<teamId>:*` instances (never touching or falling back to personal subscriptions), fed transparently by the Team Server via `proxy` (API/gateway) or ephemeral `token-lease` (OAuth access tokens without `refresh_token`), with `remote-only` fallback for drivers that cannot safely lease/proxy.
+8. **Agent privilege containment (Member-bound MCP + Hub/Runner OS split)** — injected T3 MCP tokens are bound to `actingMemberId = turnAuthorMemberId` (inherited immutably by subagents/delegates) so agents obey the exact same RBAC/View/Lock/Env permissions as the triggering member; for OS-level containment on a shared server, the Team Server supports `--team-hub-only` mode under a dedicated OS user (`t3hub`, `0700` data dir) while an unprivileged `t3runner` user attached over loopback runs the Default Team Environment (with optional Linux `bwrap` worktree sandboxing).

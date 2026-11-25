@@ -104,8 +104,11 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
   - Provider authentication and configuration performed **only by `owner`/`admin` on the Team Server**; teammates never sign in or configure team provider credentials locally.
   - Auto-provision isolated virtual local instances (`team:<teamId>:<providerInstanceId>`) with separate `GEMINI_HOME` / `CODEX_HOME` / `CLAUDE_CONFIG_DIR` from personal subscriptions; strictly restrict team projects to `team:<teamId>:*` (never fall back to personal providers).
   - Authenticated **Team Model Proxy** (`/api/team/provider-proxy/:id/*`) for API-key / `BASE_URL` providers (zero company keys leave the Team Server).
-  - Authenticated **Ephemeral OAuth Token Lease** (`POST /api/team/provider-lease/:id`) for OAuth subscription harnesses (Antigravity/Gemini, Codex via `CodexManagedTokenBroker`, Claude OAuth): Team Server refreshes server-side, strips `refresh_token`, and leases only short-lived `access_token` + `expiry` to isolated local/remote instances.
+  - Authenticated **Ephemeral OAuth Token Lease** (`POST /api/team/provider-lease/:id`) for OAuth subscription harnesses (Antigravity/Gemini, Codex via `CodexManagedTokenBroker`, Claude OAuth): Team Server refreshes server-side, strips `refresh_token`, and leases only short-lived `access_token` + `expiry` to isolated local/remote instances (with proactive background renewal and `ProviderContinuationRequests` auto-resume for >1h turns).
   - Clear `remote-only` indicator for any CLI driver that cannot safely be proxied or leased without a `refresh_token`.
+- **Agent Privilege Containment & Control-Plane Isolation:**
+  - Bind every injected T3 MCP token on team threads to `actingMemberId = turnAuthorMemberId` (propagated immutably to subagents/delegates and rotated on author-switch session recycle) so agents cannot bypass RBAC, Views, thread locks, or Environment ACLs via MCP tools.
+  - Add `--team-hub-only` (control-plane-only) server mode and deployment guide for splitting `t3hub` (owns `statev2.sqlite`, `ServerSecretStore`, and OAuth `refresh_token`s under `0700` OS permissions, never spawns agents) from `t3runner` (unprivileged OS user attached over loopback as the Default Team Environment).
 
 ### Definition of Done
 
@@ -148,7 +151,8 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 - **Mobile (`apps/mobile`):** Team switcher, deep-link join, pseudo prefixes, "My threads" default filter + toggle, follow/unfollow, View/Lock badges, and per-member push notification filtering.
 - **Translations (`i18n`):** Add and verify all new UI strings via `vp run i18n:generate` and `vp run i18n:check`.
-- **Testing & verification:**
-  - Integration tests for RBAC, View filtering, thread locking, and per-turn GitHub isolation.
+- **Testing, Sandboxing & Hardening:**
+  - Optional Linux per-turn `bwrap` (bubblewrap) worktree sandboxing on shared runners (bind-mounting only the thread's worktree + `/tmp` + turn broker socket) + `/proc` `hidepid=2` runbook.
+  - Integration tests for RBAC, View filtering, thread locking, member-bound MCP enforcement, and per-turn GitHub isolation.
   - End-to-end scenarios (`vp run scenarios:prove`) covering multi-member collaboration.
-  - Security audit of WebSocket subscription filtering, asset access, and credential lease revocation.
+  - Security audit of WebSocket subscription filtering, `t3hub`/`t3runner` OS boundary, asset access, and credential lease revocation.
