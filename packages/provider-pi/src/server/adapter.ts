@@ -4150,11 +4150,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     }),
                   );
                 }).pipe(
-                  Effect.onError(() =>
-                    Effect.sync(() => {
-                      if (switchedSession && threadState === state) threadState = null;
-                    }),
-                  ),
+                  Effect.onError(() => (switchedSession ? connection.terminate : Effect.void)),
                   Effect.onInterrupt(() => connection.terminate),
                 );
               },
