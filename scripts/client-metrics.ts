@@ -45,6 +45,8 @@ import {
   noiseReport,
   parseCases,
   summaryTable,
+  PROBE_KEYS,
+  WORKLOAD_KEYS,
   workloadDifferences,
   type Case,
   type Idle,
@@ -503,12 +505,22 @@ const startSeededApp = Effect.fn("clientMetrics.startSeededApp")(function* (
 const INSTALL_PROBES = `(() => {
   const bench = { events: [], loaf: [], last: null, step: null };
   window.__clientMetrics = bench;
+  // Entries are kept only while a measurement watches, so soak heap samples hold none.
+  const record = (on) => {
+    bench.recording = on;
+    bench.events = [];
+    bench.loaf = [];
+  };
+  bench.record = record;
+  record(false);
   new PerformanceObserver((list) => {
+    if (!bench.recording) return;
     for (const entry of list.getEntries()) {
       bench.events.push({ name: entry.name, start: entry.startTime, duration: entry.duration, interaction: entry.interactionId ?? 0 });
     }
   }).observe({ type: "event", durationThreshold: 16, buffered: false });
   new PerformanceObserver((list) => {
+    if (!bench.recording) return;
     for (const entry of list.getEntries()) bench.loaf.push({ start: entry.startTime, duration: entry.duration });
   }).observe({ type: "long-animation-frame", buffered: false });
   // The click's own timestamp, so the press's hold does not count; Event Timing skips fast clicks.
@@ -516,6 +528,7 @@ const INSTALL_PROBES = `(() => {
     if (bench.last && bench.last.clickAt === null) bench.last.clickAt = event.timeStamp;
   }, true);
   bench.watch = (fromPath) => {
+    record(true);
     const t0 = performance.now();
     const watch = { t0, clickAt: null, frames: [] };
     const tick = (ts) => {
@@ -531,6 +544,7 @@ const INSTALL_PROBES = `(() => {
     bench.last = watch;
   };
   bench.begin = () => {
+    record(true);
     const step = { t0: performance.now(), frames: [], done: false };
     const tick = (ts) => {
       if (step.done) return;
@@ -539,6 +553,11 @@ const INSTALL_PROBES = `(() => {
     };
     requestAnimationFrame(tick);
     bench.step = step;
+  };
+  // A step whose input failed: stop its frame loop and drop what it saw.
+  bench.abort = () => {
+    if (bench.step) bench.step.done = true;
+    record(false);
   };
   // Two frames later, so the observers have delivered the step's last entries.
   bench.end = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -552,6 +571,7 @@ const INSTALL_PROBES = `(() => {
       dropped += Math.max(0, Math.round((step.frames[index] - step.frames[index - 1]) / (1000 / 60)) - 1);
     }
     const intervals = Math.max(1, step.frames.length - 1);
+    record(false);
     resolve({
       paintMs: paints.length ? Math.round(Math.max(...paints)) : null,
       loafMs: Math.round(loaf),
@@ -567,7 +587,10 @@ const READ_SWITCH = `(() => {
   const bench = window.__clientMetrics;
   const watch = bench.last;
   const at = location.pathname;
-  if (watch.clickAt === null) return { clicked: false, at };
+  if (watch.clickAt === null) {
+    bench.record(false);
+    return { clicked: false, at };
+  }
   const clickAt = watch.clickAt;
   const event = bench.events.find((entry) => entry.name === "click" && entry.start >= clickAt - 5);
   const moved = watch.frames.find((frame) => frame.moved);
@@ -578,6 +601,7 @@ const READ_SWITCH = `(() => {
     (sum, entry) => sum + Math.max(0, Math.min(entry.start + entry.duration, to) - Math.max(entry.start, from)),
     0,
   );
+  bench.record(false);
   return {
     clicked: true,
     at,
@@ -775,7 +799,17 @@ const runStep = Effect.fn("clientMetrics.step")(function* (
     yield* browserPromise("begin step", () => h.page.evaluate("window.__clientMetrics.begin()"));
     yield* startRenders(h);
   }
-  yield* browserPromise(`${name} ${step}`, act);
+  yield* browserPromise(`${name} ${step}`, act).pipe(
+    Effect.tapError(() =>
+      mode.kind !== "measure"
+        ? Effect.void
+        : browserPromise("abort step", () =>
+            h.page.evaluate(
+              "window.__clientMetrics.abort(); window.__clientMetricsRenders?.stop()",
+            ),
+          ).pipe(Effect.ignore),
+    ),
+  );
   yield* Effect.sleep(Duration.millis(settleMs));
   if (mode.kind === "trace") yield* mark(h.page, END_LABEL);
   if (mode.kind !== "measure") return;
@@ -1197,17 +1231,23 @@ const measureOnce = Effect.fn("clientMetrics.measureOnce")(function* (options: M
     yield* Console.error(`skipping ${name}: ${reason}`);
   });
 
-  const wanted = panelThreads(cases);
-  if (wanted.includes("surfaces")) {
-    yield* openPanels(h, ["surfaces"], options.artifacts).pipe(
-      Effect.catch((error) => skip("surfaces", error.message.split("\n")[0]!)),
+  // A panel this checkout cannot open skips only the cases that need it.
+  const panels: Panel[] = [];
+  for (const thread of panelThreads(cases)) {
+    const opened = yield* openPanels(h, [thread], options.artifacts).pipe(
+      Effect.catch((error) =>
+        Effect.as(
+          Effect.forEach(
+            cases.filter((name) => panelThreads([name]).includes(thread)),
+            (name) =>
+              skip(name, `its ${thread} panel did not open: ${error.message.split("\n")[0]!}`),
+          ),
+          [],
+        ),
+      ),
     );
+    panels.push(...opened);
   }
-  const panels = yield* openPanels(
-    h,
-    wanted.filter((name) => name !== "surfaces"),
-    options.artifacts,
-  );
 
   // A fresh document, so round 0 visits every thread for the first time in this page.
   yield* browserPromise("reload on the hub thread", async () => {
@@ -1249,6 +1289,8 @@ const measureOnce = Effect.fn("clientMetrics.measureOnce")(function* (options: M
   const memory: Memory[] = [{ label: "loaded", ...(yield* memoryAfterGc(page, cdp)) }];
   const switches: Switch[] = [];
   const steps: Step[] = [];
+  /** Interactions that failed in the traced round, whose marked windows the analysis drops. */
+  const failedInTrace = new Set<string>();
 
   /** Runs a case once; an interaction this checkout cannot do is skipped from then on. */
   const runCase = Effect.fn("clientMetrics.runCase")(function* (name: Case, mode: Mode) {
@@ -1274,11 +1316,14 @@ const measureOnce = Effect.fn("clientMetrics.measureOnce")(function* (options: M
       return;
     }
     const before = steps.length;
+    const loggedBefore = h.probeLog.length;
     yield* onThread(h, INTERACTIONS[name].thread);
     yield* INTERACTIONS[name].run(h, mode, steps).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
           steps.splice(before);
+          h.probeLog.splice(loggedBefore);
+          if (mode.kind === "trace") failedInTrace.add(name);
           yield* browserPromise("recover", async () => {
             await page.keyboard.press("Escape");
             await page.keyboard.press("Escape");
@@ -1343,7 +1388,7 @@ const measureOnce = Effect.fn("clientMetrics.measureOnce")(function* (options: M
       yield* Console.error("the trace has no renderer main thread; no CPU breakdown");
     } else {
       if (!analyzed.profiled) yield* Console.error("the trace has no CPU profile samples");
-      trace = analyzed.steps;
+      trace = analyzed.steps.filter((step) => !failedInTrace.has(step.label.split(":")[0]!));
       callSites = analyzed.callSites;
     }
   }
@@ -1480,7 +1525,10 @@ const report = Effect.fn("clientMetrics.report")(function* (
   if (compared === 0) {
     return yield* new MetricsError({ message: "the two files share no metric" });
   }
-  if (noisy.length) yield* Console.error(`Moved, but too noisy to gate on: ${noisy.join(", ")}`);
+  if (noisy.length)
+    yield* Console.error(
+      `Moved, but not gated (too noisy, or one run a side): ${noisy.join(", ")}`,
+    );
   if (improved.length) yield* Console.error(`Better: ${improved.join(", ")}`);
   if (regressed.length === 0) return;
   yield* Console.error(`Worse: ${regressed.join(", ")}`);
@@ -1766,7 +1814,7 @@ const compareCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Markdown table of two result files, lower is better. With 2+ samples a side, a metric counts only when the 95% bootstrap interval of the median difference clears the threshold and its floor (calibrated with --floors, else a default). Exits 1 on a regression.",
+    "Markdown table of two result files, lower is better. Each run's median is one sample; with 2+ runs a side, a metric counts only when the 95% bootstrap interval of the median difference across runs clears the threshold and its floor (calibrated with --floors, else a default). One run a side is shown, not gated. Exits 1 on a regression.",
   ),
 );
 
@@ -1794,6 +1842,13 @@ const noiseCommand = Command.make(
         if (a.meta.commit === null || a.meta.commit !== b.meta.commit) {
           return yield* new MetricsError({
             message: `${dir}: a.json is ${a.meta.commit} and b.json ${b.meta.commit}; floors need one commit against itself`,
+          });
+        }
+        // A probe or build difference would pass for noise and widen every floor.
+        const settings = workloadDifferences(a, b, [...WORKLOAD_KEYS, ...PROBE_KEYS]).differ;
+        if (settings.length > 0) {
+          return yield* new MetricsError({
+            message: `${dir}: a.json and b.json ran with different settings (${settings.join("; ")})`,
           });
         }
         for (const [file, metrics] of [

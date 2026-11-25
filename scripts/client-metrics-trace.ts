@@ -97,6 +97,8 @@ export const TraceStep = Schema.Struct({
   /** Style recalculation and layout a script forced inside the input task. */
   forcedStyleMs: Schema.Number,
   forcedLayoutMs: Schema.Number,
+  /** Median of each window's style plus layout, which the two medians above can both miss. */
+  forcedMs: Schema.optional(Schema.Number),
   /** CPU samples inside the input task. */
   sampledMs: Schema.Number,
   /** Self time by package (app package, `nm:` library or V8 bucket); sums to `sampledMs`. */
@@ -105,7 +107,7 @@ export const TraceStep = Schema.Struct({
   bySource: Schema.Array(Weighted),
   /** Inclusive time by library, each counted once per sample however deep it nests. */
   byPackage: Schema.Array(Weighted),
-  /** Tasks over 50 ms after the input task, inside the window, with their top sources. */
+  /** Tasks over 50 ms after the input task (anywhere in the window without one), with their top sources. */
   longTasks: Schema.Array(LongTask),
 });
 export type TraceStep = typeof TraceStep.Type;
@@ -182,11 +184,10 @@ export function cpuProfile(events: ReadonlyArray<TraceEvent>, thread: Thread): P
     const id = String(event.id);
     byId.set(id, [...(byId.get(id) ?? []), event]);
   }
-  // A page can have worker profiles too; the main thread's is the one started on its thread.
-  const chunks =
-    [...byId.values()].find((entries) =>
-      entries.some((entry) => entry.name === "Profile" && entry.tid === thread.tid),
-    ) ?? [...byId.values()].toSorted((a, b) => b.length - a.length)[0];
+  // A page can have worker profiles too; only one started on the main thread is its.
+  const chunks = [...byId.values()].find((entries) =>
+    entries.some((entry) => entry.name === "Profile" && entry.tid === thread.tid),
+  );
   const frames = new Map<number, typeof CallFrame.Type>();
   const parents = new Map<number, number>();
   const samples: Array<readonly [number, number]> = [];
@@ -370,8 +371,9 @@ export function analyzeTrace(
         }
       }
     }
+    const after = task === undefined ? mark.ts : task.ts! + (task.dur ?? 0);
     for (const later of tasks) {
-      if (later === task || later.ts! < mark.ts || later.ts! >= end) continue;
+      if (later === task || later.ts! < after || later.ts! >= end) continue;
       if ((later.dur ?? 0) / 1_000 < LONG_TASK_MS) continue;
       const totals = new Map<string, number>();
       for (const [id, ms] of sampleWeights(later.ts!, later.ts! + (later.dur ?? 0))) {
@@ -400,6 +402,7 @@ export function analyzeTrace(
       inputTaskMs: round(median(entries.map((entry) => entry.inputTaskMs)), 1),
       forcedStyleMs: round(median(entries.map((entry) => entry.style)), 1),
       forcedLayoutMs: round(median(entries.map((entry) => entry.layout)), 1),
+      forcedMs: round(median(entries.map((entry) => entry.style + entry.layout)), 1),
       sampledMs: round(median(entries.map((entry) => entry.sampled)), 1),
       selfByPackage: top(
         merged((window) => window.self),

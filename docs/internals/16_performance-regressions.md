@@ -62,7 +62,8 @@ machine for the pinned `playwright-core` with
   `compare` gates the result. Isolated runs on a loaded machine say nothing; trust only `ab`. The
   harness, seed and replay agent come from the script, so an older checkout works as A; a case it
   cannot run is skipped and named. `compare` refuses files whose workload (cases, rounds, long
-  thread length) differs.
+  thread length) differs, and takes each run's median as one sample: samples from one page are not
+  independent, so it gates only with 2+ runs a side.
 - **Switches** are sidebar clicks from a small hub thread. A case's first visit and its revisits
   are separate metrics, since a first visit is the thread's first open in that page. Paints under
   Event Timing's 16 ms threshold count as 16 ms.

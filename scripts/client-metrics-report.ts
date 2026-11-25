@@ -226,16 +226,17 @@ export const PAINT_THRESHOLD_MS = 16;
 const censoredPaint = (value: number | null) => value ?? PAINT_THRESHOLD_MS;
 
 /**
- * Every compared metric of a file, each with one value per sample: per switch or step for
- * latencies and renders, per run for shares, memory, panels, traces and idle CPU.
+ * Every compared metric of a file, one value per run: the median of the run's switches or steps
+ * for latencies and renders, so samples from one page never pass for independent runs.
  */
 export function flatten(metrics: ClientMetrics): Map<string, number[]> {
   const values = new Map<string, number[]>();
-  const add = (key: string, value: number | null | undefined) => {
-    if (value === null || value === undefined || !Number.isFinite(value)) return;
-    values.set(key, [...(values.get(key) ?? []), value]);
-  };
   for (const run of metrics.runs) {
+    const inRun = new Map<string, number[]>();
+    const add = (key: string, value: number | null | undefined) => {
+      if (value === null || value === undefined || !Number.isFinite(value)) return;
+      inRun.set(key, [...(inRun.get(key) ?? []), value]);
+    };
     const groups = new Map<string, Switch[]>();
     for (const entry of run.switches) {
       const key = `switch.${entry.case}.${entry.visit}`;
@@ -261,7 +262,10 @@ export function flatten(metrics: ClientMetrics): Map<string, number[]> {
     for (const entry of run.panels ?? []) add(`panel.${entry.case}.domNodes`, entry.panelNodes);
     for (const entry of run.trace ?? []) {
       add(`trace.${entry.label}.inputTaskMs`, entry.inputTaskMs);
-      add(`trace.${entry.label}.forcedMs`, entry.forcedStyleMs + entry.forcedLayoutMs);
+      add(
+        `trace.${entry.label}.forcedMs`,
+        entry.forcedMs ?? entry.forcedStyleMs + entry.forcedLayoutMs,
+      );
     }
     for (const entry of run.memory) {
       add(`memory.${entry.label}.heapMB`, entry.heapMB);
@@ -274,18 +278,26 @@ export function flatten(metrics: ClientMetrics): Map<string, number[]> {
       add("soak.domNodesPerIteration", slopes.domNodes);
       add("soak.listenersPerIteration", slopes.listeners);
     }
+    for (const [key, samples] of inRun)
+      values.set(key, [...(values.get(key) ?? []), median(samples)!]);
   }
   return values;
 }
 
 /** Settings that change what shared metrics measure, recorded in each file's meta. */
 export const WORKLOAD_KEYS = ["cases", "switchRounds", "longTurns"] as const;
+/** Settings that change timing without changing the workload: the render probe and the build. */
+export const PROBE_KEYS = ["renders", "minified"] as const;
 
-/** Workload settings two files disagree on, and those one of them did not record. */
-export function workloadDifferences(before: ClientMetrics, after: ClientMetrics) {
+/** Settings two files disagree on, and those one of them did not record. */
+export function workloadDifferences(
+  before: ClientMetrics,
+  after: ClientMetrics,
+  keys: ReadonlyArray<string> = WORKLOAD_KEYS,
+) {
   const differ: string[] = [];
   const unrecorded: string[] = [];
-  for (const key of WORKLOAD_KEYS) {
+  for (const key of keys) {
     const a = before.meta[key];
     const b = after.meta[key];
     if (a === undefined || b === undefined) {
@@ -440,7 +452,7 @@ export function summaryTable(metrics: ClientMetrics) {
     }
     lines.push("", "Where each traced step's input task spent its JS (ms per window):", "");
     for (const step of traced) {
-      if (step.sampledMs === 0 && step.longTasks.length === 0) continue;
+      if (step.selfByPackage.length === 0 && step.longTasks.length === 0) continue;
       lines.push(
         `- **${step.label}**: self ${weightsOf(step.selfByPackage.slice(0, 4))}; libraries ${weightsOf(step.byPackage.slice(0, 4))}; sources ${weightsOf(step.bySource.slice(0, 5))}`,
       );
@@ -553,11 +565,15 @@ export function compareClientMetrics(
     const mx = median(x)!;
     const my = median(y)!;
     const limit = Math.max(calibrated?.floor ?? floorFor(metric), (Math.abs(mx) * threshold) / 100);
+    // Runs are the independent samples; with one a side there is no interval to gate on.
     const repeated = x.length > 1 && y.length > 1;
     const [low, high] = repeated ? bootstrapMedianDifference(x, y) : [my - mx, my - mx];
     const moved = low > limit ? "worse" : high < -limit ? "better" : "";
-    const gated = calibrated?.gate ?? true;
-    const verdict = moved && !gated ? `${moved}, too noisy to gate` : moved;
+    const gated = repeated && (calibrated?.gate ?? true);
+    const verdict =
+      moved && !gated
+        ? `${moved}, ${repeated ? "too noisy to gate" : "one run, not gated"}`
+        : moved;
     if (moved && !gated) noisy.push(metric);
     else if (moved === "worse") regressed.push(metric);
     else if (moved === "better") improved.push(metric);

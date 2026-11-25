@@ -11,6 +11,7 @@ import {
   noiseReport,
   parseCases,
   percentile,
+  PROBE_KEYS,
   slope,
   soakSlopes,
   summaryTable,
@@ -107,6 +108,8 @@ describe("parseCases", () => {
   it("names unknown cases", () => {
     const parsed = parseCases("short,diffs");
     expect("error" in parsed && parsed.error).toMatch(/^unknown cases: diffs; choose from/);
+    const inherited = parseCases("short,toString");
+    expect("error" in inherited && inherited.error).toMatch(/^unknown cases: toString;/);
   });
 });
 
@@ -133,7 +136,8 @@ describe("report math", () => {
       ],
     });
     const flat = flatten(metrics);
-    expect(flat.get("switch.short.revisit.paintMs")).toEqual([100, 120, 16]);
+    // One value per run: the median of 100, 120 and 16, where dropping the null would give 110.
+    expect(flat.get("switch.short.revisit.paintMs")).toEqual([100]);
     expect(flat.get("switch.short.revisit.firstFrameMissPct")).toEqual([(1 / 3) * 100]);
   });
 
@@ -215,6 +219,23 @@ describe("report math", () => {
       });
     const result = compareClientMetrics(paints("a", null), paints("b", 64));
     expect(result.regressed).toContain("switch.diff.revisit.paintMs");
+  });
+
+  it("gates only across runs, never on samples from one page", () => {
+    const result = compareClientMetrics(
+      file("a", [[24, 24, 24, 24]]),
+      file("b", [[48, 48, 48, 48]]),
+    );
+    expect(result.regressed).toEqual([]);
+    expect(result.noisy).toContain("switch.diff.revisit.paintMs");
+    expect(result.table).toContain("one run, not gated");
+  });
+
+  it("names probe settings A/A pairs disagree on", () => {
+    const withMeta = (renders: boolean) => decode({ meta: { commit: "a", renders }, runs: [] });
+    expect(workloadDifferences(withMeta(true), withMeta(false), PROBE_KEYS).differ).toEqual([
+      "renders true vs false",
+    ]);
   });
 
   it("names workload settings two files disagree on", () => {
@@ -308,15 +329,19 @@ describe("noiseReport", () => {
   it("derives a floor from the A/A spread and flags metrics too noisy to gate", () => {
     const steady = withRenders("a", [
       [40, 40, 40],
-      [40, 41, 40],
+      [41, 41, 41],
     ]);
     const { floors, rows } = noiseReport([[steady, steady]], "linux-x64");
     expect(floors.platform).toBe("linux-x64");
-    expect(floors.floors["step.type-long.key.renders"]).toEqual({ floor: 0.25, gate: true });
+    expect(floors.floors["step.type-long.key.renders"]).toEqual({ floor: 0.5, gate: true });
     const noisy = (paints: ReadonlyArray<number>) =>
       decode({
         meta: { commit: "a", platform: "linux-x64" },
-        runs: [{ switches: paints.map((paint) => switchTo("long", paint)), memory: [], idle: [] }],
+        runs: paints.map((paint) => ({
+          switches: [switchTo("long", paint)],
+          memory: [],
+          idle: [],
+        })),
       });
     const loose = noiseReport([[noisy([20, 200, 30, 180]), noisy([190, 25, 210, 22])]], "x");
     const row = loose.rows.find((entry) => entry.metric === "switch.long.revisit.paintMs");
@@ -473,6 +498,81 @@ describe("analyzeTrace", () => {
     const key = result.steps.find((entry) => entry.label === "palette:key")!;
     expect(key).toMatchObject({ inputTaskMs: 5, sampledMs: 0, longTasks: [] });
     expect(result.steps.map((entry) => entry.label)).toEqual(["switch:diff", "palette:key"]);
+  });
+
+  it("takes the median of each window's forced total", () => {
+    const window = (at: number, style: number, layout: number): ReadonlyArray<TraceEvent> => [
+      { ...main, ph: "R", name: `${MARK_PREFIX}palette:key`, ts: at },
+      { ...main, ph: "X", name: "RunTask", ts: at + 100, dur: 20_000 },
+      {
+        ...main,
+        ph: "X",
+        name: "EventDispatch",
+        ts: at + 200,
+        dur: 1_000,
+        args: { data: { type: "keydown" } },
+      },
+      ...(style > 0
+        ? [
+            {
+              ...main,
+              ph: "X",
+              name: "UpdateLayoutTree",
+              ts: at + 300,
+              dur: style * 1_000,
+              args: { beginData: { stackTrace: stack } },
+            },
+          ]
+        : []),
+      ...(layout > 0
+        ? [
+            {
+              ...main,
+              ph: "X",
+              name: "Layout",
+              ts: at + 300,
+              dur: layout * 1_000,
+              args: { beginData: { stackTrace: stack } },
+            },
+          ]
+        : []),
+    ];
+    const result = analyzeTrace(
+      [events[0]!, ...window(0, 8, 0), ...window(2_000_000, 0, 8), ...window(4_000_000, 0, 0)],
+      mapper,
+    )!;
+    expect(result.steps[0]).toMatchObject({ forcedStyleMs: 0, forcedLayoutMs: 0, forcedMs: 8 });
+  });
+
+  it("counts only long tasks that start after the input task", () => {
+    const result = analyzeTrace(
+      [
+        events[0]!,
+        { ...main, ph: "R", name: `${MARK_PREFIX}palette:key`, ts: 0 },
+        { ...main, ph: "X", name: "RunTask", ts: 100, dur: 60_000 },
+        { ...main, ph: "X", name: "RunTask", ts: 70_000, dur: 5_000 },
+        {
+          ...main,
+          ph: "X",
+          name: "EventDispatch",
+          ts: 70_100,
+          dur: 1_000,
+          args: { data: { type: "keydown" } },
+        },
+      ],
+      mapper,
+    )!;
+    expect(result.steps[0]!.longTasks).toEqual([]);
+  });
+
+  it("never reads a worker's profile as the main thread's", () => {
+    const worker = { pid: main.pid, tid: 9 };
+    const moved = events.map((event) =>
+      event.name === "Profile" || event.name === "ProfileChunk" ? { ...event, ...worker } : event,
+    );
+    const result = analyzeTrace(moved, mapper)!;
+    expect(result.profiled).toBe(false);
+    expect(result.steps[0]!.sampledMs).toBe(0);
   });
 
   it("needs a renderer main thread", () => {
