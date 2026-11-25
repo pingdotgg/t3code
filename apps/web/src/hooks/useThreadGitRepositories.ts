@@ -23,9 +23,16 @@ export function useThreadGitRepositories(input: {
   readonly projectId: ProjectId | null;
   readonly worktreePath: string | null;
   readonly threadCwd: string | null;
-  /** False while nothing reads the list, or when the project tracks no folders. */
+  /**
+   * False while nothing reads the list. A thread in its own worktree keeps its task folder when
+   * the project stops tracking folders, so only an in-place thread needs the project to track some.
+   */
   readonly enabled: boolean;
-}): ReadonlyArray<ThreadGitRepository> {
+}): {
+  readonly repositories: ReadonlyArray<ThreadGitRepository>;
+  /** The worktree thread's task folder, once read; null otherwise. */
+  readonly taskFolder: { readonly projectIsWorktree: boolean } | null;
+} {
   const { threadRef, worktreePath, enabled } = input;
   const structure = useQuietThreadProjection(input.isServerThread ? threadRef : null);
   const taskFolderQuery = useEnvironmentQuery(
@@ -44,11 +51,15 @@ export function useThreadGitRepositories(input: {
         })
       : null,
   );
-  return threadGitRepositories({
-    changed:
-      structure === null ? NO_GIT_REPOSITORIES : threadChangedRepositories(structure.projection),
-    taskFolder: taskFolderQuery.data?.taskFolder ?? null,
-    folders: foldersQuery.data?.folders ?? null,
-    threadCwd: input.threadCwd,
-  });
+  const taskFolder = taskFolderQuery.data?.taskFolder ?? null;
+  return {
+    repositories: threadGitRepositories({
+      changed:
+        structure === null ? NO_GIT_REPOSITORIES : threadChangedRepositories(structure.projection),
+      taskFolder,
+      folders: foldersQuery.data?.folders ?? null,
+      threadCwd: input.threadCwd,
+    }),
+    taskFolder,
+  };
 }

@@ -300,19 +300,23 @@ export default function DiffPanel({
   const storedDiffSelection = useDiffPanelStore((state) =>
     selectThreadDiffPanelSelection(state.byThreadKey, routeThreadRef),
   );
-  const threadFolderIsRepo = gitStatusQuery.data?.isRepo ?? true;
   // The checkout the Git scopes read: the thread's folder, or a repository the thread changed.
   // A plain folder has no history of its own, so it starts on the latest one changed.
   const tracksFolders = (activeProject?.trackedFolders?.length ?? 0) > 0;
   // Unchanged repositories are listed too: work done outside a turn only shows in these scopes.
-  const gitRepositories = useThreadGitRepositories({
+  const threadWorktreePath = activeThread?.worktreePath ?? null;
+  const { repositories: gitRepositories, taskFolder } = useThreadGitRepositories({
     threadRef: routeThreadRef,
     isServerThread: true,
     projectId: activeProjectId,
-    worktreePath: activeThread?.worktreePath ?? null,
+    worktreePath: threadWorktreePath,
     threadCwd: activeCwd ?? null,
-    enabled: visible && tracksFolders,
+    // As in the thread details panel, which this must resolve the same repository as.
+    enabled: visible && (tracksFolders || threadWorktreePath !== null),
   });
+  // A task folder's plain project directory can sit inside someone else's repository.
+  const threadFolderIsRepo =
+    (gitStatusQuery.data?.isRepo ?? true) && taskFolder?.projectIsWorktree !== false;
   const chosenGitRepositoryPath = useThreadGitRepositoryPath(routeThreadRef);
   const gitRepository = resolveThreadGitRepository({
     repositories: gitRepositories,

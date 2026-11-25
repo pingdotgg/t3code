@@ -44,6 +44,7 @@ const state = vi.hoisted(() => ({
     trackedFolders?: ReadonlyArray<unknown>;
   },
   gitRepositories: [] as ReadonlyArray<{ repositoryPath: string; name: string; cwd: string }>,
+  taskFolder: null as { projectIsWorktree: boolean } | null,
   toolCallItem: null as unknown,
   config: null as unknown as Atom.Atom<null>,
   status: null as unknown as ResultAtom<VcsStatusResult>,
@@ -85,7 +86,10 @@ vi.mock("~/state/filesystem", () => ({
   filesystemEnvironment: {},
 }));
 vi.mock("~/hooks/useThreadGitRepositories", () => ({
-  useThreadGitRepositories: () => state.gitRepositories,
+  useThreadGitRepositories: () => ({
+    repositories: state.gitRepositories,
+    taskFolder: state.taskFolder,
+  }),
 }));
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
 vi.mock("~/hooks/useSettings", () => ({
@@ -152,17 +156,16 @@ function setup(failedBaseRef: string | null) {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
-    });
-    useDiffPanelSessionStore.setState({
-      collapsedFileKeysByScopeKey: {},
       gitRepositoryPathByThreadKey: {},
     });
+    useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
     useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
   };
   reset();
   state.diffFilesCollapsed = false;
   state.project = { workspaceRoot: "/project", repositoryIdentity: null };
   state.gitRepositories = [];
+  state.taskFolder = null;
   state.toolCallItem = null;
   state.checkpoints = [];
   state.checkpointDiff = null;
@@ -500,6 +503,35 @@ it.each([
     const headerRow = picker.element().parentElement!;
     expect(headerRow.scrollWidth).toBeLessThanOrEqual(headerRow.clientWidth);
   });
+});
+
+it("starts on the task folder's first repository when its project folder is no repository", async () => {
+  using context = setup("origin/orphan");
+  // The plain project folder sits inside an enclosing checkout, so Git calls it a repository.
+  state.taskFolder = { projectIsWorktree: false };
+  state.project = { ...state.project, trackedFolders: [{ path: "web" }] };
+  state.gitRepositories = ["web", "server"].map((path) => ({
+    repositoryPath: `/project/${path}`,
+    name: path,
+    cwd: `/task/${path}`,
+  }));
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, width: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel
+          mode="embedded"
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+        />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  // The same default the thread details panel resolves.
+  const picker = screen.getByRole("button", { name: "Repository: web" });
+  await expect.element(picker).toBeVisible();
+  await userEvent.click(picker);
+  await expect.element(page.getByRole("menuitemradio", { name: "plain" })).not.toBeInTheDocument();
 });
 
 // Paths as git's numstat reports them; the parsed patch keeps their edge whitespace.
