@@ -1,7 +1,7 @@
 import * as Haptics from "expo-haptics";
 import { T } from "gt-react-native";
 import { useEffect } from "react";
-import { Platform, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, {
   interpolate,
@@ -13,11 +13,14 @@ import Animated, {
   withTiming,
   type ScrollEvent,
 } from "react-native-reanimated";
-import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
-import type { ScrollPullEvent } from "../../native/T3ScrollPull";
+import {
+  SCROLL_PULL_FEED_EVENTS,
+  T3ScrollPullScrim,
+  type ScrollPullEvent,
+} from "../../native/T3ScrollPull";
 import {
   PULL_NEW_THREAD_THRESHOLD as THRESHOLD,
   overscrollPastEnd,
@@ -29,10 +32,6 @@ import {
 const SETTLE = { duration: 180 };
 const SCRIM_SOLID = 84;
 const SCRIM_FADE = 48;
-const DRAG_EVENTS =
-  Platform.OS === "ios"
-    ? ["onScroll", "onScrollBeginDrag", "onScrollEndDrag"]
-    : ["onScrollBeginDrag"];
 
 const armedHaptic = () => {
   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -83,7 +82,7 @@ export function useThreadPullNewThread(enabled: boolean) {
       update(overscrollPastEnd(event));
       if (event.eventName.endsWith("onScrollEndDrag")) release(true, event.velocity?.y ?? 0);
     }
-  }, DRAG_EVENTS) as unknown as RegisteredEventHandler;
+  }, SCROLL_PULL_FEED_EVENTS) as unknown as RegisteredEventHandler;
   const stretchEvents = useEvent<ScrollPullEvent>(
     (event) => {
       "worklet";
@@ -143,27 +142,12 @@ export function ThreadPullIndicator(props: {
   }));
   return (
     <>
-      {Platform.OS === "android" ? (
-        <Animated.View
-          pointerEvents="none"
-          className="absolute inset-x-0 bottom-0"
-          style={[{ height: props.bottom + SCRIM_SOLID + SCRIM_FADE }, scrimStyle]}
-        >
-          <Svg width="100%" height="100%">
-            <Defs>
-              <LinearGradient id="thread-pull-scrim" x1="0%" x2="0%" y1="0%" y2="100%">
-                <Stop offset="0%" stopColor={props.screenColor} stopOpacity={0} />
-                <Stop
-                  offset={SCRIM_FADE / (props.bottom + SCRIM_SOLID + SCRIM_FADE)}
-                  stopColor={props.screenColor}
-                  stopOpacity={1}
-                />
-              </LinearGradient>
-            </Defs>
-            <Rect width="100%" height="100%" fill="url(#thread-pull-scrim)" />
-          </Svg>
-        </Animated.View>
-      ) : null}
+      <T3ScrollPullScrim
+        height={props.bottom + SCRIM_SOLID + SCRIM_FADE}
+        fadeHeight={SCRIM_FADE}
+        color={props.screenColor}
+        style={scrimStyle}
+      />
       <Animated.View
         pointerEvents="none"
         importantForAccessibility="no-hide-descendants"
