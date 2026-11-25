@@ -422,15 +422,15 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
 
 // Claude Code records its own UI as user turns: slash commands, `!` shell runs and
 // their output, task notifications. Keep what the user typed, as they typed it.
-function isClaudeUiOutput(text: string): boolean {
-  if (/^\[Request interrupted by user(?: for tool use)?\]$/.test(text)) return true;
+function claudeUiOutputEnd(text: string): number {
   const block =
-    /<(task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>\s*/y;
-  // Consume each block at its first closing tag so prose between blocks stays visible.
+    /<(task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>(?:\s*<\/\1>)*\s*/y;
+  // Shell output can end with a literal copy of its wrapper's closing tag.
+  let end = 0;
   while (block.test(text)) {
-    if (block.lastIndex === text.length) return true;
+    end = block.lastIndex;
   }
-  return false;
+  return end;
 }
 
 /**
@@ -439,6 +439,12 @@ function isClaudeUiOutput(text: string): boolean {
  */
 function claudeCommand(text: string): { readonly text: string; readonly titleText: string } | null {
   if (!/^<command-(?:name|message)>/.test(text)) return null;
+  const block = /<command-(name|message|args)>[\s\S]*?<\/command-\1>\s*/y;
+  let end = 0;
+  while (block.test(text)) {
+    end = block.lastIndex;
+  }
+  if (end !== text.length) return null;
   const name =
     /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim() ||
     `/${/<command-message>([^<]*)<\/command-message>/.exec(text)?.[1]?.trim() ?? ""}`;
@@ -448,10 +454,16 @@ function claudeCommand(text: string): { readonly text: string; readonly titleTex
 
 /** What a Claude user turn shows the user typed, and the part of it that may name the thread. */
 function claudeUserText(text: string): { readonly text: string; readonly titleText: string } {
-  if (isClaudeUiOutput(text)) return { text: "", titleText: "" };
+  const outputEnd = claudeUiOutputEnd(text);
+  if (
+    outputEnd === text.length ||
+    /^\[Request interrupted by user(?: for tool use)?\]$/.test(text)
+  ) {
+    return { text: "", titleText: "" };
+  }
   const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
   if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
-  return claudeCommand(text) ?? { text, titleText: text };
+  return claudeCommand(text) ?? { text, titleText: text.slice(outputEnd) };
 }
 
 function claudeVisibleText(record: DecodedTranscriptRecord) {
