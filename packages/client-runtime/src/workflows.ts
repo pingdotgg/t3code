@@ -677,6 +677,18 @@ export function workflowAnswer(result: WorkflowStep["result"]): {
     : null;
 }
 
+/** Who withdrew a question unanswered, and why, when a step's result says so. */
+export function workflowWithdrawal(
+  result: WorkflowStep["result"],
+): { readonly by: string; readonly reason: string | null } | null {
+  const withdrawn = field(result, "withdrawn");
+  const by = field(withdrawn, "by");
+  const reason = field(withdrawn, "reason");
+  return typeof by === "string"
+    ? { by, reason: typeof reason === "string" && reason.trim() !== "" ? reason : null }
+    : null;
+}
+
 /**
  * Whether the client whose session on the run's environment is `sessionId` gave `answer`. Decided
  * by session, never by name: two browsers share "Chrome on Linux" and every phone its app's name.

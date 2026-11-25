@@ -5683,5 +5683,9 @@
       "k": "_gt_value_1",
       "v": "v"
     }
-  ]
+  ],
+  "1a1beecff68a6e61": "Verificar conta Google",
+  "99451a5d2d40440f": "Retirada por {by}.",
+  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
+  "201490988858b511": "retirada por {by}"
 }

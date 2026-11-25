@@ -12276,10 +12276,26 @@
   "a16b48709357a5a7": "Gestionar uso",
   "a00e74aaa421c524": "restante",
   "0e34c3076c08feb2": [
-    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    {
+      "t": "span",
+      "i": 1,
+      "c": [
+        "↻ +",
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
     " ",
     "en ",
-    { "i": 3, "k": "_gt_value_3", "v": "v" }
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    }
   ],
   "8bd6f07136317c8f": "Ningún proveedor de los entornos seleccionados informa de límites de suscripción.",
   "87f5d0c61b335f38": "Consulta el uso en ChatGPT con tu cuenta conectada.",
@@ -12949,5 +12965,10 @@
       "v": "v"
     },
     " necesita un motivo."
-  ]
+  ],
+  "91aadfc843c600de": "Verificar cuenta de Google",
+  "201490988858b511": "retirada por {by}",
+  "99451a5d2d40440f": "Retirada por {by}.",
+  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
+  "92e129bf413a1220": "retirada"
 }

@@ -1042,6 +1042,22 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       });
     },
   );
+  const withdraw: Workflows["Service"]["withdraw"] = Effect.fn("Workflows.withdraw")(
+    function* (runId, name, options) {
+      yield* requireRun(runId);
+      const wait = yield* store.waitAt({ runId, wait: name });
+      // Only a question: a plain wait is something a run sleeps on, not something it asked.
+      if (wait === undefined || wait.request_json === null) return "not_open" as const;
+      const woke = {
+        expired: true,
+        value: null,
+        withdrawn: { by: options.by, reason: options.reason ?? null },
+      };
+      if (!(yield* store.waitSignalled(runId, name, woke))) return "not_open" as const;
+      yield* wake(wait, woke);
+      return "withdrawn" as const;
+    },
+  );
   const signalAll = Effect.fn("WorkflowEngine.signalAll")(function* (
     address: { readonly channel: string; readonly workflow?: string | undefined },
     value: Schema.Json,
@@ -1134,6 +1150,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     ended,
     watchTurn,
     cancel: (runId, reason) => cancel(runId, reason),
+    withdraw,
     list: Effect.fn("WorkflowEngine.list")(function* (filter) {
       return (yield* store.runsWhere(filter)).map((row) => ({
         id: row.run_id,
@@ -1167,6 +1184,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     answer,
     resume,
     cancel,
+    withdraw,
     get: Effect.fn("Workflows.get")(function* (runId) {
       const row = yield* requireRun(runId);
       const steps = yield* store.steps(runId);

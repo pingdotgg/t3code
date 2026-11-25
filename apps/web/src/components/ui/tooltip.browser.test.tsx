@@ -3,6 +3,14 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
+import {
+  Combobox,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxPopup,
+  ComboboxSearchInput,
+  ComboboxTrigger,
+} from "./combobox";
 import { SharedTooltipProvider, SharedTooltipTrigger } from "./shared-tooltip";
 import { Tooltip, TooltipPopup, TooltipScrollDismissArea, TooltipTrigger } from "./tooltip";
 
@@ -63,6 +71,38 @@ it.each([
     else await expect.element(page.getByText("Description")).not.toBeInTheDocument();
   },
 );
+
+it("closes a hovered tooltip when the combobox list scrolls under a stationary pointer", async () => {
+  await using screen = await render(
+    <Combobox>
+      <ComboboxTrigger>Projects</ComboboxTrigger>
+      <ComboboxPopup render={<TooltipScrollDismissArea holdPositionOnExit />}>
+        <ComboboxSearchInput aria-label="Search projects" />
+        <ComboboxList>
+          <ComboboxItem value="project">
+            <Tooltip>
+              <TooltipTrigger render={<span />}>Remote project</TooltipTrigger>
+              <TooltipPopup>Remote machine</TooltipPopup>
+            </Tooltip>
+          </ComboboxItem>
+          <div className="h-160" />
+        </ComboboxList>
+      </ComboboxPopup>
+    </Combobox>,
+  );
+  await userEvent.click(screen.getByText("Projects"));
+  const trigger = page.getByText("Remote project");
+  await userEvent.hover(trigger);
+  const tooltip = page.getByText("Remote machine");
+  await expect.element(tooltip).toBeVisible();
+
+  trigger.element().closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!.scrollTop = 1;
+  await expect.element(tooltip).not.toBeInTheDocument();
+
+  await userEvent.unhover(trigger);
+  await userEvent.hover(trigger);
+  await expect.element(tooltip).toBeVisible();
+});
 
 it("refreshes an open shared tooltip's label and links aria-describedby on focus", async () => {
   await using screen = await render(
@@ -135,4 +175,27 @@ it("opens a shared tooltip in place the first time", async () => {
     .map((transition) => transition.transitionProperty)
     .filter((property) => ["top", "left", "right", "bottom", "transform"].includes(property));
   expect(moving).toEqual([]);
+});
+
+it("closes the shared tooltip when its open trigger is removed", async () => {
+  const tree = (showReaction: boolean) => (
+    <SharedTooltipProvider>
+      {showReaction ? (
+        <SharedTooltipTrigger label="Ada reacted" render={<button type="button" />}>
+          Reaction
+        </SharedTooltipTrigger>
+      ) : null}
+      <SharedTooltipTrigger label="Add reaction" render={<button type="button" />}>
+        Add
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>
+  );
+  await using screen = await render(tree(true));
+  await userEvent.keyboard("{Tab}");
+  await expect.element(screen.getByRole("button", { name: "Reaction" })).toHaveFocus();
+  await expect.element(page.getByText("Ada reacted")).toBeVisible();
+
+  // A refresh drops the reaction under the pointer; a removed trigger fires no pointerleave.
+  await screen.rerender(tree(false));
+  await expect.element(page.getByText("Ada reacted")).not.toBeInTheDocument();
 });
