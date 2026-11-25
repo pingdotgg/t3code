@@ -96,7 +96,7 @@ import {
   parseSessionUpdateEvent,
   sessionUpdateIsReplay,
   toolCallVisibleOutputChanged,
-  withKnownPermissionLocations,
+  withTrackedChangedPaths,
   withTrackedPermissionToolCall,
   type AcpPlanUpdate,
   type AcpAgentTerminalState,
@@ -106,7 +106,9 @@ import {
 import {
   acpClientExecuteDisposition,
   acpMcpToolApprovalElicitationDisposition,
+  acpChangedPathsOfToolCall,
   acpPermissionDisposition,
+  mergeAcpChangedPaths,
   type AcpPermissionDisposition,
   makeAcpClientPolicyGrants,
   unknownRecord,
@@ -6465,29 +6467,40 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ? update.content.patch?.text
                       : update.content.newText
                     : undefined;
-              if (text !== undefined) {
-                const previous = context.tools.get(update.toolCallId) ?? {
+              // A diff chunk names files the call changes; the tracked call keeps them for policy.
+              const chunkPaths = acpChangedPathsOfToolCall({ content: [update.content] });
+              const namesPaths = chunkPaths === "unknown" || chunkPaths.length > 0;
+              if (text !== undefined || namesPaths) {
+                const stored: AcpToolCallState = context.tools.get(update.toolCallId) ?? {
                   toolCallId: update.toolCallId,
                   status: "inProgress" as const,
                   data: { toolCallId: update.toolCallId },
                 };
+                const previous = namesPaths
+                  ? {
+                      ...stored,
+                      changedPaths: mergeAcpChangedPaths(stored.changedPaths, chunkPaths),
+                    }
+                  : stored;
                 // Text chunks extend the content list so a later content replacement still shows.
                 yield* emitTool(
                   context,
-                  update.content.type === "content" && previous.data.rawOutput === undefined
-                    ? {
-                        ...previous,
-                        data: {
-                          ...previous.data,
-                          content: appendToolContentText(previous.data.content, text),
-                        },
-                      }
-                    : previous.data.rawOutput === undefined
-                      ? setToolOutputText(
-                          previous,
-                          `${textFromUnknown(previous.data.content) ?? ""}${text}`,
-                        )
-                      : appendToolOutputText(previous, text),
+                  text === undefined
+                    ? previous
+                    : update.content.type === "content" && previous.data.rawOutput === undefined
+                      ? {
+                          ...previous,
+                          data: {
+                            ...previous.data,
+                            content: appendToolContentText(previous.data.content, text),
+                          },
+                        }
+                      : previous.data.rawOutput === undefined
+                        ? setToolOutputText(
+                            previous,
+                            `${textFromUnknown(previous.data.content) ?? ""}${text}`,
+                          )
+                        : appendToolOutputText(previous, text),
                 );
               }
               break;
@@ -7634,10 +7647,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   : { ...params, options: flavor.answerablePermissionOptions(params) };
               const dispositionFor = (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-                request: EffectAcpSchema.RequestPermissionRequest = params,
+                request: EffectAcpSchema.RequestPermissionRequest,
               ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
+              // Kiro leaves the kind off the permission request for a `tool_call` it already
+              // sent, so policy takes it and the call's changed paths from that tool. Tool ids
+              // are only unique within a session and these are the root session's tools, so
+              // callers pass no tool for another session's request.
+              const policyRequest = (knownTool: AcpToolCallState | undefined) =>
+                withTrackedChangedPaths(
+                  params.toolCall.kind == null && knownTool?.kind !== undefined
+                    ? { ...params, toolCall: { ...params.toolCall, kind: knownTool.kind } }
+                    : params,
+                  knownTool,
+                );
+              const arrivalTool =
+                trackedTurn !== null && params.sessionId === (yield* Ref.get(activeSessionId))
+                  ? trackedTurn.tools.get(params.toolCall.toolCallId)
+                  : undefined;
               if (
-                (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") ||
+                (followsAgentWorkState &&
+                  dispositionFor(latestRuntimePolicy, policyRequest(arrivalTool)) === "ask") ||
                 (postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
               ) {
                 if (!(yield* awaitRequestTurn(handlerGeneration)))
@@ -7649,22 +7678,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const context = followsAgentWorkState
                     ? yield* Ref.get(activeTurn)
                     : yield* activeContext;
-                  // Kiro leaves the kind off the permission request for a `tool_call`
-                  // it already sent, so policy takes it from that tool. Tool ids are
-                  // only unique within a session and these are the root session's
-                  // tools, so another session's request takes nothing from them.
-                  const knownTool =
-                    params.sessionId === (yield* Ref.get(activeSessionId))
-                      ? context?.tools.get(params.toolCall.toolCallId)
-                      : undefined;
-                  const knownKind = knownTool?.kind;
                   const disposition = dispositionFor(
                     context?.input.runtimePolicy ?? latestRuntimePolicy,
-                    withKnownPermissionLocations(
-                      params.toolCall.kind == null && knownKind !== undefined
-                        ? { ...params, toolCall: { ...params.toolCall, kind: knownKind } }
-                        : params,
-                      knownTool,
+                    policyRequest(
+                      params.sessionId === (yield* Ref.get(activeSessionId))
+                        ? context?.tools.get(params.toolCall.toolCallId)
+                        : undefined,
                     ),
                   );
                   if (disposition === "allow") {

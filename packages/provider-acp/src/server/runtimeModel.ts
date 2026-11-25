@@ -11,6 +11,11 @@ import {
   mergeToolActivityData,
 } from "@t3tools/shared/toolActivity";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
+import {
+  acpChangedPathsOfToolCall,
+  mergeAcpChangedPaths,
+  type AcpChangedPaths,
+} from "./clientPolicy.ts";
 import type {
   OrchestrationV2ProviderThreadNativeMetadata,
   ThreadTokenUsageSnapshot,
@@ -44,6 +49,11 @@ export interface AcpToolCallState {
   readonly command?: string;
   readonly detail?: string;
   readonly data: Record<string, unknown>;
+  /**
+   * Every path any notification of this call named, as sent, or unknown; absent when none did.
+   * It only grows: `data.locations` is what the tool card shows and a later update replaces it.
+   */
+  readonly changedPaths?: AcpChangedPaths;
 }
 
 export interface AcpAgentTerminalState {
@@ -930,7 +940,12 @@ function makeToolCallState(
     ...(command ? { command } : {}),
     ...(presentation?.detail ? { detail: presentation.detail } : {}),
     data,
+    ...changedPathsField(acpChangedPathsOfToolCall(input)),
   };
+}
+
+function changedPathsField(changedPaths: AcpChangedPaths): Pick<AcpToolCallState, "changedPaths"> {
+  return changedPaths === "unknown" || changedPaths.length > 0 ? { changedPaths } : {};
 }
 
 function parseTypedToolCallState(
@@ -975,6 +990,7 @@ export function mergeToolCallState(
     ...(command ? { command } : {}),
     ...(detail ? { detail } : {}),
     data,
+    ...changedPathsField(mergeAcpChangedPaths(previous?.changedPaths, next.changedPaths)),
   };
 }
 
@@ -1290,82 +1306,26 @@ export function withTrackedPermissionToolCall(
   };
 }
 
-/**
- * Every file path the locations, diffs and raw input of a tool call say it changes, or undefined
- * when one of them changes something whose path cannot be read.
- */
-function changedPathsOfToolCall(input: {
-  readonly locations?: unknown;
-  readonly content?: unknown;
-  readonly rawInput?: unknown;
-}): ReadonlyArray<string> | undefined {
-  const paths: Array<string> = [];
-  let complete = true;
-  const requirePath = (value: unknown) => {
-    const path = filePathFromToolValue(value);
-    if (path === undefined) complete = false;
-    else paths.push(path);
-  };
-  if (Array.isArray(input.locations)) {
-    for (const location of input.locations) {
-      requirePath(isRecord(location) ? location.path : undefined);
-    }
-  }
-  if (Array.isArray(input.content)) {
-    for (const entry of input.content) {
-      if (!isRecord(entry) || entry.type !== "diff") continue;
-      if (!Array.isArray(entry.changes)) {
-        requirePath(entry.path);
-        continue;
-      }
-      for (const change of entry.changes) {
-        switch (isRecord(change) ? change.operation : undefined) {
-          case "move":
-            requirePath(change.oldPath);
-            requirePath(change.path);
-            break;
-          case "add":
-          case "delete":
-          case "modify":
-          // A copy only reads its source.
-          case "copy":
-            requirePath(change.path);
-            break;
-          default:
-            // An operation this client does not know may write where its fields do not show.
-            complete = false;
-        }
-      }
-    }
-  }
-  if (isRecord(input.rawInput)) {
-    for (const value of [input.rawInput.path, input.rawInput.filePath, input.rawInput.file_path]) {
-      const path = filePathFromToolValue(value);
-      if (path !== undefined) paths.push(path);
-    }
-  }
-  return complete ? paths : undefined;
-}
+/** A location entry no path can be read from, so the changed paths of a request carrying it are unknown. */
+const UNREADABLE_LOCATION: EffectAcpSchema.ToolCallLocation = { path: "" };
 
 /**
- * The request with every file path it or its tracked tool call names as `locations`, so policy
- * can check where a change lands when the request itself carries only a diff, raw input or an ID.
- * `tracked` must be the call of the session that sent the request. When part of the change has
- * no readable path the request gets no locations at all, so no policy takes the rest for the whole.
+ * The request with the changed paths of its tracked tool call added to its locations, so policy
+ * reads one request and sees every path either of them named. `tracked` must be the call of the
+ * session that sent the request. Paths the tracked call could not fully name stay unknown here.
  */
-export function withKnownPermissionLocations(
+export function withTrackedChangedPaths(
   params: EffectAcpSchema.RequestPermissionRequest,
   tracked: AcpToolCallState | undefined,
 ): EffectAcpSchema.RequestPermissionRequest {
-  const requested = changedPathsOfToolCall(params.toolCall);
-  const seen = tracked === undefined ? [] : changedPathsOfToolCall(tracked.data);
-  if (requested === undefined || seen === undefined) {
-    return { ...params, toolCall: { ...params.toolCall, locations: [] } };
-  }
-  const known = [...new Set([...requested, ...seen])];
-  return known.length === 0
-    ? params
-    : { ...params, toolCall: { ...params.toolCall, locations: known.map((path) => ({ path })) } };
+  const seen = tracked?.changedPaths;
+  if (seen === undefined || (seen !== "unknown" && seen.length === 0)) return params;
+  const own: unknown = params.toolCall.locations;
+  const locations =
+    seen === "unknown" || (own !== undefined && own !== null && !Array.isArray(own))
+      ? [UNREADABLE_LOCATION]
+      : [...(params.toolCall.locations ?? []), ...seen.map((path) => ({ path }))];
+  return { ...params, toolCall: { ...params.toolCall, locations } };
 }
 
 export function parsePermissionRequest(

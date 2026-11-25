@@ -7746,6 +7746,75 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  const editNamedByIdAsks = (
+    name: string,
+    updates: (turn: {
+      readonly inside: string;
+      readonly outside: string;
+    }) => ReadonlyArray<Record<string, unknown>>,
+  ) =>
+    Effect.gen(function* () {
+      const turn = yield* startAutoAcceptEditsTurn(name);
+      const inside = turn.path.join(turn.workspace, "src", "a.ts");
+      // The first request waits for the turn, so the tool call below lands in it.
+      const first = yield* turn
+        .requestEdit("edit-first", { target: inside })
+        .pipe(Effect.flatMap(Fiber.join));
+      yield* turn.acknowledge("edit-first-request");
+      assert.deepEqual(first.outcome, { outcome: "selected", optionId: "allow-once" });
+      for (const update of updates({ inside, outside: turn.path.join(turn.elsewhere, "b.ts") })) {
+        yield* turn.sessionUpdate({
+          sessionId: "mock-session-1",
+          update: { toolCallId: "edit-tracked", ...update },
+        } as EffectAcpSchema.SessionNotification);
+      }
+      const fiber = yield* turn.requestEdit("edit-tracked");
+      yield* turn.declinePendingAndStop("edit-tracked-request", fiber);
+    }).pipe(Effect.provide(layerTest));
+
+  it.effect(
+    "asks about an edit named by id whose tool call named another folder before an update",
+    () =>
+      editNamedByIdAsks("edit-replaced-path", ({ inside, outside }) => [
+        {
+          sessionUpdate: "tool_call",
+          title: "Edit file",
+          kind: "edit",
+          status: "pending",
+          locations: [{ path: outside }],
+        },
+        { sessionUpdate: "tool_call_update", locations: [{ path: inside }] },
+      ]),
+  );
+
+  it.effect("asks about an edit named by id whose tool call left one location blank", () =>
+    editNamedByIdAsks("edit-blank-path", ({ inside }) => [
+      {
+        sessionUpdate: "tool_call",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+        locations: [{ path: inside }, { path: " " }],
+      },
+    ]),
+  );
+
+  it.effect("asks about an edit named by id whose content chunk changes another folder", () =>
+    editNamedByIdAsks("edit-chunk-path", ({ inside, outside }) => [
+      {
+        sessionUpdate: "tool_call",
+        title: "Edit file",
+        kind: "edit",
+        status: "pending",
+        locations: [{ path: inside }],
+      },
+      {
+        sessionUpdate: "tool_call_content_chunk",
+        content: { type: "diff", changes: [{ operation: "modify", path: outside }] },
+      },
+    ]),
+  );
+
   it.effect("replaces the ACP session and clears conversation state on rollback", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
