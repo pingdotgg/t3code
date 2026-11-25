@@ -3042,12 +3042,24 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return readable ? { entries, leafId } : null;
       });
 
-      // Old records hold entry IDs without a session file. Use timestamped user entries
-      // to distinguish the original branch from unrelated sessions with matching IDs.
+      const siblingSessionFiles = Effect.fnUntraced(function* (currentFile: string) {
+        const dir = path.dirname(currentFile);
+        const siblings = yield* fileSystem
+          .readDirectoryEntries(dir)
+          .pipe(Effect.orElseSucceed(() => []));
+        return siblings
+          .filter((entry) => entry.type === "File" && entry.name.endsWith(".jsonl"))
+          .map((entry) => path.join(dir, entry.name))
+          .filter((file) => file !== currentFile)
+          .sort()
+          .reverse();
+      });
+
+      // Old records hold entry IDs without a session file. Corroborate them with the
+      // saved prompt timestamps and ancestry before using a sibling session.
       const findHistoricalForkSession = Effect.fnUntraced(function* (
         currentFile: string,
         boundary: Extract<PiForkBoundary, { type: "entry" }>,
-        acrossHandoff = false,
       ) {
         const targetId = piTurnEntryId(boundary.target);
         const startedAt = boundary.target?.startedAt;
@@ -3064,39 +3076,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const from = DateTime.toEpochMillis(startedAt);
         const between = DateTime.toEpochMillis(completedAt);
         const to = DateTime.toEpochMillis(boundaryEnd);
-        const dir = path.dirname(currentFile);
-        const siblings = yield* fileSystem
-          .readDirectoryEntries(dir)
-          .pipe(Effect.orElseSucceed(() => []));
-        const files = siblings
-          .filter((entry) => entry.type === "File" && entry.name.endsWith(".jsonl"))
-          .map((entry) => path.join(dir, entry.name))
-          .sort()
-          .reverse();
-        let historicalFile: string | undefined;
-        for (const file of files) {
-          if (file === currentFile) continue;
+        for (const file of yield* siblingSessionFiles(currentFile)) {
           const listing = yield* readSessionFile(file);
           if (
-            listing === null ||
-            !piUserEntryInWindow(listing.entries.get(targetId), from, between)
-          )
-            continue;
-          if (acrossHandoff) {
-            // The discard boundary is in the new session. Clone only a unique old branch
-            // whose saved history already ends within the selected turn.
-            const leafTime =
-              listing.leafId === null ? null : listing.entries.get(listing.leafId)?.timestamp;
-            if (
-              leafTime == null ||
-              leafTime < from ||
-              leafTime > between ||
-              walkPiBranch(listing.entries, listing.leafId, targetId)?.reachedStop !== true
-            )
-              continue;
-            if (historicalFile !== undefined) return undefined;
-            historicalFile = file;
-          } else if (
+            listing !== null &&
+            piUserEntryInWindow(listing.entries.get(targetId), from, between) &&
             piUserEntryInWindow(listing.entries.get(boundary.entryId), between, to) &&
             walkPiBranch(listing.entries, listing.leafId, boundary.entryId)?.reachedStop === true &&
             walkPiBranch(listing.entries, boundary.entryId, targetId)?.reachedStop === true
@@ -3104,7 +3088,63 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             return file;
           }
         }
-        return historicalFile;
+        return undefined;
+      });
+
+      const recoverLegacyHandoff = Effect.fnUntraced(function* (
+        sourceFile: string,
+        boundary: Extract<PiForkBoundary, { type: "entry" }>,
+        source: PiSessionListing | null,
+      ) {
+        const targetId = piTurnEntryId(boundary.target);
+        const startedAt = boundary.target?.startedAt;
+        const completedAt = boundary.target?.completedAt;
+        if (targetId === undefined || source === null || !source.entries.has(boundary.entryId))
+          return undefined;
+
+        const unresolved = () => protocolError("Pi fork target was not found in a session");
+        if (startedAt == null || completedAt == null) return yield* unresolved();
+        const from = DateTime.toEpochMillis(startedAt);
+        const to = DateTime.toEpochMillis(completedAt);
+        if (
+          piUserEntryInWindow(source.entries.get(targetId), from, to) &&
+          walkPiBranch(source.entries, boundary.entryId, targetId)?.reachedStop === true
+        )
+          return undefined;
+
+        // Pi accepts a fork before the first prompt in a new session even when the
+        // selected turn is absent. Find its retained branch before asking Pi to fork.
+        let recovered: { file: string; boundary: PiForkBoundary; history: string } | undefined;
+        for (const file of yield* siblingSessionFiles(sourceFile)) {
+          const listing = yield* readSessionFile(file);
+          if (listing === null || !piUserEntryInWindow(listing.entries.get(targetId), from, to))
+            continue;
+          const afterTarget = walkPiBranch(listing.entries, listing.leafId, targetId);
+          if (afterTarget?.reachedStop !== true) continue;
+          let entryId: string | undefined;
+          for (const id of [...afterTarget.userEntryIds].reverse()) {
+            const timestamp = listing.entries.get(id)?.timestamp;
+            if (timestamp == null) return yield* unresolved();
+            if (timestamp >= to) {
+              entryId = id;
+              break;
+            }
+          }
+          const retainedLeaf =
+            entryId === undefined
+              ? listing.leafId
+              : (listing.entries.get(entryId)?.parentId ?? null);
+          const retained = walkPiBranch(listing.entries, retainedLeaf, null);
+          if (retained?.reachedStop !== true) continue;
+          const history = JSON.stringify([...retained.entryIds]);
+          if (recovered !== undefined && history !== recovered.history) return yield* unresolved();
+          recovered ??= {
+            file,
+            boundary: entryId === undefined ? { type: "nothing" } : { ...boundary, entryId },
+            history,
+          };
+        }
+        return recovered ?? (yield* unresolved());
       });
 
       const sessionFileInCwd = Effect.fnUntraced(function* (
@@ -4050,19 +4090,29 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       boundary = piForkBoundary({ ...rollbackInput, sessionFile: targetFile });
                     }
                   }
+                  const candidateFile = sourceFile ?? currentFile;
                   if (
-                    sourceFile == null &&
-                    currentFile != null &&
-                    boundary.type === "entry" &&
-                    piTurnEntryId(boundary.target) !== undefined &&
-                    boundary.target?.startedAt != null &&
-                    boundary.target.completedAt !== null &&
-                    boundary.turn.completedAt !== null
+                    targetFile === undefined &&
+                    candidateFile != null &&
+                    boundary.type === "entry"
                   ) {
                     // The persisted file avoids sending the whole tree over RPC before forking.
-                    const live = yield* readSessionFile(path.resolve(cwd, currentFile));
-                    if (live !== null && !live.entries.has(boundary.entryId)) {
-                      sourceFile = yield* findHistoricalForkSession(currentFile, boundary);
+                    const file = path.resolve(cwd, candidateFile);
+                    const listing = yield* readSessionFile(file);
+                    const recovered = yield* recoverLegacyHandoff(file, boundary, listing);
+                    if (recovered !== undefined) {
+                      sourceFile = recovered.file;
+                      boundary = recovered.boundary;
+                    } else if (
+                      sourceFile == null &&
+                      listing !== null &&
+                      !listing.entries.has(boundary.entryId) &&
+                      targetId !== undefined &&
+                      target?.startedAt != null &&
+                      target.completedAt !== null &&
+                      boundary.turn.completedAt !== null
+                    ) {
+                      sourceFile = yield* findHistoricalForkSession(file, boundary);
                       if (sourceFile === undefined)
                         return yield* protocolError("Pi rollback entry was not found in a session");
                     }
@@ -4243,39 +4293,24 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const boundaryFile =
               boundary.type === "nothing" ? undefined : boundary.turn.nativeThreadRef?.nativeId;
             const sourceFile = targetFile ?? boundaryFile ?? currentFile;
-            let historicalFile: string | undefined;
-            // Pi can successfully fork before the first entry in the new session,
-            // even though that session never contained the selected turn.
-            if (targetFile === undefined && boundaryFile != null && boundary.type === "entry") {
-              const targetId = piTurnEntryId(boundary.target);
-              const completedAt = boundary.target?.completedAt;
-              const boundaryEnd = boundary.turn.completedAt;
-              if (targetId !== undefined && completedAt != null && boundaryEnd !== null) {
-                const file = path.resolve(cwd, boundaryFile);
-                const listing = yield* readSessionFile(file);
-                if (
-                  listing !== null &&
-                  !listing.entries.has(targetId) &&
-                  piUserEntryInWindow(
-                    listing.entries.get(boundary.entryId),
-                    DateTime.toEpochMillis(completedAt),
-                    DateTime.toEpochMillis(boundaryEnd),
+            const resolvedSourceFile = path.resolve(cwd, sourceFile);
+            const recovered =
+              targetFile === undefined && boundary.type === "entry"
+                ? yield* readSessionFile(resolvedSourceFile).pipe(
+                    Effect.flatMap((listing) =>
+                      recoverLegacyHandoff(resolvedSourceFile, boundary, listing),
+                    ),
                   )
-                ) {
-                  historicalFile = yield* findHistoricalForkSession(file, boundary, true);
-                  if (historicalFile === undefined)
-                    return yield* protocolError("Pi fork target was not found in a session");
-                }
-              }
-            }
+                : undefined;
             const nativeId = yield* forkSessionIntoCwd(
-              historicalFile ?? sourceFile,
-              historicalFile === undefined ? boundary : { type: "nothing" },
+              recovered?.file ?? sourceFile,
+              recovered?.boundary ?? boundary,
               source.createdAt,
             ).pipe(
               Effect.catchTags({
                 PiRpcError: (error) => {
                   if (
+                    recovered !== undefined ||
                     boundary.type !== "entry" ||
                     boundaryFile != null ||
                     error.operation !== "fork" ||
@@ -4419,6 +4454,7 @@ function walkPiBranch(
   stopAt: string | null,
 ): {
   readonly entryCount: number;
+  readonly entryIds: ReadonlySet<string>;
   readonly userEntryIds: ReadonlyArray<string>;
   readonly reachedStop: boolean;
 } | null {
@@ -4433,7 +4469,12 @@ function walkPiBranch(
     if (entry.isUserMessage) userEntryIds.push(current);
     current = entry.parentId;
   }
-  return { entryCount: visited.size, userEntryIds, reachedStop: current === stopAt };
+  return {
+    entryCount: visited.size,
+    entryIds: visited,
+    userEntryIds,
+    reachedStop: current === stopAt,
+  };
 }
 
 type PiForkBoundary =

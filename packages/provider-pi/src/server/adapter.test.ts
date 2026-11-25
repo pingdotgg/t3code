@@ -3254,6 +3254,124 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    "equivalent copies with a discarded prompt",
+    "running legacy boundary with a colliding entry ID",
+    "rollback across a handoff",
+    "conflicting retained branches",
+  ] as const)("recovers Pi history across a handoff for %s", (scenario) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      const oldFile = `${dir}/original.jsonl`;
+      const copyFile = `${dir}/a-copy.jsonl`;
+      const currentFile = `${dir}/current.jsonl`;
+      const forkFile = `${dir}/result.jsonl`;
+      const writeSession = (file: string, entries: ReadonlyArray<unknown>) =>
+        fs.writeFileString(
+          file,
+          [{ type: "session", version: 3 }, ...entries].map(encodeJsonLine).join("\n") + "\n",
+        );
+      const legacyBoundary = scenario === "running legacy boundary with a colliding entry ID";
+      const trailingPrompt = scenario === "equivalent copies with a discarded prompt";
+      const ambiguous = scenario === "conflicting retained branches";
+      const newerEntries = legacyBoundary
+        ? [
+            sessionMessage("u1", null, "user", 90),
+            { ...sessionMessage("u2", "u1", "user", 110), timestamp: undefined },
+          ]
+        : [sessionMessage("u2", null, "user", 110)];
+      yield* writeSession(currentFile, newerEntries);
+      yield* writeSession(
+        oldFile,
+        trailingPrompt
+          ? [...TURN_ONE_ENTRIES, sessionMessage("discarded", "a1b", "user", 60)]
+          : TURN_ONE_ENTRIES,
+      );
+      if (trailingPrompt) yield* writeSession(copyFile, TURN_ONE_ENTRIES);
+      if (ambiguous)
+        yield* writeSession(copyFile, [
+          ...TURN_ONE_ENTRIES,
+          sessionMessage("other-reply", "a1b", "assistant", 45),
+        ]);
+
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, forkFake);
+      fake.queueState({ sessionFile: currentFile });
+      const source = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const [target, boundary] = uncapturedTurns(source.id, { startedAt: 100, completedAt: 150 });
+      if (target === undefined || boundary === undefined) throw new Error("missing turns");
+      const turns = [
+        target,
+        {
+          ...boundary,
+          nativeTurnRef: { driver: PI_PROVIDER, nativeId: "u2", strength: "strong" as const },
+          ...(legacyBoundary
+            ? { status: "running" as const, completedAt: null }
+            : {
+                nativeThreadRef: {
+                  driver: PI_PROVIDER,
+                  nativeId: currentFile,
+                  strength: "strong" as const,
+                },
+              }),
+        },
+      ];
+      if (scenario === "rollback across a handoff") {
+        fake.queueState({ sessionFile: oldFile });
+        fake.queueState({ sessionFile: oldFile });
+        const retained = { entries: TURN_ONE_ENTRIES, leafId: "a1b" };
+        fake.queueEntries(retained);
+        fake.queueEntries(retained);
+        const result = yield* runtime.rollbackThread({
+          providerThread: source,
+          providerThreadTurns: turns,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint"),
+            appRunOrdinal: target.ordinal,
+            providerTurn: target,
+          },
+        });
+        assert.equal(result.providerThread.nativeThreadRef?.nativeId, oldFile);
+        assert.equal(result.providerThread.nativeConversationHeadRef?.nativeId, "a1b");
+        return;
+      }
+
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      const result = yield* runtime
+        .forkThread({
+          sourceProviderThread: source,
+          sourceProviderTurns: turns,
+          providerTurnId: target.id,
+          targetThreadId: ThreadId.make("fork-target"),
+        })
+        .pipe(Effect.result);
+      if (ambiguous) {
+        assert.equal(result._tag, "Failure");
+        assert.isFalse(forkFake.allRequests().some((request) => request.type === "fork"));
+        return;
+      }
+      if (result._tag === "Failure") return yield* Effect.fail(result.failure);
+      const args = forkFake.lastSpawn().args;
+      assert.equal(args[args.indexOf("--fork") + 1], oldFile);
+      assert.deepEqual(
+        forkFake
+          .allRequests()
+          .filter((request) => request.type === "fork")
+          .map((request) => request.entryId),
+        trailingPrompt ? ["discarded"] : [],
+      );
+      assert.equal(result.success.nativeThreadRef?.nativeId, forkFile);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("natively forks before a turn whose start entry was never captured", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
