@@ -49,6 +49,7 @@ object AgentNotifications {
   private const val ALERT_CHANNEL = "agent-alerts"
   private const val ACTIVITY_TAG = "t3-agent-activity"
   private const val ALERT_TAG = "t3-agent-alert"
+  private const val ALERT_THREAD_TAG = "$ALERT_TAG-thread:"
   private const val ALERT_UPDATED_AT = "t3_alert_updated_at"
   private const val ACTIVITY_ID = 73001
   private const val MAX_MESSAGE_AGE_MS = 10 * 60 * 1000L
@@ -89,6 +90,7 @@ object AgentNotifications {
     val manager = manager(context)
     manager.activeNotifications.filter {
       it.tag == ACTIVITY_TAG || it.tag == ALERT_TAG ||
+        it.tag?.startsWith(ALERT_THREAD_TAG) == true ||
         it.tag?.startsWith("$ALERT_TAG-summary:") == true
     }
       .forEach { manager.cancel(it.tag, it.id) }
@@ -189,13 +191,16 @@ object AgentNotifications {
     val body = data["alert_body"].orEmpty().take(608)
     val threadGroup = data["alert_group"]?.takeIf { it.isNotBlank() }
     // alert_id is unique per turn; keying on the thread makes its next alert replace this one.
-    val id = (threadGroup ?: alertId).hashCode()
+    // The tag carries the whole group, since distinct groups can share a String hash.
+    val tag = threadGroup?.let { "$ALERT_THREAD_TAG$it" } ?: ALERT_TAG
+    val requestCode = (threadGroup ?: alertId).hashCode()
+    val id = if (threadGroup != null) 0 else requestCode
     val group = threadGroup ?: ALERT_TAG
     // A late or retried push for an earlier turn must not overwrite the thread's newer alert.
     // updated_at is the relay's send time, which a retry advances, so order by the turn's time.
     val updatedAt = data["alert_updated_at"]?.toLongOrNull() ?: 0L
     val newer = threadGroup != null && manager(context).activeNotifications.any {
-      it.tag == ALERT_TAG && it.id == id &&
+      it.tag == tag && it.id == id &&
         it.notification.extras.getLong(ALERT_UPDATED_AT, 0L) > updatedAt
     }
     if (newer) return
@@ -205,9 +210,9 @@ object AgentNotifications {
       .addExtras(Bundle().apply { putLong(ALERT_UPDATED_AT, updatedAt) })
       .setAutoCancel(true)
       .setGroup(group)
-      .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
+      .setContentIntent(contentIntent(context, scheme, data["alert_path"], requestCode))
       .build()
-    manager(context).notify(ALERT_TAG, id, notification)
+    manager(context).notify(tag, id, notification)
     val children = manager(context).activeNotifications.filter {
       it.tag == ALERT_TAG && it.notification.group == group
     }
