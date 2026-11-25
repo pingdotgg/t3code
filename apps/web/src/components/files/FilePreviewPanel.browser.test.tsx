@@ -7,6 +7,7 @@ import { cdp, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
+import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
 import {
   createWorkspaceFocusController,
   startWorkspaceFocus,
@@ -522,6 +523,11 @@ describe("source file scroll", () => {
 
   it("scrolls a find match below many wrapped lines into view", async () => {
     using _settings = setup();
+    const previousClientSettings = getClientSettings();
+    __setClientSettingsForTests({ ...previousClientSettings, wordWrap: true });
+    using _restoreClientSettings = {
+      [Symbol.dispose]: () => __setClientSettingsForTests(previousClientSettings),
+    };
     const style = document.createElement("style");
     style.textContent = appCss;
     document.head.append(style);

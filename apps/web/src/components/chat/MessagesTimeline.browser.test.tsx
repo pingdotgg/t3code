@@ -643,6 +643,9 @@ describe("MessagesTimeline messages", () => {
     screen.container.style.width = "900px";
     const viewport = props.listRef.current!.getScrollableNode()!;
     const target = page.getByText(paragraphs[15]!.trim(), { exact: true }).element();
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
     await vi.waitFor(() => {
       expect(viewport.scrollHeight).toBeGreaterThan(1000);
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
