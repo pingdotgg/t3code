@@ -165,6 +165,19 @@ function xml(source: string, extension: string): XmlNode {
     if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
       separateRubyReadings(node);
     if (node.name === "Fallback" && !retainCompatibilityFallback(parent, node)) return;
+    const alt = tag.attributes.alt;
+    if (
+      extension === ".epub" &&
+      node.name === "img" &&
+      stack[1]?.name === "html" &&
+      alt?.trim() &&
+      !/(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse))\s*(?:!important\s*)?(?:;|$)/i.test(
+        String(tag.attributes.style ?? ""),
+      )
+    ) {
+      node.children.push(alt);
+      node.hasText = true;
+    }
     if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
