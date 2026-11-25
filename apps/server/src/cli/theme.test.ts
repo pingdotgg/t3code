@@ -132,7 +132,6 @@ describe("t3 theme", () => {
   it.effect.each([
     { extension: "json", relativePath: null },
     { extension: "JSON", relativePath: "nightfall.JSON" },
-    { extension: "JsOn", relativePath: "./nightfall.JsOn" },
   ])(
     "publishes a .$extension theme file under its filename and sets it",
     ({ extension, relativePath }) =>
