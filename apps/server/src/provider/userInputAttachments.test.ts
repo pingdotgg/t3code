@@ -957,10 +957,14 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Intro</w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGEREF _Toc1 \\h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t> 3</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="9350"/></w:tabs></w:pPr><w:r><w:t xml:space="preserve">Fee </w:t></w:r><w:del><w:r><w:delText>$500</w:delText><w:noBreakHyphen/></w:r></w:del><w:ins><w:r><w:t>$700</w:t></w:r></w:ins><w:moveFrom><w:r><w:t>Moved</w:t></w:r></w:moveFrom><w:r><w:tab/><w:t>due</w:t></w:r></w:p></w:body></w:document>',
+              '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Intro</w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGEREF _Toc1 \\h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t> 3</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="9350"/></w:tabs></w:pPr><w:r><w:t xml:space="preserve">Fee </w:t></w:r><w:del><w:r><w:delText>$500</w:delText><w:noBreakHyphen/></w:r></w:del><w:ins><w:r><w:t>$700</w:t></w:r></w:ins><w:moveFrom><w:r><w:t>Moved</w:t></w:r></w:moveFrom><w:r><w:tab/><w:t>due</w:t></w:r></w:p>' +
+              "<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Service</w:t></w:r></w:p></w:tc></w:tr>" +
+              '<w:tr><w:trPr><w:del w:id="1" w:author="Reviewer"/></w:trPr><w:tc><w:p><w:r><w:t>Cancelled surcharge</w:t></w:r></w:p></w:tc></w:tr>' +
+              '<w:tr><w:trPr><w:ins w:id="2" w:author="Reviewer"/></w:trPr><w:tc><w:p><w:r><w:t>Replacement surcharge</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' +
+              "</w:body></w:document>",
           },
-          expected: ["Intro 3\nFee $700\tdue"],
-          absent: ["PAGEREF", "$500", "Moved", "\u2011"],
+          expected: ["Intro 3\nFee $700\tdue\nService\nReplacement surcharge"],
+          absent: ["PAGEREF", "$500", "Moved", "\u2011", "Cancelled surcharge"],
         },
         {
           ext: "docx",

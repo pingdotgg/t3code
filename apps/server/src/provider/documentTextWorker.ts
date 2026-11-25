@@ -53,6 +53,7 @@ interface XmlNode {
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
   spaceCount?: number;
+  deletedRow?: boolean;
   hasText?: boolean;
   hasTextChoice?: boolean;
 }
@@ -114,8 +115,16 @@ function xml(source: string, extension: string): XmlNode {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
+    if (extension === ".docx" && node.name === "del") {
+      if (parent.name === "trPr") {
+        const row = stack.at(-2);
+        if (row?.name === "tr") row.deletedRow = true;
+      }
+      parent.children.pop();
+      return;
+    }
     if (
-      (extension === ".docx" && node.name === "del") ||
+      node.deletedRow ||
       (extension === ".docx" &&
         node.name === "r" &&
         children(node)
