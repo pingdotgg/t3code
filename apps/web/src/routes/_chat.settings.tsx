@@ -18,7 +18,6 @@ import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice"
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import { useRenderedSettingsPathname } from "../components/settings/useRenderedSettingsPathname";
-import { SettingsPageSkeleton } from "../components/settings/SettingsPageSkeleton";
 import {
   retainSettingsScope,
   validateSettingsRouteSearch,
@@ -173,16 +172,10 @@ function SettingsContentLayout() {
               <AppRouteModalClose />
             </div>
           </header>
-          <div
-            key={`${contentScopeKey}:${restoreSignal}`}
-            className="relative min-h-0 flex flex-1 flex-col"
-          >
+          <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
             <SettingsScopeBoundary pathname={pathname}>
               <Outlet />
             </SettingsScopeBoundary>
-            {navPathname !== pathname && navPathname.startsWith("/settings/") ? (
-              <SettingsPageSkeleton />
-            ) : null}
           </div>
         </div>
       </div>
