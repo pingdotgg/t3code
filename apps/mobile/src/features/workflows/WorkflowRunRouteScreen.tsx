@@ -298,6 +298,8 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   return (
     <ScreenScrollView
       contentInsetAdjustmentBehavior="automatic"
+      // With the reason's keyboard up, a tap on a choice answers; it does not only put it away.
+      keyboardShouldPersistTaps="handled"
       contentContainerClassName="gap-3 px-4 pt-3"
       contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
     >
