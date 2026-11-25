@@ -610,6 +610,8 @@ describe("workflowStepTime", () => {
     expect(workflowStepTime(9)).toBe("0.1s");
     expect(workflowStepTime(342)).toBe("0.3s");
     expect(workflowStepTime(9_700)).toBe("9.7s");
+    expect(workflowStepTime(9_949)).toBe("9.9s");
+    expect(workflowStepTime(9_950)).toBe("10s");
     expect(workflowStepTime(4_000)).toBe("4s");
     expect(workflowStepTime(12_400)).toBe("12s");
     expect(workflowStepTime(59_499)).toBe("59s");
