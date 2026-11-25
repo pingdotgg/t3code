@@ -968,7 +968,7 @@ describe("loginAvatarUrl", () => {
 });
 
 describe("listChangeRequests", () => {
-  it.effect("counts a review requested from the viewer's team as requested from the viewer", () =>
+  it.effect("counts a team review request as the viewer's only on search rows", () =>
     Effect.gen(function* () {
       const teamOnly = {
         number: 1,
@@ -990,74 +990,34 @@ describe("listChangeRequests", () => {
         reviewDecision: null,
         checksState: null,
       };
-      const list = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-            listPullRequests: () =>
-              Effect.succeed({ items: [teamOnly], truncated: false, continues: true }),
-          }),
-        ),
-        Effect.map((provider) => provider.listChangeRequests),
-      );
-      const input = {
-        cwd: "/w",
-        host: "github.com",
-        repository: "acme/web",
-        state: "open" as const,
-        viewer: "Viewer",
-        limit: 50,
-      };
-      const reviewing = yield* list({ ...input, involvement: "reviewing" });
-      expect(reviewing.items[0]!.reviewRequestLogins).toEqual(["someone-else", "Viewer"]);
-      const all = yield* list({ ...input, involvement: "all" });
-      expect(all.items[0]!.reviewRequestLogins).toEqual(["someone-else"]);
-    }),
-  );
-
-  it.effect(
-    "does not vouch for a team request the listing fallback cannot scope to the viewer",
-    () =>
-      Effect.gen(function* () {
-        const teamOnly = {
-          number: 1,
-          title: "Change",
-          url: "https://github.com/acme/web/pull/1",
-          author: null,
-          headBranch: "feature",
-          baseBranch: "main",
-          state: "open" as const,
-          isDraft: false,
-          mergeability: "mergeable" as const,
-          additions: 0,
-          deletions: 0,
-          createdAt: "2026-07-01T00:00:00Z",
-          updatedAt: "2026-07-02T00:00:00Z",
-          reviewRequestLogins: [],
-          hasTeamReviewRequest: true,
-          labels: [],
-          reviewDecision: null,
-          checksState: null,
-        };
-        const list = yield* make.pipe(
+      const list = (continues: boolean, involvement: "all" | "reviewing") =>
+        make.pipe(
           Effect.provide(
             Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
               listPullRequests: () =>
-                Effect.succeed({ items: [teamOnly], truncated: false, continues: false }),
+                Effect.succeed({ items: [teamOnly], truncated: false, continues }),
             }),
           ),
-          Effect.map((provider) => provider.listChangeRequests),
+          Effect.flatMap((provider) =>
+            provider.listChangeRequests({
+              cwd: "/w",
+              host: "github.com",
+              repository: "acme/web",
+              state: "open",
+              involvement,
+              viewer: "Viewer",
+              limit: 50,
+            }),
+          ),
         );
-        const reviewing = yield* list({
-          cwd: "/w",
-          host: "github.com",
-          repository: "acme/web",
-          state: "open",
-          involvement: "reviewing",
-          viewer: "viewer",
-          limit: 50,
-        });
-        expect(reviewing.items[0]!.reviewRequestLogins).toEqual([]);
-      }),
+      const searched = yield* list(true, "reviewing");
+      expect(searched.items[0]!.reviewRequestLogins).toEqual(["someone-else", "Viewer"]);
+      const all = yield* list(true, "all");
+      expect(all.items[0]!.reviewRequestLogins).toEqual(["someone-else"]);
+      // The listing fallback keeps any team's request; it cannot say the team is the viewer's.
+      const listed = yield* list(false, "reviewing");
+      expect(listed.items[0]!.reviewRequestLogins).toEqual(["someone-else"]);
+    }),
   );
 });
 
