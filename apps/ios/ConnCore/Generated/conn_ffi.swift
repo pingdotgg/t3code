@@ -13598,6 +13598,7 @@ public enum FfiPullRequestOperation: Equatable, Hashable {
     case activity
     case submitReview
     case diff
+    case listStats
 
 
 
@@ -13629,6 +13630,8 @@ public struct FfiConverterTypeFfiPullRequestOperation: FfiConverterRustBuffer {
         
         case 5: return .diff
         
+        case 6: return .listStats
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -13655,6 +13658,10 @@ public struct FfiConverterTypeFfiPullRequestOperation: FfiConverterRustBuffer {
         
         case .diff:
             writeInt(&buf, Int32(5))
+        
+        
+        case .listStats:
+            writeInt(&buf, Int32(6))
         
         }
     }

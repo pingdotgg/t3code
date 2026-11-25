@@ -413,6 +413,7 @@ pub enum FfiPullRequestOperation {
     Activity,
     SubmitReview,
     Diff,
+    ListStats,
 }
 
 #[uniffi::export]
@@ -435,6 +436,7 @@ impl ConnCore {
                     .await?
                     .to_string());
             }
+            FfiPullRequestOperation::ListStats => "pullRequests.listStats",
             FfiPullRequestOperation::List => "pullRequests.list",
             FfiPullRequestOperation::Detail => "pullRequests.detail",
             FfiPullRequestOperation::Activity => "pullRequests.activity",

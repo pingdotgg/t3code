@@ -24,6 +24,14 @@ struct PullRequestRow: Codable, Identifiable, Hashable {
     }
 }
 
+private struct PullRequestStats: Decodable {
+    struct Stat: Decodable {
+        let projectId, repository: String
+        let number, additions, deletions: Int
+    }
+    let stats: [Stat]
+}
+
 private struct PullRequestPage: Decodable {
     struct ProjectError: Decodable { let projectTitle, message: String }
     let entries: [PullRequestRow]
@@ -36,6 +44,8 @@ struct PullRequestsTabView: View {
     let store: CoreStore
     let searchQuery: String
     @State private var rows: [PullRequestRow] = []
+    @State private var stats: [String: PullRequestStats.Stat] = [:]
+    @State private var request = UUID()
     @State private var notice: String?
     @State private var loading = true
     @State private var filter = "All"
@@ -70,22 +80,31 @@ struct PullRequestsTabView: View {
                 }
                 ForEach(selected) { row in
                     NavigationLink(value: WorkspaceRoute.pullRequest(row)) {
-                        HStack(spacing: 12) {
-                            ProjectFaviconView(title: row.projectTitle, size: 18)
+                        HStack(alignment: .top, spacing: 12) {
+                            ProjectFaviconView(title: row.projectTitle, size: 20)
                                 .overlay(alignment: .topTrailing) {
                                     Circle().fill(row.checksState == "failing" ? theme.destructive : row.checksState == "passing" ? theme.success : row.checksState == "pending" ? theme.warning : theme.mutedForeground)
                                         .frame(width: 6, height: 6).padding(2)
                                         .background(theme.background, in: Circle()).offset(x: 4, y: -4)
                                 }
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(row.title).font(.system(size: 16, weight: .medium)).lineLimit(2)
+                                HStack(spacing: 6) {
+                                    Text(row.title).font(.system(size: 16, weight: .medium)).lineLimit(1)
+                                    Spacer(minLength: 0)
+                                    if let stat = stats[row.id] {
+                                        HStack(spacing: 4) {
+                                            Text("+\(stat.additions)").foregroundStyle(theme.diffAdded)
+                                            Text("−\(stat.deletions)").foregroundStyle(theme.diffRemoved)
+                                        }.font(.caption.monospacedDigit()).fixedSize()
+                                    }
+                                }
                                 Text("\(row.projectTitle) · #\(row.number) · \(row.status)").font(.subheadline).foregroundStyle(.secondary)
                             }
                             Spacer()
-                        }.padding(.vertical, 8).contentShape(Rectangle())
+                        }.padding(.vertical, 12).contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("pr.row.\(row.repository).\(row.number)")
                 }
-            }.padding(.horizontal, 16)
+            }.padding(.horizontal, 12)
         }
         .background(theme.background)
         .refreshable { await load() }
@@ -93,8 +112,10 @@ struct PullRequestsTabView: View {
     }
 
     private func load() async {
+        let generation = UUID()
+        request = generation
         loading = true
-        defer { if !Task.isCancelled { loading = false } }
+        defer { if request == generation && !Task.isCancelled { loading = false } }
         do {
             var input: [String: Any] = ["state": "open"]
             var result: [PullRequestRow] = []
@@ -104,6 +125,7 @@ struct PullRequestsTabView: View {
             while true {
                 let page = try await store.pullRequest(.list, input: input, as: PullRequestPage.self)
                 try Task.checkCancellation()
+                guard request == generation else { return }
                 result += page.entries.filter { seen.insert($0.id).inserted }
                 for error in page.errors { messages.insert("\(error.projectTitle): \(error.message)") }
                 guard page.truncated else { break }
@@ -115,8 +137,20 @@ struct PullRequestsTabView: View {
             }
             rows = result
             notice = messages.isEmpty ? nil : messages.sorted().joined(separator: "\n")
+            loading = false
+            stats = [:]
+            for start in stride(from: 0, to: result.count, by: 100) {
+                let batch = result[start..<min(start + 100, result.count)]
+                guard let response = try? await store.pullRequest(.listStats, input: ["refs": batch.map(\.ref)], as: PullRequestStats.self) else { break }
+                guard request == generation && !Task.isCancelled else { return }
+                for stat in response.stats {
+                    if let row = batch.first(where: { $0.projectId == stat.projectId && $0.repository == stat.repository && $0.number == stat.number }) {
+                        stats[row.id] = stat
+                    }
+                }
+            }
         } catch {
-            if !Task.isCancelled { notice = error.localizedDescription }
+            if request == generation && !Task.isCancelled { notice = error.localizedDescription }
         }
     }
 }
@@ -163,7 +197,8 @@ struct PullRequestRecord: View {
     @State private var attempt = 0
     @State private var review: String?
     @State private var bodyText = ""
-    struct FileChange {
+    struct FileChange: Identifiable {
+        var id: String { patch.path }
         let patch: FfiFilePatch
         let additions: Int
         let deletions: Int
@@ -175,6 +210,7 @@ struct PullRequestRecord: View {
         }
     }
     @State private var patches: [FileChange]?
+    @State private var selectedFile: FileChange?
     @State private var omitted: [String] = []
     @State private var canReadOmitted = false
     @State private var truncated = false
@@ -204,11 +240,8 @@ struct PullRequestRecord: View {
                         if let patches {
                             ForEach(patches, id: \.patch.path) { change in
                                 let path = change.patch.path as NSString
-                                NavigationLink {
-                                    ScrollView { PatchBody(patch: change.patch) }
-                                        .navigationTitle(path.lastPathComponent)
-                                        .toolbar(.hidden, for: .bottomBar)
-                                        .accessibilityIdentifier("pr.fileDiff")
+                                Button {
+                                    selectedFile = change
                                 } label: {
                                     HStack(spacing: 10) {
                                         Image(systemName: "doc.text")
@@ -222,7 +255,7 @@ struct PullRequestRecord: View {
                                         Text("+\(change.additions)").foregroundStyle(.green)
                                         Text("−\(change.deletions)").foregroundStyle(.red)
                                         Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
-                                    }.font(.subheadline).lineLimit(1)
+                                    }.font(.subheadline).lineLimit(1).contentShape(Rectangle())
                                 }.buttonStyle(.plain).accessibilityIdentifier("pr.file.\(change.patch.path)")
                             }
                             ForEach(omitted, id: \.self) { path in
@@ -275,6 +308,19 @@ struct PullRequestRecord: View {
                         Image(systemName: name == "Overview" ? "doc.text" : name == "Checks" ? "checkmark.circle" : name == "Files" ? "doc.on.doc" : "clock")
                     }.tint(name == section ? .accentColor : .secondary).accessibilityLabel(name).accessibilityAddTraits(name == section ? .isSelected : [])
                 }
+            }
+        }
+        .sheet(item: $selectedFile) { file in
+            NavigationStack {
+                ScrollView { PatchBody(patch: file.patch) }
+                    .navigationTitle((file.patch.path as NSString).lastPathComponent)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button { selectedFile = nil } label: { Image(systemName: "chevron.left") }
+                                .accessibilityLabel("Back to changed files")
+                        }
+                    }
             }
         }
         .alert("Submit review", isPresented: Binding(get: { review != nil }, set: { if !$0 { review = nil } })) {

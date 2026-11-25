@@ -157,8 +157,6 @@ struct TasksTabView: View {
 
     /// `TasksTopBar` height.
     private let barHeight: CGFloat = 56
-    /// The bar sits where a native one would: its middle 28pt below the safe area's top.
-    private let barLift: CGFloat = 8
 
     var body: some View {
         let view = model.view(query: searchQuery)
@@ -167,7 +165,7 @@ struct TasksTabView: View {
                 LazyVStack(spacing: 0) {
                     content(view)
                 }
-                .padding(.top, barHeight + 4 - barLift)
+                .padding(.top, barHeight + 4)
             }
             .refreshable { await model.refresh() }
             .background(theme.background)
@@ -180,7 +178,6 @@ struct TasksTabView: View {
                 onSelectLane: { model.lane = $0 }
             )
             .frame(height: barHeight)
-            .padding(.top, -barLift)
         }
         .onAppear { model.appear() }
         .onDisappear { model.disappear() }

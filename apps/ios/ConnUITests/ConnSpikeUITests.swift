@@ -272,8 +272,10 @@ final class ConnSpikeUITests: XCTestCase {
         XCTAssertTrue(file.waitForExistence(timeout: 30))
         capture("pr-Files")
         file.tap()
+        let backToFiles = app.buttons["Back to changed files"]
+        XCTAssertTrue(backToFiles.waitForExistence(timeout: 10))
         capture("code-diff")
-        app.navigationBars.buttons.firstMatch.tap()
+        backToFiles.tap()
         app.navigationBars.buttons.firstMatch.tap()
         threads.tap()
         firstThread.tap()
