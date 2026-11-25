@@ -100,7 +100,7 @@ jobs:
       - name: Setup dependencies
         uses: ./.github/actions/setup-ci-deps
         with:
-          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+          install-args: --filter=tix... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
           save-pnpm-store: ${{ matrix.arch == 'arm64' }}
 
       - name: Ensure Rosetta for macOS x64 bytecode generation
