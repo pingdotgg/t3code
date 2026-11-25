@@ -29,7 +29,7 @@ struct SettingsRootSheet: View {
                     Button {
                         dismiss()
                     } label: {
-                        ConnIcon("xmark")
+                        Image(systemName: "xmark")
                     }
                     .accessibilityLabel("Close")
                     .accessibilityIdentifier("settings.closeButton")

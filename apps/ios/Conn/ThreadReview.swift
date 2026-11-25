@@ -176,6 +176,7 @@ struct PatchBody: View {
                                     .foregroundStyle(line.number == nil ? theme.mutedForeground : theme.codeForeground)
                             }
                         }
+                        .fixedSize(horizontal: true, vertical: false)
                         .font(.system(size: 12, design: .monospaced)).foregroundStyle(tint)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(tint.opacity(line.marker == " " ? 0 : 0.12))

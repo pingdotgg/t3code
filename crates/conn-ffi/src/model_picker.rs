@@ -535,6 +535,27 @@ mod tests {
     #[test]
     fn save_sends_only_a_model_the_catalog_still_offers() {
         let claude = thread("claudeAgent", "sonnet");
+        let mut with_speed = catalog();
+        with_speed.providers[0].models[0]
+            .descriptors
+            .push(ModelOptionDescriptor::Boolean {
+                id: "fastMode".into(),
+                label: "Fast mode".into(),
+                current_value: Some(false),
+            });
+        let changes = std::collections::HashMap::from([("fastMode".to_owned(), "true".to_owned())]);
+        assert_eq!(
+            model_to_save(&with_speed, &claude, "claudeAgent", "sonnet", &changes),
+            SaveDecision::Send {
+                instance_id: "claudeAgent".into(),
+                model: "sonnet".into(),
+                options: Some(OptionMap::from_iter([("fastMode".into(), json!(true))]))
+            }
+        );
+        assert_eq!(
+            model_to_save(&with_speed, &claude, "grok", "grok-build", &changes),
+            SaveDecision::Unavailable
+        );
         assert_eq!(
             model_to_save(
                 &catalog(),

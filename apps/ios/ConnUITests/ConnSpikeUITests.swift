@@ -220,6 +220,9 @@ final class ConnSpikeUITests: XCTestCase {
         let firstThread = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'inbox.thread.'")).firstMatch
         XCTAssertTrue(firstThread.waitForExistence(timeout: 15))
         capture("threads")
+        app.buttons["Filter threads"].tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", "project")).firstMatch.waitForExistence(timeout: 5))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.8)).tap()
         app.buttons["workspace.settingsButton"].tap()
         XCTAssertTrue(app.staticTexts["Environments"].waitForExistence(timeout: 5))
         capture("settings")
@@ -237,7 +240,7 @@ final class ConnSpikeUITests: XCTestCase {
         app.buttons["modelPicker.confirm"].tap()
         app.navigationBars.buttons.firstMatch.tap()
         app.buttons["workspace.tab.tasks"].tap()
-        let task = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'tasks.row.'")).firstMatch
+        let task = env["CONN_TEST_TASK_ID"].map { app.descendants(matching: .any)["tasks.row." + $0].firstMatch } ?? app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'tasks.row.'")).firstMatch
         if task.waitForExistence(timeout: 12) {
             capture("tasks")
             task.tap()
@@ -259,8 +262,18 @@ final class ConnSpikeUITests: XCTestCase {
             let tab = app.buttons[section]
             XCTAssertTrue(tab.waitForExistence(timeout: 20))
             tab.tap()
-            capture("pr-" + section)
+            if section == "Timeline" {
+                let item = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'pr.timeline.'")).firstMatch
+                XCTAssertTrue(item.waitForExistence(timeout: 30))
+            }
+            if section != "Files" { capture("pr-" + section) }
         }
+        let file = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'pr.file.'")).firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 30))
+        capture("pr-Files")
+        file.tap()
+        capture("code-diff")
+        app.navigationBars.buttons.firstMatch.tap()
         app.navigationBars.buttons.firstMatch.tap()
         threads.tap()
         firstThread.tap()
@@ -283,6 +296,39 @@ final class ConnSpikeUITests: XCTestCase {
         XCTAssertTrue(restored)
         capture("restored-thread")
 
+    }
+
+    func testCachedThreadWhileDisconnected() async throws {
+        let env = ProcessInfo.processInfo.environment
+        guard let pairing = env["CONN_PAIRING_URL"],
+              let endpoint = env["CONN_DISCONNECT_FIXTURE_URL"], let url = URL(string: endpoint) else {
+            throw XCTSkip("Requires a disposable server with a stop endpoint")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--reset-session", "--manual-pairing"]
+        app.launch()
+        let field = app.textFields["pairing.urlField"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        field.typeText(pairing)
+        app.buttons["pairing.connectButton"].tap()
+        let row = app.buttons["inbox.thread.thread-parity-pinned"]
+        XCTAssertTrue(row.waitForExistence(timeout: 20))
+        row.tap()
+        let reply = app.staticTexts.containing(NSPredicate(format: "label CONTAINS[c] %@", "Seeded parity response")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 10))
+        let (_, response) = try await URLSession.shared.data(from: url)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        XCTAssertTrue(app.staticTexts["Not connected"].waitForExistence(timeout: 15))
+        XCTAssertTrue(reply.exists)
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        XCTAssertTrue(reply.waitForExistence(timeout: 10))
+        let evidence = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        evidence.name = "offline-cached-thread"
+        evidence.lifetime = .keepAlways
+        add(evidence)
     }
 
     func testQuestionPanelFlow() throws {

@@ -123,7 +123,11 @@ struct PullRequestsTabView: View {
 
 struct PullRequestRecord: View {
     struct Detail: Decodable {
-        struct Check: Decodable { let name, status: String; let description: String?; let placeholder: Bool? }
+        struct Check: Decodable {
+            let name, status: String
+            let description: String?
+            let placeholder: Bool?
+        }
         struct Permissions: Decodable { let verdicts: [String] }
         struct Capabilities: Decodable { let review: Permissions; let diff: Bool }
         let title, body: String
@@ -159,7 +163,18 @@ struct PullRequestRecord: View {
     @State private var attempt = 0
     @State private var review: String?
     @State private var bodyText = ""
-    @State private var patches: [FfiFilePatch]?
+    struct FileChange {
+        let patch: FfiFilePatch
+        let additions: Int
+        let deletions: Int
+
+        init(_ patch: FfiFilePatch) {
+            self.patch = patch
+            additions = patch.lines.count { $0.marker == "+" }
+            deletions = patch.lines.count { $0.marker == "-" }
+        }
+    }
+    @State private var patches: [FileChange]?
     @State private var omitted: [String] = []
     @State private var canReadOmitted = false
     @State private var truncated = false
@@ -187,11 +202,28 @@ struct PullRequestRecord: View {
                         }
                     case "Files":
                         if let patches {
-                            ForEach(patches, id: \.path) { patch in
-                                NavigationLink(patch.path) {
-                                    ScrollView { PatchBody(patch: patch) }
-                                        .navigationTitle(patch.path)
-                                }
+                            ForEach(patches, id: \.patch.path) { change in
+                                let path = change.patch.path as NSString
+                                NavigationLink {
+                                    ScrollView { PatchBody(patch: change.patch) }
+                                        .navigationTitle(path.lastPathComponent)
+                                        .toolbar(.hidden, for: .bottomBar)
+                                        .accessibilityIdentifier("pr.fileDiff")
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "doc.text")
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(path.lastPathComponent).fontWeight(.medium)
+                                            if !path.deletingLastPathComponent.isEmpty {
+                                                Text(path.deletingLastPathComponent).font(.caption).foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        Spacer()
+                                        Text("+\(change.additions)").foregroundStyle(.green)
+                                        Text("−\(change.deletions)").foregroundStyle(.red)
+                                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                                    }.font(.subheadline).lineLimit(1)
+                                }.buttonStyle(.plain).accessibilityIdentifier("pr.file.\(change.patch.path)")
                             }
                             ForEach(omitted, id: \.self) { path in
                                 if canReadOmitted {
@@ -206,12 +238,12 @@ struct PullRequestRecord: View {
                             let comments = activity.comments + (activity.reviewThreads + (activity.overviewThreads ?? [])).flatMap(\.comments)
                             let events = Dictionary(grouping: comments, by: \.id).values.compactMap(\.first).map { ($0.createdAt, $0.id, $0.body) }
                                 + activity.commits.map { ($0.committedDate, $0.oid, $0.messageHeadline) }
-                            if events.isEmpty { Text("No activity") }
+                            if events.isEmpty { Text("No activity").accessibilityIdentifier("pr.timeline.empty") }
                             ForEach(events.sorted { $0.0 < $1.0 }, id: \.1) { event in
                                 VStack(alignment: .leading) {
                                     Text(event.0).font(.caption).foregroundStyle(.secondary)
                                     MarkdownView(source: event.2)
-                                }
+                                }.accessibilityElement(children: .combine).accessibilityIdentifier("pr.timeline.event")
                             }
                         } else if failure == nil { ProgressView() }
                     default:
@@ -241,7 +273,7 @@ struct PullRequestRecord: View {
                 ForEach(["Overview", "Checks", "Timeline"] + (detail?.capabilities.diff == true ? ["Files"] : []), id: \.self) { name in
                     Button { section = name } label: {
                         Image(systemName: name == "Overview" ? "doc.text" : name == "Checks" ? "checkmark.circle" : name == "Files" ? "doc.on.doc" : "clock")
-                    }.accessibilityLabel(name).accessibilityAddTraits(name == section ? .isSelected : [])
+                    }.tint(name == section ? .accentColor : .secondary).accessibilityLabel(name).accessibilityAddTraits(name == section ? .isSelected : [])
                 }
             }
         }
@@ -290,7 +322,7 @@ struct PullRequestRecord: View {
                     } while true
                     omitted = paths.subtracting(result.map(\.path)).sorted()
                     truncated = incomplete
-                    patches = result
+                    patches = await Task.detached { [result] in result.map(FileChange.init) }.value
                 }
                 if section == "Timeline" {
                     activity = try await store.pullRequest(.activity, input: row.ref, as: Activity.self)
@@ -314,6 +346,7 @@ private struct OmittedPatch: View {
             else { ProgressView() }
         }
         .navigationTitle(path)
+        .toolbar(.hidden, for: .bottomBar)
         .task {
             do {
                 var input = row.ref
