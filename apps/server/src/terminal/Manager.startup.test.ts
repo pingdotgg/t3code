@@ -27,6 +27,7 @@ it.layer(
 )("terminal startup retention", (it) => {
   it.effect.each([
     { scenario: "canceled reopen", limit: 1 },
+    { scenario: "canceled history write", limit: 1 },
     { scenario: "canceled acquisition", limit: 1 },
     { scenario: "canceled registration", limit: 1 },
     { scenario: "exited reopen", limit: 1 },
@@ -47,6 +48,9 @@ it.layer(
       let pauseSpawn = scenario === "capacity pressure";
       const cancelAtAcquisition = scenario === "canceled acquisition";
       const cancelAtRegistration = scenario === "canceled registration";
+      const cancelAtHistory = scenario === "canceled history write";
+      let emitOutput: ((data: string) => void) | undefined;
+      const outputDelivered = yield* Deferred.make<void>();
       const killed = yield* Deferred.make<void>();
       let pauseHistoryWrite = false;
       const manager = yield* TerminalManager.makeWithOptions({
@@ -57,20 +61,22 @@ it.layer(
         processKillGraceMs: 1,
         maxRetainedInactiveSessions: limit,
         ptyAdapter: {
-          spawn: () =>
+          spawn: ({ onSpawned }) =>
             Effect.gen(function* () {
               if (pauseSpawn) {
                 pauseSpawn = false;
-                yield* Effect.interruptible(pause);
+                yield* pause;
               }
               const fiber = yield* Effect.withFiberSucceed((fiber) => fiber);
               const process: PtyAdapter.PtyProcess = {
                 pid: nextPid++,
-                onData: () => () => {},
+                onData: (listener) => {
+                  emitOutput = listener;
+                  return () => {};
+                },
                 onExit: (listener) => {
                   emitExit ??= listener;
-                  if (cancelAtRegistration) {
-                    listener({ exitCode: 7, signal: 0 });
+                  if (cancelAtRegistration && process.pid !== 9000) {
                     fiber.interruptUnsafe();
                   }
                   return () => {};
@@ -81,6 +87,7 @@ it.layer(
                   Deferred.doneUnsafe(killed, Effect.void);
                 },
               };
+              onSpawned?.(process);
               if (cancelAtAcquisition && process.pid === 9000) fiber.interruptUnsafe();
               return process;
             }),
@@ -105,11 +112,7 @@ it.layer(
         terminalId: DEFAULT_TERMINAL_ID,
         cwd: process.cwd(),
       };
-      if (
-        scenario === "exited reopen" ||
-        scenario === "capacity pressure" ||
-        cancelAtRegistration
-      ) {
+      if (scenario === "exited reopen" || scenario === "capacity pressure") {
         const stop = yield* manager.subscribe((event) =>
           event.type === "exited"
             ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
@@ -117,17 +120,19 @@ it.layer(
         );
         yield* Effect.addFinalizer(() => Effect.sync(stop));
       }
-      if (!pauseSpawn && !cancelAtAcquisition && !cancelAtRegistration) yield* manager.open(input);
+      if (!pauseSpawn && !cancelAtAcquisition) yield* manager.open(input);
 
       const viewerEvents: TerminalAttachStreamEvent[] = [];
-      if (scenario === "canceled reopen") {
+      if (scenario === "canceled reopen" || cancelAtHistory || cancelAtRegistration) {
         const stop = yield* manager.attachStream({ ...input, resume: true }, (event) =>
           Effect.sync(() => {
             viewerEvents.push(event);
+            if (event.type === "output") Deferred.doneUnsafe(outputDelivered, Effect.void);
           }),
         );
         yield* Effect.addFinalizer(() => Effect.sync(stop));
-        pauseSpawn = true;
+        pauseSpawn = scenario === "canceled reopen";
+        pauseHistoryWrite = cancelAtHistory;
       }
 
       if (scenario === "exited reopen") {
@@ -137,7 +142,10 @@ it.layer(
       }
 
       const reopen =
-        scenario === "changed launch context" || scenario === "canceled reopen"
+        scenario === "changed launch context" ||
+        scenario === "canceled reopen" ||
+        cancelAtHistory ||
+        cancelAtRegistration
           ? { ...input, cwd: logsDir }
           : input;
       const pending = yield* manager.open(reopen).pipe(Effect.forkChild());
@@ -154,7 +162,7 @@ it.layer(
           return events;
         });
 
-      if (scenario === "canceled reopen") {
+      if (scenario === "canceled reopen" || cancelAtHistory) {
         yield* Deferred.await(paused);
         yield* Fiber.interrupt(pending);
         expect(viewerEvents).toMatchObject([
@@ -165,18 +173,22 @@ it.layer(
           { type: "snapshot", snapshot: { status: "exited" } },
         ]);
         yield* manager.open(reopen);
-      } else if (cancelAtAcquisition || cancelAtRegistration) {
+      } else if (cancelAtAcquisition) {
         yield* Fiber.await(pending);
-        if (cancelAtRegistration) yield* Deferred.await(exited);
         expect(yield* attachEvents(reopen)).toMatchObject([
-          {
-            type: "snapshot",
-            snapshot: { status: "exited", exitCode: cancelAtRegistration ? 7 : null },
-          },
+          { type: "snapshot", snapshot: { status: "exited", exitCode: null } },
         ]);
-        if (cancelAtAcquisition) yield* Deferred.await(killed);
-        else expect(yield* Deferred.isDone(killed)).toBe(false);
+        yield* Deferred.await(killed);
         return;
+      } else if (cancelAtRegistration) {
+        yield* Fiber.await(pending);
+        emitOutput?.("still running");
+        yield* Deferred.await(outputDelivered);
+        expect(viewerEvents.filter((event) => event.type !== "activity")).toMatchObject([
+          { type: "snapshot", snapshot: { status: "running", pid: 9000 } },
+          { type: "started", snapshot: { status: "running", pid: 9001 } },
+          { type: "output", data: "still running" },
+        ]);
       } else if (scenario === "exited reopen") {
         yield* Deferred.await(paused);
         yield* manager.open(second);

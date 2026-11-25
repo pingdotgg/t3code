@@ -44,6 +44,8 @@ export interface PtySpawnInput {
   cols: number;
   rows: number;
   env: NodeJS.ProcessEnv;
+  /** Transfers the ready process to its caller before spawn can be interrupted. */
+  onSpawned?: (process: PtyProcess) => void;
 }
 
 export class PtyAdapter extends Context.Service<

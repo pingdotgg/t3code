@@ -2740,7 +2740,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
   });
 
-  const stopProcess = Effect.fn("terminal.stopProcess")(function* (session: TerminalSessionState) {
+  const stopProcess = Effect.fn("terminal.stopProcess")(function* (
+    session: TerminalSessionState,
+    nextStatus: "exited" | "starting" = "exited",
+  ) {
     const process = session.process;
     if (!process) return;
 
@@ -2751,7 +2754,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       session.pid = null;
       session.hasRunningSubprocess = false;
       session.childCommandLabel = null;
-      session.status = "exited";
+      session.status = nextStatus;
+      if (nextStatus === "starting") {
+        session.exitCode = null;
+        session.exitSignal = null;
+      }
       session.pendingHistoryControlSequence = "";
       session.pendingProcessEvents = [];
       session.pendingProcessEventIndex = 0;
@@ -2838,20 +2845,15 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       survivesRestart: true,
     });
     const attempt = yield* Effect.result(
-      options.ptyAdapter
-        .spawn({
-          shell: launch.command,
-          ...(launch.args.length > 0 ? { args: [...launch.args] } : {}),
-          cwd: session.cwd,
-          cols: session.cols,
-          rows: session.rows,
-          env: spawnEnv,
-        })
-        .pipe(
-          // Hand the process to startup cleanup before honoring a pending interrupt.
-          Effect.tap((process) => Effect.sync(() => onSpawned(process))),
-          Effect.uninterruptible,
-        ),
+      options.ptyAdapter.spawn({
+        shell: launch.command,
+        ...(launch.args.length > 0 ? { args: [...launch.args] } : {}),
+        cwd: session.cwd,
+        cols: session.cols,
+        rows: session.rows,
+        env: spawnEnv,
+        onSpawned,
+      }),
     );
 
     if (attempt._tag === "Success") {
@@ -2963,6 +2965,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 ptyProcess = process;
               },
             );
+            ptyProcess = spawnResult.process;
             startedShell = spawnResult.shellLabel;
 
             const processPid = spawnResult.process.pid;
@@ -3002,17 +3005,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 sequence: eventStamp.sequence,
                 snapshot: snapshot(session),
               });
-            }).pipe(
-              Effect.ensuring(
-                Effect.sync(() => {
-                  if (session.process !== spawnResult.process) return;
-                  // Publish startup before draining any events replayed during subscription.
-                  eventsActivated = true;
-                  if (session.processEventDrainRunning)
-                    runFork(drainProcessEvents(session, processPid));
-                }),
-              ),
-            );
+              // Publish startup before draining any events replayed during subscription.
+              eventsActivated = true;
+              if (session.processEventDrainRunning)
+                runFork(drainProcessEvents(session, processPid));
+            }).pipe(Effect.uninterruptible);
           }),
         ),
         Effect.onInterrupt(() =>
@@ -3429,7 +3426,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       liveSession.worktreePath !== nextWorktreePath;
 
     if (launchContextChanged) {
-      yield* Effect.uninterruptible(stopProcess(liveSession));
+      yield* Effect.uninterruptible(stopProcess(liveSession, "starting"));
       liveSession.cwd = input.cwd;
       liveSession.worktreePath = nextWorktreePath;
       liveSession.runtimeEnv = nextRuntimeEnv;
