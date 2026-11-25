@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useRef, useState } from "react";
 import { Platform, View } from "react-native";
 import Animated from "react-native-reanimated";
@@ -50,6 +51,7 @@ export function IssueCommentComposer(props: {
   readonly onHeightChange: (height: number) => void;
   readonly onFocusChange: (focused: boolean) => void;
 }) {
+  const gt = useGT();
   const editorRef = useRef<ComposerEditorHandle>(null);
   const [draft, setDraft] = useState("");
   // Read by dictation and by send after an await, when the render's `draft` may be stale.
@@ -71,6 +73,7 @@ export function IssueCommentComposer(props: {
     readDraftMessage: () => latestDraft.current,
     selection,
     disabled: props.blocked !== null,
+    hidden: props.blocked !== null,
     onChangeDraftMessage: changeDraft,
     onChangeSelection: setSelection,
   });
@@ -100,7 +103,7 @@ export function IssueCommentComposer(props: {
   const sendButton = (
     <ComposerActionButton
       size={chrome.controlSize}
-      accessibilityLabel={props.posting ? "Posting comment" : "Post comment"}
+      accessibilityLabel={props.posting ? gt("Posting comment") : gt("Post comment")}
       icon="arrow.up"
       variant="primary"
       disabled={!canSend}
@@ -132,10 +135,6 @@ export function IssueCommentComposer(props: {
             paddingVertical: chrome.paddingVertical,
           }}
         >
-          <ComposerDictationError
-            error={voiceInput.state.phase === "error" ? voiceInput.state.error : null}
-            onDismiss={voiceInput.cancel}
-          />
           {props.blocked !== null ? (
             <View className="h-[44px] flex-row items-center">
               <Text
@@ -150,6 +149,10 @@ export function IssueCommentComposer(props: {
             </View>
           ) : (
             <>
+              <ComposerDictationError
+                error={voiceInput.state.phase === "error" ? voiceInput.state.error : null}
+                onDismiss={voiceInput.cancel}
+              />
               <View onLayout={compactEditor.onRowLayout}>
                 <ComposerDictationDraftContent
                   className="flex-row items-end"
@@ -168,7 +171,11 @@ export function IssueCommentComposer(props: {
                   />
                   {/* TalkBack orders siblings by position; outside this row the editor reads after Send. */}
                   <Animated.View
-                    style={[compactEditor.editorStyle, dictating ? { display: "none" } : undefined]}
+                    style={[
+                      compactEditor.editorStyle,
+                      // iOS destroys a view under display: none; the editor would lose its focus and caret.
+                      Platform.OS === "android" && dictating ? { display: "none" } : undefined,
+                    ]}
                   >
                     <ComposerEditor
                       ref={editorRef}
@@ -180,7 +187,7 @@ export function IssueCommentComposer(props: {
                         if (!locked) changeDraft(text);
                       }}
                       onSelectionChange={setSelection}
-                      placeholder="Leave a comment"
+                      placeholder={gt("Leave a comment")}
                       onFocus={() => {
                         setFocused(true);
                         props.onFocusChange(true);
@@ -190,7 +197,7 @@ export function IssueCommentComposer(props: {
                         props.onFocusChange(false);
                       }}
                       onSubmit={() => void send()}
-                      submitTitle="Comment"
+                      submitTitle={gt("Comment", { $context: "verb, posts the comment" })}
                       {...compactEditor.editorProps}
                       textStyle={textStyle}
                     />

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   continueIssuePage,
+  groupIssues,
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
@@ -143,6 +144,35 @@ describe("issueFilterScopes", () => {
     expect(issueFilterScopes(held, [])).toEqual([{ environmentId, input: scope }]);
   });
 
+  it("offers the same team key of two Linear accounts as two scopes", () => {
+    const first = {
+      projectId: api,
+      tracker: "linear" as IssueTrackerKind,
+      host: "linear.app",
+      scope: "ENG",
+    };
+    const second = hold(
+      answer({
+        trackers: [tracker({})],
+        scopes: [first, { ...first, projectId: "home" as ProjectId }],
+      }),
+    );
+    const other = hold(
+      answer({ trackers: [tracker({})], scopes: [{ ...first, projectId: "o" as ProjectId }] }),
+    );
+    // Older servers name no scopes; their rows stand in, once per team on that server.
+    const older = hold(
+      answer({ trackers: [tracker({})], entries: [linearRow, { ...linearRow, key: "ENG-2" }] }),
+    );
+    const count = (...pages: ReadonlyArray<ReturnType<typeof hold>>) =>
+      issueFilterScopes(
+        new Map(pages.map((page, index) => [`env-${index}` as EnvironmentId, page])),
+        [],
+      ).length;
+    expect([count(second), count(second, other), count(other, second)]).toEqual([2, 3, 3]);
+    expect([count(older), count(older, second), count(second, older)]).toEqual([1, 3, 3]);
+  });
+
   it("skips a tracker that cannot be read", () => {
     const held = new Map([
       [
@@ -151,5 +181,73 @@ describe("issueFilterScopes", () => {
       ],
     ]);
     expect(issueFilterScopes(held, [])).toEqual([]);
+  });
+});
+
+describe("groupIssues", () => {
+  it("lists an issue once when two environments hold the same repository", () => {
+    const github = {
+      tracker: "github",
+      host: "github.com",
+      projectCount: 1,
+      capabilities: { labels: true, assignees: true },
+      configured: true,
+      detail: null,
+    } as IssueTrackerSummary;
+    const page = answer({
+      trackers: [github],
+      entries: [entry({ key: "1" }), entry({ key: "2" })],
+    });
+    const held = holdIssuePages(
+      [
+        [environmentId, page],
+        [
+          "env-2" as EnvironmentId,
+          answer({
+            ...page,
+            entries: page.entries.map((row) => ({ ...row, projectId: "other" as ProjectId })),
+          }),
+        ],
+      ],
+      new Map(),
+    );
+    const [group] = groupIssues(held, "", []);
+    expect(group!.rows.map((row) => row.displayKey)).toEqual(["#1", "#2"]);
+  });
+
+  it("keeps same-keyed issues from two Linear workspaces apart", () => {
+    const linear = {
+      tracker: "linear",
+      host: "linear.app",
+      projectCount: 1,
+      capabilities: { labels: true, assignees: true },
+      configured: true,
+      detail: null,
+    } as IssueTrackerSummary;
+    const inWorkspace = (workspace: string) =>
+      answer({
+        trackers: [linear],
+        entries: [
+          entry({
+            tracker: "linear" as IssueTrackerKind,
+            host: "linear.app",
+            scope: "ENG",
+            key: "ENG-1",
+            url: `https://linear.app/${workspace}/issue/ENG-1`,
+          }),
+        ],
+      });
+    const held = holdIssuePages(
+      [
+        [environmentId, inWorkspace("acme")],
+        ["env-2" as EnvironmentId, inWorkspace("globex")],
+      ],
+      new Map(),
+    );
+    const [group] = groupIssues(held, "", []);
+    expect(group!.rows.map((row) => row.url)).toEqual([
+      "https://linear.app/acme/issue/ENG-1",
+      "https://linear.app/globex/issue/ENG-1",
+    ]);
   });
 });

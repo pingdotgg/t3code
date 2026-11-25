@@ -18,6 +18,9 @@ run these commands on the machine that will host T3 Code:
 | Restart                               | `t3 service restart`   |
 | Stop and remove from startup          | `t3 service uninstall` |
 
+The service never writes a pairing code to its log. To connect a device, run
+`t3 pair` on the host, or `t3 up` to set up access from your other devices.
+
 Uninstalling the service leaves your projects, threads, and settings intact.
 Running `t3 service install` again repairs a service that `t3 service status`
 reports as broken.
@@ -199,4 +202,7 @@ once next to the database for its write-ahead log.
 If you upgraded from a version before 0.1.0, its database (`state.sqlite`) is
 still kept next to the current one so you can roll back. `t3 doctor` offers to
 delete it, but never selects that repair for you and `--fix` skips it: once it
-is gone, a version before 0.1.0 starts with no threads or settings.
+is gone, a version before 0.1.0 starts with no threads or settings. It does
+not offer to delete it while any project or thread you have not deleted is
+missing from the current database, so the old file stays available for
+recovery.

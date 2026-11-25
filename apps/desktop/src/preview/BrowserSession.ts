@@ -1,6 +1,7 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { Certificate, Session, WebContents } from "electron";
-import { BrowserWindow, session } from "electron";
+import { BrowserWindow, session, systemPreferences } from "electron";
+import { msg } from "gt-i18n";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Digest from "effect/crypto/Digest";
@@ -17,6 +18,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import { m } from "../i18n/messages.ts";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 /** Ephemeral partitions omit persist: but retain a product prefix so the webview gate recognizes them. */
@@ -28,7 +30,6 @@ export type BrowserSessionPartitionNamespace = "profile";
 // Electron's clipboard API uses clipboard-sanitized-write and checks both permission handlers.
 const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   "clipboard-sanitized-write",
-  "geolocation",
   // DesktopWindow confines HTML fullscreen to the guest's webview.
   "fullscreen",
   "pointerLock",
@@ -63,7 +64,46 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
 };
 
 // Teams sends Electron User-Agents to an error page before sign-in. Electron allows one listener per session.
-const TEAMS_URL_PATTERNS = ["https://teams.cloud.microsoft/*", "https://teams.microsoft.com/*"];
+const isTeamsUrl = (url: string): boolean =>
+  url.startsWith("https://teams.cloud.microsoft/") ||
+  url.startsWith("https://teams.microsoft.com/");
+
+const GREASE_CHARS = [" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"];
+const GREASE_VERSIONS = ["8", "99", "24"];
+
+/**
+ * The low-entropy User-Agent client hints the renderer sends on fetches. Mirrors Chromium's
+ * GenerateBrandVersionList with no embedder brand, as Electron builds it.
+ */
+export const lowEntropyClientHints = (
+  chromeVersion: string,
+  platform: NodeJS.Platform,
+): Record<string, string> => {
+  const major = Number.parseInt(chromeVersion, 10);
+  const grease = `"Not${GREASE_CHARS[major % 11]}A${GREASE_CHARS[(major + 1) % 11]}Brand";v="${GREASE_VERSIONS[major % 3]}"`;
+  const chromium = `"Chromium";v="${major}"`;
+  return {
+    "sec-ch-ua": major % 2 === 0 ? `${grease}, ${chromium}` : `${chromium}, ${grease}`,
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": `"${platform === "darwin" ? "macOS" : platform === "win32" ? "Windows" : "Linux"}"`,
+  };
+};
+
+const isPotentiallyTrustworthy = (rawUrl: string): boolean => {
+  try {
+    const { protocol, hostname } = new URL(rawUrl);
+    if (protocol === "https:") return true;
+    return (
+      protocol === "http:" &&
+      (hostname === "localhost" ||
+        hostname.endsWith(".localhost") ||
+        hostname === "[::1]" ||
+        /^127\.\d+\.\d+\.\d+$/.test(hostname))
+    );
+  } catch {
+    return false;
+  }
+};
 
 const MAX_PROMPT_URL_LENGTH = 300;
 
@@ -85,9 +125,9 @@ const permissionOrigin = (rawUrl: string | undefined): string | null => {
  * prompt shows. Every other error keeps Electron's denial.
  */
 const OVERRIDABLE_CERTIFICATE_ERRORS: ReadonlyMap<string, string> = new Map([
-  ["net::ERR_CERT_AUTHORITY_INVALID", "No trusted authority issued this certificate."],
-  ["net::ERR_CERT_COMMON_NAME_INVALID", "This certificate is not for this address."],
-  ["net::ERR_CERT_DATE_INVALID", "This certificate has expired or is not valid yet."],
+  ["net::ERR_CERT_AUTHORITY_INVALID", msg("No trusted authority issued this certificate.")],
+  ["net::ERR_CERT_COMMON_NAME_INVALID", msg("This certificate is not for this address.")],
+  ["net::ERR_CERT_DATE_INVALID", msg("This certificate has expired or is not valid yet.")],
 ]);
 
 /**
@@ -136,6 +176,58 @@ interface CertificateTrust {
   readonly approvals: Map<string, CertificateApproval>;
   /** Bumped by each revocation, so an answer to an older prompt cannot restore trust. */
   revocations: number;
+}
+
+type MediaDevice = "camera" | "microphone";
+
+const mediaDeviceFor = (mediaType: string | undefined): MediaDevice | null =>
+  mediaType === "video" ? "camera" : mediaType === "audio" ? "microphone" : null;
+
+// Whole sentences per device set, so each language can phrase them its own way.
+const mediaRequestMessage = (devices: ReadonlyArray<MediaDevice>, origin: string): string =>
+  devices.length === 2
+    ? m(msg("{origin} wants to use your camera and microphone"), { origin })
+    : devices[0] === "microphone"
+      ? m(msg("{origin} wants to use your microphone"), { origin })
+      : m(msg("{origin} wants to use your camera"), { origin });
+
+const mediaBlockedMessage = (devices: ReadonlyArray<MediaDevice>): string =>
+  devices.length === 2
+    ? m(msg("macOS blocked T3 Code from using your camera and microphone"))
+    : devices[0] === "microphone"
+      ? m(msg("macOS blocked T3 Code from using your microphone"))
+      : m(msg("macOS blocked T3 Code from using your camera"));
+
+/**
+ * macOS gates capture devices per app and lists an app under Privacy & Security
+ * only after it asks, so ask the OS once the user allowed the page.
+ */
+/** Returns the devices macOS blocks, so the recovery message names only those; empty means allowed. */
+const ensureSystemMediaAccess = async (
+  platform: NodeJS.Platform,
+  devices: ReadonlyArray<MediaDevice>,
+): Promise<ReadonlyArray<MediaDevice>> => {
+  if (platform !== "darwin") return [];
+  const statuses = devices.map((device) => systemPreferences.getMediaAccessStatus(device));
+  const refused = devices.filter(
+    (_device, index) => statuses[index] !== "granted" && statuses[index] !== "not-determined",
+  );
+  if (refused.length > 0) return refused;
+  const results = await Promise.all(
+    devices.map((device, index) =>
+      statuses[index] === "granted"
+        ? true
+        : systemPreferences.askForMediaAccess(device).catch(() => false),
+    ),
+  );
+  return devices.filter((_device, index) => !results[index]);
+};
+
+/** The camera and microphone answers given in one preview Session. */
+interface MediaConsent {
+  readonly decisions: Map<string, boolean>;
+  /** Bumped by each reset, so an answer to an older prompt cannot restore a decision. */
+  resets: number;
 }
 
 export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<BrowserSessionPartitionDerivationError>()(
@@ -267,6 +359,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   // One prompt at a time, so a page cannot stack dialogs by looping a deep link.
   let permissionPromptOpen = false;
+  let mediaRecoveryOpen = false;
   /** Settles with `undefined` when the user gave no answer: another prompt was open or the dialog failed. */
   const promptPermission = (
     requester: WebContents | null,
@@ -277,21 +370,26 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     },
     callback: (answer: boolean | undefined) => void,
   ): void => {
-    if (permissionPromptOpen) {
+    if (permissionPromptOpen || requester?.isDestroyed()) {
       callback(undefined);
       return;
     }
     permissionPromptOpen = true;
+    const dismiss = new AbortController();
+    const abandon = () => dismiss.abort();
+    requester?.once("destroyed", abandon);
     const settle = (answer: boolean | undefined) =>
       Effect.sync(() => {
         permissionPromptOpen = false;
-        callback(answer);
+        requester?.off("destroyed", abandon);
+        callback(dismiss.signal.aborted || requester?.isDestroyed() ? undefined : answer);
       });
     runFork(
       electronDialog
         .showMessageBox(
           {
             type: "question",
+            signal: dismiss.signal,
             buttons: [...prompt.buttons],
             // Default to deny so an Enter typed into the page cannot accept a prompt it raised.
             defaultId: 1,
@@ -299,7 +397,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             message: prompt.message,
             ...(prompt.detail === undefined ? {} : { detail: prompt.detail }),
           },
-          previewHostWindow(requester),
+          platform === "win32" ? undefined : previewHostWindow(requester),
         )
         .pipe(
           Effect.map(({ response }): boolean | undefined => response === 0),
@@ -323,9 +421,16 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     promptPermission(
       requester,
       {
-        buttons: ["Open", "Cancel"],
-        message: `Open this ${new URL(url).protocol.slice(0, -1)} link?`,
-        detail: `A page in the browser wants to open another application:\n\n${truncateForPrompt(url)}`,
+        buttons: [
+          m(msg("Open", { $context: "button, opens a link in another app" })),
+          m(msg("Cancel")),
+        ],
+        message: m(msg("Open this {protocol} link?"), {
+          protocol: new URL(url).protocol.slice(0, -1),
+        }),
+        detail: m(msg("A page in the browser wants to open another application:\n\n{url}"), {
+          url: truncateForPrompt(url),
+        }),
       },
       (answer) => callback(answer === true),
     );
@@ -454,20 +559,29 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         .showMessageBox(
           {
             type: "warning",
-            buttons: ["Trust and Remember", "Cancel"],
+            buttons: [m(msg("Trust and Remember")), m(msg("Cancel"))],
             defaultId: 1,
             cancelId: 1,
             signal: dismiss.signal,
-            message: `${host} has an untrusted certificate`,
+            message: m(msg("{host} has an untrusted certificate"), { host }),
             detail: [
-              reason,
+              m(reason),
               "",
-              `Issued to: ${promptCertificateName(certificate.subjectName)}`,
-              `Issued by: ${promptCertificateName(certificate.issuerName)}`,
-              `Valid: ${promptCertificateDate(certificate.validStart)} – ${promptCertificateDate(certificate.validExpiry)}`,
-              `Fingerprint: ${approval.fingerprint}`,
+              m(msg("Issued to: {name}"), {
+                name: promptCertificateName(certificate.subjectName),
+              }),
+              m(msg("Issued by: {name}"), { name: promptCertificateName(certificate.issuerName) }),
+              m(msg("Valid: {start} – {end}"), {
+                start: promptCertificateDate(certificate.validStart),
+                end: promptCertificateDate(certificate.validExpiry),
+              }),
+              m(msg("Fingerprint: {fingerprint}"), { fingerprint: approval.fingerprint }),
               "",
-              "Trust it only if you know this certificate belongs to the site. Clearing this browser profile's cookies forgets it.",
+              m(
+                msg(
+                  "Trust it only if you know this certificate belongs to the site. Clearing this browser profile's cookies forgets it.",
+                ),
+              ),
             ].join("\n"),
           },
           // In the reporter's Windows test, a box owned by the host window
@@ -482,8 +596,12 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                     Effect.logWarning("Failed to save a certificate approval.", { cause }).pipe(
                       Effect.andThen(
                         electronDialog.showErrorBox(
-                          `Could not trust the certificate for ${host}`,
-                          "T3 Code could not save this approval, so the page stays blocked. Check that the disk is not full and its data folder is writable, then try again.",
+                          m(msg("Could not trust the certificate for {host}"), { host }),
+                          m(
+                            msg(
+                              "T3 Code could not save this approval, so the page stays blocked. Check that the disk is not full and its data folder is writable, then try again.",
+                            ),
+                          ),
                         ),
                       ),
                       Effect.as(false),
@@ -553,6 +671,15 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     }
   });
 
+  /** Camera and microphone answers by Session; clearing a profile's cookies forgets them too. */
+  const mediaConsentBySession = new WeakMap<Session, MediaConsent>();
+  const forgetMediaDecisions = (browserSession: Session): void => {
+    const consent = mediaConsentBySession.get(browserSession);
+    if (consent === undefined) return;
+    consent.resets += 1;
+    consent.decisions.clear();
+  };
+
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
@@ -585,19 +712,25 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       return Effect.try({
         try: () => {
           const browserSession = session.fromPartition(partition);
-          // Like Chrome, clipboard reads ask once per origin; both answers last for the session.
-          const clipboardReadDecisions = new Map<string, boolean>();
-          const confirmClipboardRead = (
+          // Location and clipboard decisions are remembered separately for each origin.
+          const permissionDecisions = {
+            "clipboard-read": new Map<string, boolean>(),
+            geolocation: new Map<string, boolean>(),
+          };
+          const confirmOriginPermission = (
             requester: WebContents,
+            permission: keyof typeof permissionDecisions,
             rawUrl: string | undefined,
             callback: (granted: boolean) => void,
           ): void => {
             const origin = permissionOrigin(rawUrl);
             if (origin === null) {
+              // A frame URL such as about:srcdoc cannot establish whether its origin is inherited or opaque.
               callback(false);
               return;
             }
-            const remembered = clipboardReadDecisions.get(origin);
+            const decisions = permissionDecisions[permission];
+            const remembered = decisions.get(origin);
             if (remembered !== undefined) {
               callback(remembered);
               return;
@@ -605,12 +738,121 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             promptPermission(
               requester,
               {
-                buttons: ["Allow", "Block"],
-                message: `${truncateForPrompt(origin)} wants to see text and images copied to the clipboard`,
+                buttons: [
+                  m(msg("Allow", { $context: "button, grants a site permission" })),
+                  m(msg("Block", { $context: "button, denies a site permission" })),
+                ],
+                message:
+                  permission === "geolocation"
+                    ? m(msg("{origin} wants to know your location"), {
+                        origin: truncateForPrompt(origin),
+                      })
+                    : m(msg("{origin} wants to see text and images copied to the clipboard"), {
+                        origin: truncateForPrompt(origin),
+                      }),
               },
               (answer) => {
-                if (answer !== undefined) clipboardReadDecisions.set(origin, answer);
+                if (answer !== undefined) decisions.set(origin, answer);
                 callback(answer === true);
+              },
+            );
+          };
+          // Camera and microphone ask once per origin and device, like clipboard reads.
+          const mediaConsent: MediaConsent = { decisions: new Map(), resets: 0 };
+          mediaConsentBySession.set(browserSession, mediaConsent);
+          const mediaDecisions = mediaConsent.decisions;
+          const mediaKey = (origin: string, device: MediaDevice) => `${device} ${origin}`;
+          const confirmMedia = (
+            requester: WebContents,
+            rawUrl: string | undefined,
+            mediaTypes: ReadonlyArray<string> | undefined,
+            callback: (granted: boolean) => void,
+          ): void => {
+            const origin = permissionOrigin(rawUrl);
+            const devices = [
+              ...new Set((mediaTypes ?? []).map(mediaDeviceFor).filter((d) => d !== null)),
+            ];
+            if (origin === null || devices.length === 0) {
+              callback(false);
+              return;
+            }
+            // A reset while a prompt or the macOS check is pending must not grant or remember.
+            const resets = mediaConsent.resets;
+            const isStale = () =>
+              mediaConsent.resets !== resets || requester?.isDestroyed() === true;
+            const finish = (granted: boolean) => {
+              if (!granted || isStale()) {
+                callback(false);
+                return;
+              }
+              void ensureSystemMediaAccess(platform, devices).then(
+                (blocked) => {
+                  const systemGranted = blocked.length === 0;
+                  if (isStale()) {
+                    callback(false);
+                    return;
+                  }
+                  if (!systemGranted && !mediaRecoveryOpen) {
+                    mediaRecoveryOpen = true;
+                    runFork(
+                      electronDialog
+                        .showMessageBox(
+                          {
+                            type: "info",
+                            buttons: [m(msg("OK"))],
+                            message: mediaBlockedMessage(blocked),
+                            detail: m(
+                              msg(
+                                "Allow T3 Code in System Settings › Privacy & Security, then restart T3 Code.",
+                              ),
+                            ),
+                          },
+                          previewHostWindow(requester),
+                        )
+                        .pipe(
+                          Effect.ignore,
+                          Effect.ensuring(
+                            Effect.sync(() => {
+                              mediaRecoveryOpen = false;
+                            }),
+                          ),
+                        ),
+                    );
+                  }
+                  callback(systemGranted);
+                },
+                () => callback(false),
+              );
+            };
+            const remembered = devices.map((device) =>
+              mediaDecisions.get(mediaKey(origin, device)),
+            );
+            if (remembered.some((answer) => answer === false)) {
+              callback(false);
+              return;
+            }
+            if (remembered.every((answer) => answer === true)) {
+              finish(true);
+              return;
+            }
+            const undecided = devices.filter(
+              (device) => !mediaDecisions.has(mediaKey(origin, device)),
+            );
+            promptPermission(
+              requester,
+              {
+                buttons: [
+                  m(msg("Allow", { $context: "button, grants a site permission" })),
+                  m(msg("Block", { $context: "button, denies a site permission" })),
+                ],
+                message: mediaRequestMessage(undecided, truncateForPrompt(origin)),
+              },
+              (answer) => {
+                if (answer !== undefined && !isStale()) {
+                  for (const device of undecided)
+                    mediaDecisions.set(mediaKey(origin, device), answer);
+                }
+                finish(answer === true);
               },
             );
           };
@@ -625,10 +867,21 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 );
                 return;
               }
-              if (permission === "clipboard-read") {
-                confirmClipboardRead(
+              if (permission === "clipboard-read" || permission === "geolocation") {
+                confirmOriginPermission(
                   webContents,
+                  permission,
                   "requestingUrl" in details ? details.requestingUrl : undefined,
+                  callback,
+                );
+                return;
+              }
+              if (permission === "media") {
+                confirmMedia(
+                  webContents,
+                  ("securityOrigin" in details ? details.securityOrigin : undefined) ??
+                    details.requestingUrl,
+                  "mediaTypes" in details ? details.mediaTypes : undefined,
                   callback,
                 );
                 return;
@@ -636,25 +889,51 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
             },
           );
-          browserSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
-            permission === "clipboard-read"
-              ? clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true
-              : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
-          );
-          browserSession.webRequest.onBeforeSendHeaders(
-            { urls: TEAMS_URL_PATTERNS },
-            ({ requestHeaders }, callback) => {
-              const userAgent = Object.entries(requestHeaders).find(
-                ([name]) => name.toLowerCase() === "user-agent",
-              );
-              if (userAgent === undefined) {
-                callback({});
-                return;
+          browserSession.setPermissionCheckHandler(
+            (_webContents, permission, requestingOrigin, details) => {
+              if (permission === "clipboard-read" || permission === "geolocation") {
+                return (
+                  permissionDecisions[permission].get(permissionOrigin(requestingOrigin) ?? "") ===
+                  true
+                );
               }
-              const [name, value] = userAgent;
-              callback({
-                requestHeaders: { ...requestHeaders, [name]: value.replace(/ Electron\/\S+/, "") },
-              });
+              if (permission === "media") {
+                const origin = permissionOrigin(requestingOrigin);
+                const device = mediaDeviceFor(details?.mediaType);
+                return (
+                  origin !== null &&
+                  device !== null &&
+                  mediaDecisions.get(mediaKey(origin, device)) === true &&
+                  (platform !== "darwin" ||
+                    systemPreferences.getMediaAccessStatus(device) === "granted")
+                );
+              }
+              return ALLOWED_PREVIEW_PERMISSIONS.has(permission);
+            },
+          );
+          const clientHints = lowEntropyClientHints(process.versions.chrome, platform);
+          // Electron adds client hints to subresources only; sites that compare them across a session reject navigations without them.
+          browserSession.webRequest.onBeforeSendHeaders(
+            { urls: ["http://*/*", "https://*/*"] },
+            ({ url, resourceType, requestHeaders }, callback) => {
+              let next = requestHeaders;
+              if (
+                (resourceType === "mainFrame" || resourceType === "subFrame") &&
+                !Object.keys(requestHeaders).some((name) => name.toLowerCase() === "sec-ch-ua") &&
+                isPotentiallyTrustworthy(url)
+              ) {
+                next = { ...next, ...clientHints };
+              }
+              if (isTeamsUrl(url)) {
+                const userAgent = Object.entries(next).find(
+                  ([name]) => name.toLowerCase() === "user-agent",
+                );
+                if (userAgent !== undefined) {
+                  const [name, value] = userAgent;
+                  next = { ...next, [name]: value.replace(/ Electron\/\S+/, "") };
+                }
+              }
+              callback(next === requestHeaders ? {} : { requestHeaders: next });
             },
           );
           return browserSession;
@@ -688,8 +967,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     getSession,
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
+      const selected = selectSessions(sessions, partitions);
+      for (const [, browserSession] of selected) forgetMediaDecisions(browserSession);
       yield* Effect.forEach(
-        selectSessions(sessions, partitions),
+        selected,
         ([partition, browserSession]) =>
           Effect.gen(function* () {
             const cleared = yield* Effect.tryPromise({
@@ -719,7 +1000,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     cookiesCleared: Effect.fn("BrowserSession.cookiesCleared")(function* (browserSession) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       for (const [partition, candidate] of sessions) {
-        if (candidate === browserSession) yield* revokeCertificates(partition, browserSession);
+        if (candidate !== browserSession) continue;
+        forgetMediaDecisions(browserSession);
+        yield* revokeCertificates(partition, browserSession);
       }
     }),
     clearCache: Effect.fn("BrowserSession.clearCache")(function* (partitions?) {
