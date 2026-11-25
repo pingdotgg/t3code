@@ -104,6 +104,51 @@ function openRouterBody(model: string, audio: ArrayBuffer, language: string) {
   });
 }
 
+const record = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+
+/** The message inside an upstream error body; ElevenLabs nests it as `detail.message`. */
+const upstreamMessage = (body: unknown): string | undefined => {
+  const fields = record(body);
+  for (const candidate of [
+    record(fields?.detail)?.message,
+    record(fields?.error)?.message,
+    fields?.message,
+    fields?.detail,
+  ])
+    if (typeof candidate === "string" && candidate.trim()) return candidate;
+  return undefined;
+};
+
+/**
+ * OpenRouter's own message, or for a wrapped upstream failure the upstream provider's reason.
+ * The raw upstream body is never shown.
+ */
+const openRouterErrorMessage = (response: HttpClientResponse.HttpClientResponse) =>
+  response.json.pipe(
+    Effect.map((body) => {
+      const error = record(record(body)?.error);
+      const metadata = record(error?.metadata);
+      let message: string | undefined;
+      if (typeof metadata?.raw === "string") {
+        try {
+          message = upstreamMessage(JSON.parse(metadata.raw));
+        } catch {}
+      }
+      if (message) {
+        const name = metadata?.provider_name;
+        if (typeof name === "string" && name.trim()) message = `${name}: ${message}`;
+      } else if (
+        typeof error?.message === "string" &&
+        error.message !== "Provider returned error"
+      ) {
+        message = error.message;
+      }
+      return message?.replace(/\s+/g, " ").trim().slice(0, 300);
+    }),
+    Effect.orElseSucceed(() => undefined),
+  );
+
 export class CloudSpeech extends Context.Service<
   CloudSpeech,
   {
@@ -226,9 +271,16 @@ export const layer = Layer.effect(
             reason: current ? "key-changed" : "missing-key",
           });
         const response = yield* execute(request).pipe(Effect.mapError(unavailable));
-        if (response.status < 200 || response.status >= 300)
+        if (response.status < 200 || response.status >= 300) {
+          // OpenRouter answers 403/404 with its own reason, such as no zero-retention endpoint for
+          // this key. The status alone would blame the key or the model.
+          const detail =
+            provider === "openrouter" && [403, 404].includes(response.status)
+              ? yield* openRouterErrorMessage(response)
+              : undefined;
           return yield* new CloudSpeechError({
             provider,
+            ...(detail ? { detail } : {}),
             reason:
               response.status === 429
                 ? "rate-limit"
@@ -238,6 +290,7 @@ export const layer = Layer.effect(
                     ? "model-unavailable"
                     : "unavailable",
           });
+        }
         const { text } = yield* HttpClientResponse.schemaBodyJson(
           EnvironmentSpeechTranscriptionResult,
         )(response).pipe(Effect.mapError(unavailable));

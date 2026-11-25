@@ -1,5 +1,9 @@
 import { it } from "@effect/vitest";
-import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SecretProviderId } from "@t3tools/contracts";
+import {
+  CloudSpeechError,
+  DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+  SecretProviderId,
+} from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -163,6 +167,122 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
     const wav = Buffer.from(body.input_audio.data, "base64");
     expect(wav.toString("ascii", 0, 4)).toBe("RIFF");
     expect(wav.readInt16LE(46)).toBe(16384);
+  }),
+);
+
+const cloudError = <E extends { readonly _tag: string }>(error: E | CloudSpeechError) => {
+  if (error._tag !== "CloudSpeechError") throw error;
+  return error as CloudSpeechError;
+};
+
+it.effect("shows OpenRouter's own reason when it refuses a zero-retention request", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async (input) =>
+      new URL(String(input)).pathname.endsWith("/models")
+        ? Response.json({ data: [{ id: "acme/transcribe-1" }] })
+        : Response.json({ text: "hello" }),
+    );
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    const transcribe = () =>
+      service
+        .transcribe(
+          "openrouter",
+          new Uint8Array(new Float32Array([0, 0.5]).buffer),
+          { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "en" },
+          "acme/transcribe-1",
+        )
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+    yield* service.setKey("openrouter", Redacted.make("router-key"));
+    // The first call also reads the model catalog, so mocked refusals start after it.
+    expect(yield* transcribe()).toBe("hello");
+    const refuse = (status: number, body: unknown) => {
+      upstream.mockResolvedValueOnce(
+        typeof body === "string" ? new Response(body, { status }) : Response.json(body, { status }),
+      );
+      return Effect.flip(transcribe()).pipe(Effect.map(cloudError));
+    };
+    const zdrBody = (status: number) => ({
+      error: {
+        message: "Provider returned error",
+        code: status,
+        metadata: {
+          provider_name: "ElevenLabs",
+          raw: JSON.stringify({
+            detail: {
+              type: "authorization_error",
+              code: "forbidden",
+              message: "Only users from the enterprise or trial tier can use ZRM mode.",
+              status: "not_allowed",
+            },
+          }),
+        },
+      },
+    });
+    const wrapped = yield* refuse(403, zdrBody(403));
+    expect(wrapped.reason).toBe("rejected-key");
+    expect(wrapped.detail).toBe(
+      "ElevenLabs: Only users from the enterprise or trial tier can use ZRM mode.",
+    );
+    expect(wrapped.message).toContain("OpenRouter said: ElevenLabs: Only users");
+    expect(wrapped.message).not.toContain("authorization_error");
+    const missing = yield* refuse(404, { error: { message: "No ZDR endpoints" } });
+    expect(missing.reason).toBe("model-unavailable");
+    expect(missing.detail).toBe("No ZDR endpoints");
+    const long = yield* refuse(403, {
+      error: { message: `line one\n\n  line two ${"x".repeat(400)}` },
+    });
+    expect(long.detail).toHaveLength(300);
+    expect(long.detail).toMatch(/^line one line two x/);
+    // Generic wrapper text, an empty message and an unparseable body keep the old copy.
+    for (const body of [
+      { error: { message: "Provider returned error", metadata: { raw: "not json" } } },
+      { error: { message: "Provider returned error", metadata: { raw: '{"detail":{}}' } } },
+      { error: { message: "  " } },
+      "not json",
+    ]) {
+      const plain = yield* refuse(403, body);
+      expect(plain.detail).toBeUndefined();
+      expect(plain.reason).toBe("rejected-key");
+    }
+    expect((yield* refuse(401, { error: { message: "bad key" } })).detail).toBeUndefined();
+    expect((yield* refuse(429, { error: { message: "slow down" } })).detail).toBeUndefined();
+  }),
+);
+
+it.effect("ignores the response body of a 403 from OpenAI", () =>
+  Effect.gen(function* () {
+    const upstream = vi.fn<typeof fetch>(async () =>
+      Response.json({ error: { message: "upstream detail" } }, { status: 403 }),
+    );
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    yield* service.setKey("openai", Redacted.make("key"));
+    const failure = yield* Effect.flip(
+      service
+        .transcribe(
+          "openai",
+          new Uint8Array(new Float32Array([0, 0.5]).buffer),
+          DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+        )
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
+    );
+    expect(failure).toMatchObject({ reason: "rejected-key" });
+    expect("detail" in failure).toBe(false);
   }),
 );
 

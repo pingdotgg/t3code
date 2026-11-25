@@ -53,11 +53,19 @@ export class CloudSpeechError extends Schema.TaggedError<CloudSpeechError>()(
       "model-unavailable",
       "unavailable",
     ]),
+    /** The provider's own explanation, when it gave one that the reason alone would misstate. */
+    detail: Schema.optionalKey(Schema.String),
   },
   { httpApiStatus: 422 },
 ) {
   override get message() {
     const name = CLOUD_SPEECH_PROVIDER_NAMES[this.provider];
+    const base = this.baseMessage(name);
+    if (!this.detail) return base;
+    return `${base} ${name} said: ${this.detail}${/[.!?]$/.test(this.detail) ? "" : "."}`;
+  }
+
+  private baseMessage(name: string) {
     switch (this.reason) {
       case "missing-key":
         return `Add your ${name} API key in Settings → Voice.`;

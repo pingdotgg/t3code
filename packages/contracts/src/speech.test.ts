@@ -1,10 +1,12 @@
 import * as Schema from "effect/Schema";
 import { expect, it } from "vite-plus/test";
 
-import { EnvironmentSpeechModel, EnvironmentSpeechStatus } from "./speech.ts";
+import { CloudSpeechError, EnvironmentSpeechModel, EnvironmentSpeechStatus } from "./speech.ts";
 
 const decodeStatus = Schema.decodeUnknownSync(EnvironmentSpeechStatus);
 const encodeStatus = Schema.encodeSync(EnvironmentSpeechStatus);
+const encodeCloudError = Schema.encodeSync(CloudSpeechError);
+const decodeCloudError = Schema.decodeUnknownSync(CloudSpeechError);
 const decodeModel = Schema.decodeUnknownSync(EnvironmentSpeechModel);
 const encodeModel = Schema.encodeSync(EnvironmentSpeechModel);
 
@@ -94,4 +96,28 @@ it.each([
       }),
     ).toThrow();
   }
+});
+
+it("appends the provider's detail to the reason and round-trips it", () => {
+  const plain = new CloudSpeechError({ provider: "openrouter", reason: "rejected-key" });
+  const detailed = new CloudSpeechError({
+    provider: "openrouter",
+    reason: "rejected-key",
+    detail: "ElevenLabs: Only enterprise users can use ZRM mode",
+  });
+  expect(detailed.message).toBe(
+    `${plain.message} OpenRouter said: ElevenLabs: Only enterprise users can use ZRM mode.`,
+  );
+  expect(new CloudSpeechError({ ...detailed, detail: "Stop!" }).message).toMatch(
+    / OpenRouter said: Stop!$/,
+  );
+  const encoded = encodeCloudError(detailed);
+  expect(encoded).toEqual({
+    _tag: "CloudSpeechError",
+    provider: "openrouter",
+    reason: "rejected-key",
+    detail: "ElevenLabs: Only enterprise users can use ZRM mode",
+  });
+  expect(decodeCloudError(encoded).message).toBe(detailed.message);
+  expect(encodeCloudError(plain)).not.toHaveProperty("detail");
 });
