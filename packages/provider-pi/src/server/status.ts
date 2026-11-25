@@ -21,6 +21,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -313,46 +314,71 @@ export const discoverPiWorkspaceInventory = Effect.fn("discoverPiWorkspaceInvent
   }
   const timeoutMs = resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment);
   const probeEnvironment = providerProbeEnvironment(environment);
-  return yield* readWithPiProjectTrust(launchArgs.args, (args) =>
+  const timeout = new PiRpcTimeoutError({ operation: "discovery", timeoutMs });
+  const pending = {
+    state: Option.none<unknown>(),
+    models: Result.fail(timeout),
+    commands: Result.fail(timeout),
+  };
+  type InventoryResult = Result.Result<unknown, PiRpcError | PiRpcTimeoutError>;
+  const partial = yield* Ref.make<{
+    state: Option.Option<unknown>;
+    models: InventoryResult;
+    commands: InventoryResult;
+  }>(pending);
+  const read = yield* readWithPiProjectTrust(launchArgs.args, (args) =>
     Effect.gen(function* () {
-      const connection = yield* makePiDiscoveryConnection(
-        piSettings,
-        probeEnvironment,
-        args,
-        cwd,
-      ).pipe(
-        Effect.timeoutOrElse({
-          duration: timeoutMs,
-          orElse: () => Effect.fail(new PiRpcTimeoutError({ operation: "discovery", timeoutMs })),
-        }),
-      );
-      const { state, models, commands } = yield* Effect.all(
+      yield* Ref.set(partial, pending);
+      const connection = yield* makePiDiscoveryConnection(piSettings, probeEnvironment, args, cwd);
+      const inventory = yield* Effect.all(
         {
-          state: connection.request({ type: "get_state" }, timeoutMs).pipe(Effect.option),
-          models: connection
-            .request({ type: "get_available_models" }, timeoutMs)
-            .pipe(Effect.result),
-          commands: connection.request({ type: "get_commands" }, timeoutMs).pipe(Effect.result),
+          state: connection.request({ type: "get_state" }, timeoutMs).pipe(
+            Effect.option,
+            Effect.tap((state) => Ref.update(partial, (current) => ({ ...current, state }))),
+          ),
+          models: connection.request({ type: "get_available_models" }, timeoutMs).pipe(
+            Effect.result,
+            Effect.tap((models) => Ref.update(partial, (current) => ({ ...current, models }))),
+          ),
+          commands: connection.request({ type: "get_commands" }, timeoutMs).pipe(
+            Effect.flatMap((data) =>
+              Array.isArray(recordField(data, "commands"))
+                ? Effect.succeed(data)
+                : Effect.fail(
+                    new PiRpcError({
+                      operation: "get_commands",
+                      detail: "Invalid command inventory",
+                    }),
+                  ),
+            ),
+            Effect.result,
+            Effect.tap((commands) => Ref.update(partial, (current) => ({ ...current, commands }))),
+          ),
         },
         { concurrency: "unbounded" },
       );
-      const catalog = Result.flatMap(models, (data) =>
-        parseDiscoveredModels(data, Option.getOrUndefined(state)),
-      );
-      if (Result.isFailure(catalog) && Result.isFailure(commands)) {
-        return yield* Result.isFailure(models) ? models.failure : commands.failure;
+      if (Result.isFailure(inventory.models) && Result.isFailure(inventory.commands)) {
+        return yield* inventory.models.failure;
       }
-      return {
-        models: Result.map(catalog, (discovered) =>
-          piModelsFromSettings(piSettings.customModels, discovered),
-        ),
-        commands: Result.map(commands, (data) => {
-          const { slashCommands, skills } = parsePiDiscoveredCommands(data);
-          return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };
-        }),
-      };
+      return inventory;
     }).pipe(Effect.scoped),
+  ).pipe(Effect.timeoutOption(timeoutMs));
+  const { state, models, commands } = Option.isSome(read) ? read.value : yield* Ref.get(partial);
+  const catalog = Result.flatMap(models, (data) =>
+    parseDiscoveredModels(data, Option.getOrUndefined(state)),
   );
+  if (Result.isFailure(catalog) && Result.isFailure(commands)) {
+    return yield* Result.isFailure(models) ? models.failure : commands.failure;
+  }
+  return {
+    models: Result.map(catalog, (discovered) =>
+      piModelsFromSettings(piSettings.customModels, discovered),
+    ),
+    commands: Result.map(commands, (data) => {
+      const { slashCommands, skills } = parsePiDiscoveredCommands(data);
+      return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };
+    }),
+  };
 });
 
 export const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(function* (

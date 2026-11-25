@@ -142,17 +142,23 @@ export function resolveProvidersForCwd<P extends ServerProvider>(
     const models = resolveProviderWorkspaceSnapshot(provider, cwd)?.models;
     if (models === undefined || models === provider.models) return provider;
     // Pi only lists discovered models for providers it has credentials for in this directory.
-    const auth =
+    const projectAuthenticated =
       provider.driver === "pi" &&
       provider.enabled &&
       provider.installed &&
       provider.availability !== "unavailable" &&
       provider.status === "warning" &&
       provider.auth.status === "unauthenticated" &&
-      models.some((model) => !model.isCustom && model.slug !== "default")
-        ? ({ status: "authenticated", type: "pi" } as const)
-        : provider.auth;
-    return { ...provider, models, auth };
+      models.some((model) => !model.isCustom && model.slug !== "default");
+    return projectAuthenticated
+      ? {
+          ...provider,
+          models,
+          auth: { status: "authenticated", type: "pi" } as const,
+          status: "ready" as const,
+          message: undefined,
+        }
+      : { ...provider, models };
   });
   return resolved.every((provider, index) => provider === providers[index]) ? providers : resolved;
 }

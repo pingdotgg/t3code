@@ -166,7 +166,17 @@ describe("workspace provider snapshots", () => {
         driver: ProviderDriverKind.make("pi"),
         instanceId: ProviderInstanceId.make("pi"),
         status: "warning",
+        message: "Pi has no usable models.",
         auth: { status: "unauthenticated" },
+        versionAdvisory: {
+          status: "behind_latest",
+          currentVersion: "1.0.0",
+          latestVersion: "1.1.0",
+          updateCommand: null,
+          canUpdate: false,
+          checkedAt: null,
+          message: null,
+        },
         enabled: "enabled" in testCase ? testCase.enabled : true,
         installed: "installed" in testCase ? testCase.installed : true,
         ...("availability" in testCase ? { availability: testCase.availability } : {}),
@@ -177,9 +187,11 @@ describe("workspace provider snapshots", () => {
           },
         ],
       } satisfies ServerProvider;
-      expect(resolveProvidersForCwd([pi], "/workspace/project-a")[0]?.auth.status).toBe(
-        authenticated ? "authenticated" : "unauthenticated",
-      );
+      const scoped = resolveProvidersForCwd([pi], "/workspace/project-a")[0];
+      expect(scoped?.auth.status).toBe(authenticated ? "authenticated" : "unauthenticated");
+      expect(scoped?.status).toBe(authenticated ? "ready" : "warning");
+      expect(scoped?.message).toBe(authenticated ? undefined : pi.message);
+      expect(scoped?.versionAdvisory).toBe(pi.versionAdvisory);
       expect(resolveProvidersForCwd([pi], "/workspace/project-b")[0]).toBe(pi);
     },
   );
