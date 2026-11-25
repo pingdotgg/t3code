@@ -75,7 +75,8 @@ it.layer(Layer.mergeAll(platform, ProcessRunner.layer.pipe(Layer.provide(platfor
         manager.attachOutputStream({ ...input, maxHistoryBytes: budget }, "joining"),
       );
       const [snapshot] = yield* joining;
-      const decoded = Schema.decodeSync(wireEvent)(Schema.encodeSync(wireEvent)(snapshot));
+      const encoded = yield* Schema.encodeEffect(wireEvent)(snapshot);
+      const decoded = yield* Schema.decodeEffect(wireEvent)(encoded);
       if (decoded.type !== "snapshot") throw new Error("Expected a terminal snapshot");
       expect(decoded.snapshot.history).toBe(history);
       const state = decoded.snapshot.historySequenceState;
