@@ -2390,6 +2390,50 @@ describe("UsageService", () => {
     }),
   );
 
+  it.effect("counts a remote Claude session once beside the local ssh-* mirror of it", () =>
+    Effect.gen(function* () {
+      const remote = yield* setup;
+      const local = yield* setup;
+      const session = "1acabe71-751c-45b0-b3e0-8710bd7aeaae";
+      const lines =
+        claudeLine(1, 5, "claude-fable-5", session) + claudeLine(2, 7, "claude-fable-5", session);
+      yield* Effect.promise(async () => {
+        await NodeFSP.writeFile(remote.transcript, lines);
+        const mirror = NodePath.join(local.home, "claude", "projects", `ssh-${session}`);
+        await NodeFSP.mkdir(mirror, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(mirror, `${session}.jsonl`), lines);
+      });
+      const read = (input: { readonly home: string; readonly settings: typeof remote.settings }) =>
+        Effect.gen(function* () {
+          const service = yield* UsageService.make.pipe(
+            Effect.provide(
+              layerService({
+                prefix: "usage-service-ssh-mirror",
+                home: input.home,
+                settings: input.settings,
+              }),
+            ),
+          );
+          return yield* service.readSummary(WINDOW);
+        });
+      const remoteSummary = yield* read(remote);
+      const localSummary = yield* read(local);
+
+      const merged = mergeUsage(
+        [
+          { environmentId: EnvironmentId.make("remote"), label: "remote", summary: remoteSummary },
+          { environmentId: EnvironmentId.make("local"), label: "local", summary: localSummary },
+        ],
+        remoteSummary.contractVersion,
+      );
+      const claude = merged.providers.find((entry) => entry.provider === "claude");
+
+      assert.strictEqual(claude?.records, 2);
+      assert.strictEqual(claude?.sessions, 1);
+      assert.strictEqual(merged.outputTokens, 12);
+    }),
+  );
+
   it.effect("includes host and merged OpenCode instance histories once across list aliases", () =>
     Effect.gen(function* () {
       const { settings, home } = yield* setup;
