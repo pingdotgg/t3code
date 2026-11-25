@@ -4,6 +4,10 @@ struct PullRequestRow: Codable, Identifiable, Hashable {
     let projectId, projectTitle, host, repository, title, url, headBranch, baseBranch: String
     let number: Int
     let isDraft: Bool
+    struct Actor: Codable, Hashable { let login: String }
+    struct LabelValue: Codable, Hashable { let name: String }
+    let author: Actor?
+    let labels: [LabelValue]?
     let checksState: String?
     var id: String { url }
     var ref: [String: Any] {
@@ -39,7 +43,7 @@ struct PullRequestsTabView: View {
 
     var body: some View {
         let candidates = rows.filter { row in
-            searchQuery.isEmpty || [row.title, row.repository, row.projectTitle, "#\(row.number)", row.headBranch]
+            searchQuery.isEmpty || [row.title, row.repository, row.projectTitle, "#\(row.number)", row.headBranch, row.author?.login ?? "", row.labels?.map(\.name).joined(separator: " ") ?? ""]
                 .joined(separator: " ").localizedCaseInsensitiveContains(searchQuery)
         }
         let selected = candidates.filter { filter == "All" || $0.status == filter }
@@ -131,7 +135,10 @@ struct PullRequestRecord: View {
     struct Activity: Decodable {
         struct Comment: Decodable { let id, body, createdAt: String }
         struct Commit: Decodable { let oid, messageHeadline, committedDate: String }
+        struct Thread: Decodable { let comments: [Comment] }
         let comments: [Comment]
+        let reviewThreads: [Thread]
+        let overviewThreads: [Thread]?
         let commits: [Commit]
     }
     struct DiffPage: Decodable {
@@ -196,7 +203,8 @@ struct PullRequestRecord: View {
                         } else if failure == nil { ProgressView() }
                     case "Timeline":
                         if let activity {
-                            let events = activity.comments.map { ($0.createdAt, $0.id, $0.body) }
+                            let comments = activity.comments + (activity.reviewThreads + (activity.overviewThreads ?? [])).flatMap(\.comments)
+                            let events = Dictionary(grouping: comments, by: \.id).values.compactMap(\.first).map { ($0.createdAt, $0.id, $0.body) }
                                 + activity.commits.map { ($0.committedDate, $0.oid, $0.messageHeadline) }
                             if events.isEmpty { Text("No activity") }
                             ForEach(events.sorted { $0.0 < $1.0 }, id: \.1) { event in
@@ -207,6 +215,8 @@ struct PullRequestRecord: View {
                             }
                         } else if failure == nil { ProgressView() }
                     default:
+                        if let author = row.author { LabeledContent("Author", value: author.login) }
+                        LabeledContent("Status", value: row.status)
                         LabeledContent("Repository", value: row.repository)
                         LabeledContent("Branch", value: "\(row.headBranch) → \(row.baseBranch)")
                         LabeledContent("Changes", value: "+\(detail.additions) −\(detail.deletions) · \(detail.changedFiles) files")

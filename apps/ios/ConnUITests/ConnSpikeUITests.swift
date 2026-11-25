@@ -213,7 +213,9 @@ final class ConnSpikeUITests: XCTestCase {
             add(attachment)
         }
         let threads = app.buttons["workspace.tab.threads"]
-        XCTAssertTrue(threads.waitForExistence(timeout: 25))
+        let ready = threads.waitForExistence(timeout: 25)
+        if !ready { capture("workspace-failure") }
+        XCTAssertTrue(ready)
         threads.tap()
         let firstThread = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'inbox.thread.'")).firstMatch
         XCTAssertTrue(firstThread.waitForExistence(timeout: 15))
@@ -229,7 +231,7 @@ final class ConnSpikeUITests: XCTestCase {
         firstThread.tap()
         XCTAssertTrue(app.descendants(matching: .any)["thread.composer"].waitForExistence(timeout: 10))
         capture("thread")
-        app.buttons["composer.modelButton"].tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Model")).firstMatch.tap()
         XCTAssertTrue(app.buttons["modelPicker.confirm"].waitForExistence(timeout: 8))
         capture("thread-settings")
         app.buttons["modelPicker.confirm"].tap()

@@ -1769,6 +1769,7 @@ mod tests {
         let gw_url = rt.block_on(spawn_rejecting_server());
         let gateway = MockGateway::new(move |req| {
             let body = match req.path.as_str() {
+                "/me" => json!({"data":{"id":1,"name":"phone","wireguard_ip":"10.0.0.2"}}),
                 "/environments" => json!({ "data": [{
                     "environment_id": "node-agent",
                     "label": "agent",
@@ -1852,6 +1853,7 @@ mod tests {
         ));
         let gateway = MockGateway::new(move |req| {
             let body = match req.path.as_str() {
+                "/me" => json!({"data":{"id":1,"name":"phone","wireguard_ip":"10.0.0.2"}}),
                 "/environments" => json!({ "data": [{
                     "environment_id": "node-new",
                     "label": "agent",

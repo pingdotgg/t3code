@@ -92,6 +92,10 @@ final class CoreStore {
         self.scope = scope
         let arguments = ProcessInfo.processInfo.arguments
         if scope.isEmpty && arguments.contains("--reset-session") {
+            for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("workspace.route.") {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            UserDefaults.standard.removeObject(forKey: "workspace.selectedTab")
             clearLinkedSessions()
             KeychainStore.clearSession(scope: scope)
             try? FileManager.default.removeItem(at: Self.cacheDirectory(scope))
