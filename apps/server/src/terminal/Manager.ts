@@ -3402,10 +3402,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         startupError: null,
       };
 
+      const createdSession = session;
       // Once the session is visible as starting, finish startup even if the opener disconnects.
       yield* modifyManagerState((state) => {
         const sessions = new Map(state.sessions);
-        sessions.set(sessionKey, session);
+        sessions.set(sessionKey, createdSession);
         closedSessionKeys.delete(sessionKey);
         return [undefined, { ...state, sessions }] as const;
       }).pipe(
