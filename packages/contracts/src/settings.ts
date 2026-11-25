@@ -1435,16 +1435,16 @@ const DelegationProfileOptions = rejectUnknownProfileFields(
   }),
 );
 
+export const SkillName = Schema.String.check(
+  Schema.isMaxLength(192),
+  Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?::[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$/),
+);
+
 const DelegationProfile = rejectUnknownProfileFields(
   Schema.Struct({
     model: Schema.toEncoded(DelegationModelReferenceParts),
     options: Schema.optionalKey(DelegationProfileOptions),
-    deniedSkills: Schema.Array(
-      Schema.String.check(
-        Schema.isMaxLength(192),
-        Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?::[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$/),
-      ),
-    ).check(Schema.isMaxLength(256), Schema.isUnique()),
+    deniedSkills: Schema.Array(SkillName).check(Schema.isMaxLength(256), Schema.isUnique()),
     checkout: Schema.Literals(["shared", "worktree"]),
   }),
 );

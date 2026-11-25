@@ -63,7 +63,7 @@ import {
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { DelegationProfileName } from "./settings.ts";
+import { DelegationProfileName, SkillName } from "./settings.ts";
 import { ThreadIssueKey, ThreadIssueLink, ThreadIssueLinkSource } from "./issue.ts";
 import {
   ThreadLinkedPullRequest,
@@ -498,12 +498,7 @@ const OrchestrationV2LastTitleRegeneration = Schema.Struct({
   completedAt: Schema.DateTimeUtc,
 });
 
-export const OrchestrationV2DeniedSkills = Schema.Array(
-  Schema.String.check(
-    Schema.isMaxLength(192),
-    Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.-]*(?::[a-zA-Z0-9][a-zA-Z0-9_.-]*)*$/),
-  ),
-);
+export const OrchestrationV2DeniedSkills = Schema.Array(SkillName);
 
 const delegatedSkillPolicyFields = {
   deniedSkills: Schema.optional(OrchestrationV2DeniedSkills),
