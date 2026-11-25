@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { render, stubGlobal } from "../../../test/render";
+import { act, render, stubGlobal } from "../../../test/render";
 import { AppRouteModal } from "../AppRouteModal";
 import { OpenSourceLicensesPanel } from "./OpenSourceLicenses";
 
@@ -40,6 +40,30 @@ it("Esc in the license search closes it without closing Settings", async () => {
   };
   await openSearch();
   await search.fill("react");
+
+  for (const { compositionEnd, ...composition } of [
+    { key: "Escape", isComposing: true, keyCode: 27, compositionEnd: false },
+    // Safari ends the composition just before the Escape keydown.
+    { key: "Escape", isComposing: false, keyCode: 229, compositionEnd: true },
+    // A 229 Escape outside the dialog's composition window must not reach it either.
+    { key: "Escape", isComposing: false, keyCode: 229, compositionEnd: false },
+  ]) {
+    const keydown = new KeyboardEvent("keydown", {
+      ...composition,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(() => {
+      if (compositionEnd)
+        search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+      search.element().dispatchEvent(keydown);
+    });
+    await expect.element(settings).toHaveAttribute("data-open");
+    expect(keydown.defaultPrevented).toBe(false);
+    await expect.element(search).toHaveValue("react");
+    await expect.element(search).toHaveFocus();
+  }
+  expect(search.element().getAttribute("type")).toBe("text");
 
   await userEvent.keyboard("{Escape}");
 
