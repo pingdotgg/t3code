@@ -68,7 +68,10 @@ export function feedbackPreviewFields(
   ].filter((field) => field.value !== "");
 }
 
-const seconds = (ms: number) => `${(ms / 1_000).toFixed(ms < 10_000 ? 1 : 0)} s`;
+const seconds = (ms: number) => {
+  const tenths = (ms / 1_000).toFixed(1);
+  return `${Number(tenths) < 10 ? tenths : (ms / 1_000).toFixed(0)} s`;
+};
 
 /** One line per outline entry, plus the message text that goes with it. */
 export function feedbackTraceLines(
