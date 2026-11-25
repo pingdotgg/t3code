@@ -109,11 +109,9 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly requestedKind: VcsDriverKind | "auto";
   }) {
-    const requestedKind = input.requestedKind;
-
-    if (requestedKind !== "auto" && requestedKind !== "unknown") {
-      const driver = yield* get(requestedKind);
-      return yield* detectWithDriver(requestedKind, driver, input.cwd);
+    if (input.requestedKind !== "auto" && input.requestedKind !== "unknown") {
+      const driver = yield* get(input.requestedKind);
+      return yield* detectWithDriver(input.requestedKind, driver, input.cwd);
     }
 
     return yield* detectWithDriver("git", git, input.cwd);

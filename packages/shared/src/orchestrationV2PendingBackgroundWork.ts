@@ -303,18 +303,16 @@ export function derivePendingBackgroundWork(input: {
         ...(task.kind === "subagent"
           ? { providerInstanceId: providerThread.providerInstanceId }
           : {}),
-        ...(description === undefined || description.length === 0 ? {} : { description }),
+        ...(description ? { description } : {}),
       });
     }
   }
 
   for (const item of pendingBackgroundTurnItems(input)) {
     const taskId = nativeTaskIdFromTurnItem(item);
-    if (byTaskId.has(taskId)) {
-      continue;
+    if (!byTaskId.has(taskId)) {
+      byTaskId.set(taskId, pendingTaskFromTurnItem(taskId, item));
     }
-
-    byTaskId.set(taskId, pendingTaskFromTurnItem(taskId, item));
   }
 
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);

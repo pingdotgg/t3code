@@ -154,8 +154,7 @@ export function parseWhenExpressionDraft(
 
 function sourceForBinding(binding: ResolvedKeybindingRule): KeybindingSource {
   if (String(binding.command).startsWith("script.")) {
-    const source: KeybindingSource = "Project";
-    return source;
+    return "Project";
   }
 
   const bindingKey = shortcutToKeybindingInput(binding.shortcut);

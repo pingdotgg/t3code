@@ -506,23 +506,17 @@ export function getProviderUpdateSidebarPillView(
     });
   }
 
+  const providersForTone = (tone: ProviderUpdateSidebarPillView["tone"]) =>
+    tone === "error"
+      ? failedProviders
+      : tone === "warning"
+        ? unchangedProviders
+        : succeededProviders;
   return (
     terminalCandidates
       .toSorted((left, right) => {
-        const leftProviders =
-          left.tone === "error"
-            ? failedProviders
-            : left.tone === "warning"
-              ? unchangedProviders
-              : succeededProviders;
-        const rightProviders =
-          right.tone === "error"
-            ? failedProviders
-            : right.tone === "warning"
-              ? unchangedProviders
-              : succeededProviders;
-        const leftFinishedAt = latestFinishedAtForProviders(leftProviders) ?? "";
-        const rightFinishedAt = latestFinishedAtForProviders(rightProviders) ?? "";
+        const leftFinishedAt = latestFinishedAtForProviders(providersForTone(left.tone)) ?? "";
+        const rightFinishedAt = latestFinishedAtForProviders(providersForTone(right.tone)) ?? "";
         return rightFinishedAt.localeCompare(leftFinishedAt);
       })
       .at(0) ?? null

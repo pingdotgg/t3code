@@ -147,6 +147,29 @@ function resolveScope(scope: SourceControlActionScope) {
   };
 }
 
+function unavailableAction(operation: VcsActionOperation, scope: SourceControlActionScope) {
+  return AsyncResult.failure<never, VcsActionUnavailableError>(
+    Cause.fail(
+      new VcsActionUnavailableError({
+        operation,
+        environmentId: scope.environmentId,
+        cwd: scope.cwd,
+      }),
+    ),
+  );
+}
+
+function useScopeStatus(scope: SourceControlActionScope) {
+  return useEnvironmentQuery(
+    scope.environmentId !== null && scope.cwd !== null
+      ? vcsEnvironment.status({
+          environmentId: scope.environmentId,
+          input: { cwd: scope.cwd },
+        })
+      : null,
+  );
+}
+
 export function useSourceControlActionRunning(
   scope: SourceControlActionScope,
   kinds: ReadonlyArray<SourceControlActionKind>,
@@ -163,17 +186,7 @@ export function useVcsInitAction(scope: SourceControlActionScope) {
   const init = useAtomCommand(vcsEnvironment.init, { reportFailure: false });
   const action = async () => {
     const target = resolveScope(scope);
-    if (target === null) {
-      return AsyncResult.failure<never, VcsActionUnavailableError>(
-        Cause.fail(
-          new VcsActionUnavailableError({
-            operation: "init",
-            environmentId: scope.environmentId,
-            cwd: scope.cwd,
-          }),
-        ),
-      );
-    }
+    if (target === null) return unavailableAction("init", scope);
     return init({
       environmentId: target.environmentId,
       input: { cwd: target.cwd },
@@ -184,27 +197,10 @@ export function useVcsInitAction(scope: SourceControlActionScope) {
 
 export function useVcsPullAction(scope: SourceControlActionScope) {
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
-  const status = useEnvironmentQuery(
-    scope.environmentId !== null && scope.cwd !== null
-      ? vcsEnvironment.status({
-          environmentId: scope.environmentId,
-          input: { cwd: scope.cwd },
-        })
-      : null,
-  );
+  const status = useScopeStatus(scope);
   const action = async () => {
     const target = resolveScope(scope);
-    if (target === null) {
-      return AsyncResult.failure<never, VcsActionUnavailableError>(
-        Cause.fail(
-          new VcsActionUnavailableError({
-            operation: "pull",
-            environmentId: scope.environmentId,
-            cwd: scope.cwd,
-          }),
-        ),
-      );
-    }
+    if (target === null) return unavailableAction("pull", scope);
     return pull({
       environmentId: target.environmentId,
       input: { cwd: target.cwd },
@@ -223,27 +219,10 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
   const runStackedAction = useAtomCommand(vcsActionManager.runStackedAction(scope), {
     reportFailure: false,
   });
-  const status = useEnvironmentQuery(
-    scope.environmentId !== null && scope.cwd !== null
-      ? vcsEnvironment.status({
-          environmentId: scope.environmentId,
-          input: { cwd: scope.cwd },
-        })
-      : null,
-  );
+  const status = useScopeStatus(scope);
 
   const action = async (input: RunVcsStackedActionInput) => {
-    if (resolveScope(scope) === null) {
-      return AsyncResult.failure<never, VcsActionUnavailableError>(
-        Cause.fail(
-          new VcsActionUnavailableError({
-            operation: "run_change_request",
-            environmentId: scope.environmentId,
-            cwd: scope.cwd,
-          }),
-        ),
-      );
-    }
+    if (resolveScope(scope) === null) return unavailableAction("run_change_request", scope);
     return runStackedAction(input);
   };
 
@@ -261,14 +240,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
   });
-  const status = useEnvironmentQuery(
-    scope.environmentId !== null && scope.cwd !== null
-      ? vcsEnvironment.status({
-          environmentId: scope.environmentId,
-          input: { cwd: scope.cwd },
-        })
-      : null,
-  );
+  const status = useScopeStatus(scope);
   const action = async (input: {
     provider: SourceControlProviderKind;
     repository: string;
@@ -277,17 +249,7 @@ export function useSourceControlPublishRepositoryAction(scope: SourceControlActi
     protocol: SourceControlCloneProtocol;
   }) => {
     const target = resolveScope(scope);
-    if (target === null) {
-      return AsyncResult.failure<never, VcsActionUnavailableError>(
-        Cause.fail(
-          new VcsActionUnavailableError({
-            operation: "publish_repository",
-            environmentId: scope.environmentId,
-            cwd: scope.cwd,
-          }),
-        ),
-      );
-    }
+    if (target === null) return unavailableAction("publish_repository", scope);
     const result = await publishRepository({
       environmentId: target.environmentId,
       input: {
@@ -319,17 +281,7 @@ export function usePreparePullRequestThreadAction(scope: SourceControlActionScop
     threadId?: ThreadId;
   }) => {
     const target = resolveScope(scope);
-    if (target === null) {
-      return AsyncResult.failure<never, VcsActionUnavailableError>(
-        Cause.fail(
-          new VcsActionUnavailableError({
-            operation: "prepare_pull_request_thread",
-            environmentId: scope.environmentId,
-            cwd: scope.cwd,
-          }),
-        ),
-      );
-    }
+    if (target === null) return unavailableAction("prepare_pull_request_thread", scope);
     if (
       input.mode === "worktree" &&
       input.threadId !== undefined &&

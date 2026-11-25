@@ -52,6 +52,12 @@ import {
 
 export const threadListInboxReturns = createInboxReturnTracker();
 
+type ThreadKeyFields = Pick<EnvironmentThreadShell, "environmentId" | "id">;
+
+function threadKey(thread: ThreadKeyFields) {
+  return `${thread.environmentId}:${thread.id}`;
+}
+
 export function resolveThreadListV2ProviderDrivers(
   thread: Pick<EnvironmentThreadShell, "providerInstanceHistory" | "modelSelection" | "runtime">,
   providers: ReadonlyArray<ThreadListProvider> | undefined,
@@ -385,7 +391,7 @@ export function getThreadListV2OrderedSection(input: {
     if (
       (input.settlementEnvironmentIds?.has(thread.environmentId) ?? true) &&
       thread.settledOverride === "settled" &&
-      queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) !== true
+      queuedThreadKeys?.has(threadKey(thread)) !== true
     ) {
       return false;
     }
@@ -613,9 +619,7 @@ export function buildThreadListV2ListItems(input: {
         ? input.snoozeLabelNow
         : undefined;
     const move =
-      item.variant === "card"
-        ? input.moveAvailability?.get(`${item.thread.environmentId}:${item.thread.id}`)
-        : undefined;
+      item.variant === "card" ? input.moveAvailability?.get(threadKey(item.thread)) : undefined;
     return {
       type: "v2-thread",
       key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
@@ -624,8 +628,7 @@ export function buildThreadListV2ListItems(input: {
       timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined, resolve),
       snoozePresetMinute,
       showTrailingDivider: false,
-      hasQueuedMessages:
-        queuedThreadKeys?.has(`${item.thread.environmentId}:${item.thread.id}`) === true,
+      hasQueuedMessages: queuedThreadKeys?.has(threadKey(item.thread)) === true,
       canMoveUp: move?.canMoveUp === true,
       canMoveDown: move?.canMoveDown === true,
     };
@@ -808,8 +811,7 @@ export function buildThreadListV2Items(input: {
       }
       continue;
     }
-    const hasQueuedMessages =
-      queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
+    const hasQueuedMessages = queuedThreadKeys?.has(threadKey(thread)) === true;
     if (supportsSettlement && thread.settledOverride === "settled" && !hasQueuedMessages) {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
@@ -870,18 +872,11 @@ export function buildThreadListV2Items(input: {
       parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
   );
   const selectedThreadKey = input.selectedThreadKey ?? null;
+  const isSelectedThread = (thread: ThreadKeyFields) => threadKey(thread) === selectedThreadKey;
   const visibleWorking =
-    input.workingShelfExpanded === true
-      ? orderedWorking
-      : orderedWorking.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
+    input.workingShelfExpanded === true ? orderedWorking : orderedWorking.filter(isSelectedThread);
   const visibleSnoozed =
-    input.snoozedShelfExpanded === true
-      ? orderedSnoozed
-      : orderedSnoozed.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
+    input.snoozedShelfExpanded === true ? orderedSnoozed : orderedSnoozed.filter(isSelectedThread);
   const orderedSettled = sortSettledThreadsReusingLast(settled);
   const listedSettled =
     input.isListedSettled === undefined
@@ -892,20 +887,13 @@ export function buildThreadListV2Items(input: {
   const limitedSettled =
     listedSettled.length > settledLimit ? listedSettled.slice(0, settledLimit) : listedSettled;
   const selectedSettled =
-    selectedThreadKey === null ||
-    limitedSettled.some((thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey)
+    selectedThreadKey === null || limitedSettled.some(isSelectedThread)
       ? undefined
-      : orderedSettled.find(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
+      : orderedSettled.find(isSelectedThread);
   const pagedSettled =
     selectedSettled === undefined ? limitedSettled : [...limitedSettled, selectedSettled];
   const visibleSettled =
-    input.settledShelfExpanded !== false
-      ? pagedSettled
-      : pagedSettled.filter(
-          (thread) => `${thread.environmentId}:${thread.id}` === selectedThreadKey,
-        );
+    input.settledShelfExpanded !== false ? pagedSettled : pagedSettled.filter(isSelectedThread);
 
   const items: ThreadListV2Item[] = [];
   for (const thread of applyPendingThreadOrder(

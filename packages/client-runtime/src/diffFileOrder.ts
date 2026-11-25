@@ -250,12 +250,11 @@ function orderByImportsAndTier<F extends OrderableDiffFile>(
   });
   const orderedTests = [...byPath.keys()]
     .filter((path) => tiers.get(path) === "test")
-    .sort((left, right) => {
-      return (
+    .sort(
+      (left, right) =>
         testedSourcePosition(left, sourcePositions) -
-          testedSourcePosition(right, sourcePositions) || left.localeCompare(right)
-      );
-    });
+          testedSourcePosition(right, sourcePositions) || left.localeCompare(right),
+    );
 
   const orderedGenerated = [...byPath.keys()]
     .filter((path) => tiers.get(path) === "generated")
@@ -266,14 +265,22 @@ function orderByImportsAndTier<F extends OrderableDiffFile>(
   );
 }
 
+function directoryPrefixes(path: string): Array<string> {
+  const prefixes: Array<string> = [];
+  let directory = "";
+  for (const segment of path.split("/").slice(0, -1)) {
+    directory += `${segment}/`;
+    prefixes.push(directory);
+  }
+  return prefixes;
+}
+
 /** Where each file, and each directory (with a trailing slash), first appears in `paths`. */
 export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap<string, number> {
   const positions = new Map<string, number>();
   paths.forEach((path, index) => {
     positions.set(path, index);
-    let directory = "";
-    for (const segment of path.split("/").slice(0, -1)) {
-      directory += `${segment}/`;
+    for (const directory of directoryPrefixes(path)) {
       if (!positions.has(directory)) positions.set(directory, index);
     }
   });
@@ -283,16 +290,10 @@ export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap
 function orderLikeTree<F>(files: ReadonlyArray<F>, pathOf: (file: F) => string): ReadonlyArray<F> {
   const paths = files.map(pathOf);
   const positions = diffFileTreePositions(paths);
-  const keys = paths.map((path) => {
-    const key: number[] = [];
-    let directory = "";
-    for (const segment of path.split("/").slice(0, -1)) {
-      directory += `${segment}/`;
-      key.push(positions.get(directory)!);
-    }
-    key.push(positions.get(path)!);
-    return key;
-  });
+  const keys = paths.map((path) => [
+    ...directoryPrefixes(path).map((directory) => positions.get(directory)!),
+    positions.get(path)!,
+  ]);
   return files
     .map((file, index) => ({ file, key: keys[index]! }))
     .sort((left, right) => {

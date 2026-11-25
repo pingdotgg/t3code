@@ -30,6 +30,21 @@ export class RuntimeRequestResponseExecutionError extends Schema.TaggedError<Run
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
+  static forRequest(
+    input: Pick<
+      RuntimeRequestResponseExecutionError,
+      "threadId" | "providerSessionId" | "requestId"
+    >,
+    reason: RuntimeRequestResponseExecutionError["reason"],
+  ) {
+    return new RuntimeRequestResponseExecutionError({
+      reason,
+      threadId: input.threadId,
+      providerSessionId: input.providerSessionId,
+      requestId: input.requestId,
+    });
+  }
+
   override get message(): string {
     switch (this.reason) {
       case "request-missing":
@@ -77,43 +92,25 @@ export const layer: Layer.Layer<
     return RuntimeRequestServiceV2.of({
       respond: Effect.fn("RuntimeRequestService.respond")(
         function* (input) {
+          const responseError = (reason: RuntimeRequestResponseExecutionError["reason"]) =>
+            RuntimeRequestResponseExecutionError.forRequest(input, reason);
           const request = yield* projections.getRuntimeRequest(input.threadId, input.requestId);
           if (request === undefined) {
-            return yield* new RuntimeRequestResponseExecutionError({
-              reason: "request-missing",
-              threadId: input.threadId,
-              providerSessionId: input.providerSessionId,
-              requestId: input.requestId,
-            });
+            return yield* responseError("request-missing");
           }
           // Dispatch persists resolution before this effect runs; pending requests are not executable.
           if (request.status !== "resolved") {
-            return yield* new RuntimeRequestResponseExecutionError({
-              reason: "request-not-ready",
-              threadId: input.threadId,
-              providerSessionId: input.providerSessionId,
-              requestId: input.requestId,
-            });
+            return yield* responseError("request-not-ready");
           }
           if (
             request.responseCapability.type !== "live" ||
             request.responseCapability.providerSessionId !== input.providerSessionId
           ) {
-            return yield* new RuntimeRequestResponseExecutionError({
-              reason: "request-not-resumable",
-              threadId: input.threadId,
-              providerSessionId: input.providerSessionId,
-              requestId: input.requestId,
-            });
+            return yield* responseError("request-not-resumable");
           }
           const session = yield* sessions.get(input.providerSessionId);
           if (Option.isNone(session)) {
-            return yield* new RuntimeRequestResponseExecutionError({
-              reason: "provider-session-not-active",
-              threadId: input.threadId,
-              providerSessionId: input.providerSessionId,
-              requestId: input.requestId,
-            });
+            return yield* responseError("provider-session-not-active");
           }
           yield* session.value.respondToRuntimeRequest({
             requestId: input.requestId,

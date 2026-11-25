@@ -92,6 +92,9 @@ const withLinkExpiry = (
         DateTime.formatIso(linkExpiresAt),
       );
 
+const jsonBody = (body: unknown, linkExpiresAt: DateTime.Utc | undefined) =>
+  withLinkExpiry(HttpServerResponse.jsonUnsafe(body, { headers: NO_STORE }), linkExpiresAt);
+
 // The owner's thread subscription with a bounded snapshot: the same items, in the same order.
 const streamRoute = HttpRouter.add(
   "GET",
@@ -131,10 +134,7 @@ const historyRoute = HttpRouter.add(
       .getThreadHistoryPage(admitted.threadId, cursor)
       .pipe(Effect.flatMap(encodeHistoryPage), Effect.option);
     if (body._tag === "None") return refusal(500, "thread_read_failed");
-    return withLinkExpiry(
-      HttpServerResponse.jsonUnsafe(body.value, { headers: NO_STORE }),
-      admitted.linkExpiresAt,
-    );
+    return jsonBody(body.value, admitted.linkExpiresAt);
   }),
 );
 
@@ -151,10 +151,7 @@ const itemRoute = HttpRouter.add(
       .getTurnItem({ threadId: admitted.threadId, itemId: TurnItemId.make(itemId) })
       .pipe(Effect.flatMap(encodeItem), Effect.option);
     if (body._tag === "None") return refusal(500, "thread_read_failed");
-    return withLinkExpiry(
-      HttpServerResponse.jsonUnsafe(body.value, { headers: NO_STORE }),
-      admitted.linkExpiresAt,
-    );
+    return jsonBody(body.value, admitted.linkExpiresAt);
   }),
 );
 

@@ -1511,7 +1511,7 @@ export function boundAttachmentIds(
   attachments: ReadonlyArray<{ readonly id: string }>,
 ): string[] {
   return turnAttachments.map((attachment, index) =>
-    "id" in attachment && attachment.id !== undefined ? attachment.id : attachments[index]!.id,
+    attachment.id !== undefined ? attachment.id : attachments[index]!.id,
   );
 }
 

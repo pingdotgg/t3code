@@ -7,13 +7,15 @@ const animations = new Map<Element, ObservedAnimation>();
 let observer: IntersectionObserver | null = null;
 let reducedMotion: MediaQueryList | null = null;
 
+function setAnimationState(element: HTMLElement | SVGElement, running: boolean) {
+  element.style.setProperty("--visible-animation-state", running ? "running" : "paused");
+  element.style.setProperty("--visible-animation-will-change", running ? "transform" : "auto");
+}
+
 function updateAnimation(animation: ObservedAnimation) {
-  const running =
-    animation.intersecting && document.visibilityState === "visible" && !reducedMotion?.matches;
-  animation.element.style.setProperty("--visible-animation-state", running ? "running" : "paused");
-  animation.element.style.setProperty(
-    "--visible-animation-will-change",
-    running ? "transform" : "auto",
+  setAnimationState(
+    animation.element,
+    animation.intersecting && document.visibilityState === "visible" && !reducedMotion?.matches,
   );
 }
 
@@ -23,8 +25,7 @@ function updateAnimations() {
 
 export function observeVisibleAnimation(element: HTMLElement | SVGElement | null) {
   if (element === null) return;
-  element.style.setProperty("--visible-animation-state", "paused");
-  element.style.setProperty("--visible-animation-will-change", "auto");
+  setAnimationState(element, false);
   if (typeof IntersectionObserver === "undefined") return;
 
   if (observer === null) {
@@ -50,8 +51,7 @@ export function observeVisibleAnimation(element: HTMLElement | SVGElement | null
     if (animations.get(element) !== animation) return;
     animations.delete(element);
     observer?.unobserve(element);
-    element.style.setProperty("--visible-animation-state", "paused");
-    element.style.setProperty("--visible-animation-will-change", "auto");
+    setAnimationState(element, false);
     if (animations.size === 0) {
       observer?.disconnect();
       observer = null;

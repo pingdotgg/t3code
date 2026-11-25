@@ -42,7 +42,16 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
     effectType: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
-) {}
+) {
+  static mapCause(effect: { readonly id: string; readonly request: { readonly type: string } }) {
+    return (cause: unknown) =>
+      new OrchestrationEffectExecutionError({
+        effectId: effect.id,
+        effectType: effect.request.type,
+        cause,
+      });
+  }
+}
 
 const isOrchestrationEffectExecutionError = Schema.is(OrchestrationEffectExecutionError);
 
@@ -157,6 +166,7 @@ export const layerExecutor: Layer.Layer<
     return OrchestrationEffectExecutorV2.of({
       execute: Effect.fn("OrchestrationEffectExecutorV2.execute")(function (effect, options) {
         const willRetry = options?.willRetry ?? false;
+        const toExecutionError = OrchestrationEffectExecutionError.mapCause(effect);
         switch (effect.request.type) {
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
@@ -175,14 +185,7 @@ export const layerExecutor: Layer.Layer<
                   ? Effect.void
                   : threads.recoverDelegatedTask(effect.threadId, { sourceRunId }),
               ),
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
+              Effect.mapError(toExecutionError),
             );
           }
           case "provider-session.detach":
@@ -195,16 +198,7 @@ export const layerExecutor: Layer.Layer<
                   ? {}
                   : { revokeMcpCredential: effect.request.revokeMcpCredential }),
               })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.mapError(toExecutionError));
           case "provider-session.apply-model-selection":
             return providerTurnControl
               .applyModelSelection({
@@ -213,39 +207,14 @@ export const layerExecutor: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 modelSelection: effect.request.modelSelection,
               })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.mapError(toExecutionError));
           case "provider-session.apply-thread-title":
             return providerTurnControl
               .applyThreadTitle({ threadId: effect.threadId, title: effect.request.title })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.mapError(toExecutionError));
           case "provider-turn.start":
             return startRun(effect, effect.request.runId, willRetry).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
+              Effect.mapError(toExecutionError),
             );
           case "provider-turn.interrupt": {
             const request = effect.request;
@@ -442,14 +411,7 @@ export const layerExecutor: Layer.Layer<
                       );
                   }),
                 ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
+                Effect.mapError(toExecutionError),
               );
           case "provider-turn.restart":
             return providerTurnControl
@@ -486,14 +448,7 @@ export const layerExecutor: Layer.Layer<
                   // Failed interruption or detach must not report the old process stopped.
                   startRun(effect, effect.request.runId, willRetry),
                 ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
+                Effect.mapError(toExecutionError),
               );
           case "runtime-request.respond": {
             const requestId = effect.request.requestId;
@@ -532,14 +487,7 @@ export const layerExecutor: Layer.Layer<
                           ),
                         ),
                 ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
+                Effect.mapError(toExecutionError),
               );
           }
           case "provider-thread.rollback":
@@ -578,14 +526,7 @@ export const layerExecutor: Layer.Layer<
                           ),
                         ),
                 ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
+                Effect.mapError(toExecutionError),
               );
           case "checkpoint.capture":
             return runFinalization
@@ -601,26 +542,12 @@ export const layerExecutor: Layer.Layer<
                     completedRunId: effect.request.runId,
                   }),
                 ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
+                Effect.mapError(toExecutionError),
               );
           case "scheduled-tasks.cleanup":
-            return resourceCleanup.cleanupScheduledTasks(effect.threadId).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
-            );
+            return resourceCleanup
+              .cleanupScheduledTasks(effect.threadId)
+              .pipe(Effect.mapError(toExecutionError));
           // Archive and delete queue this one per-thread teardown, so it also releases the
           // thread's device claims; the devices stay booted for other threads.
           case "terminal.cleanup":
@@ -634,26 +561,12 @@ export const layerExecutor: Layer.Layer<
               Effect.flatMap(([, [failure]]) =>
                 failure === undefined ? Effect.void : Effect.fail(failure),
               ),
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
+              Effect.mapError(toExecutionError),
             );
           case "preview.cleanup":
-            return resourceCleanup.cleanupPreviews(effect.threadId).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
-            );
+            return resourceCleanup
+              .cleanupPreviews(effect.threadId)
+              .pipe(Effect.mapError(toExecutionError));
           case "attachment.cleanup": {
             const request = effect.request;
             return Effect.gen(function* () {
@@ -668,16 +581,7 @@ export const layerExecutor: Layer.Layer<
               yield* resourceCleanup.cleanupAttachments(
                 request.attachmentIds.filter((id) => !referenced.has(id)),
               );
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationEffectExecutionError({
-                    effectId: effect.id,
-                    effectType: effect.request.type,
-                    cause,
-                  }),
-              ),
-            );
+            }).pipe(Effect.mapError(toExecutionError));
           }
           case "thread-title.generate":
             return threadTitleRegeneration
@@ -686,16 +590,7 @@ export const layerExecutor: Layer.Layer<
                 requestId: effect.commandId,
                 kind: effect.request.kind,
               })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.mapError(toExecutionError));
           case "delegated-tasks.stop":
             return threads
               .stopDelegatedTasks({
@@ -703,16 +598,7 @@ export const layerExecutor: Layer.Layer<
                 commandId: effect.commandId,
                 reason: effect.request.reason,
               })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationEffectExecutionError({
-                      effectId: effect.id,
-                      effectType: effect.request.type,
-                      cause,
-                    }),
-                ),
-              );
+              .pipe(Effect.mapError(toExecutionError));
         }
       }),
     });

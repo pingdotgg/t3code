@@ -144,20 +144,20 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
 
   if (platform !== "darwin" && platform !== "linux") return;
 
-  yield* Effect.sync(() => hydratePosixHome(env)).pipe(
-    Effect.catchDefect((defect) =>
-      Effect.sync(() => {
-        logPathHydrationWarning("Failed to hydrate HOME from the user account.", defect);
-      }),
-    ),
+  const hydrateOrWarn = (message: string, hydrate: () => void) =>
+    Effect.sync(hydrate).pipe(
+      Effect.catchDefect((defect) =>
+        Effect.sync(() => {
+          logPathHydrationWarning(message, defect);
+        }),
+      ),
+    );
+  yield* hydrateOrWarn("Failed to hydrate HOME from the user account.", () =>
+    hydratePosixHome(env),
   );
   if (options?.shellEnvironmentPrepared === true) return;
-  yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
-    Effect.catchDefect((defect) =>
-      Effect.sync(() => {
-        logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
-      }),
-    ),
+  yield* hydrateOrWarn("Failed to hydrate PATH from the user environment.", () =>
+    hydratePosixPath(env, platform),
   );
 });
 

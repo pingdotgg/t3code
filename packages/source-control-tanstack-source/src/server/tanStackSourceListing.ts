@@ -87,7 +87,7 @@ export const readMerged = Effect.fn("TanStackSourceListing.readMerged")(function
   const reads = yield* Effect.forEach(
     input.states.filter((state) => resumed === null || resumed.pages[state] !== null),
     Effect.fnUntraced(function* (state) {
-      let page: string = resumed?.pages[state] ?? FIRST_PAGE;
+      let page = resumed?.pages[state] ?? FIRST_PAGE;
       const rows: Array<{ readonly row: A; readonly page: string }> = [];
       let oldest: A | undefined;
       let pages = 0;

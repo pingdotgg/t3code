@@ -26,6 +26,7 @@ const MODE_TYPE_MASK = 0o170000;
 const MODE_REGULAR = 0o100000;
 const MODE_SYMLINK = 0o120000;
 const MODE_GITLINK = 0o160000;
+const MODE_DIRECTORY = 0o040000;
 const FLAG_ASSUME_VALID = 0x8000;
 const FLAG_EXTENDED = 0x4000;
 const FLAG_STAGE = 0x3000;
@@ -88,6 +89,19 @@ function kindForMode(mode: number): IndexEntryStat["kind"] {
     case MODE_SYMLINK:
       return "symlink";
     case MODE_GITLINK:
+      return "directory";
+    default:
+      return "other";
+  }
+}
+
+function kindForStatMode(mode: number): IndexEntryStat["kind"] {
+  switch (mode & MODE_TYPE_MASK) {
+    case MODE_REGULAR:
+      return mode & 0o111 ? "executable" : "file";
+    case MODE_SYMLINK:
+      return "symlink";
+    case MODE_DIRECTORY:
       return "directory";
     default:
       return "other";
@@ -165,7 +179,6 @@ export function indexEntryStat(stat: {
   readonly size: bigint;
   readonly mode: bigint;
 }): IndexEntryStat {
-  const type = Number(stat.mode) & MODE_TYPE_MASK;
   return {
     ctimeSeconds: Number((stat.ctimeNs / BILLION) & U32),
     ctimeNanoseconds: Number(stat.ctimeNs % BILLION),
@@ -176,15 +189,6 @@ export function indexEntryStat(stat: {
     uid: Number(stat.uid & U32),
     gid: Number(stat.gid & U32),
     size: Number(stat.size & U32),
-    kind:
-      type === MODE_REGULAR
-        ? Number(stat.mode) & 0o111
-          ? "executable"
-          : "file"
-        : type === MODE_SYMLINK
-          ? "symlink"
-          : type === 0o040000
-            ? "directory"
-            : "other",
+    kind: kindForStatMode(Number(stat.mode)),
   };
 }

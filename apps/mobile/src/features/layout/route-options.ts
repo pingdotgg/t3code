@@ -38,6 +38,18 @@ function headerOptions(header: HeaderStyle, itemStyle: "editor" | "standard"): A
   };
 }
 
+function titleAndMinimizeOptions(options: {
+  readonly title?: string;
+  readonly duoMinimize?: "never" | "onScrollUp";
+}): AppScreenOptions {
+  return {
+    ...(options.title === undefined ? undefined : { title: options.title }),
+    ...(options.duoMinimize
+      ? { unstable_headerMinimizationBehavior: options.duoMinimize }
+      : undefined),
+  };
+}
+
 export interface PageRouteOptions {
   readonly title?: string;
   /** Glass bars let content scroll under them. Defaults to glass. */
@@ -57,10 +69,7 @@ export interface PageRouteOptions {
 export function pageRoute(options: PageRouteOptions = {}): AppScreenOptions {
   return {
     ...headerOptions(options.header ?? "glass", options.itemStyle ?? "editor"),
-    ...(options.title === undefined ? undefined : { title: options.title }),
-    ...(options.duoMinimize
-      ? { unstable_headerMinimizationBehavior: options.duoMinimize }
-      : undefined),
+    ...titleAndMinimizeOptions(options),
     ...(options.root ? { headerBackVisible: false } : undefined),
   };
 }
@@ -99,10 +108,7 @@ export function sheetRoute(options: SheetRouteOptions): AppScreenOptions {
   const header = headerOptions(options.header ?? "glass", options.itemStyle ?? "standard");
   const shared = {
     ...header,
-    ...(options.title === undefined ? undefined : { title: options.title }),
-    ...(options.duoMinimize
-      ? { unstable_headerMinimizationBehavior: options.duoMinimize }
-      : undefined),
+    ...titleAndMinimizeOptions(options),
     headerBackVisible: false,
     gestureEnabled: true,
   } satisfies AppScreenOptions;
@@ -136,10 +142,7 @@ export interface ModalRouteOptions {
 export function modalRoute(options: ModalRouteOptions = {}): AppScreenOptions {
   return {
     ...headerOptions(options.header ?? "none", options.itemStyle ?? "standard"),
-    ...(options.title === undefined ? undefined : { title: options.title }),
-    ...(options.duoMinimize
-      ? { unstable_headerMinimizationBehavior: options.duoMinimize }
-      : undefined),
+    ...titleAndMinimizeOptions(options),
     headerBackVisible: false,
     presentation: "fullScreenModal",
   };

@@ -1544,6 +1544,47 @@ function isPersistentCodexDynamicTool(item: CodexDynamicToolItem): boolean {
   return Reflect.get(input, "persistent") === true;
 }
 
+function withoutTurnEntry<V>(current: Map<string, V>, nativeTurnId: string): Map<string, V> {
+  if (!current.has(nativeTurnId)) {
+    return current;
+  }
+  const updated = new Map(current);
+  updated.delete(nativeTurnId);
+  return updated;
+}
+
+function trackNestedItem<T extends { readonly id: string }>(
+  current: Map<string, Map<string, T>>,
+  nativeTurnId: string,
+  item: T,
+): Map<string, Map<string, T>> {
+  const updated = new Map(current);
+  const items = new Map(updated.get(nativeTurnId) ?? []);
+  items.set(item.id, item);
+  updated.set(nativeTurnId, items);
+  return updated;
+}
+
+function withoutNestedItem<T>(
+  current: Map<string, Map<string, T>>,
+  nativeTurnId: string,
+  nativeItemId: string,
+): Map<string, Map<string, T>> {
+  const items = current.get(nativeTurnId);
+  if (items === undefined || !items.has(nativeItemId)) {
+    return current;
+  }
+  const remaining = new Map(items);
+  remaining.delete(nativeItemId);
+  const updated = new Map(current);
+  if (remaining.size === 0) {
+    updated.delete(nativeTurnId);
+  } else {
+    updated.set(nativeTurnId, remaining);
+  }
+  return updated;
+}
+
 type CodexRootTerminalEvent = Extract<
   ProviderAdapter.ProviderAdapterV2Event,
   { readonly type: "turn.terminal" }
@@ -2889,29 +2930,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
 
         const trackRunningCommandItem = (nativeTurnId: string, item: TrackedRunningCommandItem) =>
-          Ref.update(runningCommandItemsByTurn, (current) => {
-            const updated = new Map(current);
-            const items = new Map(updated.get(nativeTurnId) ?? []);
-            items.set(item.id, item);
-            updated.set(nativeTurnId, items);
-            return updated;
-          });
+          Ref.update(runningCommandItemsByTurn, (current) =>
+            trackNestedItem(current, nativeTurnId, item),
+          );
 
         const clearRunningCommandItem = (nativeTurnId: string, nativeItemId: string) =>
           Ref.modify(runningCommandItemsByTurn, (current) => {
-            const items = current.get(nativeTurnId);
-            if (items === undefined || !items.has(nativeItemId)) {
-              return [items === undefined || items.size === 0, current] as const;
-            }
-            const remaining = new Map(items);
-            remaining.delete(nativeItemId);
-            const updated = new Map(current);
-            if (remaining.size === 0) {
-              updated.delete(nativeTurnId);
-            } else {
-              updated.set(nativeTurnId, remaining);
-            }
-            return [remaining.size === 0, updated] as const;
+            const updated = withoutNestedItem(current, nativeTurnId, nativeItemId);
+            return [(updated.get(nativeTurnId)?.size ?? 0) === 0, updated] as const;
           });
 
         interface PendingMcpAppCapture {
@@ -2936,30 +2962,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           });
 
         const trackRunningDynamicTool = (nativeTurnId: string, item: CodexDynamicToolItem) =>
-          Ref.update(runningDynamicToolsByTurn, (current) => {
-            const updated = new Map(current);
-            const items = new Map(updated.get(nativeTurnId) ?? []);
-            items.set(item.id, item);
-            updated.set(nativeTurnId, items);
-            return updated;
-          });
+          Ref.update(runningDynamicToolsByTurn, (current) =>
+            trackNestedItem(current, nativeTurnId, item),
+          );
 
         const clearRunningDynamicTool = (nativeTurnId: string, nativeItemId: string) =>
-          Ref.update(runningDynamicToolsByTurn, (current) => {
-            const items = current.get(nativeTurnId);
-            if (items === undefined || !items.has(nativeItemId)) {
-              return current;
-            }
-            const remaining = new Map(items);
-            remaining.delete(nativeItemId);
-            const updated = new Map(current);
-            if (remaining.size === 0) {
-              updated.delete(nativeTurnId);
-            } else {
-              updated.set(nativeTurnId, remaining);
-            }
-            return updated;
-          });
+          Ref.update(runningDynamicToolsByTurn, (current) =>
+            withoutNestedItem(current, nativeTurnId, nativeItemId),
+          );
 
         const turnHasRetainedBackgroundWork =
           /* Provider events include streaming deltas; avoid a span for each update. */
@@ -2995,39 +3005,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             // Not pending work, but a late item/completed still needs this context to route.
             if ((yield* Ref.get(unknownOutcomeCommandItemsByTurn)).has(nativeTurnId)) return;
-            yield* Ref.update(settledTurns, (current) => {
-              if (!current.has(nativeTurnId)) {
-                return current;
-              }
-              const updated = new Map(current);
-              updated.delete(nativeTurnId);
-              return updated;
-            });
-            yield* Ref.update(offeredContinuationItemsByTurn, (current) => {
-              if (!current.has(nativeTurnId)) {
-                return current;
-              }
-              const updated = new Map(current);
-              updated.delete(nativeTurnId);
-              return updated;
-            });
-            yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
-              if (!current.has(nativeTurnId)) {
-                return current;
-              }
-              const updated = new Map(current);
-              updated.delete(nativeTurnId);
-              return updated;
-            });
+            yield* Ref.update(settledTurns, (current) => withoutTurnEntry(current, nativeTurnId));
+            yield* Ref.update(offeredContinuationItemsByTurn, (current) =>
+              withoutTurnEntry(current, nativeTurnId),
+            );
+            yield* Ref.update(completedFinalAnswerTextsByTurn, (current) =>
+              withoutTurnEntry(current, nativeTurnId),
+            );
             imageTurns.delete(nativeTurnId);
-            yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
-              if (!current.has(nativeTurnId)) {
-                return current;
-              }
-              const updated = new Map(current);
-              updated.delete(nativeTurnId);
-              return updated;
-            });
+            yield* Ref.update(finalAnswerItemIdsByTurn, (current) =>
+              withoutTurnEntry(current, nativeTurnId),
+            );
           });
 
         /**

@@ -469,18 +469,21 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
   const lock = yield* Semaphore.make(1);
   const lastUpdatedAt = yield* Ref.make(0);
 
-  const parsePayload = (raw: string | null): Preferences | null => {
-    if (raw === null || !raw.trim()) return null;
-    let parsed: unknown;
+  const parseJsonOrWarn = (raw: string, key: string): unknown => {
     try {
-      parsed = JSON.parse(raw);
+      return JSON.parse(raw);
     } catch (cause) {
       console.warn(
         "[mobile-storage] ignored invalid JSON",
-        new MobileStorageDecodeError({ key: PREFERENCES_KEY, cause }),
+        new MobileStorageDecodeError({ key, cause }),
       );
-      return null;
+      return undefined;
     }
+  };
+
+  const parsePayload = (raw: string | null): Preferences | null => {
+    if (raw === null || !raw.trim()) return null;
+    const parsed = parseJsonOrWarn(raw, PREFERENCES_KEY);
     return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
       ? (parsed as Preferences)
       : null;
@@ -488,16 +491,7 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
 
   const parseFallback = (raw: string | null): PreferencesFallback | null => {
     if (raw === null || !raw.trim()) return null;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (cause) {
-      console.warn(
-        "[mobile-storage] ignored invalid JSON",
-        new MobileStorageDecodeError({ key: PREFERENCES_FALLBACK_KEY, cause }),
-      );
-      return null;
-    }
+    const parsed = parseJsonOrWarn(raw, PREFERENCES_FALLBACK_KEY);
     if (
       typeof parsed !== "object" ||
       parsed === null ||

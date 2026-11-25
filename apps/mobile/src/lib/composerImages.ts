@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import type { AttachmentUploadStatus } from "@t3tools/client-runtime/state/attachment-uploads";
 import type { DocumentPickerResult } from "expo-document-picker";
+import type { File } from "expo-file-system";
 import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
 import { estimateBase64ByteSize } from "./base64";
@@ -142,6 +143,16 @@ function safeComposerAttachmentName(name: string): string {
   return name.replace(/[^\w. -]/g, "-") || "file";
 }
 
+function deletePartialCopy(file: File, warning: string): void {
+  try {
+    if (file.exists) {
+      file.delete();
+    }
+  } catch (cleanupError) {
+    console.warn(warning, cleanupError);
+  }
+}
+
 export async function persistComposerAttachmentFile(
   uri: string,
   name: string,
@@ -205,25 +216,13 @@ export async function persistComposerAttachmentFile(
     await source.copy(destination);
   } catch (error) {
     // Failed copies may leave untracked partial files; delete before surfacing failure.
-    try {
-      if (destination.exists) {
-        destination.delete();
-      }
-    } catch (cleanupError) {
-      console.warn("[composer-attachments] could not remove a partial copy", cleanupError);
-    }
+    deletePartialCopy(destination, "[composer-attachments] could not remove a partial copy");
     throw error;
   }
   // Android content streams may exceed reported size; validate the persisted copy.
   const copiedSize = destination.size;
   if (maxBytes !== undefined && copiedSize !== null && copiedSize > maxBytes) {
-    try {
-      if (destination.exists) {
-        destination.delete();
-      }
-    } catch (cleanupError) {
-      console.warn("[composer-attachments] could not remove an oversized copy", cleanupError);
-    }
+    deletePartialCopy(destination, "[composer-attachments] could not remove an oversized copy");
     throw new Error(fileAttachmentTooLargeMessage(name, maxBytes, m));
   }
   return destination.uri;
