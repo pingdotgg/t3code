@@ -35,6 +35,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
+import { parseGrepOutput } from "@t3tools/shared/grepOutput";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -72,7 +73,11 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import {
+  formatReadToolLabel,
+  formatSearchToolLabel,
+  searchToolLabelParts,
+} from "@t3tools/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpMcpOverAcpBridge, type AcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
@@ -478,7 +483,8 @@ export interface AcpAdapterV2Flavor {
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
     modelState: EffectAcpSchema.SessionModelState | null | undefined,
-  ) => Effect.Effect<void>;
+    options?: { readonly lastCatalogKey?: string | null },
+  ) => Effect.Effect<string | null | void>;
   readonly onUrlElicitation?: (input: {
     readonly elicitationId: string;
     readonly url: string;
@@ -2351,6 +2357,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         } | null>(null);
         const activeSessionSetup =
           yield* Ref.make<AcpSessionRuntime.AcpSessionRuntimeStartResult | null>(null);
+        const lastPublishedCatalogKey = yield* Ref.make<{
+          readonly epoch: number;
+          readonly key: string | null;
+        }>({ epoch: 0, key: null });
+        const sessionConfigurationPublishPermit = yield* Semaphore.make(1);
+        const resetPublishedCatalogKey = Ref.update(lastPublishedCatalogKey, (current) => ({
+          epoch: current.epoch + 1,
+          key: null,
+        }));
+        // Per-update session config publication shares the enclosing session update/config span.
+        const publishSessionConfiguration = Effect.fnUntraced(function* (
+          targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+        ) {
+          const onSessionConfigurationUpdate = flavor.onSessionConfigurationUpdate;
+          if (onSessionConfigurationUpdate === undefined) return;
+          yield* sessionConfigurationPublishPermit.withPermit(
+            Effect.gen(function* () {
+              const { epoch, key } = yield* Ref.get(lastPublishedCatalogKey);
+              const configOptions = yield* targetRuntime.getConfigOptions;
+              const modeState = yield* targetRuntime.getModeState;
+              const modelState = (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models;
+              const nextKey = yield* onSessionConfigurationUpdate(
+                configOptions,
+                modeState,
+                modelState,
+                { lastCatalogKey: key },
+              );
+              if (nextKey === null || typeof nextKey === "string") {
+                yield* Ref.update(lastPublishedCatalogKey, (current) =>
+                  current.epoch === epoch ? { epoch, key: nextKey } : current,
+                );
+              }
+            }),
+          );
+        });
         const setActiveSessionSetup = Effect.fnUntraced(function* (
           setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
         ) {
@@ -2370,6 +2411,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           agentRequests.clear();
           nativeChildren.clear();
           yield* Ref.set(activeSessionSetup, setup);
+          yield* resetPublishedCatalogKey;
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
@@ -5037,6 +5079,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   break;
                 }
                 const pathIsQuery = resolvedPathInfo(toolCall)?.fromQuery === true;
+                const searchOutput = textFromUnknown(rawOutput);
+                const grepResults =
+                  path === undefined || searchOutput === undefined
+                    ? undefined
+                    : parseGrepOutput(searchOutput, path);
+                const pattern = searchToolLabelParts({ input: rawInputRecord }).query ?? path;
                 turnItem = {
                   ...base,
                   title:
@@ -5046,19 +5094,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ...(path === undefined ? {} : { pattern: path }),
                     }) ?? title,
                   type: "file_search",
-                  ...(path === undefined ? {} : { pattern: path }),
-                  ...(path === undefined ||
-                  (pathIsQuery && textFromUnknown(rawOutput) === undefined)
+                  ...(pattern === undefined ? {} : { pattern }),
+                  ...(path === undefined || (pathIsQuery && searchOutput === undefined)
                     ? {}
                     : {
-                        results: [
-                          {
-                            fileName: path,
-                            ...(textFromUnknown(rawOutput) === undefined
-                              ? {}
-                              : { preview: textFromUnknown(rawOutput) }),
-                          },
-                        ],
+                        results: grepResults
+                          ? [...grepResults]
+                          : [
+                              {
+                                fileName: path,
+                                ...(searchOutput === undefined ? {} : { preview: searchOutput }),
+                              },
+                            ],
                       }),
                 };
                 break;
@@ -7290,13 +7337,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 notification.update.sessionUpdate === "config_option_update" ||
                 notification.update.sessionUpdate === "current_mode_update"
               ) {
-                yield* (
-                  flavor.onSessionConfigurationUpdate?.(
-                    yield* runtime.getConfigOptions,
-                    yield* runtime.getModeState,
-                    (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-                  ) ?? Effect.void
-                );
+                yield* publishSessionConfiguration(runtime);
               }
               const normalized = flavor.normalizeSessionUpdate?.(notification) ?? notification;
               // Turn projection misses compactions that finish while idle or after settlement.
@@ -7412,6 +7453,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           }
           yield* Ref.set(activeSessionSetup, result);
+          yield* resetPublishedCatalogKey;
           // The selection was configured against the provisional setup's
           // options, so the next turn re-applies it against the real ones.
           yield* Ref.set(activeSelection, null);
@@ -7426,13 +7468,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeBuildConfigurationBySessionId.delete(result.sessionId);
           }
           yield* refreshModelSwitchCapability;
-          yield* (
-            flavor.onSessionConfigurationUpdate?.(
-              yield* targetRuntime.getConfigOptions,
-              yield* targetRuntime.getModeState,
-              result.sessionSetupResult.models,
-            ) ?? Effect.void
-          );
+          yield* publishSessionConfiguration(targetRuntime);
         });
 
         const wireAcpRuntimeHandlers = Effect.fnUntraced(function* (
@@ -8571,13 +8607,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* validateModelSelection(modelSelection);
           yield* Ref.set(configuredModes, yield* readModes);
           yield* Ref.set(configuredRuntimeMode, runtimePolicy.runtimeMode);
-          yield* (
-            flavor.onSessionConfigurationUpdate?.(
-              yield* runtime.getConfigOptions,
-              yield* runtime.getModeState,
-              (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-            ) ?? Effect.void
-          );
+          yield* publishSessionConfiguration(runtime);
         });
 
         yield* configureSession(
@@ -9351,6 +9381,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
           yield* Ref.set(activeSessionSetup, null);
+          yield* resetPublishedCatalogKey;
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
           // A failed prompt may have been dropped, so the fresh runtime sends T3's notes again.

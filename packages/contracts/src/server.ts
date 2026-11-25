@@ -383,6 +383,8 @@ export const ServerObservability = Schema.Struct({
   otlpLogsSource: Schema.optional(OtlpEndpointSource),
   otlpLogsVariable: Schema.optional(TrimmedNonEmptyString),
   otlpLogsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Relay tracing policy for browsers opened from this server. */
+  relayTracingAllowed: Schema.optionalKey(Schema.Boolean),
 });
 export type ServerObservability = typeof ServerObservability.Type;
 
@@ -1011,6 +1013,18 @@ export class ServerProviderUpdateError extends Schema.TaggedError<ServerProvider
     return `Provider update failed for ${this.provider}: ${this.reason}`;
   }
 }
+
+export const DatabaseMigrationProgress = Schema.Struct({
+  current: Schema.Int.check(Schema.isGreaterThan(0)),
+  total: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type DatabaseMigrationProgress = typeof DatabaseMigrationProgress.Type;
+
+export const ServerStartupStatus = Schema.Struct({
+  status: Schema.Literal("starting"),
+  migration: Schema.NullOr(DatabaseMigrationProgress),
+});
+export type ServerStartupStatus = typeof ServerStartupStatus.Type;
 
 export const ServerNpmReleaseInput = Schema.Struct({
   spec: Schema.String.check(

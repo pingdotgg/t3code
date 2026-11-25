@@ -328,4 +328,51 @@ describe("ThemeEditorPanel", () => {
     expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
     expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
   });
+
+  it("clears the advanced color filter on Escape before closing on a second Escape", async () => {
+    await using view = await renderBesideSettings();
+    (await editorElement('[aria-label="Use advanced theme colors"]')).click();
+
+    const filter = (await editorElement('input[aria-label="Filter colors"]')) as HTMLInputElement;
+    filter.focus();
+    await userEvent.keyboard("accent");
+    await expect.poll(() => filter.value).toBe("accent");
+
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => filter.value).toBe("");
+    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+
+    await act(async () => {
+      filter.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Escape",
+          repeat: true,
+        }),
+      );
+    });
+    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+    expect(view.onEditorOpenChange).toHaveBeenCalledWith(false);
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps the color filter on an IME Escape", async () => {
+    await using view = await renderBesideSettings();
+    (await editorElement('[aria-label="Use advanced theme colors"]')).click();
+
+    const filter = (await editorElement('input[aria-label="Filter colors"]')) as HTMLInputElement;
+    filter.focus();
+    await userEvent.keyboard("accent");
+    await expect.poll(() => filter.value).toBe("accent");
+
+    await pressImeEscapes(filter);
+    expect(filter.value).toBe("accent");
+    expect(view.onEditorOpenChange).not.toHaveBeenCalled();
+    expect(view.onSettingsOpenChange).not.toHaveBeenCalled();
+  });
 });
