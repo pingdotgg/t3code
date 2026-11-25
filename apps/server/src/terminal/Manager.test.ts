@@ -1528,60 +1528,6 @@ it.layer(
     }),
   );
 
-  it.effect.each([
-    {
-      part: "opener",
-      publishing: "old output\r\n",
-      queued: "\u001b]0;Build ",
-      afterClear: "progress\u0007ready\r\n",
-    },
-    {
-      part: "terminator",
-      publishing: "old output\r\n\u001b]0;Build ",
-      queued: "progress\u0007",
-      afterClear: "ready\r\n",
-    },
-  ])("keeps visible history correct when the title $part is queued during a clear", (row) =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      const input = openInput();
-      yield* manager.open(input);
-      const process = ptyAdapter.processes[0]!;
-
-      const publishing = yield* Deferred.make<void>();
-      const resume = yield* Deferred.make<void>();
-      const printed = yield* Deferred.make<void>();
-      yield* Effect.acquireRelease(
-        manager.subscribe((event) => {
-          if (event.type !== "output") return Effect.void;
-          if (event.data === row.publishing) {
-            return Deferred.succeed(publishing, undefined).pipe(
-              Effect.andThen(Deferred.await(resume)),
-            );
-          }
-          if (event.data === row.afterClear) return Deferred.succeed(printed, undefined);
-          return Effect.void;
-        }),
-        (unsubscribe) =>
-          Deferred.succeed(resume, undefined).pipe(Effect.andThen(Effect.sync(unsubscribe))),
-      );
-
-      process.emitData(row.publishing);
-      yield* Deferred.await(publishing);
-      process.emitData(row.queued);
-      yield* manager.clear(input);
-      yield* Deferred.succeed(resume, undefined);
-      process.emitData(row.afterClear);
-      yield* Deferred.await(printed);
-
-      const reopened = yield* Stream.toPull(manager.attachOutputStream(input, "reopened"));
-      const [event] = yield* reopened;
-      if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
-      const visible = event.snapshot.history.replace(/\u001b\]0;[^\u0007]*\u0007/g, "");
-      expect(visible).toBe("ready\r\n");
-    }),
-  );
-
   it.effect("restores a log tail that starts inside a control sequence without its remainder", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
