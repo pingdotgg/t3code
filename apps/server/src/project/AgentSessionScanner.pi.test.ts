@@ -15,7 +15,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 
 it.layer(NodeServices.layer)("Pi session attribution", (it) => {
-  it.effect("uses the header workspace even when an earlier message names another workspace", () =>
+  it.effect("uses the header workspace despite a bad timestamp and an earlier message cwd", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -39,7 +39,7 @@ it.layer(NodeServices.layer)("Pi session attribution", (it) => {
             cwd: otherWorkspace,
             message: { role: "user", content: "Review this project" },
           },
-          { type: "session", id: "session", version: 3, cwd: workspace },
+          { type: "session", id: "session", version: 3, cwd: workspace, timestamp: null },
         ]
           .map((record) => JSON.stringify(record))
           .join("\n"),
