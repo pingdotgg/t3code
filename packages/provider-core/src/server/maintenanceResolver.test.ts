@@ -119,13 +119,18 @@ const noSpawn = ChildProcessSpawner.make(() =>
 );
 
 function stdoutSpawner(
-  onSpawn: (command: string, args: ReadonlyArray<string>) => string,
+  onSpawn: (
+    command: string,
+    args: ReadonlyArray<string>,
+    options: { readonly env: Record<string, unknown> },
+  ) => string,
   exitCodeOf: (args: ReadonlyArray<string>) => number = () => 0,
 ) {
   return ChildProcessSpawner.make((command) => {
-    const { command: executable, args } = command as unknown as {
+    const { command: executable, args, options: spawnOptions } = command as unknown as {
       readonly command: string;
       readonly args: ReadonlyArray<string>;
+      readonly options: { readonly env: Record<string, unknown> };
     };
     return Effect.succeed(
       ChildProcessSpawner.makeHandle({
@@ -135,7 +140,7 @@ function stdoutSpawner(
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
         stdin: Sink.drain,
-        stdout: Stream.encodeText(Stream.make(onSpawn(executable, args))),
+        stdout: Stream.encodeText(Stream.make(onSpawn(executable, args, spawnOptions))),
         stderr: Stream.empty,
         all: Stream.empty,
         getInputFd: () => Sink.drain,
@@ -502,6 +507,65 @@ it.layer(
           ),
         ),
       ),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "keeps a killed npm view's partial packument out of the user's npm cache",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-view-cache");
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath = NodePath.join(tempDir, ".local/bin/native-package-tool");
+        writeExecutable(binaryPath);
+        const userCacheDir = NodePath.join(tempDir, "user-npm-cache");
+        const cacheDirs: string[] = [];
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath, env: { PATH: "" } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            // Stands in for an npm view killed mid-download: the partial packument it wrote is
+            // still in the cache it wrote it to when the probe answers, as npm leaves it.
+            stdoutSpawner((_command, _args, options) => {
+              const cacheDir = options.env?.npm_config_cache;
+              if (typeof cacheDir !== "string") return '"1.2.0"';
+              cacheDirs.push(cacheDir);
+              NodeFS.mkdirSync(NodePath.join(cacheDir, "_cacache", "tmp"), { recursive: true });
+              NodeFS.writeFileSync(
+                NodePath.join(cacheDir, "_cacache", "tmp", "partial-packument"),
+                '{"name":"@example/native-package-tool"',
+              );
+              return '"1.2.0"';
+            }),
+          ),
+        );
+        expect(capabilities.lookupLatestVersion).toBeDefined();
+        const work = Effect.gen(function* () {
+          expect(yield* resolveLatestProviderVersion(capabilities)).toBe("1.2.0");
+        });
+        yield* work.pipe(
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make([]),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("the npm view answer must not fall back to the registry")),
+          ),
+        );
+        expect(cacheDirs).toHaveLength(1);
+        const throwawayCacheDir = cacheDirs[0]!;
+        expect(throwawayCacheDir).not.toBe(userCacheDir);
+        expect(NodeFS.existsSync(throwawayCacheDir)).toBe(false);
+        expect(NodeFS.existsSync(userCacheDir)).toBe(false);
+      }),
+    { skip: !symlinksSupported },
   );
 
   it.effect.skipIf(!symlinksSupported || windowsHost)(
