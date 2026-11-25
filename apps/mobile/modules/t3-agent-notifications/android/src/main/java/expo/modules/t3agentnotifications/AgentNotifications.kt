@@ -193,46 +193,57 @@ object AgentNotifications {
     // alert_id is unique per turn; keying on the thread makes its next alert replace this one.
     // The tag carries the whole group, since distinct groups can share a String hash.
     val tag = threadGroup?.let { "$ALERT_THREAD_TAG$it" } ?: ALERT_TAG
-    val requestCode = (threadGroup ?: alertId).hashCode()
-    val id = if (threadGroup != null) 0 else requestCode
+    val id = if (threadGroup != null) 0 else alertId.hashCode()
     val group = threadGroup ?: ALERT_TAG
     // A late or retried push for an earlier turn must not overwrite the thread's newer alert.
     // updated_at is the relay's send time, which a retry advances, so order by the turn's time.
     val updatedAt = data["alert_updated_at"]?.toLongOrNull() ?: 0L
-    val newer = threadGroup != null && manager(context).activeNotifications.any {
-      it.tag == tag && it.id == id &&
-        it.notification.extras.getLong(ALERT_UPDATED_AT, 0L) > updatedAt
-    }
-    if (newer) return
+    if (threadGroup != null && isSuperseded(context, tag, id, updatedAt)) return
     val notification = base(context, ALERT_CHANNEL)
       .setContentTitle(title).setContentText(body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(body))
       .addExtras(Bundle().apply { putLong(ALERT_UPDATED_AT, updatedAt) })
       .setAutoCancel(true)
       .setGroup(group)
-      .setContentIntent(contentIntent(context, scheme, data["alert_path"], requestCode))
+      .setContentIntent(
+        contentIntent(context, scheme, data["alert_path"], (threadGroup ?: alertId).hashCode()),
+      )
       .build()
     manager(context).notify(tag, id, notification)
+    postGroupSummary(context, scheme, group, data)
+  }
+
+  private fun isSuperseded(context: Context, tag: String, id: Int, updatedAt: Long): Boolean =
+    manager(context).activeNotifications.any {
+      it.tag == tag && it.id == id &&
+        it.notification.extras.getLong(ALERT_UPDATED_AT, 0L) > updatedAt
+    }
+
+  private fun postGroupSummary(
+    context: Context,
+    scheme: String,
+    group: String,
+    data: Map<String, String>
+  ) {
     val children = manager(context).activeNotifications.filter {
       it.tag == ALERT_TAG && it.notification.group == group
     }
-    if (children.size > 1) {
-      val style = NotificationCompat.InboxStyle()
-      children.forEach {
-        style.addLine(it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT))
-      }
-      val summary = base(context, ALERT_CHANNEL)
-        .setContentTitle(title)
-        .setContentText(body)
-        .setStyle(style)
-        .setGroup(group)
-        .setGroupSummary(true)
-        .setSilent(true)
-        .setAutoCancel(true)
-        .setContentIntent(contentIntent(context, scheme, data["alert_path"], 0))
-        .build()
-      manager(context).notify("$ALERT_TAG-summary:$group", 0, summary)
+    if (children.size <= 1) return
+    val style = NotificationCompat.InboxStyle()
+    children.forEach {
+      style.addLine(it.notification.extras.getCharSequence(android.app.Notification.EXTRA_TEXT))
     }
+    val summary = base(context, ALERT_CHANNEL)
+      .setContentTitle(data["alert_title"].orEmpty().take(120))
+      .setContentText(data["alert_body"].orEmpty().take(608))
+      .setStyle(style)
+      .setGroup(group)
+      .setGroupSummary(true)
+      .setSilent(true)
+      .setAutoCancel(true)
+      .setContentIntent(contentIntent(context, scheme, data["alert_path"], 0))
+      .build()
+    manager(context).notify("$ALERT_TAG-summary:$group", 0, summary)
   }
 
   /**
