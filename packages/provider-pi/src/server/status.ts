@@ -341,15 +341,13 @@ export const discoverPiWorkspaceInventory = Effect.fn("discoverPiWorkspaceInvent
             Effect.tap((models) => Ref.update(partial, (current) => ({ ...current, models }))),
           ),
           commands: connection.request({ type: "get_commands" }, timeoutMs).pipe(
-            Effect.flatMap((data) =>
-              Array.isArray(recordField(data, "commands"))
-                ? Effect.succeed(data)
-                : Effect.fail(
-                    new PiRpcError({
-                      operation: "get_commands",
-                      detail: "Invalid command inventory",
-                    }),
-                  ),
+            Effect.filterOrFail(
+              (data) => Array.isArray(recordField(data, "commands")),
+              () =>
+                new PiRpcError({
+                  operation: "get_commands",
+                  detail: "Invalid command inventory",
+                }),
             ),
             Effect.result,
             Effect.tap((commands) => Ref.update(partial, (current) => ({ ...current, commands }))),
