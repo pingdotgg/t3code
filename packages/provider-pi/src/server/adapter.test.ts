@@ -4545,6 +4545,7 @@ describe("PiAdapterV2", () => {
     "legacy uncaptured boundary",
     "adopted prompt",
     "retry after creating a recovery fork",
+    "label before the discarded prompt",
     "conflicting prior fork",
     "captured boundary on a sibling branch",
     "dangling checkpoint parent",
@@ -4557,7 +4558,8 @@ describe("PiAdapterV2", () => {
       const switched = `${dir}/current.jsonl`;
       const priorFork = `${dir}/fork.jsonl`;
       const retained = TURN_ONE_ENTRIES;
-      const retry = scenario === "retry after creating a recovery fork";
+      const labelled = scenario === "label before the discarded prompt";
+      const retry = labelled || scenario === "retry after creating a recovery fork";
       const conflicting = scenario === "conflicting prior fork";
       const sibling = scenario === "captured boundary on a sibling branch";
       const changedBranch = scenario === "different branch attached after recovery";
@@ -4567,8 +4569,9 @@ describe("PiAdapterV2", () => {
         "user",
         180,
       );
-      const sessions = new Map<string, ReadonlyArray<ReturnType<typeof sessionMessage>>>();
-      const write = (file: string, entries: ReadonlyArray<ReturnType<typeof sessionMessage>>) =>
+      type Entry = { readonly id: string; readonly parentId: string | null; readonly type: string };
+      const sessions = new Map<string, ReadonlyArray<Entry>>();
+      const write = (file: string, entries: ReadonlyArray<Entry>) =>
         fs
           .writeFileString(
             file,
@@ -4578,13 +4581,14 @@ describe("PiAdapterV2", () => {
           )
           .pipe(Effect.tap(() => Effect.sync(() => sessions.set(file, entries))));
       const extra = sessionMessage("other", "a1b", "assistant", 45);
-      const discarded = sessionMessage("discarded", "a1b", "user", 160);
+      const discarded = sessionMessage("discarded", labelled ? "label" : "a1b", "user", 160);
+      const label = { type: "label", id: "label", parentId: "a1b", targetId: "a1", label: "keep" };
       yield* write(
         original,
         changedBranch
           ? [...retained, extra, discarded]
           : retry
-            ? [...retained, discarded]
+            ? [...retained, ...(labelled ? [label] : []), discarded]
             : retained,
       );
       yield* write(
@@ -4623,13 +4627,23 @@ describe("PiAdapterV2", () => {
             case "fork": {
               let parentId = entries.find(({ id }) => id === request.entryId)?.parentId;
               assert.isDefined(parentId);
-              const branch: Array<ReturnType<typeof sessionMessage>> = [];
+              const path: Array<Entry> = [];
               while (parentId !== null) {
                 const entry = entries.find(({ id }) => id === parentId);
                 assert.isDefined(entry);
-                branch.unshift(entry);
+                path.unshift(entry);
                 parentId = entry.parentId;
               }
+              // Like Pi, drop labels from the path and re-add them with new ids at the leaf.
+              const branch: Array<Entry> = [];
+              for (const entry of path.filter(({ type }) => type !== "label"))
+                branch.push({ ...entry, parentId: branch.at(-1)?.id ?? null });
+              for (const entry of path.filter(({ type }) => type === "label"))
+                branch.push({
+                  ...entry,
+                  id: `${entry.id}-copy`,
+                  parentId: branch.at(-1)?.id ?? null,
+                });
               yield* write(priorFork, branch).pipe(Effect.orDie);
               liveFile = priorFork;
               return response;
@@ -4691,9 +4705,12 @@ describe("PiAdapterV2", () => {
       const expected = retry || sibling ? priorFork : original;
       const assertRestored = ({ providerThread: restored }: Effect.Success<typeof rewind>) => {
         assert.equal(restored.nativeThreadRef?.nativeId, expected);
-        assert.equal(restored.nativeConversationHeadRef?.nativeId, "a1b");
+        assert.equal(restored.nativeConversationHeadRef?.nativeId, labelled ? "label-copy" : "a1b");
         assert.equal(liveFile, expected);
-        assert.deepEqual(sessions.get(liveFile), retained);
+        assert.deepEqual(
+          sessions.get(liveFile)?.filter(({ type }) => type !== "label"),
+          retained,
+        );
       };
       const expectedRequests = [
         ...(sibling ? [] : [{ type: "switch_session", value: original }]),

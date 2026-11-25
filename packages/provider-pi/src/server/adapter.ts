@@ -3110,8 +3110,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           if (retained === undefined) continue;
           if (
             match !== undefined &&
-            (retained.headId !== match.retained.headId ||
-              !piSameAncestry(listing, match.listing, retained.headId))
+            !piSameHistory(listing, retained.headId, match.listing, match.retained.headId)
           ) {
             return yield* protocolError(
               "Pi rollback found conflicting histories for the checkpoint",
@@ -4190,8 +4189,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       listing === null ||
                       retained === undefined ||
                       (recoveredLegacySource !== undefined &&
-                        (retained.headId !== recoveredLegacySource.retained.headId ||
-                          !piSameAncestry(listing, recoveredLegacySource.listing, retained.headId)))
+                        !piSameHistory(
+                          listing,
+                          retained.headId,
+                          recoveredLegacySource.listing,
+                          recoveredLegacySource.retained.headId,
+                        ))
                     )
                       return yield* protocolError(
                         "Pi rollback could not verify the retained session head",
@@ -4226,8 +4229,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     const listing = piSessionListing(entriesData);
                     if (
                       listing === null ||
-                      leafId !== recoveredLegacySource.retained.headId ||
-                      !piSameAncestry(listing, recoveredLegacySource.listing, leafId)
+                      !piSameHistory(
+                        listing,
+                        leafId,
+                        recoveredLegacySource.listing,
+                        recoveredLegacySource.retained.headId,
+                      )
                     ) {
                       threadState = null;
                       return yield* protocolError(
@@ -4404,6 +4411,7 @@ const decodeSessionLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schem
 interface PiSessionEntry {
   readonly parentId: string | null;
   readonly isUserMessage: boolean;
+  readonly isLabel: boolean;
   /** Pi's `timestamp` as epoch milliseconds; null when missing or unparsable. */
   readonly timestamp: number | null;
 }
@@ -4444,6 +4452,7 @@ function readPiSessionEntry(entry: unknown): [string, PiSessionEntry] | null {
       isUserMessage:
         recordField(entry, "type") === "message" &&
         recordString(recordField(entry, "message"), "role") === "user",
+      isLabel: recordField(entry, "type") === "label",
       timestamp:
         timestamp === undefined
           ? null
@@ -4518,15 +4527,34 @@ function piRetainedCheckpoint(
   return { headId: listing.leafId };
 }
 
-function piSameAncestry(a: PiSessionListing, b: PiSessionListing, headId: string): boolean {
-  if (walkPiBranch(a.entries, headId, null)?.reachedStop !== true) return false;
-  let id: string | null = headId;
-  while (id !== null) {
-    const entry: PiSessionEntry | undefined = a.entries.get(id);
-    if (entry === undefined || entry.parentId !== b.entries.get(id)?.parentId) return false;
+// Pi's fork drops label entries from the copied path and re-adds them with new ids at the leaf.
+function piSameHistory(
+  a: PiSessionListing,
+  aHead: string | null,
+  b: PiSessionListing,
+  bHead: string | null,
+): boolean {
+  const aPath = piContentPath(a, aHead);
+  const bPath = piContentPath(b, bHead);
+  return (
+    aPath !== null &&
+    bPath !== null &&
+    aPath.length === bPath.length &&
+    aPath.every((id, index) => id === bPath[index])
+  );
+}
+
+function piContentPath(listing: PiSessionListing, headId: string | null): Array<string> | null {
+  const path: Array<string> = [];
+  const visited = new Set<string>();
+  for (let id = headId; id !== null;) {
+    const entry = listing.entries.get(id);
+    if (entry === undefined || visited.has(id)) return null;
+    visited.add(id);
+    if (!entry.isLabel) path.push(id);
     id = entry.parentId;
   }
-  return true;
+  return path;
 }
 
 type PiForkBoundary =
