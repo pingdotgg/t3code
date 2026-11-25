@@ -59,6 +59,7 @@ interface XmlNode {
   name: string;
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
+  htmlColspan?: string;
   spaceCount?: number;
   hasText?: boolean;
   hasTextChoice?: boolean;
@@ -131,6 +132,10 @@ function xml(source: string, extension: string): XmlNode {
       ),
       children: [],
     };
+    if (extension === ".epub" && (node.name === "td" || node.name === "th")) {
+      const colspan = tag.attributes.colspan;
+      if (colspan !== undefined) node.htmlColspan = colspan;
+    }
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
@@ -402,9 +407,11 @@ function* table(node: XmlNode): Generator<TextPart, void> {
       let gap = 0;
       for (const cell of cells) {
         const count = repeatCount(cell.attrs["number-columns-repeated"]);
-        // Word emits no cell for columns covered by w:gridSpan; pad before the next cell.
+        // Word and XHTML omit the cells covered by a horizontal span.
         const tcPr = cell.name === "tc" ? children(cell).find((c) => c.name === "tcPr") : undefined;
-        const val = tcPr && children(tcPr).find((c) => c.name === "gridSpan")?.attrs.val;
+        const val =
+          cell.htmlColspan ??
+          (tcPr && children(tcPr).find((c) => c.name === "gridSpan")?.attrs.val);
         const span = val ? Math.max(1, Number.parseInt(val, 10) || 1) : 1;
         for (let i = 0; i < count; i++) {
           column += span;
