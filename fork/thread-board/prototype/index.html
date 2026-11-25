@@ -205,6 +205,7 @@ code { font-family: var(--font-mono); font-size: 0.86em; background: var(--accen
 #stage { position: relative; width: 100%; height: var(--app-h); overflow: hidden; transform: scale(var(--s, 1)); transform-origin: 0 0; }
 html.embed #stage { width: 1280px; }
 .app { display: flex; height: 100%; min-height: 0; }
+.sidebar[hidden] { display: none; }
 .sidebar {
   width: 264px; flex: none; background: var(--sidebar); border-right: 1px solid var(--sidebar-border);
   display: flex; flex-direction: column; min-height: 0;
@@ -297,8 +298,10 @@ html.embed #stage { width: 1280px; }
 .col-head .count { font-weight: 500; color: var(--muted-foreground); font-size: 12px; }
 .lane-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone); flex: none; }
 .swim-row { margin-top: 10px; }
+.swim-head-row { display: flex; align-items: center; gap: 6px; }
+.swim-new { flex: none; }
 .swim-head {
-  display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 6px; border: 0; border-radius: 8px;
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 6px; border: 0; border-radius: 8px;
   background: transparent; cursor: pointer; text-align: left; font-size: 13px; font-weight: 600;
 }
 .swim-head:hover { background: var(--accent); }
@@ -342,13 +345,13 @@ html.embed #stage { width: 1280px; }
 
 /* ---------- peek (side panel, popover look) ---------- */
 .peek-panel {
-  width: 400px; flex: none; margin: 8px 8px 8px 0; display: flex; min-height: 0;
+  width: 400px; flex: none; margin: 8px 0 8px 8px; display: flex; min-height: 0;
   background: var(--popover); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-float); overflow: hidden;
   animation: panel-in 160ms var(--ease-drawer) 1;
 }
-.peek-panel.float { position: absolute; right: 0; top: 0; bottom: 0; z-index: 5; }
+.peek-panel.float { position: absolute; left: 0; top: 0; bottom: 0; z-index: 5; }
 .peek-panel[hidden] { display: none; }
-@keyframes panel-in { from { opacity: 0; transform: translateX(12px); } }
+@keyframes panel-in { from { opacity: 0; transform: translateX(-12px); } }
 
 .peek { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 .peek-scroll { flex: 1; overflow-y: auto; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
@@ -425,7 +428,7 @@ html.embed #stage { width: 1280px; }
 .toasts { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 95; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
 .toast { background: var(--popover); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 13px; box-shadow: var(--shadow-float); animation: pop-in 140ms ease-out 1; }
 .proto {
-  position: fixed; left: 8px; bottom: 52px; z-index: 90; width: 292px; max-height: calc(var(--app-h) - 32px); overflow-y: auto;
+  position: fixed; right: 16px; bottom: 16px; z-index: 90; width: 292px; max-height: calc(var(--app-h) - 32px); overflow-y: auto;
   background: var(--popover); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-float); font-size: 12px;
 }
 .proto-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px 12px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--popover); }
@@ -776,12 +779,12 @@ function spawnThread() {
 }
 
 /* ================= settings ================= */
-const DEFAULTS = { theme: "system", peekLayout: "push", entry: "icon", summary: "state" };
+const DEFAULTS = { theme: "system", peekLayout: "push", boardLayout: "full" };
 function loadSettings() {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("thread-board-proto-v2") || "{}") }; } catch { return { ...DEFAULTS }; }
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("thread-board-proto-v3") || "{}") }; } catch { return { ...DEFAULTS }; }
 }
 function saveSettings() {
-  try { localStorage.setItem("thread-board-proto-v2", JSON.stringify(S.set)); } catch {}
+  try { localStorage.setItem("thread-board-proto-v3", JSON.stringify(S.set)); } catch {}
 }
 
 /* ================= state ================= */
@@ -804,6 +807,7 @@ const S = {
   drafts: {},
   protoOpen: false,
   scale: 1,
+  composeProject: null, // set while the board's new-thread panel is open
 };
 const byId = (id) => S.threads.find((t) => t.id === id);
 const NEEDS = new Set(["approval", "input", "failed", "limited"]);
@@ -812,7 +816,7 @@ const RUNNING = new Set(["preparing", "working", "waiting"]);
 const LANES = [
   { id: "needs", name: "Needs you", tone: "tone-warning" },
   { id: "working", name: "Working", tone: "tone-info" },
-  { id: "ready", name: "Ready for review", tone: "tone-success" },
+  { id: "ready", name: "Done", tone: "tone-success" },
 ];
 const checksFailing = (t) => t.status === "ready" && t.pr?.state === "open" && t.pr.checks?.status === "failing";
 
@@ -837,7 +841,7 @@ function statusMeta(t) {
       const c = t.pr?.state === "open" ? t.pr.checks?.status : null;
       if (c === "failing") return { label: "Checks failing", icon: "xCircle", tone: "tone-error" };
       if (c === "running") return { label: "Checks running", icon: "dashed", tone: "tone-info" };
-      return { label: "Ready", icon: "checkCircle", tone: "tone-success" };
+      return { label: "Done", icon: "checkCircle", tone: "tone-success" };
     }
     default:
       return t.doneKind === "merged" ? { label: "Merged", icon: "merge", tone: "tone-merged" } : { label: "Settled", icon: "checkCheck", tone: "tone-muted" };
@@ -846,8 +850,8 @@ function statusMeta(t) {
 // The grey line only says something the status doesn't: what a running agent is doing,
 // or what a finished turn produced. Waiting cards show the request itself instead.
 function cardLine(t) {
-  if (RUNNING.has(t.status)) return S.set.summary === "llm" ? t.now.llm : t.now.state;
-  if (t.status === "ready" && !checksFailing(t)) return S.set.summary === "llm" ? t.now.llm : t.summary.state || t.now.state;
+  if (RUNNING.has(t.status)) return t.now.state;
+  if (t.status === "ready" && !checksFailing(t)) return t.summary.state || t.now.state;
   return "";
 }
 
@@ -936,7 +940,14 @@ const ACTIONS = {
   "open-thread": (d) => openThread(d.id),
   "sidebar-thread": (d) => { S.currentId = d.id; S.cameFromBoard = false; go("thread"); },
   "new-thread": (d) => { S.newProject = d.project || byId(S.currentId)?.project || "t3code"; go("new"); requestAnimationFrame(() => document.querySelector('[data-composer="new"]')?.focus()); },
-  "pick-project": (d) => { S.newProject = d.project; },
+  "pick-project": (d) => { if (S.composeProject) S.composeProject = d.project; else S.newProject = d.project; },
+  compose: (d) => {
+    S.peekId = null;
+    S.composeProject = d.project || (S.filter !== "all" ? S.filter : byId(S.currentId)?.project) || "t3code";
+    update();
+    requestAnimationFrame(() => document.querySelector('#peek-panel [data-composer="new"]')?.focus());
+  },
+  "close-compose": () => { S.composeProject = null; },
   "toggle-row": (d) => { S.collapsed.has(d.project) ? S.collapsed.delete(d.project) : S.collapsed.add(d.project); },
   approve: (d) => {
     const t = byId(d.id);
@@ -1002,11 +1013,11 @@ const ACTIONS = {
   noop: (d) => toast(d.msg || "Not part of this prototype"),
 };
 // These actions render on their own; every other action re-renders after it runs.
-const SELF_UPDATING = new Set(["toggle-board", "back", "back-to-board", "sidebar-thread", "new-thread", "tick", "send", "toggle-proto", "play"]);
+const SELF_UPDATING = new Set(["compose", "toggle-board", "back", "back-to-board", "sidebar-thread", "new-thread", "tick", "send", "toggle-proto", "play"]);
 
 function go(view) {
   S.view = view;
-  if (view !== "board") S.peekId = null;
+  if (view !== "board") { S.peekId = null; S.composeProject = null; }
   if (view === "board") S.cameFromBoard = false;
   update();
   if (view === "board") requestAnimationFrame(() => document.querySelector("#swim [data-card]")?.focus({ preventScroll: true }));
@@ -1022,6 +1033,14 @@ function send(id) {
   if (!text) return;
   S.drafts[id] = "";
   document.querySelectorAll(`[data-composer="${id}"]`).forEach((el) => (el.value = ""));
+  if (id === "new" && S.view === "board") {
+    // Started from the board: stay here and let the card arrive in Working.
+    const t = createThread(S.composeProject, text);
+    S.composeProject = null;
+    toast(`Started “${t.title}” in ${PROJECTS[t.project].name}`);
+    update();
+    return;
+  }
   if (id === "new") {
     const t = createThread(S.newProject, text);
     S.currentId = t.id;
@@ -1106,7 +1125,7 @@ function renderSidebar() {
   const keepScroll = el.querySelector(".sb-scroll")?.scrollTop ?? 0;
   const onBoard = S.view === "board";
   const needs = S.threads.filter((t) => laneOf(t) === "needs").length;
-  const working = S.threads.filter((t) => RUNNING.has(t.status)).length;
+  el.hidden = onBoard && S.set.boardLayout === "full";
   const folders = PROJECT_ORDER.map((pid) => {
     const p = PROJECTS[pid];
     const rows = S.threads.filter((t) => t.project === pid).sort((a, b) => b.lastAt - a.lastAt).map((t) => {
@@ -1120,11 +1139,10 @@ function renderSidebar() {
     return `<div class="sb-folder"><div class="sb-folder-head">${favHtml(p)}<span class="spacer">${p.name}</span><button class="btn btn-ghost btn-icon btn-sm sb-folder-new" data-action="new-thread" data-project="${pid}" title="New thread in ${p.name}">${icon("pen", "i-xs")}</button></div>${rows}</div>`;
   }).join("");
   const boardBtn = `<button class="sb-util is-new" data-action="toggle-board" title="Board (${MOD}⇧B)" aria-label="Board">${icon("board")}${needs ? `<span class="badge-count">${needs}</span>` : ""}</button>`;
-  const boardRow = `<button class="sb-board-row ${onBoard ? "on" : ""}" data-action="toggle-board" title="Board (${MOD}⇧B)">${icon("board")}<span>Board</span><span class="spacer"></span>${needs ? `<span class="sb-status tone-warning">${needs} need you</span>` : ""}<span class="sb-time">${working} running</span></button>`;
   // Like the Pull requests page: on the board, the footer's utility icons become "Back".
   const footer = onBoard
     ? `<button class="sb-row" data-action="back">${icon("arrowLeft", "i-sm")}<span class="sb-title">Back</span></button>`
-    : `${S.set.entry === "icon" ? boardBtn : ""}
+    : `${boardBtn}
       <button class="sb-util" data-action="noop" title="Settings">${icon("settings")}</button>
       <button class="sb-util" data-action="noop" title="Pull requests">${icon("pr")}</button>
       <button class="sb-util" data-action="noop" title="Issues">${icon("issue")}</button>
@@ -1133,23 +1151,25 @@ function renderSidebar() {
     <div class="sb-header"><span class="sb-brand">T3 Code<small>fork</small></span><span class="spacer"></span>
       <button class="btn btn-ghost btn-icon btn-sm" data-action="new-thread" title="New thread">${icon("pen")}</button></div>
     <div class="sb-scroll">${folders}</div>
-    ${S.set.entry === "row" ? boardRow : ""}
     <div class="sb-footer">${footer}</div>`;
   el.querySelector(".sb-scroll").scrollTop = keepScroll;
 }
 
 /* ================= board ================= */
 function boardShellHtml() {
+  const full = S.set.boardLayout === "full";
   return `<div class="board">
     <header class="board-header">
+      ${full ? `<button class="btn btn-ghost btn-sm" data-action="back" title="Back to the last thread">${icon("arrowLeft", "i-sm")}Back</button>` : ""}
       <div class="board-title">${icon("board")}Board</div>
       <div class="filters" id="board-filters"></div>
       <span class="spacer"></span>
       <label class="search">${icon("search", "i-sm")}<input id="board-search" placeholder="Filter threads" value="${esc(S.query)}" /></label>
+      ${full ? `<button class="btn btn-primary" data-action="compose">${icon("pen", "i-sm")}New thread</button>` : ""}
     </header>
     <div class="board-body">
-      <div class="swim-scroll" id="swim-scroll"><div class="swim" id="swim"></div></div>
       <aside class="peek-panel" id="peek-panel" hidden></aside>
+      <div class="swim-scroll" id="swim-scroll"><div class="swim" id="swim"></div></div>
     </div>
   </div>`;
 }
@@ -1186,7 +1206,8 @@ function swimHtml() {
     const mini = LANES.map((l) => { const n = byLane(list, l.id).length; return n ? `<span><span class="lane-dot ${l.tone}"></span>${n}</span>` : ""; }).join("");
     const cells = LANES.map((l) => `<div class="cell" data-lane="${l.id}">${byLane(list, l.id).map(cardHtml).join("")}</div>`).join("");
     return `<section class="swim-row ${collapsed ? "collapsed" : ""}" data-project="${pid}">
-      <button class="swim-head" data-action="toggle-row" data-project="${pid}" aria-expanded="${!collapsed}">${icon("chevronDown", "i-sm chev")}${favHtml(p)}${p.name}<span class="mini">${mini}</span></button>
+      <div class="swim-head-row"><button class="swim-head" data-action="toggle-row" data-project="${pid}" aria-expanded="${!collapsed}">${icon("chevronDown", "i-sm chev")}${favHtml(p)}${p.name}<span class="mini">${mini}</span></button>
+        ${S.set.boardLayout === "full" ? `<button class="btn btn-ghost btn-sm swim-new" data-action="compose" data-project="${pid}" title="New thread in ${p.name}">${icon("pen", "i-xs")}New thread</button>` : ""}</div>
       <div class="swim-cells swim-grid">${cells}</div>
     </section>`;
   }).join("");
@@ -1250,9 +1271,6 @@ function pendingHtml(t) {
     <div class="actions"><button class="btn btn-sm btn-primary" data-action="switch-model" data-id="${t.id}">Continue on ${esc(p.alt)}</button><button class="btn btn-sm" data-action="wait-limit" data-id="${t.id}">Wait for reset</button></div></div>`;
 }
 function summaryHtml(t) {
-  if (S.set.summary === "llm") {
-    return `<div><div class="sec-title">Summary <span class="tag">${icon("sparkle", "i-xs")} generated</span></div><ul class="summary-list">${t.summary.llm.map((s) => `<li>${fmt(s)}</li>`).join("")}</ul></div>`;
-  }
   return t.summary.state ? `<div><div class="sec-title">Last message from the agent</div><p class="summary-text">${fmt(t.summary.state)}</p></div>` : "";
 }
 function activityHtml(t) {
@@ -1321,11 +1339,26 @@ function updatePeekBody(t) {
   document.querySelectorAll(`[data-composer="${t.id}"]`).forEach((ta) => (ta.placeholder = composerPlaceholder(t)));
   document.querySelectorAll(`[data-model="${t.id}"]`).forEach((m) => (m.textContent = t.model));
 }
+function composeHtml() {
+  return `<div class="peek"><div class="peek-scroll">
+      <div class="peek-top"><span class="project" style="font-size:14px;font-weight:600">New thread</span><span class="spacer"></span>
+        <button class="btn btn-ghost btn-icon btn-sm" data-action="close-compose" title="Close (Esc)">${icon("x", "i-sm")}</button></div>
+      <div><div class="sec-title">Project</div><div class="project-pick" id="compose-pick" style="justify-content:flex-start"></div></div>
+      ${composerHtml("new", null)}
+      <div class="proto-note">The thread starts in the background and shows up under Working. You stay on the board.</div>
+    </div></div>`;
+}
 function renderPeek() {
   const panel = document.getElementById("peek-panel");
   if (!panel) return;
-  const t = S.peekId && S.view === "board" ? byId(S.peekId) : null;
   panel.classList.toggle("float", S.set.peekLayout === "float");
+  if (S.composeProject && S.view === "board") {
+    panel.hidden = false;
+    ensure(panel, "compose", composeHtml);
+    document.getElementById("compose-pick").innerHTML = PROJECT_ORDER.map((pid) => `<button class="chip-btn ${S.composeProject === pid ? "on" : ""}" data-action="pick-project" data-project="${pid}">${favHtml(PROJECTS[pid])}${PROJECTS[pid].name}</button>`).join("");
+    return;
+  }
+  const t = S.peekId && S.view === "board" ? byId(S.peekId) : null;
   panel.hidden = !t;
   if (!t) { panel.dataset.key = ""; panel.innerHTML = ""; return; }
   ensure(panel, `peek:${t.id}`, () => peekShellHtml(t));
@@ -1372,7 +1405,7 @@ function newThreadHtml() {
 function renderMain() {
   const main = document.getElementById("main");
   if (S.view === "board") {
-    ensure(main, "board", boardShellHtml);
+    ensure(main, `board:${S.set.boardLayout}`, boardShellHtml);
   } else if (S.view === "new") {
     ensure(main, "new", newThreadHtml);
     document.getElementById("project-pick").innerHTML = PROJECT_ORDER.map((pid) => `<button class="chip-btn ${S.newProject === pid ? "on" : ""}" data-action="pick-project" data-project="${pid}">${favHtml(PROJECTS[pid])}${PROJECTS[pid].name}</button>`).join("");
@@ -1410,11 +1443,10 @@ function renderProto() {
   root.innerHTML = `<div class="proto"><div class="proto-head">${icon("sliders", "i-sm")}<b>Prototype</b><span class="spacer"></span><button class="btn btn-ghost btn-icon btn-sm" data-action="toggle-proto" title="Collapse">${icon("chevronDown", "i-sm")}</button></div>
     <div class="proto-body">
       <div class="proto-row"><label>Live simulation</label><div class="proto-sim">${sim}<button class="btn btn-sm" data-action="reset" title="Reset data">${icon("reset", "i-xs")}</button></div></div>
+      <div class="proto-row"><label>Board layout</label>${seg("boardLayout", [["full", "Full screen"], ["beside", "Beside sidebar"]])}</div>
       <div class="proto-row"><label>Peek panel</label>${seg("peekLayout", [["push", "Pushes lanes"], ["float", "Floats over lanes"]])}</div>
-      <div class="proto-row"><label>Entry point</label>${seg("entry", [["icon", "Footer icon"], ["row", "Sidebar row"]])}</div>
-      <div class="proto-row"><label>Grey line comes from</label>${seg("summary", [["state", "Thread state"], ["llm", "LLM summary"]])}</div>
       <div class="proto-row"><label>Theme</label>${seg("theme", [["system", "System"], ["light", "Light"], ["dark", "Dark"]])}</div>
-      <div class="proto-note">Click a card to peek. ${MOD}-click opens the thread. Arrow keys move between cards, Enter peeks, ${MOD}+Enter opens, Esc closes the peek. ${MOD}⇧B toggles the board. Start a thread from the sidebar's pen buttons.</div>
+      <div class="proto-note">Click a card to peek. ${MOD}-click opens the thread. Arrow keys move between cards, Enter peeks, ${MOD}+Enter opens, Esc closes the peek. ${MOD}⇧B toggles the board. Full screen: start threads from the board's New thread buttons. Beside sidebar: from the sidebar's pen buttons.</div>
     </div></div>`;
 }
 
@@ -1444,7 +1476,7 @@ document.addEventListener("click", (e) => {
   if (card) {
     const id = card.dataset.card;
     if (e.metaKey || e.ctrlKey) openThread(id);
-    else S.peekId = S.peekId === id ? null : id;
+    else { S.peekId = S.peekId === id ? null : id; S.composeProject = null; }
     update();
   }
 });
@@ -1456,6 +1488,7 @@ document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
   if (mod && e.shiftKey && e.key.toLowerCase() === "b") { e.preventDefault(); go(S.view === "board" ? "thread" : "board"); return; }
   if (e.target.dataset?.composer && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(e.target.dataset.composer); return; }
+  if (e.key === "Escape" && S.composeProject) { S.composeProject = null; update(); return; }
   if (e.key === "Escape" && S.peekId) {
     const id = S.peekId;
     S.peekId = null;
