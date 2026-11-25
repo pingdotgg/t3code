@@ -106,9 +106,9 @@ object AgentNotifications {
       val lastTerminal = prefs
         .takeUnless { it.getBoolean("lastActive", false) }
         ?.getString("lastTerminal", null)
-      val matchesSingleRow = lastTerminal != null &&
-        lastTerminal.endsWith("\ntrue") &&
-        lastTerminal.substringBefore('\n') == path
+      val matchesSingleRow = lastTerminal?.split('\n')?.let {
+        it.size == 4 && it[0] == path && it[3] == "true"
+      } == true
       if (matchesSingleRow) {
         prefs.edit().putString("coveredTerminal", lastTerminal).apply()
         cancelActivity(context)
@@ -306,16 +306,20 @@ object AgentNotifications {
     }
   }
 
-  /** Identifies a finished card by its path, phase, scope and absolute expiry. */
+  /** Identifies a finished card by its path, phase, rows and absolute expiry. */
   private fun terminalKey(data: Map<String, String>): String? {
     if (data["active"] == "true") return null
     val phase = data["activity_phase"]
     val finished = phase == "completed" || phase == "failed"
-    val hasRow = data.containsKey("activity_line_0")
-    val single = hasRow && !data.containsKey("activity_line_1")
+    val rows = generateSequence(0) { it + 1 }
+      .map { data["activity_line_$it"] }
+      .takeWhile { it != null }
+      .filterNotNull()
+      .toList()
     val expiresAt = data["activity_expires_at"]
-    return "${data["activity_path"]}\n$phase\n$expiresAt\n$single"
-      .takeIf { finished && hasRow && expiresAt != null }
+    val scope = if (rows.size == 1) "true" else "false\n${rows.joinToString("\n")}"
+    return "${data["activity_path"]}\n$phase\n$expiresAt\n$scope"
+      .takeIf { finished && rows.isNotEmpty() && expiresAt != null }
   }
 
   private fun isCovered(prefs: SharedPreferences, terminal: String?) =

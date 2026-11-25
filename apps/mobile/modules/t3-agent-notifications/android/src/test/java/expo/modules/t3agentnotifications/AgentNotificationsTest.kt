@@ -898,5 +898,12 @@ class AgentNotificationsCompletionTest : AgentNotificationsFixture() {
 
     AgentNotifications.receive(context, coveredGrouped.filterKeys { !it.startsWith("alert_") })
     assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+
+    // A later multi-row finished card with the same hero row and expiry but a different
+    // second row must not reuse the covered terminal key.
+    val differentRows = coveredGrouped.filterKeys { !it.startsWith("alert_") } +
+      ("activity_line_1" to "Done\tThird thread\tThird project")
+    AgentNotifications.receive(context, differentRows)
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
   }
 }
