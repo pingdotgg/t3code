@@ -1055,7 +1055,6 @@ export async function extractDocumentText(path: string, extension: string): Prom
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
     for await (let part of document(path, extension)) {
       if (part === CELL_START) {
-        afterImageDescription = false;
         if (cellDepth++ === 0) {
           started = false;
           space = false;
@@ -1063,7 +1062,6 @@ export async function extractDocumentText(path: string, extension: string): Prom
         continue;
       }
       if (part === CELL_END) {
-        afterImageDescription = false;
         cellDepth--;
         if (cellDepth > 0 && started) space = true;
         continue;
