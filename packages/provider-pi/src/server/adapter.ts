@@ -3994,6 +3994,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   const isCurrentFile = (file: string) =>
                     currentFile != null &&
                     path.resolve(cwd, file) === path.resolve(cwd, currentFile);
+                  const targetPath =
+                    targetFile === undefined ? undefined : path.resolve(cwd, targetFile);
+                  const isTargetFile = (file: string | null | undefined) =>
+                    file != null && path.resolve(cwd, file) === targetPath;
                   const boundaryFile =
                     firstBoundary.type === "nothing"
                       ? undefined
@@ -4004,7 +4008,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   if (
                     targetFile !== undefined &&
                     boundaryFile != null &&
-                    path.resolve(cwd, boundaryFile) !== path.resolve(cwd, targetFile)
+                    !isTargetFile(boundaryFile)
                   ) {
                     // A previous fork can carry the checkpoint into the session with the discard boundary.
                     const listing =
@@ -4077,28 +4081,53 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       );
                     }
                   }
-                  let forkEntryId: string | undefined;
-                  if (boundary.type !== "nothing") {
-                    forkEntryId = yield* piForkEntry(
-                      boundary,
-                      rollbackInput.providerThread.createdAt,
-                      request({ type: "get_entries" }),
-                    );
-                  } else if (switchedTo === undefined && boundary === firstBoundary) {
+                  const leftTargetFile =
+                    target !== null &&
+                    isTargetFile(sourceFile) &&
+                    rollbackInput.providerThreadTurns.some((turn) => {
+                      const file = turn.nativeThreadRef?.nativeId;
+                      return turn.ordinal > target.ordinal && file != null && !isTargetFile(file);
+                    });
+                  const verifySource =
+                    leftTargetFile || (boundary.type === "nothing" && switchedTo !== undefined);
+                  if (boundary.type === "nothing" && !verifySource) {
                     return piThreadSnapshot(state.providerThread);
-                  } else {
-                    const listing = piSessionListing(yield* request({ type: "get_entries" }));
+                  }
+                  let forkEntryId: string | undefined;
+                  let readEntries = request({ type: "get_entries" });
+                  if (verifySource) {
+                    const data = yield* readEntries;
+                    readEntries = Effect.succeed(data);
+                    const listing = piSessionListing(data);
+                    // Pi stores no per-turn head. For a command-only or uncaptured checkpoint,
+                    // anchor the walk at the nearest earlier captured turn in the same file.
+                    const anchorId =
+                      targetId ??
+                      piTurnEntryId(
+                        rollbackInput.providerThreadTurns
+                          .filter(
+                            (turn) =>
+                              target !== null &&
+                              turn.ordinal < target.ordinal &&
+                              isTargetFile(turn.nativeThreadRef?.nativeId) &&
+                              piTurnEntryId(turn) !== undefined,
+                          )
+                          .sort((a, b) => b.ordinal - a.ordinal)[0],
+                      );
                     const walk =
-                      listing !== null && targetId !== undefined && listing.entries.has(targetId)
-                        ? walkPiBranch(listing.entries, listing.leafId, targetId)
+                      listing !== null && anchorId !== undefined && listing.entries.has(anchorId)
+                        ? walkPiBranch(listing.entries, listing.leafId, anchorId)
                         : null;
                     if (listing === null || walk?.reachedStop !== true)
                       return yield* protocolError(
                         "Pi rollback could not verify the retained session head",
                       );
-                    // A move can leave prompts behind in the source file even if Pi has since
-                    // returned to it. Keep steers sent during the retained turn.
+                    // A handoff can leave a prompt before the next recorded turn in this file.
                     for (const id of [...walk.userEntryIds].reverse()) {
+                      if (boundary.type === "entry" && id === boundary.entryId) {
+                        forkEntryId = id;
+                        break;
+                      }
                       const timestamp = listing.entries.get(id)?.timestamp;
                       if (timestamp == null || target?.completedAt == null)
                         return yield* protocolError(
@@ -4109,6 +4138,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                         break;
                       }
                     }
+                  }
+                  if (forkEntryId === undefined && boundary.type !== "nothing") {
+                    forkEntryId = yield* piForkEntry(
+                      boundary,
+                      rollbackInput.providerThread.createdAt,
+                      readEntries,
+                    );
                   }
                   if (forkEntryId !== undefined) {
                     const forkData = yield* lifecycleRequest({
