@@ -3943,18 +3943,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
         if (
           phase === "end" &&
-          !(paste.trailingData + input.data.slice(-TERMINAL_BRACKETED_PASTE_END.length)).endsWith(
-            TERMINAL_BRACKETED_PASTE_END,
-          )
+          !(paste.trailingData + input.data).endsWith(TERMINAL_BRACKETED_PASTE_END)
         ) {
           return yield* writeError("Missing end of bracketed paste");
         }
         paste.lastWrite = clock.currentTimeMillisUnsafe();
         if (phase === "continue") {
           yield* writeData(input.data);
-          paste.trailingData = (paste.trailingData + input.data.slice(-pasteEndOverlap)).slice(
-            -pasteEndOverlap,
-          );
+          paste.trailingData = (paste.trailingData + input.data).slice(-pasteEndOverlap);
           return;
         }
         yield* writeData(phase === "abort" ? TERMINAL_BRACKETED_PASTE_END : input.data);

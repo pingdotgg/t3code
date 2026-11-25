@@ -892,7 +892,6 @@ it.layer(
         const endPrefix = TERMINAL_BRACKETED_PASTE_END.slice(0, -1);
         const endSuffix = TERMINAL_BRACKETED_PASTE_END.slice(-1);
         const begin = TERMINAL_BRACKETED_PASTE_START + "partial";
-        let pasted = [begin];
         const writePaste = (data: string, bracketedPaste: TerminalWriteInput["bracketedPaste"]) =>
           manager.write({ ...target, data, ...(bracketedPaste && { bracketedPaste }) }, "paste");
         yield* writePaste(begin, "start");
@@ -907,7 +906,6 @@ it.layer(
           expect(process.writes).toEqual([begin]);
           yield* writePaste(endPrefix, "continue");
           yield* writePaste(endSuffix, "end");
-          pasted = [begin, endPrefix, endSuffix];
         } else if (interruption === "abort") {
           yield* writePaste(TERMINAL_BRACKETED_PASTE_END, "abort");
         } else if (interruption === "timeout") {
@@ -928,7 +926,7 @@ it.layer(
           yield* Fiber.join(pending);
           expect(process.writes).toEqual(
             interruption === "complete"
-              ? [...pasted, "next"]
+              ? [begin, endPrefix, endSuffix, "next"]
               : [begin, TERMINAL_BRACKETED_PASTE_END, "next"],
           );
         }
