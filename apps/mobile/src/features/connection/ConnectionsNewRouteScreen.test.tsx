@@ -147,7 +147,7 @@ it("does not show another feature's error as a pairing failure", () => {
   expect(harness.pendingConnectionError).toBe("Could not send the message.");
 });
 
-it("splits a pasted pairing link and preserves the code during address edits", () => {
+it("splits a pasted pairing link when editing ends and preserves the code during address edits", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.stubGlobal("__DEV__", false);
   harness.pendingConnectionError = null;
@@ -161,7 +161,11 @@ it("splits a pasted pairing link and preserves the code during address edits", (
 
     enter(code, "manual-code");
     enter(address, "https://a-long-existing-address.example.com:3773/previous-address");
-    enter(address, "  http://100.82.53.91:3773/pair#token=test-pairing-code\n");
+    const pasted = "  http://100.82.53.91:3773/pair#token=test-pairing-code";
+    enter(address, pasted);
+    expect(address.value).toBe(pasted);
+    expect(code.value).toBe("manual-code");
+    act(() => address.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     expect(address.value).toBe("http://100.82.53.91:3773");
     expect(code.value).toBe("test-pairing-code");
 
@@ -176,41 +180,41 @@ it("splits a pasted pairing link and preserves the code during address edits", (
   }
 });
 
-it.each(["blur", "submit"] as const)(
-  "keeps a typed pairing link intact until %s",
-  async (finish) => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    vi.stubGlobal("__DEV__", false);
-    harness.pendingConnectionError = null;
-    harness.connectPress.mockReset().mockResolvedValue({ ok: false, error: null });
-    const container = document.createElement("div");
-    const root = createRoot(container);
+it.each([
+  { finish: "blur", chunkSize: 1 },
+  { finish: "submit", chunkSize: 4 },
+])("keeps a typed pairing link intact until $finish", async ({ finish, chunkSize }) => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  vi.stubGlobal("__DEV__", false);
+  harness.pendingConnectionError = null;
+  harness.connectPress.mockReset().mockResolvedValue({ ok: false, error: null });
+  const container = document.createElement("div");
+  const root = createRoot(container);
 
-    try {
-      act(() => root.render(<ConnectionsNewRouteScreen route={{ params: undefined }} />));
-      const address = container.querySelector<HTMLInputElement>('input[aria-label="Address"]')!;
-      const code = container.querySelector<HTMLInputElement>('input[aria-label="Code"]')!;
-      const url = "http://100.82.53.91:3773/pair#token=test-pairing-code";
-      for (const character of url) {
-        enter(address, address.value + character);
-      }
-      expect(address.value).toBe(url);
-      expect(code.value).toBe("");
-
-      if (finish === "blur") {
-        act(() => address.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
-        expect(harness.connectPress).not.toHaveBeenCalled();
-      } else {
-        await act(async () => container.querySelector("button")!.click());
-        expect(harness.connectPress).toHaveBeenCalledWith(
-          "http://100.82.53.91:3773/#token=test-pairing-code",
-          undefined,
-        );
-      }
-      expect(address.value).toBe("http://100.82.53.91:3773");
-      expect(code.value).toBe("test-pairing-code");
-    } finally {
-      act(() => root.unmount());
+  try {
+    act(() => root.render(<ConnectionsNewRouteScreen route={{ params: undefined }} />));
+    const address = container.querySelector<HTMLInputElement>('input[aria-label="Address"]')!;
+    const code = container.querySelector<HTMLInputElement>('input[aria-label="Code"]')!;
+    const url = "http://100.82.53.91:3773/pair#token=test-pairing-code";
+    for (let offset = 0; offset < url.length; offset += chunkSize) {
+      enter(address, address.value + url.slice(offset, offset + chunkSize));
     }
-  },
-);
+    expect(address.value).toBe(url);
+    expect(code.value).toBe("");
+
+    if (finish === "blur") {
+      act(() => address.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+      expect(harness.connectPress).not.toHaveBeenCalled();
+    } else {
+      await act(async () => container.querySelector("button")!.click());
+      expect(harness.connectPress).toHaveBeenCalledWith(
+        "http://100.82.53.91:3773/#token=test-pairing-code",
+        undefined,
+      );
+    }
+    expect(address.value).toBe("http://100.82.53.91:3773");
+    expect(code.value).toBe("test-pairing-code");
+  } finally {
+    act(() => root.unmount());
+  }
+});

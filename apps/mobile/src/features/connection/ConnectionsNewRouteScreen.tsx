@@ -120,11 +120,7 @@ function PairingForm({
   };
 
   const handleHostChange = (value: string) => {
-    // React Native doesn't identify paste in onChangeText. Split bulk inserts right away
-    // and let single-character edits finish before parsing the address.
-    if (!insertsMultipleCharacters(hostInput, value) || !splitPairingAddress(value)) {
-      setHostInput(value);
-    }
+    setHostInput(value);
     clearError();
   };
 
@@ -433,23 +429,6 @@ function T3ConnectSection() {
       )}
     </View>
   );
-}
-
-function insertsMultipleCharacters(previous: string, next: string) {
-  let start = 0;
-  while (start < next.length && previous[start] === next[start]) start++;
-
-  let previousEnd = previous.length;
-  let nextEnd = next.length;
-  while (
-    previousEnd > start &&
-    nextEnd > start &&
-    previous[previousEnd - 1] === next[nextEnd - 1]
-  ) {
-    previousEnd--;
-    nextEnd--;
-  }
-  return nextEnd - start > 1;
 }
 
 function PairingInputRow({
