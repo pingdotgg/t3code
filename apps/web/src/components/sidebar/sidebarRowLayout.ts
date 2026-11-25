@@ -36,7 +36,17 @@ export interface SidebarRowToken {
   readonly key: string;
 }
 
-export type SidebarRowLayout = Readonly<Record<SidebarRowLine, ReadonlyArray<SidebarRowToken>>>;
+/** Lines that may collapse when a thread has nothing for them; the top line always shows. */
+export type SidebarRowCollapsibleLine = "middle" | "bottom";
+
+export type SidebarRowLayout = Readonly<Record<SidebarRowLine, ReadonlyArray<SidebarRowToken>>> & {
+  /** Lines kept even when empty, so every card has the same height. */
+  readonly keepLines: ReadonlyArray<SidebarRowCollapsibleLine>;
+};
+
+type MutableLayout = Record<SidebarRowLine, SidebarRowToken[]> & {
+  keepLines: ReadonlyArray<SidebarRowCollapsibleLine>;
+};
 
 // Stored as "id" or "id:form". Spacers may repeat; every other item appears once.
 const DEFAULT_STORED_LAYOUT: Record<SidebarRowLine, ReadonlyArray<string>> = {
@@ -71,10 +81,14 @@ export function resolveSidebarRowLayout(
 ): SidebarRowLayout {
   const placed = new Set<string>();
   let spacers = 0;
-  const layout = { top: [], middle: [], bottom: [], hidden: [] } as Record<
-    SidebarRowLine,
-    SidebarRowToken[]
-  >;
+  const layout: MutableLayout = {
+    top: [],
+    middle: [],
+    bottom: [],
+    hidden: [],
+    // Stored under "keep" next to the lines.
+    keepLines: (["middle", "bottom"] as const).filter((line) => stored.keep?.includes(line)),
+  };
   const place = (line: SidebarRowLine, token: Omit<SidebarRowToken, "key">) => {
     if (token.id === "spacer") {
       if (line !== "hidden") layout[line].push({ ...token, key: `spacer-${spacers++}` });
@@ -107,19 +121,23 @@ export function resolveSidebarRowLayout(
 
 export const DEFAULT_SIDEBAR_ROW_LAYOUT = resolveSidebarRowLayout({});
 
-function storedLines(layout: SidebarRowLayout): Record<SidebarRowLine, string[]> {
-  return Object.fromEntries(
-    SIDEBAR_ROW_LINES.map((line) => [
-      line,
-      layout[line].map((token) => (token.form ? `${token.id}:${token.form}` : token.id)),
-    ]),
-  ) as Record<SidebarRowLine, string[]>;
+function storedLines(layout: SidebarRowLayout): Record<SidebarRowLine | "keep", string[]> {
+  return {
+    ...(Object.fromEntries(
+      SIDEBAR_ROW_LINES.map((line) => [
+        line,
+        layout[line].map((token) => (token.form ? `${token.id}:${token.form}` : token.id)),
+      ]),
+    ) as Record<SidebarRowLine, string[]>),
+    keep: [...layout.keepLines],
+  };
 }
 
 export function isDefaultSidebarRowLayout(layout: SidebarRowLayout) {
   const stored = storedLines(layout);
-  return SIDEBAR_ROW_LINES.every(
-    (line) => stored[line].join() === DEFAULT_STORED_LAYOUT[line].join(),
+  return (
+    layout.keepLines.length === 0 &&
+    SIDEBAR_ROW_LINES.every((line) => stored[line].join() === DEFAULT_STORED_LAYOUT[line].join())
   );
 }
 
@@ -139,10 +157,21 @@ export function findSidebarRowToken(layout: SidebarRowLayout, key: string) {
   return null;
 }
 
+function mapLines(
+  layout: SidebarRowLayout,
+  map: (tokens: ReadonlyArray<SidebarRowToken>) => SidebarRowToken[],
+): MutableLayout {
+  return {
+    ...(Object.fromEntries(SIDEBAR_ROW_LINES.map((line) => [line, map(layout[line])])) as Record<
+      SidebarRowLine,
+      SidebarRowToken[]
+    >),
+    keepLines: layout.keepLines,
+  };
+}
+
 function withoutToken(layout: SidebarRowLayout, key: string) {
-  return Object.fromEntries(
-    SIDEBAR_ROW_LINES.map((line) => [line, layout[line].filter((token) => token.key !== key)]),
-  ) as Record<SidebarRowLine, SidebarRowToken[]>;
+  return mapLines(layout, (tokens) => tokens.filter((token) => token.key !== key));
 }
 
 /**
@@ -168,12 +197,18 @@ export function setSidebarRowTokenForm(
   key: string,
   form: SidebarRowItemForm,
 ): SidebarRowLayout {
-  return Object.fromEntries(
-    SIDEBAR_ROW_LINES.map((line) => [
-      line,
-      layout[line].map((token) => (token.key === key ? { ...token, form } : token)),
-    ]),
-  ) as Record<SidebarRowLine, SidebarRowToken[]>;
+  return mapLines(layout, (tokens) =>
+    tokens.map((token) => (token.key === key ? { ...token, form } : token)),
+  );
+}
+
+export function setSidebarRowLineKept(
+  layout: SidebarRowLayout,
+  line: SidebarRowCollapsibleLine,
+  kept: boolean,
+): SidebarRowLayout {
+  const others = layout.keepLines.filter((candidate) => candidate !== line);
+  return { ...layout, keepLines: kept ? [...others, line] : others };
 }
 
 export function insertSidebarRowSpacer(

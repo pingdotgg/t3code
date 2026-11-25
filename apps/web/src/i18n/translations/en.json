@@ -12934,5 +12934,6 @@
   "e7c2c7312540bae6": "customize layout sidebar thread row card line branch worktree environment machine project pull request issues terminals agents hide move",
   "cad7e919311efc25": "Branch and worktree",
   "df74c436e01b97ff": "Running terminals",
-  "df7ebb6a9956b51f": "Spacer"
+  "df7ebb6a9956b51f": "Spacer",
+  "acf922e6df970163": "Always show, even when empty:"
 }

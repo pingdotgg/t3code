@@ -1410,8 +1410,12 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           .flatMap((line) => withoutFolderItems(props.layout[line])),
       }
     : props.layout;
+  // Folder rows merge the card's other lines into one, which keeps whenever any line is kept.
+  const kept = (line: "middle" | "bottom") =>
+    inFolderVariant ? props.layout.keepLines.length > 0 : props.layout.keepLines.includes(line);
   const folds = (line: "middle" | "bottom") =>
     layoutEditing === null &&
+    !kept(line) &&
     (inFolderVariant ? line === "bottom" : line !== titleLine) &&
     !hasDetail(lineTokens[line]);
   const middleFolds = folds("middle");
@@ -1431,7 +1435,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const metaLine = bottomFolds ? null : (
     <div
       className={cn(
-        "mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs",
+        // A kept line holds its height with nothing on it.
+        "mt-0.5 flex min-h-4 min-w-0 items-center gap-1.5 text-secondary-label text-xs",
         titleLine === "bottom" && !inFolderVariant && "h-5",
       )}
     >

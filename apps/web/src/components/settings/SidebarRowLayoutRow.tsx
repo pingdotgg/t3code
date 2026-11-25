@@ -51,6 +51,7 @@ import {
   isDefaultSidebarRowLayout,
   moveSidebarRowToken,
   resolveSidebarRowLayout,
+  setSidebarRowLineKept,
   setSidebarRowTokenForm,
   storedSidebarRowLayout,
   withoutSidebarRowItem,
@@ -295,6 +296,7 @@ function SidebarRowLayoutEditor() {
               <T>Start a thread to preview its sidebar row here.</T>
             </p>
           )}
+          <KeepLinesControl layout={layout} />
           <ItemInspector layout={layout} selected={selected} onSelect={setSelectedKey} />
           <HiddenTray
             layout={layout}
@@ -576,6 +578,33 @@ function EditableItem(props: {
         </span>
       )}
     </span>
+  );
+}
+
+/** Kept lines hold their height when a thread has nothing for them, so cards line up. */
+function KeepLinesControl(props: { layout: SidebarRowLayout }) {
+  const gt = useGT();
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      <span className="text-muted-foreground">
+        <T>Always show, even when empty:</T>
+      </span>
+      {(["middle", "bottom"] as const).map((line) => {
+        const kept = props.layout.keepLines.includes(line);
+        return (
+          <Button
+            key={line}
+            type="button"
+            size="xs"
+            variant={kept ? "secondary" : "ghost-muted"}
+            aria-pressed={kept}
+            onClick={() => saveLayout(setSidebarRowLineKept(props.layout, line, !kept))}
+          >
+            {line === "middle" ? gt("Middle line") : gt("Bottom line")}
+          </Button>
+        );
+      })}
+    </div>
   );
 }
 
