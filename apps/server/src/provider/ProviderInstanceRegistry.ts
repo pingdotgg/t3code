@@ -85,13 +85,15 @@ const runtimeEqual = (a: ProviderInstanceConfig, b: ProviderInstanceConfig): boo
 const withLivePresentation = (
   instance: ProviderInstance,
   created: ProviderInstanceConfig,
-  defaultDisplayName: string,
+  defaultSnapshotDisplayName: string | undefined,
 ) => {
   let current = created;
   const restamp = <S extends ServerProvider>(snapshot: S): S => {
     const next: { -readonly [K in keyof S]: S[K] } = { ...snapshot };
     if (current.displayName !== created.displayName) {
-      next.displayName = current.displayName || defaultDisplayName;
+      const displayName = current.displayName || defaultSnapshotDisplayName;
+      if (displayName) next.displayName = displayName;
+      else delete next.displayName;
     }
     if (current.accentColor !== created.accentColor) {
       if (current.accentColor) next.accentColor = current.accentColor;
@@ -408,7 +410,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
   const { instance, setPresentation } = withLivePresentation(
     createResult.success,
     entry,
-    driver.metadata.displayName,
+    driver.metadata.defaultSnapshotDisplayName,
   );
   return {
     kind: "live" as const,
