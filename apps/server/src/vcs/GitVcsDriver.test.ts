@@ -3080,6 +3080,7 @@ it.effect(
       const bulk = path.join(root, "bulk");
       yield* makeRepository(bulk);
       yield* commitFiles(bulk, { "seed.txt": "seed\n" }, "initial");
+      const bulkBefore = (yield* git(bulk, ["rev-parse", "--short=12", "HEAD"])).stdout.trim();
       yield* git(app, ["worktree", "add", "-q", "--detach", "../app.worktrees/3"]);
       yield* git(app, ["worktree", "add", "-q", "--detach", "../app.worktrees/4"]);
       yield* makeRepository(root);
@@ -3104,9 +3105,27 @@ it.effect(
       yield* commitFiles(reused, { "reuse.txt": "reuse\n" }, "reuse");
       yield* commitFiles(
         bulk,
-        Object.fromEntries(Array.from({ length: 51 }, (_, index) => [`file-${index}.txt`, "x\n"])),
+        Object.fromEntries(Array.from({ length: 50 }, (_, index) => [`file-${index}.txt`, "x\n"])),
         "bulk",
       );
+      const atLimit = CheckpointRef.make("refs/t3/checkpoints/nested/at-limit");
+      yield* driver.checkpoints.captureCheckpoint({
+        cwd: root,
+        checkpointRef: atLimit,
+        previousCheckpointRef: before,
+      });
+      const atLimitPatch = yield* driver.checkpoints.diffCheckpoints({
+        cwd: root,
+        fromCheckpointRef: before,
+        toCheckpointRef: atLimit,
+        ignoreWhitespace: false,
+        filePaths: ["bulk"],
+      });
+      assert.lengthOf(atLimitPatch.match(/^\+\+\+ b\/bulk\/file-\d+\.txt$/gm) ?? [], 50);
+      assert.notInclude(atLimitPatch, "Checkout bulk");
+
+      yield* commitFiles(bulk, { "seed.txt": "replacement\nsecond line\n" }, "replace seed");
+      const bulkAfter = (yield* git(bulk, ["rev-parse", "--short=12", "HEAD"])).stdout.trim();
       yield* fileSystem.writeFileString(path.join(root, "notes.txt"), "notes\nmore\n");
       yield* driver.checkpoints.captureCheckpoint({
         cwd: root,
@@ -3123,12 +3142,12 @@ it.effect(
       assert.deepStrictEqual(
         numstat.split("\0").filter((record) => record !== ""),
         [
-          "1\t1\tbulk",
           "1\t0\tnotes.txt",
           "1\t0\tapp/src/new.txt",
           "0\t1\tapp/src/old.txt",
           "1\t0\tapp [feature #1]/feature.txt",
           "1\t0\tapp [reuse #3]/reuse.txt",
+          "0\t0\tbulk",
         ],
       );
 
@@ -3138,7 +3157,23 @@ it.effect(
         "diff --git a/app [feature #1]/feature.txt b/app [feature #1]/feature.txt",
       );
       assert.include(patch, "+++ b/app [reuse #3]/reuse.txt");
-      assert.include(patch, "Subproject commit");
+      assert.include(
+        patch,
+        `Checkout bulk (branch main): ${bulkBefore} → ${bulkAfter}; 2 new commits`,
+      );
+      assert.include(patch, "+  +2 -1  seed.txt\n");
+      assert.lengthOf(patch.match(/^\+  \+1 -0  file-\d+\.txt$/gm) ?? [], 50);
+      assert.notInclude(patch, "diff --git a/bulk/");
+      assert.notInclude(patch, "Subproject commit");
+
+      const filteredBulk = yield* driver.checkpoints.diffCheckpoints({
+        ...refs,
+        ignoreWhitespace: false,
+        filePaths: ["bulk/seed.txt"],
+      });
+      assert.include(filteredBulk, "+  +2 -1  seed.txt\n");
+      assert.notInclude(filteredBulk, "file-49.txt");
+      assert.notInclude(filteredBulk, "notes.txt");
       assert.notInclude(patch, "app.worktrees/2");
       assert.notInclude(patch, "app [#2]");
       assert.notInclude(patch, "app.worktrees/4");
@@ -3187,6 +3222,76 @@ it.effect(
       });
       assert.include(afterDeleteNumstat, "1\t0\tapp [feature #1]/feature.txt");
       assert.notInclude(afterDeleteNumstat, "later-unrelated");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each(["rewritten", "unreadable", "submodule"] as const)(
+  "summarizes a %s gitlink move",
+  (scenario) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const git = (cwd: string, args: ReadonlyArray<string>) =>
+        driver.execute({ operation: "test", cwd, args });
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-gitlink-move-" });
+      const nested = path.join(root, "app.worktrees", "2");
+      yield* fileSystem.makeDirectory(nested, { recursive: true });
+      for (const cwd of [root, nested]) {
+        yield* git(cwd, ["init", "-b", "main"]);
+        yield* git(cwd, ["config", "user.email", "test@test.com"]);
+        yield* git(cwd, ["config", "user.name", "Test"]);
+      }
+      yield* fileSystem.writeFileString(path.join(nested, "file.txt"), "original\n");
+      yield* git(nested, ["add", "file.txt"]);
+      yield* git(nested, ["commit", "-m", "original"]);
+      const before = CheckpointRef.make("refs/t3/checkpoints/before");
+      const after = CheckpointRef.make("refs/t3/checkpoints/after");
+      const initialCommit = (yield* git(nested, ["rev-parse", "HEAD"])).stdout.trim();
+      const oldCommit =
+        scenario === "unreadable" ? "1".repeat(initialCommit.length) : initialCommit;
+      if (scenario === "submodule") {
+        yield* git(root, ["submodule", "add", "./app.worktrees/2", "app.worktrees/2"]);
+        yield* git(root, ["submodule", "absorbgitdirs"]);
+      } else {
+        yield* git(root, [
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          `160000,${oldCommit},app.worktrees/2`,
+        ]);
+      }
+      yield* git(root, ["commit", "-m", "old checkout"]);
+      yield* git(root, ["update-ref", before, "HEAD"]);
+
+      if (scenario === "rewritten") yield* git(nested, ["switch", "--orphan", "feature"]);
+      yield* fileSystem.writeFileString(path.join(nested, "file.txt"), "updated\n");
+      yield* git(nested, ["add", "file.txt"]);
+      yield* git(nested, ["commit", "-m", "updated"]);
+      const newCommit = (yield* git(nested, ["rev-parse", "--short=12", "HEAD"])).stdout.trim();
+      yield* git(root, ["add", "app.worktrees/2"]);
+      yield* git(root, ["commit", "-m", "new checkout"]);
+      yield* git(root, ["update-ref", after, "HEAD"]);
+      const patch = yield* driver.checkpoints.diffCheckpoints({
+        cwd: root,
+        fromCheckpointRef: before,
+        toCheckpointRef: after,
+        ignoreWhitespace: false,
+      });
+
+      const branch = scenario === "rewritten" ? "feature" : "main";
+      const reason = {
+        rewritten: "history rewritten (rebased or reset)",
+        unreadable: "commit not readable",
+        submodule: "1 new commit",
+      }[scenario];
+      assert.include(
+        patch,
+        `Checkout app.worktrees/2 (branch ${branch}): ${oldCommit.slice(0, 12)} → ${newCommit}; ${reason}`,
+      );
+      assert.notInclude(patch, "Subproject commit");
+      if (scenario === "rewritten") assert.include(patch, "+  +1 -1  file.txt\n");
+      else assert.notInclude(patch, "file.txt");
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 

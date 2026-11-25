@@ -17,6 +17,7 @@ import {
   GitCommandError,
   VcsCheckpointStorageError,
   VcsProcessExitError,
+  VcsProcessOutputLimitError,
   VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
@@ -1181,11 +1182,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   // Nested checkouts have their own checkpoints; unexcluded, the outer one records them as gitlinks.
   const excludedPathspecs = (excludePaths: ReadonlyArray<string> | undefined) =>
     (excludePaths ?? []).map((relativePath) => `:(exclude,literal)${relativePath}`);
-  // Gitlinks (submodules, or checkouts in a folder of repositories) that moved are diffed in their
-  // own repository. A commit off the default branch is diffed from where it left that branch when
-  // that follows the previous commit, so a new or restarted worktree shows only its own commits.
-  // A removal, a move past NESTED_REPOSITORY_DIFF_MAX_FILES or unreadable commits keep the line.
-  const listNestedRepositoryRanges = Effect.fn("GitVcsDriver.listNestedRepositoryRanges")(
+  const resolveNestedRepositoryDiffs = Effect.fn("GitVcsDriver.resolveNestedRepositoryDiffs")(
     function* (cwd: string, from: string, to: string, exclude: ReadonlyArray<string>) {
       const operation = "GitVcsDriver.checkpoints.diffCheckpoints";
       const raw = yield* execute({
@@ -1260,6 +1257,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         execute({ operation, cwd: nestedCwd, args }).pipe(
           Effect.map((result) => result.stdout.trimEnd()),
         );
+      const ancestryExitCode = (nestedCwd: string, ancestor: string, descendant: string) =>
+        execute({
+          operation,
+          cwd: nestedCwd,
+          args: ["merge-base", "--is-ancestor", ancestor, descendant],
+          allowNonZeroExit: true,
+        }).pipe(Effect.map((result) => result.exitCode));
       const defaultBranchTip = (nestedCwd: string) =>
         nestedGit(nestedCwd, ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/HEAD"]).pipe(
           Effect.catch(() =>
@@ -1268,56 +1272,93 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ),
           ),
         );
-      const ranges = yield* Effect.forEach(
+      const nestedDiffs = yield* Effect.forEach(
         gitlinks,
         (gitlink) =>
           Effect.gen(function* () {
-            if (submodules.has(gitlink.path)) return null;
+            const submodule = submodules.has(gitlink.path);
             const nestedCwd = path.join(topLevel, gitlink.path);
-            const forkPoint = yield* defaultBranchTip(nestedCwd).pipe(
-              Effect.flatMap((tip) => nestedGit(nestedCwd, ["merge-base", gitlink.to, tip])),
-              Effect.orElseSucceed(() => null),
-            );
-            const forkPointFollowsFrom =
-              gitlink.from !== null &&
-              forkPoint !== null &&
-              forkPoint !== gitlink.to &&
-              (yield* execute({
-                operation,
-                cwd: nestedCwd,
-                args: ["merge-base", "--is-ancestor", gitlink.from, forkPoint],
-                allowNonZeroExit: true,
-              })).exitCode === 0;
-            const isLinkedWorktree = Effect.map(
-              nestedGit(nestedCwd, ["rev-parse", "--git-dir", "--git-common-dir"]),
-              (dirs) => {
-                const [gitDir = "", commonDir = ""] = dirs.split("\n");
-                return path.resolve(nestedCwd, gitDir) !== path.resolve(nestedCwd, commonDir);
-              },
-            );
-            const start =
-              forkPoint === gitlink.to && (yield* isLinkedWorktree)
-                ? gitlink.to
-                : gitlink.from === null || forkPointFollowsFrom
-                  ? forkPoint
-                  : gitlink.from;
-            if (start === null) return null;
-            const changed = yield* nestedGit(nestedCwd, [
-              "diff",
-              "--name-only",
-              "-z",
-              "--no-renames",
-              "--no-ext-diff",
-              `${start}^{commit}`,
-              `${gitlink.to}^{commit}`,
-            ]);
-            const fileCount = changed.split("\0").filter((file) => file !== "").length;
-            if (fileCount > NESTED_REPOSITORY_DIFF_MAX_FILES) return null;
-            let displayPath = gitlink.path;
-            if (isNumberedWorktreePath(gitlink.path)) {
-              let branch: string | null = recordedWorktreeBranches.get(gitlink.path) ?? null;
-              const currentBranch =
-                branch !== null ? null : yield* readWorktreeBranchName(nestedCwd, fileSystem, path);
+            const previous = gitlink.from;
+            if (submodule && previous === null) return null;
+            const checkoutPresent =
+              previous === null ||
+              (yield* fileSystem
+                .exists(path.join(nestedCwd, ".git"))
+                .pipe(Effect.orElseSucceed(() => false)));
+            const summary = (reason: string, statFrom: string | null, forkPoint: string | null) =>
+              previous === null
+                ? null
+                : { kind: "summary" as const, previous, reason, statFrom, forkPoint };
+            const unreadable = summary("commit not readable", null, null);
+            const change = yield* Effect.gen(function* () {
+              if (previous !== null) {
+                if (!checkoutPresent) return unreadable;
+                const exitCode = yield* ancestryExitCode(nestedCwd, previous, gitlink.to);
+                if (exitCode === 1) {
+                  return summary(
+                    "history rewritten (rebased or reset)",
+                    submodule ? null : previous,
+                    null,
+                  );
+                }
+                if (exitCode !== 0) return unreadable;
+              }
+              const commitCount = nestedGit(nestedCwd, [
+                "rev-list",
+                "--count",
+                `${previous}..${gitlink.to}`,
+              ]).pipe(
+                Effect.map((count) => `${count} new ${count === "1" ? "commit" : "commits"}`),
+              );
+              if (submodule) return summary(yield* commitCount, null, null);
+              const forkPoint = yield* defaultBranchTip(nestedCwd).pipe(
+                Effect.flatMap((tip) => nestedGit(nestedCwd, ["merge-base", gitlink.to, tip])),
+                Effect.orElseSucceed(() => null),
+              );
+              const forkPointFollowsFrom =
+                previous !== null &&
+                forkPoint !== null &&
+                forkPoint !== gitlink.to &&
+                (yield* ancestryExitCode(nestedCwd, previous, forkPoint)) === 0;
+              const isLinkedWorktree = Effect.map(
+                nestedGit(nestedCwd, ["rev-parse", "--git-dir", "--git-common-dir"]),
+                (dirs) => {
+                  const [gitDir = "", commonDir = ""] = dirs.split("\n");
+                  return path.resolve(nestedCwd, gitDir) !== path.resolve(nestedCwd, commonDir);
+                },
+              );
+              const start =
+                forkPoint === gitlink.to && (yield* isLinkedWorktree)
+                  ? gitlink.to
+                  : previous === null || forkPointFollowsFrom
+                    ? forkPoint
+                    : previous;
+              if (start === null) return null;
+              const changed = yield* nestedGit(nestedCwd, [
+                "diff",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                "--no-ext-diff",
+                `${start}^{commit}`,
+                `${gitlink.to}^{commit}`,
+              ]);
+              const fileCount = changed.split("\0").filter((file) => file !== "").length;
+              if (fileCount > NESTED_REPOSITORY_DIFF_MAX_FILES) {
+                return previous === null ? null : summary(yield* commitCount, start, forkPoint);
+              }
+              return { kind: "patch" as const, from: start, forkPoint };
+            }).pipe(Effect.orElseSucceed(() => unreadable));
+            if (change === null) return null;
+
+            const numberedWorktree = isNumberedWorktreePath(gitlink.path);
+            let branch = recordedWorktreeBranches.get(gitlink.path) ?? null;
+            if (
+              checkoutPresent &&
+              branch === null &&
+              (numberedWorktree || change.kind === "summary")
+            ) {
+              const currentBranch = yield* readWorktreeBranchName(nestedCwd, fileSystem, path);
               if (currentBranch !== null) {
                 const currentHead = yield* nestedGit(nestedCwd, [
                   "rev-parse",
@@ -1328,13 +1369,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 const onCurrentBranch =
                   currentHead === gitlink.to ||
                   (currentHead !== "" &&
-                    gitlink.to !== forkPoint &&
-                    (yield* execute({
-                      operation,
-                      cwd: nestedCwd,
-                      args: ["merge-base", "--is-ancestor", gitlink.to, currentHead],
-                      allowNonZeroExit: true,
-                    })).exitCode === 0);
+                    gitlink.to !== change.forkPoint &&
+                    (yield* ancestryExitCode(nestedCwd, gitlink.to, currentHead).pipe(
+                      Effect.orElseSucceed(() => null),
+                    )) === 0);
                 if (onCurrentBranch) branch = currentBranch;
               }
               if (branch === null) {
@@ -1358,19 +1396,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   pointing[0] ??
                   null;
               }
-              displayPath = formatWorktreeDisplayPrefix(gitlink.path, branch);
             }
             return {
+              ...change,
               path: gitlink.path,
-              displayPath,
+              displayPath: formatWorktreeDisplayPrefix(gitlink.path, branch),
+              branch,
               cwd: nestedCwd,
-              from: start,
               to: gitlink.to,
             };
-          }).pipe(Effect.orElseSucceed(() => null)),
+          }),
         { concurrency: 4 },
       );
-      return ranges.filter((range) => range !== null);
+      return nestedDiffs.filter((nested) => nested !== null);
     },
   );
 
@@ -2718,7 +2756,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }
 
       const toRevision = input.range?.to ?? input.toCheckpointRef;
-      const nestedRanges = yield* listNestedRepositoryRanges(
+      const nestedDiffs = yield* resolveNestedRepositoryDiffs(
         input.cwd,
         fromRevision,
         toRevision,
@@ -2733,16 +2771,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               .map((file) => file.slice(prefix.length + 1));
       const rootFilePaths = normalizedFilePaths?.filter(
         (file) =>
-          !nestedRanges.some((range) => file === range.path || file.startsWith(`${range.path}/`)),
+          !nestedDiffs.some((range) => file === range.path || file.startsWith(`${range.path}/`)),
       );
-      const diffArgs = (prefix: string, from: string, to: string) => [
+      const diffArgs = (prefix: string, from: string, to: string, format = input.format) => [
         // Not --no-relative, which Git before 2.28 rejects.
         "-c",
         "diff.relative=false",
         "-c",
         "diff.suppressBlankEmpty=false",
         "diff",
-        ...(input.format === "numstat" ? ["--numstat", "-z"] : ["--patch"]),
+        ...(format === "numstat" ? ["--numstat", "-z"] : ["--patch"]),
         "--no-color",
         "--no-ext-diff",
         "--no-textconv",
@@ -2755,7 +2793,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         `${from}^{commit}`,
         `${to}^{commit}`,
       ];
-      let remainingBytes = input.maxOutputBytes ?? VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
+      const maxBytes = input.maxOutputBytes ?? VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
+      let remainingBytes = maxBytes;
       const runDiff = Effect.fn("GitVcsDriver.checkpoints.runDiff")(function* (
         cwd: string,
         args: ReadonlyArray<string>,
@@ -2784,7 +2823,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       // Paths are repository-relative, while cwd can be a subdirectory.
       const rootPathspec = [
         ...(rootFilePaths ?? []).map((file) => `:(top,literal)${file}`),
-        ...nestedRanges.map((range) => `:(exclude,top,literal)${range.path}`),
+        ...nestedDiffs.map((range) => `:(exclude,top,literal)${range.path}`),
         ...diffExclusions,
       ];
       let diff =
@@ -2794,14 +2833,70 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...diffArgs("", fromRevision, toRevision),
               ...(rootPathspec.length === 0 ? [] : ["--", ...rootPathspec]),
             ]);
-      for (const range of nestedRanges) {
+      for (const range of nestedDiffs) {
         const filePaths = nestedFilePaths(range.path);
         if (remainingBytes <= 0 || filePaths?.length === 0) continue;
+        const pathspec =
+          filePaths === undefined
+            ? []
+            : ["--", ...filePaths.map((file) => `:(top,literal)${file}`)];
+        if (range.kind === "summary") {
+          if (input.format === "numstat") {
+            const entry = `0\t0\t${range.path}\0`;
+            remainingBytes -= Buffer.byteLength(entry);
+            if (remainingBytes < 0) {
+              return yield* new VcsProcessOutputLimitError({
+                operation,
+                command: "git diff",
+                cwd: input.cwd,
+                stream: "stdout",
+                maxBytes,
+                observedBytes: maxBytes - remainingBytes,
+              });
+            }
+            diff += entry;
+            continue;
+          }
+          const stat =
+            range.statFrom === null
+              ? null
+              : yield* execute({
+                  operation,
+                  cwd: range.cwd,
+                  args: [...diffArgs(range.path, range.statFrom, range.to, "numstat"), ...pathspec],
+                  maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+                  outputMode: "truncate",
+                }).pipe(Effect.orElseSucceed(() => null));
+          const reason =
+            stat === null && range.statFrom !== null ? "commit not readable" : range.reason;
+          const branch =
+            range.branch === null ? "" : ` (branch ${quoteGitPatchPath(range.branch)})`;
+          const lines = [
+            `+Checkout ${quoteGitPatchPath(range.path)}${branch}: ${range.previous.slice(0, 12)} → ${range.to.slice(0, 12)}; ${reason}\n`,
+          ];
+          if (stat !== null) {
+            for (const record of stat.stdout.split("\0").slice(0, -1)) {
+              const fields = /^(\d+|-)\t(\d+|-)\t([\s\S]+)$/.exec(record);
+              if (fields?.[3] === undefined) continue;
+              const counts = fields[1] === "-" ? "binary" : `+${fields[1]} -${fields[2]}`;
+              lines.push(`+  ${counts}  ${quoteGitPatchPath(fields[3])}\n`);
+            }
+            if (stat.stdoutTruncated) lines.push("+  Additional files omitted\n");
+          }
+          const beforePath = quoteGitPatchPath(`a/${range.path}`);
+          const afterPath = quoteGitPatchPath(`b/${range.path}`);
+          const summaryPatch = `diff --git ${beforePath} ${afterPath}\n--- ${beforePath}\n+++ ${afterPath}\n@@ -0,0 +1,${lines.length} @@\n${lines.join("")}`;
+          const bytes = Buffer.from(summaryPatch);
+          diff +=
+            bytes.length <= remainingBytes
+              ? summaryPatch
+              : new TextDecoder().decode(bytes.subarray(0, remainingBytes), { stream: true });
+          remainingBytes -= Math.min(bytes.length, remainingBytes);
+          continue;
+        }
         const nestedDiff = yield* runDiff(range.cwd, [
           ...diffArgs(range.displayPath, range.from, range.to),
-          ...(filePaths === undefined
-            ? []
-            : ["--", ...filePaths.map((file) => `:(top,literal)${file}`)]),
+          ...pathspec,
         ]);
         diff +=
           input.format === "numstat"
