@@ -89,20 +89,25 @@ sudo systemctl enable --now t3hub t3runner
 1. Verify `t3hub` advertises control-plane-only mode (`capabilities.teamHubOnly === true`):
 
    ```bash
-   curl -s http://127.0.0.1:3773/api/environment/descriptor | jq '{environmentId, teamHubOnly: .capabilities.teamHubOnly}'
+   curl -s http://127.0.0.1:3773/.well-known/t3/environment | jq '{environmentId, teamHubOnly: .capabilities.teamHubOnly}'
    ```
 
-2. Mint a one-time pairing credential on `t3runner` (run as `t3runner`):
+2. Enable linked environments on `t3runner` (so `t3runner` accepts `t3hub`'s peer-link OAuth registration) and mint a one-time pairing credential as `t3runner`:
 
    ```bash
+   sudo -u t3runner mkdir -p /var/lib/t3runner/userdata
+   sudo -u t3runner sh -c 'cat > /var/lib/t3runner/userdata/settings.json <<EOF
+   {"linkedEnvironmentsEnabled": true}
+   EOF'
+   sudo systemctl restart t3runner
    sudo -u t3runner t3 pair --base-dir /var/lib/t3runner
    ```
 
-3. Pair an owner client with `t3hub`, initialize the team in **Settings → Teams**, and link `http://127.0.0.1:3774` as a linked environment using `t3runner`'s pairing code (`--team-hub-only` automatically enables peer links and permits attaching distinct loopback runners).
+3. Pair an owner client with `t3hub`, initialize the team in **Settings → Teams**, and link `http://127.0.0.1:3774` as a linked environment using `t3runner`'s pairing code (`--team-hub-only` automatically enables peer links on `t3hub` and permits attaching distinct loopback runners).
 
 ## 4. Verify Isolation
 
-- **Hub refuses local execution:** Dispatching a turn or opening a terminal directly on `t3hub` is rejected with an explicit `--team-hub-only` error; `t3hub` never spawns agent or PTY child processes.
+- **Hub refuses local execution:** Dispatching a turn, resuming a queue, delegating a task, or opening a terminal directly on `t3hub` is rejected synchronously with an explicit `--team-hub-only` error; `t3hub` never spawns agent or PTY child processes.
 - **OS filesystem boundary:** Confirm `t3runner` cannot inspect `t3hub`'s database or secrets:
 
   ```bash
@@ -110,7 +115,8 @@ sudo systemctl enable --now t3hub t3runner
   # Permission denied
   ```
 
-- **No upward privilege from runner to hub:** `t3runner` holds no `t3hub` session token and cannot mint sessions or read RBAC/invite tables on `t3hub`. Every MCP call originating from a turn on `t3runner` is bound to `actingMemberId = turnAuthorMemberId`.
+- **No upward privilege from runner to hub:** `t3runner` holds no `t3hub` session token and cannot mint sessions or read RBAC/invite tables on `t3hub`.
+- **Cross-environment forwarding scope:** In Milestone 4, cross-environment MCP forwarding from `t3hub` to linked runners is restricted to `owner` and `admin` callers; per-environment `team_environments` ACLs and hub-signed member execution handoffs (`actingMemberId` propagation from `t3hub` to `t3runner`) arrive in Milestone 5.
 
 ## 5. Optional Layer 2 Hardening (Concurrent Teammates)
 

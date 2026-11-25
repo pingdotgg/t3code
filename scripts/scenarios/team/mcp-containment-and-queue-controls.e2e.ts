@@ -660,6 +660,36 @@ test("enforces Milestone 4 mid-turn queueing, creator-only Send now, explicit ow
   expect(bobInterruptAlice.isError).toBe(true);
   expect(bobInterruptAlice.text).toContain("capability_denied");
 
+  // Even passing stop: true on Alice's thread is denied for regular Bob.
+  const bobStopAlice = await callMcpTool({
+    request: alice.page.request,
+    endpoint: bobProbe.endpoint!,
+    authorization: bobProbe.authorization!,
+    toolName: "t3_thread_interrupt",
+    args: { threadId: aliceThreadId, stop: true },
+  });
+  expect(bobStopAlice.isError).toBe(true);
+  expect(bobStopAlice.text).toContain("capability_denied");
+
+  // Restricted Staff-only thread issues and PR links must not leak to regular Bob.
+  const bobListStaffIssues = await callMcpTool({
+    request: alice.page.request,
+    endpoint: bobProbe.endpoint!,
+    authorization: bobProbe.authorization!,
+    toolName: "list_thread_issues",
+    args: { threadId: staffThreadId },
+  });
+  expect(bobListStaffIssues.isError).toBe(true);
+
+  const bobListStaffPrs = await callMcpTool({
+    request: alice.page.request,
+    endpoint: bobProbe.endpoint!,
+    authorization: bobProbe.authorization!,
+    toolName: "list_thread_pull_requests",
+    args: { threadId: staffThreadId },
+  });
+  expect(bobListStaffPrs.isError).toBe(true);
+
   const bobCreateProject = await callMcpTool({
     request: alice.page.request,
     endpoint: bobProbe.endpoint!,

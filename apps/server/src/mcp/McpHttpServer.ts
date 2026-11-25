@@ -33,6 +33,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerConfig from "../config.ts";
+import { isTeamHubOnlyServer } from "../team/hubOnly.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
@@ -289,15 +290,16 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const registry = yield* McpSessionRegistry.McpSessionRegistry;
   const clients = yield* Effect.serviceOption(McpClientAuthenticator);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const teamHubOnly = yield* isTeamHubOnlyServer;
   const runtimeModeCeiling = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
   const settingsFlags = serverSettings.getSettings.pipe(
     Effect.map((settings) => ({
-      linkedEnvironments: settings.linkedEnvironmentsEnabled,
+      linkedEnvironments: teamHubOnly || settings.linkedEnvironmentsEnabled,
       agentFeedback: settings.agentFeedback.mode,
       workflows: settings.workflowsEnabled,
     })),
     Effect.orElseSucceed(() => ({
-      linkedEnvironments: false,
+      linkedEnvironments: teamHubOnly,
       agentFeedback: "off" as const,
       workflows: false,
     })),

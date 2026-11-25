@@ -28,8 +28,11 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TeamMcpAccess from "../team/mcpAccess.ts";
+import * as TeamService from "../team/TeamService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import * as TaskFolders from "../workspace/TaskFolders.ts";
+import * as McpInvocationContext from "./McpInvocationContext.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
 
 export class WorktreeMcpService extends Context.Service<
@@ -78,6 +81,7 @@ const make = Effect.gen(function* () {
   const setupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
   const taskFolders = yield* TaskFolders.TaskFolders;
+  const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
   // The administrator's limit, fixed for the server's life as it is where turns start.
   const maxRuntimeMode = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
 
@@ -361,6 +365,20 @@ const make = Effect.gen(function* () {
               "invalid_request",
               `Thread '${scope.thread.threadId}' was archived while the worktree was being created; the handoff was rolled back.`,
             );
+          }
+          if (input.continuationPrompt !== undefined) {
+            const recordAttribution = TeamMcpAccess.recordTurnAuthoredByCaller({
+              threadId: scope.thread.threadId,
+              turnId: `msg:${ids.continuationMessageId}`,
+            }).pipe(
+              Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+              Effect.mapError((error) => failure("operation_failed", error.message)),
+            );
+            yield* Option.isSome(teamServiceOption)
+              ? recordAttribution.pipe(
+                  Effect.provideService(TeamService.TeamService, teamServiceOption.value),
+                )
+              : recordAttribution;
           }
           return yield* threadManagement
             .dispatch({

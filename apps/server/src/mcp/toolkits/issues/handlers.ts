@@ -78,6 +78,9 @@ const make = Effect.gen(function* () {
     const scope = yield* McpInvocationContext.requireMcpCapability("issues");
     const threadId = requested ?? scope.thread?.threadId;
     if (threadId === undefined) return yield* new IssueThreadRequiredError();
+    yield* TeamMcpAccess.assertCanReadThread(threadId).pipe(
+      Effect.mapError(() => new IssueThreadNotFoundError({ threadId })),
+    );
     const thread = yield* engine.getThreadShell(threadId).pipe(
       Effect.map(Option.fromNullishOr),
       Effect.mapError((cause) => new IssueLinkFailedError({ cause })),

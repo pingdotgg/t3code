@@ -35,6 +35,7 @@ import { HttpServerRequest } from "effect/http";
 import { hostedAppUrlConfig } from "../cloud/publicConfig.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { isTeamHubOnlyServer } from "../team/hubOnly.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as PayloadSigner from "./PayloadSigner.ts";
@@ -267,10 +268,13 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const digester = yield* Digest.Digest;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const linksEnabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.linkedEnvironmentsEnabled),
-    Effect.orElseSucceed(() => false),
-  );
+  const teamHubOnly = yield* isTeamHubOnlyServer;
+  const linksEnabled = teamHubOnly
+    ? Effect.succeed(true)
+    : serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.linkedEnvironmentsEnabled),
+        Effect.orElseSucceed(() => false),
+      );
   const signer = yield* PayloadSigner.fromSecret(
     yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32).pipe(Effect.orDie),
   );

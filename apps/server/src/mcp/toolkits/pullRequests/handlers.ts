@@ -292,6 +292,11 @@ const make = Effect.gen(function* () {
     if (threadId === undefined) {
       return yield* new PullRequestThreadRequiredError();
     }
+    yield* TeamMcpAccess.assertCanReadThread(threadId).pipe(
+      Effect.catch(() =>
+        threadNotFound(engine, scope, threadId, `Thread ${threadId} was not found.`),
+      ),
+    );
     const thread = yield* engine.getThreadShell(threadId).pipe(
       Effect.map(Option.fromNullishOr),
       Effect.mapError((cause) => new Failure({ cause })),
@@ -1066,6 +1071,9 @@ const make = Effect.gen(function* () {
     pull_request_create: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestForgeError, undefined);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         const project = yield* projectOf(thread, PullRequestForgeError);
         if (project === undefined) {
           return yield* new PullRequestProjectNotFoundError({ repository: "" });
@@ -1259,6 +1267,9 @@ const make = Effect.gen(function* () {
     ci_rerun: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const { thread, target, ref } = yield* locate(input);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         const checks = yield* pullRequests
           .rerunChecks({ ...ref, ...(input.check === undefined ? {} : { check: input.check }) })
           .pipe(Effect.mapError(forgeFailure));

@@ -52,15 +52,8 @@ const resolveTeamMcpCaller = Effect.fn("TeamMcpAccess.resolveTeamMcpCaller")(fun
   }
   const scope = scopeOption.value;
   if (scope.thread !== undefined && scope.thread !== null) {
-    let memberId = scope.thread.actingMemberId;
-    if (memberId === undefined) {
-      const resolved = yield* teamService.resolveTurnAuthorMemberId({
-        threadId: scope.thread.threadId,
-      });
-      if (Option.isSome(resolved)) {
-        memberId = resolved.value;
-      }
-    }
+    // Team agent tokens must carry an immutable actingMemberId; never resolve dynamically across turns.
+    const memberId = scope.thread.actingMemberId;
     if (memberId === undefined) {
       return yield* forbiddenFailure("This agent MCP token is not bound to an active team member.");
     }
@@ -269,17 +262,28 @@ export const authorizeChildThreadCreation = Effect.fn("TeamMcpAccess.authorizeCh
   },
 );
 
+export const canUseWorkflows = Effect.fn("TeamMcpAccess.canUseWorkflows")(function* () {
+  const caller = yield* resolveTeamMcpCaller().pipe(
+    Effect.orElseSucceed(() => Option.none<ResolvedTeamMcpCaller>()),
+  );
+  if (Option.isNone(caller)) return true;
+  return yield* caller.value.teamService.assertActorCanUseWorkflows(caller.value.actor).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
 export const recordTurnAuthoredByCaller = Effect.fn("TeamMcpAccess.recordTurnAuthoredByCaller")(
   function* (input: { readonly threadId: ThreadId; readonly turnId: string }) {
-    const caller = yield* resolveTeamMcpCaller().pipe(
-      Effect.orElseSucceed(() => Option.none<ResolvedTeamMcpCaller>()),
-    );
+    const caller = yield* resolveTeamMcpCaller();
     if (Option.isNone(caller)) return;
-    yield* caller.value.teamService.recordTurnAuthoredByMember({
-      memberId: caller.value.memberId,
-      threadId: input.threadId,
-      turnId: input.turnId,
-    });
+    yield* caller.value.teamService
+      .requireTurnAuthoredByMember({
+        memberId: caller.value.memberId,
+        threadId: input.threadId,
+        turnId: input.turnId,
+      })
+      .pipe(Effect.mapError(toMcpForbidden));
   },
 );
 

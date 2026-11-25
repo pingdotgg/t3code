@@ -20,6 +20,7 @@ import {
   RunId,
   RunAttemptId,
   NodeId,
+  type TeamMemberId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -1029,15 +1030,36 @@ export const layer: Layer.Layer<
         brokenNativeThread &&
         providerThread.nativeThreadRef !== null &&
         !(yield* providerSessions.isLive(providerSessionId));
-      const actingMemberId = Option.isSome(teamServiceOption)
-        ? Option.getOrUndefined(
-            yield* teamServiceOption.value.resolveTurnAuthorMemberId({
-              threadId: projection.thread.id,
-              runId: run.id,
-              userMessageId: run.userMessageId,
-            }),
-          )
-        : undefined;
+      const runUserMessage = projection.messages.find(
+        (candidate) => candidate.id === run.userMessageId,
+      );
+      const continuedFromRunId =
+        run.restartContinuationOfRunId ??
+        run.usageLimitContinuationOfRunId ??
+        run.manualContinuationOfRunId ??
+        runUserMessage?.delegatedCompletion?.parentRunId;
+      let actingMemberId: TeamMemberId | undefined;
+      if (Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured())) {
+        const resolvedAuthor = yield* teamServiceOption.value.resolveTurnAuthorMemberId({
+          threadId: projection.thread.id,
+          runId: run.id,
+          userMessageId: run.userMessageId,
+          ...(continuedFromRunId === undefined ? {} : { continuedFromRunId }),
+        });
+        if (Option.isNone(resolvedAuthor)) {
+          yield* settleStartFailure({
+            signal: "team-turn-attribution-missing",
+            title: "Missing team turn attribution",
+            error: new Error(
+              `Refusing to start run ${run.id} on thread ${projection.thread.id} without authoritative team turn attribution.`,
+            ),
+            message:
+              "Cannot start this turn because its team author attribution could not be verified.",
+          });
+          return;
+        }
+        actingMemberId = resolvedAuthor.value;
+      }
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,

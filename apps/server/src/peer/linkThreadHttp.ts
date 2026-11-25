@@ -22,6 +22,7 @@ import { eventStreamResponse } from "../eventStreamResponse.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { isTeamHubOnlyServer } from "../team/hubOnly.ts";
 import { subscribeOrchestrationV2Thread } from "../ws.ts";
 
 /** How soon an open stream ends after its link is revoked here or the beta is turned off. */
@@ -47,10 +48,13 @@ const admitLink = Effect.gen(function* () {
   if (request.headers.origin !== undefined) return refusal(403, "origin_not_allowed");
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const settings = yield* ServerSettings.ServerSettingsService;
-  const linksEnabled = settings.getSettings.pipe(
-    Effect.map((current) => current.linkedEnvironmentsEnabled),
-    Effect.orElseSucceed(() => false),
-  );
+  const teamHubOnly = yield* isTeamHubOnlyServer;
+  const linksEnabled = teamHubOnly
+    ? Effect.succeed(true)
+    : settings.getSettings.pipe(
+        Effect.map((current) => current.linkedEnvironmentsEnabled),
+        Effect.orElseSucceed(() => false),
+      );
   // Verifying renews the link's session, as each `/mcp` call does.
   const verify = auth.authenticateMcpClient(request).pipe(Effect.option);
   const client = yield* verify;

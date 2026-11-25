@@ -6233,6 +6233,125 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 isolates multi-thread provider sessions by actingMemberId when sibling threads remain attached and busy",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const aliceId = TeamMemberId.make("member-alice-multi");
+      const bobId = TeamMemberId.make("member-bob-multi");
+      const thread1 = ThreadId.make("thread-multi-1");
+      const thread2 = ThreadId.make("thread-multi-2");
+      const turnHold = yield* Deferred.make<void>();
+
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const mcpRegistry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: thread1, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: thread2, now }),
+          ],
+        });
+
+        // Alice attaches T1 and T2 to the shared multi-thread provider session and starts a busy turn on T2.
+        const aliceRuntime1 = yield* manager.open({
+          threadId: thread1,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        const aliceRuntime2 = yield* manager.open({
+          threadId: thread2,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        assert.strictEqual(aliceRuntime2, aliceRuntime1);
+        assert.strictEqual((yield* Ref.get(state)).openCount, 1);
+        const configsBefore = yield* Ref.get(mcpConfigs);
+        const aliceT1Token = configsBefore[0]?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(aliceT1Token);
+        assert.strictEqual(
+          (yield* mcpRegistry.resolve(aliceT1Token!))?.thread.actingMemberId,
+          aliceId,
+        );
+
+        const busyRunId = idAllocator.derive.run({ threadId: thread2, ordinal: 1 });
+        const busyTurnFiber = yield* Effect.forkChild(
+          aliceRuntime2.startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(thread2)).thread,
+            threadId: thread2,
+            runId: busyRunId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId: busyRunId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId: busyRunId }),
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId: thread2,
+              providerSessionId,
+              now,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("msg-alice-busy-t2"),
+              text: "Keep T2 busy",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          }),
+        );
+        yield* Effect.yieldNow;
+
+        // Bob switches onto T1 while Alice's T2 is still attached and busy -> MUST spawn a separate
+        // process for Bob, revoke T1's Alice MCP token, and leave Alice's T2 process untouched!
+        const bobRuntime = yield* manager.open({
+          threadId: thread1,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: bobId,
+        });
+        const afterSwitch = yield* Ref.get(state);
+        assert.strictEqual(afterSwitch.openCount, 2);
+        assert.strictEqual(afterSwitch.closeCount, 0);
+        assert.notStrictEqual(bobRuntime, aliceRuntime1);
+        assert.isUndefined(yield* mcpRegistry.resolve(aliceT1Token!));
+        const configsAfter = yield* Ref.get(mcpConfigs);
+        const bobToken = configsAfter.at(-1)?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(bobToken);
+        assert.strictEqual((yield* mcpRegistry.resolve(bobToken!))?.thread.actingMemberId, bobId);
+
+        yield* Deferred.succeed(turnHold, undefined);
+        yield* Fiber.join(busyTurnFiber);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            mcpConfigs,
+            capabilities: CodexCapabilities,
+            startTurn: Deferred.await(turnHold),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 refuses opening local agent sessions in --team-hub-only mode",
   () =>
     Effect.gen(function* () {

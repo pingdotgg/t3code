@@ -52,7 +52,7 @@ import {
   type OrchestrationV2Command,
   type GitActionProgressEvent,
   type GitManagerServiceError,
-  type MessageId,
+  MessageId,
   type AcpRegistryDeleteSessionInput,
   type AcpRegistryDisableProviderInput,
   type AcpRegistryListProvidersInput,
@@ -2157,7 +2157,11 @@ export const layerWsRpc = (
             Effect.andThen(
               command.type === "message.dispatch" ||
                 command.type === "prepared-run.retry" ||
-                command.type === "queued-message.promote-to-steer"
+                command.type === "queued-message.promote-to-steer" ||
+                command.type === "queue.resume" ||
+                command.type === "queued-run.start" ||
+                command.type === "delegated_task.request" ||
+                (command.type === "thread.metadata.update" && command.continuation !== undefined)
                 ? assertLocalAgentRpcExecutionAllowed
                 : Effect.void,
             ),
@@ -2209,7 +2213,8 @@ export const layerWsRpc = (
                             result.storedEvents,
                           ).pipe(
                             Effect.andThen(
-                              effectiveCommand.type === "run.interrupt"
+                              effectiveCommand.type === "run.interrupt" ||
+                                effectiveCommand.type === "subagent.stop"
                                 ? teamService.notifyTurnInterrupted({
                                     actor: { kind: "session", sessionId: currentSessionId },
                                     threadId: effectiveCommand.threadId,
@@ -2226,6 +2231,7 @@ export const layerWsRpc = (
                                     ? teamService.notifyTurnInterrupted({
                                         actor: { kind: "session", sessionId: currentSessionId },
                                         threadId: effectiveCommand.threadId,
+                                        runId: effectiveCommand.targetRunId,
                                         reason: "promote_to_steer",
                                       })
                                     : Effect.void,
@@ -2505,6 +2511,24 @@ export const layerWsRpc = (
                         ...(input.teamLocked === undefined ? {} : { locked: input.teamLocked }),
                       })
                     : false;
+                const resolvedInitialMessageId =
+                  input.initialMessage === undefined
+                    ? undefined
+                    : (input.initialMessage.messageId ??
+                      (isTeam
+                        ? MessageId.make(yield* random.uuidV4().pipe(Effect.orDie))
+                        : undefined));
+                if (
+                  isTeam &&
+                  resolvedThreadId !== undefined &&
+                  resolvedInitialMessageId !== undefined
+                ) {
+                  yield* teamService.requireTurnAuthoredBySession({
+                    sessionId: currentSessionId,
+                    threadId: resolvedThreadId,
+                    turnId: `msg:${resolvedInitialMessageId}`,
+                  });
+                }
                 return yield* startup
                   .enqueueCommand(
                     threadLaunch
@@ -2536,9 +2560,9 @@ export const layerWsRpc = (
                               ? {}
                               : {
                                   initialMessage: {
-                                    ...(input.initialMessage.messageId === undefined
+                                    ...(resolvedInitialMessageId === undefined
                                       ? {}
-                                      : { messageId: input.initialMessage.messageId }),
+                                      : { messageId: resolvedInitialMessageId }),
                                     text: input.initialMessage.text,
                                     attachments: input.initialMessage.attachments,
                                     ...(input.initialMessage.context === undefined

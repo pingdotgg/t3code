@@ -22,6 +22,7 @@ import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as TeamService from "../../../team/TeamService.ts";
+import { assertLocalAgentMcpExecutionAllowed } from "../../../team/hubOnly.ts";
 import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
@@ -457,6 +458,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
+        if (
+          input.message !== undefined ||
+          (input.attachments !== undefined && input.attachments.length > 0)
+        ) {
+          yield* assertLocalAgentMcpExecutionAllowed;
+        }
         const teamChildAuth = yield* TeamMcpAccess.authorizeChildThreadCreation(
           caller === undefined ? {} : { sourceThreadId: caller.id },
         );
@@ -504,11 +511,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           (input.message !== undefined || attachments.length > 0) &&
           Option.isSome(teamChildAuth)
         ) {
-          yield* teamChildAuth.value.teamService.recordTurnAuthoredByMember({
-            memberId: teamChildAuth.value.memberId,
-            threadId,
-            turnId: `msg:${messageId}`,
-          });
+          yield* teamChildAuth.value.teamService
+            .requireTurnAuthoredByMember({
+              memberId: teamChildAuth.value.memberId,
+              threadId,
+              turnId: `msg:${messageId}`,
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code: "capability_denied",
+                    message: error.message,
+                  }),
+              ),
+            );
         }
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,

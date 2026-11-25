@@ -557,6 +557,7 @@ export const layerWithOptions = (
       );
       const readLinkedEnvironments = Effect.gen(function* () {
         if (options.configureMcp === false || Option.isNone(serverSettings)) return undefined;
+        if (teamHubOnly) return true;
         return yield* serverSettings.value.getSettings.pipe(
           Effect.map((settings) => settings.linkedEnvironmentsEnabled),
           Effect.orElseSucceed(() => null),
@@ -580,6 +581,25 @@ export const layerWithOptions = (
           }),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      const activeSessionIdByThread = yield* Ref.make(new Map<ThreadId, ProviderSessionId>());
+      const memberScopedSessionId = (
+        base: ProviderSessionId,
+        actingMemberId: TeamMemberId,
+      ): ProviderSessionId => ProviderSessionId.make(`${base}::member:${actingMemberId}`);
+      const matchingSessionIds = (
+        current: ReadonlyMap<string, LiveSessionEntry>,
+        base: ProviderSessionId,
+      ): ReadonlyArray<ProviderSessionId> => {
+        const baseKey = sessionKey(base);
+        const prefix = `${baseKey}::member:`;
+        const matched: Array<ProviderSessionId> = [];
+        for (const [key, entry] of current) {
+          if (key === baseKey || key.startsWith(prefix)) {
+            matched.push(entry.runtime.providerSessionId);
+          }
+        }
+        return matched;
+      };
       // Retry per released entry; reusing ids must not lose cleanup for earlier threads.
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
@@ -3306,12 +3326,14 @@ export const layerWithOptions = (
                   });
                 }
               }
-              const key = sessionKey(input.providerSessionId);
-              const live = (yield* Ref.get(sessions)).get(key);
+              const previousSessionId =
+                (yield* Ref.get(activeSessionIdByThread)).get(input.threadId) ??
+                input.providerSessionId;
+              const live = (yield* Ref.get(sessions)).get(sessionKey(previousSessionId));
               if (live !== undefined) yield* releaseForLinkedEnvironments(live);
               // Recycle warm provider sessions whenever the acting team member changes between turns
               // so the child process restarts with a rotated MCP token bound to the new author.
-              const liveAfterLinks = (yield* Ref.get(sessions)).get(key);
+              const liveAfterLinks = (yield* Ref.get(sessions)).get(sessionKey(previousSessionId));
               if (liveAfterLinks !== undefined && input.actingMemberId !== undefined) {
                 const previousAuthor = liveAfterLinks.actingMemberIdByThread.get(input.threadId);
                 const nextAuthor = input.actingMemberId ?? null;
@@ -3322,17 +3344,17 @@ export const layerWithOptions = (
                       liveAfterLinks.attachedThreadIds.size <= 1)
                   ) {
                     yield* releaseEntry({
-                      providerSessionId: input.providerSessionId,
+                      providerSessionId: previousSessionId,
                       reason: "manual_shutdown",
                       detail:
                         "Turn author changed; recycling warm provider session with rotated MCP token.",
-                    }).pipe(logReleaseFailure(input.providerSessionId));
+                    }).pipe(logReleaseFailure(previousSessionId));
                   } else {
                     const previousCredentialId = liveAfterLinks.mcpCredentialIdByThread.get(
                       input.threadId,
                     );
                     yield* removeThreadAttachment({
-                      providerSessionId: input.providerSessionId,
+                      providerSessionId: previousSessionId,
                       threadId: input.threadId,
                       runtime: liveAfterLinks.runtime,
                     });
@@ -3340,26 +3362,46 @@ export const layerWithOptions = (
                   }
                 }
               }
+              const baseEntry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+              const baseOccupiedByOtherMember =
+                input.actingMemberId !== undefined &&
+                input.actingMemberId !== null &&
+                baseEntry !== undefined &&
+                [...baseEntry.actingMemberIdByThread.values()].some(
+                  (member) => member !== null && member !== input.actingMemberId,
+                );
+              // Isolate multi-thread sessions by acting member so an author switch never reuses
+              // another member's warm process even when sibling threads remain attached or busy.
+              const effectiveProviderSessionId =
+                baseOccupiedByOtherMember &&
+                input.actingMemberId !== undefined &&
+                input.actingMemberId !== null
+                  ? memberScopedSessionId(input.providerSessionId, input.actingMemberId)
+                  : input.providerSessionId;
+              const key = sessionKey(effectiveProviderSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
                     instanceId: input.modelSelection.instanceId,
-                    providerSessionId: input.providerSessionId,
+                    providerSessionId: effectiveProviderSessionId,
                     cause: `Provider ${existing.runtime.driver} does not support attaching multiple app threads to one session.`,
                   });
                 }
                 if (!attached) yield* agentScope.clear(input.threadId);
                 yield* ensureThreadAttached({
-                  providerSessionId: input.providerSessionId,
+                  providerSessionId: effectiveProviderSessionId,
                   threadId: input.threadId,
                   providerInstanceId: existing.runtime.instanceId,
                   ...(input.actingMemberId === undefined
                     ? {}
                     : { actingMemberId: input.actingMemberId }),
                 });
-                yield* touchActivity(input.providerSessionId);
+                yield* Ref.update(activeSessionIdByThread, (current) =>
+                  new Map(current).set(input.threadId, effectiveProviderSessionId),
+                );
+                yield* touchActivity(effectiveProviderSessionId);
                 return existing.exposedRuntime;
               }
 
@@ -3368,7 +3410,7 @@ export const layerWithOptions = (
                   (cause) =>
                     new ProviderSessionOpenError({
                       instanceId: input.modelSelection.instanceId,
-                      providerSessionId: input.providerSessionId,
+                      providerSessionId: effectiveProviderSessionId,
                       cause,
                     }),
                 ),
@@ -3397,7 +3439,7 @@ export const layerWithOptions = (
                   input.modelSelection.instanceId,
                   adapter.openSession({
                     threadId: input.threadId,
-                    providerSessionId: input.providerSessionId,
+                    providerSessionId: effectiveProviderSessionId,
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
                     promptSuggestions: promptSuggestionsEnabled,
@@ -3427,7 +3469,7 @@ export const layerWithOptions = (
                       ),
                       Effect.ensuring(
                         closeScopeWithin(sessionScope, {
-                          providerSessionId: input.providerSessionId,
+                          providerSessionId: effectiveProviderSessionId,
                           reason: "open_failed",
                         }),
                       ),
@@ -3437,7 +3479,7 @@ export const layerWithOptions = (
                     (cause) =>
                       new ProviderSessionOpenError({
                         instanceId: input.modelSelection.instanceId,
-                        providerSessionId: input.providerSessionId,
+                        providerSessionId: effectiveProviderSessionId,
                         cause,
                       }),
                   ),
@@ -3479,9 +3521,12 @@ export const layerWithOptions = (
                 updated.set(key, entry);
                 return updated;
               });
+              yield* Ref.update(activeSessionIdByThread, (current) =>
+                new Map(current).set(input.threadId, effectiveProviderSessionId),
+              );
               yield* dropReservation;
               yield* withActivityError(
-                input.providerSessionId,
+                effectiveProviderSessionId,
                 writeProviderSessionEvents({
                   runtime,
                   threadIds: [input.threadId],
@@ -3494,26 +3539,26 @@ export const layerWithOptions = (
                   releaseEntry(
                     Cause.hasInterruptsOnly(cause)
                       ? {
-                          providerSessionId: input.providerSessionId,
+                          providerSessionId: effectiveProviderSessionId,
                           reason: "manual_shutdown",
                           detail: "The provider session start was interrupted.",
                         }
                       : {
-                          providerSessionId: input.providerSessionId,
+                          providerSessionId: effectiveProviderSessionId,
                           reason: "runtime_error",
                           detail: "Failed to persist the provider-session attachment.",
                         },
-                  ).pipe(logReleaseFailure(input.providerSessionId)),
+                  ).pipe(logReleaseFailure(effectiveProviderSessionId)),
                 ),
               );
               yield* startEventPump(entry, sessionClosed);
-              yield* scheduleIdleRelease(input.providerSessionId);
+              yield* scheduleIdleRelease(effectiveProviderSessionId);
               return exposedRuntime;
             }),
           ),
         isLive: (providerSessionId) =>
           Ref.get(sessions).pipe(
-            Effect.map((current) => current.has(sessionKey(providerSessionId))),
+            Effect.map((current) => matchingSessionIds(current, providerSessionId).length > 0),
           ),
         get: Effect.fn("ProviderSessionManager.get")(
           function* (providerSessionId) {
@@ -3535,16 +3580,28 @@ export const layerWithOptions = (
               ),
             ),
         ),
-        close: (providerSessionId) =>
-          releaseEntry({ providerSessionId, reason: "manual_shutdown" }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderSessionCloseError({
-                  providerSessionId,
-                  cause,
-                }),
+        close: Effect.fn("ProviderSessionManager.close")(
+          function* (providerSessionId) {
+            const ids = matchingSessionIds(yield* Ref.get(sessions), providerSessionId);
+            const targets = ids.length > 0 ? ids : [providerSessionId];
+            yield* Effect.forEach(
+              targets,
+              (targetId) =>
+                releaseEntry({ providerSessionId: targetId, reason: "manual_shutdown" }),
+              { concurrency: "unbounded", discard: true },
+            );
+          },
+          (effect, providerSessionId) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderSessionCloseError({
+                    providerSessionId,
+                    cause,
+                  }),
+              ),
             ),
-          ),
+        ),
         closeInstance: Effect.fn("ProviderSessionManager.closeInstance")(
           function* (instanceId) {
             const active = [...(yield* Ref.get(sessions)).values()].filter(
@@ -3578,7 +3635,15 @@ export const layerWithOptions = (
               ),
             ),
         ),
-        release: releaseEntry,
+        release: Effect.fn("ProviderSessionManager.release")(function* (input) {
+          const ids = matchingSessionIds(yield* Ref.get(sessions), input.providerSessionId);
+          const targets = ids.length > 0 ? ids : [input.providerSessionId];
+          yield* Effect.forEach(
+            targets,
+            (targetId) => releaseEntry({ ...input, providerSessionId: targetId }),
+            { concurrency: "unbounded", discard: true },
+          );
+        }),
         releaseUnlessBusy: Effect.fn("ProviderSessionManager.releaseUnlessBusy")(function* (input) {
           const key = sessionKey(input.providerSessionId);
           const before = (yield* Ref.get(sessions)).get(key);
@@ -3624,7 +3689,21 @@ export const layerWithOptions = (
         ),
         detach: Effect.fn("ProviderSessionManager.detach")(
           function* (input) {
-            const key = sessionKey(input.providerSessionId);
+            const activeForThread = (yield* Ref.get(activeSessionIdByThread)).get(input.threadId);
+            const effectiveSessionId =
+              activeForThread !== undefined &&
+              activeForThread.startsWith(`${input.providerSessionId}::member:`)
+                ? activeForThread
+                : input.providerSessionId;
+            if (activeForThread === effectiveSessionId) {
+              yield* Ref.update(activeSessionIdByThread, (current) => {
+                if (current.get(input.threadId) !== effectiveSessionId) return current;
+                const next = new Map(current);
+                next.delete(input.threadId);
+                return next;
+              });
+            }
+            const key = sessionKey(effectiveSessionId);
             const currentEntry = (yield* Ref.get(sessions)).get(key);
             let detachedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread> = [];
             if (currentEntry?.supportsMultipleProviderThreads === true) {
@@ -3739,7 +3818,7 @@ export const layerWithOptions = (
               !detached.value.supportsMultipleProviderThreads
             ) {
               yield* releaseEntry({
-                providerSessionId: input.providerSessionId,
+                providerSessionId: effectiveSessionId,
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
                 detachedThreadId: input.threadId,
@@ -3755,7 +3834,7 @@ export const layerWithOptions = (
                 const ownerThreadId = providerThread.appThreadId ?? input.threadId;
                 yield* threadAttachment.withLock(
                   threadAttachmentKey({
-                    providerSessionId: input.providerSessionId,
+                    providerSessionId: effectiveSessionId,
                     threadId: ownerThreadId,
                   }),
                   Effect.gen(function* () {
@@ -3770,7 +3849,7 @@ export const layerWithOptions = (
                       Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
                       Effect.catchCause((cause) =>
                         Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {
-                          providerSessionId: input.providerSessionId,
+                          providerSessionId: effectiveSessionId,
                           threadId: ownerThreadId,
                           providerThreadId: providerThread.id,
                           cause,
@@ -3781,7 +3860,7 @@ export const layerWithOptions = (
                 );
               }
             }
-            yield* scheduleIdleRelease(input.providerSessionId);
+            yield* scheduleIdleRelease(effectiveSessionId);
           },
           (effect, input) =>
             effect.pipe(
@@ -3797,21 +3876,33 @@ export const layerWithOptions = (
             ),
         ),
         forgetLoadedProviderThread: (input) =>
-          Ref.update(sessions, (current) => {
-            const key = sessionKey(input.providerSessionId);
-            const entry = current.get(key);
-            // Only the matching load: a different key belongs to a later load of this thread.
-            if (
-              entry === undefined ||
-              entry.loadedProviderThreadKeyByThread.get(input.threadId) !==
-                providerThreadLoadKey({ ...input, runtime: entry.runtime })
-            ) {
-              return current;
-            }
-            const loadedProviderThreadKeyByThread = new Map(entry.loadedProviderThreadKeyByThread);
-            loadedProviderThreadKeyByThread.delete(input.threadId);
-            return new Map(current).set(key, { ...entry, loadedProviderThreadKeyByThread });
-          }),
+          Ref.get(activeSessionIdByThread).pipe(
+            Effect.flatMap((byThread) => {
+              const activeForThread = byThread.get(input.threadId);
+              const effectiveSessionId =
+                activeForThread !== undefined &&
+                activeForThread.startsWith(`${input.providerSessionId}::member:`)
+                  ? activeForThread
+                  : input.providerSessionId;
+              return Ref.update(sessions, (current) => {
+                const key = sessionKey(effectiveSessionId);
+                const entry = current.get(key);
+                // Only the matching load: a different key belongs to a later load of this thread.
+                if (
+                  entry === undefined ||
+                  entry.loadedProviderThreadKeyByThread.get(input.threadId) !==
+                    providerThreadLoadKey({ ...input, runtime: entry.runtime })
+                ) {
+                  return current;
+                }
+                const loadedProviderThreadKeyByThread = new Map(
+                  entry.loadedProviderThreadKeyByThread,
+                );
+                loadedProviderThreadKeyByThread.delete(input.threadId);
+                return new Map(current).set(key, { ...entry, loadedProviderThreadKeyByThread });
+              });
+            }),
+          ),
         // Stored suggestions can outlive a deleted thread, so check the thread before serving one.
         subscribePromptSuggestion: (threadId) =>
           SubscriptionRef.changes(promptSuggestionStore).pipe(

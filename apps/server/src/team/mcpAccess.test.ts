@@ -30,6 +30,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import { assertLocalAgentMcpExecutionAllowed } from "./hubOnly.ts";
 import * as TeamMcpAccess from "./mcpAccess.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
@@ -379,7 +380,26 @@ describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () =
           },
         ]);
 
-        // 5. External OAuth MCP client (session-bound) obeys identical team RBAC, and unbound fails closed.
+        // 5. External OAuth MCP client (session-bound) obeys identical team RBAC, and unbound tokens fail closed.
+        const unboundThreadToken = yield* mcpRegistry.issue({
+          threadId: aliceDefaultThread,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        });
+        const unboundThreadCaller = yield* mcpRegistry.resolve(
+          unboundThreadToken.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        expect(unboundThreadCaller).toBeDefined();
+        expect(
+          (yield* Effect.exit(
+            withThreadCaller(
+              unboundThreadCaller!,
+              TeamMcpAccess.assertCanReadThread(aliceDefaultThread),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        expect(yield* withThreadCaller(bobCaller!, TeamMcpAccess.canUseWorkflows())).toBe(false);
+        expect(yield* withThreadCaller(aliceCaller!, TeamMcpAccess.canUseWorkflows())).toBe(true);
+
         const unboundSession = yield* sessions.issue({ subject: "unbound-oauth" });
         expect(
           (yield* Effect.exit(
@@ -451,6 +471,10 @@ describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () =
           const error = Cause.squash(terminalExit.cause) as { readonly cause?: unknown };
           expect(String(error.cause ?? error)).toContain("--team-hub-only");
         }
+
+        // Hub-only MCP local execution guard refuses spawning local agent runs.
+        const mcpHubExit = yield* Effect.exit(assertLocalAgentMcpExecutionAllowed);
+        expect(mcpHubExit._tag).toBe("Failure");
 
         // PeerLinks automatically enables peer linking when teamHubOnly is active.
         const peerLayer = PeerLinks.layer.pipe(

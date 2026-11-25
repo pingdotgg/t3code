@@ -2638,6 +2638,7 @@ export default function ChatView(props: ChatViewProps) {
     routeThreadKey,
     currentRouteThreadKeyRef,
     canOperateThread: effectiveCanOperateThread,
+    canInterruptTurn: routeKind !== "server" || teamThreadTurnControls.canInterrupt,
     clientSettingsHydrated,
     activeThread,
     activeThreadId,
@@ -3698,7 +3699,9 @@ export default function ChatView(props: ChatViewProps) {
                   pendingApprovals={pendingApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}
-                  onRespondToApproval={onRespondToApprovalStable}
+                  {...(routeKind === "server" && !teamThreadTurnControls.canInterrupt
+                    ? {}
+                    : { onRespondToApproval: onRespondToApprovalStable })}
                   canOperateThread={effectiveCanOperateThread}
                   threadDetailRef={routeThreadDetailRef}
                   entriesInput={timelineEntriesInput}

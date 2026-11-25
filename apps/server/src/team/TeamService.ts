@@ -410,10 +410,20 @@ export class TeamService extends Context.Service<
       readonly threadId: ThreadId;
       readonly turnId: string;
     }) => Effect.Effect<void>;
+    readonly requireTurnAuthoredBySession: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+    }) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly requireTurnAuthoredByMember: (input: {
+      readonly memberId: TeamMemberId;
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+    }) => Effect.Effect<void, EnvironmentAuthorizationError>;
     readonly prepareTurnAttributionForCommand: (
       sessionId: AuthSessionId,
       command: OrchestrationV2Command,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
     readonly prepareThreadAttributionForMember: (input: {
       readonly memberId: TeamMemberId;
       readonly threadId: ThreadId;
@@ -442,6 +452,7 @@ export class TeamService extends Context.Service<
       readonly threadId: ThreadId;
       readonly runId?: string | null;
       readonly userMessageId?: string | null;
+      readonly continuedFromRunId?: string | null;
     }) => Effect.Effect<Option.Option<TeamMemberId>>;
     readonly assertActorIsActiveMember: (
       actor: TeamActor,
@@ -1791,64 +1802,68 @@ const make = Effect.gen(function* () {
     return Option.some(memberOption.value.id);
   });
 
+  const ACTIVE_RUN_STATUSES = new Set<string>(["preparing", "starting", "running", "waiting"]);
+
   const resolveTurnAuthorMemberId = Effect.fn("TeamService.resolveTurnAuthorMemberId")(
     function* (input: {
       readonly threadId: ThreadId;
       readonly runId?: string | null;
       readonly userMessageId?: string | null;
+      readonly continuedFromRunId?: string | null;
     }) {
       return yield* Effect.gen(function* () {
         const workspaceOption = yield* repository.getWorkspace();
         if (Option.isNone(workspaceOption)) return Option.none<TeamMemberId>();
-        const team = workspaceOption.value;
+        const resolveByRunOrMessage = Effect.fnUntraced(function* (
+          candidateRunId: string | null,
+          candidateMessageId: string | null,
+        ) {
+          if (candidateRunId !== null) {
+            const byRun = yield* repository.getTurnAttribution(candidateRunId);
+            if (Option.isSome(byRun) && byRun.value.threadId === input.threadId) {
+              return Option.some(byRun.value.authorMemberId);
+            }
+          }
+          let messageId = candidateMessageId;
+          if (messageId === null && candidateRunId !== null) {
+            const runRecord = yield* repository
+              .getRunInProjection(input.threadId, candidateRunId)
+              .pipe(Effect.orElseSucceed(() => Option.none()));
+            if (Option.isSome(runRecord)) {
+              messageId = runRecord.value.userMessageId;
+            }
+          }
+          if (messageId !== null) {
+            const byMessage = yield* repository.getTurnAttribution(`msg:${messageId}`);
+            if (Option.isSome(byMessage) && byMessage.value.threadId === input.threadId) {
+              return Option.some(byMessage.value.authorMemberId);
+            }
+          }
+          return Option.none<TeamMemberId>();
+        });
+
         const runId = input.runId ?? null;
-        if (runId !== null) {
-          const byRun = yield* repository.getTurnAttribution(runId);
-          if (Option.isSome(byRun) && byRun.value.threadId === input.threadId) {
-            return Option.some(byRun.value.authorMemberId);
-          }
+        const userMessageId = input.userMessageId ?? null;
+        const continuedFromRunId = input.continuedFromRunId ?? null;
+        const direct = yield* resolveByRunOrMessage(runId, userMessageId);
+        if (Option.isSome(direct)) return direct;
+        if (continuedFromRunId !== null) {
+          const fromContinued = yield* resolveByRunOrMessage(continuedFromRunId, null);
+          if (Option.isSome(fromContinued)) return fromContinued;
         }
-        let userMessageId = input.userMessageId ?? null;
-        if (userMessageId === null && runId !== null) {
-          const runRecord = yield* repository
-            .getRunInProjection(input.threadId, runId)
-            .pipe(Effect.orElseSucceed(() => Option.none()));
-          if (Option.isSome(runRecord)) {
-            userMessageId = runRecord.value.userMessageId;
-          }
-        }
-        if (userMessageId !== null) {
-          const byMessage = yield* repository.getTurnAttribution(`msg:${userMessageId}`);
-          if (Option.isSome(byMessage) && byMessage.value.threadId === input.threadId) {
-            return Option.some(byMessage.value.authorMemberId);
-          }
-        }
-        if (runId === null && userMessageId === null) {
+        if (runId === null && userMessageId === null && continuedFromRunId === null) {
           const activeRun = yield* repository
             .getActiveRunInProjection(input.threadId)
             .pipe(Effect.orElseSucceed(() => Option.none()));
           if (Option.isSome(activeRun)) {
-            const byActiveRun = yield* repository.getTurnAttribution(activeRun.value.runId);
-            if (Option.isSome(byActiveRun) && byActiveRun.value.threadId === input.threadId) {
-              return Option.some(byActiveRun.value.authorMemberId);
-            }
-            if (activeRun.value.userMessageId !== null) {
-              const byActiveMessage = yield* repository.getTurnAttribution(
-                `msg:${activeRun.value.userMessageId}`,
-              );
-              if (
-                Option.isSome(byActiveMessage) &&
-                byActiveMessage.value.threadId === input.threadId
-              ) {
-                return Option.some(byActiveMessage.value.authorMemberId);
-              }
-            }
+            const fromActive = yield* resolveByRunOrMessage(
+              activeRun.value.runId,
+              activeRun.value.userMessageId,
+            );
+            if (Option.isSome(fromActive)) return fromActive;
           }
         }
-        const attribution = yield* repository.getThreadAttribution(input.threadId);
-        if (Option.isSome(attribution) && attribution.value.teamId === team.id) {
-          return Option.some(attribution.value.creatorMemberId);
-        }
+        // Fail closed: never escalate missing turn attribution to the thread creator's privileges.
         return Option.none<TeamMemberId>();
       }).pipe(
         Effect.tapError((cause) =>
@@ -2308,10 +2323,22 @@ const make = Effect.gen(function* () {
         }
         return;
       }
-      const activeTurnAuthorOption = yield* resolveTurnAuthorMemberId({
-        threadId,
-        ...(runId !== undefined ? { runId } : {}),
-      });
+      let activeTurnAuthorOption: Option.Option<TeamMemberId> = Option.none();
+      if (runId != null) {
+        const targetRun = yield* repository
+          .getRunInProjection(threadId, runId)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        // Only an actually active run grants active-turn-author interrupt rights; a past or queued run cannot.
+        if (Option.isSome(targetRun) && ACTIVE_RUN_STATUSES.has(targetRun.value.status)) {
+          activeTurnAuthorOption = yield* resolveTurnAuthorMemberId({
+            threadId,
+            runId: targetRun.value.runId,
+            userMessageId: targetRun.value.userMessageId,
+          });
+        }
+      } else {
+        activeTurnAuthorOption = yield* resolveTurnAuthorMemberId({ threadId });
+      }
       if (
         !canMemberInterruptTeamTurn({
           member: ctx.member,
@@ -2717,25 +2744,21 @@ const make = Effect.gen(function* () {
         yield* assertActorCanPostInThread(actor, command.threadId);
         if (
           command.dispatchMode.type === "steer_active" ||
-          command.dispatchMode.type === "restart_active"
+          command.dispatchMode.type === "restart_active" ||
+          command.deliveryIntent === "steer" ||
+          command.deliveryIntent === "restart"
         ) {
           yield* assertActorCanSteerActiveTurn(actor, command.threadId);
           return command;
         }
-        if (command.dispatchMode.type === "start_immediately") {
-          const canSteer = yield* canActorSteerActiveTurn(actor, command.threadId);
-          if (!canSteer) {
-            const activeRun = yield* repository
-              .getActiveRunInProjection(command.threadId)
-              .pipe(Effect.orElseSucceed(() => Option.none()));
-            if (Option.isSome(activeRun)) {
-              // Non-creators never auto-steer an active turn; always queue behind it.
-              return {
-                ...command,
-                dispatchMode: { type: "queue_after_active" },
-              };
-            }
-          }
+        const canSteer = yield* canActorSteerActiveTurn(actor, command.threadId);
+        if (!canSteer) {
+          // Strip deliveryIntent and force queue_after_active so non-creators never auto-steer or restart.
+          const { deliveryIntent: _stripped, ...withoutDeliveryIntent } = command;
+          return {
+            ...withoutDeliveryIntent,
+            dispatchMode: { type: "queue_after_active" },
+          };
         }
         return command;
       }
@@ -2743,6 +2766,7 @@ const make = Effect.gen(function* () {
         yield* assertActorCanPromoteQueuedRun(actor, command.threadId);
         return command;
       case "run.interrupt":
+      case "subagent.stop":
         yield* assertActorCanInterruptThread(actor, command.threadId, command.runId);
         return command;
       case "thread.stop":
@@ -3693,17 +3717,99 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const requireTurnAuthoredByMember = Effect.fn("TeamService.requireTurnAuthoredByMember")(
+    function* (input: {
+      readonly memberId: TeamMemberId;
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+    }) {
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(
+          Effect.mapError(() =>
+            teamPostAuthError("Unable to verify team workspace for turn attribution."),
+          ),
+        );
+      if (Option.isNone(workspaceOption)) return;
+      const memberOption = yield* repository
+        .getMemberById(input.memberId)
+        .pipe(
+          Effect.mapError(() =>
+            teamPostAuthError("Unable to verify team member for turn attribution."),
+          ),
+        );
+      if (
+        Option.isNone(memberOption) ||
+        memberOption.value.teamId !== workspaceOption.value.id ||
+        memberOption.value.status !== "active"
+      ) {
+        return yield* teamPostAuthError("This session is not bound to an active team member.");
+      }
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const inserted = yield* repository
+        .recordTurnAttribution({
+          turnId: input.turnId,
+          threadId: input.threadId,
+          authorMemberId: memberOption.value.id,
+          createdAt: nowIso,
+        })
+        .pipe(
+          Effect.mapError(() =>
+            teamPostAuthError("Unable to persist authoritative team turn attribution."),
+          ),
+        );
+      if (inserted && !input.turnId.startsWith("msg:")) {
+        yield* publish({
+          version: 1,
+          type: "turnAttributed",
+          payload: {
+            turnId: input.turnId,
+            threadId: input.threadId,
+            authorMemberId: memberOption.value.id,
+            authorPseudo: memberOption.value.pseudo,
+            createdAt: nowIso,
+          },
+        });
+      }
+    },
+  );
+
+  const requireTurnAuthoredBySession = Effect.fn("TeamService.requireTurnAuthoredBySession")(
+    function* (input: {
+      readonly sessionId: AuthSessionId;
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+    }) {
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(
+          Effect.mapError(() =>
+            teamPostAuthError("Unable to verify team workspace for turn attribution."),
+          ),
+        );
+      if (Option.isNone(workspaceOption)) return;
+      const memberId = yield* resolveMemberIdForSession(input.sessionId);
+      if (Option.isNone(memberId)) {
+        return yield* teamPostAuthError("This session is not bound to an active team member.");
+      }
+      yield* requireTurnAuthoredByMember({
+        memberId: memberId.value,
+        threadId: input.threadId,
+        turnId: input.turnId,
+      });
+    },
+  );
+
   const prepareTurnAttributionForCommand = Effect.fn(
     "TeamService.prepareTurnAttributionForCommand",
   )(function* (sessionId: AuthSessionId, command: OrchestrationV2Command) {
-    if (command.type !== "message.dispatch") return;
-    // Record `msg:<messageId>` synchronously before enqueueCommand so EffectWorker/ProviderTurnStartService
-    // sees the exact turn author before spawning/recycling the provider session.
-    yield* recordTurnAuthored({
-      sessionId,
-      threadId: command.threadId,
-      turnId: `msg:${command.messageId}`,
-    });
+    if (command.type === "message.dispatch") {
+      yield* requireTurnAuthoredBySession({
+        sessionId,
+        threadId: command.threadId,
+        turnId: `msg:${command.messageId}`,
+      });
+    }
   });
 
   const recordThreadInheritedFromParent = Effect.fn("TeamService.recordThreadInheritedFromParent")(
@@ -3886,6 +3992,8 @@ const make = Effect.gen(function* () {
     rollbackPreparedThreadAttribution,
     recordTurnAuthored,
     recordTurnAuthoredByMember,
+    requireTurnAuthoredBySession,
+    requireTurnAuthoredByMember,
     prepareTurnAttributionForCommand,
     prepareThreadAttributionForMember,
     recordThreadCreatedByMember,

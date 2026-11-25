@@ -11,6 +11,7 @@ import {
   AuthStandardClientScopes,
   CommandId,
   MessageId,
+  NodeId,
   RunId,
   RuntimeRequestId,
   TeamMemberId,
@@ -1770,15 +1771,21 @@ describe("TeamService", () => {
             TeamService.TeamService["Service"]["assertAndNormalizeDispatchCommand"]
           >[1];
 
-        // 1. Non-creator (even owner Alice!) sending start_immediately while Bob's turn is active
-        //    is coerced to queue_after_active — NEVER auto-steers!
+        // 1. Non-creator (even owner Alice!) sending start_immediately or deliveryIntent: "auto"
+        //    is normalized to queue_after_active with deliveryIntent stripped — NEVER auto-steers!
         const normalizedAliceSend = yield* team.assertAndNormalizeDispatchCommand(
           aliceSession.sessionId,
-          makeSendCmd("alice-midturn", "start_immediately"),
+          {
+            ...makeSendCmd("alice-midturn", "start_immediately"),
+            deliveryIntent: "auto",
+          } as Parameters<
+            TeamService.TeamService["Service"]["assertAndNormalizeDispatchCommand"]
+          >[1],
         );
         expect(normalizedAliceSend.type).toBe("message.dispatch");
         if (normalizedAliceSend.type === "message.dispatch") {
           expect(normalizedAliceSend.dispatchMode.type).toBe("queue_after_active");
+          expect(normalizedAliceSend.deliveryIntent).toBeUndefined();
         }
 
         // Bob (creator) sending start_immediately keeps start_immediately.
@@ -1790,7 +1797,7 @@ describe("TeamService", () => {
           expect(normalizedBobSend.dispatchMode.type).toBe("start_immediately");
         }
 
-        // 2. Non-creator steer_active and restart_active are rejected even for owner/admin.
+        // 2. Non-creator steer_active, restart_active, and deliveryIntent steer/restart are rejected even for owner/admin.
         for (const policy of ["steer_active", "restart_active"] as const) {
           for (const actorSession of [aliceSession.sessionId, dana.sessionId, charlie.sessionId]) {
             const exit = yield* Effect.exit(
@@ -1798,6 +1805,19 @@ describe("TeamService", () => {
                 actorSession,
                 makeSendCmd(`steer-${policy}`, policy),
               ),
+            );
+            expect(exit._tag).toBe("Failure");
+          }
+        }
+        for (const intent of ["steer", "restart"] as const) {
+          for (const actorSession of [aliceSession.sessionId, dana.sessionId, charlie.sessionId]) {
+            const exit = yield* Effect.exit(
+              team.assertAndNormalizeDispatchCommand(actorSession, {
+                ...makeSendCmd(`intent-${intent}`, "queue_after_active"),
+                deliveryIntent: intent,
+              } as Parameters<
+                TeamService.TeamService["Service"]["assertAndNormalizeDispatchCommand"]
+              >[1]),
             );
             expect(exit._tag).toBe("Failure");
           }
@@ -1833,6 +1853,58 @@ describe("TeamService", () => {
         yield* team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, interruptCmd);
         yield* team.assertAndNormalizeDispatchCommand(dana.sessionId, interruptCmd);
         yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, interruptCmd);
+
+        // 4a. Past completed run authored by Charlie cannot grant interrupt rights; subagent.stop follows interrupt matrix.
+        const charliePastRunId = RunId.make("run-m4-charlie-completed");
+        yield* team.recordTurnAuthored({
+          sessionId: charlie.sessionId,
+          threadId: bobThreadId,
+          turnId: charliePastRunId,
+        });
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id,
+            status, requested_at, completed_at, payload_json
+          ) VALUES (
+            ${charliePastRunId},
+            ${bobThreadId},
+            99,
+            'codex',
+            NULL,
+            'completed',
+            '2026-01-01T00:00:00.000Z',
+            '2026-01-01T00:00:02.000Z',
+            ${JSON.stringify({ id: charliePastRunId, threadId: bobThreadId, status: "completed", userMessageId: "msg-charlie-past" })}
+          )
+        `;
+        expect(
+          (yield* Effect.exit(
+            team.assertAndNormalizeDispatchCommand(charlie.sessionId, {
+              type: "run.interrupt",
+              commandId: CommandId.make("cmd-interrupt-past"),
+              threadId: bobThreadId,
+              runId: charliePastRunId,
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertAndNormalizeDispatchCommand(charlie.sessionId, {
+              type: "subagent.stop",
+              commandId: CommandId.make("cmd-subagent-stop-charlie"),
+              threadId: bobThreadId,
+              runId: bobActiveRunId,
+              subagentId: NodeId.make("node-sub-1"),
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, {
+          type: "subagent.stop",
+          commandId: CommandId.make("cmd-subagent-stop-bob"),
+          threadId: bobThreadId,
+          runId: bobActiveRunId,
+          subagentId: NodeId.make("node-sub-1"),
+        });
 
         // 4b. Pending tool-approval / user-input responses follow the same non-creator containment.
         const respondCmd = {
@@ -1916,7 +1988,8 @@ describe("TeamService", () => {
         });
         expect(hookEvents).toHaveLength(1);
 
-        // 7. Pre-recorded message attribution resolves turn author before runId exists.
+        // 7. Pre-recorded message attribution resolves turn author before runId exists,
+        //    continuation turns inherit continuedFromRunId author, and unattributed runs fail closed (never escalate to creator).
         yield* team.prepareTurnAttributionForCommand(
           charlie.sessionId,
           makeSendCmd("charlie-pre", "queue_after_active"),
@@ -1926,6 +1999,18 @@ describe("TeamService", () => {
           userMessageId: MessageId.make("msg-charlie-pre"),
         });
         expect(Option.getOrThrow(resolvedAuthor)).toBe(charlie.member.id);
+        const resolvedContinuation = yield* team.resolveTurnAuthorMemberId({
+          threadId: bobThreadId,
+          runId: "run-unrecorded-continuation",
+          continuedFromRunId: charliePastRunId,
+        });
+        expect(Option.getOrThrow(resolvedContinuation)).toBe(charlie.member.id);
+        const unattributedAuthor = yield* team.resolveTurnAuthorMemberId({
+          threadId: bobThreadId,
+          runId: "run-missing-attribution",
+          userMessageId: "msg-missing-attribution",
+        });
+        expect(Option.isNone(unattributedAuthor)).toBe(true);
 
         // 8. Child thread inheritance with explicit creatorMemberId preserves parent's restricted View
         //    while attributing child creator & initial turn to actingMemberId (never widening).

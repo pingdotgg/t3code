@@ -117,6 +117,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import { placeholderThreadTitle } from "../orchestration-v2/placeholderThreadTitle.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as TeamService from "../team/TeamService.ts";
+import { assertLocalAgentMcpExecutionAllowed } from "../team/hubOnly.ts";
 import * as TeamMcpAccess from "../team/mcpAccess.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
@@ -2926,6 +2927,10 @@ const make = Effect.gen(function* () {
           : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
+        yield* TeamMcpAccess.assertIsAdmin(
+          "Cross-environment delegation requires owner or admin access.",
+          "team:environment:forward",
+        );
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         const { taskId } = yield* remoteDelegation.delegate(scope, {
@@ -2937,6 +2942,7 @@ const make = Effect.gen(function* () {
           : readTask(scope, taskId, false, true);
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
+      yield* assertLocalAgentMcpExecutionAllowed;
       if (
         input.target?.projectId !== undefined &&
         input.target.projectId !== parent.thread.projectId
@@ -3066,6 +3072,23 @@ const make = Effect.gen(function* () {
                   ),
                 )
             : false;
+          if (Option.isSome(teamChildAuth)) {
+            const derivedChildMessageId = deriveOrchestrationId.delegatedTaskMessage({ commandId });
+            yield* teamChildAuth.value.teamService
+              .requireTurnAuthoredByMember({
+                memberId: teamChildAuth.value.memberId,
+                threadId: derivedChildThreadId,
+                turnId: `msg:${derivedChildMessageId}`,
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  failure(
+                    "capability_denied",
+                    `Unable to record delegated turn attribution: ${error.message}`,
+                  ),
+                ),
+              );
+          }
           const result = yield* threadManagement
             .dispatch({
               type: "delegated_task.request",
@@ -3368,6 +3391,9 @@ const make = Effect.gen(function* () {
     createThreads: Effect.fn("OrchestratorMcpService.createThreads")(
       function* (callerScope, input) {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
+        if (input.threads.some((thread) => (thread.prompt?.trim().length ?? 0) > 0)) {
+          yield* assertLocalAgentMcpExecutionAllowed;
+        }
         const parentRun = ThreadManagementService.latestActiveRun(parent);
         if (
           parentRun === undefined ||
@@ -3469,11 +3495,13 @@ const make = Effect.gen(function* () {
                     )
                 : false;
               if (initialMessage !== undefined && Option.isSome(teamChildAuth)) {
-                yield* teamChildAuth.value.teamService.recordTurnAuthoredByMember({
-                  memberId: teamChildAuth.value.memberId,
-                  threadId,
-                  turnId: `msg:${initialMessage.messageId}`,
-                });
+                yield* teamChildAuth.value.teamService
+                  .requireTurnAuthoredByMember({
+                    memberId: teamChildAuth.value.memberId,
+                    threadId,
+                    turnId: `msg:${initialMessage.messageId}`,
+                  })
+                  .pipe(Effect.mapError((error) => failure("capability_denied", error.message)));
               }
               const created = yield* threadManagement
                 .dispatch({
@@ -3856,6 +3884,7 @@ const make = Effect.gen(function* () {
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* assertTargetWithinLimits(limits, target.thread);
       yield* TeamMcpAccess.assertCanPostInThread(input.threadId);
+      yield* assertLocalAgentMcpExecutionAllowed;
 
       const requestedMode = input.mode ?? "auto";
       let mode = requestedMode;
@@ -3863,13 +3892,9 @@ const make = Effect.gen(function* () {
         yield* TeamMcpAccess.assertCanSteerActiveTurn(input.threadId);
       } else if (requestedMode === "auto") {
         const canSteer = yield* TeamMcpAccess.canSteerActiveTurn(input.threadId);
+        // Always route non-creator auto sends as queue so concurrent turn starts can never auto-steer.
         if (!canSteer) {
-          const targetShell = yield* threadManagement
-            .getThreadShell(input.threadId)
-            .pipe(Effect.orElseSucceed(() => null));
-          if (targetShell?.activeRunId != null) {
-            mode = "queue";
-          }
+          mode = "queue";
         }
       }
       const key = yield* requestKey(input.clientRequestId);
@@ -3993,7 +4018,11 @@ const make = Effect.gen(function* () {
       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* assertTargetWithinLimits(limits, target.thread);
-      yield* TeamMcpAccess.assertCanInterruptThread(input.threadId, input.runId);
+      // Thread-wide stop ignores input.runId, so never let a caller pass a stale own runId to authorize stop.
+      yield* TeamMcpAccess.assertCanInterruptThread(
+        input.threadId,
+        input.stop === true ? undefined : input.runId,
+      );
       const key = yield* requestKey(input.clientRequestId);
       // A peer from before `stop` drops it when decoding, so it interrupts
       // the run instead, as this call did then.

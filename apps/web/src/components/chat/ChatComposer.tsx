@@ -1268,11 +1268,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isComposerApprovalState = activePendingApproval !== null;
   // A send declines the approvals shown here to redirect the agent, so it steers the waiting
   // turn instead of queueing behind it. Approvals the typing guard holds stay unseen and pending.
-  const followUpBehavior = pendingApprovals.some(
-    (approval) => !heldRequestIds.has(approval.requestId),
-  )
-    ? "steer"
-    : settings.followUpBehavior;
+  const followUpBehavior =
+    canSteer && pendingApprovals.some((approval) => !heldRequestIds.has(approval.requestId))
+      ? "steer"
+      : settings.followUpBehavior;
   const composerSuggestionsVisible = composerMenuOpen;
   const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;

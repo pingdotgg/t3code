@@ -2,6 +2,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   EnvironmentAuthorizationError,
+  OrchestratorMcpFailure,
   TerminalCwdStatError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -35,6 +36,19 @@ export const assertLocalAgentRpcExecutionAllowed = isTeamHubOnlyServer.pipe(
           new EnvironmentAuthorizationError({
             requiredScope: AuthOrchestrationOperateScope,
             requiredPermission: "team:hub_runner_required",
+            message: TEAM_HUB_ONLY_AGENT_ERROR_MESSAGE,
+          }),
+        )
+      : Effect.void,
+  ),
+);
+
+export const assertLocalAgentMcpExecutionAllowed = isTeamHubOnlyServer.pipe(
+  Effect.flatMap((hubOnly) =>
+    hubOnly
+      ? Effect.fail(
+          new OrchestratorMcpFailure({
+            code: "capability_denied",
             message: TEAM_HUB_ONLY_AGENT_ERROR_MESSAGE,
           }),
         )

@@ -23,6 +23,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { isTeamHubOnlyServer } from "../team/hubOnly.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 
 /** Long enough for the client to reach the linked environment and redeem it, and no longer. */
@@ -87,11 +88,14 @@ export class PeerClientPairing extends Context.Service<
 const makeIssuer = Effect.gen(function* () {
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const teamHubOnly = yield* isTeamHubOnlyServer;
   const maxRuntimeMode = serverSettings.managedPolicy?.limits?.maxRuntimeMode;
-  const enabled = serverSettings.getSettings.pipe(
-    Effect.map((settings) => settings.linkedEnvironmentsEnabled),
-    Effect.orElseSucceed(() => false),
-  );
+  const enabled = teamHubOnly
+    ? Effect.succeed(true)
+    : serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.linkedEnvironmentsEnabled),
+        Effect.orElseSucceed(() => false),
+      );
 
   const issue: PeerClientPairingIssuer["Service"]["issue"] = Effect.fn(
     "PeerClientPairingIssuer.issue",
