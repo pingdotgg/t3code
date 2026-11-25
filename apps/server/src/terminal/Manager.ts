@@ -2859,6 +2859,40 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError);
   });
 
+  const failStartup = Effect.fn("terminal.failStartup")(function* (
+    session: TerminalSessionState,
+    message: string,
+  ) {
+    yield* modifyManagerState((state) => {
+      cleanupProcessHandles(session);
+      session.status = "error";
+      session.startupError = message;
+      session.pid = null;
+      session.process = null;
+      session.hasRunningSubprocess = false;
+      session.childCommandLabel = null;
+      session.pendingProcessEvents = [];
+      session.pendingProcessEventIndex = 0;
+      session.processEventDrainRunning = false;
+      advanceEventSequence(session);
+      return [undefined, state] as const;
+    });
+    yield* unregisterTerminal({
+      threadId: session.threadId,
+      terminalId: session.terminalId,
+    });
+
+    yield* evictInactiveSessionsIfNeeded();
+
+    yield* publishEvent({
+      type: "error",
+      threadId: session.threadId,
+      terminalId: session.terminalId,
+      sequence: session.eventSequence,
+      message,
+    });
+  });
+
   const startSession = Effect.fn("terminal.startSession")(function* (
     session: TerminalSessionState,
     input: TerminalStartInput,
@@ -3003,34 +3037,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
       }
 
-      yield* modifyManagerState((state) => {
-        cleanupProcessHandles(session);
-        session.status = "error";
-        session.startupError = message;
-        session.pid = null;
-        session.process = null;
-        session.hasRunningSubprocess = false;
-        session.childCommandLabel = null;
-        session.pendingProcessEvents = [];
-        session.pendingProcessEventIndex = 0;
-        session.processEventDrainRunning = false;
-        advanceEventSequence(session);
-        return [undefined, state] as const;
-      });
-      yield* unregisterTerminal({
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-      });
-
-      yield* evictInactiveSessionsIfNeeded();
-
-      yield* publishEvent({
-        type: "error",
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-        sequence: session.eventSequence,
-        message,
-      });
+      yield* failStartup(session, message);
       yield* Effect.logError("failed to start terminal", {
         threadId: session.threadId,
         terminalId: session.terminalId,
@@ -3443,7 +3450,16 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const openLocked = (input: TerminalOpenInput) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input),
+      openWithWorkspaceLease(input).pipe(
+        Effect.onInterrupt(() =>
+          Effect.gen(function* () {
+            const session = yield* getSession(input.threadId, input.terminalId);
+            if (Option.isSome(session) && session.value.status === "starting") {
+              yield* failStartup(session.value, "Terminal startup was interrupted.");
+            }
+          }),
+        ),
+      ),
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
