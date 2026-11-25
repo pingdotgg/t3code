@@ -1244,54 +1244,160 @@ it.effect("a signal sent before its wait opens is delivered when it does", () =>
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
-it.effect("a signal buffered as its wait opens is still delivered to that wait", () =>
+it.effect("a buffered signal that expires after selection falls through to the next signal", () =>
   Effect.gen(function* () {
-    const looked = yield* Deferred.make<void>();
-    const opened = yield* Deferred.make<void>();
-    const checked = yield* Deferred.make<void>();
-    // Holds the signal between finding no wait and buffering, while the wait opens and finds no mail.
+    const checking = yield* Deferred.make<WorkflowStore.WorkflowStore["Service"]>();
+    const buffered = yield* Deferred.make<void>();
+    const selected = yield* Deferred.make<void>();
+    const claim = yield* Deferred.make<void>();
+    const delivered = yield* Deferred.make<void>();
     const store = Layer.effect(
       WorkflowStore.WorkflowStore,
-      Effect.gen(function* () {
-        const real = yield* WorkflowStore.make;
-        let first = true;
-        return WorkflowStore.WorkflowStore.of({
+      Effect.map(WorkflowStore.make, (real) =>
+        WorkflowStore.WorkflowStore.of({
           ...real,
-          waitAt: (address) =>
-            Effect.tap(real.waitAt(address), () => {
-              if (!("channel" in address) || address.channel !== "c9" || !first) return Effect.void;
-              first = false;
-              return Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opened));
-            }),
           mailNext: (addresses, passed) =>
-            Effect.tap(real.mailNext(addresses, passed), (mail) =>
-              mail === undefined && !first ? Deferred.succeed(checked, undefined) : Effect.void,
+            Effect.andThen(
+              Effect.andThen(Deferred.succeed(checking, real), Deferred.await(buffered)),
+              real.mailNext(addresses, passed),
             ),
-        });
-      }),
+          mailDeliver: (id, runId, name, woke) =>
+            Effect.andThen(
+              id === "short"
+                ? Effect.andThen(Deferred.succeed(selected, undefined), Deferred.await(claim))
+                : Effect.void,
+              Effect.tap(real.mailDeliver(id, runId, name, woke), (outcome) =>
+                outcome === "delivered" ? Deferred.succeed(delivered, undefined) : Effect.void,
+              ),
+            ),
+        }),
+      ),
     );
-    const { boot } = yield* harness(store);
+    const { boot, clock } = yield* harness(store);
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
-        const sent = yield* Effect.forkChild(
-          workflows.signal({ workflow: "review", channel: "c9" }, { merge: true }, { id: "s9" }),
-        );
-        yield* Deferred.await(looked);
+        const address = { workflow: "review", channel: "expiry" };
         const { runId } = yield* workflows.start(
           "review",
-          { change: "c9" },
-          { idempotencyKey: "c9" },
+          { change: address.channel },
+          { idempotencyKey: "expiry" },
         );
-        // Released once the open wait has looked for mail and found none.
-        yield* Deferred.await(checked);
-        yield* Deferred.succeed(opened, undefined);
-        assert.equal(yield* Fiber.join(sent), "delivered");
+        const real = yield* Deferred.await(checking);
+        yield* clock.close;
+        yield* TestClock.adjust(0);
+        const at = yield* DateTime.now;
+        const sender = { answeredAt: DateTime.formatIso(at) };
+        yield* real.mailPut({
+          signalId: "short",
+          address,
+          valueJson: '{"merge":false}',
+          expiresAt: DateTime.formatIso(DateTime.addDuration(at, "1 millis")),
+          sender,
+        });
+        yield* real.mailPut({
+          signalId: "live",
+          address,
+          valueJson: '{"merge":true}',
+          expiresAt: DateTime.formatIso(DateTime.addDuration(at, "1 minute")),
+          sender,
+        });
+        yield* Deferred.succeed(buffered, undefined);
+        yield* Deferred.await(selected);
+        yield* TestClock.adjust("1 millis");
+        yield* Deferred.succeed(claim, undefined);
+        yield* Deferred.await(delivered);
+        const kept = yield* real.mailSender("short");
+        yield* clock.open;
         const done = yield* workflows.waitFor(runId, status("completed"));
         assert.equal(done.result, "2 checks, merge: true");
-      }),
+        assert.deepStrictEqual(kept, sender);
+      }).pipe(Effect.ensuring(clock.open)),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect.each(["stays live", "expires", "is delivered concurrently"] as const)(
+  "a signal buffered as its wait opens %s",
+  (how) =>
+    Effect.gen(function* () {
+      const looked = yield* Deferred.make<void>();
+      const opened = yield* Deferred.make<void>();
+      const checked = yield* Deferred.make<void>();
+      const claiming = yield* Deferred.make<void>();
+      const claim = yield* Deferred.make<void>();
+      // Holds the signal between finding no wait and buffering, while the wait opens and finds no mail.
+      const store = Layer.effect(
+        WorkflowStore.WorkflowStore,
+        Effect.gen(function* () {
+          const real = yield* WorkflowStore.make;
+          let first = true;
+          return WorkflowStore.WorkflowStore.of({
+            ...real,
+            waitAt: (address) =>
+              Effect.tap(real.waitAt(address), () => {
+                if (!("channel" in address) || address.channel !== "c9" || !first)
+                  return Effect.void;
+                first = false;
+                return Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opened));
+              }),
+            mailNext: (addresses, passed) =>
+              Effect.tap(real.mailNext(addresses, passed), (mail) =>
+                mail === undefined && !first ? Deferred.succeed(checked, undefined) : Effect.void,
+              ),
+            mailDeliver: (id, runId, name, woke) =>
+              Effect.andThen(
+                Effect.andThen(Deferred.succeed(claiming, undefined), Deferred.await(claim)),
+                real.mailDeliver(id, runId, name, woke),
+              ),
+          });
+        }),
+      );
+      const { boot, clock, database } = yield* harness(store);
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const address = { workflow: "review", channel: "c9" };
+          const send = workflows.signal(address, { merge: true }, { id: "s9", ttl: "1 millis" });
+          const sent = yield* Effect.forkChild(
+            send.pipe(
+              Effect.match({ onFailure: (error) => error._tag, onSuccess: (outcome) => outcome }),
+            ),
+          );
+          yield* Deferred.await(looked);
+          const { runId } = yield* workflows.start(
+            "review",
+            { change: "c9" },
+            { idempotencyKey: "c9" },
+          );
+          // Released once the open wait has looked for mail and found none.
+          yield* Deferred.await(checked);
+          yield* clock.close;
+          yield* TestClock.adjust(0);
+          yield* Deferred.succeed(opened, undefined);
+          yield* Deferred.await(claiming);
+          if (how === "expires") yield* TestClock.adjust("1 millis");
+          if (how === "is delivered concurrently") assert.equal(yield* send, "delivered");
+          yield* Deferred.succeed(claim, undefined);
+          assert.equal(
+            yield* Fiber.join(sent),
+            how === "expires" ? "WorkflowInputError" : "delivered",
+          );
+          if (how === "expires") {
+            const sql = yield* Effect.provide(SqlClient.SqlClient, database);
+            assert.lengthOf(yield* sql`SELECT 1 FROM workflow_mail WHERE signal_id = 's9'`, 1);
+            assert.lengthOf(yield* sql`SELECT 1 FROM workflow_signals WHERE signal_id = 's9'`, 0);
+            assert.equal(
+              yield* workflows.signal(address, { merge: false }, { id: "replacement" }),
+              "delivered",
+            );
+          }
+          yield* clock.open;
+          const done = yield* workflows.waitFor(runId, status("completed"));
+          assert.equal(done.result, `2 checks, merge: ${how !== "expires"}`);
+        }).pipe(Effect.ensuring(clock.open)),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("a wait another signal claimed first wakes with that signal's value", () =>
