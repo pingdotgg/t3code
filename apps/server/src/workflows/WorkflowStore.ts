@@ -717,6 +717,8 @@ export const make = Effect.gen(function* () {
               ? Effect.flatMap(now, (at) => questionClaimed(runId, name, woke, at))
               : Effect.void,
           ),
+          // A paused run is not woken, so nothing else would tell a watcher the wait is taken.
+          Effect.tap((taken) => (taken ? PubSub.publish(changes, runId) : Effect.void)),
         ),
     ),
     waitsToWake: Effect.gen(function* () {
@@ -777,7 +779,10 @@ export const make = Effect.gen(function* () {
           ),
           Effect.orDie,
         );
-      if (outcome === "delivered") yield* questionClaimed(runId, name, woke, at);
+      if (outcome === "delivered") {
+        yield* questionClaimed(runId, name, woke, at);
+        yield* PubSub.publish(changes, runId);
+      }
       return outcome;
     }),
     prunable: Effect.fn("WorkflowStore.prunable")(function* (before, limit) {
