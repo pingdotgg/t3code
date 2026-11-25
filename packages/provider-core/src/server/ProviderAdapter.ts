@@ -795,8 +795,9 @@ export interface ProviderAdapterV2SessionRuntime {
   ) => number | undefined;
   readonly canReuseContextUsage?: (previous: ModelSelection, next: ModelSelection) => boolean;
   /**
-   * False when the native session no longer holds a cancelled turn's request. Set only by
-   * providers that can drop one, so a turn a restart cut off is settled like a Stop.
+   * False when the provider will not see a cancelled or stopped turn's request again: the native
+   * session no longer holds it, and this session runtime does not carry it into the next turn.
+   * Set only by providers that can drop one, so the turn is settled like a failed one.
    */
   readonly nativeTurnKept?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;

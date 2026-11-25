@@ -3377,9 +3377,15 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               readonly providerThread: OrchestrationV2ProviderThread;
               readonly nativeTurnId: string;
             }) {
+              const agentId = nativeThreadId(keptInput.providerThread);
+              // A Stop this session saw leaves the request here; the next turn sends it again.
+              const interrupted = yield* Ref.get(interruptedPrompt);
+              if (interrupted?.agent === agentId && interrupted.runId === keptInput.nativeTurnId) {
+                return true;
+              }
               const agent = yield* openAgent({
                 operation: "resume",
-                agentId: nativeThreadId(keptInput.providerThread),
+                agentId,
                 storeCwd: keptInput.providerThread.nativeMetadata?.cursorStoreCwd,
                 threadId: keptInput.providerThread.appThreadId ?? input.threadId,
                 modelSelection: input.modelSelection,

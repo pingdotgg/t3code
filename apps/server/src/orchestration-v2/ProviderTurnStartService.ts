@@ -154,10 +154,11 @@ export function abandonedProviderTurns(
 const CUT_TURN_SETTLED = "cut-turn-settled";
 
 /**
- * The previous run's cancelled turn when no adapter said whether it kept the request. A Stop
- * settles that as the turn ends; a restart cancels the turn with no adapter left to tell.
+ * The previous run's cancelled or stopped turn when no adapter said whether it kept the request.
+ * A restart cancels the turn with no adapter left to tell. A Stop leaves its request with the
+ * session, which is gone once the session closes.
  */
-function unsettledCancelledProviderTurn(
+function unsettledCutProviderTurn(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
   run: Pick<OrchestrationV2Run, "ordinal">,
   providerThread: Pick<OrchestrationV2ProviderThread, "id" | "nativeThreadRef">,
@@ -172,7 +173,11 @@ function unsettledCancelledProviderTurn(
         : latest,
     undefined,
   );
-  if (previous?.status !== "cancelled" || previous.activeAttemptId === null) return undefined;
+  if (
+    (previous?.status !== "cancelled" && previous?.status !== "interrupted") ||
+    previous.activeAttemptId === null
+  )
+    return undefined;
   const turn = projection.providerTurns.findLast(
     (candidate) =>
       candidate.runAttemptId === previous.activeAttemptId &&
@@ -182,7 +187,7 @@ function unsettledCancelledProviderTurn(
   if (
     turn === undefined ||
     nativeTurnId == null ||
-    turn.status !== "cancelled" ||
+    (turn.status !== "cancelled" && turn.status !== "interrupted") ||
     turn.promptDropped === true ||
     (turn.nativeThreadRef !== undefined &&
       turn.nativeThreadRef.nativeId !== providerThread.nativeThreadRef?.nativeId)
@@ -1103,7 +1108,7 @@ export const layer: Layer.Layer<
       }
       const session = sessionResult.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
-      const cutTurn = unsettledCancelledProviderTurn(projection, run, providerThread);
+      const cutTurn = unsettledCutProviderTurn(projection, run, providerThread);
       if (
         cutTurn !== undefined &&
         session.nativeTurnKept !== undefined &&
@@ -1114,8 +1119,8 @@ export const layer: Layer.Layer<
             .pipe(Effect.orElseSucceed(() => false))
         ))
       ) {
-        // Settle it as a Stop would: mark the request dropped and take back its inline context, so
-        // this turn resends both. Starting again reads the settled state.
+        // Settle it as a failed turn is settled: mark the request dropped and take back its inline
+        // context, so this turn resends both. Starting again reads the settled state.
         const occurredAt = yield* DateTime.now;
         const allocateEventId = () =>
           idAllocator.allocate.event({ threadId: projection.thread.id });
