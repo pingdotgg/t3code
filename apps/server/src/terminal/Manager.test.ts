@@ -3075,6 +3075,34 @@ it.layer(
       }
     }),
   );
+  it.effect("does not leave a terminal starting after its open request is cancelled", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new GatedPtyAdapter();
+      const { manager } = yield* createManager(5, { ptyAdapter });
+      const input = openInput();
+      const gate = {
+        spawning: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      ptyAdapter.gate = gate;
+      const opening = yield* manager.open(input).pipe(Effect.forkChild());
+      yield* Deferred.await(gate.spawning);
+      yield* Fiber.interrupt(opening);
+
+      const events: TerminalAttachStreamEvent[] = [];
+      const stop = yield* manager.attachStream(input, (event) =>
+        Effect.sync(() => {
+          events.push(event);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stop));
+      const initial = events[0];
+      expect(initial?.type === "snapshot" ? initial.snapshot.status : initial?.type).not.toBe(
+        "starting",
+      );
+    }),
+  );
+
   it.effect("removes terminal metadata subscriptions when initial delivery fails", () =>
     Effect.gen(function* () {
       const { manager } = yield* createManager();
