@@ -150,15 +150,17 @@ export function resolveProvidersForCwd<P extends ServerProvider>(
       provider.status === "warning" &&
       provider.auth.status === "unauthenticated" &&
       models.some((model) => !model.isCustom && model.slug !== "default");
-    return projectAuthenticated
-      ? {
-          ...provider,
-          models,
-          auth: { status: "authenticated", type: "pi" } as const,
-          status: "ready" as const,
-          message: undefined,
-        }
-      : { ...provider, models };
+    return {
+      ...provider,
+      models,
+      ...(projectAuthenticated
+        ? {
+            auth: { status: "authenticated", type: "pi" } as const,
+            status: "ready" as const,
+            message: undefined,
+          }
+        : {}),
+    };
   });
   return resolved.every((provider, index) => provider === providers[index]) ? providers : resolved;
 }
