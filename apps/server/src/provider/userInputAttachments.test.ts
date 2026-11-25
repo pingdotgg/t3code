@@ -657,9 +657,46 @@ describe("question answer paths", () => {
             "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
             "chapter.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Guide</title></head><body><table><tr><th>January</th><th>February</th><th>March</th></tr><tr><td colspan="2">No sales</td><td>420</td></tr></table></body></html>',
+              '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Guide</title></head><body><table><tr><th>Region</th><th>Month</th><th>Revenue</th></tr><tr><td rowspan="2">North</td><td>June</td><td>400</td></tr><tr><td>July</td><td>520</td></tr></table></body></html>',
           },
-          expected: ["January\tFebruary\tMarch\nNo sales\t\t420"],
+          expected: ["North\tJune\t400\n\tJuly\t520"],
+        },
+        // A prefixed span attribute is foreign markup, not an XHTML span.
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:x="urn:x"><body><table><tr><td x:colspan="2" x:rowspan="2">A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table></body></html>',
+          },
+          expected: ["A\tB\nC\tD"],
+        },
+        // Cells past the column limit truncate only when they hold text.
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><table><tr><td>Heading</td><td rowspan="2" colspan="513"/></tr><tr><td>Next row</td></tr></table><p>After the table</p></body></html>',
+          },
+          expected: ["Heading", "Next row", "After the table"],
+          absent: ["[Extracted text truncated"],
+        },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><table><tr><td colspan="513">Heading</td><td>Out of range</td></tr></table><p>After the table</p></body></html>',
+          },
+          expected: ["Heading", "[Extracted text truncated"],
+          absent: ["Out of range", "After the table"],
         },
         // Word stores object layout and field data outside the visible document text.
         {
