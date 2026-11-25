@@ -946,7 +946,8 @@ const decodeUtf8OrGb18030 = (bytes: Uint8Array): string => {
 };
 
 // Git emits file bytes as stored; without a working-tree-encoding attribute, GBK/GB18030
-// sources are not UTF-8. Decode per line so one such file does not garble UTF-8 neighbours.
+// sources are not UTF-8. Decode per LF line or NUL record (`-z` output) so one such file or
+// path does not garble UTF-8 neighbours.
 const decodeGitText = (bytes: Uint8Array): string => {
   try {
     return strictUtf8Decoder.decode(bytes);
@@ -954,8 +955,9 @@ const decodeGitText = (bytes: Uint8Array): string => {
     let text = "";
     let start = 0;
     while (start < bytes.length) {
-      const newline = bytes.indexOf(0x0a, start);
-      const end = newline === -1 ? bytes.length : newline + 1;
+      let end = start;
+      while (end < bytes.length && bytes[end] !== 0x0a && bytes[end] !== 0x00) end += 1;
+      end = Math.min(end + 1, bytes.length);
       text += decodeUtf8OrGb18030(bytes.subarray(start, end));
       start = end;
     }

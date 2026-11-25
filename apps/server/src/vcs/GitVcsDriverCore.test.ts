@@ -4806,6 +4806,37 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    // macOS and Windows filesystems reject file names that are not valid UTF-8.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+      "keeps UTF-8 paths intact next to a non-UTF-8 path in NUL-separated output",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          for (const name of ["文档.md", "café.md"]) {
+            NodeFS.writeFileSync(NodePath.join(cwd, name), "x\n");
+          }
+          NodeFS.writeFileSync(
+            Buffer.concat([
+              Buffer.from(`${cwd}/Gro`),
+              Buffer.from([0xf6, 0xdf]),
+              Buffer.from("e.c"),
+            ]),
+            "x\n",
+          );
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const result = yield* driver.execute({
+            operation: "test.lsFilesOthers",
+            cwd,
+            args: ["ls-files", "-z", "--others"],
+          });
+          const paths = result.stdout.split("\0");
+          assert.include(paths, "文档.md");
+          assert.include(paths, "café.md");
+        }),
+    );
+
     it.effect("reads a base ref that looks like an option as a revision", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
