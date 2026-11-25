@@ -4,6 +4,7 @@ import { Toolbar } from "./Toolbar";
 import type { AppBarMenu, AppBarMenuItem } from "./AppBar.types";
 
 function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
+  const probe = perfProbe;
   return items.map((item) =>
     "items" in item ? (
       <Toolbar.Menu key={item.id} title={item.title} icon={item.icon} inline={item.inline}>
@@ -18,9 +19,9 @@ function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
         destructive={item.destructive}
         isOn={item.selected}
         onPress={
-          perfProbe
+          probe
             ? () => {
-                perfProbe.menuAction();
+                probe.menuAction();
                 item.onPress();
               }
             : item.onPress

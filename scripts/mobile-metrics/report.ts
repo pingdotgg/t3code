@@ -368,6 +368,6 @@ export function summaryTable(metrics: MobileMetrics) {
     );
   });
   for (const entry of metrics.runs.flatMap((run) => run.skipped ?? []))
-    lines.push("", `Skipped ${entry.case}: ${entry.reason}`);
+    lines.push("", `Not measured in a round, ${entry.case}: ${entry.reason}`);
   return lines.join("\n");
 }

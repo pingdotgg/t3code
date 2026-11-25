@@ -202,7 +202,6 @@ const measureOnce = Effect.fn("mobileMetrics.measureOnce")(function* (options: M
   const visited = new Set<string>();
   for (let round = 1; round <= options.rounds; round++) {
     for (const name of options.cases) {
-      if (skipped.some((entry) => entry.case === name)) continue;
       const ctx: CaseContext = { session, device, fixtures, round, visited };
       const result = yield* CASES[name](ctx).pipe(
         Effect.map((measured) => ({ measured })),

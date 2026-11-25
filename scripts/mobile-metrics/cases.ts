@@ -96,7 +96,8 @@ const toHome = Effect.fn("metrics.toHome")(function* (ctx: CaseContext) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const state = yield* ctx.device.state;
     if (state.route?.name === "Home") break;
-    yield* ctx.device.back;
+    // UIKit can report an unknown outcome while the pop animates; the next state read decides.
+    yield* ctx.device.back.pipe(Effect.ignore);
     yield* Effect.sleep("800 millis");
   }
   yield* ctx.device.waitFor("Home", (state) => state.route?.name === "Home", 5_000);
@@ -118,6 +119,22 @@ const findNode = Effect.fn("metrics.findNode")(function* (
     yield* Effect.sleep("500 millis");
   }
   return yield* new CaseFailure({ message: `No ${description} on screen.` });
+});
+
+/** Taps the shared PR/issues list switcher by the centre of its labelled view. */
+const pressSwitcher = Effect.fn("metrics.pressSwitcher")(function* (
+  ctx: CaseContext,
+  label: string,
+) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const node = (yield* ctx.device.nodes).find((entry) => entry.label === label && entry.rect);
+    if (node) {
+      const { x, y } = ctx.device.center(node);
+      return yield* ctx.device.pressAt(x, y);
+    }
+    yield* Effect.sleep("500 millis");
+  }
+  return yield* new CaseFailure({ message: `No "${label}" on screen.` });
 });
 
 /** A Home row's label is its title and status, e.g. "Bench short, Done". */
@@ -252,8 +269,9 @@ export const CASES = {
   issues: Effect.fn("metrics.issues")(function* (ctx: CaseContext) {
     yield* toHome(ctx);
     yield* ctx.device.press('role=button label="PRs"');
-    // The header title is the switcher's button (SharedSlotTitle); its label names the open list.
-    yield* ctx.device.press('role=button label="Pull requests, switch list"');
+    // The header title (SharedSlotTitle) is a menu trigger whose whole area belongs to its child
+    // views, so agent-device will not tap it by ref; tap its centre instead.
+    yield* pressSwitcher(ctx, "Pull requests, switch list");
     const target = yield* findNode(ctx, "Issues menu item", (label) => label === "Issues");
     const step = yield* measure(
       ctx,
@@ -261,7 +279,7 @@ export const CASES = {
       ctx.device.press(target),
     );
     // Hand the slot back, so the pull request case finds its tab.
-    yield* ctx.device.press('role=button label="Issues, switch list"');
+    yield* pressSwitcher(ctx, "Issues, switch list");
     yield* ctx.device.press(
       yield* findNode(ctx, "Pull requests menu item", (label) => label === "Pull requests"),
     );

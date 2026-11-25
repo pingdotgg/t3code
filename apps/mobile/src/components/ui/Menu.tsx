@@ -101,9 +101,10 @@ export function Menu(props: MenuProps) {
     };
   }
   const { onPressAction } = props;
-  if (perfProbe && onPressAction)
+  const probe = perfProbe;
+  if (probe && onPressAction)
     menuProps.onPressAction = (event) => {
-      perfProbe.menuAction();
+      probe.menuAction();
       onPressAction(event);
     };
   return (

@@ -118,8 +118,7 @@ thread's rows, composer keys, and JS and UI frames. `mobile-metrics --help` list
 - A side chat is seeded with one exchange, since an empty one shows a placeholder rather than a
   timeline and would never count as content.
 - `--soak <n>` repeats the switch cases and samples the Hermes heap after each one, with growth
-  per iteration after warm-up and per case. Development Hermes exposes no `gc`, so heap samples
-  include garbage; trust a slope over many iterations, not one sample.
+  per iteration after warm-up and per case. Each sample follows a full Hermes `gc()`.
 - `settled` is the last commit before a second of quiet. Any streaming thread keeps Home
   committing, so only `switch-working` streams, and it stops its thread when done.
 
