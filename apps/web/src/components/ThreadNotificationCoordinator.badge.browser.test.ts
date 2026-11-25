@@ -541,6 +541,7 @@ it("gates team thread notifications by creator, follow state, and completing tur
     creatorPseudo: alice.pseudo,
     viewId,
     locked: false,
+    lockedByMemberId: null,
     createdAt: "2026-09-13T07:00:00.000Z",
   };
   const aliceRun1 = {
@@ -560,6 +561,7 @@ it("gates team thread notifications by creator, follow state, and completing tur
     },
     currentMember: bob,
     members: [alice, bob],
+    views: [],
     invites: [],
     threadAttributions: [attribution],
     followedThreadIds: new Set(),
@@ -569,6 +571,7 @@ it("gates team thread notifications by creator, follow state, and completing tur
       [aliceId, alice],
       [bobId, bob],
     ]),
+    viewById: new Map(),
     attributionByThreadId: new Map([[threadId, attribution]]),
   };
 
@@ -671,6 +674,7 @@ it("defers notifications and sound across team stream races without leaking coll
     creatorPseudo: alice.pseudo,
     viewId,
     locked: false,
+    lockedByMemberId: null,
     createdAt: "2026-09-13T07:00:00.000Z",
   };
   const aliceRun1 = {
@@ -690,6 +694,7 @@ it("defers notifications and sound across team stream races without leaking coll
     },
     currentMember: bob,
     members: [alice, bob],
+    views: [],
     invites: [],
     threadAttributions: [attribution],
     followedThreadIds: new Set(),
@@ -699,6 +704,7 @@ it("defers notifications and sound across team stream races without leaking coll
       [aliceId, alice],
       [bobId, bob],
     ]),
+    viewById: new Map(),
     attributionByThreadId: new Map([[threadId, attribution]]),
   };
 

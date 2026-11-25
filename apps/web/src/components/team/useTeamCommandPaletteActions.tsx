@@ -1,12 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
+  canCurrentMemberChangeThreadView,
+  canCurrentMemberToggleThreadLock,
   hasActiveTeamEnvironment,
   isFollowingTeamThread,
   isTeamColleagueThread,
+  isTeamThreadLocked,
+  listAccessibleTeamViews,
+  resolveTeamThreadView,
 } from "@t3tools/client-runtime/team";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useGT } from "gt-react";
-import { BellIcon, BellOffIcon, UsersIcon } from "lucide-react";
+import { BellIcon, BellOffIcon, LayersIcon, LockIcon, UnlockIcon, UsersIcon } from "lucide-react";
 
 import {
   teamEnvironment,
@@ -17,6 +22,7 @@ import {
   useTeamStatesByEnvironment,
 } from "~/state/team";
 import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "../CommandPalette.logic";
+import { useTeamThreadAccessActions } from "./useTeamThreadAccessActions";
 import { useTeamThreadFollowToggle } from "./useTeamThreadFollowToggle";
 
 export function useTeamCommandPaletteActions(
@@ -27,6 +33,7 @@ export function useTeamCommandPaletteActions(
   const showColleaguesThreads = useShowColleaguesThreads();
   const showFollowedThreadsOnly = useShowFollowedThreadsOnly();
   const { setFollowing: setTeamThreadFollowing } = useTeamThreadFollowToggle();
+  const { setThreadView, setThreadLocked } = useTeamThreadAccessActions();
   const activeTeamState = activeThread
     ? teamStatesByEnvironment.get(activeThread.environmentId)
     : undefined;
@@ -42,6 +49,12 @@ export function useTeamCommandPaletteActions(
       ? teamEnvironment.unfollowThread
       : teamEnvironment.followThread
     ).permissionAtom(activeThread?.environmentId ?? null),
+  );
+  const canSetViewScope = useAtomValue(
+    teamEnvironment.setThreadView.permissionAtom(activeThread?.environmentId ?? null),
+  );
+  const canSetLockScope = useAtomValue(
+    teamEnvironment.setThreadLocked.permissionAtom(activeThread?.environmentId ?? null),
   );
 
   const items: CommandPaletteActionItem[] = [];
@@ -73,6 +86,56 @@ export function useTeamCommandPaletteActions(
         });
       },
     });
+  }
+  if (activeThread && activeTeamState?.team != null) {
+    if (canSetLockScope && canCurrentMemberToggleThreadLock(activeTeamState)) {
+      const isLocked = isTeamThreadLocked({
+        teamState: activeTeamState,
+        threadId: activeThread.id,
+      });
+      items.push({
+        kind: "action",
+        value: "action:team-toggle-lock",
+        searchTerms: ["team", "lock", "unlock", "read-only", "admin", "owner", "thread"],
+        title: isLocked ? gt("Unlock current thread") : gt("Lock current thread"),
+        icon: isLocked ? (
+          <UnlockIcon className={ITEM_ICON_CLASS} />
+        ) : (
+          <LockIcon className={ITEM_ICON_CLASS} />
+        ),
+        run: async () => {
+          await setThreadLocked({
+            environmentId: activeThread.environmentId,
+            threadId: activeThread.id,
+            locked: !isLocked,
+          });
+        },
+      });
+    }
+    if (canSetViewScope && canCurrentMemberChangeThreadView(activeTeamState)) {
+      const currentView = resolveTeamThreadView({
+        teamState: activeTeamState,
+        threadId: activeThread.id,
+      });
+      const accessibleViews = listAccessibleTeamViews(activeTeamState);
+      for (const view of accessibleViews) {
+        if (view.id === currentView?.id) continue;
+        items.push({
+          kind: "action",
+          value: `action:team-move-view:${view.id}`,
+          searchTerms: ["team", "view", "move", "access", "visibility", view.name],
+          title: gt("Move current thread to view: {viewName}", { viewName: view.name }),
+          icon: <LayersIcon className={ITEM_ICON_CLASS} />,
+          run: async () => {
+            await setThreadView({
+              environmentId: activeThread.environmentId,
+              threadId: activeThread.id,
+              viewId: view.id,
+            });
+          },
+        });
+      }
+    }
   }
   if (hasActiveTeamEnvironment(teamStatesByEnvironment)) {
     items.push({

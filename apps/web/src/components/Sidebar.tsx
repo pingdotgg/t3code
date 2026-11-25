@@ -2,7 +2,7 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
 import { attachSidebarTree } from "../lib/sidebarTree";
-import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
+import { type EnvironmentId, type ScopedProjectRef, type TeamViewId } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import {
   dropThreadContext,
@@ -264,12 +264,14 @@ import {
   shouldShowThreadInTeamFilter,
 } from "@t3tools/client-runtime/team";
 import {
+  readTeamThreadAccessActionState,
   readTeamThreadFollowActionState,
   useShowColleaguesThreads,
   useShowFollowedThreadsOnly,
   useTeamStatesByEnvironment,
 } from "../state/team";
 import { TeamColleaguesToggle } from "./team/TeamColleaguesToggle";
+import { useTeamThreadAccessActions } from "./team/useTeamThreadAccessActions";
 import { useTeamThreadFollowToggle } from "./team/useTeamThreadFollowToggle";
 import { TooltipProvider } from "./ui/tooltip";
 import {
@@ -2632,6 +2634,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const { setFollowing: setTeamThreadFollowing } = useTeamThreadFollowToggle();
+  const { setThreadView: setTeamThreadView, setThreadLocked: setTeamThreadLocked } =
+    useTeamThreadAccessActions();
   const handleDraftContextMenu = useStableCallback(
     (draftId: DraftId, position: { x: number; y: number }, source: ContextMenuSource) => {
       void (async () => {
@@ -2735,6 +2739,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        const teamAccessActions = readTeamThreadAccessActionState(
+          threadRef.environmentId,
+          threadRef.threadId,
+        );
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2767,6 +2775,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 threadRef.environmentId,
                 threadRef.threadId,
               ),
+              teamView: teamAccessActions.teamView,
+              teamLock: teamAccessActions.teamLock,
               canRename: !fromSearch,
               supports: {
                 settlement: configLoaded,
@@ -2783,6 +2793,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
+        if (clicked.value?.startsWith("team-view:")) {
+          await setTeamThreadView({
+            environmentId: threadRef.environmentId,
+            threadId: threadRef.threadId,
+            viewId: clicked.value.slice("team-view:".length) as TeamViewId,
+          });
+          return;
+        }
         if (clicked.value?.startsWith("snooze:")) {
           const preset =
             clicked.value === "snooze:custom"
@@ -2843,6 +2861,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               environmentId: threadRef.environmentId,
               threadId: threadRef.threadId,
               follow: clicked.value === "follow",
+            });
+            return;
+          case "team-lock":
+          case "team-unlock":
+            await setTeamThreadLocked({
+              environmentId: threadRef.environmentId,
+              threadId: threadRef.threadId,
+              locked: clicked.value === "team-lock",
             });
             return;
           case "unsettle":

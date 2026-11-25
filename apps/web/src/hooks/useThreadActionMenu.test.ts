@@ -65,7 +65,13 @@ vi.mock("../state/environments", () => ({ usePrimaryEnvironmentId: () => "primar
 vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metadata" } }));
 vi.mock("../state/team", () => ({
   readTeamThreadFollowActionState: () => null,
-  teamEnvironment: { followThread: "follow", unfollowThread: "unfollow" },
+  readTeamThreadAccessActionState: () => ({ teamView: null, teamLock: null }),
+  teamEnvironment: {
+    followThread: "follow",
+    unfollowThread: "unfollow",
+    setThreadView: "set-view",
+    setThreadLocked: "set-locked",
+  },
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand: () => async () => {

@@ -12,6 +12,7 @@ import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/threa
 import {
   AuthOrchestrationOperateScope,
   type ScopedThreadRef,
+  type TeamViewId,
   type ThreadId,
   type ContextMenuSource,
 } from "@t3tools/contracts";
@@ -48,7 +49,8 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
-import { readTeamThreadFollowActionState } from "../state/team";
+import { readTeamThreadAccessActionState, readTeamThreadFollowActionState } from "../state/team";
+import { useTeamThreadAccessActions } from "../components/team/useTeamThreadAccessActions";
 import { useTeamThreadFollowToggle } from "../components/team/useTeamThreadFollowToggle";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -99,6 +101,7 @@ export function useThreadActionMenu(input: {
     reportFailure: false,
   });
   const { setFollowing } = useTeamThreadFollowToggle();
+  const { setThreadView, setThreadLocked } = useTeamThreadAccessActions();
   const handleNewThread = useNewThreadHandler();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -142,6 +145,10 @@ export function useThreadActionMenu(input: {
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
+      const teamAccessActions = readTeamThreadAccessActionState(
+        threadRef.environmentId,
+        threadRef.threadId,
+      );
       const items = buildThreadActionMenuItems({
         canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
         canFind: onFind !== undefined,
@@ -160,6 +167,8 @@ export function useThreadActionMenu(input: {
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
         teamFollow: readTeamThreadFollowActionState(threadRef.environmentId, threadRef.threadId),
+        teamView: teamAccessActions.teamView,
+        teamLock: teamAccessActions.teamLock,
       });
       const clicked = await settlePromise(() => api.contextMenu.show(items, position, source));
       if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -172,6 +181,14 @@ export function useThreadActionMenu(input: {
           m(msg("Thread action unavailable")),
           new Error(m(msg("This connection cannot change threads."))),
         );
+        return;
+      }
+      if (action.startsWith("team-view:")) {
+        await setThreadView({
+          environmentId: threadRef.environmentId,
+          threadId: threadRef.threadId,
+          viewId: action.slice("team-view:".length) as TeamViewId,
+        });
         return;
       }
       if (action.startsWith("snooze:")) {
@@ -242,6 +259,14 @@ export function useThreadActionMenu(input: {
             environmentId: threadRef.environmentId,
             threadId: threadRef.threadId,
             follow: action === "follow",
+          });
+          return;
+        case "team-lock":
+        case "team-unlock":
+          await setThreadLocked({
+            environmentId: threadRef.environmentId,
+            threadId: threadRef.threadId,
+            locked: action === "team-lock",
           });
           return;
         case "unsettle":

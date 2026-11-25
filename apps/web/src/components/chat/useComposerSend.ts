@@ -124,6 +124,11 @@ import { countPreparingComposerImages, holdComposerSend } from "./preparingCompo
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
+import {
+  clearTeamDraftAccessOptions,
+  readTeamDraftAccessOptions,
+  readTeamThreadPostPermission,
+} from "../../state/team";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
@@ -1149,6 +1154,28 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       return;
     }
+    if (isServerThread) {
+      const teamPostPermission = readTeamThreadPostPermission(environmentId, threadIdForSend);
+      if (!teamPostPermission.canPost) {
+        sendInFlightRef.current = false;
+        setThreadError(
+          threadIdForSend,
+          teamPostPermission.blockReason === "locked"
+            ? m(msg("This thread is locked. Only team owners and admins can post."))
+            : teamPostPermission.blockReason === "view_read_only"
+              ? m(
+                  msg(
+                    "This view is read-only for your role. You cannot post in colleagues' threads here.",
+                  ),
+                )
+              : m(msg("You do not have permission to post in this thread.")),
+        );
+        setDockedDraftHeroThreadKey((currentThreadKey) =>
+          currentThreadKey === activeThreadKey ? null : currentThreadKey,
+        );
+        return;
+      }
+    }
     if (
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       attachmentCapabilitiesBeforeDispatch.fileBlockReason !== null
@@ -1497,6 +1524,7 @@ export function useComposerSend(input: ComposerSendInput) {
 
     let backgroundDraftOpened = false;
     let turnStartSucceeded = false;
+    const teamDraftAccess = isLocalDraftThread ? readTeamDraftAccessOptions(routeThreadKey) : null;
     if (failure === null && turnAttachmentsResult._tag === "Success") {
       const bootstrap =
         isLocalDraftThread || baseBranchForWorktree
@@ -1512,6 +1540,8 @@ export function useComposerSend(input: ComposerSendInput) {
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
+                      ...(teamDraftAccess?.viewId ? { teamViewId: teamDraftAccess.viewId } : {}),
+                      ...(teamDraftAccess?.locked ? { teamLocked: true } : {}),
                     },
                   }
                 : {}),
@@ -1593,6 +1623,9 @@ export function useComposerSend(input: ComposerSendInput) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (isLocalDraftThread) {
+          clearTeamDraftAccessOptions(routeThreadKey);
+        }
         if (checkoutPullRequestUrl) {
           linkCheckoutPullRequest(
             scopeThreadRef(environmentId, threadIdForSend),

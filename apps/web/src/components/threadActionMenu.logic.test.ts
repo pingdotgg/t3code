@@ -1,3 +1,4 @@
+import { TeamViewId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
@@ -111,5 +112,40 @@ describe("buildThreadActionMenuItems", () => {
     const unfollowItem = followed.find((item) => item.id === "unfollow");
     expect(unfollowItem).toMatchObject({ id: "unfollow", icon: "bell-off" });
     expect(unfollowItem?.disabled).not.toBe(true);
+  });
+
+  it("includes team view submenu and lock/unlock controls when permitted", () => {
+    const defaultViewId = TeamViewId.make("view-default");
+    const staffViewId = TeamViewId.make("view-staff");
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      teamView: {
+        currentViewId: defaultViewId,
+        views: [
+          { id: defaultViewId, name: "Default" },
+          { id: staffViewId, name: "Staff Only" },
+        ],
+      },
+      teamLock: { isLocked: false },
+    });
+
+    const viewMenu = items.find((item) => item.id === "team-view");
+    expect(viewMenu?.children).toEqual([
+      { id: `team-view:${defaultViewId}`, label: "Default", checked: true },
+      { id: `team-view:${staffViewId}`, label: "Staff Only", checked: false },
+    ]);
+    expect(items.find((item) => item.id === "team-lock")).toMatchObject({
+      id: "team-lock",
+      icon: "lock",
+    });
+
+    const lockedItems = buildThreadActionMenuItems({
+      ...baseState,
+      teamLock: { isLocked: true },
+    });
+    expect(lockedItems.find((item) => item.id === "team-unlock")).toMatchObject({
+      id: "team-unlock",
+      icon: "unlock",
+    });
   });
 });

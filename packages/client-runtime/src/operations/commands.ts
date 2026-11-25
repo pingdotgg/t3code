@@ -26,6 +26,7 @@ import {
   type RunId,
   type RuntimeMode,
   type RuntimeRequestId,
+  type TeamViewId,
   type ThreadId,
   type ThreadEnvMode,
   type UploadChatAttachment,
@@ -177,6 +178,8 @@ interface StartThreadBootstrap {
     readonly branch: string | null;
     readonly worktreePath: string | null;
     readonly createdAt: string;
+    readonly teamViewId?: TeamViewId;
+    readonly teamLocked?: boolean;
   };
   readonly prepareWorktree?: {
     readonly requireWorktree?: boolean;
@@ -837,6 +840,8 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
       workspaceStrategy,
+      ...(bootstrap?.teamViewId !== undefined ? { teamViewId: bootstrap.teamViewId } : {}),
+      ...(bootstrap?.teamLocked === true ? { teamLocked: true } : {}),
       initialMessage: {
         messageId: input.message.messageId,
         text: input.message.text,

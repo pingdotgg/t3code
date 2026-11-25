@@ -17,7 +17,7 @@ import {
   type TeamRole,
 } from "@t3tools/contracts";
 import { msg, T, useGT, Var } from "gt-react";
-import { CheckIcon, CopyIcon, LinkIcon, ShieldIcon, Trash2Icon, UsersIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, LinkIcon, Trash2Icon, UsersIcon } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { isElectron } from "~/env";
@@ -48,6 +48,8 @@ import { toastManager } from "../ui/toast";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "../settings/settingsLayout";
 import { formatTeamRoleLabel } from "./TeamJoinForm";
 import { openTeamJoinDialog } from "./teamJoinDialogState";
+import { TeamMembersSettingsSection } from "./TeamMembersSettingsSection";
+import { TeamViewsSettingsSection } from "./TeamViewsSettingsSection";
 
 function CopyableLinkRow({
   label,
@@ -752,40 +754,22 @@ export function TeamsSettings() {
             </SettingsSection>
           ) : null}
 
-          <SettingsSection
-            id="teams-members"
-            title={gt("Members")}
-            icon={<ShieldIcon className="size-4" />}
-          >
-            <div className="divide-y divide-border/60">
-              {teamState.members.map((member) => (
-                <div
-                  key={member.id}
-                  className="flex items-center justify-between gap-3 px-3 py-2.5 sm:px-4"
-                  data-testid={`team-member-${member.pseudo}`}
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {member.pseudo}
-                    </span>
-                    {currentMember?.id === member.id ? (
-                      <Badge variant="outline" size="sm">
-                        <T>You</T>
-                      </Badge>
-                    ) : null}
-                    {member.status !== "active" ? (
-                      <Badge variant="error" size="sm">
-                        {member.status === "suspended" ? <T>Suspended</T> : <T>Removed</T>}
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <Badge variant="secondary" size="sm">
-                    {formatTeamRoleLabel(member.role, gt)}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          </SettingsSection>
+          {selectedEnvironmentId !== null ? (
+            <>
+              <TeamViewsSettingsSection
+                environmentId={selectedEnvironmentId}
+                currentMember={currentMember}
+                members={teamState.members}
+                memberById={teamState.memberById}
+                views={teamState.views}
+              />
+              <TeamMembersSettingsSection
+                environmentId={selectedEnvironmentId}
+                currentMember={currentMember}
+                members={teamState.members}
+              />
+            </>
+          ) : null}
         </>
       )}
 

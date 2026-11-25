@@ -1,6 +1,14 @@
 import {
+  canChangeThreadTeamView,
+  canMemberCreateThreadInTeamView,
+  canMemberReadTeamView,
+  canToggleTeamThreadLock,
+  matchesTeamAccessRule,
+  resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
   type EnvironmentId,
+  type TeamThreadPostBlockReason,
+  type TeamView,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { TeamEnvironmentState } from "./state.ts";
@@ -192,4 +200,121 @@ export function hasActiveTeamEnvironment(
     if (state.team !== null) return true;
   }
   return false;
+}
+
+export function resolveTeamDefaultView(
+  teamState: TeamEnvironmentState | null | undefined,
+): TeamView | null {
+  if (!teamState || teamState.team === null) return null;
+  return (
+    teamState.viewById.get(teamState.team.defaultViewId) ??
+    teamState.views.find((view) => view.isDefault) ??
+    null
+  );
+}
+
+export function resolveTeamThreadView(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): TeamView | null {
+  const { teamState, threadId } = input;
+  if (!teamState || teamState.team === null) return null;
+  const attribution = teamState.attributionByThreadId.get(threadId);
+  const targetViewId = attribution?.viewId ?? teamState.team.defaultViewId;
+  return teamState.viewById.get(targetViewId) ?? resolveTeamDefaultView(teamState);
+}
+
+export function isTeamThreadLocked(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): boolean {
+  const { teamState, threadId } = input;
+  if (!teamState || teamState.team === null) return false;
+  return teamState.attributionByThreadId.get(threadId)?.locked === true;
+}
+
+export interface TeamThreadPostPermission {
+  readonly canPost: boolean;
+  readonly blockReason: Exclude<TeamThreadPostBlockReason, "ok"> | null;
+}
+
+export const TEAM_THREAD_POST_ALLOWED: TeamThreadPostPermission = {
+  canPost: true,
+  blockReason: null,
+};
+
+export function resolveTeamThreadPostPermission(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): TeamThreadPostPermission {
+  const { teamState, threadId } = input;
+  if (!teamState || teamState.team === null) {
+    return TEAM_THREAD_POST_ALLOWED;
+  }
+  const member = teamState.currentMember;
+  if (member === null || member.status !== "active") {
+    return { canPost: false, blockReason: "no_access" };
+  }
+  const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
+  const view = resolveTeamThreadView({ teamState, threadId });
+  if (attribution === null) {
+    if (!canMemberReadTeamView(member, view)) {
+      return { canPost: false, blockReason: "no_access" };
+    }
+    if (view && !matchesTeamAccessRule(view.postRule, member)) {
+      return { canPost: false, blockReason: "view_read_only" };
+    }
+    return TEAM_THREAD_POST_ALLOWED;
+  }
+  const reason = resolveTeamThreadPostBlockReason({
+    member,
+    attribution,
+    view,
+  });
+  return reason === "ok" ? TEAM_THREAD_POST_ALLOWED : { canPost: false, blockReason: reason };
+}
+
+export function listAccessibleTeamViews(
+  teamState: TeamEnvironmentState | null | undefined,
+): ReadonlyArray<TeamView> {
+  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+    return [];
+  }
+  const member = teamState.currentMember;
+  return teamState.views.filter((view) => canMemberReadTeamView(member, view));
+}
+
+export function listCreatableTeamViews(
+  teamState: TeamEnvironmentState | null | undefined,
+): ReadonlyArray<TeamView> {
+  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+    return [];
+  }
+  const member = teamState.currentMember;
+  return teamState.views.filter((view) => canMemberCreateThreadInTeamView(member, view));
+}
+
+export function canCurrentMemberChangeThreadView(
+  teamState: TeamEnvironmentState | null | undefined,
+): boolean {
+  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+    return false;
+  }
+  return (
+    teamState.currentMember.status === "active" &&
+    canChangeThreadTeamView(teamState.currentMember.role) &&
+    listAccessibleTeamViews(teamState).length > 0
+  );
+}
+
+export function canCurrentMemberToggleThreadLock(
+  teamState: TeamEnvironmentState | null | undefined,
+): boolean {
+  if (!teamState || teamState.team === null || teamState.currentMember === null) {
+    return false;
+  }
+  return (
+    teamState.currentMember.status === "active" &&
+    canToggleTeamThreadLock(teamState.currentMember.role)
+  );
 }
