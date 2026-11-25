@@ -45,6 +45,7 @@ import {
 } from "../../../sourceControl/threadPullRequests.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import { threadNotFound } from "../../threadAccess.ts";
 import {
   type ListThreadPullRequestsResult,
@@ -291,6 +292,11 @@ const make = Effect.gen(function* () {
     if (threadId === undefined) {
       return yield* new PullRequestThreadRequiredError();
     }
+    yield* TeamMcpAccess.assertCanReadThread(threadId).pipe(
+      Effect.catch(() =>
+        threadNotFound(engine, scope, threadId, `Thread ${threadId} was not found.`),
+      ),
+    );
     const thread = yield* engine.getThreadShell(threadId).pipe(
       Effect.map(Option.fromNullishOr),
       Effect.mapError((cause) => new Failure({ cause })),
@@ -413,7 +419,19 @@ const make = Effect.gen(function* () {
 
   const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
     handle: (params: P) => Effect.Effect<A, E, R>,
-  ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
+  ) =>
+    McpToolAccess.writesThreads(
+      (params: P) => [params.threadId],
+      (params) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const targetThreadId = params.threadId ?? scope.thread?.threadId;
+          if (targetThreadId !== undefined) {
+            yield* TeamMcpAccess.assertCanPostInThread(targetThreadId);
+          }
+          return yield* handle(params);
+        }),
+    );
 
   const forgeFailure = (error: { readonly message: string }) =>
     new PullRequestForgeError({ detail: error.message, cause: error });
@@ -1053,6 +1071,9 @@ const make = Effect.gen(function* () {
     pull_request_create: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(PullRequestForgeError, undefined);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         const project = yield* projectOf(thread, PullRequestForgeError);
         if (project === undefined) {
           return yield* new PullRequestProjectNotFoundError({ repository: "" });
@@ -1100,7 +1121,10 @@ const make = Effect.gen(function* () {
             detail: "Pass title, body, ready, state, addLabels, removeLabels, or requestReviewers.",
           });
         }
-        const { target, ref } = yield* locate(input);
+        const { thread, target, ref } = yield* locate(input);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         if (input.title !== undefined || input.body !== undefined) {
           yield* pullRequests
             .update({
@@ -1156,7 +1180,10 @@ const make = Effect.gen(function* () {
             detail: "resolved needs reviewThreadId.",
           });
         }
-        const { target, ref } = yield* locate(input);
+        const { thread, target, ref } = yield* locate(input);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         const reviewThreadId = input.reviewThreadId;
         if (input.body !== undefined) {
           yield* (
@@ -1195,7 +1222,10 @@ const make = Effect.gen(function* () {
               "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.",
           });
         }
-        const { target, ref } = yield* locate(input);
+        const { thread, target, ref } = yield* locate(input);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         const comments = yield* reviewComments(ref, input.comments ?? []);
         yield* pullRequests
           .submitReview({
@@ -1213,7 +1243,10 @@ const make = Effect.gen(function* () {
     ),
     pull_request_merge: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
-        const { target, ref } = yield* locate(input);
+        const { thread, target, ref } = yield* locate(input);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         const stack = input.stack === true ? yield* stackMergeScope(ref, input) : {};
         yield* pullRequests
           .runAction({
@@ -1246,6 +1279,9 @@ const make = Effect.gen(function* () {
     ci_rerun: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
         const { thread, target, ref } = yield* locate(input);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         const checks = yield* pullRequests
           .rerunChecks({ ...ref, ...(input.check === undefined ? {} : { check: input.check }) })
           .pipe(Effect.mapError(forgeFailure));

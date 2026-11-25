@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   threadState: null as unknown as Atom.Writable<AsyncResult.AsyncResult<EnvironmentThreadState>>,
   workflow: null as unknown,
   commandResult: undefined as unknown,
+  teamState: null as unknown,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => ({
@@ -77,6 +78,11 @@ vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   useAtomCommand: (() => async () => state.commandResult) as never,
 }));
 
+vi.mock(import("../../state/team"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useTeamEnvironmentState: (() => state.teamState) as never,
+}));
+
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
   ...(await importOriginal()),
   useAssetUrls: ((_environmentId: never, resources: ReadonlyArray<{ attachmentId: string }>) =>
@@ -96,6 +102,7 @@ import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 function setup() {
   state.workflow = null;
   state.commandResult = undefined;
+  state.teamState = null;
 }
 
 const baseProps = {
@@ -442,4 +449,114 @@ it("tells the user why Send now was rejected", async () => {
 
   await page.getByRole("button", { name: "Send now" }).click();
   await vi.waitFor(() => expect(page.getByText(reason).element()).toBeVisible());
+});
+
+it("shows queued author pseudo and restricts Send now strictly to thread creator (hiding it for colleagues and owner/admin)", async () => {
+  setup();
+  const { applyTeamStreamEvent, EMPTY_TEAM_ENVIRONMENT_STATE } =
+    await import("@t3tools/client-runtime/team");
+  const { ALL_TEAM_ROLES, TeamId, TeamMemberId, TeamViewId } = await import("@t3tools/contracts");
+  const teamId = TeamId.make("team:m4");
+  const viewId = TeamViewId.make("view:default");
+  const aliceId = TeamMemberId.make("member:alice");
+  const bobId = TeamMemberId.make("member:bob");
+  const team = {
+    id: teamId,
+    name: "M4 Team",
+    defaultViewId: viewId,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const alice = {
+    id: aliceId,
+    teamId,
+    pseudo: "alice" as never,
+    role: "owner" as const,
+    status: "active" as const,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const bob = {
+    id: bobId,
+    teamId,
+    pseudo: "bob" as never,
+    role: "regular" as const,
+    status: "active" as const,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  const makeTeamState = (currentMember: typeof alice | typeof bob) =>
+    applyTeamStreamEvent(EMPTY_TEAM_ENVIRONMENT_STATE, {
+      version: 1,
+      type: "snapshot",
+      payload: {
+        team,
+        currentMember,
+        members: [alice, bob],
+        views: [
+          {
+            id: viewId,
+            teamId,
+            name: "Default",
+            description: null,
+            isDefault: true,
+            readRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+            postRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        invites: [],
+        threadAttributions: [
+          {
+            threadId: ThreadId.make("thread:test"),
+            teamId,
+            creatorMemberId: bobId,
+            creatorPseudo: bob.pseudo,
+            viewId,
+            locked: false,
+            lockedByMemberId: null,
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+        ],
+        followedThreadIds: [],
+        latestTurnAttributions: [
+          {
+            turnId: "run:queued",
+            threadId: ThreadId.make("thread:test"),
+            authorMemberId: aliceId,
+            authorPseudo: alice.pseudo,
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+        ],
+      },
+    });
+
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    queuedRuns: [
+      {
+        run: { id: "run:queued", userMessageId: "message:queued" },
+        text: "Queued by owner on Bob's thread",
+        attachments: [],
+      },
+    ],
+  };
+
+  // Alice (owner) viewing Bob's thread: sees author pseudo "alice", does NOT see "Send now"!
+  state.teamState = makeTeamState(alice);
+  const { createRef } = await import("react");
+  const controlRef = createRef<import("./QueuedRunsControl").QueuedRunsControlHandle>();
+  await using screen = await renderQueue({ ref: controlRef });
+
+  await expect.element(screen.getByTestId("team-queued-author")).toHaveTextContent("alice");
+  expect(screen.getByTestId("queued-send-now-button").query()).toBeNull();
+  expect(controlRef.current?.steerNext(false)).toBe(false);
+
+  // Bob (thread creator) viewing Bob's thread: DOES see "Send now" AND author pseudo "alice"!
+  state.teamState = makeTeamState(bob);
+  await screen.rerender(<QueuedRunsControl {...baseProps} ref={controlRef} />);
+  await expect.element(screen.getByTestId("team-queued-author")).toHaveTextContent("alice");
+  await expect.element(screen.getByTestId("queued-send-now-button")).toBeVisible();
 });

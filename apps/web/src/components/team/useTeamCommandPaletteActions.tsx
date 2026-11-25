@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   canCurrentMemberChangeThreadView,
+  canCurrentMemberInterruptThread,
   canCurrentMemberToggleThreadLock,
   hasActiveTeamEnvironment,
   isFollowingTeamThread,
@@ -9,10 +11,24 @@ import {
   listAccessibleTeamViews,
   resolveTeamThreadView,
 } from "@t3tools/client-runtime/team";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useGT } from "gt-react";
-import { BellIcon, BellOffIcon, LayersIcon, LockIcon, UnlockIcon, UsersIcon } from "lucide-react";
+import {
+  BellIcon,
+  BellOffIcon,
+  LayersIcon,
+  LockIcon,
+  OctagonXIcon,
+  UnlockIcon,
+  UsersIcon,
+} from "lucide-react";
 
+import { useEnvironmentScope } from "~/state/session";
+import { useQuietThreadShell } from "~/state/entities";
 import {
   teamEnvironment,
   toggleShowColleaguesThreads,
@@ -21,6 +37,8 @@ import {
   useShowFollowedThreadsOnly,
   useTeamStatesByEnvironment,
 } from "~/state/team";
+import { threadEnvironment } from "~/state/threads";
+import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 import { ITEM_ICON_CLASS, type CommandPaletteActionItem } from "../CommandPalette.logic";
 import { useTeamThreadAccessActions } from "./useTeamThreadAccessActions";
 import { useTeamThreadFollowToggle } from "./useTeamThreadFollowToggle";
@@ -56,6 +74,16 @@ export function useTeamCommandPaletteActions(
   const canSetLockScope = useAtomValue(
     teamEnvironment.setThreadLocked.permissionAtom(activeThread?.environmentId ?? null),
   );
+  const canOperateActiveThread = useEnvironmentScope(
+    activeThread?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
+  );
+  const activeThreadShell = useQuietThreadShell(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
+  const interruptThreadTurn = useOrchestrationCommand(threadEnvironment.interruptTurn, {
+    reportFailure: false,
+  });
 
   const items: CommandPaletteActionItem[] = [];
   if (canFollowActiveThread && canToggleActiveThreadFollow && activeThread) {
@@ -88,6 +116,29 @@ export function useTeamCommandPaletteActions(
     });
   }
   if (activeThread && activeTeamState?.team != null) {
+    const activeRunId = activeThreadShell?.runtime?.activeRunId ?? null;
+    if (activeRunId !== null && canOperateActiveThread) {
+      const interruptPermission = canCurrentMemberInterruptThread({
+        teamState: activeTeamState,
+        threadId: activeThread.id,
+        activeRunId,
+      });
+      if (interruptPermission.isExplicitAdminInterrupt) {
+        items.push({
+          kind: "action",
+          value: "action:team-interrupt-turn",
+          searchTerms: ["team", "interrupt", "stop", "cancel", "admin", "owner", "turn"],
+          title: gt("Interrupt active turn"),
+          icon: <OctagonXIcon className={ITEM_ICON_CLASS} />,
+          run: async () => {
+            await interruptThreadTurn({
+              environmentId: activeThread.environmentId,
+              input: { threadId: activeThread.id },
+            });
+          },
+        });
+      }
+    }
     if (canSetLockScope && canCurrentMemberToggleThreadLock(activeTeamState)) {
       const isLocked = isTeamThreadLocked({
         teamState: activeTeamState,

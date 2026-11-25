@@ -45,6 +45,8 @@ interface ComposerPrimaryActionsProps {
   pendingAction: PendingActionState | null;
   isRunning: boolean;
   canInterrupt: boolean;
+  /** True when an owner/admin is viewing another member's active turn and receives an explicit Interrupt control. */
+  isExplicitAdminInterrupt?: boolean;
   runId?: string | null;
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
@@ -142,6 +144,7 @@ function StopGenerationButton({
   stopPhase,
   canOperateThread,
   insidePendingAction,
+  isExplicitAdminInterrupt = false,
   preserveComposerFocusOnPointerDown,
   onStopRequested,
   onInterrupt,
@@ -149,6 +152,7 @@ function StopGenerationButton({
   stopPhase: StopPhase;
   canOperateThread: boolean;
   insidePendingAction: boolean;
+  isExplicitAdminInterrupt?: boolean;
   preserveComposerFocusOnPointerDown: boolean;
   onStopRequested: () => void;
   onInterrupt: () => void;
@@ -161,9 +165,14 @@ function StopGenerationButton({
         render={
           <button
             type="button"
+            data-testid={isExplicitAdminInterrupt ? "team-admin-interrupt-button" : undefined}
             className={cn(
               "flex shrink-0 cursor-pointer items-center justify-center rounded-full bg-destructive/90 text-white shadow-xs shadow-destructive/24 inset-shadow-control-highlight transition-colors duration-150 hover:bg-destructive active:inset-shadow-control-pressed active:shadow-none disabled:cursor-default disabled:opacity-64 disabled:hover:bg-destructive/90 [&_svg]:pointer-events-none",
-              insidePendingAction ? "size-8 sm:size-7" : "size-8 sm:h-8 sm:w-8",
+              isExplicitAdminInterrupt
+                ? "h-8 gap-1.5 px-3 text-xs font-medium"
+                : insidePendingAction
+                  ? "size-8 sm:size-7"
+                  : "size-8 sm:h-8 sm:w-8",
             )}
             onPointerDown={preserveComposerFocusOnPointerDown ? preventPointerFocus : undefined}
             disabled={!canOperateThread || isStopDisabled}
@@ -172,18 +181,33 @@ function StopGenerationButton({
               onStopRequested();
               onInterrupt();
             }}
-            aria-label={stopPhase === "pending" ? gt("Stopping") : gt("Stop generation")}
+            aria-label={
+              stopPhase === "pending"
+                ? gt("Stopping")
+                : isExplicitAdminInterrupt
+                  ? gt("Interrupt active turn")
+                  : gt("Stop generation")
+            }
           />
         }
       >
         <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
+        {isExplicitAdminInterrupt ? (
+          <span>
+            {stopPhase === "pending"
+              ? gt("Stopping…")
+              : gt("Interrupt", { $context: "verb, stops the running agent" })}
+          </span>
+        ) : null}
       </TooltipTrigger>
       <TooltipPopup>
         {stopPhase === "pending"
           ? gt("Stopping…")
-          : gt("Interrupt", { $context: "verb, stops the running agent" })}
+          : isExplicitAdminInterrupt
+            ? gt("Interrupt this member's active turn")
+            : gt("Interrupt", { $context: "verb, stops the running agent" })}
       </TooltipPopup>
     </Tooltip>
   );
@@ -240,6 +264,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   pendingAction,
   isRunning,
   canInterrupt,
+  isExplicitAdminInterrupt = false,
   runId = null,
   followUpBehavior = "steer",
   canSteer = true,
@@ -289,6 +314,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       stopPhase={stopPhase}
       canOperateThread={canOperateThread}
       insidePendingAction={insidePendingAction}
+      isExplicitAdminInterrupt={isExplicitAdminInterrupt}
       preserveComposerFocusOnPointerDown={preserveComposerFocusOnPointerDown}
       onStopRequested={() => setStopPhase("pending")}
       onInterrupt={onInterrupt}
@@ -296,10 +322,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   );
 
   // Keep the clicked target at the right edge even if typing changes the primary action.
+  // For owner/admin interrupting a colleague's active turn, keep the explicit Interrupt button visible beside Queue.
   const withStopButton = (action: ReactNode) => (
     <>
       {action}
-      {stopPhase === "pending" || stopPhase === "timedOut"
+      {stopPhase === "pending" ||
+      stopPhase === "timedOut" ||
+      (isExplicitAdminInterrupt && canInterrupt)
         ? renderStopGenerationButton(false)
         : null}
     </>

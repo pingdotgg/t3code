@@ -19,6 +19,10 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   applyTeamStreamEvent,
   canCurrentMemberChangeThreadView,
+  canCurrentMemberInterruptThread,
+  canCurrentMemberManageQueuedRun,
+  canCurrentMemberPromoteQueuedRun,
+  canCurrentMemberSteerActiveTurn,
   canCurrentMemberToggleThreadLock,
   countFollowedTeamThreads,
   EMPTY_TEAM_ENVIRONMENT_STATE,
@@ -28,9 +32,11 @@ import {
   isTeamColleagueThread,
   isTeamThreadLocked,
   listAccessibleTeamViews,
+  resolveTeamQueuedRunAuthorPseudo,
   resolveTeamThreadCreatorPseudo,
   resolveTeamThreadNotificationDecision,
   resolveTeamThreadPostPermission,
+  resolveTeamThreadTurnControls,
   resolveTeamThreadView,
   scanTeamStateStream,
   shouldNotifyForTeamThread,
@@ -629,5 +635,211 @@ describe("team client-runtime state and presentation", () => {
     });
     expect(state.viewById.has(announcementsViewId)).toBe(false);
     expect(state.attributionByThreadId.get(bobThreadId)?.viewId).toBe(viewId);
+  });
+
+  it("resolves creator-only Send now, explicit owner/admin Interrupt, and queued run author pseudo", () => {
+    const modoId = TeamMemberId.make("member-modo");
+    const charlie: TeamMember = {
+      id: modoId,
+      teamId,
+      pseudo: "charlie" as TeamPseudo,
+      role: "modo",
+      status: "active",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const buildState = (currentMember: TeamMember) =>
+      applyTeamStreamEvent(EMPTY_TEAM_ENVIRONMENT_STATE, {
+        version: 1,
+        type: "snapshot",
+        payload: {
+          team,
+          currentMember,
+          members: [alice, charlie, bob],
+          views: [defaultView],
+          invites: [],
+          threadAttributions: [
+            {
+              threadId: aliceThreadId,
+              teamId,
+              creatorMemberId: aliceId,
+              creatorPseudo: alice.pseudo,
+              viewId,
+              locked: false,
+              lockedByMemberId: null,
+              createdAt: "2026-01-01T00:00:01.000Z",
+            },
+            {
+              threadId: bobThreadId,
+              teamId,
+              creatorMemberId: bobId,
+              creatorPseudo: bob.pseudo,
+              viewId,
+              locked: false,
+              lockedByMemberId: null,
+              createdAt: "2026-01-01T00:00:02.000Z",
+            },
+          ],
+          followedThreadIds: [],
+          latestTurnAttributions: [
+            {
+              turnId: "run-bob-active",
+              threadId: bobThreadId,
+              authorMemberId: bobId,
+              authorPseudo: bob.pseudo,
+              createdAt: "2026-01-01T00:00:03.000Z",
+            },
+            {
+              turnId: "run-alice-queued",
+              threadId: bobThreadId,
+              authorMemberId: aliceId,
+              authorPseudo: alice.pseudo,
+              createdAt: "2026-01-01T00:00:04.000Z",
+            },
+            {
+              turnId: "msg:msg-charlie-queued",
+              threadId: bobThreadId,
+              authorMemberId: modoId,
+              authorPseudo: charlie.pseudo,
+              createdAt: "2026-01-01T00:00:05.000Z",
+            },
+          ],
+        },
+      });
+
+    const aliceState = buildState(alice);
+    const charlieState = buildState(charlie);
+    const bobState = buildState(bob);
+
+    // Queued run author pseudo resolution (by runId or msg:<messageId>).
+    expect(
+      resolveTeamQueuedRunAuthorPseudo({
+        teamState: bobState,
+        threadId: bobThreadId,
+        runId: "run-alice-queued",
+      }),
+    ).toBe("alice");
+    expect(
+      resolveTeamQueuedRunAuthorPseudo({
+        teamState: bobState,
+        threadId: bobThreadId,
+        runId: "run-unattributed",
+        userMessageId: "msg-charlie-queued",
+      }),
+    ).toBe("charlie");
+
+    // Alice (owner) on Bob's thread: cannot Send now / steer, DOES get explicit admin Interrupt!
+    expect(
+      resolveTeamThreadTurnControls({
+        teamState: aliceState,
+        threadId: bobThreadId,
+        activeRunId: "run-bob-active",
+      }),
+    ).toEqual({
+      isTeamThread: true,
+      canSteerActiveTurn: false,
+      canPromoteQueuedRun: false,
+      canInterrupt: true,
+      isExplicitAdminInterrupt: true,
+    });
+    expect(canCurrentMemberPromoteQueuedRun({ teamState: aliceState, threadId: bobThreadId })).toBe(
+      false,
+    );
+    expect(canCurrentMemberSteerActiveTurn({ teamState: aliceState, threadId: bobThreadId })).toBe(
+      false,
+    );
+    expect(
+      canCurrentMemberInterruptThread({
+        teamState: aliceState,
+        threadId: bobThreadId,
+        activeRunId: "run-bob-active",
+      }),
+    ).toEqual({ canInterrupt: true, isExplicitAdminInterrupt: true });
+
+    // Bob (creator) on Bob's thread: can Send now, can steer, normal Interrupt (not explicit admin).
+    expect(
+      resolveTeamThreadTurnControls({
+        teamState: bobState,
+        threadId: bobThreadId,
+        activeRunId: "run-bob-active",
+      }),
+    ).toEqual({
+      isTeamThread: true,
+      canSteerActiveTurn: true,
+      canPromoteQueuedRun: true,
+      canInterrupt: true,
+      isExplicitAdminInterrupt: false,
+    });
+
+    // Charlie (modo) on Bob's thread: cannot Send now, cannot steer, cannot interrupt Bob's turn.
+    expect(
+      resolveTeamThreadTurnControls({
+        teamState: charlieState,
+        threadId: bobThreadId,
+        activeRunId: "run-bob-active",
+      }),
+    ).toEqual({
+      isTeamThread: true,
+      canSteerActiveTurn: false,
+      canPromoteQueuedRun: false,
+      canInterrupt: false,
+      isExplicitAdminInterrupt: false,
+    });
+    // Even if activeRunId is null while Charlie has the newest queued turn on Bob's thread,
+    // Charlie must NOT be misidentified as the active turn author and still cannot interrupt!
+    expect(
+      resolveTeamThreadTurnControls({
+        teamState: charlieState,
+        threadId: bobThreadId,
+        activeRunId: null,
+        activeUserMessageId: null,
+      }),
+    ).toEqual({
+      isTeamThread: true,
+      canSteerActiveTurn: false,
+      canPromoteQueuedRun: false,
+      canInterrupt: false,
+      isExplicitAdminInterrupt: false,
+    });
+
+    // Queued run management: Charlie can manage his own queued message, not Alice's.
+    expect(
+      canCurrentMemberManageQueuedRun({
+        teamState: charlieState,
+        threadId: bobThreadId,
+        runId: "run-unattributed",
+        userMessageId: "msg-charlie-queued",
+      }),
+    ).toBe(true);
+    expect(
+      canCurrentMemberManageQueuedRun({
+        teamState: charlieState,
+        threadId: bobThreadId,
+        runId: "run-alice-queued",
+      }),
+    ).toBe(false);
+    expect(
+      canCurrentMemberManageQueuedRun({
+        teamState: aliceState,
+        threadId: bobThreadId,
+        runId: "run-unattributed",
+        userMessageId: "msg-charlie-queued",
+      }),
+    ).toBe(true);
+
+    // Personal mode remains completely unrestricted and never shows explicit admin Interrupt.
+    expect(
+      resolveTeamThreadTurnControls({
+        teamState: EMPTY_TEAM_ENVIRONMENT_STATE,
+        threadId: bobThreadId,
+        activeRunId: "run-bob-active",
+      }),
+    ).toEqual({
+      isTeamThread: false,
+      canSteerActiveTurn: true,
+      canPromoteQueuedRun: true,
+      canInterrupt: true,
+      isExplicitAdminInterrupt: false,
+    });
   });
 });

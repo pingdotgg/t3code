@@ -35,7 +35,7 @@ export const TEAM_ROLE_RANK: Readonly<Record<TeamRole, number>> = {
   regular: 1,
 };
 
-function isTeamAdminRole(role: TeamRole): boolean {
+export function isTeamAdminRole(role: TeamRole): boolean {
   return role === "owner" || role === "admin";
 }
 
@@ -241,6 +241,81 @@ export function canMemberPostInTeamThread(input: {
   readonly view: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
 }): boolean {
   return resolveTeamThreadPostBlockReason(input) === "ok";
+}
+
+/**
+ * Only the thread creator may steer an active turn or promote a queued run (`Send now`).
+ * Even `owner` and `admin` cannot steer/promote on someone else's thread.
+ */
+export function canMemberSteerActiveTeamTurn(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly attribution:
+    | Pick<TeamThreadAttribution, "creatorMemberId" | "locked">
+    | null
+    | undefined;
+  readonly view?: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
+}): boolean {
+  const { member, attribution, view } = input;
+  if (!member || member.status !== "active" || !attribution) return false;
+  if (attribution.creatorMemberId !== member.id) return false;
+  if (attribution.locked && !isTeamAdminRole(member.role)) return false;
+  if (view !== undefined && !canMemberReadTeamThread({ member, view })) return false;
+  return true;
+}
+
+export function canMemberPromoteTeamQueuedRun(
+  input: Parameters<typeof canMemberSteerActiveTeamTurn>[0],
+): boolean {
+  return canMemberSteerActiveTeamTurn(input);
+}
+
+/**
+ * Team turn interrupt rules: `owner`/`admin`, the thread creator, or the active turn author may
+ * interrupt; `regular`/`modo` non-creators cannot interrupt another member's turn.
+ */
+export function canMemberInterruptTeamTurn(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly attribution:
+    | Pick<TeamThreadAttribution, "creatorMemberId" | "locked">
+    | null
+    | undefined;
+  readonly view?: Pick<TeamView, "readRule"> | null | undefined;
+  readonly activeTurnAuthorMemberId?: TeamMemberId | null | undefined;
+}): boolean {
+  const { member, attribution, view, activeTurnAuthorMemberId } = input;
+  if (!member || member.status !== "active") return false;
+  if (view !== undefined && !canMemberReadTeamThread({ member, view })) return false;
+  if (isTeamAdminRole(member.role)) return true;
+  if (activeTurnAuthorMemberId != null && activeTurnAuthorMemberId === member.id) {
+    return true;
+  }
+  if (attribution && attribution.creatorMemberId === member.id) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Who may edit or cancel a queued run in a team thread (excluding `Send now` promotion,
+ * which is strictly thread-creator-only via `canMemberPromoteTeamQueuedRun`).
+ */
+export function canMemberManageTeamQueuedRun(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly attribution:
+    | Pick<TeamThreadAttribution, "creatorMemberId" | "locked">
+    | null
+    | undefined;
+  readonly view?: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
+  readonly queuedRunAuthorMemberId?: TeamMemberId | null | undefined;
+}): boolean {
+  const { member, attribution, view, queuedRunAuthorMemberId } = input;
+  if (!member || member.status !== "active") return false;
+  if (view !== undefined && !canMemberReadTeamThread({ member, view })) return false;
+  if (isTeamAdminRole(member.role)) return true;
+  if (attribution?.locked) return false;
+  if (attribution && attribution.creatorMemberId === member.id) return true;
+  if (queuedRunAuthorMemberId != null && queuedRunAuthorMemberId === member.id) return true;
+  return false;
 }
 
 export const TeamThreadAttribution = Schema.Struct({

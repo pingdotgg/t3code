@@ -29,6 +29,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import { fencingLinkOrigin } from "./linkOrigin.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as TeamMcpAccess from "../team/mcpAccess.ts";
 
 const delegatedTaskPrefix = "thread:delegated-task:";
 
@@ -68,7 +69,15 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
   message: string,
 ) {
   let suggested: ThreadId | null = null;
-  for (const candidate of candidateThreadIds(threadId, scope.environmentId)) {
+  const candidates = candidateThreadIds(threadId, scope.environmentId);
+  const readableCandidates =
+    candidates.length > 0
+      ? yield* TeamMcpAccess.filterReadableThreadIds(candidates).pipe(
+          Effect.orElseSucceed(() => new Set<ThreadId>() as ReadonlySet<ThreadId>),
+        )
+      : (new Set<ThreadId>() as ReadonlySet<ThreadId>);
+  for (const candidate of candidates) {
+    if (!readableCandidates.has(candidate)) continue;
     const shell = yield* threads.getThreadShell(candidate).pipe(Effect.orElseSucceed(() => null));
     if (shell !== null && shell.deletedAt === null) {
       suggested = candidate;
@@ -267,6 +276,7 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
 >(threadId?: ThreadId, fields: ReadonlyArray<K> = [], filter?: ProjectionRecordFilter) {
   const context = yield* readCaller();
   const targetId = yield* resolveThreadId(context, threadId);
+  yield* TeamMcpAccess.assertCanReadThread(targetId);
   const shell = yield* context.threads.getThreadShell(targetId).pipe(Effect.mapError(unavailable));
   if (shell === null || shell.deletedAt !== null) {
     return yield* threadNotFound(

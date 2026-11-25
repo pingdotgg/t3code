@@ -17,6 +17,7 @@ import { McpSchema, type McpServer } from "effect/ai";
 
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as TeamMcpAccess from "../team/mcpAccess.ts";
 import * as MilestoneHub from "./MilestoneHub.ts";
 
 // Matches the hub's buffer, so a poll can drain everything it keeps at once.
@@ -135,42 +136,83 @@ const eventOf = <P extends typeof Parameters | typeof WorkflowParameters>(
   parameters: P,
 ) => {
   const type = payload.fields.type.literal;
+  const isWorkflowEvent = type.startsWith("workflow.");
   const filterOf = (args: P["Type"]): MilestoneFilter => ({ ...args, types: [type] });
+  const eventThreadId = (event: MilestoneEventValue): ThreadId | undefined =>
+    "threadId" in event && event.threadId != null ? event.threadId : undefined;
   return {
     name: type,
     description: DESCRIPTIONS[type],
     parameters,
     payload,
-    poll: (args, request) =>
-      hub
-        .read({
-          cursor: request.cursor,
-          maxAgeMs: request.maxAgeMs,
-          filter: filterOf(args),
-          limit: Math.min(request.maxEvents ?? DEFAULT_EVENTS, MAX_EVENTS),
-        })
-        .pipe(
-          Effect.flatMap((page) =>
-            Effect.map(Effect.forEach(page.events, occurrence), (events) => ({
-              ...page,
-              events,
-            })),
-          ),
-        ),
+    poll: Effect.fn("MilestoneEvents.poll")(function* (
+      args: P["Type"],
+      request: McpServer.EventPollRequest,
+    ) {
+      if (isWorkflowEvent && !(yield* TeamMcpAccess.canUseWorkflows())) {
+        return {
+          cursor: request.cursor ?? "0",
+          truncated: false,
+          events: [],
+        };
+      }
+      const page = yield* hub.read({
+        cursor: request.cursor,
+        maxAgeMs: request.maxAgeMs,
+        filter: filterOf(args),
+        limit: Math.min(request.maxEvents ?? DEFAULT_EVENTS, MAX_EVENTS),
+      });
+      const threadIds = page.events
+        .map((item) => eventThreadId(item.event))
+        .filter((threadId): threadId is ThreadId => threadId !== undefined);
+      const readableThreadIds =
+        threadIds.length > 0
+          ? yield* TeamMcpAccess.filterReadableThreadIds(threadIds).pipe(
+              Effect.orElseSucceed(() => new Set<ThreadId>()),
+            )
+          : new Set<ThreadId>();
+      const visible = page.events.filter((item) => {
+        const threadId = eventThreadId(item.event);
+        return threadId === undefined || readableThreadIds.has(threadId);
+      });
+      const events = yield* Effect.forEach(visible, occurrence);
+      return {
+        ...page,
+        events,
+      };
+    }),
     stream: Effect.fn("MilestoneEvents.stream")(function* (
       args: P["Type"],
       request: McpServer.EventStreamRequest,
     ) {
+      if (isWorkflowEvent && !(yield* TeamMcpAccess.canUseWorkflows())) {
+        return {
+          cursor: request.cursor ?? "0",
+          truncated: false,
+          items: Stream.empty,
+        };
+      }
       const { cursor, truncated, items } = yield* hub.follow({
         cursor: request.cursor,
         maxAgeMs: request.maxAgeMs,
         filter: filterOf(args),
       });
+      const visibleItems = items.pipe(
+        Stream.filterEffect((item) => {
+          if (item._tag !== "Milestone") return Effect.succeed(true);
+          const threadId = eventThreadId(item.event);
+          if (threadId === undefined) return Effect.succeed(true);
+          return TeamMcpAccess.filterReadableThreadIds([threadId]).pipe(
+            Effect.map((readable) => readable.has(threadId)),
+            Effect.orElseSucceed(() => false),
+          );
+        }),
+      );
       return {
         cursor,
         truncated,
         items: yield* untilRevoked(
-          items.pipe(
+          visibleItems.pipe(
             Stream.mapEffect(
               (item): Effect.Effect<McpServer.EventStreamItem<MilestoneEventValue>> =>
                 item._tag === "Milestone"

@@ -17,6 +17,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import { Cookies, FetchHttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
@@ -177,26 +178,43 @@ const reservePort = NetService.NetService.pipe(
   Effect.provide(NetService.layer),
 );
 
-interface StartedServerHandle {
+const SettingsJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const decodeSettingsJson = Schema.decodeEffect(SettingsJson);
+const encodeSettingsJson = Schema.encodeEffect(SettingsJson);
+
+export interface StartedServerHandle {
   readonly origin: string;
   readonly pairingToken: string;
   readonly stop: () => Promise<void>;
 }
 
-function startT3ServerProcess(input: {
+export function startT3ServerProcess(input: {
   readonly home: string;
   readonly port: number;
   readonly devUrl: string;
   readonly allowedOrigins: ReadonlyArray<string>;
   readonly devAuthToken: string;
   readonly environmentLabel: string;
+  readonly extraArgs?: ReadonlyArray<string>;
+  readonly settingsPatch?: Readonly<Record<string, unknown>>;
 }): Promise<StartedServerHandle> {
   const ready = Promise.withResolvers<{ readonly pairingToken: string }>();
   const runServer = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const node = yield* HostProcess.ExecutablePath;
     const hostEnvironment = yield* HostProcess.Environment;
     yield* prepareHome(input.home);
+    if (input.settingsPatch !== undefined) {
+      const settingsPath = path.join(input.home, "userdata/settings.json");
+      const currentRaw = yield* fs.readFileString(settingsPath);
+      const current = yield* decodeSettingsJson(currentRaw);
+      const nextRaw = yield* encodeSettingsJson({
+        ...current,
+        ...input.settingsPatch,
+      });
+      yield* fs.writeFileString(settingsPath, nextRaw);
+    }
     const tokenDeferred = yield* Deferred.make<string>();
     const recentStdout: Array<string> = [];
     const server = yield* start({
@@ -213,6 +231,7 @@ function startT3ServerProcess(input: {
         input.home,
         "--dev-url",
         input.devUrl,
+        ...(input.extraArgs ?? []),
       ],
       env: {
         PATH: `${path.join(input.home, "bin")}:${hostEnvironment.PATH ?? ""}`,
@@ -310,6 +329,7 @@ const signInOrigin = Effect.fn("teamTopology.signInOrigin")(function* (input: {
 export async function startTeamTopology(input: {
   readonly viteUrl: string;
   readonly members: ReadonlyArray<TeamMemberSpec>;
+  readonly teamServerSettingsPatch?: Readonly<Record<string, unknown>>;
 }): Promise<TeamTopology> {
   const stack = new AsyncDisposableStack();
   try {
@@ -357,6 +377,9 @@ export async function startTeamTopology(input: {
       allowedOrigins: allMemberOrigins,
       devAuthToken: `${teamRawToken}${teamRawToken}`,
       environmentLabel: "Team Server",
+      ...(input.teamServerSettingsPatch === undefined
+        ? {}
+        : { settingsPatch: input.teamServerSettingsPatch }),
     });
     stack.defer(() => startedTeamServer.stop());
     const teamEnvId = await runPromise(environmentId(startedTeamServer.origin));
@@ -375,6 +398,9 @@ export async function startTeamTopology(input: {
         allowedOrigins: [allocation.origin],
         devAuthToken: allocation.devAuthToken,
         environmentLabel: `Local (${allocation.spec.pseudo})`,
+        ...(input.teamServerSettingsPatch === undefined
+          ? {}
+          : { settingsPatch: input.teamServerSettingsPatch }),
       });
       stack.defer(() => localServer.stop());
 

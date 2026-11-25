@@ -205,6 +205,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   } | null;
   isRunning: boolean;
   canInterrupt: boolean;
+  isExplicitAdminInterrupt?: boolean;
   runId: string | null;
   followUpBehavior: "queue" | "steer";
   canSteer: boolean;
@@ -235,6 +236,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
         canInterrupt={props.canInterrupt}
+        isExplicitAdminInterrupt={props.isExplicitAdminInterrupt ?? false}
         runId={props.runId}
         followUpBehavior={props.followUpBehavior}
         canSteer={props.canSteer}

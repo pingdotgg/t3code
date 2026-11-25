@@ -102,6 +102,7 @@ interface ThreadLifecycleInput {
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly canOperateThread: boolean;
+  readonly canInterruptTurn?: boolean;
   readonly clientSettingsHydrated: boolean;
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly activeThreadId: ThreadId | null;
@@ -158,6 +159,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     routeThreadKey,
     currentRouteThreadKeyRef,
     canOperateThread,
+    canInterruptTurn = true,
     clientSettingsHydrated,
     activeThread,
     activeThreadId,
@@ -628,7 +630,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       ? runStopNowItem({
           threadId: activeThread.id,
           stop: runStop,
-          canForceStop: forceStop.canForceStop,
+          canForceStop: canInterruptTurn && forceStop.canForceStop,
           forceStopping: forceStop.stoppingThreadId === activeThread.id,
           onForceStop: () => void forceStop.forceStopThread(activeThread.id, runStop.runId),
         })

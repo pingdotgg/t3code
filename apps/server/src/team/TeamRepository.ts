@@ -311,6 +311,20 @@ const errorChainIncludes = (cause: unknown, needle: string): boolean => {
 const isUniqueConstraintError = (cause: unknown): boolean =>
   errorChainIncludes(cause, "UNIQUE constraint failed");
 
+const RunPayloadUserMessageSchema = Schema.fromJsonString(
+  Schema.Struct({
+    userMessageId: Schema.optional(Schema.String),
+  }),
+);
+const decodeRunPayloadUserMessage = Schema.decodeUnknownOption(RunPayloadUserMessageSchema);
+
+const extractRunUserMessageId = (payloadJson: string): string | null => {
+  const decoded = decodeRunPayloadUserMessage(payloadJson);
+  if (Option.isNone(decoded)) return null;
+  const id = decoded.value.userMessageId;
+  return typeof id === "string" && id.length > 0 ? id : null;
+};
+
 export class TeamRepository extends Context.Service<
   TeamRepository,
   {
@@ -472,6 +486,25 @@ export class TeamRepository extends Context.Service<
     readonly getThreadCreatedAtInProjection: (
       threadId: ThreadId,
     ) => Effect.Effect<Option.Option<string>, TeamRepositoryError>;
+    readonly getActiveRunInProjection: (threadId: ThreadId) => Effect.Effect<
+      Option.Option<{
+        readonly runId: string;
+        readonly status: string;
+        readonly userMessageId: string | null;
+      }>,
+      TeamRepositoryError
+    >;
+    readonly getRunInProjection: (
+      threadId: ThreadId,
+      runId: string,
+    ) => Effect.Effect<
+      Option.Option<{
+        readonly runId: string;
+        readonly status: string;
+        readonly userMessageId: string | null;
+      }>,
+      TeamRepositoryError
+    >;
     readonly listThreadCreatedAtInProjection: (
       threadIds: ReadonlyArray<ThreadId>,
     ) => Effect.Effect<ReadonlyMap<ThreadId, string>, TeamRepositoryError>;
@@ -1415,6 +1448,57 @@ const make = Effect.gen(function* () {
         return createdAt !== undefined ? Option.some(createdAt) : Option.none();
       },
     ),
+
+    getActiveRunInProjection: Effect.fn("TeamRepository.getActiveRunInProjection")(
+      function* (threadId) {
+        const rows = yield* runSql(
+          "getActiveRunInProjection",
+          sql<{
+            readonly run_id: string;
+            readonly status: string;
+            readonly payload_json: string;
+          }>`
+          SELECT run_id, status, payload_json
+          FROM orchestration_v2_projection_runs
+          WHERE thread_id = ${threadId}
+            AND status IN ('preparing', 'starting', 'running', 'waiting')
+          ORDER BY ordinal DESC
+          LIMIT 1
+        `,
+        );
+        const row = rows[0];
+        if (!row) return Option.none();
+        return Option.some({
+          runId: row.run_id,
+          status: row.status,
+          userMessageId: extractRunUserMessageId(row.payload_json),
+        });
+      },
+    ),
+
+    getRunInProjection: Effect.fn("TeamRepository.getRunInProjection")(function* (threadId, runId) {
+      const rows = yield* runSql(
+        "getRunInProjection",
+        sql<{
+          readonly run_id: string;
+          readonly status: string;
+          readonly payload_json: string;
+        }>`
+          SELECT run_id, status, payload_json
+          FROM orchestration_v2_projection_runs
+          WHERE thread_id = ${threadId}
+            AND run_id = ${runId}
+          LIMIT 1
+        `,
+      );
+      const row = rows[0];
+      if (!row) return Option.none();
+      return Option.some({
+        runId: row.run_id,
+        status: row.status,
+        userMessageId: extractRunUserMessageId(row.payload_json),
+      });
+    }),
 
     listThreadCreatedAtInProjection: Effect.fn("TeamRepository.listThreadCreatedAtInProjection")(
       function* (threadIds) {

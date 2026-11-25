@@ -194,3 +194,39 @@ it("swaps the collapsed composer's send button for Stop while a turn can be stop
   await screen.rerender(collapsed({ canInterrupt: false }));
   await expect.element(screen.getByRole("button", { name: "Send message" })).toBeVisible();
 });
+
+it("shows explicit Interrupt button for owner/admin on a colleague's active turn even while drafting, and hides stop when canInterrupt is false", async () => {
+  const props = setup();
+  await using screen = await render(
+    <ComposerPrimaryActions
+      {...props}
+      isRunning
+      canSteer={false}
+      canInterrupt
+      isExplicitAdminInterrupt
+      hasSendableContent
+    />,
+  );
+
+  // Explicit labeled Interrupt button is visible alongside Queue even when composer has content.
+  const interruptBtn = screen.getByTestId("team-admin-interrupt-button");
+  await expect.element(interruptBtn).toBeVisible();
+  await expect.element(interruptBtn).toHaveTextContent("Interrupt");
+  await expect.element(screen.getByRole("button", { name: "Queue message" })).toBeVisible();
+
+  await act(() => (interruptBtn.element() as HTMLButtonElement).click());
+  expect(props.onInterrupt).toHaveBeenCalledTimes(1);
+
+  // Regular/modo non-creator (canInterrupt=false) sees no Stop/Interrupt button while running.
+  await screen.rerender(
+    <ComposerPrimaryActions
+      {...props}
+      isRunning
+      canInterrupt={false}
+      isExplicitAdminInterrupt={false}
+      hasSendableContent={false}
+    />,
+  );
+  expect(screen.getByTestId("team-admin-interrupt-button").query()).toBeNull();
+  expect(screen.getByRole("button", { name: "Stop generation" }).query()).toBeNull();
+});

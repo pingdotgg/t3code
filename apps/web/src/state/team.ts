@@ -12,12 +12,15 @@ import {
   previewTeamInviteEffect,
   redeemTeamInviteAndConnectEffect,
   resolveTeamThreadPostPermission,
+  resolveTeamThreadTurnControls,
   resolveTeamThreadView,
   TEAM_THREAD_POST_ALLOWED,
+  TEAM_THREAD_TURN_CONTROLS_DEFAULT,
   type TeamEnvironmentState,
   type TeamInviteJoinInput,
   type TeamInvitePreviewInput,
   type TeamThreadPostPermission,
+  type TeamThreadTurnControls,
 } from "@t3tools/client-runtime/team";
 import type { EnvironmentId, TeamView, TeamViewId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
@@ -293,6 +296,24 @@ export function readTeamThreadPostPermission(
   threadId: ThreadId,
 ): TeamThreadPostPermission {
   return appAtomRegistry.get(teamThreadPostPermissionAtom(`${environmentId}\0${threadId}`));
+}
+
+export function useTeamThreadTurnControls(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly activeRunId?: string | null;
+  readonly activeUserMessageId?: string | null;
+}): TeamThreadTurnControls {
+  const teamState = useTeamEnvironmentState(input.environmentId);
+  if (teamState.team === null) {
+    return TEAM_THREAD_TURN_CONTROLS_DEFAULT;
+  }
+  return resolveTeamThreadTurnControls({
+    teamState,
+    threadId: input.threadId,
+    activeRunId: input.activeRunId,
+    activeUserMessageId: input.activeUserMessageId,
+  });
 }
 
 export interface TeamThreadAccessMenuState {

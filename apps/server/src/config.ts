@@ -112,6 +112,8 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    /** Runs strictly as the Team Control Plane (no local coding agents or shell terminals). */
+    readonly teamHubOnly?: boolean | undefined;
   }
 >()("t3/config/ServerConfig") {
   static readonly layerTest = (

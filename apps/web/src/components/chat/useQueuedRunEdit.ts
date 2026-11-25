@@ -57,7 +57,9 @@ import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ComposerSubmissionIntent } from "../../composer-logic";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import { canCurrentMemberPromoteQueuedRun } from "@t3tools/client-runtime/team";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { readTeamEnvironmentStateFromRegistry } from "../../state/team";
 import { environmentServerConfigsAtom } from "../../state/server";
 import {
   environmentThreadDetails,
@@ -431,6 +433,13 @@ export function useQueuedRunEdit(input: {
 
   // The same move as the queued row's "Send now" while a turn runs.
   const steerSavedRun = async (edited: EditingQueuedRun) => {
+    const teamState = readTeamEnvironmentStateFromRegistry(appAtomRegistry, environmentId);
+    if (
+      teamState !== null &&
+      !canCurrentMemberPromoteQueuedRun({ teamState, threadId: edited.threadId })
+    ) {
+      return;
+    }
     const projection = appAtomRegistry.get(
       environmentThreadDetails.quietThreadAtom({ environmentId, threadId: edited.threadId }),
     )?.projection;

@@ -9,6 +9,7 @@ import {
   type ProviderInteractionMode,
   type OrchestrationV2LinkedSender,
   type RuntimeMode,
+  type TeamMemberId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -34,6 +35,8 @@ export interface McpThreadCaller {
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
+  /** Team member whose permissions bound this turn-scoped MCP token (never widened). */
+  readonly actingMemberId?: TeamMemberId;
 }
 
 export interface McpClientCaller {

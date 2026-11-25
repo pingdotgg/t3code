@@ -11,6 +11,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
+import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -45,8 +46,10 @@ const handlers = {
     (input) => [input.threadId],
     (input) =>
       Effect.gen(function* () {
+        yield* TeamMcpAccess.assertCanUseWorkflows();
+        yield* TeamMcpAccess.assertCanInterruptThread(input.threadId);
         const { threads } = yield* readCaller();
-        return yield* threads.stopWorkflow(input).pipe(
+        const stopped = yield* threads.stopWorkflow(input).pipe(
           Effect.as({}),
           Effect.mapError(
             (cause) =>
@@ -59,6 +62,11 @@ const handlers = {
               }),
           ),
         );
+        yield* TeamMcpAccess.notifyTurnInterruptedByCaller({
+          threadId: input.threadId,
+          reason: "mcp_interrupt",
+        });
+        return stopped;
       }),
   ),
   // Claude can start a turn by itself before T3 starts its run, so a live-run check would refuse the mark.

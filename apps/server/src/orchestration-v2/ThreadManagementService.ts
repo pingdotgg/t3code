@@ -1578,6 +1578,7 @@ const make = Effect.gen(function* () {
         const fiber = yield* sessions
           .releaseUnlessBusy({
             providerSessionId,
+            threadId: input.threadId,
             ownProviderThreadIds,
             throughRunOrdinal,
             // A promoted follow-up may not have marked its turn busy yet.
