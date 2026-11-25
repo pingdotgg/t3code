@@ -1,6 +1,7 @@
 import { Platform, View } from "react-native";
 
 import { useResolveClassNames } from "uniwind";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { SymbolView } from "./AppSymbol";
 import { ListRowLayout, type ListRowContentProps } from "./ListRowLayout";
 import { RadioIndicator } from "./RadioIndicator";
@@ -13,6 +14,7 @@ export function ListRow(
     readonly selected?: boolean;
   },
 ) {
+  const direction = useInterfaceDirection();
   const rippleStyle = useResolveClassNames("bg-subtle-strong");
   return (
     <RowPressable
@@ -52,7 +54,7 @@ export function ListRow(
               </View>
             )}
             <SymbolView
-              name="chevron.right"
+              name={direction === "rtl" ? "chevron.left" : "chevron.right"}
               size={16}
               tintColorClassName="accent-chevron"
               type="monochrome"

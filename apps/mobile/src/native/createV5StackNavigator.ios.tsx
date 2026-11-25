@@ -1,3 +1,4 @@
+import { useInterfaceDirection } from "../i18n/direction";
 import {
   createNavigatorFactory,
   NavigationContext,
@@ -160,9 +161,10 @@ export function V5CardStackView(
       });
     }
   };
+  const direction = useInterfaceDirection();
   return (
     <View className="flex-1 bg-screen">
-      <Stack.Host>
+      <Stack.Host direction={direction}>
         {screens.routes.map((route, index) => {
           const descriptor = props.descriptors[route.key] ?? screens.descriptors[route.key];
           if (!descriptor) return null;

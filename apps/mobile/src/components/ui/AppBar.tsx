@@ -23,6 +23,7 @@ import { useAppearancePreferences } from "../../features/settings/appearance/App
 import type { AppBarMenu, AppBarMenuItem, AppBarProps } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { useControlTheme } from "./useControlTheme";
 
 function iosIcon(icon: AppSymbolName) {
@@ -46,6 +47,7 @@ function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] 
 
 export function AppBar(props: AppBarProps) {
   const gt = useGT();
+  const isRtl = useInterfaceDirection() === "rtl";
   const m = useMessages();
   const locale = useLocale();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
@@ -229,7 +231,7 @@ export function AppBar(props: AppBarProps) {
           {rootBack ? (
             <ScreenHeaderButton
               accessibilityLabel={gt("Back")}
-              icon="chevron.left"
+              icon={isRtl ? "chevron.right" : "chevron.left"}
               onPress={rootBack}
               separateBackground
             />

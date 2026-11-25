@@ -1,4 +1,5 @@
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { useInterfaceDirection } from "../../i18n/direction";
 import {
   BasicAlertDialog,
   Column,
@@ -132,10 +133,15 @@ export function CustomSnoozeSheet(props: Props) {
     timeSelectorUnselectedContainerColor: colors["--color-card"],
     timeSelectorUnselectedContentColor: colors["--color-foreground"],
   };
+  const direction = useInterfaceDirection();
   return (
     // Recycled thread rows can detach a zero-sized native dialog host.
     <OverlayPortal>
-      <Host colorScheme={themeAppearance} style={{ height: 0, width: 0 }}>
+      <Host
+        layoutDirection={direction === "rtl" ? "rightToLeft" : "leftToRight"}
+        colorScheme={themeAppearance}
+        style={{ height: 0, width: 0 }}
+      >
         <BasicAlertDialog
           onDismissRequest={props.onClose}
           properties={{ usePlatformDefaultWidth: false }}

@@ -3,6 +3,7 @@ import { useSyncExternalStore, type ReactNode } from "react";
 import { Split, Stack } from "react-native-screens";
 
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
+import { useInterfaceDirection } from "../../i18n/direction";
 import { PaneContext } from "../../components/ui/Pane";
 import { GLASS_HEADER_OPTIONS } from "../../native/glass-header-options";
 import { NativeColumnContent } from "../../native/NativeColumnContent.ios";
@@ -74,10 +75,11 @@ export function InspectorColumnScreens(props: {
   /** Drawn over the active pane. */
   readonly overlay?: ReactNode;
 }) {
+  const direction = useInterfaceDirection();
   const panes = useMountedInspectorPanes(props.content);
   return (
     <Split.Inspector>
-      <Stack.Host>
+      <Stack.Host direction={direction}>
         {panes.map((pane) => {
           const active = pane.key === props.content?.active;
           return (
@@ -105,10 +107,11 @@ export function InspectorPanes(props: {
   readonly content: InspectorContent | undefined;
   readonly onClose: () => void;
 }) {
+  const direction = useInterfaceDirection();
   const panes = useMountedInspectorPanes(props.content);
   if (panes.length === 0) return null;
   return (
-    <Stack.Host>
+    <Stack.Host direction={direction}>
       {panes.map((pane) => (
         <Stack.Screen
           key={pane.key}

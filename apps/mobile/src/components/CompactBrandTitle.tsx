@@ -47,7 +47,7 @@ export function CompactBrandTitle(
       role="heading"
       className="flex-row items-center gap-1.5"
       style={[
-        { marginLeft: titleOffset },
+        { direction: "ltr", marginLeft: titleOffset },
         Platform.OS === "android" && { gap: 5.25 * scale },
         props.fit && { flexShrink: 0 },
       ]}

@@ -1,4 +1,5 @@
 import { useGT } from "gt-react-native";
+import { useInterfaceDirection } from "../../i18n/direction";
 import {
   createNavigatorFactory,
   NavigationContext,
@@ -330,6 +331,7 @@ function WorkspaceColumns(
     }
   };
 
+  const direction = useInterfaceDirection();
   const primary = props.descriptors[props.primary.key];
   if (!primary) return null;
   const primaryColumnWidth = nativeSidebarColumnWidth(layout);
@@ -394,7 +396,7 @@ function WorkspaceColumns(
       }}
     >
       <Split.Column>
-        <Stack.Host>
+        <Stack.Host direction={direction}>
           <ColumnScreen
             descriptor={primary}
             primary
@@ -409,7 +411,7 @@ function WorkspaceColumns(
         </Stack.Host>
       </Split.Column>
       <Split.Column>
-        <Stack.Host>
+        <Stack.Host direction={direction}>
           <Stack.Screen
             screenKey="workspace-empty"
             activityMode={layout.usesSplitView && !activeDetailKey ? "attached" : "detached"}
