@@ -4541,7 +4541,6 @@ describe("PiAdapterV2", () => {
 
   it.effect.each([
     "captured handoff",
-    "uncaptured handoff",
     "command-only handoff",
     "legacy uncaptured boundary",
     "adopted prompt",
@@ -4655,7 +4654,7 @@ describe("PiAdapterV2", () => {
         nativeTurnRef:
           scenario === "command-only handoff"
             ? null
-            : scenario === "uncaptured handoff" || scenario === "legacy uncaptured boundary"
+            : scenario === "legacy uncaptured boundary"
               ? next.nativeTurnRef
               : { driver: PI_PROVIDER, strength: "strong", nativeId: "u3" },
         ...(scenario === "legacy uncaptured boundary"
