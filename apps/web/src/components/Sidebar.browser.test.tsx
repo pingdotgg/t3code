@@ -199,6 +199,7 @@ describe("sidebar numbered jumps", () => {
     const initial = useComposerDraftStore.getState();
     using stack = new DisposableStack();
     stack.defer(() => useComposerDraftStore.setState(initial, true));
+    useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
     const previousSettings = getClientSettings();
     stack.defer(() => __setClientSettingsForTests(previousSettings));
     __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
@@ -230,7 +231,7 @@ describe("sidebar numbered jumps", () => {
         <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
       </SidebarProvider>,
     );
-    const draftRow = screen.getByTestId("sidebar-draft-row");
+    const draftRow = screen.getByRole("button", { name: "Unsent prompt, Unsent draft, web" });
     await expect.element(draftRow).toBeInTheDocument();
     await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
     await userEvent.keyboard("{Control>}");
