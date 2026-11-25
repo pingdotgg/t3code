@@ -4341,6 +4341,21 @@
     },
     " app left its page and was stopped"
   ],
+  "796b81c4875c4feb": [
+    "The ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " app needs a newer ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " server on this environment. Update the server to use it."
+  ],
   "5ef18e4d39b398bf": [
     "Unable to load the ",
     {
