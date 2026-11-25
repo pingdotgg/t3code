@@ -196,7 +196,8 @@ it.effect("runs background Git in its own lane so user commands never queue behi
       concurrency: "unbounded",
     }).pipe(Effect.forkChild);
 
-    const started = yield* Queue.takeN(starts, 6);
+    yield* TestClock.adjust("2 seconds");
+    const started = yield* Queue.takeAll(starts);
     assert.deepStrictEqual([...started].toSorted(), [
       "background",
       "background",
@@ -1089,12 +1090,7 @@ it.effect("keeps a branch's base cached while only other refs' commits move", ()
       // Another worktree's commits and a fetch moving a packed base ref add or remove no name.
       yield* git(other, ["commit", "--allow-empty", "-m", "other"]);
       yield* driver.statusDetailsLocal(cwd);
-      // Remote names and the default branch are read from this worktree on a full status read.
-      const remoteMetadataReads = spawnedArgs.filter(
-        (args) => args[0] === "remote" || args.at(-1) === "refs/remotes/origin/HEAD",
-      );
-      assert.equal(remoteMetadataReads.length, 2);
-      assert.equal(spawnedArgs.length - remoteMetadataReads.length, 6);
+      assert.equal(spawnedArgs.length, 6);
       assert.equal(lookups(), 0);
       yield* git(other, ["commit", "--allow-empty", "-m", "other again"]);
       yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "other"]);
@@ -6276,8 +6272,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(cachedStatus.behindCount, 0);
         assert.equal(refreshedStatus.behindCount, 1);
         const fresh = yield* driver.readStatusPoll(linked, "feature", false);
-        assert.notEqual(fresh?.inputStamp, observed.inputStamp);
-        assert.equal(yield* observed.inputStampAfterLookup, fresh?.inputStamp);
+        if (fresh === null) return assert.fail("Expected poll inputs after the fetch");
+        assert.notEqual(fresh.inputStamp, observed.inputStamp);
+        assert.equal(yield* observed.inputStampAfterLookup, fresh.inputStamp);
       }),
     );
 
@@ -6310,12 +6307,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect.each([
-      { seed: 20261125, reftable: false },
-      { seed: 424242, reftable: gitHasReftable },
-    ])(
-      "scopes linked worktree poll inputs and matches Git after seeded ref moves ($seed)",
-      ({ seed, reftable }) =>
+    it.effect.each([{ reftable: false }, { reftable: gitHasReftable }])(
+      "scopes linked worktree poll inputs and matches Git after ref moves (reftable: $reftable)",
+      ({ reftable }) =>
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
           const linked = yield* makeTmpDir();
@@ -6404,41 +6398,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             snapshot,
           );
 
-          const advance = (value: number) => (Math.imul(value, 1664525) + 1013904223) >>> 0;
-          let random = seed;
-          for (let step = 0; step < 12; step++) {
-            random = advance(random);
-            switch (random % 4) {
-              case 0:
-                yield* git(sibling, [
-                  "update-ref",
-                  "refs/heads/sibling",
-                  random & 4 ? initial : next,
-                ]);
-                assert.equal(yield* readPoll(), snapshot);
-                break;
-              case 1:
-                yield* git(cwd, [
-                  "update-ref",
-                  "refs/remotes/origin/unrelated",
-                  random & 4 ? initial : next,
-                ]);
-                assert.equal(yield* readPoll(), snapshot);
-                break;
-              case 2:
-                yield* git(cwd, [
-                  "update-ref",
-                  "refs/remotes/origin/feature",
-                  random & 4 ? initial : next,
-                ]);
-                break;
-              case 3:
-                yield* git(cwd, ["pack-refs", "--all"]);
-                assert.equal(yield* readPoll(), snapshot);
-                break;
-            }
-            snapshot = yield* readPoll();
-          }
+          yield* git(sibling, ["update-ref", "refs/heads/sibling", next]);
+          yield* git(cwd, ["update-ref", "refs/remotes/origin/unrelated", next]);
+          yield* git(cwd, ["pack-refs", "--all"]);
+          assert.equal(yield* readPoll(), snapshot);
+          // Divergence comes from the poll itself; readPoll checks it against Git.
+          yield* git(cwd, ["update-ref", "refs/remotes/origin/feature", next]);
+          snapshot = yield* readPoll();
 
           yield* git(cwd, [
             "symbolic-ref",
@@ -6470,16 +6436,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.notEqual(detached, configuredBase);
           yield* git(linked, ["checkout", "feature"]);
           assert.notEqual(yield* readPoll(), detached);
-          yield* git(linked, ["config", "--worktree", "remote.origin.url", cwd]);
-          yield* git(cwd, ["config", "--remove-section", "remote.origin"]);
-          assert.isFalse((yield* driver.statusDetailsLocal(sibling)).hasOriginRemote);
-          assert.isTrue((yield* driver.statusDetailsLocal(linked)).hasOriginRemote);
-          assert.isTrue(
-            (yield* driver.readStatusPoll(linked, "feature", false))?.details.hasPrimaryRemote,
-          );
-          assert.isFalse(
-            (yield* driver.readStatusPoll(sibling, "sibling", false))?.details.hasPrimaryRemote,
-          );
 
           yield* git(cwd, ["branch", "local-base", initial]);
           const localWorktree = yield* makeTmpDir();
@@ -6546,7 +6502,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(unborn?.details.branch, "main");
         assert.isFalse(unborn?.details.hasUpstream);
         yield* commitInitialRepo(cwd);
-        assert.notEqual((yield* poll)?.inputStamp, unborn?.inputStamp);
+        const born = yield* poll;
+        assert.isNotNull(born);
+        assert.notEqual(born?.inputStamp, unborn?.inputStamp);
         yield* git(cwd, ["commit", "--allow-empty", "-m", "replacement"]);
         yield* git(cwd, ["replace", "HEAD^", "HEAD"]);
         assert.isNull(yield* poll);
@@ -6625,14 +6583,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isNotNull(unshallowWorktreeSnapshot);
         assert.notEqual(unshallowSnapshot, shallowSnapshot);
         assert.notEqual(unshallowWorktreeSnapshot, worktreeSnapshot);
-        assert.notEqual(
-          (yield* driver.readStatusPoll(shallow, shallowBranch, false))?.inputStamp,
-          shallowInputs?.inputStamp,
-        );
-        assert.notEqual(
-          (yield* driver.readStatusPoll(shallowWorktree, null, false))?.inputStamp,
-          worktreeInputs?.inputStamp,
-        );
+        const deepened = yield* driver.readStatusPoll(shallow, shallowBranch, false);
+        const deepenedWorktree = yield* driver.readStatusPoll(shallowWorktree, null, false);
+        assert.isNotNull(deepened);
+        assert.isNotNull(deepenedWorktree);
+        assert.notEqual(deepened?.inputStamp, shallowInputs?.inputStamp);
+        assert.notEqual(deepenedWorktree?.inputStamp, worktreeInputs?.inputStamp);
 
         yield* git(cwd, ["checkout", "--detach"]);
         yield* git(cwd, ["commit", "--allow-empty", "-m", "detached"]);

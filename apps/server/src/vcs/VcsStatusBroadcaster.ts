@@ -654,6 +654,8 @@ export const make = Effect.gen(function* () {
     const cached = yield* getCachedStatus(cwd);
     const refreshedLocal =
       branch !== currentBranch || cached?.local?.value.refName !== currentBranch;
+    // Read before the local refresh: a base that moves after it changes the next poll's stamp.
+    const inputStamp = branch === currentBranch && poll ? yield* poll.inputStampAfterLookup : null;
     if (refreshedLocal) {
       yield* refreshLocalStatusCore(cwd);
     }
@@ -662,7 +664,7 @@ export const make = Effect.gen(function* () {
         branch === currentBranch
           ? { branch, value, fingerprint: fingerprintStatusPart(value) }
           : null,
-      inputStamp: branch === currentBranch && poll ? yield* poll.inputStampAfterLookup : null,
+      inputStamp,
       refreshedLocal,
     };
   });

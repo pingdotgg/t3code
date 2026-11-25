@@ -134,6 +134,8 @@ const LIST_REFS_SNAPSHOT_CACHE_CAPACITY = 64;
 const LIST_REFS_SNAPSHOT_CACHE_TTL = Duration.minutes(2);
 const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
+const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
+const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
 const BASE_BRANCH_CACHE_TTL = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
@@ -1922,6 +1924,58 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return { worktreeRoot: repository.worktreeRoot, currentBranch };
   });
 
+  const defaultBranchCache = yield* Cache.makeWith(
+    (gitCommonDir: string) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fetchCwd =
+          path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+        return yield* resolvePrimaryDefaultBranchName(fetchCwd, ["--git-dir", gitCommonDir]);
+      }),
+    {
+      capacity: 2_048,
+      timeToLive: Exit.match({
+        onSuccess: () => STATUS_DEFAULT_BRANCH_CACHE_TTL,
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+  const primaryRemoteExistsCache = yield* Cache.makeWith(
+    (gitCommonDir: string) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fetchCwd =
+          path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+        return yield* executeGit(
+          "GitVcsDriver.statusDetails.primaryRemoteExists",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "remote"],
+          { allowNonZeroExit: true },
+        ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim().length > 0));
+      }),
+    {
+      capacity: 2_048,
+      // A remote added outside T3 Code must show on the next status read, so only a hit is kept.
+      timeToLive: Exit.match({
+        onSuccess: (exists) => (exists ? STATUS_ORIGIN_EXISTS_CACHE_TTL : Duration.zero),
+        onFailure: () => Duration.zero,
+      }),
+    },
+  );
+  const invalidateStatusStaticCaches = Effect.fn("GitVcsDriverCore.invalidateStatusStaticCaches")(
+    function* (cwd: string, gitCommonDir?: string | null) {
+      const commonDir =
+        gitCommonDir === undefined
+          ? yield* readGitCommonDir(cwd).pipe(
+              Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
+            )
+          : gitCommonDir;
+      const cacheKey = commonDir ?? normalizeRepositoryPathsCacheKey(cwd);
+      yield* Cache.invalidate(defaultBranchCache, cacheKey);
+      yield* Cache.invalidate(primaryRemoteExistsCache, cacheKey);
+    },
+  );
+
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
     const repositoryPaths = yield* resolveRepositoryPaths(cwd);
     if (repositoryPaths !== null) {
@@ -2141,28 +2195,40 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolvePublishBranchName = (branchName: string, remoteName: string) =>
     parseRemoteRefWithRemoteNames(branchName, [remoteName])?.branchName ?? branchName;
 
+  const hasAnyRemote = (cwd: string) =>
+    resolveRepositoryPaths(cwd).pipe(
+      Effect.orElseSucceed(() => null),
+      Effect.flatMap((paths) =>
+        paths === null
+          ? listRemoteNames(cwd).pipe(Effect.map((remoteNames) => remoteNames.length > 0))
+          : Cache.get(primaryRemoteExistsCache, paths.gitCommonDir),
+      ),
+    );
+
   // Local-only repositories are normal and status polls them, so the span succeeds with null.
   // Callers that need a remote fail in their own span.
   const findPrimaryRemoteName = Effect.fn("resolvePrimaryRemoteName")(function* (cwd: string) {
-    const remoteNames = yield* listRemoteNames(cwd);
-    if (remoteNames.length === 0) return null;
-    if (yield* originRemoteExists(cwd)) return "origin";
-    return remoteNames[0] ?? null;
+    if (!(yield* hasAnyRemote(cwd))) {
+      return null;
+    }
+    if (yield* originRemoteExists(cwd)) {
+      return "origin";
+    }
+    const [firstRemote] = yield* listRemoteNames(cwd);
+    return firstRemote ?? null;
   });
 
-  const resolveStatusRemote = Effect.fn("GitVcsDriver.resolveStatusRemote")(function* (
-    cwd: string,
-  ) {
-    const remoteNames = yield* listRemoteNames(cwd);
-    const [firstRemote] = remoteNames;
-    if (firstRemote === undefined) return [false, null] as const;
-    const originDefault = yield* resolveDefaultBranchName(cwd, "origin");
-    const defaultBranch =
-      originDefault !== null || remoteNames.includes("origin")
-        ? originDefault
-        : yield* resolveDefaultBranchName(cwd, firstRemote);
-    return [true, defaultBranch] as const;
-  });
+  const resolvePrimaryDefaultBranchName = Effect.fn("GitVcsDriver.resolvePrimaryDefaultBranchName")(
+    function* (cwd: string, gitDirArgs: ReadonlyArray<string> = []) {
+      const originDefault = yield* resolveDefaultBranchName(cwd, "origin", gitDirArgs);
+      if (originDefault !== null) return originDefault;
+      const remoteNames = yield* listRemoteNames(cwd, gitDirArgs);
+      const [firstRemote] = remoteNames;
+      return firstRemote === undefined || remoteNames.includes("origin")
+        ? null
+        : yield* resolveDefaultBranchName(cwd, firstRemote, gitDirArgs);
+    },
+  );
 
   const resolvePrimaryRemoteName = (cwd: string) =>
     findPrimaryRemoteName(cwd).pipe(
@@ -2742,7 +2808,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    const [hasPrimaryRemote, defaultBranch] = yield* resolveStatusRemote(cwd);
+    const hasPrimaryRemote = yield* hasAnyRemote(cwd);
+    const defaultBranch = hasPrimaryRemote ? yield* resolvePrimaryDefaultBranchName(cwd) : null;
     const isDefaultBranch =
       branch !== null &&
       (branch === defaultBranch ||
@@ -3231,7 +3298,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           }),
           Effect.result,
         ),
-        resolveStatusRemote(cwd).pipe(Effect.orElseSucceed(() => [false, null] as const)),
+        (statusCacheKey
+          ? Cache.get(primaryRemoteExistsCache, statusCacheKey)
+          : listRemoteNames(cwd).pipe(Effect.map((remoteNames) => remoteNames.length > 0))
+        ).pipe(
+          Effect.orElseSucceed(() => false),
+          Effect.flatMap((hasRemote) =>
+            (hasRemote
+              ? statusCacheKey
+                ? Cache.get(defaultBranchCache, statusCacheKey)
+                : resolvePrimaryDefaultBranchName(cwd)
+              : Effect.succeed(null)
+            ).pipe(
+              Effect.orElseSucceed(() => null),
+              Effect.map((defaultBranch) => [hasRemote, defaultBranch] as const),
+            ),
+          ),
+        ),
       ],
       { concurrency: "unbounded" },
     );
@@ -7378,7 +7461,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     effect: Effect.Effect<A, E>,
   ): Effect.Effect<A, E> =>
-    effect.pipe(Effect.ensuring(invalidateListRefsSnapshot(cwd).pipe(Effect.ignore)));
+    effect.pipe(
+      Effect.ensuring(
+        Effect.all([
+          invalidateListRefsSnapshot(cwd).pipe(Effect.ignore),
+          invalidateStatusStaticCaches(cwd).pipe(Effect.ignore),
+        ]),
+      ),
+    );
   const invalidateWorktreeCreationCaches = Effect.fn(
     "GitVcsDriverCore.invalidateWorktreeCreationCaches",
   )(function* (cwd: string) {
@@ -7394,7 +7484,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => null),
       );
     }
-    yield* invalidateListRefsSnapshot(cwd, gitCommonDir).pipe(Effect.ignore);
+    yield* Effect.all([
+      invalidateListRefsSnapshot(cwd, gitCommonDir).pipe(Effect.ignore),
+      invalidateStatusStaticCaches(cwd, gitCommonDir).pipe(Effect.ignore),
+    ]);
   });
   const initRepoWithListRefsInvalidation: GitVcsDriver.GitVcsDriver["Service"]["initRepo"] = (
     input,
