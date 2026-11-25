@@ -603,12 +603,16 @@ const checkLimit = (what: string, limit: unknown) => {
   }
 };
 
-/** Holds a place in `pool` while `body` runs, waiting first in line for one when it is full. */
+/**
+ * Holds a place in `pool` while `body` runs, waiting first in line for one when it is full. With
+ * `untilRunEnds` the place is kept past `body`, through `onEnd`, until the run ends or pauses.
+ */
 const holding = Effect.fn("workflow.within")(function* <A, E, R>(
   name: string,
   pool: string,
   limit: number,
   body: Effect.Effect<A, E, R>,
+  untilRunEnds = false,
 ): Effect.fn.Return<A, E, R | InRun> {
   const run = yield* claim(name, true);
   yield* Effect.orDie(
@@ -617,6 +621,7 @@ const holding = Effect.fn("workflow.within")(function* <A, E, R>(
       pool: { name: pool, size: limit },
     }),
   );
+  if (untilRunEnds) return yield* body;
   // A run that pauses or ends inside gives its place back there; this is the body finishing,
   // or failing in a way its caller may catch and carry on from.
   const leave = Activity.make({ name: `${name}/leave`, execute: run.placeLeft(name) });
@@ -978,6 +983,7 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
               definition.name,
               definition.concurrency,
               body,
+              true,
             )
       ).pipe(
         Effect.flatMap((value) =>
@@ -1064,9 +1070,12 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
       Effect.tapCause((cause) =>
         Cause.hasInterruptsOnly(cause)
           ? Effect.void
-          : Effect.flatMap(WorkflowStore.WorkflowStore, (store) =>
-              store.runPaused(runId, text(Cause.squash(cause))),
-            ),
+          : Effect.gen(function* () {
+              const store = yield* WorkflowStore.WorkflowStore;
+              const link = yield* EngineLink;
+              yield* store.runPaused(runId, text(Cause.squash(cause)));
+              if (link.current !== undefined) yield* link.current.placesFreed;
+            }),
       ),
     ),
   );

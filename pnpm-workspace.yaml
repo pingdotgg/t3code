@@ -34,13 +34,13 @@ catalog:
   "@alchemy.run/drizzle": 2.0.0-beta.85
   "@alchemy.run/planetscale": 2.0.0-beta.85
   "@alchemy.run/test": 2.0.0-beta.85
-  "@clerk/backend": 3.27.0
-  "@clerk/clerk-js": 6.42.3
-  "@clerk/electron": 0.1.10
+  "@clerk/backend": 3.33.0
+  "@clerk/clerk-js": 6.47.0
+  "@clerk/electron": 0.1.20
   "@clerk/electron-passkeys": 0.0.3
-  "@clerk/expo": 4.15.1
-  "@clerk/react": 6.18.6
-  "@clerk/shared": 4.44.1
+  "@clerk/expo": 4.17.6
+  "@clerk/react": 6.19.6
+  "@clerk/shared": 4.49.0
   # Must match the version alchemy depends on: the relay overrides its
   # Cloudflare retry policy through this package's Retry service.
   "@distilled.cloud/cloudflare": 1.0.0-rc.18
@@ -111,7 +111,7 @@ overrides:
   alchemy: "catalog:"
   expo-audio: 58.0.12
   expo-network: 58.0.5
-  "@clerk/expo-native-components": 0.4.4
+  "@clerk/expo-native-components": 0.4.8
   "@cursor/sdk": 1.5.0
   expo-sharing: 58.0.23
   expo-widgets: 58.0.29
@@ -123,7 +123,7 @@ overrides:
   dbus-next: 0.10.2
   node-pty: 1.2.0-beta.15
   react-native-gesture-handler: 3.5.0
-  react-native-reanimated: 4.7.1
+  react-native-reanimated: 4.8.0
   react-native-keyboard-controller: 1.23.0
   # 6.1.1 cannot build Android: it downloads PDFium from a release asset that was never published.
   react-native-pdf-jsi: 6.1.0
@@ -239,7 +239,7 @@ patchedDependencies:
   expo-audio@58.0.12: patches/expo-audio@58.0.12.patch
   expo-video@58.0.14: patches/expo-video@58.0.14.patch
   expo-network@58.0.5: patches/expo-network@58.0.5.patch
-  "@clerk/expo-native-components@0.4.4": patches/@clerk__expo-native-components@0.4.4.patch
+  "@clerk/expo-native-components@0.4.8": patches/@clerk__expo-native-components@0.4.8.patch
   "@alchemy.run/test@2.0.0-beta.85": patches/@alchemy.run__test@2.0.0-beta.85.patch
   "@effect/vitest@4.1.5": patches/@effect__vitest@4.1.5.patch
   expo-sharing@58.0.23: patches/expo-sharing@58.0.23.patch
@@ -259,7 +259,7 @@ patchedDependencies:
   react-native-gesture-handler@3.5.0: patches/react-native-gesture-handler@3.5.0.patch
   # Screens v5 stack, split and tab screens leave at once, like legacy screens. Exiting animations
   # inside one otherwise hold its removal for a later mount, after its stack has moved on.
-  react-native-reanimated@4.7.1: patches/react-native-reanimated@4.7.1.patch
+  react-native-reanimated@4.8.0: patches/react-native-reanimated@4.8.0.patch
   react-native-keyboard-controller@1.23.0: patches/react-native-keyboard-controller@1.23.0.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
@@ -360,3 +360,10 @@ minimumReleaseAgeExclude:
   - "@voidzero-dev/vite-plus-win32-arm64-msvc@1.8.0"
   - "@voidzero-dev/vite-plus-win32-x64-msvc@1.8.0"
   - vite-plus@1.8.0
+  - "@clerk/backend@3.33.0"
+  - "@clerk/clerk-js@6.47.0"
+  - "@clerk/electron@0.1.20"
+  - "@clerk/expo-native-components@0.4.8"
+  - "@clerk/expo@4.17.6"
+  - "@clerk/react@6.19.6"
+  - "@clerk/shared@4.49.0"
