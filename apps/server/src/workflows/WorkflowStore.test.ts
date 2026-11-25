@@ -17,7 +17,7 @@ import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_Workflow
 import WorkflowRunIndexesMigration from "../persistence/Migrations/114_WorkflowRunIndexes.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
 import WorkflowMailSenderMigration from "../persistence/Migrations/117_WorkflowMailSender.ts";
-import WorkflowRunSubjectMigration from "../persistence/Migrations/119_WorkflowRunSubject.ts";
+import WorkflowRunSubjectMigration from "../persistence/Migrations/118_WorkflowRunSubject.ts";
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
