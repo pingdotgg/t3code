@@ -1058,6 +1058,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
         continue;
       }
       if (part === LINE_START) {
+        // A list starts its own line unless the text before it already ended one.
         if (!midLine) continue;
         part = "\n";
       }
