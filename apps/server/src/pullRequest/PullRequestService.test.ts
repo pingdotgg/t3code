@@ -2612,6 +2612,50 @@ it.effect("names the host when no project has a checkout on it for a host-routed
   }),
 );
 
+// regression: #42790 a self-hosted host with no project fell through to "provider-unsupported"
+it.effect("does not call a self-hosted host with no project unsupported", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "public",
+          title: "Public",
+          workspaceRoot: "/public",
+          repository: "acme/web",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
+        }),
+      ],
+      resolveHandle: ({ context }) =>
+        Effect.succeed({
+          context: {
+            ...context!,
+            provider: { ...context!.provider, kind: SourceControlProviderKind.make("github") },
+          },
+          provider: undefined as never,
+        }),
+    });
+    const result = yield* Effect.result(
+      service.summary(
+        {
+          projectId: "public" as ProjectId,
+          host: "ghes.example",
+          repository: "owner/repo",
+          number: 1,
+        },
+        { recoverTransientFailure: false },
+      ),
+    );
+    if (result._tag === "Failure") {
+      expect(result.failure).not.toMatchObject({ reason: "provider-unsupported" });
+      expect(result.failure.message).toContain("ghes.example");
+    }
+  }),
+);
+
 it.effect("prefers a matching checkout over a non-repository project's directory", () =>
   Effect.gen(function* () {
     const seen: string[] = [];
