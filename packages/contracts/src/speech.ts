@@ -235,6 +235,7 @@ const SupportedSpeechStatus = Schema.Struct({
   acceleration: SpeechAcceleration,
   benchmarkTier: SpeechBenchmarkTier,
   modelUnloadTimeout: SpeechModelUnloadTimeout,
+  modelLoadState: Schema.optionalKey(Schema.Literals(["unloaded", "loaded", "busy"])),
   gpuDevices: Schema.Array(SpeechGpuDevice),
 });
 const SupportedSpeechStatusWire = SupportedSpeechStatus.mapFields((fields) => ({

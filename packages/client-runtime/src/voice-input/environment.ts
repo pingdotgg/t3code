@@ -331,3 +331,12 @@ export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, model
     path: (urls) => urls.removeModel(),
     run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
   });
+
+export const unloadEnvironmentSpeechModel = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.unloadModel(),
+    run: ({ client, headers }) => client.unloadModel({ headers }),
+  });

@@ -148,6 +148,7 @@ export class SpeechService extends Context.Service<
     /** Uses catalog model files already on this machine, from a file or folder path. */
     readonly linkModels: (source: string) => Effect.Effect<SpeechModels, SpeechError>;
     readonly prepareModel: Effect.Effect<void, SpeechError>;
+    readonly unloadModel: () => Effect.Effect<void, SpeechError>;
     readonly transcribe: (
       pcmBytes: Uint8Array,
       options: SpeechTranscriptionOptions,
@@ -487,6 +488,7 @@ const make = Effect.gen(function* () {
           ? "cpu"
           : "accelerated",
       modelUnloadTimeout: settings.speechModelUnloadTimeout,
+      modelLoadState: operationBusy() ? "busy" : model ? "loaded" : "unloaded",
       gpuDevices,
     };
   });
@@ -897,6 +899,15 @@ const make = Effect.gen(function* () {
     status: freshStatus("status"),
     models: readModels,
     prepareModel,
+    unloadModel: Effect.fn("SpeechService.unloadModel")(() =>
+      exclusive(
+        "model unload",
+        requireSupported.pipe(
+          Effect.andThen(attempt("model unload", disposeModel)),
+          Effect.uninterruptible,
+        ),
+      ),
+    ),
     transcribe,
     startStream: Effect.fn("SpeechService.startStream")(function* (options) {
       const session = yield* Scope.fork(yield* Effect.scope);
