@@ -161,6 +161,13 @@ const PACKAGE_FIELD_TEXT: ReadonlyMap<string, string> = new Map([
       "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
     ),
   ],
+  ["Stop at plan limit", msg("Stop at plan limit")],
+  [
+    "Stop the turn when a plan limit is reached instead of continuing on extra usage. Snooze and auto-resume treat it as a usage limit.",
+    msg(
+      "Stop the turn when a plan limit is reached instead of continuing on extra usage. Snooze and auto-resume treat it as a usage limit.",
+    ),
+  ],
   [
     "Google accounts use your subscription; API keys and Agent Platform bill usage.",
     msg("Google accounts use your subscription; API keys and Agent Platform bill usage."),
