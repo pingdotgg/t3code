@@ -26,6 +26,7 @@ import {
   type ProviderDriverKind,
   type ProviderRequestKind,
   type ProviderThreadId,
+  type ProviderTurnId,
   type ProviderUserInputAnswers,
   type RuntimeMode,
   type RuntimeRequestId,
@@ -157,6 +158,8 @@ const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 // A model can stay silent this long before the first token of a reply the agent started itself.
 const ACP_OPEN_REPLY_QUIET_LIMIT: Duration.Input = "2 minutes";
 const ACP_BUSY_PROMPT_RETRY_INTERVAL: Duration.Input = "1 second";
+// Bounded retries for a steer refused while the agent's request is still in flight to T3.
+const ACP_AWAITING_ANSWER_UNSEEN_RETRIES = 3;
 // Agents such as omp advertise a loaded session's commands shortly after answering session/load.
 const ACP_LOADED_COMMANDS_WAIT: Duration.Input = "2 seconds";
 const ACP_PROMPT_INACTIVITY_SLICE_MILLIS = 60_000;
@@ -198,24 +201,72 @@ function mergeAcpAppContext(
   return merged;
 }
 
+// `agy acp` refuses a prompt while its running prompt waits for a permission or question answer:
+// "Can't add this prompt to session <id>: the running prompt is waiting for a permission or
+// question answer; answer it or send session/cancel, then send this prompt again".
+function isAwaitingAnswerPromptError(error: EffectAcpErrors.AcpError): boolean {
+  return (
+    error._tag === "AcpRequestError" &&
+    error.errorMessage.includes("the running prompt is waiting for a permission or question answer")
+  );
+}
+
 function sendPromptWhenIdle<A>(
   turn: { readonly interrupted: boolean; readonly finalized: boolean },
   prompt: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
   superseded: () => boolean = () => false,
+  /** Given for a steer: true while the agent waits on a request T3 has not answered. */
+  answerPending?: Effect.Effect<boolean>,
+  unseenAnswerRetries = 0,
 ): Effect.Effect<A, EffectAcpErrors.AcpError> {
   // A Stop or a prompt-steer can land during the wait, so both are rechecked before each resend.
   const stopped = () => turn.interrupted || turn.finalized || superseded();
+  const awaitAnswer = (seenPending: boolean): Effect.Effect<boolean> =>
+    Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
+      Effect.andThen(
+        Effect.suspend(() =>
+          stopped() || answerPending === undefined
+            ? Effect.succeed(seenPending)
+            : answerPending.pipe(
+                Effect.flatMap((pending) =>
+                  pending ? awaitAnswer(true) : Effect.succeed(seenPending),
+                ),
+              ),
+        ),
+      ),
+    );
   return prompt().pipe(
     Effect.catchIf(
-      (error) => isAgentBusyPromptError(error) && !stopped(),
       (error) =>
-        Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
-          Effect.andThen(
-            Effect.suspend(() =>
-              stopped() ? Effect.fail(error) : sendPromptWhenIdle(turn, prompt, superseded),
+        !stopped() &&
+        (isAgentBusyPromptError(error) ||
+          (answerPending !== undefined &&
+            isAwaitingAnswerPromptError(error) &&
+            unseenAnswerRetries < ACP_AWAITING_ANSWER_UNSEEN_RETRIES)),
+      (error) =>
+        isAgentBusyPromptError(error)
+          ? Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
+              Effect.andThen(
+                Effect.suspend(() =>
+                  stopped()
+                    ? Effect.fail(error)
+                    : sendPromptWhenIdle(turn, prompt, superseded, answerPending, 0),
+                ),
+              ),
+            )
+          : awaitAnswer(false).pipe(
+              Effect.flatMap((seenPending) =>
+                stopped()
+                  ? Effect.fail(error)
+                  : sendPromptWhenIdle(
+                      turn,
+                      prompt,
+                      superseded,
+                      answerPending,
+                      seenPending ? 0 : unseenAnswerRetries + 1,
+                    ),
+              ),
             ),
-          ),
-        ),
     ),
   );
 }
@@ -6918,20 +6969,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ),
         );
 
-        const cancelPendingRuntimeRequests = Effect.fnUntraced(function* (
-          options: { readonly stopMcpCalls: boolean } = { stopMcpCalls: true },
+        const hasPendingRequestForTurn = (providerTurnId: ProviderTurnId) =>
+          Ref.get(pendingRuntimeRequests).pipe(
+            Effect.map((requests) =>
+              [...requests.values()].some(
+                (request) => request.runtimeRequest.providerTurnId === providerTurnId,
+              ),
+            ),
+          );
+
+        const cancelMatchingPendingRuntimeRequests = Effect.fnUntraced(function* (
+          predicate: (request: PendingRuntimeRequest) => boolean,
+          emitCancelledEvents: boolean,
         ) {
-          const waiting = turnAttached;
-          turnAttached = yield* Deferred.make<boolean>();
-          yield* Deferred.succeed(waiting, false);
-          // session/cancel does not end the agent's MCP calls; T3 runs them, so it stops them.
-          if (options.stopMcpCalls && runtimeMcpBridge !== undefined) {
-            yield* runtimeMcpBridge.stopCalls;
-          }
-          const requests = yield* Ref.modify(pendingRuntimeRequests, (current) => [
-            [...current.values()],
-            new Map<string, PendingRuntimeRequest>(),
-          ]);
+          const requests = yield* Ref.modify(pendingRuntimeRequests, (current) => {
+            const matched: Array<PendingRuntimeRequest> = [];
+            const kept = new Map<string, PendingRuntimeRequest>();
+            for (const [key, request] of current) {
+              if (predicate(request)) {
+                matched.push(request);
+              } else {
+                kept.set(key, request);
+              }
+            }
+            return [matched, kept] as const;
+          });
           if (requests.length === 0) return;
 
           const now = yield* DateTime.now;
@@ -6942,7 +7004,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const cancelled = yield* request.type === "approval"
                   ? Deferred.succeed(request.decision, "cancel")
                   : Deferred.succeed(request.answers, null);
-                if (!cancelled) return;
+                if (!cancelled || !emitCancelledEvents) return;
 
                 yield* emitProviderEvent({
                   type: "runtime_request.updated",
@@ -6976,6 +7038,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }),
             { concurrency: 1, discard: true },
           );
+        });
+
+        const cancelPendingRuntimeRequests = Effect.fnUntraced(function* (
+          options: { readonly stopMcpCalls: boolean } = { stopMcpCalls: true },
+        ) {
+          const waiting = turnAttached;
+          turnAttached = yield* Deferred.make<boolean>();
+          yield* Deferred.succeed(waiting, false);
+          // session/cancel does not end the agent's MCP calls; T3 runs them, so it stops them.
+          if (options.stopMcpCalls && runtimeMcpBridge !== undefined) {
+            yield* runtimeMcpBridge.stopCalls;
+          }
+          yield* cancelMatchingPendingRuntimeRequests(() => true, true);
         });
 
         const mutateCarryoverSubagentStatus = Effect.fnUntraced(function* (
@@ -9467,6 +9542,84 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         });
 
+        // Prompts still waiting on their response, including ones a later steer superseded.
+        const unsettledPrompts = new Set<{
+          readonly generation: number;
+          readonly settled: Deferred.Deferred<void>;
+        }>();
+        const trackPrompt = <A, E>(
+          generation: number,
+          prompt: Effect.Effect<A, E>,
+        ): Effect.Effect<A, E> =>
+          Effect.acquireUseRelease(
+            Deferred.make<void>().pipe(
+              Effect.map((settled) => {
+                const entry = { generation, settled };
+                unsettledPrompts.add(entry);
+                return entry;
+              }),
+            ),
+            () => prompt,
+            (entry) =>
+              Effect.suspend(() => {
+                unsettledPrompts.delete(entry);
+                return Deferred.succeed(entry.settled, undefined);
+              }),
+          );
+
+        /**
+         * A new turn's prompt refused because an earlier prompt still waits on an answer T3 no
+         * longer shows: cancel that prompt, let it settle, and resend once. If the agent still
+         * refuses, the next turn starts a fresh runtime.
+         */
+        const recoverOrphanedAnswerWait = <A>(
+          context: ActiveAcpTurn,
+          generation: number,
+          superseded: () => boolean,
+          send: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
+        ): Effect.Effect<A, EffectAcpErrors.AcpError> => {
+          const stopped = () => context.interrupted || context.finalized || superseded();
+          return send().pipe(
+            Effect.catchIf(
+              (error) => isAwaitingAnswerPromptError(error) && !stopped(),
+              (error) =>
+                Effect.gen(function* () {
+                  // The user can still answer a request T3 shows for this turn, so leave it for them.
+                  if (yield* hasPendingRequestForTurn(context.providerTurnId)) {
+                    return yield* error;
+                  }
+                  yield* cancelMatchingPendingRuntimeRequests(
+                    (request) => request.runtimeRequest.providerTurnId !== context.providerTurnId,
+                    false,
+                  );
+                  yield* Effect.logWarning("orchestration-v2.acp-orphaned-answer-wait-cancelled", {
+                    driver,
+                    providerSessionId: input.providerSessionId,
+                    providerTurnId: context.providerTurnId,
+                  });
+                  yield* runtime.cancel.pipe(Effect.ignore);
+                  const priorPrompts = [...unsettledPrompts]
+                    .filter((entry) => entry.generation === generation)
+                    .map((entry) => entry.settled);
+                  if (priorPrompts.length > 0) {
+                    yield* Effect.raceFirst(
+                      Deferred.await(context.completed),
+                      Effect.forEach(priorPrompts, Deferred.await, { discard: true }),
+                    ).pipe(Effect.timeoutOption(ACP_STOP_CONFIRM_TIMEOUT_MS));
+                  }
+                  if (stopped()) return yield* error;
+                  return yield* send().pipe(
+                    Effect.tapError((retryError) =>
+                      isAwaitingAnswerPromptError(retryError)
+                        ? Ref.set(runtimeRestartRequired, true)
+                        : Effect.void,
+                    ),
+                  );
+                }),
+            ),
+          );
+        };
+
         /** Follows a turn's `session/prompt`; a prompt-steer's prompt supersedes the one before. */
         const followPrompt = (
           context: ActiveAcpTurn,
@@ -9717,6 +9870,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const agentAnswered =
                     Result.isSuccess(error) && error.success._tag === "AcpRequestError";
                   if (!interrupted) {
+                    yield* cancelMatchingPendingRuntimeRequests(
+                      (request) => request.runtimeRequest.providerTurnId === context.providerTurnId,
+                      true,
+                    );
                     yield* terminalizeOpenForegroundTools(context, "failed", {
                       unstartedOnly: agentAnswered,
                     });
@@ -10129,10 +10286,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context,
               (superseded) =>
                 compactSession === undefined
-                  ? sendPromptWhenIdle(
-                      context,
-                      () => runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
-                      superseded,
+                  ? recoverOrphanedAnswerWait(context, promptGeneration, superseded, () =>
+                      sendPromptWhenIdle(
+                        context,
+                        () =>
+                          trackPrompt(
+                            promptGeneration,
+                            runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
+                          ),
+                        superseded,
+                      ),
                     )
                   : Deferred.succeed(context.promptDispatched, undefined).pipe(
                       Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
@@ -10199,6 +10362,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver,
                   detail: `Provider turn ${turnInput.providerTurnId} is not active and cannot be steered.`,
+                });
+              }
+              // The agent refuses a prompt while it waits on an answer, so the message waits too.
+              if (yield* hasPendingRequestForTurn(context.providerTurnId)) {
+                return yield* new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+                  driver,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId: turnInput.providerTurnId,
                 });
               }
               const generation = yield* Ref.get(runtimeCallbackGeneration);
@@ -10279,11 +10450,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       sendPromptWhenIdle(
                         context,
                         () =>
-                          runtime.prompt(
-                            { prompt: steerPrompt },
-                            { dispatched, released: releasedForSteer },
-                          ),
+                          trackPrompt(
+                            generation,
+                            runtime.prompt(
+                              { prompt: steerPrompt },
+                              { dispatched, released: releasedForSteer },
+                            ),
+                          ).pipe(Effect.ensuring(Deferred.succeed(dispatched, undefined))),
                         superseded,
+                        // A question that arrived as the steer went out: resend once it is answered.
+                        hasPendingRequestForTurn(context.providerTurnId),
                       ),
                     {
                       generation,
@@ -10701,7 +10877,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (effect, turnInput) =>
               effect.pipe(
                 Effect.mapError((cause) =>
-                  cause._tag === "ProviderAdapterSteerRunUnsupportedError"
+                  cause._tag === "ProviderAdapterSteerRunUnsupportedError" ||
+                  cause._tag === "ProviderAdapterSteerDeclinedError"
                     ? cause
                     : new ProviderAdapter.ProviderAdapterSteerRunError({
                         driver,

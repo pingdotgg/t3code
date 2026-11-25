@@ -626,6 +626,9 @@ it.effect("detaches owned ACP processes on POSIX hosts but not on Windows", () =
 
 const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapterProtocolError);
 
+const AWAITING_ANSWER_ERROR =
+  "Can't add this prompt to session mock-session-1: the running prompt is waiting for a permission or question answer; answer it or send session/cancel, then send this prompt again";
+
 const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   readonly environment: (runtimeOrdinal: number) => Readonly<Record<string, string>>;
   readonly runtimeMode?: "full-access" | "approval-required";
@@ -635,6 +638,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
   readonly cancelled?: Deferred.Deferred<void>;
   readonly followAgentWorkState?: boolean;
+  readonly steersWithPrompt?: boolean;
   readonly sessionScope?: Scope.Scope;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -650,6 +654,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
         ? {}
         : { watchPromptOutcome: input.watchPromptOutcome }),
       ...(input.followAgentWorkState === true ? { followAgentWorkState: true } : {}),
+      ...(input.steersWithPrompt === true ? { steersWithPrompt: () => true } : {}),
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath: yield* bundledMockAgentPath,
@@ -698,6 +703,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
       ),
     );
   return {
+    threadId,
     runtime,
     natives,
     providerThread,
@@ -6386,6 +6392,287 @@ describe("AcpAdapterV2", () => {
       const [delivered] = yield* Fiber.join(followUp);
       assert.equal(delivered?.status, "completed");
       assert.equal(promptCalls, 3);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("cancels a prompt left waiting on an answer and resends the next turn", () =>
+    Effect.gen(function* () {
+      let promptCalls = 0;
+      const orphanedPrompt = yield* Deferred.make<
+        EffectAcpSchema.PromptResponse,
+        EffectAcpErrors.AcpError
+      >();
+      const cancelled = yield* Deferred.make<void>();
+      const resent = yield* Deferred.make<void>();
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({}),
+        cancelled,
+        steersWithPrompt: true,
+        wrapPrompt: (prompt) => (payload, options) => {
+          promptCalls += 1;
+          if (promptCalls === 1) {
+            return (
+              options?.dispatched === undefined
+                ? Effect.void
+                : Deferred.succeed(options.dispatched, undefined)
+            ).pipe(Effect.andThen(Deferred.await(orphanedPrompt)));
+          }
+          if (promptCalls === 2) {
+            return (
+              options?.dispatched === undefined
+                ? Effect.void
+                : Deferred.succeed(options.dispatched, undefined)
+            ).pipe(
+              Effect.andThen(
+                Effect.fail(EffectAcpErrors.AcpRequestError.internalError("Steer rejected")),
+              ),
+            );
+          }
+          if (promptCalls === 3) {
+            return Effect.fail(
+              EffectAcpErrors.AcpRequestError.internalError(AWAITING_ANSWER_ERROR),
+            );
+          }
+          return Deferred.succeed(resent, undefined).pipe(Effect.andThen(prompt(payload, options)));
+        },
+      });
+      const turn1Terminal = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(1);
+      const running = Option.getOrThrow(
+        yield* harness.runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_turn.updated"),
+          Stream.runHead,
+        ),
+      );
+      if (running.type !== "provider_turn.updated") return yield* Effect.die("Expected a turn");
+      // A failed steer leaves prompt 1 unsettled on the agent while T3 ends turn 1.
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: RunId.make(`run:${harness.threadId}:1`),
+        providerThread: harness.providerThread,
+        providerTurnId: running.providerTurn.id,
+        message: {
+          createdBy: "agent",
+          creationSource: "server",
+          messageId: MessageId.make("orphan-prompt-1"),
+          text: "Steer that fails",
+          attachments: [],
+        },
+      });
+      const [first] = yield* Fiber.join(turn1Terminal);
+      assert.equal(first?.status, "failed");
+
+      const next = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(2);
+      yield* Deferred.await(cancelled);
+      assert.isFalse(
+        yield* Deferred.isDone(resent),
+        "the retry went out before the cancelled prompt settled",
+      );
+      assert.equal(promptCalls, 3);
+      yield* Deferred.succeed(orphanedPrompt, { stopReason: "cancelled" });
+      const [terminal] = yield* Fiber.join(next);
+      assert.equal(terminal?.status, "completed");
+      assert.isTrue(yield* Deferred.isDone(resent));
+      assert.equal(promptCalls, 4);
+      assert.lengthOf(harness.natives, 1);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("restarts the runtime when the agent still waits on an answer after a cancel", () =>
+    Effect.gen(function* () {
+      let promptCalls = 0;
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({}),
+        wrapPrompt: (prompt) => (payload, options) => {
+          promptCalls += 1;
+          return promptCalls === 2 || promptCalls === 3
+            ? Effect.fail(EffectAcpErrors.AcpRequestError.internalError(AWAITING_ANSWER_ERROR))
+            : prompt(payload, options);
+        },
+      });
+      yield* harness.startTurn(1);
+      yield* harness.terminals(1);
+
+      const jammed = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(2);
+      const [failed] = yield* Fiber.join(jammed);
+      assert.equal(failed?.status, "failed");
+
+      const recovered = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(3);
+      const [terminal] = yield* Fiber.join(recovered);
+      assert.equal(terminal?.status, "completed");
+      assert.lengthOf(harness.natives, 2, "the next turn did not get a fresh runtime");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("declines a prompt-steer while the agent waits on a question", () =>
+    Effect.gen(function* () {
+      let promptCalls = 0;
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({ T3_ACP_EMIT_ELICITATION: "1" }),
+        runtimeMode: "approval-required",
+        steersWithPrompt: true,
+        wrapPrompt: (prompt) => (payload, options) => {
+          promptCalls += 1;
+          return prompt(payload, options);
+        },
+      });
+      const terminals = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(1);
+      const asked = Option.getOrThrow(
+        yield* harness.runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (asked.type !== "turn_item.updated" || asked.turnItem.type !== "user_input_request") {
+        return yield* Effect.die("Expected a question");
+      }
+      const declined = yield* harness.runtime
+        .steerTurn({
+          threadId: harness.threadId,
+          runId: asked.turnItem.runId!,
+          providerThread: harness.providerThread,
+          providerTurnId: asked.turnItem.providerTurnId!,
+          message: {
+            createdBy: "agent",
+            creationSource: "server",
+            messageId: MessageId.make("steer-during-question"),
+            text: "Delegated task completed",
+            attachments: [],
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(declined._tag, "ProviderAdapterSteerDeclinedError");
+      assert.equal(promptCalls, 1);
+
+      yield* harness.runtime.respondToRuntimeRequest({ requestId: asked.turnItem.requestId });
+      const [terminal] = yield* Fiber.join(terminals);
+      assert.equal(terminal?.status, "completed");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("holds a prompt-steer the agent refuses for a pending answer, then resends it", () =>
+    Effect.gen(function* () {
+      let promptCalls = 0;
+      const refused = yield* Deferred.make<void>();
+      const resent = yield* Deferred.make<void>();
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({ T3_ACP_HANG_PROMPT_FOREVER: "1" }),
+        steersWithPrompt: true,
+        wrapPrompt: (prompt) => (payload, options) => {
+          promptCalls += 1;
+          if (promptCalls === 2) {
+            return (
+              options?.dispatched === undefined
+                ? Effect.void
+                : Deferred.succeed(options.dispatched, undefined)
+            ).pipe(
+              Effect.andThen(Deferred.succeed(refused, undefined)),
+              Effect.andThen(
+                Effect.fail(EffectAcpErrors.AcpRequestError.internalError(AWAITING_ANSWER_ERROR)),
+              ),
+            );
+          }
+          if (promptCalls === 3) {
+            return (
+              options?.dispatched === undefined
+                ? Effect.void
+                : Deferred.succeed(options.dispatched, undefined)
+            ).pipe(
+              Effect.andThen(Deferred.succeed(resent, undefined)),
+              Effect.as({ stopReason: "end_turn" as const }),
+            );
+          }
+          return prompt(payload, options);
+        },
+      });
+      const terminals = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(1);
+      const running = Option.getOrThrow(
+        yield* harness.runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_turn.updated"),
+          Stream.runHead,
+        ),
+      );
+      if (running.type !== "provider_turn.updated") return yield* Effect.die("Expected a turn");
+      // The question reached the agent but not T3 yet, so the steer went out and was refused.
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: RunId.make(`run:${harness.threadId}:1`),
+        providerThread: harness.providerThread,
+        providerTurnId: running.providerTurn.id,
+        message: {
+          createdBy: "agent",
+          creationSource: "server",
+          messageId: MessageId.make("steer-refused-for-answer"),
+          text: "Delegated task completed",
+          attachments: [],
+        },
+      });
+      yield* Deferred.await(refused);
+      assert.isTrue(yield* harness.nextTurnRejected(2), "the refused steer ended the turn");
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(resent);
+      assert.equal(promptCalls, 3, "the refused steer was not sent again");
+      const [terminal] = yield* Fiber.join(terminals);
+      assert.equal(terminal?.status, "completed");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("stops retrying a refused prompt-steer when no pending request appears in T3", () =>
+    Effect.gen(function* () {
+      let promptCalls = 0;
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({ T3_ACP_HANG_PROMPT_FOREVER: "1" }),
+        steersWithPrompt: true,
+        wrapPrompt: (prompt) => (payload, options) => {
+          promptCalls += 1;
+          return promptCalls === 1
+            ? prompt(payload, options)
+            : (options?.dispatched === undefined
+                ? Effect.void
+                : Deferred.succeed(options.dispatched, undefined)
+              ).pipe(
+                Effect.andThen(
+                  Effect.fail(EffectAcpErrors.AcpRequestError.internalError(AWAITING_ANSWER_ERROR)),
+                ),
+              );
+        },
+      });
+      const terminals = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      yield* harness.startTurn(1);
+      const running = Option.getOrThrow(
+        yield* harness.runtime.events.pipe(
+          Stream.filter((event) => event.type === "provider_turn.updated"),
+          Stream.runHead,
+        ),
+      );
+      if (running.type !== "provider_turn.updated") return yield* Effect.die("Expected a turn");
+      yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: RunId.make(`run:${harness.threadId}:1`),
+        providerThread: harness.providerThread,
+        providerTurnId: running.providerTurn.id,
+        message: {
+          createdBy: "agent",
+          creationSource: "server",
+          messageId: MessageId.make("steer-refused-forever"),
+          text: "Delegated task completed",
+          attachments: [],
+        },
+      });
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("1 second");
+      yield* TestClock.adjust("1 second");
+      const [terminal] = yield* Fiber.join(terminals);
+      assert.equal(terminal?.status, "failed");
+      assert.equal(promptCalls, 5);
     }).pipe(Effect.provide(layerTest)),
   );
 
