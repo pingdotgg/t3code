@@ -104,6 +104,7 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { isModelPickerOpen } from "../modelPickerVisibility";
+import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -2984,8 +2985,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       handleThreadContextMenu(threadRef, position, source, true),
   );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation and project filter shortcuts
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the project filter with the shortcut dispatcher, so the composer yields a rebound chord, and with desktop menu actions forwarded from previews
   useEffect(() => {
+    if (projectGroups.length === 0) return;
     const toggleProjectFilter = () => {
       if (!projectScopeMenuState.open) {
         if (isMobile) setOpenMobile(true);
@@ -3004,6 +3006,36 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       target?.focus();
       if (document.activeElement !== target) projectScopeTriggerRef.current?.focus();
     };
+    const disposers = [
+      registerCommands(
+        {
+          "sidebar.projectFilter": (event) => {
+            if (event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) return false;
+            event.preventDefault();
+            event.stopPropagation();
+            toggleProjectFilter();
+          },
+        },
+        { context: () => threadShortcutContext(routeThreadRef) },
+      ),
+      registerMenuAction("sidebar.projectFilter", toggleProjectFilter),
+    ];
+    return () => {
+      for (const dispose of disposers) dispose();
+    };
+  }, [
+    isMobile,
+    projectGroups.length,
+    projectScopeMenuState.open,
+    projectScopeReturnFocusRef,
+    routeThreadRef,
+    setOpenMobile,
+    setSidebarOpen,
+    sidebarOpen,
+  ]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation shortcuts using the current thread list
+  useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
         return;
@@ -3024,12 +3056,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
         return true;
       };
-      if (command === "sidebar.projectFilter" && projectGroups.length > 0) {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleProjectFilter();
-        return;
-      }
       const traversalDirection = threadTraversalDirectionFromCommand(command);
       if (traversalDirection !== null) {
         navigateToRowKey(
@@ -3046,28 +3072,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       navigateToRowKey(orderedRowKeys[jumpIndex] ?? null);
     };
     window.addEventListener("keydown", onWindowKeyDown);
-    const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
-      if (action === "sidebar.projectFilter" && projectGroups.length > 0) toggleProjectFilter();
-    });
-    return () => {
-      window.removeEventListener("keydown", onWindowKeyDown);
-      unsubscribe?.();
-    };
+    return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
     draftIdByRowKey,
-    isMobile,
     keybindings,
     navigateToDraft,
     navigateToThread,
     orderedRowKeys,
-    projectGroups.length,
-    projectScopeMenuState.open,
-    projectScopeReturnFocusRef,
     routeRowKey,
     routeThreadRef,
-    setOpenMobile,
-    setSidebarOpen,
-    sidebarOpen,
     threadByKey,
   ]);
 
