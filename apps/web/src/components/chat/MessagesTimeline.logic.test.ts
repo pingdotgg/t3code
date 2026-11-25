@@ -4492,6 +4492,7 @@ describe("linked timeline resources", () => {
     expect(rowIds([runId])).not.toContain("created");
     expect(rowIds([segmentKey])).toEqual([
       `turn-fold:${runId}`,
+      "intro",
       "steer",
       `turn-fold:${segmentKey}`,
       "created",

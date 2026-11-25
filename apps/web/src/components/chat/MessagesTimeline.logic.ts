@@ -1195,6 +1195,23 @@ function deriveTurnFolds(input: {
       : group.entries.length;
     // Folded dividers lose their place in the turn, so only the latest stays visible.
     const visibleCompactionId = group.entries.findLast(timelineEntryIsCompaction)?.id;
+    // A steer read mid-turn continues the run, so the reply that ended each earlier
+    // segment stays visible unless the provider marked it a progress note.
+    const steerSegmentReplyIds = new Set(
+      group.steerSegments.flatMap(({ startIndex }, index) => {
+        const segmentStart = group.steerSegments[index - 1]?.startIndex ?? 0;
+        const reply = group.entries
+          .slice(segmentStart, startIndex)
+          .findLast((entry) => entry.kind === "message" && entry.message.role === "assistant");
+        const phase =
+          reply?.kind === "message" && reply.projectedItem?.item.type === "assistant_message"
+            ? reply.projectedItem.item.phase
+            : undefined;
+        return reply !== undefined && (phase === undefined || phase === "final_answer")
+          ? [reply.id]
+          : [];
+      }),
+    );
     for (const [index, entry] of group.entries.entries()) {
       if (entry.id === group.terminalEntry?.id) {
         continue;
@@ -1211,7 +1228,8 @@ function deriveTurnFolds(input: {
         entry.id === visibleCompactionId ||
         timelineEntryIsPersistentResourceCard(entry) ||
         input.liveSubagentEntryIds.has(entry.id) ||
-        input.retainedAssistantReplyEntryIds.has(entry.id)
+        input.retainedAssistantReplyEntryIds.has(entry.id) ||
+        steerSegmentReplyIds.has(entry.id)
       ) {
         continue;
       }
