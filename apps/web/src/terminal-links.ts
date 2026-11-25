@@ -30,10 +30,10 @@ export interface WrappedTerminalLinkLine {
 const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
 // The default PowerShell prompt delimits its unquoted path with `PS ` and `>`.
 const POWERSHELL_PROMPT_PATH_PATTERN = /^PS ((?:[A-Za-z]:[\\/]|\\\\|\/)[^>\r\n]*)>/u;
-// Bare paths start only at a segment boundary: hover detection runs this on
-// every frame, so separator-free output must not be rescanned at every suffix.
-// Parenthesized path segments need a following slash to distinguish compiler locations.
-// A bare `name.ext` needs `:line:col` or a TS location after it, so prose and `host:port` stay text.
+// Bare paths start only at a segment boundary: hover detection runs this every frame.
+// Parenthesized segments need a trailing slash; a bare `name.ext` needs `:line:col` or a
+// TS location, so prose and `host:port` stay text. A rooted path ends before the `:` that
+// follows a `grep -n` line number.
 const FILE_PATH_PATTERN =
   /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)(?:(?!:(?<=:\d+:)(?!\d))[^\s"'`<>])+|(?<![\p{L}\p{M}\p{N}._$+@-])[\p{L}\p{M}\p{N}._$+@-]+(?:(?:[\\/](?:[\p{L}\p{M}\p{N}._$+@-]|\[{1,2}[\p{L}\p{M}\p{N}._-]+\]{1,2}|\([\p{L}\p{M}\p{N}._-]+\)(?=[\\/]))+)+|\.\p{L}[\p{L}\p{M}\p{N}_-]*(?=:\d+:\d|\(\d+,\d+\):\s+(?:error|warning) TS\d+:))(?:(?::\d+){1,2}|\(\d+,\d+\)(?=:\s+(?:error|warning) TS\d+:))?/gu;
 const QUOTED_FILE_PATH_PATTERN =
