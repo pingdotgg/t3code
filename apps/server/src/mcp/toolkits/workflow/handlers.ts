@@ -88,7 +88,8 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
           }
           const random = yield* SecureRandom.SecureRandom;
           const id = input.signalId ?? (yield* random.uuidV4());
-          // Threads have no access to this tool; an agent answers through the CLI, named for its thread.
+          // The server refuses a thread's call to this tool, so the caller is a client. An agent
+          // answers through the CLI, a client it names after its thread.
           const answeredBy = (yield* McpInvocationContext.McpInvocationContext).client?.label;
           const delivery = yield* workflows
             .signal(address, value, { id, ...(answeredBy === undefined ? {} : { answeredBy }) })
