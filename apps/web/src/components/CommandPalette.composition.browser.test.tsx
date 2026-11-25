@@ -2,19 +2,30 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  EnvironmentId,
+  ProjectId,
+} from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
+import { dispatchCommandPalette } from "../commandPaletteStore";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { toastManager } from "./ui/toast";
 
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
+  waitForProject: vi.fn<() => Promise<EnvironmentProject | undefined>>(),
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
   scopes.sourceControl = sourceControl;
+  scopes.waitForProject.mockReset().mockResolvedValue(undefined);
 };
 const githubAvailable = {
   versionControlSystems: [],
@@ -104,7 +115,7 @@ vi.mock("../state/entities", async (original) => ({
   useAnyEnvironmentHiding: () => false,
   useEnvironmentThreadRefs: () => [],
   useServerConfigs: () => new Map(),
-  waitForProject: async () => undefined,
+  waitForProject: () => scopes.waitForProject(),
 }));
 vi.mock("../state/queries", async (original) => ({
   ...(await original<typeof import("../state/queries")>()),
@@ -130,6 +141,69 @@ vi.mock("../state/query", async (original) => ({
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
+
+it.each(["dismissed", "timed out"] as const)(
+  "keeps the current draft project when a pending folder add is %s",
+  async (outcome) => {
+    setup();
+    const update = Promise.withResolvers<EnvironmentProject>();
+    const waiting = Promise.withResolvers<void>();
+    scopes.waitForProject.mockImplementation(() => {
+      waiting.resolve();
+      return update.promise;
+    });
+    const draftId = DraftId.make(crypto.randomUUID());
+    const environmentId = EnvironmentId.make("local");
+    const original = { environmentId, projectId: ProjectId.make("original") };
+    const newer = { environmentId, projectId: ProjectId.make("newer") };
+    const draftStore = useComposerDraftStore.getState();
+    draftStore.setProjectDraftThreadId(original, draftId);
+    draftStore.setPrompt(draftId, "Keep this draft");
+
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    using toast = vi.spyOn(toastManager, "add");
+    await act(() => openCommandPalette({ open: "add-project", draftId }));
+    await page.getByText("Local folder", { exact: true }).click();
+    await page.getByRole("combobox").fill("/workspace/added");
+    await userEvent.keyboard("{Enter}");
+    await waiting.promise;
+
+    if (outcome === "dismissed") {
+      await act(() => {
+        dispatchCommandPalette({ _tag: "SetOpen", open: false });
+        draftStore.setProjectDraftThreadId(newer, draftId);
+        openCommandPalette({ open: "new-thread-in" });
+        update.resolve({
+          environmentId,
+          id: ProjectId.make("added"),
+          title: "added",
+          workspaceRoot: "/workspace/added",
+          repositoryIdentity: null,
+          defaultModelSelection: null,
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+          scripts: [],
+        });
+      });
+      await expect.element(page.getByRole("combobox")).toBeInTheDocument();
+    } else {
+      await userEvent.keyboard("{Enter}");
+      expect(scopes.waitForProject).toHaveBeenCalledTimes(1);
+      await act(() => update.reject(new Error("The project did not appear in the desktop app.")));
+      await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Failed to open project",
+          description: expect.stringContaining("It will appear in the sidebar"),
+        }),
+      );
+    }
+    expect(draftStore.getDraftSession(draftId)?.projectId).toBe(
+      outcome === "dismissed" ? newer.projectId : original.projectId,
+    );
+    expect(draftStore.getComposerDraft(draftId)?.prompt).toBe("Keep this draft");
+  },
+);
 
 // The real palette and Base UI input must agree that confirming composition is typing.
 describe.each(["repository", "folder", "destination"] as const)("add-project %s", (step) => {
