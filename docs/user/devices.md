@@ -34,8 +34,9 @@ Studio's Device Manager. T3 Code detects standard SDK locations; set
 After installing SDK tools, restart the environment server and refresh devices.
 
 Physical Android devices connected to the machine that hosts the environment
-server need only SDK Platform-Tools. Connect the device over USB and approve USB
-debugging. For wireless debugging, turn on **Wireless debugging** on the phone,
+server need only SDK Platform-Tools. Turn on **USB debugging** in the phone's
+Developer options, connect it over USB, and approve the prompt on the phone. For
+wireless debugging, turn on **Wireless debugging** instead,
 pair it once with `adb pair <address>:<port>` on that machine, then run
 `adb connect <address>:<port>`. Refresh devices afterwards.
 
