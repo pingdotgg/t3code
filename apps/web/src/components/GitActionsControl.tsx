@@ -380,17 +380,12 @@ function GitActionProgressButtonContent({
       role="status"
     >
       <Spinner aria-hidden="true" className="row-start-1 -mx-0.5 shrink-0" />
-      <p
-        className={cn(
-          "row-start-1 min-w-0 self-baseline truncate text-left",
-          THREAD_DETAILS_PANEL_LABEL_CLASS,
-        )}
-      >
+      <p className={cn("row-start-1 min-w-0 truncate text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
         {progress.status}
       </p>
       <GitActionElapsedTime
         startedAtMs={progress.startedAtMs}
-        className="col-start-3 row-start-1 self-baseline text-2xs font-normal tabular-nums text-muted-foreground"
+        className="col-start-3 row-start-1 text-2xs font-normal tabular-nums text-muted-foreground"
       />
       <div
         className={cn(
@@ -1071,12 +1066,11 @@ function CheckoutGitActionsControl({
   const ignoreWhitespace =
     useDiffPanelSessionStore((state) => state.ignoreWhitespace) ?? ignoreWhitespaceSetting;
   const { canReadFiles } = useFilesystemReadAccess(activeEnvironmentId, messages);
-  // Same input as the Diff panel's branch query, so both read one cached result. Status
-  // totals join the revision because edits, pulls and resets outside a turn leave the mutation
-  // id as is.
-  const changesRevision = gitStatusForActions
+  // Same input and workspace revision as the Diff panel's branch query, so both read one
+  // cached result. Status totals are this reader's own revision because edits, pulls and
+  // resets outside a turn leave the mutation id as is.
+  const changesStatusRevision = gitStatusForActions
     ? JSON.stringify([
-        workspaceMutationId,
         gitStatusForActions.refName,
         gitStatusForActions.workingTree.insertions,
         gitStatusForActions.workingTree.deletions,
@@ -1089,7 +1083,7 @@ function CheckoutGitActionsControl({
     showChanges &&
       isRepo &&
       canReadFiles &&
-      changesRevision !== null &&
+      changesStatusRevision !== null &&
       activeEnvironmentId !== null &&
       gitCwd !== null
       ? revisionedQuery(
@@ -1103,7 +1097,8 @@ function CheckoutGitActionsControl({
               sourceKind: "branch-range",
             },
           }),
-          changesRevision,
+          workspaceMutationId,
+          { detail: changesStatusRevision },
         )
       : null,
   );

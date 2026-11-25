@@ -81,7 +81,7 @@ import { DiffFileTree } from "./diffs/DiffFileTree";
 import { FileExplorerPane } from "./files/FileExplorerPane";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { getDiffHeaderClickAction } from "./diffs/diffHeaderClick";
-import { Button } from "./ui/button";
+import { Button, InlineButton } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
 import {
@@ -105,7 +105,7 @@ import {
   DropdownMenuTrigger,
 } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { useEnvironmentQuery } from "../state/query";
+import { useEnvironmentQuery, useEnvironmentQueryRefresh } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
 import { serverEnvironment } from "../state/server";
 import { reviewEnvironment } from "../state/review";
@@ -459,7 +459,7 @@ export default function DiffPanel({
   const canRefreshGitDiff = isGitRepo && isGitSelection && activeThread != null && gitCwd != null;
   // Read under the workspace mutation id, so each mutation refetches the diff; the panel stays
   // mounted while hidden, so a mutation made then is already reflected when it shows.
-  const branchDiffPreview = useEnvironmentQuery(
+  const branchDiffPreviewAtom =
     branchDiffPreviewInput && activeThread
       ? revisionedQuery(
           reviewEnvironment.diffPreview({
@@ -468,9 +468,9 @@ export default function DiffPanel({
           }),
           canRefreshGitDiff ? workspaceMutationId : undefined,
         )
-      : null,
-    messages,
-  );
+      : null;
+  const branchDiffPreview = useEnvironmentQuery(branchDiffPreviewAtom, messages);
+  const branchDiffPreviewIsPending = useEnvironmentQueryRefresh(branchDiffPreviewAtom).isPending;
   const branchCommitsQuery = useEnvironmentQuery(
     visible && isGitRepo && canReadFiles && activeThread && gitCwd
       ? reviewEnvironment.branchCommits({
@@ -728,6 +728,8 @@ export default function DiffPanel({
   useLiveRefresh(
     branchDiffPreview.data !== null && !branchDiffPreview.isPending
       ? () => {
+          // A read that began after this render, as a thread switch's, is that revalidation.
+          if (branchDiffPreviewIsPending()) return;
           if (Date.now() - branchDiffPreview.dataUpdatedAt < LIVE_REFRESH_MIN_INTERVAL_MS) return;
           refreshBranchDiffPreview();
         }
@@ -1674,6 +1676,18 @@ export default function DiffPanel({
                   </p>
                 </div>
               )
+            ) : shownFileEntries.length === 0 && testFileCount > 0 ? (
+              <div className="flex h-full flex-wrap items-center justify-center gap-2 px-3 py-2 text-xs text-muted-foreground/70">
+                <p>
+                  {gt(
+                    "{count, plural, one {{count} test file hidden} other {{count} test files hidden}}",
+                    { count: testFileCount },
+                  )}
+                </p>
+                <InlineButton onClick={() => setHideTestFiles(false)}>
+                  {gt("Show test files")}
+                </InlineButton>
+              </div>
             ) : lazySource || renderablePatch?.kind === "files" ? (
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <div

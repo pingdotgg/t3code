@@ -67,6 +67,7 @@ import {
   mediaFileRevision,
   openMediaFile,
   readMediaFileHeader,
+  realPathWithoutNativeResolver,
   type OpenMediaFile,
 } from "./MediaFile.ts";
 import * as WorkspacePreviewRevisions from "./WorkspacePreviewRevisions.ts";
@@ -287,6 +288,8 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
 const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(function* (
   filePath: string,
 ) {
+  // Checked again here: a link can be repointed after its URL was issued.
+  if (!isProjectFaviconPath(filePath)) return null;
   if (!filePath.toLowerCase().endsWith(".icns")) {
     return { kind: "file", path: filePath } satisfies ResolvedAsset;
   }
@@ -307,15 +310,20 @@ const resolveCanonicalFile = Effect.fn("AssetAccess.resolveCanonicalFile")(funct
   filePath: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const canonicalFile = yield* ProjectFaviconResolver.optionOnNotFound(
+  const nativeCanonicalFile = yield* ProjectFaviconResolver.optionOnNotFound(
     fileSystem.realPath(filePath),
   );
-  if (Option.isNone(canonicalFile)) return null;
+  // Windows' native realpath returns ENOENT on drives without a mount-manager name
+  // (some USB and RAM-disk drivers) although the file is readable.
+  const canonicalFile = Option.isSome(nativeCanonicalFile)
+    ? nativeCanonicalFile.value
+    : yield* realPathWithoutNativeResolver(filePath);
+  if (canonicalFile === null) return null;
 
-  const info = yield* ProjectFaviconResolver.optionOnNotFound(fileSystem.stat(canonicalFile.value));
+  const info = yield* ProjectFaviconResolver.optionOnNotFound(fileSystem.stat(canonicalFile));
   if (Option.isNone(info) || info.value.type !== "File") return null;
   const isServerInternalPath = yield* makeIsServerInternalPath;
-  return (yield* isServerInternalPath(canonicalFile.value)) ? null : canonicalFile.value;
+  return (yield* isServerInternalPath(canonicalFile)) ? null : canonicalFile;
 });
 
 const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWorkspaceFile")(
@@ -442,7 +450,8 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
       });
     }
     const download =
-      input.resource._tag === "media-file" && input.resource.disposition === "attachment";
+      (input.resource._tag === "media-file" || input.resource._tag === "draft-workspace-file") &&
+      input.resource.disposition === "attachment";
     if (!download && hostPreviewMimeTypeFromExtension(path.extname(canonicalFile)) === null) {
       return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
     }
@@ -515,7 +524,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       );
     const isDraftMedia =
       input.resource._tag === "draft-workspace-file" &&
-      (isWorkspaceAudioPreviewPath(resolved.relativePath) ||
+      (input.resource.disposition === "attachment" ||
+        isWorkspaceAudioPreviewPath(resolved.relativePath) ||
         isWorkspaceVideoPreviewPath(resolved.relativePath));
     if (!isDraftMedia && !isWorkspacePreviewEntryPath(resolved.relativePath)) {
       return yield* new AssetPreviewTypeValidationError({
@@ -741,19 +751,18 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           Effect.orElseSucceed(() => null),
         );
       }
+      const download = isGenericFile && !isVideo && inlinePreviewMimeType === undefined;
+      // A client-named type is kept only where it cannot make the bytes render as a document.
+      const mimeType =
+        inlinePreviewMimeType ??
+        (isVideo ? videoMimeType : download ? input.resource.mimeType : undefined);
       claims = {
         version: 1,
         kind: "attachment",
         attachmentId: input.resource.attachmentId,
-        ...(isGenericFile && !isVideo && inlinePreviewMimeType === undefined
-          ? { download: true }
-          : {}),
+        ...(download ? { download: true } : {}),
         ...(input.resource.fileName !== undefined ? { fileName: input.resource.fileName } : {}),
-        ...(inlinePreviewMimeType !== undefined
-          ? { mimeType: inlinePreviewMimeType }
-          : input.resource.mimeType !== undefined
-            ? { mimeType: isVideo ? videoMimeType : input.resource.mimeType }
-            : {}),
+        ...(mimeType !== undefined ? { mimeType } : {}),
         ...(input.resource.renderIntent === "mcp-app" && inlinePreviewMimeType === "text/html"
           ? { renderIntent: "mcp-app" as const }
           : {}),
@@ -821,6 +830,10 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         return yield* new AssetProjectFaviconNotFoundError({
           resource: input.resource,
         });
+      }
+      // A favicon link must resolve to an image file.
+      if (canonicalFaviconPath && !isProjectFaviconPath(canonicalFaviconPath)) {
+        return yield* new AssetPreviewTypeValidationError({ resource: input.resource });
       }
       claims =
         isExternalOverride && canonicalFaviconPath

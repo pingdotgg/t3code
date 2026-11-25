@@ -42,6 +42,12 @@ const OUTCOME_PATTERN = /^[a-z_]{1,32}$/;
 
 class ResponseTooLarge extends Schema.TaggedError<ResponseTooLarge>()("ResponseTooLarge", {}) {}
 
+/** Stands in for an HttpClientError, so a span records the failure reason and not the request URL. */
+class UpstreamRequestFailed extends Schema.TaggedError<UpstreamRequestFailed>()(
+  "UpstreamRequestFailed",
+  { reason: Schema.String },
+) {}
+
 const readCapped = (response: HttpClientResponse.HttpClientResponse) =>
   Effect.suspend(() => {
     const chunks: Array<Uint8Array> = [];
@@ -110,6 +116,10 @@ export const sendUpstream = Effect.fn("upstream.sendUpstream")(function* (
       ),
     ),
     withoutRedirects,
+    Effect.catchTags({
+      HttpClientError: (error) =>
+        Effect.fail(new UpstreamRequestFailed({ reason: error.reason._tag })),
+    }),
     // The client span would record url.full, which carries the token.
     Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
     Effect.timeoutOption(Duration.millis(RELAY_HOOK_UPSTREAM_TIMEOUT_MS)),
