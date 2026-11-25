@@ -69,6 +69,10 @@ browser; fake data, no build). Its "Prototype" panel toggles the variants that a
   subagents. *Done* holds finished turns (diff or PR), the same word the sidebar uses. Other
   lanes sort newest first. A merged or settled thread leaves the board but stays in the
   sidebar, and it comes back with Reopen (thread view, or Undo right after settling).
+- **Snooze:** a snoozed thread leaves the board until it wakes, then returns to its lane on
+  top with a "Woke" chip (cleared once you peek or open it). It wakes early if it starts waiting
+  on you. Snooze sits in the peek (not while an approval waits); Undo right after snoozing,
+  and "Wake now" in the thread view.
 - **Card:** status (icon, label, working time) and time since last activity; the title; a grey
   line from thread state, only when it adds something (the running command or tool call, or the
   last assistant message of a finished turn); for Needs-you cards, the request itself with
@@ -88,14 +92,10 @@ browser; fake data, no build). Its "Prototype" panel toggles the variants that a
 
 ## Open questions
 
-1. Snoozed threads. Snooze is not settle: it hides a thread until a wake time
-   (`snoozedUntil`), then the thread comes back marked "Woke". Settle marks it finished until
-   reopened. Proposal: hide snoozed threads like settled ones, and bring them back into their
-   lane with a "Woke" marker when they wake. Awaiting a decision.
-2. Is a state-built grey line enough, or will finished threads need an LLM summary later?
-3. Later, the board could move into upstream's pane system (#28839–#28845, #28845 "tabs in
+1. Is a state-built grey line enough, or will finished threads need an LLM summary later?
+2. Later, the board could move into upstream's pane system (#28839–#28845, #28845 "tabs in
    split panes") once that lands.
-4. Mobile: later, or never?
+3. Mobile: later, or never?
 
 ## Data the board needs (learned from the prototype, feeds phase 2)
 
@@ -158,6 +158,8 @@ Add new entries at the bottom: date, decision, reason.
   the main page has them; the per-swimlane New thread buttons go (not useful).
 - **2026-11-25** The peek keeps pushing the lanes aside (no floating variant).
 - **2026-11-25** Swimlanes with Needs-you cards move to the top; the rest keep sidebar order.
+- **2026-11-25** Snoozed threads leave the board until they wake, then return with "Woke".
+  Reason: snooze means "not now", same as upstream's sidebar shelf.
 
 ## Prior art (upstream, all closed)
 

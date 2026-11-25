@@ -502,6 +502,7 @@ const ICONS = {
   sliders: '<line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/>',
   sparkle: '<path d="M9.94 14.06 2 22"/><path d="m15 4 1.5 3.5L20 9l-3.5 1.5L15 14l-1.5-3.5L10 9l3.5-1.5Z"/>',
   clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  alarm: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/><path d="M6.38 18.7 4 21"/><path d="M17.64 18.67 20 21"/>',
   calendar: '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/>',
 };
 const icon = (name, cls = "") =>
@@ -757,6 +758,16 @@ function seed() {
       now: { state: "PR #42398 · all 7 checks passed", llm: "Collapsed files persist per thread. CI is green; ready to merge." },
       summary: { state: "Collapsed files are stored per thread and checkpoint in `uiStateStore`. PR #42398 is green.", llm: ["Collapsed state persists per thread and checkpoint.", "#42398 is green."] }, activity: ["Opened PR #42398", "Checks passed on #42398"],
     }),
+    // Snoozed: off the board until it wakes about 40 seconds after load.
+    T({
+      id: "t17", project: "pocket", title: "Flaky iOS e2e: login screen times out", branch: "fix/ios-e2e-login-flake",
+      model: "Codex · GPT-5.5", status: "ready", startedAt: ago(140), lastAt: ago(95), snoozedUntil: Date.now() + 40_000,
+      prompt: "The iOS e2e login test fails about one run in five. Find out why.",
+      diff: diffOf([["e2e/login.test.ts", 9, 4]]),
+      now: { state: "Turn finished · 1 file changed", llm: "Raised the login wait; flake rate needs a few more CI runs to confirm." },
+      summary: { state: "I raised the wait for the keychain prompt from 5s to 15s. Let's watch a few CI runs before calling it fixed.", llm: ["Raised the keychain wait to 15s.", "Needs a few CI runs to confirm."] },
+      activity: ["Edited e2e/login.test.ts", "Turn finished", "You snoozed it"],
+    }),
   ];
 }
 // A thread a scheduled task starts mid-simulation, to show how new cards arrive.
@@ -819,8 +830,13 @@ const LANES = [
 ];
 const checksFailing = (t) => t.status === "ready" && t.pr?.state === "open" && t.pr.checks?.status === "failing";
 
-// Done (merged or settled) threads leave the board; the sidebar still lists them.
+const isSnoozed = (t) => t.snoozedUntil != null && t.snoozedUntil > Date.now();
+// Snooze is upstream's rule: not while an approval waits.
+const canSnooze = (t) => t.status !== "approval" && t.status !== "done";
+
+// Settled, merged and snoozed threads leave the board; the sidebar still lists them.
 function laneOf(t) {
+  if (isSnoozed(t)) return null;
   if (NEEDS.has(t.status) || checksFailing(t)) return "needs";
   if (RUNNING.has(t.status)) return "working";
   if (t.status === "ready") return "ready";
@@ -865,8 +881,22 @@ function applyStep(t, step) {
   if (RUNNING.has(t.status) && !RUNNING.has(prev)) t.startedAt = Date.now();
   t.lastAt = Date.now();
   S.flash.add(t.id);
+  // A snoozed thread that starts waiting on you wakes early, like upstream.
+  if (isSnoozed(t) && (NEEDS.has(t.status) || checksFailing(t))) wake(t);
   // A follow-up queued during the turn starts as soon as the turn ends.
   if (t.status === "ready" && t.queued.length) startFollowUp(t, t.queued.shift(), true);
+}
+
+function wake(t) {
+  t.snoozedUntil = null;
+  t.woke = true;
+  t.lastAt = Date.now(); // waking counts as activity, so it surfaces in its lane
+  S.flash.add(t.id);
+}
+function snoozeLabel(ts) {
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? time : `tomorrow ${time}`;
 }
 
 function tick() {
@@ -947,6 +977,18 @@ const ACTIONS = {
     requestAnimationFrame(() => document.querySelector('#peek-panel [data-composer="new"]')?.focus());
   },
   "close-compose": () => { S.composeProject = null; },
+  "snooze-menu": (d) => { S.snoozeMenu = S.snoozeMenu === d.id ? null : d.id; },
+  snooze: (d) => {
+    const t = byId(d.id);
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(9, 0, 0, 0);
+    t.snoozedUntil = d.until === "tomorrow" ? tomorrow.getTime() : Date.now() + +d.mins * MIN;
+    t.woke = false;
+    t.activity = [...t.activity, "You snoozed it"].slice(-6);
+    S.snoozeMenu = null;
+    if (S.peekId === t.id) S.peekId = null;
+    toast(`Snoozed until ${snoozeLabel(t.snoozedUntil)}`, { label: "Undo", action: "unsnooze", id: t.id });
+  },
+  unsnooze: (d) => { const t = byId(d.id); t.snoozedUntil = null; S.flash.add(t.id); },
   "toggle-row": (d) => { S.collapsed.has(d.project) ? S.collapsed.delete(d.project) : S.collapsed.add(d.project); },
   approve: (d) => {
     const t = byId(d.id);
@@ -1003,7 +1045,7 @@ const ACTIONS = {
   play: () => setPlaying(!S.playing),
   reset: () => {
     setPlaying(false);
-    Object.assign(S, { threads: seed(), ticks: 0, newCount: 0, peekId: null, drafts: {}, currentId: "t1", filter: "all", query: "", collapsed: new Set() });
+    Object.assign(S, { threads: seed(), snoozeMenu: null, ticks: 0, newCount: 0, peekId: null, drafts: {}, currentId: "t1", filter: "all", query: "", collapsed: new Set() });
     const q = document.querySelector("#board-search");
     if (q) q.value = "";
     toast("Reset to the starting data");
@@ -1022,6 +1064,7 @@ function go(view) {
   if (view === "board") requestAnimationFrame(() => document.querySelector("#swim [data-card]")?.focus({ preventScroll: true }));
 }
 function openThread(id) {
+  byId(id).woke = false;
   S.currentId = id;
   S.cameFromBoard = true;
   S.peekId = null;
@@ -1131,7 +1174,9 @@ function renderSidebar() {
     const rows = S.threads.filter((t) => t.project === pid).sort((a, b) => b.lastAt - a.lastAt).map((t) => {
       const active = S.view === "thread" && t.id === S.currentId;
       let trail;
-      if (t.status === "ready") trail = `<span class="sb-status tone-success">${icon("checkCircle", "i-xs")}Done</span>`;
+      if (isSnoozed(t)) trail = `<span class="sb-status tone-muted">${icon("alarm", "i-xs")}Snoozed</span>`;
+      else if (t.woke) trail = `<span class="sb-status tone-warning">${icon("alarm", "i-xs")}Woke</span>`;
+      else if (t.status === "ready") trail = `<span class="sb-status tone-success">${icon("checkCircle", "i-xs")}Done</span>`;
       else if (t.status === "done") trail = `<span class="sb-time">${rel(t.lastAt)}</span>`;
       else { const m = statusMeta(t); trail = `<span class="sb-status ${m.tone}">${icon(m.icon, "i-xs")}${m.label}</span>`; }
       return `<button class="sb-row ${active ? "active" : ""} ${t.status === "done" ? "recede" : ""}" data-action="sidebar-thread" data-id="${t.id}"><span class="sb-title">${esc(t.title)}</span>${trail}</button>`;
@@ -1178,9 +1223,10 @@ function boardThreads() {
 }
 function cardHtml(t) {
   const line = cardLine(t);
+  const woke = t.woke ? `<span class="chip"><span class="tone-warning" style="display:inline-flex;gap:4px;align-items:center">${icon("alarm", "i-xs")}Woke</span></span>` : "";
   const queued = t.queued.length ? `<span class="chip"><span class="tone-info">${t.queued.length} queued</span></span>` : "";
   const source = t.source ? `<span class="chip" title="${esc(t.source)}">${icon("calendar", "i-xs")}Scheduled</span>` : "";
-  const foot = prChip(t) + diffChip(t) + queued + source;
+  const foot = woke + prChip(t) + diffChip(t) + queued + source;
   return `<div class="card ${S.peekId === t.id ? "is-active" : ""} ${S.flash.has(t.id) ? "is-changed" : ""}" data-card="${t.id}" tabindex="0" role="button" aria-label="${esc(t.title)}">
     <div class="card-head">${statusHtml(t)}<span class="time" data-rel="${t.lastAt}">${rel(t.lastAt)}</span></div>
     <div class="card-title">${esc(t.title)}</div>
@@ -1301,7 +1347,11 @@ function peekActionsHtml(t) {
   if (t.pr && t.pr.state !== "merged" && !checksFailing(t)) b.push(`<button class="btn btn-sm" data-action="open-pr" data-id="${t.id}">${icon("pr", "i-xs")}Open PR</button>`);
   if (t.status === "ready" && t.diff && !t.pr) b.push(`<button class="btn btn-sm" data-action="create-pr" data-id="${t.id}">${icon("pr", "i-xs")}Create PR</button>`);
   if (t.status === "ready") b.push(`<button class="btn btn-sm" data-action="settle" data-id="${t.id}" title="Marks it done and takes it off the board">${icon("checkCheck", "i-xs")}Settle</button>`);
-  return b.length ? `<div class="peek-actions">${b.join("")}</div>` : "";
+  if (canSnooze(t)) b.push(`<button class="btn btn-sm" data-action="snooze-menu" data-id="${t.id}" title="Takes it off the board until it wakes">${icon("alarm", "i-xs")}Snooze</button>`);
+  const menu = S.snoozeMenu === t.id
+    ? `<div class="peek-actions"><button class="btn btn-sm" data-action="snooze" data-id="${t.id}" data-mins="0.5">30 seconds (demo)</button><button class="btn btn-sm" data-action="snooze" data-id="${t.id}" data-mins="60">1 hour</button><button class="btn btn-sm" data-action="snooze" data-id="${t.id}" data-until="tomorrow">Tomorrow 9:00</button></div>`
+    : "";
+  return b.length ? `<div class="peek-actions">${b.join("")}</div>${menu}` : "";
 }
 function composerPlaceholder(t) {
   if (!t) return "Describe what you want done…";
@@ -1390,7 +1440,9 @@ function updateThreadView(t) {
   if (RUNNING.has(t.status)) msgs.push(`<div class="tool-row tone-info">${icon("working", "i-xs")}${fmt(t.now.state)}</div>`);
   document.getElementById("thread-msgs").innerHTML = msgs.join("");
   const m = statusMeta(t);
-  document.getElementById("thread-pending").innerHTML = t.status === "done"
+  document.getElementById("thread-pending").innerHTML = isSnoozed(t)
+    ? `<div class="settled-box">${icon("alarm", "i-sm")}<span class="spacer">Snoozed until ${snoozeLabel(t.snoozedUntil)}. It's off the board.</span><button class="btn btn-sm" data-action="unsnooze" data-id="${t.id}">Wake now</button></div>`
+    : t.status === "done"
     ? `<div class="settled-box">${icon(m.icon, "i-sm " + m.tone)}<span class="spacer">${m.label}. It's off the board.</span><button class="btn btn-sm" data-action="reopen" data-id="${t.id}">${icon("undo", "i-xs")}Reopen</button></div>`
     : pendingHtml(t);
   document.querySelectorAll(`[data-composer="${t.id}"]`).forEach((ta) => (ta.placeholder = composerPlaceholder(t)));
@@ -1476,7 +1528,7 @@ document.addEventListener("click", (e) => {
   if (card) {
     const id = card.dataset.card;
     if (e.metaKey || e.ctrlKey) openThread(id);
-    else { S.peekId = S.peekId === id ? null : id; S.composeProject = null; }
+    else { S.peekId = S.peekId === id ? null : id; S.composeProject = null; byId(id).woke = false; }
     update();
   }
 });
@@ -1532,6 +1584,12 @@ document.addEventListener("keydown", (e) => {
 });
 setInterval(() => {
   const now = Date.now();
+  const woken = S.threads.filter((t) => t.snoozedUntil != null && t.snoozedUntil <= now);
+  if (woken.length) {
+    woken.forEach(wake);
+    toast(woken.length === 1 ? `“${woken[0].title}” woke up` : `${woken.length} threads woke up`);
+    update();
+  }
   document.querySelectorAll("[data-since]").forEach((el) => (el.textContent = dur(now - +el.dataset.since)));
   document.querySelectorAll("[data-rel]").forEach((el) => (el.textContent = rel(+el.dataset.rel)));
 }, 1000);
