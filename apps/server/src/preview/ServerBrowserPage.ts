@@ -14,6 +14,7 @@ import {
   type PreviewAutomationSelectInput,
   type PreviewAutomationSelectResult,
   type PreviewAutomationSnapshot,
+  type PreviewAutomationSnapshotMetadata,
   type PreviewAutomationSnapshotStage,
   type PreviewAutomationTypeInput,
   type PreviewAutomationUploadInput,
@@ -197,7 +198,6 @@ const SNAPSHOT_SCRIPT = `(() => {
     title: document.title,
     loading: document.readyState !== "complete",
     visibleText: document.body?.innerText || "",
-    interactiveElements: [],
   };
 })()`;
 
@@ -483,6 +483,37 @@ const pngSize = (base64: string) => {
   return { width: header.readUInt32BE(16), height: header.readUInt32BE(20) };
 };
 
+export const jpegSize = (base64: string) => {
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.length < 4 || bytes.readUInt16BE(0) !== 0xffd8)
+    throw new Error("Invalid JPEG screenshot.");
+  let offset = 2;
+  while (offset < bytes.length) {
+    if (bytes[offset++] !== 0xff) throw new Error("Invalid JPEG screenshot.");
+    while (bytes[offset] === 0xff) offset++;
+    const marker = bytes[offset++];
+    if (marker === undefined || marker === 0xd9 || marker === 0xda) break;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    if (offset + 2 > bytes.length) break;
+    const length = bytes.readUInt16BE(offset);
+    if (length < 2 || offset + length > bytes.length) break;
+    if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+      if (length < 7) break;
+      const height = bytes.readUInt16BE(offset + 3);
+      const width = bytes.readUInt16BE(offset + 5);
+      if (width && height) return { width, height };
+      break;
+    }
+    offset += length;
+  }
+  throw new Error("Invalid JPEG screenshot.");
+};
+
+const scaledSize = (size: { readonly width: number; readonly height: number }, scale: number) =>
+  scale < 1
+    ? { width: Math.round(size.width * scale), height: Math.round(size.height * scale) }
+    : size;
+
 /**
  * A page's display ratio and CSS viewport, read in an isolated world since page script can
  * reassign `devicePixelRatio`, `innerWidth`, and `innerHeight` in its own, and its page zoom.
@@ -634,7 +665,8 @@ const capture = async (
   input: SnapshotInput,
   deadline: number,
   stages: SnapshotStages,
-): Promise<PreviewAutomationSnapshot> => {
+  metadataOnly: boolean,
+) => {
   const { running } = stages;
   const track = async <A>(stage: SnapshotStage, operation: () => Promise<A>) => {
     running.set(stage, (running.get(stage) ?? 0) + 1);
@@ -666,21 +698,24 @@ const capture = async (
       "page state",
       () =>
         input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
-          Pick<
-            PreviewAutomationSnapshot,
-            "url" | "title" | "loading" | "visibleText" | "interactiveElements"
-          >
+          Pick<PreviewAutomationSnapshot, "url" | "title" | "loading" | "visibleText">
         >,
     ),
+    // A cheap real frame still sizes the screenshot; computing it from metrics drifted from the PNG.
     track("screenshot", () =>
-      captureViewport(input.cdp, { format: "png" }).then(async (full) =>
-        scale < 1
-          ? {
-              data: await shrinkPng(input.cdp, full, scale),
-              full: input.fullScreenshot ? full : undefined,
-            }
-          : { data: full, full: undefined },
-      ),
+      metadataOnly
+        ? captureViewport(input.cdp, { format: "jpeg", quality: 10 }).then((data) => ({
+            data,
+            full: undefined,
+          }))
+        : captureViewport(input.cdp, { format: "png" }).then(async (full) =>
+            scale < 1
+              ? {
+                  data: await shrinkPng(input.cdp, full, scale),
+                  full: input.fullScreenshot ? full : undefined,
+                }
+              : { data: full, full: undefined },
+          ),
     ),
   ]);
   void pageAndScreenshot.catch(constVoid);
@@ -731,11 +766,10 @@ const capture = async (
     consoleEntries: [...input.consoleEntries],
     networkEntries: [...input.networkEntries],
     actionTimeline: [...input.actionTimeline],
-    screenshot: {
-      mimeType: "image/png",
-      data,
-      ...pngSize(data),
-    },
+    // Reports the size the PNG path would have shrunk to.
+    screenshot: metadataOnly
+      ? scaledSize(jpegSize(data), scale)
+      : { mimeType: "image/png" as const, data, ...pngSize(data) },
     ...(full !== undefined ? { fullScreenshot: { data: full, ...pngSize(full) } } : {}),
   };
 };
@@ -743,7 +777,7 @@ const capture = async (
 /** Snapshots begun per page; observers' snapshots aren't queued, so two can overlap. */
 const snapshotTurns = new WeakMap<Page, number>();
 
-export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationSnapshot> => {
+const runSnapshot = async (input: SnapshotInput, metadataOnly: boolean) => {
   const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
   const stages: SnapshotStages = { running: new Map(), timedOut: new Set() };
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -753,11 +787,11 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
   const turn = (snapshotTurns.get(input.page) ?? 0) + 1;
   snapshotTurns.set(input.page, turn);
   // Retry only before the deadline and the next snapshot, whose refs a later retry would revoke.
-  const captured = capture(input, deadline, stages).catch((cause: unknown) =>
+  const captured = capture(input, deadline, stages, metadataOnly).catch((cause: unknown) =>
     Date.now() < deadline &&
     snapshotTurns.get(input.page) === turn &&
     !(cause instanceof Error && cause.message === VALUE_TOO_LONG)
-      ? capture(input, deadline, stages)
+      ? capture(input, deadline, stages, metadataOnly)
       : Promise.reject(cause),
   );
   try {
@@ -768,6 +802,12 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
     clearTimeout(timer);
   }
 };
+
+export const snapshot = (input: SnapshotInput) =>
+  runSnapshot(input, false) as Promise<PreviewAutomationSnapshot>;
+
+export const snapshotMetadata = (input: SnapshotInput) =>
+  runSnapshot(input, true) as Promise<PreviewAutomationSnapshotMetadata>;
 
 /** Return when a dialog opens; waiting for the action to finish would block until dialog resolution. */
 export const click = async (
@@ -852,53 +892,135 @@ const clickTarget = async (
   return point;
 };
 
+type FocusCandidate = {
+  readonly tagName: string;
+  readonly type?: string;
+  readonly disabled?: boolean;
+  readonly readOnly?: boolean;
+  readonly isContentEditable?: boolean;
+  readonly shadowRoot?: { readonly activeElement: FocusCandidate | null } | null;
+  readonly focus?: () => void;
+  getRootNode(): { readonly activeElement?: FocusCandidate | null };
+  contains(other: FocusCandidate): boolean;
+};
+
+// Serialized into the page's main world, so it must not reference module scope.
+const focusTextTarget = (target: FocusCandidate | null) => {
+  let element =
+    target ??
+    (globalThis as unknown as { document: { activeElement: FocusCandidate | null } }).document
+      .activeElement;
+  if (target === null) {
+    while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+    // Focus inside a frame cannot be checked from here, and an editable frame would pass as contentEditable.
+    if (element && ["IFRAME", "FRAME", "FENCEDFRAME", "OBJECT", "EMBED"].includes(element.tagName))
+      return false;
+  }
+  if (element == null) return false;
+  // Require an enabled, focused text target to avoid losing input or sending it to the previous field.
+  const nonText = [
+    "button",
+    "checkbox",
+    "color",
+    "file",
+    "hidden",
+    "image",
+    "radio",
+    "range",
+    "reset",
+    "submit",
+  ];
+  const textControl =
+    element.tagName === "TEXTAREA" ||
+    (element.tagName === "INPUT" && !nonText.includes(element.type ?? "text"));
+  if (!(textControl || element.isContentEditable) || element.disabled || element.readOnly) {
+    return false;
+  }
+  element.focus?.();
+  const active = element.getRootNode().activeElement;
+  return active != null && (active === element || element.contains(active));
+};
+
+// Playwright's own timeout covers finding the element, not a page that stops answering the evaluation.
+const pageAnswer = async <A>(answer: Promise<A>, timeout: number) => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new ServerBrowserOperationError({
+            tag: "PreviewAutomationTimeoutError",
+            message: `The page did not answer within ${timeout}ms, so no text was typed.`,
+            detail: { timeoutMs: timeout },
+          }),
+        ),
+      timeout,
+    );
+  });
+  return await Promise.race([answer, expired]).finally(() => clearTimeout(timer));
+};
+
+// Serialized into the page's main world, so it must not reference module scope.
+const valueOnlyInput = (
+  target: FocusCandidate & {
+    closest(selector: string): { readonly control: FocusCandidate | null } | null;
+  },
+) => {
+  // As fill does, a target that is not a control stands for its label's control.
+  const element = target.tagName === "INPUT" ? target : target.closest("label")?.control;
+  return (
+    element?.tagName === "INPUT" &&
+    ["color", "date", "datetime-local", "month", "range", "time", "week"].includes(
+      element.type ?? "",
+    )
+  );
+};
+
+// Keys reach pages that build their value from keydown. Line breaks stay text: Enter would submit the form.
+const typeKeys = async (page: Page, text: string, timeoutMs: number, deadline: number) => {
+  let typed = 0;
+  for (const [index, part] of text.split(/([\r\n]+)/u).entries()) {
+    // Keys cost about a millisecond each, so long text is sent in pieces that stop at the deadline.
+    const pieces = index % 2 === 1 ? [part] : (part.match(/[^]{1,64}/gu) ?? []);
+    for (const piece of pieces) {
+      if (Date.now() >= deadline) {
+        const reason = `Typing stopped after ${typed} of ${text.length} characters, which the field now holds. Type the rest in another call or raise timeoutMs.`;
+        throw new ServerBrowserOperationError({
+          tag: "PreviewAutomationTimeoutError",
+          message: reason,
+          detail: { timeoutMs, reason },
+        });
+      }
+      if (index % 2 === 1) await page.keyboard.insertText(piece);
+      else await page.keyboard.type(piece);
+      typed += piece.length;
+    }
+  }
+};
+
 export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // One deadline across steps keeps the reply inside the broker's grace; Playwright reads 0 as none.
+  const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  const remaining = () => Math.max(1, deadline - Date.now());
   const locator = targetLocator(page, input);
   if (locator !== null && input.clear) {
-    await locator.fill(input.text, { timeout });
+    // Pickers and sliders take a value such as 2026-01-31 only from fill, and some reject an empty one.
+    const timeout = remaining();
+    if (await pageAnswer(locator.evaluate(valueOnlyInput, undefined, { timeout }), timeout)) {
+      await locator.fill(input.text, { timeout: remaining() });
+      return;
+    }
+    // fill follows a label to its control and leaves that control focused for the keys.
+    await locator.fill("", { timeout: remaining() });
+    await typeKeys(page, input.text, timeoutMs, deadline);
     return;
   }
-  // A shadow host also matches :focus; use its innermost focused descendant.
-  const target = locator ?? page.locator("*:focus").last();
   const focused =
-    (locator !== null || (await target.count()) > 0) &&
-    (await target.evaluate(
-      (element) => {
-        // Require an enabled, focused text target to avoid losing input or sending it to the previous field.
-        const control = element as unknown as {
-          readonly type?: string;
-          readonly disabled?: boolean;
-          readonly readOnly?: boolean;
-          readonly isContentEditable?: boolean;
-          readonly focus?: () => void;
-        };
-        const nonText = [
-          "button",
-          "checkbox",
-          "color",
-          "file",
-          "hidden",
-          "image",
-          "radio",
-          "range",
-          "reset",
-          "submit",
-        ];
-        const textControl =
-          element.tagName === "TEXTAREA" ||
-          (element.tagName === "INPUT" && !nonText.includes(control.type ?? "text"));
-        if (!(textControl || control.isContentEditable) || control.disabled || control.readOnly) {
-          return false;
-        }
-        control.focus?.();
-        const root = element.getRootNode() as { readonly activeElement?: typeof element | null };
-        const active = root.activeElement;
-        return active != null && (active === element || element.contains(active));
-      },
-      undefined,
-      { timeout },
-    ));
+    locator === null
+      ? // A `*:focus` locator needs Playwright's utility world, which some desktop tabs never get.
+        await pageAnswer(page.evaluate(focusTextTarget, null), remaining())
+      : await locator.evaluate(focusTextTarget, undefined, { timeout: remaining() });
   if (focused !== true) {
     throw new ServerBrowserOperationError({
       tag: "PreviewAutomationTargetNotEditableError",
@@ -909,7 +1031,7 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.press("Delete");
   }
-  await page.keyboard.insertText(input.text);
+  await typeKeys(page, input.text, timeoutMs, deadline);
 };
 
 export const hover = async (
@@ -1161,6 +1283,7 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
   let ring = null;
   const AGENT_CURSOR_PATH = new Path2D("M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z");
   let ringTimer = null;
+  let idleTimer = null;
   let scale = 1;
   let offsetX = 0;
   let offsetY = 0;
@@ -1231,6 +1354,7 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
             tooLarge = true;
             chunks.length = 0;
             clearInterval(ringTimer);
+            clearInterval(idleTimer);
             frame?.close();
             frame = null;
             if (recorder.state !== "inactive") recorder.stop();
@@ -1240,6 +1364,8 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
           chunks.push(event.data);
         };
         recorder.start(1000);
+        // captureStream only emits on a paint; repainting an idle frame lets the encoder sharpen it.
+        idleTimer = setInterval(paint, 1000 / ${frameRate});
       }
       // Frame px per page CSS px, before fitting into the canvas.
       bitmap.cssScale = bitmap.width / cssWidth;
@@ -1287,6 +1413,7 @@ export const recordingEncoderScript = (frameRate: BrowserRecordingFrameRate) => 
         video.srcObject = null;
         if (recorder.state !== "inactive") recorder.stop();
       }
+      clearInterval(idleTimer);
       await stopped;
       return { mimeType: recorder.mimeType, count: chunks.length, bytes: sizeBytes };
     },

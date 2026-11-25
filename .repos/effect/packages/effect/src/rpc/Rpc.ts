@@ -26,6 +26,7 @@ import * as Schema from "../Schema.ts"
 import * as SchemaAST from "../SchemaAST.ts"
 import type { Stream } from "../Stream.ts"
 import type * as Struct from "../Struct.ts"
+import type * as Tracer from "../Tracer.ts"
 import type { NoInfer } from "../Types.ts"
 import type { RequestId } from "./RpcMessage.ts"
 import type * as RpcMiddleware from "./RpcMiddleware.ts"
@@ -224,6 +225,10 @@ export interface Handler<Tag extends string> {
   readonly handler: (request: any, options: {
     readonly client: ServerClient
     readonly requestId: RequestId
+    /**
+     * The span sent by the client, or `undefined` when no span was propagated.
+     */
+    readonly remoteParentSpan: Tracer.ExternalSpan | undefined
     readonly headers: Headers
     readonly rpc: Any
   }) => Effect<{} | Deferred<any, any>, any> | Stream<any, any>
@@ -666,6 +671,10 @@ export type ToHandlerFn<Current extends Any, R = any> = (
   options: {
     readonly client: ServerClient
     readonly requestId: RequestId
+    /**
+     * The span sent by the client, or `undefined` when no span was propagated.
+     */
+    readonly remoteParentSpan: Tracer.ExternalSpan | undefined
     readonly headers: Headers
     readonly rpc: Current
   }
@@ -696,7 +705,38 @@ export type IsStream<R extends Any, Tag extends string> = R extends Rpc<
  * @category utility types
  * @since 4.0.0
  */
-export type ExtractTag<R extends Any, Tag extends string> = R extends Rpc<
+export type ExtractTag<R extends Any, Tag extends string> = [NonLiteralTagged<R>] extends [never] ?
+  ByTag<R>[Tag & Exclude<R, NonLiteralTagged<R>>["_tag"]]
+  : ExtractTagDistributive<R, Tag>
+
+/**
+ * Indexes the RPCs of a union by their tag.
+ *
+ * **Details**
+ *
+ * Indexing it with a literal tag selects that RPC without testing every RPC in
+ * the union, which keeps tag-based client calls fast for large groups.
+ *
+ * @stability unstable
+ * @category utility types
+ * @since 4.1.3
+ */
+export type ByTag<R extends Any> = { readonly [Current in R as Current["_tag"]]: Current }
+
+// The RPCs whose tag is not a single literal. `ByTag` cannot index a union
+// containing one: a `string`, template literal pattern or union-valued tag
+// would change which RPCs a tag matches.
+type NonLiteralTagged<R extends Any> = R extends Any ? IsLiteral<R["_tag"]> extends true ? never : R : never
+
+// `true` when `T` is one string literal: not `string`, not a template literal
+// pattern and not a union.
+type IsLiteral<T extends string, Each = T> = {} extends Record<T, unknown> ? false
+  : Each extends unknown ? [T] extends [Each] ? true : false
+  : never
+
+// Tests every RPC in the union. Used when some RPC's tag is not a single
+// literal, which `ByTag` cannot index without changing which RPCs match.
+type ExtractTagDistributive<R extends Any, Tag extends string> = R extends Rpc<
   infer _Tag extends Tag,
   infer _Payload,
   infer _Success,
@@ -761,7 +801,8 @@ export type ExcludeProvides<Env, R extends Any, Tag extends string> = Exclude<
  *
  * Streaming RPCs may return a stream or an effect that produces a queue. Other
  * RPCs return an effect that succeeds with the success value or a deferred
- * success value.
+ * success value. Handlers may also fail with the errors of the RPC's server
+ * middleware, but a returned `Deferred` can only fail with the RPC's own error.
  *
  * @stability unstable
  * @category utility types
@@ -777,17 +818,17 @@ export type ResultFrom<R extends Any, Services> = R extends Rpc<
 > ? [_Success] extends [RpcSchema.Stream<infer _SA, infer _SE>] ?
       | Stream<
         _SA["Type"],
-        _SE["Type"] | _Error["Type"],
+        _SE["Type"] | _Error["Type"] | _Middleware["error"]["Type"],
         Services
       >
       | Effect<
-        Queue.Dequeue<_SA["Type"], _SE["Type"] | _Error["Type"] | Cause.Done>,
-        _SE["Type"] | Schema.Schema.Type<_Error>,
+        Queue.Dequeue<_SA["Type"], _SE["Type"] | _Error["Type"] | _Middleware["error"]["Type"] | Cause.Done>,
+        _SE["Type"] | _Error["Type"] | _Middleware["error"]["Type"],
         Services
       > :
   Effect<
     _Success["Type"] | Deferred<_Success["Type"], _Error["Type"]>,
-    _Error["Type"],
+    _Error["Type"] | _Middleware["error"]["Type"],
     Services
   > :
   never
@@ -1216,6 +1257,28 @@ export const exitSchema = <R extends Any>(
 export const ParseOptions = Context.Reference<SchemaAST.ParseOptions>("effect/rpc/Rpc/ParseOptions", {
   defaultValue: () => SchemaAST.defaultParseOptions
 })
+
+/**
+ * Annotation that selects which sides create automatic spans for an RPC:
+ * `"client"`, `"server"`, `"both"` (the default), or `"none"`.
+ *
+ * **Details**
+ *
+ * When the annotation disables the client span, the client can still propagate
+ * its caller's span. A client's or server's `disableTracing: true` option
+ * overrides this annotation on that side; a globally disabled client does not
+ * propagate a span.
+ *
+ * @stability unstable
+ * @category annotations
+ * @since 4.1.5
+ */
+export const TracingEnabled = Context.Reference<"client" | "server" | "both" | "none">(
+  "effect/rpc/Rpc/TracingEnabled",
+  {
+    defaultValue: () => "both"
+  }
+)
 
 const WrapperTypeId = "~effect/rpc/Rpc/Wrapper"
 

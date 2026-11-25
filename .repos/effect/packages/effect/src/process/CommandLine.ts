@@ -23,7 +23,7 @@
  * `<redacted>`.
  *
  * @stability unstable
- * @since 4.0.7
+ * @since 4.1.0
  */
 import * as Data from "../Data.ts"
 import * as Redacted from "../Redacted.ts"
@@ -45,7 +45,7 @@ import * as Result from "../Result.ts"
  *
  * @stability unstable
  * @category models
- * @since 4.0.7
+ * @since 4.1.0
  */
 export type Format = "posix" | "powershell" | "windows"
 
@@ -55,7 +55,7 @@ export type Format = "posix" | "powershell" | "windows"
  *
  * @stability unstable
  * @category models
- * @since 4.0.7
+ * @since 4.1.0
  */
 export type Word = string | Redacted.Redacted<string>
 
@@ -64,7 +64,7 @@ export type Word = string | Redacted.Redacted<string>
  *
  * @stability unstable
  * @category models
- * @since 4.0.7
+ * @since 4.1.0
  */
 export type TemplateExpressionItem = string | number | boolean | Redacted.Redacted<string>
 
@@ -78,7 +78,7 @@ export type TemplateExpressionItem = string | number | boolean | Redacted.Redact
  *
  * @stability unstable
  * @category models
- * @since 4.0.7
+ * @since 4.1.0
  */
 export type TemplateExpression = TemplateExpressionItem | ReadonlyArray<TemplateExpressionItem>
 
@@ -103,7 +103,7 @@ export type TemplateExpression = TemplateExpressionItem | ReadonlyArray<Template
  *
  * @stability unstable
  * @category errors
- * @since 4.0.7
+ * @since 4.1.0
  */
 export class CommandLineError extends Data.TaggedError("CommandLineError")<{
   readonly reason: "NulCharacter" | "InvalidArgument" | "InvalidEscape" | "UnterminatedQuote" | "UnsupportedSyntax"
@@ -156,7 +156,7 @@ export class CommandLineError extends Data.TaggedError("CommandLineError")<{
  *
  * @stability unstable
  * @category encoding
- * @since 4.0.7
+ * @since 4.1.0
  */
 export const quote = (
   word: Word,
@@ -218,7 +218,7 @@ export const quote = (
  *
  * @stability unstable
  * @category encoding
- * @since 4.0.7
+ * @since 4.1.0
  */
 export const join = (
   words: ReadonlyArray<Word>,
@@ -291,7 +291,7 @@ export const join = (
  *
  * @stability unstable
  * @category encoding
- * @since 4.0.7
+ * @since 4.1.0
  */
 export const display = (words: ReadonlyArray<Word>, options?: { readonly format?: Format | undefined }): string => {
   if (words.length === 0) return ""
@@ -362,7 +362,7 @@ export const display = (words: ReadonlyArray<Word>, options?: { readonly format?
  *
  * @stability unstable
  * @category constructors
- * @since 4.0.7
+ * @since 4.1.0
  */
 export const template = (
   strings: TemplateStringsArray,

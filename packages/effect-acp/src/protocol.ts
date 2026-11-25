@@ -1,6 +1,7 @@
 import type * as AcpCompat from "./compat.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
@@ -115,6 +116,15 @@ export interface AcpPatchedProtocolOptions {
   };
 }
 
+/**
+ * Provided to a request call, settles once that request is queued for writing. Messages queued
+ * later are written after it; the call itself returns only with the reply.
+ */
+export const AcpOutgoingQueued = Context.Reference<Deferred.Deferred<void> | undefined>(
+  "effect-acp/protocol/AcpOutgoingQueued",
+  { defaultValue: () => undefined },
+);
+
 export interface AcpPatchedProtocol {
   readonly clientProtocol: RpcClient.Protocol["Service"];
   readonly serverProtocol: RpcServer.Protocol["Service"];
@@ -162,6 +172,15 @@ const decodeSessionUpdate = Schema.decodeUnknownEffect(
         usage: Schema.optionalKey(Schema.NullOr(AcpSchema.Usage)),
         error: Schema.optionalKey(Schema.NullOr(AcpSchema.Error)),
         _meta: AcpSchema.UpdateSessionNotification.fields._meta,
+      }),
+    }),
+    // fx reports command cancellation outside ACP's standard tool fields.
+    Schema.Struct({
+      ...AcpSchemaV1.SessionNotification.fields,
+      update: Schema.Struct({
+        ...AcpSchemaV1.ToolCallUpdate.fields,
+        sessionUpdate: Schema.Literals(["tool_call", "tool_call_update"]),
+        command_result: Schema.Json,
       }),
     }),
     AcpSchema.UpdateSessionNotification,
@@ -438,6 +457,10 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               }).pipe(Effect.andThen(Deferred.fail(acknowledgement, error)), Effect.asVoid),
         ),
       );
+      const queued = yield* AcpOutgoingQueued;
+      if (queued !== undefined) {
+        yield* Deferred.succeed(queued, undefined);
+      }
       if (acknowledgement !== undefined) {
         yield* Deferred.await(acknowledgement);
       }

@@ -34,16 +34,19 @@ describe("atom-solid", () => {
       dispose()
     })
 
-    it("updates when Atom value changes", () => {
+    it("returns function values without calling them", () => {
       const registry = AtomRegistry.make()
-      const atom = Atom.make("initial")
-      let observed: string | undefined
+      const first = () => "first"
+      const second = () => "second"
+      const useSecond = Atom.make(false)
+      const atom = Atom.make((get) => get(useSecond) ? second : first)
+      let observed: (() => string) | undefined
       const dispose = renderAtomValue(atom, (value) => {
         observed = value
       }, { registry })
-      assert.strictEqual(observed, "initial")
-      registry.set(atom, "updated")
-      assert.strictEqual(observed, "updated")
+      assert.strictEqual(observed, first)
+      registry.set(useSecond, true)
+      assert.strictEqual(observed, second)
       dispose()
     })
 
@@ -102,15 +105,17 @@ describe("atom-solid", () => {
   })
 
   describe("AtomRef", () => {
-    it("updates when AtomRef changes", () => {
-      const ref = AtomRef.make(0)
-      let observed: number | undefined
+    it("returns function values without calling them", () => {
+      const first = () => "first"
+      const second = () => "second"
+      const ref = AtomRef.make(first)
+      let observed: (() => string) | undefined
       const dispose = renderAtomRef(ref, (value) => {
         observed = value
       })
-      assert.strictEqual(observed, 0)
-      ref.set(1)
-      assert.strictEqual(observed, 1)
+      assert.strictEqual(observed, first)
+      ref.set(second)
+      assert.strictEqual(observed, second)
       dispose()
     })
 

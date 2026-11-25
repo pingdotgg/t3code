@@ -13,6 +13,7 @@ import { applyAppearanceFontVariables, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from ".
 import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { startBrowserProfileReporting } from "./browser/BrowserProfileReporter";
 import { startPreviewTitleRecording } from "./browserHistoryStore";
+import { setServerRelayTelemetry } from "./cloud/publicConfig";
 import { retainThreadOverlaysForThread } from "./components/chat/threadOverlayRetention";
 import { resolveWindowTitleThreadStatus } from "./components/Sidebar.logic";
 import { startBackgroundThreadAnnouncements } from "./components/BackgroundThreadAnnouncer";
@@ -37,6 +38,7 @@ import {
 } from "./composerDraftStore";
 import { startDefaultThemeAdoption } from "./hooks/useDefaultTheme";
 import { startEnvironmentThemeRepaint } from "./hooks/useEnvironmentTheme";
+import { startThemeBackground } from "./themeBackground";
 import { readLocalStorageValue, subscribeLocalStorageKey } from "./hooks/useLocalStorage";
 import { startHostEnvironmentLookup } from "./state/primaryEnvironment";
 import {
@@ -55,11 +57,13 @@ import { startProviderAuthDelivery } from "./providerAuthDelivery";
 import { getRouter, type AppRouter } from "./router";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { environmentProjects } from "./state/projects";
-import { primaryServerConfigAtom } from "./state/server";
+import { primaryRelayTracingAllowedAtom, primaryServerConfigAtom } from "./state/server";
 import { environmentShell } from "./state/shell";
 import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
 import { startWorkspaceFocus } from "./lib/workspaceFocus";
-import { startI18n } from "./i18n/runtime";
+import { m } from "./i18n/messages";
+import { startI18n, subscribeI18n } from "./i18n/runtime";
+import { guardDomAgainstPageTranslation } from "./lib/pageTranslationGuard";
 import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommands";
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
 import { environmentThreadShells, threadEnvironment } from "./state/threads";
@@ -86,6 +90,9 @@ function startClientAppearance(): void {
     }
     if (previous?.chatWidth !== settings.chatWidth) {
       root.dataset.chatWidth = settings.chatWidth;
+    }
+    if (previous?.htmlPreviewWidth !== settings.htmlPreviewWidth) {
+      root.dataset.htmlPreviewWidth = settings.htmlPreviewWidth;
     }
     if (previous?.appearanceContrast !== settings.appearanceContrast) {
       applyAppearanceContrast(root, settings.appearanceContrast);
@@ -134,6 +141,12 @@ function readOpenThreadRef(router: AppRouter): ScopedThreadRef | null {
   return resolveActiveThreadRouteRef(target, draft);
 }
 
+function windowTitleThreadStatus(
+  thread: Parameters<typeof resolveWindowTitleThreadStatus>[0] | null,
+): string | null {
+  return thread === null ? null : resolveWindowTitleThreadStatus(thread, m);
+}
+
 /**
  * Names the open thread and its project in the window title, or the app when none is open.
  * Screen readers read it on Alt+Tab, so it can lead with the thread and what it's doing.
@@ -169,7 +182,7 @@ function startDocumentTitle(router: AppRouter): void {
       threadTitle: thread?.title ?? null,
       ...(getClientSettings().screenReaderWindowTitle && {
         screenReader: {
-          threadStatus: thread === null ? null : resolveWindowTitleThreadStatus(thread),
+          threadStatus: windowTitleThreadStatus(thread),
         },
       }),
       desktop: isElectron,
@@ -208,6 +221,7 @@ function startDocumentTitle(router: AppRouter): void {
   appAtomRegistry.subscribe(primaryServerConfigAtom, write, { immediate: true });
   appAtomRegistry.subscribe(environmentProjects.projectsAtom, write);
   subscribeClientSettings(write);
+  subscribeI18n(write);
   router.subscribe("onResolved", updateOpenThread);
   useComposerDraftStore.subscribe(updateOpenThread);
 }
@@ -258,12 +272,17 @@ export function startAppServices(): AppRouter {
   }
 
   installDesktopPasteAsText(window.desktopBridge, window);
+  guardDomAgainstPageTranslation();
 
   startClientAppearance();
   startI18n();
   startDocumentTitle(router);
   startHostEnvironmentLookup();
+  appAtomRegistry.subscribe(primaryRelayTracingAllowedAtom, setServerRelayTelemetry, {
+    immediate: true,
+  });
   startEnvironmentThemeRepaint();
+  startThemeBackground();
   startBrowserChromeThemeSync(router);
   startDefaultThemeAdoption();
   startModelPreferencesMigration();

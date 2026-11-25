@@ -9,6 +9,7 @@ import {
   DeviceToolUnavailableError,
   LOCAL_DEVICE_HOST_ID,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as DeviceService from "../../../device/DeviceService.ts";
@@ -49,7 +50,7 @@ export function agentDeviceQuickStart(
           .filter(Boolean)
           .join(" ")
       : host?.kind === "eas"
-        ? "This is an EAS Simulator session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
+        ? "This is an Expo Simulators session in the cloud. It bills the Expo account per minute until it stops, so call device_close with shutdown: true when you are done. It starts with no apps installed: install-from-source <url> installs a build from a URL (iOS needs a .tar.gz containing a .app), and install uploads one from this machine."
         : device.platform === "ios"
           ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
           : "The Android snapshot helper installs itself on first use.";
@@ -89,10 +90,13 @@ const requireDeviceAccess = McpInvocationContext.requireThreadMcpCapability("dev
     () =>
       new DeviceToolUnavailableError({
         reason:
-          "Agent device access is turned off for this environment. Ask the user to turn on Agent device access in Settings > Integrations > Devices; it applies when the agent session next starts, such as in a new thread.",
+          "Agent device access is turned off for this environment. Ask the user to turn on the Device hub and Agent device access in Settings > Integrations > Devices; it applies when the agent session next starts, such as in a new thread.",
       }),
   ),
 );
+
+const slicePrefix = (text: string, max: number) =>
+  text.slice(0, splitsSurrogatePair(text, max) ? max - 1 : max);
 
 export const resolveHostId = Effect.fn("handlers.resolveHostId")(function* (
   hosts: ReadonlyArray<DeviceHostSummary>,
@@ -105,10 +109,10 @@ export const resolveHostId = Effect.fn("handlers.resolveHostId")(function* (
   if (labelMatches.length === 1) return labelMatches[0]!.id;
   const candidates = labelMatches.length > 1 ? labelMatches : hosts;
   const listed = [
-    ...candidates.slice(0, 10).map((host) => `${host.label.slice(0, 64)} (${host.id})`),
+    ...candidates.slice(0, 10).map((host) => `${slicePrefix(host.label, 64)} (${host.id})`),
     ...(candidates.length > 10 ? [`${candidates.length - 10} more`] : []),
   ].join(", ");
-  const selector = hostId.slice(0, 128);
+  const selector = slicePrefix(hostId, 128);
   return yield* new DeviceToolUnavailableError({
     reason:
       labelMatches.length > 1
@@ -227,7 +231,11 @@ const handlers = {
       }
       const hostId = yield* resolveHostId(state.hosts, input?.hostId);
       const open = state.sessions
-        .filter((session) => session.threadId === scope.thread.threadId)
+        .filter(
+          (session) =>
+            session.threadId === scope.thread.threadId &&
+            (hostId === undefined || session.hostId === hostId),
+        )
         .map((session) => ({ hostId: session.hostId, deviceId: session.deviceId }));
       return {
         hostStatuses: Object.fromEntries(
@@ -275,7 +283,7 @@ const handlers = {
         after.devices.find(
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
-      // Target the opened device: an EAS device and its agent-device daemon
+      // Target the opened device: an Expo device and its agent-device daemon
       // exist only once its session runs, and Android ids change on boot.
       const opened = {
         threadId: scope.thread.threadId,
