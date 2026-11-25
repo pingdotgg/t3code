@@ -251,6 +251,17 @@ const command = Effect.fn("nativeClient.command")(function* (
   return stdout.trim();
 }, Effect.scoped);
 
+export const installIosPods = Effect.fn("nativeClient.installIosPods")(function* (mobile: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
+  const projectRoot = yield* fs.realPath(mobile);
+  // ExpoWidgets embeds PROJECT_ROOT at pod install time because Xcode can report a symlinked PROJECT_DIR.
+  yield* command("pod", ["install"], true, path.join(projectRoot, "ios")).pipe(
+    Effect.provideService(HostProcess.Environment, { ...environment, PROJECT_ROOT: projectRoot }),
+  );
+});
+
 const fingerprint = Effect.fn("nativeClient.fingerprint")(function* (platform: NativePlatform) {
   const output = yield* command(yield* HostProcess.ExecutablePath, [
     "--eval",
@@ -736,7 +747,7 @@ const build = Effect.fn("nativeClient.build")(function* (
       yield* buildIosOnEas(staging);
     } else if (platform === "ios") {
       const output = yield* fs.makeTempDirectoryScoped({ prefix: "t3-native-client-" });
-      yield* command("pod", ["install"], true, path.join(mobile, "ios"));
+      yield* installIosPods(mobile);
       // One device-independent arm64 simulator build installs on every iPhone and iPad simulator.
       yield* command(
         "xcrun",

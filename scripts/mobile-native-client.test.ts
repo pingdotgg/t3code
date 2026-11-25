@@ -8,10 +8,40 @@ import * as Path from "effect/Path";
 import {
   androidSdk,
   buildRunTitle,
+  installIosPods,
   NativeClientError,
   prebuildAndroid,
   remoteBuildState,
 } from "./mobile-native-client.ts";
+
+if (HostProcess.Platform.defaultValue() !== "win32") {
+  it.live("passes the physical app root to CocoaPods from a symlinked checkout", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "mobile-pods-" });
+      const mobile = path.join(root, "mobile");
+      const alias = path.join(root, "checkout-link");
+      const ios = path.join(mobile, "ios");
+      yield* fs.makeDirectory(ios, { recursive: true });
+      yield* fs.symlink(mobile, alias);
+      yield* fs.writeFileString(
+        path.join(root, "pod"),
+        '#!/bin/sh\nprintf "%s" "$PROJECT_ROOT" > project-root.txt\n',
+        { mode: 0o700 },
+      );
+
+      yield* installIosPods(alias).pipe(
+        Effect.provideService(HostProcess.Environment, { PATH: root }),
+      );
+
+      assert.strictEqual(
+        yield* fs.readFileString(path.join(ios, "project-root.txt")),
+        yield* fs.realPath(mobile),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
 
 const caches = [".gradle/history", "app/.cxx/object"];
 
