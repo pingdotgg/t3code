@@ -130,7 +130,8 @@ export type ManagedCapability =
   | "connect"
   | "webhookTasks"
   | "browserCookieImport"
-  | "previewTunnel";
+  | "previewTunnel"
+  | "worktreeLayoutCommands";
 
 function managedCapabilityDeniedMessage(
   organization: string,
@@ -162,6 +163,12 @@ function managedCapabilityDeniedMessage(
           "{organization}'s policy does not allow opening this machine's local servers on other devices.",
           { organization },
         ),
+      );
+    case "worktreeLayoutCommands":
+      return resolve(
+        msg("{organization}'s policy does not allow project worktree layout commands.", {
+          organization,
+        }),
       );
   }
 }
@@ -281,6 +288,14 @@ const INSTALL_HINTS = [
       install: "`bun install -g @gitcafe/cli`",
       login: "`cafe auth login --host https://git.cafe/api`",
       variable: "CAFE_TOKEN",
+    },
+  ),
+  msg(
+    "Install the TanStack Source CLI with {install}, then run {login}, save a token in Settings, or set {variable} on the server.",
+    {
+      install: "`curl -fsSL https://source.tanstack.com/install | sh`",
+      login: "`src auth login --web --hostname source.tanstack.com`",
+      variable: "SRC_TOKEN",
     },
   ),
 ];

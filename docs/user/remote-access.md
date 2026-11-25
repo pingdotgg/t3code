@@ -235,7 +235,8 @@ If that port is already in use, choose another with
 
 [app.t3.codes](https://app.t3.codes) needs an HTTPS endpoint. It connects directly
 to your server; a hosted pairing link does not make an unreachable backend
-reachable or convert HTTP to HTTPS.
+reachable or convert HTTP to HTTPS. Opening a hosted pairing link shows the
+server address and asks you to confirm before adding it.
 
 For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. On mobile, an IP address entered without a
@@ -421,7 +422,11 @@ the other: launch, message, wait on and stop its threads, answer their
 questions, and manage its queues, projects and scheduled tasks.
 
 Linked environments is a beta. Turn it on for both machines in **Settings →
-Labs**; on mobile, **Settings → Labs** lists each connected machine. While it is
+Labs**; on mobile, **Settings → Labs** lists each connected machine. On a
+headless server, open its address in a browser and pair to reach its **Settings
+→ Labs**, or add `"linkedEnvironmentsEnabled": true` to `settings.json` in its
+`userdata` directory, such as `~/.t3/userdata/settings.json`; a running server
+picks it up. While it is
 off on either machine, agents start nothing over a link between them. A task
 already running on the other machine still finishes, and if that machine has it
 off, its result arrives once it is back on.
@@ -464,8 +469,10 @@ an address you trust: the code is sent there.
   machine's own threads, projects or settings, and they skip its project setup
   scripts.
 - The link shows up in that machine's **Settings → Sharing & access** like any
-  outside agent. Revoke it there to end it. **Forget** on this machine only
-  removes it here.
+  outside agent, and can be revoked there. **Forget** on this machine also ends
+  it there when that machine confirms it. If it can't, such as when it is
+  offline or on an older T3 Code, Forget says so; revoke it in that machine's
+  Sharing & access.
 - A link stays valid while agents use it. One unused for 30 days expires, as
   does one to a machine on an older T3 Code after 30 days; link again with a
   new pairing code.
@@ -478,6 +485,14 @@ the map, drag the plus on an environment onto another machine, or press it and
 pick one. If this app is connected to both machines, knows an address the first
 can reach the other at, and its session on the other one manages access there,
 it needs no pairing code.
+
+A machine this app is not connected to, shown only because another environment
+links to it, can still be linked without a code when that link has full access:
+drop the plus on it and the environment holding the link gets the pairing code
+from it. Your session on that environment must manage access there and already
+have the access you pick. The result
+is a separate link with the access you pick, listed and revocable on the linked
+machine like any other. Links still do not chain.
 
 A link goes one way. To let the other machine's agents work back, tick **Also
 link … back** when you create the link, or select a one-way link and use
@@ -590,7 +605,13 @@ checkout use that checkout's permissions.
 client: pushing, switching or creating branches, cloning, and removing
 worktrees. It does not restrict what a task does. Starting a task in a new
 worktree still creates that branch and worktree with `orchestration:operate`,
-and the agent it runs can use Git however the environment allows.
+and the agent it runs can use Git however the environment allows. A project
+that [lays out its worktrees with its own command](multi-repo-projects.md#lay-the-folder-out-yourself)
+runs that command on the host, so creating a worktree there from the client also
+needs `orchestration:operate` or `terminal:operate`; without one of them,
+removing a worktree skips the project's `remove` command. The command also has
+to be [approved](multi-repo-projects.md#approve-the-commands) first, from a
+client with `terminal:operate`.
 
 Settings changes, provider management, environment maintenance, access
 management, and T3 Connect preferences can each be granted separately. Setting

@@ -349,7 +349,7 @@ describe("gitHubViewerPermissions", () => {
       if (readChecks === undefined) return yield* Effect.die("checks read missing");
       expect(
         yield* readChecks({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 }),
-      ).toEqual({ state: detail.state, checks: detail.checks });
+      ).toEqual({ state: detail.state, checks: detail.checks, workflowApprovalsRequired: 1 });
       expect(detail.workflowApprovalsRequired).toBe(1);
       expect(detail.checks).toEqual([
         {
@@ -419,6 +419,7 @@ describe("gitHubViewerPermissions", () => {
           listWorkflowRunsRequiringApproval: () =>
             Effect.succeed([
               {
+                pullRequestNumbers: [7],
                 id: 123,
                 name: "contributor tests",
                 url: "https://github.com/acme/web/actions/runs/123",
@@ -510,11 +511,68 @@ it.effect("adds unstarted same-repository workflow runs as pending, not as appro
         // Run 201 is represented by its running job; run 202 is queued before any job exists.
         listUnfinishedWorkflowRuns: () =>
           Effect.succeed([
-            { id: 201, name: "Lint", url: "https://github.com/acme/web/actions/runs/201" },
-            { id: 202, name: "CI", url: "https://github.com/acme/web/actions/runs/202" },
+            {
+              pullRequestNumbers: [],
+              id: 201,
+              name: "Lint",
+              url: "https://github.com/acme/web/actions/runs/201",
+            },
+            {
+              pullRequestNumbers: [],
+              id: 202,
+              name: "CI",
+              url: "https://github.com/acme/web/actions/runs/202",
+            },
           ]),
+        listWorkflowRunsRequiringApproval: () => Effect.succeed([]),
+        getViewerAccess: () =>
+          Effect.succeed({
+            canWrite: true,
+            canTriage: true,
+            canUpdate: true,
+            didAuthor: false,
+            mergeCapabilities: { merge: true, squash: true, rebase: true },
+            autoMergeAllowed: true,
+          }),
+      }),
+    ),
+  ),
+);
+
+it.effect("discovers workflow approval for a same-repository bot pull request", () =>
+  Effect.gen(function* () {
+    const provider = yield* make;
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
+
+    expect(detail.workflowApprovalsRequired).toBe(1);
+    expect(detail.checks).toEqual([
+      {
+        name: "bot tests",
+        status: "action-required",
+        description: "A maintainer must approve this workflow before it can run.",
+        url: "https://github.com/acme/web/actions/runs/123",
+      },
+    ]);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+        revalidateChecks: (_input, read) => read,
+        getPullRequestDetail: () => Effect.succeed({ ...openDetail, isCrossRepository: false }),
+        listUnfinishedWorkflowRuns: () => Effect.succeed([]),
         listWorkflowRunsRequiringApproval: () =>
-          Effect.die("same-repository pull requests must not probe fork workflow approvals"),
+          Effect.succeed([
+            {
+              pullRequestNumbers: [7],
+              id: 123,
+              name: "bot tests",
+              url: "https://github.com/acme/web/actions/runs/123",
+            },
+          ]),
         getViewerAccess: () =>
           Effect.succeed({
             canWrite: true,
