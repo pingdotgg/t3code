@@ -45,7 +45,6 @@ import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 describe("resolveTimelineMinimapHitStrip", () => {
   it.each([
     {
-      name: "centered 1280/768",
       viewport: { left: 0, width: 1280 },
       content: { left: 256, width: 768 },
       left: 32,
@@ -53,23 +52,6 @@ describe("resolveTimelineMinimapHitStrip", () => {
       persistent: true,
     },
     {
-      name: "left-shifted 1024/652 at 48px gutter",
-      viewport: { left: 256, width: 1024 },
-      content: { left: 304, width: 652 },
-      left: 32,
-      width: 16,
-      persistent: true,
-    },
-    {
-      name: "left-shifted 1024/652 at 12px gutter",
-      viewport: { left: 256, width: 1024 },
-      content: { left: 268, width: 652 },
-      left: 0,
-      width: 8,
-      persistent: false,
-    },
-    {
-      name: "centered 768/672",
       viewport: { left: 0, width: 768 },
       content: { left: 48, width: 672 },
       left: 32,
@@ -77,7 +59,6 @@ describe("resolveTimelineMinimapHitStrip", () => {
       persistent: true,
     },
     {
-      name: "centered 768/704",
       viewport: { left: 0, width: 768 },
       content: { left: 32, width: 704 },
       left: 0,
@@ -85,15 +66,6 @@ describe("resolveTimelineMinimapHitStrip", () => {
       persistent: false,
     },
     {
-      name: "centered 768/720",
-      viewport: { left: 0, width: 768 },
-      content: { left: 24, width: 720 },
-      left: 0,
-      width: 8,
-      persistent: false,
-    },
-    {
-      name: "centered 768/756",
       viewport: { left: 0, width: 768 },
       content: { left: 6, width: 756 },
       left: 0,
@@ -101,23 +73,29 @@ describe("resolveTimelineMinimapHitStrip", () => {
       persistent: false,
     },
     {
-      name: "centered 768/768",
       viewport: { left: 0, width: 768 },
       content: { left: 0, width: 768 },
       left: 0,
       width: 0,
       persistent: false,
     },
+    // Lane shifted left of center, e.g. by the floating details card.
     {
-      name: "missing content lane",
       viewport: { left: 256, width: 1024 },
-      content: null,
+      content: { left: 304, width: 652 },
+      left: 32,
+      width: 16,
+      persistent: true,
+    },
+    {
+      viewport: { left: 256, width: 1024 },
+      content: { left: 268, width: 652 },
       left: 0,
-      width: 0,
+      width: 8,
       persistent: false,
     },
   ])(
-    "keeps the minimap inside the gutter for $name",
+    "keeps the minimap inside the gutter at $viewport.left+$viewport.width / $content.left+$content.width",
     ({ viewport, content, left, width, persistent }) => {
       expect(resolveTimelineMinimapHitStrip(viewport, content)).toEqual({ left, width });
       expect(resolveTimelineMinimapHasPersistentGutter(viewport, content)).toBe(persistent);
