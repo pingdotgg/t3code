@@ -416,15 +416,18 @@ function* epubTable(node: XmlNode): Generator<TextPart, void> {
         while ((occupiedUntil[column] ?? 0) > rowIndex) column++;
         const width = Math.max(1, Math.min(1000, epubSpan(cell.attrs.colspan)));
         const endColumn = column + width;
-        if (endColumn > occupiedUntil.length) throw new Truncation("Column limit");
+        const inBounds = column < occupiedUntil.length;
+        if (!inBounds && index <= lastText && hasCellText(cell))
+          throw new Truncation("Column limit");
         if (rowSpan !== 1) {
           // A zero row span covers the rest of the row group.
           const endRow = rowSpan === 0 ? 0xffffffff : rowIndex + Math.min(65_534, rowSpan);
-          for (let slot = column; slot < endColumn; slot++) {
+          const trackedEnd = Math.min(endColumn, occupiedUntil.length);
+          for (let slot = column; slot < trackedEnd; slot++) {
             occupiedUntil[slot] = Math.max(occupiedUntil[slot]!, endRow);
           }
         }
-        if (index <= lastText) {
+        if (inBounds && index <= lastText) {
           if (column > lastColumn) yield "\t".repeat(column - lastColumn);
           yield CELL_START;
           yield* paragraphs(cell);
