@@ -175,7 +175,8 @@ type AcpAppContextEntry = NonNullable<
 >[number];
 
 function formatAcpAppContextEntry(entry: AcpAppContextEntry): string {
-  return `<external_${entry.key}>${entry.text}</external_${entry.key}>`;
+  const updatedAt = entry.updatedAt === undefined ? "" : ` updated_at="${entry.updatedAt}"`;
+  return `<external_${entry.key}${updatedAt}>${entry.text}</external_${entry.key}>`;
 }
 
 function unsentAcpAppContext(
