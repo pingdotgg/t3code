@@ -913,18 +913,20 @@ function ProjectScopeRowIcon(props: { isSelected: boolean; children: ReactNode }
 }
 
 function canOperateThreads(
-  threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId">>,
+  threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId" | "id">>,
   triage = false,
 ): boolean {
-  return threads.every((thread) =>
-    triage
-      ? threadTriagePermitted(thread.environmentId)
-      : readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope),
+  return threads.every(
+    (thread) =>
+      (triage
+        ? threadTriagePermitted(thread.environmentId)
+        : readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) &&
+      readTeamThreadPostPermission(thread.environmentId, thread.id).canPost,
   );
 }
 
 function checkThreadOperations(
-  threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId">>,
+  threads: ReadonlyArray<Pick<SidebarThreadSummary, "environmentId" | "id">>,
   triage = false,
 ): boolean {
   if (canOperateThreads(threads, triage)) return true;

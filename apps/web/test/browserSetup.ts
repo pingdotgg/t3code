@@ -25,6 +25,14 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
+  // Serialized CI browser runs reuse one BrowserContext across test files; clear web storage so
+  // persisted stores (e.g. composer drafts) cannot leak into the next file.
+  try {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  } catch {
+    // Ignore if a test stubbed or restricted storage.
+  }
   await commands.collectGarbage();
 });
 

@@ -166,13 +166,14 @@ const browserTestProject = {
         // since Vitest's built-in disk-space heuristic does not fire on 16 GB Linux runners.
         collectGarbage: async ({ context, page }) => {
           if (!isCi) return;
-          const cdp = await context.newCDPSession(page);
+          let cdp: Awaited<ReturnType<typeof context.newCDPSession>> | undefined;
           try {
+            cdp = await context.newCDPSession(page);
             await cdp.send("HeapProfiler.collectGarbage");
           } catch {
             // Best-effort memory relief; ignore if the browser session is already closing.
           } finally {
-            await cdp.detach().catch(() => {});
+            await cdp?.detach().catch(() => {});
           }
         },
       },

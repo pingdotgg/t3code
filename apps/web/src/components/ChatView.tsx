@@ -1470,7 +1470,7 @@ export default function ChatView(props: ChatViewProps) {
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
     activeProviderStatus;
   const supportsConversationRollback =
-    canOperateThread &&
+    effectiveCanOperateThread &&
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeRuntime);
@@ -1993,7 +1993,8 @@ export default function ChatView(props: ChatViewProps) {
   const { focusComposer: focusComposerStable, scheduleComposerFocus: scheduleComposerFocusStable } =
     useComposerFocus(composerRef);
   const canInterruptRunningThread =
-    canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+    effectiveCanOperateThread &&
+    deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
   const onInterrupt = async () => {
     if (
       !activeThread ||
@@ -2611,7 +2612,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
-    canOperateThread,
+    canOperateThread: effectiveCanOperateThread,
     clientSettingsHydrated,
     activeThread,
     activeThreadId,
@@ -2665,7 +2666,7 @@ export default function ChatView(props: ChatViewProps) {
     providerStatuses,
   );
   const compactThreadUnavailable =
-    !canOperateThread ||
+    !effectiveCanOperateThread ||
     !activeThread ||
     !activeThreadHasCompactableConversation ||
     !activeProject ||
@@ -3030,7 +3031,7 @@ export default function ChatView(props: ChatViewProps) {
   // Side chats do not nest or start from subagents, and older servers would fork a listed thread.
   const sideChatsOffered =
     !embedded &&
-    canOperateThread &&
+    effectiveCanOperateThread &&
     activeThread?.lineage.sideChat !== true &&
     !isSubagentThread &&
     serverConfig?.environment.capabilities.sideChats === true;
@@ -3673,7 +3674,7 @@ export default function ChatView(props: ChatViewProps) {
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}
                   onRespondToApproval={onRespondToApprovalStable}
-                  canOperateThread={canOperateThread}
+                  canOperateThread={effectiveCanOperateThread}
                   threadDetailRef={routeThreadDetailRef}
                   entriesInput={timelineEntriesInput}
                   draftEntries={isServerThread ? null : draftTimelineEntries}
