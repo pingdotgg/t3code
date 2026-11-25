@@ -1013,6 +1013,40 @@ it.layer(
     }),
   );
 
+  it.effect("rejects conditional paste chunks when the process has gone", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      const original = yield* manager.open(input);
+      if (original.pid === null) throw new Error("Expected a running terminal");
+      expect(original.supportsConditionalWrites).toBe(true);
+      const pasteChunk = {
+        threadId: input.threadId,
+        terminalId: original.terminalId,
+        data: "\x1b[200~paste",
+        expectedPid: original.pid,
+      };
+      yield* manager.write(pasteChunk);
+      yield* manager.close({ threadId: input.threadId, terminalId: original.terminalId });
+      expect(yield* manager.write(pasteChunk).pipe(Effect.flip)).toMatchObject({
+        _tag: "TerminalProcessChangedError",
+      });
+      yield* manager.open(input);
+      expect(yield* manager.write(pasteChunk).pipe(Effect.flip)).toMatchObject({
+        _tag: "TerminalProcessChangedError",
+      });
+      yield* manager.write({
+        threadId: input.threadId,
+        terminalId: original.terminalId,
+        data: "after",
+      });
+      expect(ptyAdapter.processes.map(({ writes }) => writes)).toEqual([
+        [pasteChunk.data],
+        ["after"],
+      ]);
+    }),
+  );
+
   it.effect("supports multiple terminals per thread independently", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
