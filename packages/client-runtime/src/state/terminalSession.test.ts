@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   EnvironmentId,
+  retainTerminalSnapshotHistory,
   retainedTerminalHistory,
   TerminalSessionSnapshot,
   ThreadId,
@@ -39,6 +40,69 @@ const BASE_SNAPSHOT: TerminalSessionSnapshot = {
 };
 
 describe("terminal session reducers", () => {
+  it.each([
+    {
+      title: "zero-byte attach budget",
+      history: "\u001b]0;Build ",
+      budget: 0,
+      chunks: ["progress", "\u0007"],
+      attach: true,
+    },
+    {
+      title: "one-byte attach budget",
+      history: "\u001b]0;Build ",
+      budget: 1,
+      chunks: ["progress", "\u0007"],
+      attach: true,
+    },
+    {
+      title: "title cut during observe",
+      history: "\u001b]0;Build ",
+      budget: 2,
+      chunks: ["progress", "\u0007"],
+      attach: false,
+    },
+    {
+      title: "CSI parameters cut during attach",
+      history: "\u001b[20",
+      budget: 2,
+      chunks: ["C"],
+      attach: true,
+    },
+    {
+      title: "split surrogate in a cut DCS",
+      history: "\u001bP" + "中".repeat(2_000) + "\ud83d",
+      budget: 4_096,
+      chunks: ["\ude00"],
+      attach: true,
+    },
+  ])("skips a continuation after $title", ({ history, budget, chunks, attach }) => {
+    const snapshot = {
+      ...BASE_SNAPSHOT,
+      ...(attach ? retainTerminalSnapshotHistory(history, budget) : { history }),
+    };
+    const clientBudget = attach ? 8_192 : budget;
+    let state = applyTerminalAttachStreamEvent(
+      EMPTY_TERMINAL_BUFFER_STATE,
+      { type: "snapshot", snapshot },
+      clientBudget,
+    );
+    const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
+    expect(initial).toMatchObject({ type: "reset", data: "" });
+    let cursor = initial.cursor;
+    for (const data of [...chunks, "ok"]) {
+      state = applyTerminalAttachStreamEvent(
+        state,
+        { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data },
+        clientBudget,
+      );
+      const update = readTerminalOutputUpdate(state.output, cursor);
+      expect("data" in update ? update.data : "").toBe(data === "ok" ? data : "");
+      cursor = update.cursor;
+    }
+    expect(terminalOutputText(state.output)).toBe("ok");
+  });
+
   it("prefers live attach status over stale metadata after the attach stream starts", () => {
     const summary = applyTerminalMetadataStreamEvent([], {
       type: "snapshot",

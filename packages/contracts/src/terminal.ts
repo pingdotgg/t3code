@@ -130,6 +130,22 @@ export function retainedTerminalHistory(history: string, maxBytes: number): stri
   return retained.slice(terminalSequenceEnd(state, retained));
 }
 
+/** Keep a whole unfinished prefix when possible, or skip its continuation during replay. */
+export function retainTerminalSnapshotHistory(history: string, maxBytes: number) {
+  const retained = retainedTerminalHistory(history, maxBytes);
+  if (retained.length > 0 || history.length === 0) return { history: retained };
+
+  // The last ESC starts a sequence independently of the discarded prefix.
+  const start = history.lastIndexOf("\u001b");
+  if (start < 0) return { history: retained };
+  const state = terminalSequenceStateAfter(TERMINAL_SEQUENCE_GROUND, history, start);
+  if (state === TERMINAL_SEQUENCE_GROUND) return { history: retained };
+  const pending = history.slice(start);
+  return historyEncoder.encode(pending).byteLength <= maxBytes
+    ? { history: pending }
+    : { history: "", historySequenceState: state };
+}
+
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
   Schema.isLessThanOrEqualTo(1000),
@@ -250,6 +266,10 @@ export const TerminalSessionSnapshot = Schema.Struct({
   status: TerminalSessionStatus,
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   history: Schema.String,
+  // Parser state after an unfinished prefix was dropped from an empty history.
+  historySequenceState: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: (0xdbff << 3) | SEQUENCE_OSC })),
+  ),
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
   label: Schema.String.check(Schema.isMaxLength(128)),

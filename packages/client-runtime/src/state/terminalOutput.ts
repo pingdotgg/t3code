@@ -1,6 +1,7 @@
 import {
-  retainedTerminalHistory,
+  retainTerminalSnapshotHistory,
   TERMINAL_SEQUENCE_GROUND,
+  type TerminalSessionSnapshot,
   terminalSequenceEnd,
   terminalSequenceStateAfter,
 } from "@t3tools/contracts";
@@ -254,12 +255,12 @@ function appendOutput(
 
 function resetOutput(
   current: TerminalOutputState,
-  data: string,
+  snapshot: Pick<TerminalSessionSnapshot, "history" | "historySequenceState">,
   maxBufferBytes: number,
 ): TerminalOutputState {
-  const retained = retainedTerminalHistory(data, maxBufferBytes);
+  const retained = retainTerminalSnapshotHistory(snapshot.history, maxBufferBytes);
   const reset = splitOutputChunks(
-    retained,
+    retained.history,
     0,
     Math.min(DEFAULT_TERMINAL_CHUNK_BYTES, Math.max(1, maxBufferBytes)),
   );
@@ -269,7 +270,8 @@ function resetOutput(
     retainedBytes: reset.byteLength,
     resetVersion: current.resetVersion + 1,
     nextOffset: reset.nextOffset,
-    sequenceState: TERMINAL_SEQUENCE_GROUND,
+    sequenceState:
+      snapshot.historySequenceState ?? retained.historySequenceState ?? TERMINAL_SEQUENCE_GROUND,
     textStartOffset: 0,
   };
 }

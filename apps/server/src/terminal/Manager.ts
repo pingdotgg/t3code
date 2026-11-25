@@ -5,7 +5,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
-  retainedTerminalHistory,
+  retainTerminalSnapshotHistory,
   TERMINAL_SEQUENCE_GROUND,
   terminalSequenceEnd,
   terminalSequenceStateAfter,
@@ -1424,26 +1424,6 @@ function unfinishedSequenceReplay(session: TerminalSessionState): string {
   if (held.startsWith(OVERSIZED_SEQUENCE)) return held.slice(1);
   if (held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) return held;
   return held.slice(0, 2) + (/[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "");
-}
-
-function retainedSnapshotHistory(history: string, maxBytes: number): string {
-  const retained = retainedTerminalHistory(history, maxBytes);
-  if (retained.length > 0) return retained;
-
-  // A cut can discard the unfinished sequence along with the preceding history.
-  // The last ESC starts it independently of the state of the discarded prefix.
-  const start = history.lastIndexOf("\u001b");
-  if (start < 0) return retained;
-  const state = terminalSequenceStateAfter(TERMINAL_SEQUENCE_GROUND, history, start);
-  if (state === TERMINAL_SEQUENCE_GROUND) return retained;
-  const sequence = history.slice(start);
-  if (Buffer.byteLength(sequence) <= maxBytes) return sequence;
-
-  const introducer = sequence.slice(0, 2);
-  return Buffer.byteLength(introducer) <= maxBytes &&
-    terminalSequenceStateAfter(TERMINAL_SEQUENCE_GROUND, introducer) === state
-    ? introducer
-    : retained;
 }
 
 export function sanitizeTerminalHistoryChunk(
@@ -3739,7 +3719,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                     ...event,
                     snapshot: {
                       ...event.snapshot,
-                      history: retainedSnapshotHistory(event.snapshot.history, maxHistoryBytes),
+                      ...retainTerminalSnapshotHistory(event.snapshot.history, maxHistoryBytes),
                     },
                   }
                 : event,
