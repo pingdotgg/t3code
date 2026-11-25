@@ -10970,7 +10970,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const launch =
             toolUseId === undefined
               ? undefined
-              : (activeContext?.toolCalls.get(toolUseId) ?? subagentToolCalls.get(toolUseId));
+              : (activeContext?.toolCalls.get(toolUseId) ??
+                subagentToolCalls.get(toolUseId) ??
+                // A command Claude moved to the background can settle before the roster lists it.
+                [...foregroundTailCalls.values()].find((call) => call.nativeItemId === toolUseId));
           const command =
             launch?.classification.itemType === "command_execution" ||
             launch?.toolName === "Monitor"
@@ -11991,6 +11994,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (isClaudeBackgroundTasksChangedMessage(message)) {
+            // The roster reads a moved command's launch before its tail switch drops the retained call.
+            yield* applyBackgroundTaskRosterMessage({
+              nativeThreadId: liveQuery.nativeThreadId,
+              message,
+              activeContext: context,
+            });
             const roster = Reflect.get(message, "tasks");
             // A foreground command Claude moved to the background keeps streaming until its notification.
             for (const entry of Array.isArray(roster) ? roster : []) {
@@ -12012,11 +12021,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 });
               }
             }
-            yield* applyBackgroundTaskRosterMessage({
-              nativeThreadId: liveQuery.nativeThreadId,
-              message,
-              activeContext: context,
-            });
             return;
           }
 

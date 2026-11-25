@@ -15595,6 +15595,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           session_id: WAKE_NATIVE_SESSION,
         }),
       );
+      // Background work details find the command row by this launch even though the call already settled.
+      yield* harness.until(() =>
+        providerThreadRosterEvents(harness.events).some(
+          (event) => (event.providerThread.pendingBackgroundTasks?.length ?? 0) > 0,
+        ),
+      );
+      const moved = providerThreadRosterEvents(harness.events).at(-1)?.providerThread
+        .pendingBackgroundTasks?.[0];
+      assert.equal(moved?.command, "pnpm install");
+      assert.isDefined(moved?.itemId);
       yield* harness.until(() => deltas() === 2);
       yield* fileSystem.writeFileString(outputFile, "installing\ndone\n");
       yield* harness.offerAndWait(
