@@ -341,7 +341,7 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
           ].join("\n"),
         });
         // Each billing request takes the next answer: a used percent, or 401 for a rejected key.
-        const billing: Array<number | 401> = [97, 9, 401, 12, 401, 30];
+        const billing: Array<number | 401> = [97, 9, 401, 401, 401, 12, 401, 30, 401, 40];
         const httpClient = HttpClient.make((request) => {
           // Only Grok's billing endpoint answers; version advisories see an unknown latest version.
           if (request.url !== GROK_USAGE_URL) {
@@ -371,7 +371,6 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
           config: { ...GrokDriver.defaultConfig(), binaryPath },
         }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
         const launchCount = fs.readFileString(launches).pipe(Effect.map((text) => text.length));
-        // Waits on the real clock, so a reading that never comes fails on the stale value.
         const readingAfter = (adjust: Effect.Effect<void>, percent: number) =>
           Effect.gen(function* () {
             const reading = yield* instance.snapshot.streamChanges.pipe(
@@ -385,27 +384,26 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
             );
             yield* Effect.yieldNow;
             yield* adjust;
-            yield* TestClock.withLive(Fiber.join(reading).pipe(Effect.timeoutOption("10 seconds")));
-            const snapshot = yield* instance.snapshot.getSnapshot;
-            return snapshot.usageLimits?.windows[0]?.usedPercent;
+            yield* Fiber.join(reading);
+            return yield* launchCount;
           });
         const nextInterval = TestClock.adjust("5 minutes");
 
-        expect(yield* readingAfter(Effect.void, 97)).toBe(97);
-        const launchesAfterCheck = yield* launchCount;
+        const started = yield* readingAfter(Effect.void, 97);
+        expect(yield* readingAfter(nextInterval, 9)).toBe(started);
 
-        expect(yield* readingAfter(nextInterval, 9)).toBe(9);
-        expect(yield* launchCount).toBe(launchesAfterCheck);
+        // A rejected key runs the full check, which starts the CLI to renew it; here it stays rejected.
+        const renewed = yield* readingAfter(nextInterval, 9);
+        expect(renewed).toBeGreaterThan(started);
+        // While reads keep failing, the CLI is not started again.
+        expect(yield* readingAfter(nextInterval, 9)).toBe(renewed);
+        expect(yield* readingAfter(nextInterval, 12)).toBe(renewed);
 
-        // A rejected key runs the full check once, which starts the CLI to renew it.
-        expect(yield* readingAfter(nextInterval, 12)).toBe(12);
-        const launchesAfterRenewal = yield* launchCount;
-        expect(launchesAfterRenewal).toBeGreaterThan(launchesAfterCheck);
-
-        // A second rejection in a row keeps the last reading and does not start the CLI again.
-        expect(yield* readingAfter(nextInterval, 12)).toBe(12);
-        expect(yield* readingAfter(nextInterval, 30)).toBe(30);
-        expect(yield* launchCount).toBe(launchesAfterRenewal);
+        // Once a read succeeds, the next rejection runs the full check again, and so does the
+        // rejection after a full check that read successfully.
+        const renewedAgain = yield* readingAfter(nextInterval, 30);
+        expect(renewedAgain).toBeGreaterThan(renewed);
+        expect(yield* readingAfter(nextInterval, 40)).toBeGreaterThan(renewedAgain);
         expect(billing).toEqual([]);
       }),
   );

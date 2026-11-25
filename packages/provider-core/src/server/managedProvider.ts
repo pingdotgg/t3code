@@ -65,7 +65,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly checkUsageLimits?: Effect.Effect<ServerProvider["usageLimits"]>;
   /**
    * Re-read usage with `checkUsageLimits` on every interval, not only after a failed probe.
-   * The first failed read in a row runs the full check instead.
+   * A failed read after a successful one runs the full check instead.
    */
   readonly pollUsageLimits?: boolean;
   readonly invalidateUsageCache?: Effect.Effect<void>;
@@ -86,7 +86,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const host = yield* ProviderHost.ProviderHost;
   const refreshSemaphore = yield* Semaphore.make(1);
   const usageRefreshQueued = yield* Ref.make<symbol | null>(null);
-  const usagePollFailed = yield* Ref.make(false);
+  const lastUsageReadFailed = yield* Ref.make(false);
   const changesPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<ServerProvider>(),
     PubSub.shutdown,
@@ -196,6 +196,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     const probedSnapshot = yield* input.checkProvider.pipe(
       Effect.provideService(DeferringFailedCheck, options?.deferFailure === true),
     );
+    if (probedSnapshot.usageLimits !== undefined) {
+      yield* Ref.set(
+        lastUsageReadFailed,
+        probedSnapshot.usageLimits.unavailable?.reason === "probeFailed",
+      );
+    }
     // One failed periodic check over a ready provider is often transient; recheck before showing it.
     if (
       options?.deferFailure === true &&
@@ -365,10 +371,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     const probed = yield* input.checkUsageLimits;
     if (input.pollUsageLimits === true) {
       // A failed read can mean the stored session expired or was revoked, which only the full
-      // check can renew or detect. Run it once per run of failed reads, not on every interval.
+      // check can renew or detect. Run it when reads start failing, not on every interval, and
+      // always for the recheck a deferred failure scheduled (deferFailure is false then).
       const failed = probed?.unavailable?.reason === "probeFailed";
-      const failedBefore = yield* Ref.getAndSet(usagePollFailed, failed);
-      if (failed && !failedBefore) {
+      const failedBefore = yield* Ref.getAndSet(lastUsageReadFailed, failed);
+      if (failed && (!failedBefore || !deferFailure)) {
         yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
         return;
       }
