@@ -193,7 +193,6 @@ class BaseBranchCacheKey extends Data.Class<{
   cwd: string;
   refName: string;
   allowRemoteOfCurrent: boolean;
-  inputsStamp: string;
 }> {}
 
 class GitRefsSnapshotCacheKey extends Data.Class<{
@@ -933,6 +932,51 @@ export function parseGitCheckoutProgressLine(
 
 const OUTPUT_LINE_SEPARATOR = /\r\n|\r|\n/;
 
+const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const lenientUtf8Decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const gb18030Decoder = new TextDecoder("gb18030", { ignoreBOM: true });
+
+// A byte cap can cut the last UTF-8 character; that tail is not evidence of another encoding.
+const decodeStrictUtf8 = (bytes: Uint8Array, truncated: boolean): string => {
+  if (!truncated) return strictUtf8Decoder.decode(bytes);
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const text = decoder.decode(bytes, { stream: true });
+  try {
+    return text + decoder.decode();
+  } catch {
+    return `${text}\uFFFD`;
+  }
+};
+
+const decodeUtf8OrGb18030 = (bytes: Uint8Array, truncated: boolean): string => {
+  try {
+    return decodeStrictUtf8(bytes, truncated);
+  } catch {
+    const fallback = gb18030Decoder.decode(bytes);
+    return fallback.includes("\uFFFD") ? lenientUtf8Decoder.decode(bytes) : fallback;
+  }
+};
+
+// Git emits file bytes as stored; without a working-tree-encoding attribute, GBK/GB18030
+// sources are not UTF-8. Decode per LF line or NUL record (`-z` output) so one such file or
+// path does not garble UTF-8 neighbours.
+const decodeGitText = (bytes: Uint8Array, truncated = false): string => {
+  try {
+    return decodeStrictUtf8(bytes, truncated);
+  } catch {
+    let text = "";
+    let start = 0;
+    while (start < bytes.length) {
+      let end = start;
+      while (end < bytes.length && bytes[end] !== 0x0a && bytes[end] !== 0x00) end += 1;
+      end = Math.min(end + 1, bytes.length);
+      text += decodeUtf8OrGb18030(bytes.subarray(start, end), truncated && end === bytes.length);
+      start = end;
+    }
+    return text;
+  }
+};
+
 const collectOutput = Effect.fnUntraced(function* (
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
   stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
@@ -941,10 +985,10 @@ const collectOutput = Effect.fnUntraced(function* (
   onLine: ((line: string) => Effect.Effect<void, never>) | undefined,
   keepLineCallbacksAfterTruncation = false,
 ): Effect.fn.Return<{ readonly text: string; readonly truncated: boolean }, GitCommandError> {
-  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
   const lineDecoder = keepLineCallbacksAfterTruncation && onLine ? new TextDecoder() : null;
+  const lineStreamDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  const chunks: Array<Uint8Array> = [];
   let bytes = 0;
-  let text = "";
   let lineBuffer = "";
   let truncated = false;
   // Bound newline-free output; oversized lines are not useful to callbacks.
@@ -996,10 +1040,11 @@ const collectOutput = Effect.fnUntraced(function* (
     bytes += chunkToDecode.byteLength;
     truncated = appendTruncationMarker && nextBytes > maxOutputBytes;
 
-    const decoded = decoder.decode(chunkToDecode, { stream: !truncated });
-    text += decoded;
+    chunks.push(chunkToDecode);
     if (onLine) {
-      lineBuffer += lineDecoder ? lineDecoder.decode(chunk, { stream: true }) : decoded;
+      lineBuffer += lineDecoder
+        ? lineDecoder.decode(chunk, { stream: true })
+        : lineStreamDecoder.decode(chunkToDecode, { stream: !truncated });
       yield* emitCompleteLines(false);
     }
   });
@@ -1015,15 +1060,13 @@ const collectOutput = Effect.fnUntraced(function* (
     }),
   );
 
-  const remainder = truncated ? "" : decoder.decode();
-  text += remainder;
   if (onLine) {
-    lineBuffer += remainder;
+    if (!truncated && !lineDecoder) lineBuffer += lineStreamDecoder.decode();
     if (lineDecoder) lineBuffer += lineDecoder.decode();
     yield* emitCompleteLines(true);
   }
   return {
-    text,
+    text: decodeGitText(Buffer.concat(chunks), truncated),
     truncated,
   };
 });
@@ -2477,10 +2520,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return null;
   });
 
-  // The effective config listing covers included, global, system and worktree config. Git writes
-  // packed-refs and each loose ref by rename, so their stats change whenever a ref could. Directory
-  // stats are left out: Git for Windows' no-op fetch touches refs/remotes/<remote>.
-  // Cost: one git process, a listing per refs directory and a stat per loose ref.
+  // Base selection reads config, which refs exist and each remote's HEAD target, never where a ref
+  // points, so commits and fetches keep the stamp. packed-refs names are re-read only when the file
+  // changes (repack, packed delete); a loose ref shadowing a packed one adds no name. Reftable keeps
+  // no names in files, so its table list's stat stands in for them.
+  const packedRefNames = new Map<
+    string,
+    { readonly token: string; readonly hash: string; readonly names: ReadonlySet<string> }
+  >();
+  const sha256Hex = (text: string) =>
+    Effect.map(digest.digest(Digest.sha256, new TextEncoder().encode(text)), Hex.encode);
   const readBaseBranchInputsStamp = Effect.fn("GitVcsDriverCore.readBaseBranchInputsStamp")(
     function* (cwd: string, gitCommonDir: string) {
       const effectiveConfig = yield* executeGit(
@@ -2490,9 +2539,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { allowNonZeroExit: true },
       );
       if (effectiveConfig.exitCode !== 0 || effectiveConfig.stdoutTruncated) return null;
-      const configHash = Hex.encode(
-        yield* digest.digest(Digest.sha256, new TextEncoder().encode(effectiveConfig.stdout)),
-      );
       const statToken = (target: string) =>
         fileSystem.stat(target).pipe(
           Effect.map(
@@ -2504,16 +2550,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ),
           Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("-")),
         );
-      const tokens = yield* Effect.forEach(
-        ["packed-refs", "reftable/tables.list"],
-        (name) => statToken(path.join(gitCommonDir, name)),
+      const packedRefsPath = path.join(gitCommonDir, "packed-refs");
+      const [packedToken, reftableToken] = yield* Effect.all(
+        [statToken(packedRefsPath), statToken(path.join(gitCommonDir, "reftable", "tables.list"))],
         { concurrency: "unbounded" },
       );
-      const directories = [
-        path.join(gitCommonDir, "refs", "heads"),
-        path.join(gitCommonDir, "refs", "remotes"),
-      ];
-      const looseRefs: Array<string> = [];
+      let packed = packedRefNames.get(gitCommonDir);
+      if (packed?.token !== packedToken) {
+        const contents =
+          packedToken === "-"
+            ? ""
+            : yield* fileSystem
+                .readFileString(packedRefsPath)
+                .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("")));
+        const names = contents
+          .split("\n")
+          .map((line) => line.slice(line.indexOf(" ") + 1))
+          .filter((name) => name.startsWith("refs/heads/") || name.startsWith("refs/remotes/"));
+        packed = {
+          token: packedToken,
+          hash: yield* sha256Hex(names.join("\0")),
+          names: new Set(names),
+        };
+        packedRefNames.set(gitCommonDir, packed);
+      }
+      const remotesDirectory = path.join(gitCommonDir, "refs", "remotes");
+      const directories = [path.join(gitCommonDir, "refs", "heads"), remotesDirectory];
+      const looseNames: Array<string> = [];
+      const remoteHeads: Array<string> = [];
       for (let index = 0; index < directories.length; index++) {
         const directory = directories[index]!;
         const entries = yield* fileSystem
@@ -2521,23 +2585,53 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
         for (const entry of entries.toSorted((a, b) => a.name.localeCompare(b.name))) {
           const entryPath = path.join(directory, entry.name);
-          if (entry.type === "Directory") directories.push(entryPath);
-          else looseRefs.push(entryPath);
+          if (entry.type === "Directory") {
+            directories.push(entryPath);
+            continue;
+          }
+          const name = path.relative(gitCommonDir, entryPath).split(path.sep).join("/");
+          if (!packed.names.has(name)) looseNames.push(name);
+          // A remote name may contain "/", so its HEAD can sit deeper than refs/remotes/<name>.
+          if (entry.name === "HEAD" && directory.startsWith(remotesDirectory + path.sep)) {
+            remoteHeads.push(entryPath);
+          }
         }
       }
-      tokens.push(
-        ...(yield* Effect.forEach(
-          looseRefs,
-          (ref) => Effect.map(statToken(ref), (token) => `${ref}=${token}`),
-          { concurrency: 16 },
-        )),
+      const remoteHeadTargets = yield* Effect.forEach(
+        remoteHeads,
+        (head) =>
+          fileSystem.readFileString(head).pipe(
+            Effect.map((target) => `${head}=${target}`),
+            Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(`${head}=-`)),
+          ),
+        { concurrency: "unbounded" },
       );
-      tokens.push(configHash);
-      return tokens.join("\0");
+      // Hashed: names alone reach ~1 MB in busy repositories, and keys behind a stale stamp
+      // linger in the cache until its capacity evicts them.
+      return yield* sha256Hex(
+        [
+          effectiveConfig.stdout,
+          packed.hash,
+          reftableToken,
+          ...looseNames,
+          ...remoteHeadTargets,
+        ].join("\0"),
+      );
     },
   );
+  const readCurrentBaseBranchInputsStamp = Effect.fnUntraced(function* (cwd: string) {
+    const gitCommonDir = (yield* resolveRepositoryPaths(cwd).pipe(Effect.orElseSucceed(() => null)))
+      ?.gitCommonDir;
+    if (gitCommonDir === undefined) return null;
+    return yield* readBaseBranchInputsStamp(cwd, gitCommonDir).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+  });
+  // The stamp lives in the value, not the key: a key per stamp would leave every superseded
+  // stamp's entry behind until capacity evicts it, since TTL only expires a key that is read again.
   const baseBranchCache = yield* Cache.makeWith(
     Effect.fnUntraced(function* (key: BaseBranchCacheKey) {
+      const inputsStamp = yield* readCurrentBaseBranchInputsStamp(key.cwd);
       const trace = { dependsOnRemoteOfCurrent: false, degraded: false };
       const base = yield* findBaseBranchForNoUpstream(
         key.cwd,
@@ -2545,7 +2639,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { allowRemoteOfCurrent: key.allowRemoteOfCurrent },
         trace,
       );
-      return { base, ...trace };
+      return { base, inputsStamp, ...trace };
     }),
     {
       capacity: 2_048,
@@ -2561,28 +2655,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       refName: string,
       options?: { readonly allowRemoteOfCurrent?: boolean },
     ) {
-      const gitCommonDir = (yield* resolveRepositoryPaths(cwd).pipe(
-        Effect.orElseSucceed(() => null),
-      ))?.gitCommonDir;
-      const inputsStamp =
-        gitCommonDir === undefined
-          ? null
-          : yield* readBaseBranchInputsStamp(cwd, gitCommonDir).pipe(
-              Effect.orElseSucceed(() => null),
-            );
-      if (inputsStamp === null) {
-        return yield* findBaseBranchForNoUpstream(cwd, refName, options);
-      }
-      const key = {
-        cwd: normalizeRepositoryPathsCacheKey(cwd),
-        refName,
-        inputsStamp,
-      };
+      const key = { cwd: normalizeRepositoryPathsCacheKey(cwd), refName };
       const allowRemoteOfCurrent = options?.allowRemoteOfCurrent === true;
       const cacheKey = new BaseBranchCacheKey({ ...key, allowRemoteOfCurrent });
+      const cached = yield* Cache.getOption(baseBranchCache, cacheKey);
+      if (Option.isSome(cached)) {
+        const inputsStamp = yield* readCurrentBaseBranchInputsStamp(cwd);
+        if (inputsStamp !== null && inputsStamp === cached.value.inputsStamp) {
+          return cached.value.base;
+        }
+        yield* Cache.invalidate(baseBranchCache, cacheKey);
+      }
       const entry = yield* Cache.get(baseBranchCache, cacheKey);
       // A fallback forced by a failed remote lookup must not outlive the failure.
-      if (entry.degraded) {
+      if (entry.degraded || entry.inputsStamp === null) {
         yield* Cache.invalidate(baseBranchCache, cacheKey);
       } else if (!entry.dependsOnRemoteOfCurrent) {
         yield* Cache.set(
@@ -5142,7 +5228,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (bytes.includes(0)) {
       return yield* fileError("fs.readFile", `Cannot expand binary file '${input.newPath}'.`);
     }
-    const contents = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    const contents = decodeGitText(bytes);
     if (!contents.includes("$Id:")) return contents;
     const collapsed = contents.replace(GIT_IDENT_KEYWORD, () => "$Id$");
     if (collapsed === contents) return contents;
@@ -5188,7 +5274,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "GitVcsDriver.getReviewDiffFileContents.repositoryRoot",
       input.cwd,
       ["rev-parse", "--show-toplevel"],
-    ).pipe(Effect.map((value) => value.trim()));
+    ).pipe(Effect.map((value) => value.replace(/\n$/, "")));
     if (repositoryRoot.length === 0) {
       return yield* reviewDiffFileError(input, "Could not resolve the Git repository root.");
     }
@@ -5401,6 +5487,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { concurrency: 2 },
     );
 
+    const remoteNamesInGitOrder =
+      remoteNamesResult.exitCode === 0 ? parseRemoteNamesInGitOrder(remoteNamesResult.stdout) : [];
     const remoteNames =
       remoteNamesResult.exitCode === 0 ? parseRemoteNames(remoteNamesResult.stdout) : [];
     if (remoteNamesResult.exitCode !== 0 && remoteNamesResult.stderr.trim().length > 0) {
@@ -5408,10 +5496,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         `GitVcsDriver.listRefs: remote name lookup returned code ${remoteNamesResult.exitCode} for ${gitCommonDir}: ${remoteNamesResult.stderr.trim()}. Falling back to an empty remote name list.`,
       );
     }
-    const defaultBranch =
+    const originDefaultBranch =
       defaultRefResult.exitCode === 0
         ? parseDefaultBranchFromRemoteHeadRef(defaultRefResult.stdout, "origin")
         : null;
+    // Same fallback as resolvePrimaryDefaultBranchName: without an origin, the first remote is primary.
+    const [firstRemoteName] = remoteNamesInGitOrder;
+    const fallbackRemoteName =
+      originDefaultBranch === null &&
+      firstRemoteName !== undefined &&
+      !remoteNamesInGitOrder.includes("origin")
+        ? firstRemoteName
+        : null;
+    const defaultBranch =
+      fallbackRemoteName === null
+        ? originDefaultBranch
+        : yield* resolveDefaultBranchName(fetchCwd, fallbackRemoteName, gitDirArgs);
+    const defaultRemoteName = fallbackRemoteName ?? "origin";
     const localBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
     const remoteBranches: Array<{ readonly ref: VcsRef; readonly lastCommit: number }> = [];
 
@@ -5447,7 +5548,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         isRemote: true,
         isDefault:
           defaultBranch !== null &&
-          parsedRemoteRef?.remoteName === "origin" &&
+          parsedRemoteRef?.remoteName === defaultRemoteName &&
           parsedRemoteRef.branchName === defaultBranch,
         worktreePath: null,
         ...(parsedRemoteRef ? { remoteName: parsedRemoteRef.remoteName } : {}),
@@ -5767,14 +5868,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     // Older Git (such as 2.30) skips the write when racy entries merely check out clean.
     // A refresh re-reads every checked-out file, so allow five minutes outside shared permits.
-    const refresh = runGit(
-      "GitVcsDriver.createWorktree.refreshIndex",
-      worktreePath,
-      ["update-index", "-q", "--refresh", "--force-write-index"],
-      { timeoutMs: WORKTREE_INDEX_REFRESH_TIMEOUT_MS },
-    );
+    const refresh = (env?: NodeJS.ProcessEnv) =>
+      runGit(
+        "GitVcsDriver.createWorktree.refreshIndex",
+        worktreePath,
+        ["update-index", "-q", "--refresh", "--force-write-index"],
+        { timeoutMs: WORKTREE_INDEX_REFRESH_TIMEOUT_MS, env },
+      );
     const checkoutSecond = yield* indexSecond;
-    yield* refresh;
+    yield* refresh();
     const refreshedSecond = yield* indexSecond;
     if (
       Option.isNone(checkoutSecond) ||
@@ -5787,10 +5889,44 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // second out (file timestamps can trail the clock by a kernel tick) and refresh again. Two
     // seconds or more means this clock does not match the file timestamps, as on a share stamped
     // by another machine, so it cannot say when that second ends.
-    const delay = (checkoutSecond.value + 1) * 1000 + 50 - (yield* Clock.currentTimeMillis);
+    const checkoutTime = checkoutSecond.value;
+    const delay = (checkoutTime + 1) * 1000 + 50 - (yield* Clock.currentTimeMillis);
     if (delay >= 2_000) return;
-    if (delay > 0) yield* Effect.sleep(Duration.millis(delay));
-    yield* refresh;
+    if (delay <= 0) return yield* refresh();
+    // Waiting here would hold up the thread's agent, and refreshing in place later would hold the
+    // index lock while its setup script and agent run Git. So refresh a copy in the background and
+    // take the lock only to swap it in, unless Git holds it or the index changed since the copy.
+    const copyPath = `${indexPath}.t3-refresh`;
+    const lockPath = `${indexPath}.lock`;
+    const stamp = (info: FileSystem.File.Info) =>
+      `${info.size}:${Option.getOrUndefined(info.ino)}:${Option.getOrUndefined(info.mtime)?.getTime()}`;
+    yield* Effect.gen(function* () {
+      yield* Effect.sleep(Duration.millis(delay));
+      const copied = stamp(yield* fileSystem.stat(indexPath));
+      yield* fileSystem.copyFile(indexPath, copyPath);
+      // Keep the checkout's timestamp so this refresh still re-reads the files stamped in it.
+      yield* fileSystem.utimes(copyPath, checkoutTime, checkoutTime);
+      yield* refresh({ GIT_INDEX_FILE: copyPath });
+      yield* Effect.uninterruptible(
+        // link fails when the lock exists; once it is ours, release it on any failure.
+        fileSystem.link(copyPath, lockPath).pipe(
+          Effect.andThen(
+            fileSystem.stat(indexPath).pipe(
+              Effect.flatMap((current) =>
+                stamp(current) === copied
+                  ? fileSystem.rename(lockPath, indexPath)
+                  : fileSystem.remove(lockPath),
+              ),
+              Effect.tapError(() => fileSystem.remove(lockPath).pipe(Effect.ignore)),
+            ),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.ensuring(fileSystem.remove(copyPath).pipe(Effect.ignore)),
+      Effect.ignore({ log: "Debug" }),
+      Effect.forkIn(serviceScope),
+    );
   });
 
   // Git writes the lock reason during registration, before checkout or user hooks can run.
@@ -6810,9 +6946,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             )
           : null;
 
-      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
+      const localTrackedBranchCandidate =
+        remoteExists && !localInputExists && !localTrackingBranch
+          ? yield* executeGit("GitVcsDriver.switchRef.remoteNames", input.cwd, ["remote"], {
+              timeoutMs: 5_000,
+              allowNonZeroExit: true,
+            }).pipe(
+              Effect.map((result) => {
+                const remoteNames = result.exitCode === 0 ? parseRemoteNames(result.stdout) : [];
+                return (
+                  parseRemoteRefWithRemoteNames(input.refName, remoteNames)?.branchName ??
+                  deriveLocalBranchNameFromRemoteRef(input.refName)
+                );
+              }),
+            )
+          : null;
       const localTrackedBranchTargetExists =
-        remoteExists && !localInputExists && !localTrackingBranch && localTrackedBranchCandidate
+        localTrackedBranchCandidate !== null
           ? yield* executeGit(
               "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
               input.cwd,
@@ -6825,7 +6975,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           : false;
 
       const newTrackingBranch =
-        !localInputExists && remoteExists && !localTrackingBranch && !localTrackedBranchTargetExists
+        localTrackedBranchCandidate !== null && !localTrackedBranchTargetExists
           ? localTrackedBranchCandidate
           : null;
 
@@ -6834,7 +6984,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         : newTrackingBranch
           ? ["checkout", newTrackingBranch]
           : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
+            ? localTrackedBranchCandidate
+              ? [
+                  "checkout",
+                  "--track",
+                  "-b",
+                  localTrackedBranchCandidate,
+                  `refs/remotes/${input.refName}`,
+                ]
+              : ["checkout", "--track", input.refName]
             : remoteExists && localTrackingBranch
               ? ["checkout", localTrackingBranch]
               : ["checkout", input.refName];

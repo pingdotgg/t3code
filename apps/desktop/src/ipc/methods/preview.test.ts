@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as LoopbackTunnel from "../../preview/LoopbackTunnel.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import * as PreviewIpc from "./preview.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -142,6 +143,9 @@ describe("preview IPC methods", () => {
           },
           navigate,
         } as unknown as PreviewManager.PreviewManager["Service"]),
+        Effect.provideService(LoopbackTunnel.LoopbackTunnel, {
+          subscribeForwards: listen,
+        } as unknown as LoopbackTunnel.LoopbackTunnel["Service"]),
       );
       yield* openLink!({ tabId: "tab-1", url: "https://example.com" });
       if (mainAlive) {

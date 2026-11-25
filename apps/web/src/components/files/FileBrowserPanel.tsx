@@ -1,11 +1,12 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { m } from "~/i18n/messages";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import type { ContextMenuSource, EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -104,9 +105,11 @@ function FileSearchField({
   const gt = useGT();
   return (
     <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
+      {/* Native search inputs clear on Escape even during IME composition. */}
       <InputGroupInput
         ref={ref}
-        type="search"
+        type="text"
+        role="searchbox"
         name={props.name}
         size="sm"
         value={props.value}
@@ -116,7 +119,14 @@ function FileSearchField({
         spellCheck={false}
         onChange={(event) => props.onValueChange(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key !== "Escape") return;
+          if (event.key !== "Escape" || event.nativeEvent.isComposing || event.keyCode === 229)
+            return;
+          if (props.value || event.repeat) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (props.value) props.onClose();
+            return;
+          }
           props.onClose();
           event.currentTarget.blur();
         }}
@@ -178,6 +188,7 @@ export default function FileBrowserPanel({
     entries: directoryEntries,
     load,
     refresh,
+    revalidate,
     ready,
     error,
     isPending,
@@ -203,7 +214,12 @@ export default function FileBrowserPanel({
   const followedRevealRef = useRef<string | null>(null);
 
   // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
-  const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
+  const contextMenuPointerRef = useRef<{
+    x: number;
+    y: number;
+    at: number;
+    source: ContextMenuSource;
+  } | null>(null);
 
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
@@ -220,7 +236,12 @@ export default function FileBrowserPanel({
       const position = pointerIsFresh
         ? { x: pointer.x, y: pointer.y }
         : { x: anchorRect.left, y: anchorRect.bottom };
-      const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
+      const fileTarget = {
+        environmentId,
+        filePath: relativePath,
+        workspaceRoot: cwd,
+        isDirectory: item.kind === "directory",
+      };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
@@ -232,6 +253,7 @@ export default function FileBrowserPanel({
             { id: "add-to-chat", label: gt("Add to chat") },
           ],
           position,
+          pointerIsFresh ? pointer.source : undefined,
         );
         if (clicked === null) return;
         // Open-with submenu ids are absent from the top-level item list.
@@ -279,6 +301,7 @@ export default function FileBrowserPanel({
   );
 
   const loadingDirectoriesRef = useRef(loadingDirectories);
+  const revalidateDirectory = useStableCallback(revalidate);
   const dragMention = createFileTreeDragMentionController(
     hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
   );
@@ -311,12 +334,15 @@ export default function FileBrowserPanel({
       }
     },
     paths: [],
-    renderRowDecoration: ({ item, row }) =>
-      row.kind === "directory" &&
-      row.isExpanded &&
-      loadingDirectoriesRef.current.has(item.path.replace(/\/$/, ""))
+    renderRowDecoration: ({ item, row }) => {
+      const path = item.path.replace(/\/$/, "");
+      const open = row.kind === "directory" && row.isExpanded;
+      // Pierre calls this for the rows it renders, which is the only sign of what is on screen.
+      revalidateDirectory(open ? path : path.slice(0, Math.max(0, path.lastIndexOf("/"))));
+      return open && loadingDirectoriesRef.current.has(path)
         ? { icon: "t3-tree-icon-loading", title: gt("Loading…") }
-        : null,
+        : null;
+    },
     search: false,
     onSearchChange: (value) => setQuery(value ?? ""),
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
@@ -431,15 +457,20 @@ export default function FileBrowserPanel({
     }
     search.setValue(value);
   };
-  const handleRefresh = () => {
+  const refreshDirectories = () => {
     refresh();
+    // Renders the rows again, so each one on screen revalidates the folders it comes from.
+    model.setComposition(model.getComposition());
+  };
+  const handleRefresh = () => {
+    refreshDirectories();
     if (query.trim()) pathSearch.refresh();
     onRefreshSelectedFile?.();
   };
   useWorkspaceMutationRefresh({
     mutationId: workspaceMutationId,
     refresh: () => {
-      refresh();
+      refreshDirectories();
       if (query.trim()) pathSearch.refresh();
     },
     resourceKey: `files:${environmentId}:${cwd}`,
@@ -551,7 +582,12 @@ export default function FileBrowserPanel({
       data-file-browser-panel={`${environmentId}:${cwd}`}
       // Capture runs before the tree's shadow-internal row handler opens the menu.
       onContextMenuCapture={(event) => {
-        contextMenuPointerRef.current = { x: event.clientX, y: event.clientY, at: event.timeStamp };
+        contextMenuPointerRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+          at: event.timeStamp,
+          source: contextMenuSourceOf(event),
+        };
       }}
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}

@@ -315,8 +315,8 @@ export interface FileRoutesByFullPath {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
-  '/browser-window/$runtimeTabId': typeof BrowserWindowRuntimeTabIdRoute
   '/workflows': typeof ChatWorkflowsRoute
+  '/browser-window/$runtimeTabId': typeof BrowserWindowRuntimeTabIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
@@ -362,8 +362,8 @@ export interface FileRoutesByTo {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
-  '/browser-window/$runtimeTabId': typeof BrowserWindowRuntimeTabIdRoute
   '/workflows': typeof ChatWorkflowsRoute
+  '/browser-window/$runtimeTabId': typeof BrowserWindowRuntimeTabIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -412,8 +412,8 @@ export interface FileRoutesById {
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
   '/_chat/usage': typeof ChatUsageRoute
-  '/browser-window/$runtimeTabId': typeof BrowserWindowRuntimeTabIdRoute
   '/_chat/workflows': typeof ChatWorkflowsRoute
+  '/browser-window/$runtimeTabId': typeof BrowserWindowRuntimeTabIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -463,8 +463,8 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/settings'
     | '/usage'
-    | '/browser-window/$runtimeTabId'
     | '/workflows'
+    | '/browser-window/$runtimeTabId'
     | '/projects/$projectKey'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
@@ -510,8 +510,8 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/settings'
     | '/usage'
-    | '/browser-window/$runtimeTabId'
     | '/workflows'
+    | '/browser-window/$runtimeTabId'
     | '/projects/$projectKey'
     | '/'
     | '/$environmentId/$threadId'
@@ -559,8 +559,8 @@ export interface FileRouteTypes {
     | '/_chat/pull-requests'
     | '/_chat/settings'
     | '/_chat/usage'
-    | '/browser-window/$runtimeTabId'
     | '/_chat/workflows'
+    | '/browser-window/$runtimeTabId'
     | '/projects/$projectKey'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'

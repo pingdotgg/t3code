@@ -540,17 +540,29 @@ it.effect("--output-schema reads a ~/ path from the home directory", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-/** Serves t3_thread_read pages the way the server does: positions count every item. */
+/** Serves t3_thread_read pages the way the server does: positions count every item, and a cursorless read is the newest page. */
 const timelineTools = (types: ReadonlyArray<string>) => {
   const items = types.map((type, position) => ({ position, itemId: `item-${position}`, type }));
   const served: Array<number> = [];
   const call = ((_tool: string, input: unknown) => {
     const args = input as { readonly afterPosition?: number; readonly limit: number };
+    const isMessage = (item: (typeof items)[number]) =>
+      ["user_message", "assistant_message", "proposed_plan"].includes(item.type);
+    if (args.afterPosition === undefined) {
+      const page = items.filter(isMessage).slice(-args.limit);
+      served.push(page.length);
+      return Effect.succeed({
+        thread: { itemCount: items.length },
+        items: page,
+        nextPosition: null,
+        hasMore: false,
+      });
+    }
     // Scanning one match past the page keeps reads of huge fixtures linear.
     const matching: typeof items = [];
-    for (let position = (args.afterPosition ?? -1) + 1; position < items.length; position++) {
+    for (let position = args.afterPosition + 1; position < items.length; position++) {
       const item = items[position]!;
-      if (["user_message", "assistant_message", "proposed_plan"].includes(item.type)) {
+      if (isMessage(item)) {
         matching.push(item);
         if (matching.length > args.limit) break;
       }
@@ -755,5 +767,10 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     assert.strictEqual(ambiguous._tag, "ThreadUsageError");
     assert.include(ambiguous.message, "sample (project-sample)");
     assert.include(ambiguous.message, "feature (project-feature)");
+
+    // An inherited relative GIT_DIR resolves against Git's cwd, where no repository is.
+    vi.stubEnv("GIT_DIR", ".git");
+    yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+    assert.deepStrictEqual(yield* resolveFrom([sample], path.join(worktree, "pkg")), sample);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
