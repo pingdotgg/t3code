@@ -1422,12 +1422,18 @@ function unfinishedSequenceReplay(session: TerminalSessionState): string {
   const held = session.pendingHistoryControlSequence;
   if (held.startsWith(OVERSIZED_SEQUENCE)) return held.slice(1);
   if (held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) return held;
-  if (held.startsWith("\u001b[") && /^[\x00-\x7f]*$/.test(held)) {
-    // NUL has no effect inside a CSI. Keep its parameters and executed controls in order.
-    const withoutPadding = held.replaceAll("\u0000", "");
-    if (withoutPadding.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) return withoutPadding;
+  const introducer = held.slice(0, 2);
+  const tail = /[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "";
+  if (introducer === "\u001b[") {
+    // The scanner has already handled bytes that end a CSI. Only intermediates, parameters,
+    // and executed non-NUL controls affect its replay.
+    const body = held.slice(2, held.length - tail.length).replace(/[^\x01-\x0f\x20-\x3f]+/g, "");
+    const budget = MAX_SNAPSHOT_SEQUENCE_LENGTH - introducer.length - tail.length;
+    if (body.length <= budget) return introducer + body + tail;
+    const controls = body.replace(/[^\x01-\x0f]+/g, "");
+    return introducer + controls.slice(-budget) + tail;
   }
-  return held.slice(0, 2) + (/[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "");
+  return introducer + tail;
 }
 
 export function sanitizeTerminalHistoryChunk(
