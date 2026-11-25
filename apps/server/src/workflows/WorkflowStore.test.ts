@@ -16,8 +16,11 @@ import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import WorkflowRunIndexesMigration from "../persistence/Migrations/114_WorkflowRunIndexes.ts";
 import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
+import WorkflowMailSenderMigration from "../persistence/Migrations/117_WorkflowMailSender.ts";
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
+
+const sender = { answeredBy: "t3 CLI", answeredAt: "2026-01-01T00:00:00.000Z" };
 
 const withStore = <A, E>(
   use: Effect.Effect<
@@ -35,6 +38,7 @@ const withStore = <A, E>(
       Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
         Effect.andThen(WorkflowRunIndexesMigration),
         Effect.andThen(WorkflowRunTagsMigration),
+        Effect.andThen(WorkflowMailSenderMigration),
       ),
     );
     return yield* Effect.provide(
@@ -378,6 +382,7 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
         address: { workflow: "gate:ready", channel: "x" },
         valueJson: "1",
         expiresAt: "2999-01-01T00:00:00.000Z",
+        sender,
       });
       assert.isUndefined(yield* store.mailNext([{ workflow: "gate", channel: "ready:x" }]));
 
@@ -386,7 +391,13 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
         address: { workflow: "gate", channel: "ready" },
         valueJson: '"yes"',
         expiresAt: "2999-01-01T00:00:00.000Z",
+        sender,
       });
+      // Who sent it is kept beside the value, as the server said it on receiving it.
+      assert.deepStrictEqual(
+        (yield* store.mailNext([{ workflow: "gate", channel: "ready" }]))?.sender,
+        sender,
+      );
       const woke = { expired: false, value: "yes" };
       assert.equal(yield* store.mailDeliver("s1", "r1", "go", woke), "delivered");
       // The second wait finds the signal gone and stays open for the next one.
@@ -403,6 +414,7 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
         address: { workflow: "gate", channel: "ready" },
         valueJson: '"yes"',
         expiresAt: "2999-01-01T00:00:00.000Z",
+        sender,
       });
       assert.equal(yield* store.mailDeliver("s1", "r2", "go", woke), "gone");
       assert.isDefined(yield* store.waitAt({ runId: "r2", wait: "go" }));
@@ -428,6 +440,7 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
         address: { runId: "r3", wait: "go" },
         valueJson: '"yes"',
         expiresAt: "1970-01-31T00:00:00.000Z",
+        sender,
       });
       assert.equal(yield* store.mailDeliver("long", "r3", "go", woke), "delivered");
       yield* TestClock.adjust("10 days");

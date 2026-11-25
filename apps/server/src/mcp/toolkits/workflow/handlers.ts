@@ -3,6 +3,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
 import * as Workflows from "../../../workflows/Workflows.ts";
+import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { WORKFLOW_READ_ACTIONS, WorkflowToolkit } from "./tools.ts";
 
@@ -87,8 +88,11 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
           }
           const random = yield* SecureRandom.SecureRandom;
           const id = input.signalId ?? (yield* random.uuidV4());
+          // The server refuses a thread's call to this tool, so the caller is a client. An agent
+          // answers through the CLI, a client it names after its thread.
+          const answeredBy = (yield* McpInvocationContext.McpInvocationContext).client?.label;
           const delivery = yield* workflows
-            .signal(address, value, { id })
+            .signal(address, value, { id, ...(answeredBy === undefined ? {} : { answeredBy }) })
             .pipe(Effect.mapError(refused));
           return { delivery };
         }
