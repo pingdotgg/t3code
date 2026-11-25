@@ -3,7 +3,7 @@ import { m } from "../../i18n/messages";
 import {
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
-  chunkTerminalWrite,
+  type TerminalWriteInput,
   DEFAULT_TERMINAL_ID,
   EnvironmentId,
   ThreadId,
@@ -649,7 +649,10 @@ function ThreadTerminal(props: {
     messages,
   );
 
-  const writeInput = async (data: string): Promise<boolean> => {
+  const writeInput = async (
+    data: string,
+    plainWrite?: TerminalWriteInput["plainWrite"],
+  ): Promise<boolean> => {
     if (
       !isRunning ||
       !readEnvironmentScope(selectedThread.environmentId, AuthTerminalOperateScope)
@@ -657,21 +660,16 @@ function ThreadTerminal(props: {
       return false;
     }
 
-    // Android's IME delivers a system paste as one input, which can exceed one write.
-    const isSameShell = pasteSession.liveness();
-    for (const chunk of chunkTerminalWrite(data)) {
-      if (!isSameShell()) return false;
-      const result = await writeTerminal({
-        environmentId: selectedThread.environmentId,
-        input: {
-          threadId: selectedThread.id,
-          terminalId,
-          data: chunk,
-        },
-      });
-      if (result._tag !== "Success") return false;
-    }
-    return true;
+    const result = await writeTerminal({
+      environmentId: selectedThread.environmentId,
+      input: {
+        threadId: selectedThread.id,
+        terminalId,
+        data,
+        ...(plainWrite ? { plainWrite } : {}),
+      },
+    });
+    return result._tag === "Success";
   };
 
   const pasteText = async (readText: () => Promise<string>) => {
@@ -686,7 +684,7 @@ function ThreadTerminal(props: {
 
   const writeModifiedInput = (data: string) => {
     if (pendingModifier === null) {
-      void writeInput(data);
+      void pasteSession.write(data, writeInput);
       return;
     }
 
@@ -700,7 +698,7 @@ function ThreadTerminal(props: {
       void pasteText(Clipboard.getStringAsync);
       return;
     }
-    void writeInput(resolved.data);
+    void pasteSession.write(resolved.data, writeInput);
   };
 
   const handleInput = (data: string) => {

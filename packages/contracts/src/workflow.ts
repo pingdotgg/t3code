@@ -44,8 +44,8 @@ export type WorkflowRun = typeof WorkflowRun.Type;
 
 export const WorkflowStep = Schema.Struct({
   name: Schema.String,
-  // A sleep's `detail` is when it wakes, as an ISO time.
-  kind: Schema.Literals(["step", "wait", "agent", "ask", "sleep"]),
+  // A sleep's `detail` is when it wakes, as an ISO time. A `queue` step waits for a place in a pool.
+  kind: Schema.Literals(["step", "wait", "agent", "ask", "sleep", "queue"]),
   status: Schema.Literals(["running", "completed", "failed"]),
   attempts: Schema.Number,
   detail: Schema.NullOr(Schema.String),
@@ -57,6 +57,8 @@ export const WorkflowStep = Schema.Struct({
   result: Schema.NullOr(Schema.Json),
   /** What an agent said in closing, when its result is data and not that reply. */
   said: Schema.NullOr(Schema.String),
+  /** For a `queue` step still waiting, how many asked for a place in its pool before it. */
+  ahead: Schema.optional(Schema.Number),
   startedAt: Schema.String,
   endedAt: Schema.NullOr(Schema.String),
 });

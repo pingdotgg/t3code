@@ -411,7 +411,11 @@ function boundedWorksheet(
       const end = cell.selfClosing ? cell.start : xml.lastIndexOf("<", parser.position - 1);
       const raw = cell.opening + xml.slice(cell.start, end) + `</${cell.name}>`;
       const shown = cell.shared ? (strings[Number(cell.value)] ?? "") : cell.text || cell.value;
-      const kept = shown.slice(0, Math.min(4096, budget.remaining));
+      let limit = Math.min(4096, budget.remaining);
+      const before = shown.charCodeAt(limit - 1);
+      const after = shown.charCodeAt(limit);
+      if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) limit--;
+      const kept = shown.slice(0, limit);
       budget.remaining -= kept.length;
       if (kept.length < shown.length) {
         truncated = true;
