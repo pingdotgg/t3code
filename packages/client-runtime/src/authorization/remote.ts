@@ -326,14 +326,18 @@ export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
   }) => Effect.Effect<string, E>;
   /** Asks for the secure channel in the upgrade proof, which the tunnel cannot strip. */
   readonly secureChannel?: boolean;
+  /** The ticket request goes sealed, so its proofs carry the claim that requires the envelope. */
+  readonly sealedRequests?: boolean;
   readonly clientMetadata?: AuthClientPresentationMetadata;
   readonly connectionMethod?: ClientConnectionMethod;
   readonly timeoutMs?: number;
 }) {
+  const sealed = input.sealedRequests ? { secureChannel: true } : {};
   const ticketProof = yield* input.createProof({
     method: "POST",
     url: environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath("rpc")),
     accessToken: input.accessToken,
+    ...sealed,
   });
   const issued = yield* issueRemoteDpopWebSocketTicket({
     httpBaseUrl: input.httpBaseUrl,
@@ -345,6 +349,7 @@ export const resolveRemoteDpopWebSocketConnectionUrl = Effect.fn(
         method: "POST",
         url: environmentEndpointUrl(input.httpBaseUrl, webSocketTicketPath(undefined)),
         accessToken: input.accessToken,
+        ...sealed,
       }),
     ),
     ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),

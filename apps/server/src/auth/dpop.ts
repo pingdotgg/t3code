@@ -3,6 +3,7 @@ import {
   verifyDpopProof,
 } from "@t3tools/shared/dpop";
 import type { DpopFailureReason } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -20,6 +21,11 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import { requestUrl } from "../requestUrl.ts";
 
 export const DPOP_REPLAY_MARKER_PREFIX = "dpop-proof-";
+
+/** True while a request opened from the sealed HTTP envelope runs through the routes. */
+export const SealedHttpRequest = Context.Reference<boolean>("t3/auth/dpop/SealedHttpRequest", {
+  defaultValue: () => false,
+});
 
 const mapDpopFailureReason = (code: DpopVerificationFailureCodeType): DpopFailureReason => {
   switch (code) {
@@ -60,6 +66,11 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
   readonly proof?: string;
   readonly expectedThumbprint?: string;
   readonly expectedAccessToken?: string;
+  /**
+   * Only a WebSocket upgrade may carry `t3sc` outside the sealed envelope: there the claim asks for
+   * the socket's own secure channel. Any other request with that claim must arrive sealed.
+   */
+  readonly secureChannelUpgrade?: true;
 }) {
   const proof = input.proof ?? input.request.headers.dpop;
   const url = requestUrl(input.request);
@@ -84,6 +95,13 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
     return yield* new ServerAuthInvalidCredentialError({
       diagnostic: result.reason,
       dpopFailureReason: mapDpopFailureReason(result.code),
+    });
+  }
+  if (result.secureChannel && !input.secureChannelUpgrade && !(yield* SealedHttpRequest)) {
+    yield* Effect.annotateCurrentSpan({ "environment.dpop.failure_code": "unsealed_request" });
+    return yield* new ServerAuthInvalidCredentialError({
+      diagnostic: "A secure DPoP proof must arrive inside the sealed request envelope.",
+      dpopFailureReason: "invalid_proof",
     });
   }
   const secretStore = yield* ServerSecretStore.ServerSecretStore;

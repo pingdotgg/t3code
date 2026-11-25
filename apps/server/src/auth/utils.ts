@@ -10,6 +10,7 @@ import * as NodeNet from "node:net";
 import { normalizeHostname } from "@t3tools/shared/hostClassification";
 import * as Mac from "effect/crypto/Mac";
 import * as Base64Url from "effect/encoding/Base64Url";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 
 const SESSION_COOKIE_NAME = "t3_session";
@@ -171,7 +172,10 @@ const isLoopbackIpAddress = (address: string): boolean =>
 
 // A loopback peer is a local reverse proxy (Tailscale Serve); trust only the entry it appended.
 function resolveClientIpAddress(request: HttpServerRequest.HttpServerRequest): string | undefined {
-  const peer = readRemoteAddressFromSource(request.source);
+  // A request opened from the sealed envelope has no socket; it carries its connection's address.
+  const peer =
+    readRemoteAddressFromSource(request.source) ??
+    normalizeIpAddress(Option.getOrUndefined(request.remoteAddress));
   if (!peer || !isLoopbackIpAddress(peer)) {
     return peer;
   }

@@ -418,8 +418,16 @@ describe("RemoteEnvironmentAuthorization", () => {
     Effect.gen(function* () {
       const started = Promise.withResolvers<void>();
       const release = Promise.withResolvers<Response>();
-      const first = { connectionId: "direct-1", httpBaseUrl: ENDPOINT.httpBaseUrl };
-      const second = { connectionId: "direct-2", httpBaseUrl: "https://other.example.test" };
+      const first = {
+        connectionId: "direct-1",
+        environmentId: ENVIRONMENT_ID,
+        httpBaseUrl: ENDPOINT.httpBaseUrl,
+      };
+      const second = {
+        connectionId: "direct-2",
+        environmentId: ENVIRONMENT_ID,
+        httpBaseUrl: "https://other.example.test",
+      };
       const harness = yield* makeHarness({
         responses: [
           () => {
@@ -993,7 +1001,11 @@ describe("RemoteEnvironmentAuthorization", () => {
     Effect.gen(function* () {
       let markLoopRenewal = () => {};
       const loopRenewed = new Promise<void>((resolve) => (markLoopRenewal = resolve));
-      const connection = { connectionId: "direct-1", httpBaseUrl: ENDPOINT.httpBaseUrl };
+      const connection = {
+        connectionId: "direct-1",
+        environmentId: ENVIRONMENT_ID,
+        httpBaseUrl: ENDPOINT.httpBaseUrl,
+      };
       const harness = yield* makeHarness({
         responses: [
           () => Promise.reject(new TypeError("network down")),

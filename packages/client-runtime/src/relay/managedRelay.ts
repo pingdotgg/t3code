@@ -44,6 +44,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import type * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientError from "effect/http/HttpClientError";
 import type * as HttpMethod from "effect/http/HttpMethod";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
@@ -51,6 +52,7 @@ import type * as Socket from "effect/socket/Socket";
 import { msg } from "gt-i18n";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import { type MarkedText, markedTextEnglish } from "../errors/translatable.ts";
+import type { SealedEnvironment } from "../rpc/secureHttp.ts";
 import { relayRequestFailureText } from "./errorPresentation.ts";
 
 export interface ManagedRelayDpopProofInput {
@@ -354,6 +356,11 @@ export class ManagedRelayDpopSigner extends Context.Service<
       socket: Socket.Socket,
       options: Omit<SecureClientSocketOptions, "identity">,
     ) => Effect.Effect<Socket.Socket, ManagedRelayDpopKeyLoadError>;
+    /** Set with `secureClientSocket`: sends each request through `client` sealed for the environment. */
+    readonly sealHttpClient?: (
+      client: HttpClient.HttpClient,
+      environment: SealedEnvironment,
+    ) => HttpClient.HttpClient;
   }
 >()("@t3tools/client-runtime/relay/managedRelay/ManagedRelayDpopSigner") {}
 

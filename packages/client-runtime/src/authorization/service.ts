@@ -40,6 +40,7 @@ import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
+import { isSecureHttpKeyRejection, sealedEnvironmentHttpClient } from "../rpc/secureHttp.ts";
 import * as TokenStore from "./tokenStore.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -295,6 +296,7 @@ export const make = Effect.gen(function* () {
       timeoutMs?: number,
       endpoint: { readonly httpBaseUrl: string; readonly wsBaseUrl: string } = token.endpoint,
     ) {
+      const http = yield* environmentHttp(token.environmentId);
       return yield* resolveRemoteDpopWebSocketConnectionUrl({
         wsBaseUrl: endpoint.wsBaseUrl,
         httpBaseUrl: endpoint.httpBaseUrl,
@@ -310,12 +312,15 @@ export const make = Effect.gen(function* () {
             ),
           ),
         secureChannel,
+        sealedRequests: http.sealed,
         clientMetadata: presentation.metadata,
         connectionMethod: "relay",
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      });
+      }).pipe(
+        reportIdentityChange(token.label, "relay"),
+        Effect.provideService(HttpClient.HttpClient, http.client),
+      );
     },
-    Effect.provideService(HttpClient.HttpClient, httpClient),
   );
 
   const sessionChanged = () =>
@@ -389,6 +394,32 @@ export const make = Effect.gen(function* () {
   const pinStoreError = (error: Persistence.ConnectionPersistenceError) =>
     new ConnectionBlockedError({ reason: "configuration", detail: error.message, hop: "device" });
 
+  /** A sealed request refused by the pinned key reports the identity change, as the socket does. */
+  const reportIdentityChange =
+    (host: string, via: "relay" | "direct") =>
+    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.catchIf(isSecureHttpKeyRejection, () =>
+          Effect.fail(environmentIdentityChangedError({ host, via })),
+        ),
+      );
+
+  /** Sealed once the environment's identity key is pinned; first contact goes as before. */
+  const environmentHttp = (environmentId: EnvironmentId) =>
+    sealedEnvironmentHttpClient(environmentId, {
+      signer: Option.some(signer),
+      registrations: Option.some(registrations),
+    }).pipe(
+      Effect.map(
+        Option.match({
+          onNone: () => ({ client: httpClient, sealed: false }),
+          onSome: (client) => ({ client, sealed: true }),
+        }),
+      ),
+      Effect.mapError(pinStoreError),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
+
   /**
    * The code this device shows while it waits. With the environment's key and nonce it is the v2
    * code, and the key it covers is pinned now, so the approval the human gives also vouches for
@@ -451,10 +482,12 @@ export const make = Effect.gen(function* () {
           actual: descriptor.environmentId,
         });
       }
+      const http = yield* environmentHttp(environmentId);
       const bootstrapProof = yield* signer
         .createProof({
           method: "POST",
           url: environmentEndpointUrl(bootstrap.endpoint.httpBaseUrl, "/oauth/token"),
+          ...(http.sealed ? { secureChannel: true } : {}),
         })
         .pipe(
           Effect.mapError(
@@ -479,8 +512,9 @@ export const make = Effect.gen(function* () {
               Effect.flatMap(Effect.fail),
             ),
         }),
+        reportIdentityChange(descriptor.label, "relay"),
         Effect.mapError(mapDpopSocketError),
-        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(HttpClient.HttpClient, http.client),
         Effect.withSpan("environment.authorization.accessToken.exchange"),
       );
       const issuedAt = yield* Clock.currentTimeMillis;
@@ -637,10 +671,12 @@ export const make = Effect.gen(function* () {
         ) {
           return current;
         }
+        const http = yield* environmentHttp(connection.environmentId);
         const proof = yield* signer
           .createProof({
             method: "POST",
             url: environmentEndpointUrl(connection.httpBaseUrl, "/oauth/token"),
+            ...(http.sealed ? { secureChannel: true } : {}),
           })
           .pipe(
             Effect.mapError(
@@ -653,8 +689,15 @@ export const make = Effect.gen(function* () {
           credentialType: AuthAccessTokenType,
           dpopProof: proof,
         }).pipe(
-          Effect.mapError((error) => mapRemoteDpopEnvironmentError(error, "direct")),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.mapError((error) =>
+            isSecureHttpKeyRejection(error)
+              ? environmentIdentityChangedError({
+                  host: new URL(connection.httpBaseUrl).host,
+                  via: "direct",
+                })
+              : mapRemoteDpopEnvironmentError(error, "direct"),
+          ),
+          Effect.provideService(HttpClient.HttpClient, http.client),
           Effect.withSpan("environment.authorization.directRenewal"),
         );
         const renewed = new DpopConnectionCredential({
@@ -687,7 +730,12 @@ export const make = Effect.gen(function* () {
         httpBaseUrl: input.httpBaseUrl,
         connectionMethod: "direct",
       });
-      const connection = { connectionId: input.connectionId, httpBaseUrl: input.httpBaseUrl };
+      const connection = {
+        connectionId: input.connectionId,
+        environmentId: input.expectedEnvironmentId,
+        httpBaseUrl: input.httpBaseUrl,
+      };
+      const http = yield* environmentHttp(input.expectedEnvironmentId);
       const openSocket = (credential: DpopConnectionCredential) =>
         resolveRemoteDpopWebSocketConnectionUrl({
           wsBaseUrl: input.wsBaseUrl,
@@ -702,9 +750,14 @@ export const make = Effect.gen(function* () {
                 ),
               ),
           secureChannel,
+          sealedRequests: http.sealed,
           clientMetadata: presentation.metadata,
           connectionMethod: "direct",
-        }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.result);
+        }).pipe(
+          reportIdentityChange(descriptor.label, "direct"),
+          Effect.provideService(HttpClient.HttpClient, http.client),
+          Effect.result,
+        );
       let credential = yield* directDpopToken(connection);
       let socket = yield* openSocket(credential);
       // A token the host refuses before its expiry, such as after a clock jump, renews once.

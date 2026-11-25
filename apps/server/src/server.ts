@@ -97,6 +97,7 @@ import * as ProviderHostPathWatcher from "./provider/ProviderHostPathWatcher.ts"
 import * as ProjectSettingsOverrideSweep from "./provider/ProjectSettingsOverrideSweep.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
+import * as SecureHttp from "./auth/secureHttp.ts";
 import * as PeerForwarding from "./peer/PeerForwarding.ts";
 import * as RemoteDelegation from "./peer/RemoteDelegation.ts";
 import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
@@ -916,6 +917,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerDesktopReadinessProofRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
+    SecureHttp.layer,
     GuestHttp.layer,
     LinkThreadHttp.layer,
     DeviceHubProxy.layer,

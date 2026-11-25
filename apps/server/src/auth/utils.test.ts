@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import * as Option from "effect/Option";
+
 import { deriveAuthClientMetadata, resolveSessionCookieName } from "./utils.ts";
 
 describe("deriveAuthClientMetadata", () => {
@@ -70,7 +72,11 @@ describe("deriveAuthClientMetadata", () => {
     ],
   ])("labels %s by its own browser token", (_name, userAgent, browser) => {
     const metadata = deriveAuthClientMetadata({
-      request: { headers: { "user-agent": userAgent }, source: {} } as never,
+      request: {
+        headers: { "user-agent": userAgent },
+        source: {},
+        remoteAddress: Option.none(),
+      } as never,
     });
 
     expect(metadata.browser).toBe(browser);

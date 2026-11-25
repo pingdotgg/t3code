@@ -1638,6 +1638,7 @@ export const make = Effect.gen(function* () {
               proof,
               expectedThumbprint: session.proofKeyThumbprint,
               expectedAccessToken: websocketTicket,
+              secureChannelUpgrade: true,
             }).pipe(
               Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
               Effect.provideService(Digest.Digest, digest),

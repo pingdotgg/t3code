@@ -21,7 +21,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import type { HttpClient } from "effect/http";
+import { HttpClient as HttpClientModule, HttpClientRequest, type HttpClient } from "effect/http";
 import { AsyncResult } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -31,6 +31,7 @@ import {
   type PreparedConnection,
   type PreparedHttpAuthorization,
 } from "../connection/model.ts";
+import * as Persistence from "../platform/persistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
@@ -322,6 +323,35 @@ describe("authenticated environment HTTP requests", () => {
         expect(url.searchParams.get("cursor")).toBe("older-page");
       }
       expect(PREPARED.httpAuthorization).toMatchObject({ accessToken: "expired-token" });
+    }),
+  );
+
+  it.effect.each([
+    { pinned: true, sealed: true },
+    { pinned: false, sealed: false },
+  ])("seals requests only to an environment with a pinned key (pinned: $pinned)", (scenario) =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json(SESSION));
+      const signer = Option.getOrThrow(harness.input.signer);
+      const sealing = ManagedRelay.ManagedRelayDpopSigner.of({
+        ...signer,
+        sealHttpClient: (client, environment) =>
+          HttpClientModule.mapRequest(
+            client,
+            HttpClientRequest.setHeader("x-sealed-for", environment.environmentId),
+          ),
+      });
+      const registrations = Layer.mock(Persistence.ConnectionRegistrationStore)({
+        environmentKey: () =>
+          Effect.succeed(scenario.pinned ? Option.some(new Uint8Array(32)) : Option.none()),
+      });
+      yield* fetchEnvironmentSessionState({ ...harness.input, signer: Option.some(sealing) }).pipe(
+        Effect.provide(Layer.merge(harness.httpLayer, registrations)),
+      );
+      expect(new Headers(harness.calls[0]!.init.headers).get("x-sealed-for")).toBe(
+        scenario.sealed ? TARGET.environmentId : null,
+      );
+      expect(harness.proofs[0]?.secureChannel).toBe(scenario.sealed ? true : undefined);
     }),
   );
 

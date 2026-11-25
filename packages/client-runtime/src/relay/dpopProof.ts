@@ -17,8 +17,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Exit from "effect/Exit";
+import * as Context from "effect/Context";
 import * as Layer from "effect/Layer";
 
+import { makeSecureHttpSealer } from "../rpc/secureHttp.ts";
 import {
   ManagedRelayDpopKeyLoadError,
   ManagedRelayDpopProofCreationError,
@@ -90,7 +92,8 @@ const secureChannelIdentity = Effect.fnUntraced(function* (key: DpopProofKey) {
 
 /**
  * A relay DPoP signer that loads its key once and keeps it; a failed load is retried. A platform
- * that supplies `secureChannelCrypto` can run the secure channel on its RPC sockets.
+ * that supplies `secureChannelCrypto` can run the secure channel on its RPC sockets and seal its
+ * HTTP requests.
  */
 export const layerSigner = <E, R>(options: {
   readonly keyStore: ManagedRelayDpopKeyLoadError["keyStore"];
@@ -138,6 +141,10 @@ export const layerSigner = <E, R>(options: {
                 ),
                 Effect.provideContext(crypto),
               );
+      const sealHttpClient =
+        crypto === undefined
+          ? undefined
+          : makeSecureHttpSealer(Context.add(crypto, SecureRandom.SecureRandom, random));
       return ManagedRelayDpopSigner.of({
         thumbprint: loadKey.pipe(
           Effect.map((loaded) => loaded.thumbprint),
@@ -155,6 +162,7 @@ export const layerSigner = <E, R>(options: {
           );
         }),
         ...(secureClientSocket === undefined ? {} : { secureClientSocket }),
+        ...(sealHttpClient === undefined ? {} : { sealHttpClient }),
       });
     }),
   );

@@ -9,12 +9,14 @@ import {
 import * as Result from "effect/Result";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
-import { FetchHttpClient, type HttpMethod } from "effect/http";
+import { FetchHttpClient, HttpClient, type HttpMethod } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as Persistence from "../platform/persistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
+import { sealedEnvironmentHttpClient } from "../rpc/secureHttp.ts";
 import {
   executeEnvironmentHttpRequest,
   makeEnvironmentHttpApiGroupClient,
@@ -64,6 +66,7 @@ const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironm
     method: HttpMethod.HttpMethod,
     url: string,
     signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>,
+    sealed: boolean,
   ): Effect.fn.Return<EnvironmentHttpAuthHeaders, RemoteEnvironmentAuthFetchError> {
     if (authorization === null) {
       return {};
@@ -80,7 +83,12 @@ const buildEnvironmentAuthHeaders = Effect.fn("environmentHttpAuth.buildEnvironm
       });
     }
     const proof = yield* signer.value
-      .createProof({ method, url, accessToken: authorization.accessToken })
+      .createProof({
+        method,
+        url,
+        accessToken: authorization.accessToken,
+        ...(sealed ? { secureChannel: true } : {}),
+      })
       .pipe(
         Effect.mapError(
           (cause) =>
@@ -185,6 +193,18 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   const requestUrlFor = (baseUrl: string) =>
     input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group]);
   return yield* Effect.gen(function* () {
+    const sealedClient = yield* sealedEnvironmentHttpClient(input.prepared.environmentId, {
+      signer: input.signer,
+      registrations: yield* Effect.serviceOption(Persistence.ConnectionRegistrationStore),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new RemoteEnvironmentAuthFetchError({
+            ...translatableMessage(msg("Could not authorize the environment request.")),
+            cause,
+          }),
+      ),
+    );
     let rejectedAccessToken: string | undefined;
     for (;;) {
       let authorization = input.prepared.httpAuthorization;
@@ -224,12 +244,19 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
       }
 
       const requestUrl = requestUrlFor(httpBaseUrl);
-      const client = yield* makeEnvironmentHttpApiGroupClient(httpBaseUrl, input.group);
+      const client = yield* Option.match(sealedClient, {
+        onNone: () => makeEnvironmentHttpApiGroupClient(httpBaseUrl, input.group),
+        onSome: (sealed) =>
+          makeEnvironmentHttpApiGroupClient(httpBaseUrl, input.group).pipe(
+            Effect.provideService(HttpClient.HttpClient, sealed),
+          ),
+      });
       const headers = yield* buildEnvironmentAuthHeaders(
         authorization,
         input.method,
         requestUrl,
         input.signer,
+        Option.isSome(sealedClient),
       );
       const result = yield* executeEnvironmentHttpRequest(
         requestUrl,

@@ -162,6 +162,7 @@ export type PreparedHttpAuthorization =
 export interface DirectDpopConnection {
   /** The credential store key. */
   readonly connectionId: string;
+  readonly environmentId: EnvironmentId;
   readonly httpBaseUrl: string;
 }
 
