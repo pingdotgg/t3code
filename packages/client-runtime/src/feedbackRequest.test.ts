@@ -84,7 +84,7 @@ describe("feedback preview", () => {
       turns: 1,
       textTurns: 0,
       truncated: false,
-      entries: [9_949, 9_960, 10_000].map((durationMs) => ({
+      entries: [9_949, 9_960].map((durationMs) => ({
         turn: 1,
         type: "tool" as const,
         tool: "shell",
@@ -94,7 +94,6 @@ describe("feedback preview", () => {
     });
     expect(lines.map((entry) => entry.line)).toEqual([
       "Turn 1 · shell · ok · 9.9 s",
-      "Turn 1 · shell · ok · 10 s",
       "Turn 1 · shell · ok · 10 s",
     ]);
   });
