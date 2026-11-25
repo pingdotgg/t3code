@@ -1,3 +1,4 @@
+import "~/index.css";
 import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
@@ -130,7 +131,12 @@ vi.mock(import("../ui/toast"), async (original) => {
 
 import { act, render as renderUi } from "../../../test/render";
 import { useComposerDraftStore } from "~/composerDraftStore";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { useUiStateStore } from "~/uiStateStore";
+import { PopoverCreateHandle } from "../ui/popover";
+import { ChatCanvasContext } from "./ChatCanvasContext";
+import { resolveChatCanvasLayout } from "./chatCanvasLayout";
+import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
 import { ThreadDetailsThreadPrRows } from "./ThreadDetailsPrRows";
 
@@ -457,6 +463,90 @@ it("names the first linked issue and reveals more issues on demand", async () =>
   await expect.element(extra).toBeVisible();
   await screen.getByRole("button", { name: "Show less" }).click();
   await expect.element(extra).not.toBeInTheDocument();
+});
+
+it("keeps full density and Lineage visible when expanding and collapsing linked issues", async () => {
+  await using screen = await setup();
+  useRightPanelStore.setState({ threadPanelVisibilityByThreadKey: {} });
+  const container = { width: 1200, height: 800 };
+  const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
+  const anchor = document.createElement("div");
+  document.body.append(anchor);
+  const measureDetailsCard = vi.fn();
+  const issues: ReadonlyArray<ThreadIssueLink> = Array.from({ length: 7 }, (_, index) => {
+    const number = 56 + index;
+    return {
+      tracker: IssueTrackerKind.make("github"),
+      host: "github.com",
+      scope: "owner/repo",
+      key: String(number),
+      projectId: ProjectId.make("repository"),
+      url: `https://github.com/owner/repo/issues/${number}`,
+      source: "manual",
+      linkedAt: "2026-10-30T00:00:00.000Z",
+      displayKey: `#${number}`,
+      title: `Linked issue ${number} with enough text to wrap across two lines`,
+    };
+  });
+  try {
+    await act(async () => {
+      await screen.rerender(
+        <ChatCanvasContext
+          value={{
+            container,
+            lane: { padding: 48, minChatWidth: 640 },
+            layout: resolveChatCanvasLayout({ container, preview: null }),
+            previewKey: null,
+            registerTimeline: () => {},
+            measureDetailsCard,
+            detailsCardTopInset: 0,
+            preferredDetailsCard: placement,
+            detailsCardPlacement: placement,
+          }}
+        >
+          <ThreadDetailsCard
+            threadRef={threadRef}
+            anchor={{ current: anchor }}
+            handle={PopoverCreateHandle()}
+            contentKey="issues-density"
+          >
+            {(density) => (
+              <div className="flex flex-col">
+                <div style={{ height: 180 }}>Workspace controls</div>
+                <ThreadDetailsIssueRows links={issues} threadRef={threadRef} />
+                {density === "full" ? (
+                  <section data-thread-relationships-panel>Lineage · 6 running</section>
+                ) : null}
+              </div>
+            )}
+          </ThreadDetailsCard>
+        </ChatCanvasContext>,
+      );
+    });
+
+    const card = screen.getByRole("region", { name: "Thread details" });
+    const lineage = screen.getByText("Lineage · 6 running");
+    await expect.element(card).toHaveAttribute("data-density", "full");
+    await expect.element(lineage).toBeVisible();
+
+    await screen.getByRole("button", { name: "Show 6 more" }).click();
+    await expect.element(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
+    await vi.waitFor(() => {
+      const lastCall = measureDetailsCard.mock.lastCall?.[0] as
+        | { fullContentHeight: number }
+        | undefined;
+      expect(lastCall?.fullContentHeight ?? 0).toBeGreaterThan(placement.height);
+    });
+    await expect.element(card).toHaveAttribute("data-density", "full");
+    await expect.element(lineage).toBeInTheDocument();
+
+    await screen.getByRole("button", { name: "Show less" }).click();
+    await expect.element(screen.getByRole("button", { name: "Show 6 more" })).toBeVisible();
+    await expect.element(card).toHaveAttribute("data-density", "full");
+    await expect.element(lineage).toBeVisible();
+  } finally {
+    anchor.remove();
+  }
 });
 
 it("keeps Ready pending when refreshed detail becomes mergeable before the action settles", async () => {

@@ -161,26 +161,53 @@ export function ThreadDetailsIssueRows({
   const threadKey = scopedThreadKey(threadRef);
   const expanded = expandedThread === threadKey;
   const hasMore = compact && links.length > 1;
-  const visibleLinks = hasMore && !expanded ? links.slice(0, 1) : links;
+  const [firstLink, ...restLinks] = links;
+  if (firstLink === undefined) return null;
+  if (!hasMore) {
+    return (
+      <>
+        {links.map((link) => (
+          <LinkedIssueRow
+            key={threadIssueKeyOf(link)}
+            link={link}
+            threadRef={threadRef}
+            compact={compact}
+            mountScope={mountScope}
+            onOpen={onOpen}
+          />
+        ))}
+      </>
+    );
+  }
   return (
     <>
-      {visibleLinks.map((link) => (
-        <LinkedIssueRow
-          key={threadIssueKeyOf(link)}
-          link={link}
-          threadRef={threadRef}
-          compact={compact}
-          mountScope={mountScope}
-          onOpen={onOpen}
-        />
-      ))}
-      {hasMore ? (
-        <ThreadDetailsMoreButton
-          expanded={expanded}
-          remaining={links.length - 1}
-          onToggle={() => setExpandedThread(expanded ? null : threadKey)}
-        />
+      <LinkedIssueRow
+        key={threadIssueKeyOf(firstLink)}
+        link={firstLink}
+        threadRef={threadRef}
+        compact={compact}
+        mountScope={mountScope}
+        onOpen={onOpen}
+      />
+      {expanded ? (
+        <div data-thread-details-issue-list className="flex flex-col">
+          {restLinks.map((link) => (
+            <LinkedIssueRow
+              key={threadIssueKeyOf(link)}
+              link={link}
+              threadRef={threadRef}
+              compact={compact}
+              mountScope={mountScope}
+              onOpen={onOpen}
+            />
+          ))}
+        </div>
       ) : null}
+      <ThreadDetailsMoreButton
+        expanded={expanded}
+        remaining={restLinks.length}
+        onToggle={() => setExpandedThread(expanded ? null : threadKey)}
+      />
     </>
   );
 }
