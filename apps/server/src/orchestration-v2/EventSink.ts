@@ -14,6 +14,7 @@ import {
   type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { prepareDeletionFence } from "./DelegationDeletionFence.ts";
 import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 import * as ThreadViewers from "./ThreadViewers.ts";
 import * as Context from "effect/Context";
@@ -450,9 +451,13 @@ const layerBase: Layer.Layer<
     const applyStoredEvents =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>) {
+        const checkDeletionFence = yield* prepareDeletionFence(
+          storedEvents.map((stored) => stored.event),
+        ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
         yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {
           concurrency: 1,
         });
+        yield* checkDeletionFence;
         const sequence = storedEvents.at(-1)?.sequence;
         if (sequence !== undefined) {
           const batch = yield* CurrentProviderBatch;

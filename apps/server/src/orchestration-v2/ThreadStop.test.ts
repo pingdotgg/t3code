@@ -1,3 +1,12 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as ServerConfig from "../config.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -13,11 +22,14 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RuntimeRequestId,
+  RunId,
   ScheduledTaskId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -27,6 +39,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as EventStore from "./EventStore.ts";
+import * as EventSink from "./EventSink.ts";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -131,12 +144,13 @@ const send = (threadId: ThreadId, text: string, type: "start_immediately" | "que
     });
   });
 
-const delegate = (parentThreadId: ThreadId, task: string) =>
+const delegate = (parentThreadId: ThreadId, task: string, projectId?: ProjectId) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.at(-1)!;
     yield* orchestrator.dispatch({
       type: "delegated_task.request",
+      ...(projectId === undefined ? {} : { projectId }),
       commandId: CommandId.make(`delegate:${task}`),
       parentThreadId,
       parentRunId: parentRun.id,
@@ -2353,4 +2367,174 @@ it.effect.each([
         );
       }).pipe(Effect.provide(layerLive));
     }),
+);
+
+it.effect.each([false, true])(
+  "deleting an owner fences cross-project work (nested delegate returns to owner: %s)",
+  (returnsToOwner) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const sql = yield* SqlClient.SqlClient;
+      const parentId = ThreadId.make("deletion-owner");
+      const projectB = ProjectId.make("deletion-destination");
+      const now = yield* DateTime.now;
+      yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES (${projectB}, 'Destination', '/work/destination', '[]', '2026-01-01', '2026-01-01')`;
+      const projectA = ProjectId.make("project:thread-stop");
+      yield* sql`INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES (${projectA}, 'Owner', '/work/owner', '[]', '2026-01-01', '2026-01-01')`;
+      yield* createWatchingThread(parentId, 1);
+      yield* send(parentId, "start", "start_immediately");
+      const childId = yield* delegate(parentId, "cross-project child", projectB);
+      const intermediateId = returnsToOwner
+        ? yield* delegate(childId, "nested work in removed project", projectA)
+        : childId;
+      const nestedId = yield* delegate(intermediateId, "nested child", projectB);
+      yield* send(nestedId, "queued before deletion", "queue_after_active");
+      const nested = yield* orchestrator.getThreadProjection(nestedId);
+      const staleChildId = ThreadId.make("stale-delegate");
+      const staleChild = {
+        id: EventId.make("stale-child-created"),
+        type: "thread.created" as const,
+        threadId: staleChildId,
+        occurredAt: now,
+        payload: {
+          ...nested.thread,
+          id: staleChildId,
+          lineage: {
+            ...nested.thread.lineage,
+            parentThreadId: nestedId,
+          },
+        },
+      };
+      const staleContinuation = {
+        id: EventId.make("stale-continuation"),
+        type: "run.updated" as const,
+        threadId: nestedId,
+        occurredAt: now,
+        payload: { ...nested.runs[0]!, id: RunId.make("stale-continuation"), ordinal: 3 },
+      };
+      const projects = yield* ProjectService.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ProjectStore.layer,
+            IdAllocator.layer,
+            Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
+              ensureTranscript: () =>
+                Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+            }),
+            Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({
+              invalidate: () => Effect.void,
+              peek: () =>
+                Effect.succeed({
+                  repositoryIdentity: null,
+                  faviconPath: null,
+                  repositoryIdentityResolved: true,
+                }),
+            }),
+            Layer.mock(WorkspacePaths.WorkspacePaths)({}),
+            ServerConfig.layerTest(process.cwd(), { prefix: "delegation-deletion-" }).pipe(
+              Layer.provide(NodeServices.layer),
+            ),
+            NodeServices.layer,
+          ),
+        ),
+      );
+      yield* projects.delete({
+        projectId: projectA,
+        commandId: CommandId.make("delete-owner"),
+        force: true,
+      });
+      const independentId = ThreadId.make("independent-destination-thread");
+      yield* sink.write({
+        events: [
+          {
+            ...staleChild,
+            id: EventId.make("independent-created"),
+            threadId: independentId,
+            payload: {
+              ...staleChild.payload,
+              id: independentId,
+              createdBy: "user",
+              creationSource: "web",
+              lineage: {
+                parentThreadId: null,
+                rootThreadId: independentId,
+                relationshipToParent: null,
+              },
+              forkedFrom: null,
+            },
+          },
+        ],
+      });
+      yield* send(independentId, "unrelated destination work", "start_immediately");
+      const deletionCommandId = CommandId.make(`delete-owner:delete-thread:${parentId}`);
+      for (const event of [staleChild, staleContinuation]) {
+        const result = yield* Effect.exit(
+          event.type === "thread.created"
+            ? sink
+                .commitCommand({
+                  commandId: CommandId.make("stale-delegation-command"),
+                  commandType: "delegated_task.request",
+                  threadId: nestedId,
+                  acceptedAt: now,
+                  events: [event],
+                  effects: [],
+                })
+                .pipe(Effect.asVoid)
+            : sink.writeWithEffects({ events: [event], effects: [] }).pipe(Effect.asVoid),
+        );
+        assert.isTrue(Exit.isFailure(result));
+        if (Exit.isFailure(result)) {
+          const error = Cause.findErrorOption(result.cause).pipe(Option.getOrThrow);
+          assert.instanceOf(error, EventSink.EventSinkWriteError);
+          assert.propertyVal(error.cause, "_tag", "DelegationOwnerDeletedError");
+        }
+      }
+      assert.isNull(yield* orchestrator.getThreadShell(staleChildId));
+      assert.lengthOf((yield* orchestrator.getThreadProjection(nestedId)).runs, 2);
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(delegate(childId, "late delegate"))));
+      assert.isTrue(
+        Exit.isFailure(
+          yield* Effect.exit(send(nestedId, "late continuation", "start_immediately")),
+        ),
+      );
+      const stop = yield* sql<{
+        effect_type: string;
+      }>`SELECT effect_type FROM orchestration_v2_effect_outbox
+      WHERE command_id = ${deletionCommandId} AND effect_type = 'delegated-tasks.stop'`;
+      assert.lengthOf(stop, 1);
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2.pipe(
+        Effect.provide(ProjectionMaintenance.layer),
+      );
+      yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'
+        WHERE thread_id = ${parentId} AND effect_type <> 'delegated-tasks.stop'`;
+      yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'failed'
+        WHERE command_id = ${deletionCommandId} AND effect_type = 'delegated-tasks.stop'`;
+      assert.equal(yield* maintenance.purgeDeletedThread(parentId), 0);
+      assert.lengthOf((yield* orchestrator.getThreadProjection(parentId)).subagents, 1);
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      yield* threads.stopDelegatedTasks({ threadId: parentId, commandId: deletionCommandId });
+      assert.deepEqual((yield* threadState(childId)).runs, ["interrupted"]);
+      assert.isTrue(
+        Exit.isFailure(
+          yield* Effect.exit(
+            orchestrator.dispatch({
+              type: "queue.resume",
+              threadId: nestedId,
+              commandId: CommandId.make("resume-after-owner-deletion"),
+            }),
+          ),
+        ),
+      );
+      assert.deepEqual((yield* threadState(nestedId)).runs, ["interrupted", "queued:held"]);
+      yield* sql`UPDATE orchestration_v2_effect_outbox SET status = 'succeeded'
+      WHERE thread_id = ${parentId}`;
+      yield* maintenance.purgeDeletedThread(parentId);
+      assert.lengthOf((yield* orchestrator.getThreadProjection(parentId)).subagents, 0);
+      assert.isTrue(
+        Exit.isFailure(yield* Effect.exit(send(nestedId, "after purge", "start_immediately"))),
+      );
+    }).pipe(Effect.provide(layerTest)),
 );
