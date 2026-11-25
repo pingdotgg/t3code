@@ -1433,8 +1433,12 @@ function unfinishedSequenceReplay(session: TerminalSessionState): string {
       .replace(/\r{2,}/g, "\r");
     const budget = MAX_SNAPSHOT_SEQUENCE_LENGTH - introducer.length - tail.length;
     if (body.length <= budget) return introducer + body + tail;
+    // Controls execute as they arrive, independently of the parameters dispatched at the end.
+    const parameters = body.replace(/[^\x20-\x3f]+/g, "");
+    const replayParameters = parameters.length <= budget ? parameters : "";
     const controls = body.replace(/[^\x01-\x0f]+/g, "");
-    return introducer + controls.slice(-budget) + tail;
+    const controlsToSkip = Math.max(0, controls.length - (budget - replayParameters.length));
+    return introducer + replayParameters + controls.slice(controlsToSkip) + tail;
   }
   return introducer + tail;
 }
