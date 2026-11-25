@@ -1,7 +1,6 @@
 import * as NodeModule from "node:module";
 
 import type { AntigravitySettings, ServerProviderUsageWindow } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
@@ -12,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 
 import {
   makeUnavailableUsageLimits,
@@ -24,6 +24,8 @@ const SUMMARY_WINDOW_MINS = new Map([
 ]);
 const AUTO_CACHE_TTL_MS = 5 * 60 * 1000;
 const FAIL_COOLDOWN_MS = 60 * 1000;
+const MAX_PTY_OUTPUT_BYTES = 256 * 1024;
+const utf8Encoder = new TextEncoder();
 
 // Strip ambient Google credentials and T3 launcher internals before spawning the official CLI.
 const BLOCKED_CLI_ENV_KEYS = new Set([
@@ -38,6 +40,7 @@ const BLOCKED_CLI_ENV_KEYS = new Set([
   "CLOUDSDK_CORE_PROJECT",
   "AGY_ACP_CCPA_PROJECT",
   "AGY_ACP_ENABLE_OAUTH",
+  "AGY_ADC_AUTH",
   "GEMINI_HOME",
   "SSH_CONNECTION",
   "AGY_ACP_FORCE_FILE_STORAGE",
@@ -78,6 +81,7 @@ const AntigravityCliUsageErrorReason = Schema.Literals([
   "load_pty",
   "resolve_executable",
   "spawn_failed",
+  "output_limit_exceeded",
   "invalid_output",
 ]);
 
@@ -97,6 +101,8 @@ export class AntigravityCliUsageError extends Schema.TaggedError<AntigravityCliU
         return "Could not resolve the configured Antigravity CLI executable.";
       case "spawn_failed":
         return "Could not launch the official Antigravity CLI.";
+      case "output_limit_exceeded":
+        return "Official Antigravity CLI output exceeded the safe buffer limit.";
       case "invalid_output":
         return "Official Antigravity CLI did not return a parseable /usage summary.";
     }
@@ -149,10 +155,7 @@ function summaryResetTime(
 }
 
 const sha256 = Effect.fnUntraced(function* (text: string) {
-  const digest = yield* (yield* Digest.Digest).digest(
-    Digest.sha256,
-    new TextEncoder().encode(text),
-  );
+  const digest = yield* (yield* Digest.Digest).digest(Digest.sha256, utf8Encoder.encode(text));
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 });
 
@@ -201,26 +204,227 @@ function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
 // A single-executable server resolves native addons on disk only through `require`.
 const requireExternal = NodeModule.createRequire(import.meta.url);
 
-function stripAnsiPreserveLines(input: string): string {
-  return (
-    input
-      // Turn cursor positioning and line moves into newlines so TUI cells stay separated.
-      .replace(/\x1b\[\d*(?:;\d*)?[Hf]/g, "\n")
-      .replace(/\x1b\[\d*[ABEF]/g, "\n")
-      .replace(/\x1b\[\d*[CDG]/g, " ")
-      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
-      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-      .replace(/\x1b[()][A-Z0-9]/g, "")
-      .replace(/\r/g, "\n")
-  );
+/**
+ * Lightweight incremental VT/ANSI terminal screen buffer.
+ * Resolves cursor positioning, screen/line clears, and in-place overwrites in O(chunk.length)
+ * time with bounded memory so partial BubbleTea redraws always reflect the latest screen state.
+ */
+class MiniTerminalScreen {
+  private readonly cols: number;
+  private readonly maxRows: number;
+  private rows: string[][] = [];
+  private row = 0;
+  private col = 0;
+  private pending = "";
+
+  constructor(cols = 120, maxRows = 160) {
+    this.cols = cols;
+    this.maxRows = maxRows;
+  }
+
+  private ensureRow(targetRow: number): number {
+    const clamped = Math.max(0, Math.min(targetRow, this.maxRows - 1));
+    while (this.rows.length <= clamped) {
+      this.rows.push([]);
+    }
+    return clamped;
+  }
+
+  private clearScreen(): void {
+    this.rows = [];
+    this.row = 0;
+    this.col = 0;
+  }
+
+  write(chunk: string): void {
+    const text = this.pending + chunk;
+    this.pending = "";
+    let i = 0;
+    while (i < text.length) {
+      const ch = text[i] ?? "";
+      if (ch === "\x1b") {
+        if (i + 1 >= text.length) {
+          this.pending = text.slice(i);
+          break;
+        }
+        const next = text[i + 1];
+        if (next === "[") {
+          let j = i + 2;
+          while (j < text.length && (text.charCodeAt(j) < 0x40 || text.charCodeAt(j) > 0x7e)) {
+            j++;
+          }
+          if (j >= text.length) {
+            this.pending = text.slice(i);
+            break;
+          }
+          const paramsRaw = text.slice(i + 2, j).replace(/^[?>=<]+/, "");
+          const finalCh = text[j] ?? "";
+          const parts =
+            paramsRaw.length > 0 ? paramsRaw.split(";").map((p) => (p === "" ? 0 : Number(p))) : [];
+          this.handleCsi(finalCh, parts);
+          i = j + 1;
+          continue;
+        }
+        if (next === "]") {
+          let j = i + 2;
+          let foundEnd = -1;
+          while (j < text.length) {
+            if (text[j] === "\x07") {
+              foundEnd = j + 1;
+              break;
+            }
+            if (text[j] === "\x1b" && j + 1 < text.length && text[j + 1] === "\\") {
+              foundEnd = j + 2;
+              break;
+            }
+            j++;
+          }
+          if (foundEnd === -1) {
+            if (text.length - i < 4096) this.pending = text.slice(i);
+            break;
+          }
+          i = foundEnd;
+          continue;
+        }
+        if (next === "(" || next === ")" || next === "*" || next === "+") {
+          if (i + 2 >= text.length) {
+            this.pending = text.slice(i);
+            break;
+          }
+          i += 3;
+          continue;
+        }
+        i += 2;
+        continue;
+      }
+
+      if (ch === "\r") {
+        this.col = 0;
+        i++;
+        continue;
+      }
+      if (ch === "\n") {
+        this.row = this.ensureRow(this.row + 1);
+        this.col = 0;
+        i++;
+        continue;
+      }
+      if (ch === "\b") {
+        this.col = Math.max(0, this.col - 1);
+        i++;
+        continue;
+      }
+      if (ch === "\t") {
+        this.col = Math.min(this.cols - 1, this.col + (8 - (this.col % 8)));
+        i++;
+        continue;
+      }
+      const code = ch.charCodeAt(0);
+      if (code < 0x20 || code === 0x7f) {
+        i++;
+        continue;
+      }
+
+      const r = this.ensureRow(this.row);
+      const line = this.rows[r]!;
+      while (line.length < this.col) line.push(" ");
+      if (this.col < this.cols * 2) {
+        line[this.col] = ch;
+        this.col++;
+      }
+      i++;
+    }
+  }
+
+  private handleCsi(finalCh: string, parts: ReadonlyArray<number>): void {
+    const p1 = parts[0] || 0;
+    const p2 = parts[1] || 0;
+    switch (finalCh) {
+      case "H":
+      case "f":
+        this.row = this.ensureRow((p1 || 1) - 1);
+        this.col = Math.max(0, (p2 || 1) - 1);
+        break;
+      case "A":
+        this.row = Math.max(0, this.row - (p1 || 1));
+        break;
+      case "B":
+        this.row = this.ensureRow(this.row + (p1 || 1));
+        break;
+      case "C":
+        this.col = Math.min(this.cols * 2 - 1, this.col + (p1 || 1));
+        break;
+      case "D":
+        this.col = Math.max(0, this.col - (p1 || 1));
+        break;
+      case "E":
+        this.row = this.ensureRow(this.row + (p1 || 1));
+        this.col = 0;
+        break;
+      case "F":
+        this.row = Math.max(0, this.row - (p1 || 1));
+        this.col = 0;
+        break;
+      case "G":
+        this.col = Math.max(0, (p1 || 1) - 1);
+        break;
+      case "J":
+        if (p1 === 2 || p1 === 3) {
+          this.clearScreen();
+        } else if (p1 === 0) {
+          const r = this.ensureRow(this.row);
+          const line = this.rows[r]!;
+          line.length = Math.min(line.length, this.col);
+          this.rows.length = r + 1;
+        } else if (p1 === 1) {
+          for (let r = 0; r < this.row && r < this.rows.length; r++) {
+            this.rows[r] = [];
+          }
+          const current = this.rows[this.row];
+          if (current) {
+            for (let c = 0; c <= this.col && c < current.length; c++) {
+              current[c] = " ";
+            }
+          }
+        }
+        break;
+      case "K": {
+        const r = this.ensureRow(this.row);
+        const line = this.rows[r]!;
+        if (p1 === 0) {
+          line.length = Math.min(line.length, this.col);
+        } else if (p1 === 1) {
+          for (let c = 0; c <= this.col && c < line.length; c++) {
+            line[c] = " ";
+          }
+        } else if (p1 === 2) {
+          this.rows[r] = [];
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  toText(): string {
+    return this.rows.map((line) => line.join("").replace(/\s+$/, "")).join("\n");
+  }
+}
+
+function renderTerminalOutput(input: string): string {
+  const screen = new MiniTerminalScreen(120, 160);
+  screen.write(input);
+  return screen.toText();
 }
 
 function parseRefreshDurationMs(text: string): number | undefined {
-  const match = /Refreshes\s+in\s+([^\n]+)/i.exec(text);
-  if (!match?.[1]) return undefined;
+  const matches = [...text.matchAll(/Refreshes\s+in\s+([^\n]+)/gi)];
+  const last = matches[matches.length - 1];
+  if (!last?.[1]) return undefined;
   let totalMs = 0;
   let matched = false;
-  for (const part of match[1].matchAll(/(\d+)\s*([dhms])/gi)) {
+  for (const part of last[1].matchAll(/(\d+)\s*([dhms])/gi)) {
     matched = true;
     const value = Number(part[1]);
     const unit = part[2]?.toLowerCase();
@@ -256,15 +460,10 @@ export interface ParsedAntigravityCliUsage {
   readonly accountEmail?: string;
 }
 
-/**
- * Parses the rendered output of the official `agy` CLI `/usage` view into T3 usage windows.
- * Keeps T3 from reading OAuth tokens or calling undocumented Google backend endpoints directly.
- */
-export function parseAntigravityCliUsageOutput(
-  rawOutput: string,
+function parseRenderedAntigravityCliUsage(
+  clean: string,
   nowMs: number,
 ): ParsedAntigravityCliUsage | undefined {
-  const clean = stripAnsiPreserveLines(rawOutput);
   const startIdx = clean.lastIndexOf("Models & Quota");
   if (startIdx === -1) return undefined;
   const frame = clean.slice(startIdx);
@@ -322,9 +521,10 @@ export function parseAntigravityCliUsageOutput(
       const blockEnd =
         j + 1 < foundBlocks.length ? (foundBlocks[j + 1]?.index ?? section.length) : section.length;
       const slice = section.slice(block.endOfTitle, blockEnd);
-      const percentMatch = /(\d+(?:\.\d+)?)\s*%/.exec(slice);
-      if (!percentMatch?.[1]) continue;
-      const remainingPct = Math.max(0, Math.min(100, Number(percentMatch[1])));
+      const percentMatches = [...slice.matchAll(/(\d+(?:\.\d+)?)\s*%/g)];
+      const lastPercent = percentMatches[percentMatches.length - 1];
+      if (!lastPercent?.[1]) continue;
+      const remainingPct = Math.max(0, Math.min(100, Number(lastPercent[1])));
       if (!Number.isFinite(remainingPct)) continue;
       const usedPercent = Math.round((100 - remainingPct) * 100) / 100;
       const refreshMs = parseRefreshDurationMs(slice);
@@ -366,8 +566,20 @@ export function parseAntigravityCliUsageOutput(
   };
 }
 
+/**
+ * Parses the rendered output of the official `agy` CLI `/usage` view into T3 usage windows.
+ * Keeps T3 from reading OAuth tokens or calling undocumented Google backend endpoints directly.
+ */
+export function parseAntigravityCliUsageOutput(
+  rawOutput: string,
+  nowMs: number,
+): ParsedAntigravityCliUsage | undefined {
+  return parseRenderedAntigravityCliUsage(renderTerminalOutput(rawOutput), nowMs);
+}
+
 export interface AntigravityCliUsageRunInput {
   readonly executablePath: string;
+  readonly args?: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
   readonly cwd: string;
 }
@@ -376,7 +588,12 @@ export type AntigravityNodePtyModule = Pick<typeof import("node-pty"), "spawn">;
 
 export function buildAntigravityCliUsageEnv(
   baseEnv: NodeJS.ProcessEnv,
-  profileDirectory?: string,
+  options?: {
+    readonly profileDirectory?: string;
+    readonly isolatedHome?: string;
+    readonly gcpProject?: string;
+    readonly gcpLocation?: string;
+  },
 ): NodeJS.ProcessEnv {
   const cleanEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -385,11 +602,71 @@ export function buildAntigravityCliUsageEnv(
     if (BLOCKED_CLI_ENV_KEYS.has(key.toUpperCase())) continue;
     cleanEnv[key] = value;
   }
-  if (profileDirectory !== undefined) {
-    cleanEnv.GEMINI_HOME = profileDirectory;
+  if (options?.profileDirectory !== undefined) {
+    cleanEnv.GEMINI_HOME = options.profileDirectory;
   }
+  if (options?.isolatedHome !== undefined) {
+    cleanEnv.HOME = options.isolatedHome;
+    cleanEnv.USERPROFILE = options.isolatedHome;
+  }
+  if (options?.gcpProject) {
+    cleanEnv.GOOGLE_CLOUD_PROJECT = options.gcpProject;
+  }
+  if (options?.gcpLocation) {
+    cleanEnv.GOOGLE_CLOUD_LOCATION = options.gcpLocation;
+  }
+  cleanEnv.TERM = cleanEnv.TERM || "xterm-256color";
   return cleanEnv;
 }
+
+const IsolatedCliSettings = Schema.Struct({
+  trustedWorkspaces: Schema.Array(Schema.String),
+  onboardingComplete: Schema.Boolean,
+  colorScheme: Schema.String,
+});
+const encodeIsolatedCliSettings = Schema.encodeSync(Schema.fromJsonString(IsolatedCliSettings));
+
+/**
+ * Creates a scoped, empty home directory with minimal onboarding state and empty MCP/hook configs
+ * so background `/usage` probes never spawn configured global MCP servers or run hooks.
+ */
+const makeIsolatedCliHome = Effect.fn("AntigravityUsageProbe.makeIsolatedCliHome")(function* (
+  executablePath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  return yield* Effect.gen(function* () {
+    const isolatedHome = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-usage-" });
+    const cliDir = path.join(isolatedHome, ".gemini", "antigravity-cli");
+    const cfgDir = path.join(isolatedHome, ".gemini", "config");
+    yield* fs.makeDirectory(cliDir, { recursive: true });
+    yield* fs.makeDirectory(cfgDir, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(cliDir, "settings.json"),
+      encodeIsolatedCliSettings({
+        trustedWorkspaces: [isolatedHome],
+        onboardingComplete: true,
+        colorScheme: "terminal",
+      }),
+    );
+    yield* fs.writeFileString(
+      path.join(cliDir, "onboarding.json"),
+      '{"onboardingComplete":true,"completed":true}',
+    );
+    yield* fs.writeFileString(path.join(cfgDir, "mcp_config.json"), '{"mcpServers":{}}');
+    yield* fs.writeFileString(path.join(cfgDir, "hooks.json"), "{}");
+    return isolatedHome;
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new AntigravityCliUsageError({
+          reason: "spawn_failed",
+          executablePath,
+          cause,
+        }),
+    ),
+  );
+});
 
 export const runOfficialAgyUsagePty = Effect.fn("AntigravityUsageProbe.runOfficialAgyUsagePty")(
   function* (
@@ -410,15 +687,19 @@ export const runOfficialAgyUsagePty = Effect.fn("AntigravityUsageProbe.runOffici
 
     const bannerReady = yield* Deferred.make<void>();
     const quotaReady = yield* Deferred.make<void>();
+    const singleWindowSeen = yield* Deferred.make<void>();
+    const outputLimitExceeded = yield* Deferred.make<void>();
     const exited = yield* Deferred.make<void>();
 
-    let raw = "";
+    const screen = new MiniTerminalScreen(120, 160);
+    let totalBytes = 0;
+    let limitHit = false;
     let sentUsage = false;
 
     const proc = yield* Effect.acquireRelease(
       Effect.try({
         try: () =>
-          pty.spawn(input.executablePath, [], {
+          pty.spawn(input.executablePath, [...(input.args ?? [])], {
             name: "xterm-256color",
             cols: 120,
             rows: 42,
@@ -454,15 +735,30 @@ export const runOfficialAgyUsagePty = Effect.fn("AntigravityUsageProbe.runOffici
     );
 
     proc.onData((chunk) => {
-      raw += chunk;
-      const clean = stripAnsiPreserveLines(raw);
-      if (clean.includes("Antigravity CLI")) {
-        Deferred.doneUnsafe(bannerReady, Exit.void);
+      if (limitHit) return;
+      totalBytes += utf8Encoder.encode(chunk).byteLength;
+      if (totalBytes > MAX_PTY_OUTPUT_BYTES) {
+        limitHit = true;
+        Deferred.doneUnsafe(outputLimitExceeded, Exit.void);
+        return;
       }
-      if (sentUsage && clean.includes("Models & Quota") && clean.includes("Limit Remaining")) {
-        const parsed = parseAntigravityCliUsageOutput(raw, 0);
+
+      screen.write(chunk);
+
+      if (!sentUsage) {
+        if (chunk.includes("Antigravity CLI") || screen.toText().includes("Antigravity CLI")) {
+          Deferred.doneUnsafe(bannerReady, Exit.void);
+        }
+        return;
+      }
+
+      const rendered = screen.toText();
+      if (rendered.includes("Models & Quota") && rendered.includes("Limit Remaining")) {
+        const parsed = parseRenderedAntigravityCliUsage(rendered, 0);
         if (parsed && parsed.windows.length >= 2) {
           Deferred.doneUnsafe(quotaReady, Exit.void);
+        } else if (parsed && parsed.windows.length === 1) {
+          Deferred.doneUnsafe(singleWindowSeen, Exit.void);
         }
       }
     });
@@ -471,47 +767,64 @@ export const runOfficialAgyUsagePty = Effect.fn("AntigravityUsageProbe.runOffici
       Deferred.doneUnsafe(exited, Exit.void);
     });
 
-    yield* Effect.raceFirst(Deferred.await(bannerReady), Deferred.await(exited)).pipe(
-      Effect.timeout("10 seconds"),
-      Effect.ignore,
-    );
+    // Budget worst-case timeline well under the 30s outer probe timeout:
+    // 8s banner + 0.9s + 0.35s + 12s quota + 0.7s flush + 0.25s release = 22.2s max.
+    yield* Effect.raceFirst(
+      Deferred.await(bannerReady),
+      Effect.raceFirst(Deferred.await(exited), Deferred.await(outputLimitExceeded)),
+    ).pipe(Effect.timeout("8 seconds"), Effect.ignore);
 
-    yield* Effect.sleep("900 millis");
-    sentUsage = true;
-    yield* Effect.sync(() => {
-      try {
-        proc.write("/usage");
-      } catch {
-        // Handled below if output is missing.
-      }
-    });
-    yield* Effect.sleep("350 millis");
-    yield* Effect.sync(() => {
-      try {
-        proc.write("\r");
-      } catch {
-        // Handled below if output is missing.
-      }
-    });
+    if (!limitHit) {
+      yield* Effect.sleep("900 millis");
+      sentUsage = true;
+      yield* Effect.sync(() => {
+        try {
+          proc.write("/usage");
+        } catch {
+          // Handled below if output is missing.
+        }
+      });
+      yield* Effect.sleep("350 millis");
+      yield* Effect.sync(() => {
+        try {
+          proc.write("\r");
+        } catch {
+          // Handled below if output is missing.
+        }
+      });
 
-    yield* Effect.raceFirst(Deferred.await(quotaReady), Deferred.await(exited)).pipe(
-      Effect.timeout("18 seconds"),
-      Effect.ignore,
-    );
-    // Allow the final BubbleTea frame (all model groups) to finish flushing.
-    yield* Effect.sleep("700 millis");
+      const singleWindowSettled = Deferred.await(singleWindowSeen).pipe(
+        Effect.andThen(Effect.sleep("2 seconds")),
+      );
+      yield* Effect.raceFirst(
+        Deferred.await(quotaReady),
+        Effect.raceFirst(
+          singleWindowSettled,
+          Effect.raceFirst(Deferred.await(exited), Deferred.await(outputLimitExceeded)),
+        ),
+      ).pipe(Effect.timeout("12 seconds"), Effect.ignore);
 
-    if (!parseAntigravityCliUsageOutput(raw, 0)) {
-      return yield* new AntigravityCliUsageError({ reason: "invalid_output" });
+      // Allow the final BubbleTea frame (all model groups) to finish flushing.
+      yield* Effect.sleep("700 millis");
     }
-    return raw;
+
+    const finalRendered = screen.toText();
+    if (!parseRenderedAntigravityCliUsage(finalRendered, 0)) {
+      return yield* new AntigravityCliUsageError({
+        reason: limitHit ? "output_limit_exceeded" : "invalid_output",
+        executablePath: input.executablePath,
+      });
+    }
+    return finalRendered;
   },
 );
 
 export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* (input: {
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
-  readonly resolveExecutable?: Effect.Effect<string, AntigravityCliUsageError>;
+  readonly gcpProject?: string;
+  readonly gcpLocation?: string;
+  readonly resolveExecutable?: Effect.Effect<string, AntigravityCliUsageError, Scope.Scope>;
   readonly environment?: NodeJS.ProcessEnv;
   readonly runCliUsage?: (
     args: AntigravityCliUsageRunInput,
@@ -520,7 +833,6 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Digest.Digest;
-  const homeDirectory = yield* HostProcess.HomeDirectory;
   const cliTokenPath = path.join(
     input.profileDirectory,
     "antigravity-acp",
@@ -572,10 +884,10 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       });
     }
 
-    // Personal OAuth profiles isolate sign-ins per profile directory; do not fall through to the
-    // shared OS keyring for an unsigned-in personal instance.
+    // OAuth profiles isolate sign-ins per profile directory; do not fall through to a standalone
+    // host sign-in for an unsigned-in instance.
     const hasProfileToken = yield* fs.exists(cliTokenPath).pipe(Effect.orElseSucceed(() => false));
-    if (input.authMethod === "oauth-personal" && !hasProfileToken) {
+    if (!hasProfileToken) {
       return makeUnavailableUsageLimits({
         checkedAt,
         reason: "unsupported",
@@ -585,20 +897,34 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
 
     lastAttemptAtMs = nowMs;
 
-    // Only default to "agy" when no executable resolver was supplied; never silently bypass a
-    // configured binaryPath that failed installation validation.
-    const executablePath = input.resolveExecutable ? yield* input.resolveExecutable : "agy";
-
-    const cleanEnv = buildAntigravityCliUsageEnv(
-      input.environment ?? process.env,
-      hasProfileToken ? input.profileDirectory : undefined,
+    const rawOutput = yield* Effect.scoped(
+      Effect.gen(function* () {
+        // Hold any installation lease through PTY execution so background updates cannot prune it.
+        const executablePath = input.resolveExecutable ? yield* input.resolveExecutable : "agy";
+        const isolatedHome = yield* makeIsolatedCliHome(executablePath);
+        const cleanEnv = buildAntigravityCliUsageEnv(input.environment ?? process.env, {
+          profileDirectory: input.profileDirectory,
+          isolatedHome,
+          ...(input.authMethod === "oauth-business" && input.gcpProject
+            ? { gcpProject: input.gcpProject }
+            : {}),
+          ...(input.authMethod === "oauth-business" && input.gcpLocation
+            ? { gcpLocation: input.gcpLocation }
+            : {}),
+        });
+        const cliArgs =
+          input.authMethod === "oauth-business" && input.gcpProject
+            ? ["--project", input.gcpProject]
+            : [];
+        return yield* runCliUsage({
+          executablePath,
+          args: cliArgs,
+          env: cleanEnv,
+          cwd: isolatedHome,
+        });
+      }),
     );
 
-    const rawOutput = yield* runCliUsage({
-      executablePath,
-      env: cleanEnv,
-      cwd: homeDirectory,
-    });
     const parsedAtMs = yield* Clock.currentTimeMillis;
     const observedAt = DateTime.formatIso(DateTime.makeUnsafe(parsedAtMs));
     const parsed = parseAntigravityCliUsageOutput(rawOutput, parsedAtMs);
@@ -630,6 +956,8 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   });
 
   const probe = read.pipe(
+    Effect.provideService(FileSystem.FileSystem, fs),
+    Effect.provideService(Path.Path, path),
     Effect.provideService(Digest.Digest, crypto),
     Effect.timeout("30 seconds"),
     Effect.catch(() =>

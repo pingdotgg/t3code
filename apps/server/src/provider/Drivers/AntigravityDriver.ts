@@ -576,8 +576,10 @@ export const AntigravityDriver: ProviderDriver<
     const usage = yield* makeAntigravityUsageProbe({
       profileDirectory,
       authMethod: auth.authMethod,
+      gcpProject: auth.gcpProject,
+      gcpLocation: auth.gcpLocation,
       environment: processEnvironment,
-      resolveExecutable: installation.resolve(settings.binaryPath, processEnvironment).pipe(
+      resolveExecutable: installation.acquire(settings.binaryPath, processEnvironment).pipe(
         Effect.map((resolved) => resolved.executablePath),
         Effect.mapError(
           (cause) =>
