@@ -72,7 +72,6 @@ class CodexStateReadError extends Schema.TaggedError<CodexStateReadError>()("Cod
 }
 const METADATA_READ_BYTES = 8 * 1024;
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
-const cwdBeyondPrefix = Symbol("cwdBeyondPrefix");
 const MAX_CODEX_SESSION_INDEX_BYTES = 1024 * 1024;
 const MAX_CODEX_PROJECT_ROOT_ROWS = 100_000;
 
@@ -285,6 +284,8 @@ interface MetadataReadBudget {
   recordsRemaining: number;
   truncated: boolean;
 }
+
+type CwdScanResult = string | false | null | { readonly resume: Effect.Effect<CwdScanResult> };
 
 function splitOperationBudget(budget: number, count: number): Array<number> {
   return Array.from(
@@ -1214,101 +1215,110 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (
+  const readCwd = (
     source: AgentSessionSource,
     transcript: TranscriptCandidate,
     budget: MetadataReadBudget,
-    scanLimit = MAX_TRANSCRIPT_SCAN_BYTES,
-  ) {
-    if (transcript.identity.size === 0) return null;
-    if (
-      budget.bytesRemaining === 0 ||
-      budget.operationsRemaining < 2 ||
-      budget.recordsRemaining === 0
-    ) {
-      budget.truncated = true;
-      return null;
-    }
-    budget.operationsRemaining -= 1;
-    return yield* Effect.scoped(
-      fileSystem.open(transcript.filePath, { flag: "r" }).pipe(
-        Effect.flatMap((file) =>
+  ): Effect.Effect<CwdScanResult> => {
+    const size = isCompressedTranscript(transcript.filePath)
+      ? Number.POSITIVE_INFINITY
+      : transcript.identity.size;
+    let bytesRead = 0;
+    let recordsRead = 0;
+    let selectedBytes = 0;
+    const reserveSelected = (bytes: number) => {
+      selectedBytes += bytes;
+      if (selectedBytes > MAX_TRANSCRIPT_SCAN_BYTES) {
+        throw new TranscriptJsonLimitError({
+          message: "Transcript cwd fields exceed the scan limit",
+        });
+      }
+    };
+    // When cwd precedes a large message, skip reading the rest of the record.
+    let topLevelCwd: string | null = null;
+    const createReader = () =>
+      createTranscriptJsonReader(reserveSelected, selectCwdPath, {
+        onTopLevelString: (key, value) => {
+          if (key === "cwd" && value.trim().length > 0) topLevelCwd ??= value;
+        },
+      });
+    let reader = createReader();
+    let decoder = new TextDecoder();
+    let recordStarted = false;
+    const reserveRecord = () => {
+      if (recordsRead === MAX_METADATA_RECORDS_PER_TRANSCRIPT || budget.recordsRemaining === 0) {
+        budget.truncated = true;
+        return false;
+      }
+      recordsRead += 1;
+      budget.recordsRemaining -= 1;
+      return true;
+    };
+    const finishRecord = () => {
+      reader.write(decoder.decode());
+      const value = reader.finish();
+      reader = createReader();
+      decoder = new TextDecoder();
+      recordStarted = false;
+      selectedBytes = 0;
+      return extractCwd(value, source);
+    };
+    const scanChunk = (chunk: Uint8Array): string | false | null | undefined => {
+      let start = 0;
+      while (start < chunk.byteLength) {
+        const newline = chunk.indexOf(10, start);
+        const end = newline === -1 ? chunk.byteLength : newline;
+        if (end > start) {
+          recordStarted = true;
+          reader.write(decoder.decode(chunk.subarray(start, end), { stream: true }));
+          if (topLevelCwd !== null) return reserveRecord() ? topLevelCwd : null;
+        }
+        if (newline === -1) return undefined;
+        if (!reserveRecord()) return null;
+        const cwd = finishRecord();
+        if (cwd !== null) return cwd;
+        start = newline + 1;
+      }
+      return undefined;
+    };
+    const parse = <A>(f: () => A) =>
+      Effect.try({
+        try: f,
+        catch: (cause) => new TranscriptParseError({ filePath: transcript.filePath, cause }),
+      });
+    const readLastRecord = () => (!recordStarted || !reserveRecord() ? null : finishRecord());
+
+    const readNext = Effect.fn("AgentSessionScanner.readCwd")(
+      function* (): Effect.fn.Return<CwdScanResult> {
+        if (transcript.identity.size === 0) return null;
+        const resuming = bytesRead > 0;
+        const setupOperations = resuming ? 3 : 1;
+        if (
+          budget.bytesRemaining === 0 ||
+          budget.operationsRemaining <= setupOperations ||
+          budget.recordsRemaining === 0
+        ) {
+          budget.truncated = true;
+          return null;
+        }
+        budget.operationsRemaining -= setupOperations;
+        return yield* Effect.scoped(
           Effect.gen(function* () {
-            const readChunk = yield* transcriptChunkReader(file, transcript.filePath);
-            const size = isCompressedTranscript(transcript.filePath)
-              ? Number.POSITIVE_INFINITY
-              : transcript.identity.size;
-            let bytesRead = 0;
-            let recordsRead = 0;
-            let selectedBytes = 0;
-            const reserveSelected = (bytes: number) => {
-              selectedBytes += bytes;
-              if (selectedBytes > MAX_TRANSCRIPT_SCAN_BYTES) {
-                throw new TranscriptJsonLimitError({
-                  message: "Transcript cwd fields exceed the scan limit",
-                });
-              }
-            };
-            // When cwd precedes a large message, skip reading the rest of the record.
-            let topLevelCwd: string | null = null;
-            const createReader = () =>
-              createTranscriptJsonReader(reserveSelected, selectCwdPath, {
-                onTopLevelString: (key, value) => {
-                  if (key === "cwd" && value.trim().length > 0) topLevelCwd ??= value;
-                },
-              });
-            let reader = createReader();
-            let decoder = new TextDecoder();
-            let recordStarted = false;
-            const reserveRecord = () => {
+            const file = yield* fileSystem.open(transcript.filePath, { flag: "r" });
+            if (resuming) {
               if (
-                recordsRead === MAX_METADATA_RECORDS_PER_TRANSCRIPT ||
-                budget.recordsRemaining === 0
+                !sameTranscriptIdentity(
+                  transcript.identity,
+                  transcriptIdentity(transcript.filePath, yield* file.stat),
+                )
               ) {
                 budget.truncated = true;
-                return false;
+                return null;
               }
-              recordsRead += 1;
-              budget.recordsRemaining -= 1;
-              return true;
-            };
-            const finishRecord = () => {
-              reader.write(decoder.decode());
-              const value = reader.finish();
-              reader = createReader();
-              decoder = new TextDecoder();
-              recordStarted = false;
-              selectedBytes = 0;
-              return extractCwd(value, source);
-            };
-            const scanChunk = (chunk: Uint8Array): string | false | null | undefined => {
-              let start = 0;
-              while (start < chunk.byteLength) {
-                const newline = chunk.indexOf(10, start);
-                const end = newline === -1 ? chunk.byteLength : newline;
-                if (end > start) {
-                  recordStarted = true;
-                  reader.write(decoder.decode(chunk.subarray(start, end), { stream: true }));
-                  if (topLevelCwd !== null) return reserveRecord() ? topLevelCwd : null;
-                }
-                if (newline === -1) return undefined;
-                if (!reserveRecord()) return null;
-                const cwd = finishRecord();
-                if (cwd !== null) return cwd;
-                start = newline + 1;
-              }
-              return undefined;
-            };
-            const parse = <A>(f: () => A) =>
-              Effect.try({
-                try: f,
-                catch: (cause) =>
-                  new TranscriptParseError({ filePath: transcript.filePath, cause }),
-              });
-            const readLastRecord = () =>
-              !recordStarted || !reserveRecord() ? null : finishRecord();
-
-            const maxBytes = Math.min(scanLimit, size);
+              yield* file.seek(BigInt(bytesRead), "start");
+            }
+            const readChunk = yield* transcriptChunkReader(file, transcript.filePath);
+            const maxBytes = Math.min(bytesRead + MAX_TRANSCRIPT_SCAN_BYTES, size);
             while (bytesRead < maxBytes) {
               if (budget.bytesRemaining === 0 || budget.operationsRemaining === 0) {
                 budget.truncated = true;
@@ -1331,19 +1341,17 @@ export const make = Effect.gen(function* () {
               if (result !== undefined) return result;
             }
 
-            if (bytesRead < size) {
-              if (source === "claudeAgent" && scanLimit === MAX_TRANSCRIPT_SCAN_BYTES) {
-                return cwdBeyondPrefix;
-              }
-              budget.truncated = true;
-              return null;
-            }
-            return yield* parse(readLastRecord);
+            if (bytesRead === size) return yield* parse(readLastRecord);
+            // Claude transcripts are plain JSONL, so reopen at the next byte without holding a file open.
+            if (source === "claudeAgent") return { resume: readNext() };
+            budget.truncated = true;
+            return null;
           }),
-        ),
-      ),
-    ).pipe(Effect.orElseSucceed(() => null));
-  });
+        ).pipe(Effect.orElseSucceed(() => null));
+      },
+    );
+    return readNext();
+  };
 
   const readTranscript = Effect.fn("AgentSessionScanner.readTranscript")(function* (
     filePath: string,
@@ -1813,13 +1821,24 @@ export const make = Effect.gen(function* () {
         : Effect.succeed(importedCwd);
     });
 
-    // Give every candidate its usual prefix scan before spending budget on large Claude records.
+    // Scan one more slice per deferred transcript each round so large files share the remaining budget.
+    let pending = prefixes.flatMap((result, index) =>
+      result !== null && typeof result === "object" ? [index] : [],
+    );
+    while (pending.length > 0) {
+      const nextRound: Array<number> = [];
+      for (const index of pending) {
+        const result = prefixes[index];
+        if (result === null || typeof result !== "object") continue;
+        const next = yield* result.resume;
+        prefixes[index] = next;
+        if (next !== null && typeof next === "object") nextRound.push(index);
+      }
+      pending = nextRound;
+    }
+
     for (const [index, transcript] of transcripts.entries()) {
-      const prefix = prefixes[index]!;
-      const rolloutCwd =
-        prefix === cwdBeyondPrefix
-          ? yield* readCwd(source, transcript, budget, MAX_METADATA_BYTES_PER_SOURCE)
-          : prefix;
+      const rolloutCwd = prefixes[index];
       if (typeof rolloutCwd !== "string") continue;
       const cwd = yield* projectCwd(rolloutCwd, transcript.projectRoots);
       const key = `${transcript.providerInstanceId}\0${cwd}`;
