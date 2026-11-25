@@ -147,6 +147,11 @@ function xml(source: string, extension: string): XmlNode {
       return;
     }
     if (node.name === "Fallback" && !retainCompatibilityFallback(parent, node)) return;
+    const alt = tag.attributes.alt;
+    if (extension === ".epub" && node.name === "img" && stack[1]?.name === "html" && alt?.trim()) {
+      node.children.push(alt);
+      node.hasText = true;
+    }
     if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
