@@ -1,5 +1,6 @@
 import {
   cloneElement,
+  isValidElement,
   createContext,
   use,
   useEffect,
@@ -208,7 +209,8 @@ export function useSharedTooltip(
   useEffect(() => {
     if (!api || !anchorRef.current) return;
     if (enabled) api.refresh(anchorRef.current, content);
-    else api.dismiss(anchorRef.current);
+    // Only this trigger's own pending open or popup; another trigger's must survive.
+    else api.release(anchorRef.current);
   }, [api, content, enabled]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a removed trigger fires no pointerleave, so it must close the popup anchored to it
   useEffect(
@@ -231,7 +233,9 @@ export function useSharedTooltip(
     onPointerLeave: (event) => api.hide(event.currentTarget),
     // Keyboard focus shows it at once, as Base UI does.
     onFocus: (event) => {
-      if (enabled && event.currentTarget.matches(":focus-visible")) {
+      // A wrapper's handler sees focus bubble from the control inside it, so check the focused element.
+      const focused = event.target instanceof Element ? event.target : event.currentTarget;
+      if (enabled && focused.matches(":focus-visible")) {
         anchorRef.current = event.currentTarget;
         api.show(event.currentTarget, content, true);
       }
@@ -266,6 +270,14 @@ export function withSharedTooltip<Props>(
     : cloneElement(element, merged as Partial<Props>, children);
 }
 
+// A disabled control gets no pointer events, so its tooltip is unreachable anyway; treating it as a
+// disabled trigger also closes a tooltip that was open when the control became disabled.
+function renderedDisabled(element: ReactElement): boolean {
+  const props = element.props as { disabled?: unknown; render?: unknown };
+  if (props.disabled === true) return true;
+  return isValidElement(props.render) && renderedDisabled(props.render);
+}
+
 /** A tooltip on `render`: the shared one inside a SharedTooltipProvider, Base UI's otherwise. */
 export function SharedTooltipTrigger({
   render,
@@ -288,6 +300,7 @@ export function SharedTooltipTrigger({
   className?: SharedTooltipContent["className"];
   disabled?: boolean | undefined;
 }) {
+  const inactive = disabled === true || renderedDisabled(render);
   const tooltip = useSharedTooltip(
     {
       render: () => label,
@@ -298,11 +311,11 @@ export function SharedTooltipTrigger({
       ...(variant ? { variant } : {}),
       ...(className ? { className } : {}),
     },
-    !disabled,
+    !inactive,
   );
   if (tooltip) return withSharedTooltip(render, tooltip, children);
   return (
-    <Tooltip disabled={disabled}>
+    <Tooltip disabled={inactive}>
       <TooltipTrigger render={render}>{children}</TooltipTrigger>
       <TooltipPopup
         side={side}
