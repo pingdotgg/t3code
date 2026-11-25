@@ -467,6 +467,11 @@ function computeToolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
 }
 
 export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): string | null {
+  // A running call may not have written the file yet, and a failed asset lookup is not retried.
+  return entry.toolLifecycleStatus === "inProgress" ? null : announcedViewedImagePath(entry);
+}
+
+function announcedViewedImagePath(entry: WorkLogPresentationEntry): string | null {
   if (entry.toolLifecycleStatus === "failed") {
     return null;
   }
@@ -487,11 +492,31 @@ export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): strin
     : null;
 }
 
+export interface ViewedImage {
+  readonly path: string;
+  /** Only running calls opened it, so the file may not exist yet: hold a frame, do not request it. */
+  readonly pending: boolean;
+}
+
 /** Distinct images the agent opened across a tool group, in viewing order. */
+export function workEntriesViewedImages(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): ViewedImage[] {
+  const pendingByPath = new Map<string, boolean>();
+  for (const entry of entries) {
+    const path = announcedViewedImagePath(entry);
+    if (path === null) continue;
+    const pending = entry.toolLifecycleStatus === "inProgress";
+    pendingByPath.set(path, (pendingByPath.get(path) ?? true) && pending);
+  }
+  return Array.from(pendingByPath, ([path, pending]) => ({ path, pending }));
+}
+
+/** The {@link workEntriesViewedImages} whose files can be requested. */
 export function workEntriesViewedImagePaths(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): string[] {
-  return [...new Set(entries.flatMap((entry) => workEntryViewedImagePath(entry) ?? []))];
+  return workEntriesViewedImages(entries).flatMap(({ path, pending }) => (pending ? [] : path));
 }
 
 export interface ViewedImageAsset {

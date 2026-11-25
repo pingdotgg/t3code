@@ -85,11 +85,11 @@ export function authoredImageSizeStyle(
 }
 
 /**
- * An unavailable file has no dimensions, so its `aspect-video w-full` frame
- * would fill the row and `max-height` would squash it. Bound the width so the
- * frame stays 16:9 at the height cap.
+ * A file with no URL yet, or none at all, has no dimensions, so its
+ * `aspect-video w-full` frame would fill the row and `max-height` would squash
+ * it. Bound the width so the frame stays 16:9 at the height cap.
  */
-function unavailableImageSizeStyle(maxHeightRem: number): CSSProperties | undefined {
+function unsizedImageFrameStyle(maxHeightRem: number): CSSProperties | undefined {
   if (maxHeightRem === 30) return undefined;
   return { maxWidth: `min(100%, 30rem, ${(maxHeightRem * 16) / 9}rem)` };
 }
@@ -400,6 +400,8 @@ export function assetMediaActionsSource(input: {
 export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: ChatMarkdownAssetResource;
+  /** Hold the loading frame without asking for the file, which may not exist yet. */
+  readonly pending?: boolean | undefined;
   readonly kind?: "image" | "video";
   readonly alt: string;
   readonly copyMarkdown?: string;
@@ -424,7 +426,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   const workspaceMutationId = props.workspaceMutationId ?? threadWorkspaceMutationId;
   const assetUrl = useAssetUrlState(
     props.environmentId,
-    resource,
+    props.pending ? null : resource,
     workspaceMutationId !== undefined &&
       props.kind !== "video" &&
       (resource._tag === "media-file" || resource._tag === "workspace-file")
@@ -453,8 +455,8 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     props.style ??
     (knownSize
       ? authoredImageSizeStyle(knownSize.width, knownSize.height, maxHeightRem)
-      : unavailable
-        ? unavailableImageSizeStyle(maxHeightRem)
+      : unavailable || src === null
+        ? unsizedImageFrameStyle(maxHeightRem)
         : maxHeightRem !== 30
           ? { maxHeight: `${maxHeightRem}rem` }
           : undefined);

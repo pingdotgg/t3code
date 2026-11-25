@@ -10,6 +10,9 @@ import {
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
+  workEntriesViewedImagePaths,
+  workEntriesViewedImages,
+  workEntryViewedImagePath,
 } from "./presentation.js";
 
 function commandItem(
@@ -223,5 +226,48 @@ describe("resolveViewedImageAsset", () => {
       resolveViewedImageAsset("file:///repo/my%20shot.png", { threadId: ThreadId.make("thread") })
         ?.resource.path,
     ).toBe("/repo/my shot.png");
+  });
+});
+
+describe("viewed images of running Reads", () => {
+  const read = (
+    id: string,
+    path: string,
+    toolLifecycleStatus: NonNullable<WorkLogPresentationEntry["toolLifecycleStatus"]>,
+  ): WorkLogPresentationEntry => ({
+    id,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: "Read",
+    tone: "tool",
+    itemType: "dynamic_tool",
+    viewedImagePath: path,
+    toolLifecycleStatus,
+  });
+
+  it("withholds a Read's image path until the Read has finished", () => {
+    expect(workEntryViewedImagePath(read("read", "/repo/later.png", "inProgress"))).toBeNull();
+    expect(workEntryViewedImagePath(read("read", "/repo/later.png", "completed"))).toBe(
+      "/repo/later.png",
+    );
+  });
+
+  it("marks an image pending until a Read of it finishes", () => {
+    const entries = [
+      read("running", "/repo/b.png", "inProgress"),
+      read("done", "/repo/a.png", "completed"),
+      read("missing", "/repo/c.png", "failed"),
+      read("again", "/repo/a.png", "inProgress"),
+    ];
+    expect(workEntriesViewedImages(entries)).toEqual([
+      { path: "/repo/b.png", pending: true },
+      { path: "/repo/a.png", pending: false },
+    ]);
+    expect(workEntriesViewedImagePaths(entries)).toEqual(["/repo/a.png"]);
+    expect(
+      workEntriesViewedImages([...entries, read("finished", "/repo/b.png", "completed")]),
+    ).toEqual([
+      { path: "/repo/b.png", pending: false },
+      { path: "/repo/a.png", pending: false },
+    ]);
   });
 });
