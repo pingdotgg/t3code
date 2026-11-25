@@ -6,11 +6,11 @@ Appearance, don't show it. They start at **All projects** and **All environments
 and stay selected as you move between categories or search for a setting.
 
 Preferences saved on this device, such as appearance, confirmations and browser profiles, ignore
-the environment selection. On the Browser page they are read-only while a project is selected,
-though profiles can still be added, renamed and removed. Everything else is stored on a server.
-Choose one environment to edit its settings, or leave **All environments** to edit every connected
-environment at once. Offline environments keep their current values; this is a bulk edit, not a
-synced global default.
+the environment selection. On the Browser and Labs pages they are read-only while a project is
+selected, though browser profiles can still be added, renamed and removed. Everything else is
+stored on a server. Choose one environment to edit its settings, or leave **All environments** to
+edit every connected environment at once. Offline environments keep their current values; this is a
+bulk edit, not a synced global default.
 
 Choose a project to override settings for it on the selected environments. A layers icon beside
 each server row's title shows where the value comes from: the built-in default, the environment,
