@@ -194,6 +194,39 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
 
     it.effect.skipIf(!symlinksSupported)(
+      "replaces a Codex-created local session index lock with the shared lock",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+          const shadowHome = path.join(shadowRoot, "shadow");
+          const sharedIndex = path.join(sharedHome, "session_index.jsonl");
+          const sharedLock = path.join(sharedHome, "session_index.jsonl.lock");
+          const shadowLock = path.join(shadowHome, "session_index.jsonl.lock");
+
+          yield* writeTextFile(sharedIndex, "");
+          yield* writeTextFile(sharedLock, "");
+          yield* writeTextFile(shadowLock, "");
+
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({
+              homePath: sharedHome,
+              shadowHomePath: shadowHome,
+            }),
+          );
+
+          yield* materializeCodexShadowHome(layout);
+
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "session_index.jsonl"))).toBe(
+            sharedIndex,
+          );
+          expect(yield* fileSystem.readLink(shadowLock)).toBe(sharedLock);
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
       "replaces Codex-created local MCP OAuth locks with the shared lock directory",
       () =>
         Effect.gen(function* () {

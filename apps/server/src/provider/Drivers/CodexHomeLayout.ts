@@ -38,6 +38,7 @@ const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set([
   "mcp-oauth-locks",
   "thread-writer-locks",
   ".sqlite-maintenance.lock",
+  "session_index.jsonl.lock",
 ]);
 
 function resolveHomePath(path: Path.Path, home: string, value: string | undefined): string {
