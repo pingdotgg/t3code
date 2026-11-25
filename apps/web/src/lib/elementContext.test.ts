@@ -43,4 +43,17 @@ describe("normalizeElementContextSelection", () => {
     expect(result!.htmlPreview.endsWith("…")).toBe(true);
     expect(result!.styles.endsWith("…")).toBe(true);
   });
+
+  it("drops a straddling surrogate pair instead of leaving a lone high surrogate", () => {
+    const prefix = `${"a".repeat(3997)}b`;
+    const straddling = `${prefix}🚀tail`;
+    const result = normalizeElementContextSelection(
+      makePayload({ htmlPreview: straddling, styles: straddling }),
+    );
+    expect(result).not.toBeNull();
+    expect(/\p{Surrogate}/u.test(result!.htmlPreview)).toBe(false);
+    expect(/\p{Surrogate}/u.test(result!.styles)).toBe(false);
+    expect(result!.htmlPreview).toBe(`${prefix}…`);
+    expect(result!.styles).toBe(`${prefix}…`);
+  });
 });
