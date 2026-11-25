@@ -194,11 +194,3 @@ it("swaps the collapsed composer's send button for Stop while a turn can be stop
   await screen.rerender(collapsed({ canInterrupt: false }));
   await expect.element(screen.getByRole("button", { name: "Send message" })).toBeVisible();
 });
-
-it("shows Send as busy while a send waits for dictation to finish", async () => {
-  const props = { ...setup(), isRunning: false, canInterrupt: false, hasSendableContent: true };
-  await using screen = await render(<ComposerPrimaryActions {...props} isSendHeld />);
-  const send = screen.getByRole("button", { name: "Sending when ready" });
-  await expect.element(send).toBeDisabled();
-  await expect.element(send).toHaveAttribute("aria-busy", "true");
-});

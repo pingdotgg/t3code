@@ -360,7 +360,7 @@ export class VoiceInputSession {
 
   dispose(): void {
     this.disposed = true;
-    this.setPendingSubmission(null);
+    this.pendingSubmission = null;
     this.controller.dispose();
     this.listeners.clear();
     this.activityListeners.clear();

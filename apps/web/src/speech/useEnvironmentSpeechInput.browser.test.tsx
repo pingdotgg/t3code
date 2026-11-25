@@ -1038,4 +1038,19 @@ it("drops a queued submission for a non-persistent draft when switching owners",
   });
   await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("idle"));
   expect(submit).not.toHaveBeenCalled();
+  expect(mocks.voice.submitQueued).toBe(false);
+});
+
+it("clears the queued submission when transcription fails", async () => {
+  setup({ destination: "env-a" });
+  mocks.transcripts = [new Error("inference failed")];
+  const submit = vi.fn();
+  await using _screen = await render(<Probe />);
+  await act(() => mocks.voice.start());
+  await act(async () => {
+    mocks.voice.submitAfterDictation(submit);
+  });
+  await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("error"));
+  expect(mocks.voice.submitQueued).toBe(false);
+  expect(submit).not.toHaveBeenCalled();
 });
