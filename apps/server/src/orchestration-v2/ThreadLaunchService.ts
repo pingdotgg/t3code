@@ -746,12 +746,7 @@ const make = Effect.gen(function* () {
                 .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)))
             : null;
         const shouldFetch = remote !== null;
-        yield* setupTracker.stageStatus(
-          threadId,
-          "fetch",
-          shouldFetch ? "running" : "skipped",
-          taskPlan === null ? undefined : project.title,
-        );
+        yield* setupTracker.stageStatus(threadId, "fetch", shouldFetch ? "running" : "skipped");
         let fetchedBase = false;
         if (remote !== null) {
           const remoteBase = yield* git
@@ -909,18 +904,16 @@ const make = Effect.gen(function* () {
                   onRepository: ({ active, done, total }) => {
                     const current =
                       active.find(({ operation }) => operation === "fetch") ?? active[0];
-                    const name = current?.name.trim();
-                    const repository =
-                      current && name ? { name, operation: current.operation } : null;
-                    const count = `${done}/${total}`;
-                    // The project's own checkout can report a percentage, and its submodule
-                    // step may already have marked checkout done.
+                    const count = `${done} of ${total} ready`;
+                    // The project's own submodule step may already have marked checkout done.
                     return setupTracker.stage(threadId, "checkout", {
                       status: "running",
                       endedAt: null,
                       percent: null,
-                      detail: repository === null ? count : `${repository.name} · ${count}`,
-                      repositoryProgress: { active: repository, done, total },
+                      detail:
+                        current === undefined
+                          ? count
+                          : `${current.operation === "fetch" ? "Fetching" : "Checking out"} ${current.name} · ${count}`,
                     });
                   },
                 })

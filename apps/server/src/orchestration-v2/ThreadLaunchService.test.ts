@@ -3502,16 +3502,6 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
     }));
     const fetchStarted = yield* Deferred.make<void>();
     const releaseFetch = yield* Deferred.make<void>();
-    const checkoutStarted = yield* Deferred.make<void>();
-    const releaseCheckout = yield* Deferred.make<void>();
-    state.onCheckout = (cwd) =>
-      cwd === repositories[0]
-        ? Deferred.succeed(checkoutStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(releaseCheckout)),
-          )
-        : Effect.void;
-    state.onResolveBaseRemote = (cwd) =>
-      cwd === slowRepository ? Deferred.await(checkoutStarted) : Effect.void;
     state.onFetchBase = (cwd) =>
       cwd === slowRepository
         ? Deferred.succeed(fetchStarted, undefined).pipe(
@@ -3543,27 +3533,13 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
       );
       yield* Effect.gen(function* () {
         yield* Deferred.await(fetchStarted);
-        const active = (yield* tracker.get(launched.threadId))?.stages.find(
-          (stage) => stage.id === "checkout",
-        )?.repositoryProgress?.active;
-        assert.deepEqual(active, { name: "assets", operation: "fetch" });
-        yield* Deferred.succeed(releaseCheckout, undefined);
         const progress = yield* tracker.stream(launched.threadId).pipe(
           Stream.map((snapshot) => snapshot?.stages.find((stage) => stage.id === "checkout")),
-          Stream.filter((stage) => stage?.repositoryProgress?.done === 2),
+          Stream.filter((stage) => stage?.detail?.includes("2 of 3") === true),
           Stream.runHead,
         );
-        const stage = Option.getOrThrow(progress);
-        assert.equal(stage?.detail, "assets · 2/3");
-        assert.deepEqual(stage?.repositoryProgress, {
-          active: { name: "assets", operation: "fetch" },
-          done: 2,
-          total: 3,
-        });
-      }).pipe(
-        Effect.ensuring(Deferred.succeed(releaseFetch, undefined)),
-        Effect.ensuring(Deferred.succeed(releaseCheckout, undefined)),
-      );
+        assert.equal(Option.getOrThrow(progress)?.detail, "Fetching assets · 2 of 3 ready");
+      }).pipe(Effect.ensuring(Deferred.succeed(releaseFetch, undefined)));
       yield* Deferred.await(entered);
 
       const { thread } = yield* threads.getThreadProjection(launched.threadId);
@@ -3591,9 +3567,7 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
           ["agent", "pending"],
         ],
       );
-      assert.equal(stages[0]?.detail, "Project");
-      assert.equal(stages[1]?.detail, "3/3");
-      assert.deepEqual(stages[1]?.repositoryProgress, { active: null, done: 3, total: 3 });
+      assert.equal(stages[1]?.detail, "3 of 3 ready");
 
       assert.isTrue(yield* tracker.cancel(launched.threadId));
 
