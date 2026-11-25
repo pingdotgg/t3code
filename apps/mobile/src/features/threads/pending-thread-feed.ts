@@ -65,8 +65,61 @@ export interface PendingFoldFeedEntry {
   readonly messageId: string;
 }
 
+/**
+ * The thread's present state and next turns close the feed as rows, not the list footer: a
+ * footer settles a frame after rows above it resize, so it jumped when a row expanded.
+ */
+export interface StatusLinesFeedEntry {
+  readonly type: "status-lines";
+  readonly id: "status-lines";
+  readonly createdAt: string;
+}
+
+export interface QueuedRunsFeedEntry {
+  readonly type: "queued-runs";
+  readonly id: "queued-runs";
+  readonly createdAt: string;
+}
+
 /** A row of the thread feed's list. */
-export type ThreadFeedRow = PendingThreadFeedEntry | GuestPendingFeedEntry | PendingFoldFeedEntry;
+export type ThreadFeedRow =
+  | PendingThreadFeedEntry
+  | GuestPendingFeedEntry
+  | PendingFoldFeedEntry
+  | StatusLinesFeedEntry
+  | QueuedRunsFeedEntry;
+
+// Shared objects, so the WeakMap-cached grouping keeps each row's identity across renders.
+const STATUS_LINES_ROW: StatusLinesFeedEntry = {
+  type: "status-lines",
+  id: "status-lines",
+  createdAt: new Date(0).toISOString(),
+};
+const QUEUED_RUNS_ROW: QueuedRunsFeedEntry = {
+  type: "queued-runs",
+  id: "queued-runs",
+  createdAt: new Date(0).toISOString(),
+};
+
+/** Web's order after the transcript: the thread's state, waiting guest messages, then the queue. */
+export function appendThreadTail(
+  feed: ReadonlyArray<PendingThreadFeedEntry | PendingFoldFeedEntry>,
+  tail: {
+    readonly hasStatusLines: boolean;
+    readonly guestShare: ThreadGuestShare | null;
+    readonly queuedCount: number;
+  },
+  resolve: MessageResolver = m,
+): ReadonlyArray<ThreadFeedRow> {
+  const withGuests = appendGuestPendingMessages(feed, tail.guestShare, resolve);
+  if (!tail.hasStatusLines && tail.queuedCount === 0) return withGuests;
+  return [
+    ...feed,
+    ...(tail.hasStatusLines ? [STATUS_LINES_ROW] : []),
+    ...withGuests.slice(feed.length),
+    ...(tail.queuedCount > 0 ? [QUEUED_RUNS_ROW] : []),
+  ];
+}
 
 export type GroupedThreadFeedRow = ThreadFeedRow & {
   readonly userMessageGrouping: ReturnType<typeof resolveUserMessageGrouping>;

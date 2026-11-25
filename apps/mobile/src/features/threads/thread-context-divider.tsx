@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { createContext, use, type ReactNode } from "react";
 import { Pressable, View, type ColorValue } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -120,4 +120,21 @@ export function ThreadStatusLine(props: {
       ))}
     </View>
   );
+}
+
+/**
+ * The feed's status lines, read by their own feed row. A context keeps that row's object stable,
+ * so a new action callback re-renders the row without changing the list's data.
+ */
+export const ThreadStatusLinesContext = createContext<{
+  readonly lines: ReadonlyArray<ThreadStatusLineModel>;
+  readonly iconColor: ColorValue;
+} | null>(null);
+
+export function ThreadStatusLinesRow() {
+  const value = use(ThreadStatusLinesContext);
+  if (value === null) return null;
+  return value.lines.map((line) => (
+    <ThreadStatusLine key={line.key} line={line} iconColor={value.iconColor} />
+  ));
 }
