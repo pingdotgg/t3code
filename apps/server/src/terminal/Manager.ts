@@ -1416,22 +1416,45 @@ const OVERSIZED_SEQUENCE = "\u0018";
 // Stands in for the ESC of an oversized sequence, which ended any string history left open.
 const STRING_TERMINATOR = "\u001b\\";
 
-// Long prefixes stay out of snapshots so they cannot crowd out scrollback on every resync.
+// Bound the unfinished sequence in snapshots so it cannot push history out of the client's budget.
 const MAX_SNAPSHOT_SEQUENCE_LENGTH = 4_096;
+
+// History leaves out the sequence the terminal is still inside. A client that starts from a
+// snapshot needs it, or it prints the rest of the sequence as text.
+function unfinishedSequenceReplay(held: string): string {
+  if (held.startsWith(OVERSIZED_SEQUENCE)) return held.slice(1);
+  if (held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) return held;
+  const introducer = held.slice(0, 2);
+  const tail = /[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "";
+  if (introducer === "\u001b[") {
+    // The scanner has already handled bytes that end a CSI. Only intermediates, parameters,
+    // and executed non-NUL controls affect its replay.
+    const body = held
+      .slice(2, held.length - tail.length)
+      .replace(/[^\x01-\x0f\x20-\x3f]+/g, "")
+      .replace(/\r{2,}/g, "\r");
+    const budget = MAX_SNAPSHOT_SEQUENCE_LENGTH - introducer.length - tail.length;
+    if (body.length <= budget) return introducer + body + tail;
+    // Controls execute as they arrive, independently of the parameters dispatched at the end.
+    const parameters = body.replace(/[^\x20-\x3f]+/g, "");
+    const replayParameters = parameters.length <= budget ? parameters : "";
+    const controls = body.replace(/[^\x01-\x0f]+/g, "");
+    const controlsToSkip = Math.max(0, controls.length - (budget - replayParameters.length));
+    return introducer + replayParameters + controls.slice(controlsToSkip) + tail;
+  }
+  return introducer + tail;
+}
 
 function snapshotHistory(session: TerminalSessionState, supportsSnapshotSequenceState: boolean) {
   const history = session.history.value();
   const held = session.pendingHistoryControlSequence;
   const oversized = held.startsWith(OVERSIZED_SEQUENCE);
-  if (!oversized && held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) {
-    return { history: history + held };
-  }
-  // Viewers that cannot skip omitted prefixes still need the legacy replay.
-  if (!supportsSnapshotSequenceState) {
-    const replay = oversized
-      ? held.slice(1)
-      : held.slice(0, 2) + (/[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "");
-    return { history: history + replay };
+  // A long CSI compacts into a faithful replay, so only strings and oversized prefixes are omitted.
+  if (
+    !supportsSnapshotSequenceState ||
+    (!oversized && (held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH || held.startsWith("\u001b[")))
+  ) {
+    return { history: history + unfinishedSequenceReplay(held) };
   }
   const state = terminalSequenceStateAfter(TERMINAL_SEQUENCE_GROUND, held, oversized ? 1 : 0);
   // The omitted prefix's ESC may also have ended the preceding string in history.
