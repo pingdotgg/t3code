@@ -2168,6 +2168,7 @@ export function PullRequestDetailPanel({
               ? {
                   host: {
                     url: unavailableHostUrl,
+                    threadRef,
                     openLabel: openOnHostLabel(
                       sourceControlClients.get(repositoryIdentity?.provider),
                       resolve,
@@ -2283,6 +2284,7 @@ export function PullRequestDetailPanel({
                     scrollerRef={scrollerRefs.code}
                     onAddToAgentSelection={addSelectionToAgent}
                     environmentId={environmentId}
+                    threadRef={threadRef}
                     reference={reference}
                     detail={detail}
                     selectedCommitOid={selectedCodeCommitOid}

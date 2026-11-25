@@ -402,6 +402,11 @@ function shouldReportTerminalMouse(
   return tracking && !event.shiftKey && !event.ctrlKey && !event.metaKey;
 }
 
+// macOS Chromium reports Control-click as a primary press and opens the context menu on it.
+function isTerminalPrimaryPress(event: Pick<MouseEvent, "button" | "ctrlKey">): boolean {
+  return event.button === 0 && !(event.ctrlKey && isMacPlatform(navigator.platform));
+}
+
 type TerminalMouseAction = "press" | "release" | "motion";
 type TerminalMouseReport = ReturnType<GhosttyTerminalCore["encodeMouse"]>;
 
@@ -1432,7 +1437,7 @@ export class GhosttyTerminalSurface {
       }
       return;
     }
-    if (event.button !== 0) return;
+    if (!isTerminalPrimaryPress(event)) return;
     const clickCount = this.recordSelectionClick(event);
     const link = this.linkAt(event.clientX, event.clientY, true);
     if (link && !event.shiftKey && clickCount === 1) {
@@ -1775,7 +1780,7 @@ export class GhosttyTerminalSurface {
       event.preventDefault();
       return;
     }
-    if (event.button !== 0) return;
+    if (!isTerminalPrimaryPress(event)) return;
     if (!this.selectionMoved && this.selectionMode === "cell") {
       this.clearSelection();
     }
