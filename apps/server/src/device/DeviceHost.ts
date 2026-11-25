@@ -104,7 +104,6 @@ export interface HubUpstream {
   readonly protocols: ReadonlyArray<string>;
 }
 
-/** Discovery and lifecycle for the devices a ready host can run. */
 /**
  * Where Android puts a touch normalized over the streamed framebuffer. "framebuffer": on the
  * panel, mapped into the display like a real touchscreen. "display": the hub scales it by the
@@ -118,6 +117,7 @@ export interface AndroidStream {
   readonly touchSpace: AndroidTouchSpace;
 }
 
+/** Discovery and lifecycle for the devices a ready host can run. */
 export interface DeviceOperations {
   readonly list: Effect.Effect<
     {

@@ -40,7 +40,8 @@ describe("displayRegion", () => {
   it.each([
     ["a frame already sized to the display", 904, 2316],
     ["a square frame", 1000, 1000],
-  ] as const)("shows %s whole", (_name, width, height) => {
+  ] as const)("shows %s whole and touches it as it is", (_name, width, height) => {
     expect(displayRegion(foldCover, width, height)).toBeNull();
+    expect(touchArea(foldCover, width, height)).toBeNull();
   });
 });

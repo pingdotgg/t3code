@@ -1,5 +1,5 @@
 // @effect-diagnostics globalTimers:off - This browser and WebView transport runs without an Effect runtime.
-import type { DeviceDisplayViewport } from "@t3tools/contracts";
+import { DeviceDisplayViewport } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -10,20 +10,8 @@ export interface FrameRegion {
   readonly height: number;
 }
 
-const size = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
-const offset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-const unit = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }));
-const decodeResponse = Schema.decodeUnknownOption(
-  Schema.Struct({
-    viewport: Schema.NullOr(
-      Schema.Struct({
-        width: size,
-        height: size,
-        content: Schema.Struct({ x: offset, y: offset, width: size, height: size }),
-        touch: Schema.Struct({ x: unit, y: unit, width: unit, height: unit }),
-      }),
-    ),
-  }),
+const decodeEvent = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ viewport: Schema.NullOr(DeviceDisplayViewport) })),
 );
 
 /**
@@ -140,13 +128,7 @@ export function watchDisplayViewport(options: {
       // A first connection refused (a server without the route) leaves the frame uncropped.
     };
     next.onmessage = (event: MessageEvent<string>) => {
-      let payload: unknown;
-      try {
-        payload = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      const decoded = decodeResponse(payload);
+      const decoded = decodeEvent(event.data);
       if (Option.isNone(decoded)) return;
       const viewport = decoded.value.viewport;
       if (current !== undefined && sameViewport(viewport, current)) return;
