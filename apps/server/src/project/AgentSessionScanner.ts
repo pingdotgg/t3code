@@ -361,6 +361,7 @@ interface ClaudeFields {
   readonly title: string | undefined;
   readonly customTitle: string | null;
   readonly model: string | undefined;
+  readonly promptTitle: string | undefined;
   readonly shellCommandTitle: string | undefined;
 }
 
@@ -369,6 +370,7 @@ const emptyClaudeFields: ClaudeFields = {
   title: undefined,
   customTitle: null,
   model: undefined,
+  promptTitle: undefined,
   shellCommandTitle: undefined,
 };
 
@@ -378,9 +380,10 @@ const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
 function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord): ClaudeFields {
   if (isHiddenClaudeRecord(record)) return fields;
   const model = record.message?.model?.trim();
-  const shellInput =
-    fields.shellCommandTitle === undefined && record.type === "user"
-      ? claudeShellInput(extractText(record.message?.content))
+  const userText =
+    record.type === "user" &&
+    (fields.promptTitle === undefined || fields.shellCommandTitle === undefined)
+      ? claudeUserText(extractText(record.message?.content))
       : undefined;
   return {
     sessionId: record.sessionId?.trim() || fields.sessionId,
@@ -392,9 +395,11 @@ function foldClaudeFields(fields: ClaudeFields, record: DecodedTranscriptRecord)
         : (claudeTitle(record.customTitle) ?? null),
     // Not a model ID that can be selected when the imported session resumes.
     model: model && model !== CLAUDE_SYNTHETIC_MODEL ? model : fields.model,
-    shellCommandTitle: shellInput?.trim()
-      ? deriveTitle("claudeAgent", `!${shellInput}`)
-      : fields.shellCommandTitle,
+    promptTitle:
+      fields.promptTitle ?? (userText ? deriveTitle("claudeAgent", userText.titleText) : undefined),
+    shellCommandTitle:
+      fields.shellCommandTitle ??
+      (userText?.isShellCommand ? deriveTitle("claudeAgent", userText.text) : undefined),
   };
 }
 
@@ -447,21 +452,23 @@ function claudeCommand(text: string): { readonly text: string; readonly titleTex
   return { text: args.length === 0 ? name : `${name} ${args}`, titleText: args };
 }
 
-function claudeShellInput(text: string): string | undefined {
-  return /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
-}
-
 /** What a Claude user turn shows the user typed, and the part of it that may name the thread. */
-function claudeUserText(text: string): { readonly text: string; readonly titleText: string } {
+function claudeUserText(text: string): {
+  readonly text: string;
+  readonly titleText: string;
+  readonly isShellCommand?: boolean;
+} {
   if (CLAUDE_UI_OUTPUT.test(text)) return { text: "", titleText: "" };
-  const shellInput = claudeShellInput(text);
-  if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
+  const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
+  if (shellInput !== undefined) {
+    return { text: `!${shellInput}`, titleText: "", isShellCommand: shellInput.trim().length > 0 };
+  }
   return claudeCommand(text) ?? { text, titleText: text };
 }
 
 function claudeVisibleText(record: DecodedTranscriptRecord) {
   const text = extractText(record.message?.content);
-  return record.type === "user" ? claudeUserText(text) : { text, titleText: text };
+  return record.type === "user" ? claudeUserText(text).text : text;
 }
 
 /** Saved titles can be the raw markup of a user turn, such as the command that opened the session. */
@@ -554,7 +561,7 @@ function parseAgentSessionRecords(
       ? records.findLast((record) => record.type === "session_info")?.name?.trim() || null
       : (claudeFields.title ?? null);
   let model = claudeFields.model ?? null;
-  let derivedTitle: string | undefined;
+  let derivedTitle = claudeFields.promptTitle;
   // Names a session whose only request was a bare command, such as `/review`.
   let bareCommandTitle: string | undefined;
   let hasAssistantMessage = false;
@@ -621,14 +628,16 @@ function parseAgentSessionRecords(
   let conversationMessageCount = 0;
   const retainMessage = (
     message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
-    titleText = message.text,
   ) => {
     if (firstUserMessage === undefined && message.role === "user") {
       firstUserMessage = message;
     }
     if (derivedTitle === undefined && message.role === "user") {
-      derivedTitle = deriveTitle(input.source, titleText);
-      bareCommandTitle ??= deriveTitle(input.source, message.text);
+      if (input.source === "claudeAgent") {
+        bareCommandTitle ??= deriveTitle(input.source, message.text);
+      } else {
+        derivedTitle = deriveTitle(input.source, message.text);
+      }
     }
     hasAssistantMessage ||= message.role === "assistant";
     conversationMessageCount += 1;
@@ -670,22 +679,19 @@ function parseAgentSessionRecords(
     if (input.source === "claudeAgent") {
       if (isHiddenClaudeRecord(record)) continue;
       if (record.type !== "user" && record.type !== "assistant") continue;
-      const { text, titleText } = claudeVisibleText(record);
+      const text = claudeVisibleText(record);
       if (text.length === 0) continue;
       if (record.type === "assistant") {
         if (record.message?.model?.trim() === CLAUDE_SYNTHETIC_MODEL)
           hasClaudeSyntheticReply = true;
         else hasClaudeModelReply = true;
       }
-      retainMessage(
-        {
-          role: record.type,
-          text,
-          createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
-          codexResponseUser: false,
-        },
-        titleText,
-      );
+      retainMessage({
+        role: record.type,
+        text,
+        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
+        codexResponseUser: false,
+      });
       continue;
     }
 
@@ -808,7 +814,7 @@ function shouldRetainDecodedRecord(
       return false;
     }
     // Same rule as the parser, so Claude Code's own output never takes a history window slot.
-    return claudeVisibleText(record).text.length > 0;
+    return claudeVisibleText(record).length > 0;
   }
   if (extractDecodedCwd(record) !== null) return true;
   return (

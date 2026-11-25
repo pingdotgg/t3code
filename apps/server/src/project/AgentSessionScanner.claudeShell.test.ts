@@ -23,6 +23,16 @@ it.layer(NodeServices.layer)("Claude shell history", (it) => {
       omittedMessageCount: 0,
     },
     {
+      name: "a prompt outside the retained history after an opening shell command",
+      messages: [
+        "<bash-input>pwd</bash-input>",
+        "Fix the login bug",
+        ...Array.from({ length: 200 }, () => "<command-name>/clear</command-name>"),
+      ],
+      title: "Fix the login bug",
+      omittedMessageCount: 2,
+    },
+    {
       name: "a shell command outside the retained history",
       messages: [
         "<command-name>/clear</command-name>",
