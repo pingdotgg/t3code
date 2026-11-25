@@ -11124,7 +11124,7 @@
   "4889f7885396c26b": "工作树",
   "2d96fe39105aae8f": "轮转日志",
   "1214c77f4bf1ee81": "浏览器产物",
-  "9831e9c703b3bdd0": "{omitted, plural, other {{environment}：另有 {count} 个结果。}}",
+  "d9e33a2a8d404a96": "{omitted, plural, other {{environment}：另有 {count} 个结果。}}",
   "c8192b219451a0d0": "已移除 {removed} 项，保留 {kept} 项，失败 {failed} 项",
   "cbd8bf91a856906a": "已移除 {removed} 项，保留 {kept} 项",
   "754564dc0b82aff7": "{count, plural, other {上次运行：{when}。已回收 {bytes}。有 {count} 项无法移除。}}",
