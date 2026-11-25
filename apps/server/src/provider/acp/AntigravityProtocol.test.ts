@@ -715,6 +715,28 @@ describe("Antigravity tool results", () => {
       }),
     ).toMatchObject({ item: { aggregatedOutput: "[Earlier output truncated]\n\nok" } });
   });
+
+  it("titles search_web calls that arrive as bare Searched as web searches", () => {
+    for (const rawInput of [
+      { query: "t3code pingdotgg" },
+      { domain: "github.com", query: "t3code pingdotgg" },
+    ]) {
+      const toolCall = normalizeAntigravityToolCall(
+        parseToolUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "search-web-1",
+            title: "Searched",
+            kind: "search",
+            status: "completed",
+            rawInput,
+          },
+        }).toolCall,
+      );
+      expect(toolCall.data.title).toBe("Web search");
+    }
+  });
 });
 
 describe("Antigravity served reads", () => {
