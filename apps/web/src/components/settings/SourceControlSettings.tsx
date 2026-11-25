@@ -465,6 +465,10 @@ export function SourceControlSettingsPanel() {
 
   const environmentId =
     environment?.connection.phase === "connected" ? environment.environmentId : null;
+  const environmentProjects = scope.members.filter(
+    (member) => member.environmentId === environmentId,
+  );
+  const projectId = environmentProjects.length === 1 ? environmentProjects[0]?.id : undefined;
   const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
   const environmentSuffix = aggregate && environment ? ` · ${environment.label}` : "";
   const discovery = useEnvironmentQuery(
@@ -472,7 +476,7 @@ export function SourceControlSettingsPanel() {
       ? null
       : sourceControlEnvironment.discovery({
           environmentId,
-          input: {},
+          input: projectId === undefined ? {} : { projectId },
         }),
     useMessages(),
   );

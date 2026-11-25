@@ -748,6 +748,8 @@ function makeManager(input?: {
           resolveHandle: () => Effect.succeed({ provider, context: null }),
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
+          discoverForProject: () => Effect.succeed([]),
+          discoverWithProjectRemotes: () => Effect.succeed([]),
         }),
       ),
     ),

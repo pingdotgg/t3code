@@ -1,5 +1,6 @@
 import {
   type SourceControlDiscoveryResult,
+  type SourceControlProviderDiscoveryItem,
   type VcsDiscoveryItem,
   type VcsDriverKind,
 } from "@t3tools/contracts";
@@ -69,6 +70,10 @@ export class SourceControlDiscovery extends Context.Service<
   SourceControlDiscovery,
   {
     readonly discover: Effect.Effect<SourceControlDiscoveryResult>;
+    readonly discoverForProject: (cwd: string) => Effect.Effect<SourceControlDiscoveryResult>;
+    readonly discoverWithProjectRemotes: (
+      projectRemotes: Effect.Effect<ReadonlyArray<string>>,
+    ) => Effect.Effect<SourceControlDiscoveryResult>;
   }
 >()("t3/sourceControl/SourceControlDiscovery") {}
 
@@ -136,8 +141,8 @@ export const make = Effect.gen(function* () {
       );
   };
 
-  return SourceControlDiscovery.of({
-    discover: Effect.andThen(
+  const discover = (providers: Effect.Effect<ReadonlyArray<SourceControlProviderDiscoveryItem>>) =>
+    Effect.andThen(
       refreshPath,
       Effect.all({
         versionControlSystems: Effect.all(
@@ -159,8 +164,18 @@ export const make = Effect.gen(function* () {
           ) as ReadonlyArray<Effect.Effect<VcsDiscoveryItem>>,
           { concurrency: "unbounded" },
         ),
-        sourceControlProviders: sourceControlProviders.discover,
+        sourceControlProviders: providers,
       }),
+    );
+
+  return SourceControlDiscovery.of({
+    discover: discover(sourceControlProviders.discover),
+    discoverForProject: Effect.fn("SourceControlDiscovery.discoverForProject")((cwd: string) =>
+      discover(sourceControlProviders.discoverForProject(cwd)),
+    ),
+    discoverWithProjectRemotes: Effect.fn("SourceControlDiscovery.discoverWithProjectRemotes")(
+      (projectRemotes: Effect.Effect<ReadonlyArray<string>>) =>
+        discover(sourceControlProviders.discoverWithProjectRemotes(projectRemotes)),
     ),
   });
 });

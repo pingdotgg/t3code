@@ -180,6 +180,56 @@ it.effect("reports every hosting integration in registry order with its sign-in"
   ),
 );
 
+it.effect("uses checkout and registered remote context for provider discovery", () =>
+  Effect.gen(function* () {
+    const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+    const environment = yield* discovery.discover;
+    const project = yield* discovery.discoverForProject("/forgejo-checkout");
+    const remote = "http://localhost:3000/maria/project.git";
+    const allProjects = yield* discovery.discoverWithProjectRemotes(Effect.succeed([remote]));
+
+    assert.strictEqual(environment.sourceControlProviders[0]?.auth.status, "unknown");
+    assert.strictEqual(project.sourceControlProviders[0]?.auth.status, "authenticated");
+    assert.deepStrictEqual(project.sourceControlProviders[0]?.auth.account, Option.some("maria"));
+    assert.strictEqual(allProjects.sourceControlProviders[0]?.auth.status, "authenticated");
+  }).pipe(
+    Effect.provide(
+      SourceControlDiscovery.layer.pipe(
+        Layer.provide(
+          layerDiscovery(run, [
+            {
+              type: "managed-cli",
+              kind: kind("forgejo"),
+              label: "Forgejo",
+              installHint: "Install fj.",
+              refineUnknownRemote: () => Effect.succeed(null),
+              probe: (cwd, projectRemotes) =>
+                (projectRemotes ?? Effect.succeed([])).pipe(
+                  Effect.map((registered) => ({
+                    kind: kind("forgejo"),
+                    label: "Forgejo",
+                    executable: "fj",
+                    status: "available",
+                    installHint: "Install fj.",
+                    detail: Option.none(),
+                    version: Option.none(),
+                    auth: providerAuth(
+                      cwd === "/forgejo-checkout" ||
+                        registered.includes("http://localhost:3000/maria/project.git")
+                        ? { status: "authenticated", account: "maria" }
+                        : { status: "unknown" },
+                    ),
+                  })),
+                ),
+            },
+          ]),
+        ),
+      ),
+    ),
+    Effect.provideService(SpawnExecutableResolution, onPath),
+  ),
+);
+
 it.effect("explains a CLI whose version probe failed instead of advising an install", () =>
   Effect.gen(function* () {
     const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
