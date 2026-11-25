@@ -3,9 +3,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { expect } from "e2e";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import { T3_HOME } from "../e2e.config.ts";
-import { makeState, runPromise, test, WEB } from "./t3.ts";
+import { makeState, rpcClient, runPromise, test, WEB } from "./t3.ts";
 
 const REPLY = "The screenshot is a blue frame.";
 // A 320x180 blue PNG.
@@ -17,15 +19,24 @@ const PNG =
 // the test's go-ahead before writing the file and again before ending the turn, which folds the
 // strip away.
 const acp = (path: string, signals: string) => `
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, watch, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const sessionId = "pending-read-image";
 const path = ${JSON.stringify(path)};
 const signals = ${JSON.stringify(signals)};
-const waitFor = async (signal) => {
-  while (!existsSync(signals + "/" + signal)) await new Promise((resolve) => setTimeout(resolve, 100));
-};
+const waitFor = (signal) =>
+  new Promise((resolve) => {
+    const watcher = watch(signals, (_event, name) => {
+      if (name !== signal) return;
+      watcher.close();
+      resolve();
+    });
+    if (existsSync(signals + "/" + signal)) {
+      watcher.close();
+      resolve();
+    }
+  });
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
 const update = (value) => send({ method: "session/update", params: { sessionId, update: value } });
 for await (const line of createInterface({ input: process.stdin })) {
@@ -73,32 +84,40 @@ test(
     };
     try {
       await NodeFSP.writeFile(settingsPath, JSON.stringify(settings));
+      // The settings watcher registers the agent asynchronously; start once the server lists it.
+      await runPromise(
+        Effect.gen(function* () {
+          const client = yield* rpcClient(T3_HOME, app.baseUrl ?? "");
+          yield* client.subscribeServerConfig({}).pipe(
+            Stream.filter((event) =>
+              (event.type === "snapshot"
+                ? event.config.providers
+                : event.type === "providerStatuses"
+                  ? event.payload.providers
+                  : []
+              ).some((provider) => provider.instanceId === "pending-read-agent"),
+            ),
+            Stream.runHead,
+          );
+        }).pipe(Effect.scoped),
+      );
       const { cli } = makeState(T3_HOME);
-      // The watcher reloads settings asynchronously. Retry only before a thread was created.
-      let threadId: string | undefined;
-      for (let attempt = 0; attempt < 8 && threadId === undefined; attempt++) {
-        const started = await runPromise(
-          cli(
-            [
-              "thread",
-              "start",
-              project,
-              "Take a screenshot and look at it",
-              "--title",
-              "Pending read",
-              "--provider",
-              "pending-read-agent",
-              "--model",
-              "default",
-              "--json",
-            ],
-            [0, 1],
-          ),
-        );
-        if (!started.stdout.includes("threadId")) continue;
-        threadId = (JSON.parse(started.stdout) as { threadId: string }).threadId;
-      }
-      if (threadId === undefined) throw new Error("Could not start the pending read turn.");
+      const started = await runPromise(
+        cli([
+          "thread",
+          "start",
+          project,
+          "Take a screenshot and look at it",
+          "--title",
+          "Pending read",
+          "--provider",
+          "pending-read-agent",
+          "--model",
+          "default",
+          "--json",
+        ]),
+      );
+      const { threadId } = JSON.parse(started.stdout) as { threadId: string };
 
       await t3.open({ threadId });
       await screen.getByText("Read demo/later.png", { exact: true }).waitFor({ timeout: 60_000 });
