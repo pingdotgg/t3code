@@ -582,7 +582,7 @@ export const AntigravityDriver: ProviderDriver<
         Effect.mapError(
           (cause) =>
             new AntigravityCliUsageError({
-              detail: "Could not resolve Antigravity executable.",
+              reason: "resolve_executable",
               cause,
             }),
         ),

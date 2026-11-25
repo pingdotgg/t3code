@@ -23,7 +23,28 @@ const SUMMARY_WINDOW_MINS = new Map([
   ["weekly", 7 * 24 * 60],
 ]);
 const AUTO_CACHE_TTL_MS = 5 * 60 * 1000;
-const MANUAL_MIN_INTERVAL_MS = 60 * 1000;
+const FAIL_COOLDOWN_MS = 60 * 1000;
+
+// Strip ambient Google credentials and T3 launcher internals before spawning the official CLI.
+const BLOCKED_CLI_ENV_KEYS = new Set([
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CLOUD_PROJECT",
+  "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_CLOUD_QUOTA_PROJECT",
+  "GOOGLE_GENAI_USE_VERTEXAI",
+  "GCLOUD_PROJECT",
+  "CLOUDSDK_CORE_PROJECT",
+  "AGY_ACP_CCPA_PROJECT",
+  "AGY_ACP_ENABLE_OAUTH",
+  "GEMINI_HOME",
+  "SSH_CONNECTION",
+  "AGY_ACP_FORCE_FILE_STORAGE",
+  "AGY_CLI_FORCE_FILE_TOKEN_STORAGE",
+  "ELECTRON_RUN_AS_NODE",
+  "CHROME_CRASHPAD_PIPE_NAME",
+]);
 
 const UserInfo = Schema.Struct({ id: Schema.NonEmptyString });
 const Quota = Schema.Struct({
@@ -53,15 +74,32 @@ const Summary = Schema.Struct({
 const decodeUserInfo = Schema.decodeUnknownEffect(UserInfo);
 const decodeSummary = Schema.decodeUnknownEffect(Summary);
 
+const AntigravityCliUsageErrorReason = Schema.Literals([
+  "load_pty",
+  "resolve_executable",
+  "spawn_failed",
+  "invalid_output",
+]);
+
 export class AntigravityCliUsageError extends Schema.TaggedError<AntigravityCliUsageError>()(
   "AntigravityCliUsageError",
   {
-    detail: Schema.String,
+    reason: AntigravityCliUsageErrorReason,
+    executablePath: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    return this.detail;
+    switch (this.reason) {
+      case "load_pty":
+        return "Could not load node-pty to run the official Antigravity CLI.";
+      case "resolve_executable":
+        return "Could not resolve the configured Antigravity CLI executable.";
+      case "spawn_failed":
+        return "Could not launch the official Antigravity CLI.";
+      case "invalid_output":
+        return "Official Antigravity CLI did not return a parseable /usage summary.";
+    }
   }
 }
 
@@ -334,120 +372,141 @@ export interface AntigravityCliUsageRunInput {
   readonly cwd: string;
 }
 
-const runOfficialAgyUsagePty = Effect.fn("AntigravityUsageProbe.runOfficialAgyUsagePty")(function* (
-  input: AntigravityCliUsageRunInput,
-) {
-  const pty = yield* Effect.try({
-    try: () => requireExternal("node-pty") as typeof import("node-pty"),
-    catch: (cause) =>
-      new AntigravityCliUsageError({ detail: "Could not load node-pty for agy CLI.", cause }),
-  });
+export type AntigravityNodePtyModule = Pick<typeof import("node-pty"), "spawn">;
 
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(input.env)) {
-    if (value !== undefined) env[key] = value;
+export function buildAntigravityCliUsageEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  profileDirectory?: string,
+): NodeJS.ProcessEnv {
+  const cleanEnv: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (value === undefined) continue;
+    // Windows treats environment variable names as case-insensitive.
+    if (BLOCKED_CLI_ENV_KEYS.has(key.toUpperCase())) continue;
+    cleanEnv[key] = value;
   }
-  env.TERM = env.TERM || "xterm-256color";
+  if (profileDirectory !== undefined) {
+    cleanEnv.GEMINI_HOME = profileDirectory;
+  }
+  return cleanEnv;
+}
 
-  const bannerReady = yield* Deferred.make<void>();
-  const quotaReady = yield* Deferred.make<void>();
-  const exited = yield* Deferred.make<void>();
-
-  let raw = "";
-  let sentUsage = false;
-
-  const proc = yield* Effect.acquireRelease(
-    Effect.try({
-      try: () =>
-        pty.spawn(input.executablePath, [], {
-          name: "xterm-256color",
-          cols: 120,
-          rows: 42,
-          cwd: input.cwd,
-          env,
-        }),
-      catch: (cause) =>
-        new AntigravityCliUsageError({
-          detail: `Could not launch Antigravity CLI at '${input.executablePath}'.`,
-          cause,
-        }),
-    }),
-    (handle) =>
-      Effect.gen(function* () {
-        yield* Effect.sync(() => {
-          try {
-            handle.write("\x1b");
-            handle.write("\x03\x03");
-          } catch {
-            // Ignore write errors if the CLI already exited.
-          }
-        });
-        yield* Effect.sleep("250 millis");
-        yield* Effect.sync(() => {
-          try {
-            handle.kill();
-          } catch {
-            // Ignore kill errors if already terminated.
-          }
-        });
-      }),
-  );
-
-  proc.onData((chunk) => {
-    raw += chunk;
-    const clean = stripAnsiPreserveLines(raw);
-    if (clean.includes("Antigravity CLI")) {
-      Deferred.doneUnsafe(bannerReady, Exit.void);
-    }
-    if (sentUsage && clean.includes("Models & Quota") && clean.includes("Limit Remaining")) {
-      const parsed = parseAntigravityCliUsageOutput(raw, 0);
-      if (parsed && parsed.windows.length >= 2) {
-        Deferred.doneUnsafe(quotaReady, Exit.void);
-      }
-    }
-  });
-
-  proc.onExit(() => {
-    Deferred.doneUnsafe(exited, Exit.void);
-  });
-
-  yield* Effect.raceFirst(Deferred.await(bannerReady), Deferred.await(exited)).pipe(
-    Effect.timeout("10 seconds"),
-    Effect.ignore,
-  );
-
-  yield* Effect.sleep("900 millis");
-  sentUsage = true;
-  yield* Effect.sync(() => {
-    try {
-      proc.write("/usage");
-    } catch {
-      // Handled below if output is missing.
-    }
-  });
-  yield* Effect.sleep("350 millis");
-  yield* Effect.sync(() => {
-    try {
-      proc.write("\r");
-    } catch {
-      // Handled below if output is missing.
-    }
-  });
-
-  yield* Effect.raceFirst(Deferred.await(quotaReady), Deferred.await(exited)).pipe(
-    Effect.timeout("18 seconds"),
-    Effect.ignore,
-  );
-  // Allow the final BubbleTea frame (all model groups) to finish flushing.
-  yield* Effect.sleep("700 millis");
-
-  if (!parseAntigravityCliUsageOutput(raw, 0)) {
-    return yield* new AntigravityCliUsageError({
-      detail: "Official agy CLI did not return a parseable /usage summary.",
+export const runOfficialAgyUsagePty = Effect.fn("AntigravityUsageProbe.runOfficialAgyUsagePty")(
+  function* (
+    input: AntigravityCliUsageRunInput,
+    loadPty: () => AntigravityNodePtyModule = () =>
+      requireExternal("node-pty") as AntigravityNodePtyModule,
+  ) {
+    const pty = yield* Effect.try({
+      try: loadPty,
+      catch: (cause) => new AntigravityCliUsageError({ reason: "load_pty", cause }),
     });
-  }
-  return raw;
-});
+
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(input.env)) {
+      if (value !== undefined) env[key] = value;
+    }
+    env.TERM = env.TERM || "xterm-256color";
+
+    const bannerReady = yield* Deferred.make<void>();
+    const quotaReady = yield* Deferred.make<void>();
+    const exited = yield* Deferred.make<void>();
+
+    let raw = "";
+    let sentUsage = false;
+
+    const proc = yield* Effect.acquireRelease(
+      Effect.try({
+        try: () =>
+          pty.spawn(input.executablePath, [], {
+            name: "xterm-256color",
+            cols: 120,
+            rows: 42,
+            cwd: input.cwd,
+            env,
+          }),
+        catch: (cause) =>
+          new AntigravityCliUsageError({
+            reason: "spawn_failed",
+            executablePath: input.executablePath,
+            cause,
+          }),
+      }),
+      (handle) =>
+        Effect.gen(function* () {
+          yield* Effect.sync(() => {
+            try {
+              handle.write("\x1b");
+              handle.write("\x03\x03");
+            } catch {
+              // Ignore write errors if the CLI already exited.
+            }
+          });
+          yield* Effect.sleep("250 millis");
+          yield* Effect.sync(() => {
+            try {
+              handle.kill();
+            } catch {
+              // Ignore kill errors if already terminated.
+            }
+          });
+        }),
+    );
+
+    proc.onData((chunk) => {
+      raw += chunk;
+      const clean = stripAnsiPreserveLines(raw);
+      if (clean.includes("Antigravity CLI")) {
+        Deferred.doneUnsafe(bannerReady, Exit.void);
+      }
+      if (sentUsage && clean.includes("Models & Quota") && clean.includes("Limit Remaining")) {
+        const parsed = parseAntigravityCliUsageOutput(raw, 0);
+        if (parsed && parsed.windows.length >= 2) {
+          Deferred.doneUnsafe(quotaReady, Exit.void);
+        }
+      }
+    });
+
+    proc.onExit(() => {
+      Deferred.doneUnsafe(exited, Exit.void);
+    });
+
+    yield* Effect.raceFirst(Deferred.await(bannerReady), Deferred.await(exited)).pipe(
+      Effect.timeout("10 seconds"),
+      Effect.ignore,
+    );
+
+    yield* Effect.sleep("900 millis");
+    sentUsage = true;
+    yield* Effect.sync(() => {
+      try {
+        proc.write("/usage");
+      } catch {
+        // Handled below if output is missing.
+      }
+    });
+    yield* Effect.sleep("350 millis");
+    yield* Effect.sync(() => {
+      try {
+        proc.write("\r");
+      } catch {
+        // Handled below if output is missing.
+      }
+    });
+
+    yield* Effect.raceFirst(Deferred.await(quotaReady), Deferred.await(exited)).pipe(
+      Effect.timeout("18 seconds"),
+      Effect.ignore,
+    );
+    // Allow the final BubbleTea frame (all model groups) to finish flushing.
+    yield* Effect.sleep("700 millis");
+
+    if (!parseAntigravityCliUsageOutput(raw, 0)) {
+      return yield* new AntigravityCliUsageError({ reason: "invalid_output" });
+    }
+    return raw;
+  },
+);
 
 export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* (input: {
   readonly profileDirectory: string;
@@ -473,50 +532,67 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
 
   let cached:
     | {
+        readonly checkedAt: string;
         readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
         readonly credentialFingerprint?: string;
         readonly cachedAtMs: number;
       }
     | undefined;
-  let forceRefreshRequested = false;
+  let lastAttemptAtMs = 0;
+  let generation = 0;
+
+  const formatCached = (entry: NonNullable<typeof cached>) => ({
+    ...makeUsageLimits({ checkedAt: entry.checkedAt, windows: [...entry.windows] }),
+    ...(entry.credentialFingerprint ? { credentialFingerprint: entry.credentialFingerprint } : {}),
+  });
 
   const read = Effect.gen(function* () {
+    const startedGeneration = generation;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     }
 
     const nowMs = yield* Clock.currentTimeMillis;
-    if (cached !== undefined) {
-      const ageMs = nowMs - cached.cachedAtMs;
-      const withinAutoWindow = !forceRefreshRequested && ageMs < AUTO_CACHE_TTL_MS;
-      const withinSafetyFloor = ageMs < MANUAL_MIN_INTERVAL_MS;
-      if (withinAutoWindow || withinSafetyFloor) {
-        return {
-          ...makeUsageLimits({ checkedAt, windows: [...cached.windows] }),
-          ...(cached.credentialFingerprint
-            ? { credentialFingerprint: cached.credentialFingerprint }
-            : {}),
-        };
+
+    // 1. Fresh cache hit: preserve the original checkedAt timestamp.
+    if (cached !== undefined && nowMs - cached.cachedAtMs < AUTO_CACHE_TTL_MS) {
+      return formatCached(cached);
+    }
+
+    // 2. Cooldown after a recent failed attempt (prevents rapid-fire CLI relaunches on error).
+    if (lastAttemptAtMs > 0 && nowMs - lastAttemptAtMs < FAIL_COOLDOWN_MS) {
+      if (cached !== undefined) {
+        return formatCached(cached);
       }
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message: "Could not read Antigravity limits. Refresh provider status to retry.",
+      });
     }
 
-    forceRefreshRequested = false;
-
-    const executablePath = input.resolveExecutable
-      ? yield* input.resolveExecutable.pipe(Effect.orElseSucceed(() => "agy"))
-      : "agy";
-
-    // Pass clean environment to the unmodified official CLI; only scope GEMINI_HOME when this
-    // profile holds its own CLI token file so both isolated profiles and native keyring work.
-    const baseEnv = input.environment ?? process.env;
-    const cleanEnv: NodeJS.ProcessEnv = { ...baseEnv };
-    delete cleanEnv.ELECTRON_RUN_AS_NODE;
-    delete cleanEnv.GEMINI_HOME;
+    // Personal OAuth profiles isolate sign-ins per profile directory; do not fall through to the
+    // shared OS keyring for an unsigned-in personal instance.
     const hasProfileToken = yield* fs.exists(cliTokenPath).pipe(Effect.orElseSucceed(() => false));
-    if (hasProfileToken) {
-      cleanEnv.GEMINI_HOME = input.profileDirectory;
+    if (input.authMethod === "oauth-personal" && !hasProfileToken) {
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: "Sign in with Google to see Antigravity limits.",
+      });
     }
+
+    lastAttemptAtMs = nowMs;
+
+    // Only default to "agy" when no executable resolver was supplied; never silently bypass a
+    // configured binaryPath that failed installation validation.
+    const executablePath = input.resolveExecutable ? yield* input.resolveExecutable : "agy";
+
+    const cleanEnv = buildAntigravityCliUsageEnv(
+      input.environment ?? process.env,
+      hasProfileToken ? input.profileDirectory : undefined,
+    );
 
     const rawOutput = yield* runCliUsage({
       executablePath,
@@ -524,6 +600,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       cwd: homeDirectory,
     });
     const parsedAtMs = yield* Clock.currentTimeMillis;
+    const observedAt = DateTime.formatIso(DateTime.makeUnsafe(parsedAtMs));
     const parsed = parseAntigravityCliUsageOutput(rawOutput, parsedAtMs);
     if (!parsed || parsed.windows.length === 0) {
       return makeUnavailableUsageLimits({
@@ -537,14 +614,17 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       ? yield* sha256(`google-account-cli\0${parsed.accountEmail.toLowerCase()}`)
       : undefined;
 
-    cached = {
-      windows: parsed.windows,
-      ...(credentialFingerprint ? { credentialFingerprint } : {}),
-      cachedAtMs: parsedAtMs,
-    };
+    if (generation === startedGeneration) {
+      cached = {
+        checkedAt: observedAt,
+        windows: parsed.windows,
+        ...(credentialFingerprint ? { credentialFingerprint } : {}),
+        cachedAtMs: parsedAtMs,
+      };
+    }
 
     return {
-      ...makeUsageLimits({ checkedAt, windows: [...parsed.windows] }),
+      ...makeUsageLimits({ checkedAt: observedAt, windows: [...parsed.windows] }),
       ...(credentialFingerprint ? { credentialFingerprint } : {}),
     };
   });
@@ -554,17 +634,11 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     Effect.timeout("30 seconds"),
     Effect.catch(() =>
       Effect.gen(function* () {
-        const checkedAt = DateTime.formatIso(yield* DateTime.now);
         if (cached !== undefined) {
-          return {
-            ...makeUsageLimits({ checkedAt, windows: [...cached.windows] }),
-            ...(cached.credentialFingerprint
-              ? { credentialFingerprint: cached.credentialFingerprint }
-              : {}),
-          };
+          return formatCached(cached);
         }
         return makeUnavailableUsageLimits({
-          checkedAt,
+          checkedAt: DateTime.formatIso(yield* DateTime.now),
           reason: "probeFailed",
           message: "Could not read Antigravity limits. Refresh provider status to retry.",
         });
@@ -575,7 +649,9 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   return {
     probe,
     clear: Effect.sync(() => {
-      forceRefreshRequested = true;
+      generation++;
+      cached = undefined;
+      lastAttemptAtMs = 0;
     }),
   };
 });
