@@ -84,12 +84,15 @@ export const lastConfigValue = (stdout: string, key: string) => {
   return value;
 };
 
-/** Git's boolean rules: a valueless key is true, an empty value false, any other integer true. */
+/**
+ * Git's boolean rules: a valueless key is true, an empty value false, and an integer true unless
+ * zero. Integers parse as strtoimax base 0 does (leading space, 0x hex, 0 octal), then a k/m/g unit.
+ */
 export const gitBool = (value: string | null) => {
   if (value === null) return true;
   if (/^(?:true|yes|on)$/i.test(value)) return true;
-  const integer = /^[+-]?(\d+)[kmg]?$/i.exec(value);
-  return integer !== null && /[1-9]/.test(integer[1]!);
+  const integer = /^\s*[+-]?(?:0x([\da-f]+)|([1-9]\d*|0[0-7]*))[kmg]?$/i.exec(value);
+  return integer !== null && /[1-9a-f]/i.test(integer[1] ?? integer[2]!);
 };
 
 const statSignature = (fileSystem: FileSystem.FileSystem, file: string) =>
@@ -133,17 +136,23 @@ export const make = (
       readonly prefix: string;
       readonly hostEnv: NodeJS.ProcessEnv;
     }) {
-      const attributesFile = lastConfigValue(input.config, "core.attributesfile") ?? undefined;
-      const home = input.hostEnv.HOME ?? "";
+      const { HOME: home, XDG_CONFIG_HOME: xdgConfigHome } = input.hostEnv;
+      // Git expands ~, ~user and %(prefix) itself, so only a configured value costs a command.
       const globalAttributes =
-        attributesFile === undefined
-          ? path.join(
-              input.hostEnv.XDG_CONFIG_HOME || path.join(home, ".config"),
-              "git",
-              "attributes",
-            )
-          : attributesFile.replace(/^~(?=\/)/, home);
-      // Files inside the folder are staged, so a change to their attributes shows in the tree.
+        lastConfigValue(input.config, "core.attributesfile") === undefined
+          ? xdgConfigHome
+            ? path.join(xdgConfigHome, "git", "attributes")
+            : home
+              ? path.join(home, ".config", "git", "attributes")
+              : ""
+          : (yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["config", "--type=path", "--get", "core.attributesFile"],
+              allowNonZeroExit: true,
+            })).stdout.replace(/\n$/, "");
+      // Files inside the folder are staged, so a change to a tracked or untracked .gitattributes
+      // there shows in the tree; an ignored one above it, the root included, does not.
       const parents = [""];
       for (
         let end = input.prefix.indexOf("/");
@@ -155,12 +164,11 @@ export const make = (
       const signatures = yield* Effect.forEach(
         [
           path.join(input.gitCommonDir, "info", "attributes"),
-          path.resolve(input.cwd, globalAttributes),
-          ...(input.prefix === "" ? [] : parents).map((parent) =>
-            path.join(input.topLevel, parent, ".gitattributes"),
-          ),
+          // Git reads relative paths after moving to the working-tree root.
+          globalAttributes === "" ? "" : path.resolve(input.topLevel, globalAttributes),
+          ...parents.map((parent) => path.join(input.topLevel, parent, ".gitattributes")),
         ],
-        (file) => statSignature(fileSystem, file),
+        (file) => (file === "" ? Effect.succeed("-") : statSignature(fileSystem, file)),
       );
       return `${input.config}\0${signatures.join("\0")}`;
     },

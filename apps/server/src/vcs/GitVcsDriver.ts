@@ -1228,6 +1228,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "core.splitIndex=false",
         "-c",
         "splitIndex.sharedIndexExpire=never",
+        // ignorestat marks entries update-index or add writes assume-unchanged, so a kept index
+        // would hide later edits of them from add -A.
+        "-c",
+        "core.ignorestat=false",
       ];
       const { gitCommonDir, indexPath, topLevel, prefix, headExists, head } =
         yield* resolveCaptureRepository(input.cwd);
@@ -1534,15 +1538,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               yield* execute({
                 operation,
                 cwd: input.cwd,
-                // core.ignorestat would mark these assume-unchanged, hiding edits from add -A.
-                args: [
-                  ...indexConfig,
-                  "-c",
-                  "core.ignorestat=false",
-                  "update-index",
-                  "-z",
-                  "--index-info",
-                ],
+                args: [...indexConfig, "update-index", "-z", "--index-info"],
                 stdin: flagged.join("\0") + "\0",
                 env: commitEnv,
               });
@@ -1649,9 +1645,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               // safecrlf=true refuses LF files under CRLF conversion; capture them as Git's default does.
               "-c",
               "core.safecrlf=false",
-              // ignorestat would mark new entries assume-unchanged, and a kept index would hide their edits.
-              "-c",
-              "core.ignorestat=false",
               "add",
               // Unreadable files keep their indexed version and unreadable new files are left out.
               ...(ignoreErrors ? ["--ignore-errors"] : []),
