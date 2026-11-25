@@ -1916,6 +1916,7 @@
   "69c659d8b6e271cc": "La página pide un archivo.",
   "a6efeb99b479990a": "Elegir archivos",
   "59c87648d44b958c": "Elegir archivo",
+  "6f321f153b8711bb": "Elige una opción",
   "61a552a67e9e3eac": "Respuesta al cuadro de diálogo",
   "1d9bd868fafea18a": "Descartar",
   "1d0a7acef4a95536": "Aceptar",
@@ -5682,5 +5683,6 @@
       "k": "_gt_value_1",
       "v": "v"
     }
-  ]
+  ],
+  "1a1beecff68a6e61": "Verificar cuenta de Google"
 }
