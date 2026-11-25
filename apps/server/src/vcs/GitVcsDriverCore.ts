@@ -5326,7 +5326,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
 
-    const trackedNestedRepos = input.file ? [] : yield* listTrackedGitlinkPaths(cwd);
+    const trackedNestedRepos = input.file || tracked ? [] : yield* listTrackedGitlinkPaths(cwd);
     const outerPathArgs =
       trackedNestedRepos.length === 0
         ? pathArgs
@@ -5416,7 +5416,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // Untracked files left out make the file list partial, so the bounded patch is sent instead.
       const complete = untracked !== null && !untracked.omitted;
       // With no untracked files to add, the tracked read already is the complete diff.
-      if (tracked !== undefined && complete && untracked.env === undefined) {
+      if (
+        tracked !== undefined &&
+        complete &&
+        untracked.env === undefined &&
+        nestedRepos.length === 0
+      ) {
         return [tracked.dirty, tracked.base] as const;
       }
       const metadataOnly = input.metadataOnly === true && !input.file && complete;
@@ -5476,7 +5481,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return [merge(dirtyRef, dirty), merge(review.mergeBase, base)] as const;
     }).pipe(Effect.scoped);
     let completionToken: string | undefined;
-    if (input.trackedOnly && reusesTracked && dirtyTrackedResult.files && baseResult.files) {
+    if (
+      input.trackedOnly &&
+      reusesTracked &&
+      trackedNestedRepos.length === 0 &&
+      dirtyTrackedResult.files &&
+      baseResult.files
+    ) {
       completionToken = yield* random.uuidV4();
       trackedReviewPreviews.set(completionToken, {
         key: trackedReviewPreviewKey(input),
