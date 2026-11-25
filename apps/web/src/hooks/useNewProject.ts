@@ -24,7 +24,7 @@ function errorMessage(error: unknown): string {
     : m(msg("An error occurred."));
 }
 
-export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Promise<void>) {
+export function useNewProject() {
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
@@ -75,6 +75,7 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
     readonly environmentId: EnvironmentId;
     readonly name: string;
     readonly publishTo: NewProjectPublishTarget | null;
+    readonly openProject: (projectRef: ScopedProjectRef) => Promise<void>;
   }): Promise<boolean> => {
     const result = await createNew({
       environmentId: input.environmentId,
@@ -139,7 +140,7 @@ export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Pro
       return null;
     });
     if (project === null) return true;
-    await openProject(projectRef).catch((error: unknown) => {
+    await input.openProject(projectRef).catch((error: unknown) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",

@@ -7,6 +7,7 @@ import {
   AuthSourceControlWriteScope,
   EnvironmentId,
   ProjectId,
+  type ScopedProjectRef,
 } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { act, render } from "../../test/render";
@@ -20,7 +21,7 @@ import { toastManager } from "./ui/toast";
 const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
-  waitForProject: vi.fn<() => Promise<EnvironmentProject | undefined>>(),
+  waitForProject: vi.fn<(ref: ScopedProjectRef) => Promise<EnvironmentProject | undefined>>(),
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
@@ -115,7 +116,7 @@ vi.mock("../state/entities", async (original) => ({
   useAnyEnvironmentHiding: () => false,
   useEnvironmentThreadRefs: () => [],
   useServerConfigs: () => new Map(),
-  waitForProject: () => scopes.waitForProject(),
+  waitForProject: (ref: ScopedProjectRef) => scopes.waitForProject(ref),
 }));
 vi.mock("../state/queries", async (original) => ({
   ...(await original<typeof import("../state/queries")>()),
@@ -142,13 +143,13 @@ vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
 
-it.each(["dismissed", "timed out"] as const)(
+it.each(["dismissed", "backed out of", "timed out"] as const)(
   "keeps the current draft project when a pending folder add is %s",
   async (outcome) => {
     setup();
     const update = Promise.withResolvers<EnvironmentProject>();
     const waiting = Promise.withResolvers<void>();
-    scopes.waitForProject.mockImplementation(() => {
+    scopes.waitForProject.mockImplementationOnce(() => {
       waiting.resolve();
       return update.promise;
     });
@@ -156,6 +157,18 @@ it.each(["dismissed", "timed out"] as const)(
     const environmentId = EnvironmentId.make("local");
     const original = { environmentId, projectId: ProjectId.make("original") };
     const newer = { environmentId, projectId: ProjectId.make("newer") };
+    const folder = `/workspace/${draftId}`;
+    const project = (projectId: ProjectId, workspaceRoot = folder): EnvironmentProject => ({
+      environmentId,
+      id: projectId,
+      title: "added",
+      workspaceRoot,
+      repositoryIdentity: null,
+      defaultModelSelection: null,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+      scripts: [],
+    });
     const draftStore = useComposerDraftStore.getState();
     draftStore.setProjectDraftThreadId(original, draftId);
     draftStore.setPrompt(draftId, "Keep this draft");
@@ -163,29 +176,40 @@ it.each(["dismissed", "timed out"] as const)(
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     using toast = vi.spyOn(toastManager, "add");
     await act(() => openCommandPalette({ open: "add-project", draftId }));
-    await page.getByText("Local folder", { exact: true }).click();
-    await page.getByRole("combobox").fill("/workspace/added");
-    await userEvent.keyboard("{Enter}");
+    const submitFolder = async (path: string) => {
+      await page.getByText("Local folder", { exact: true }).click();
+      await page.getByRole("combobox").fill(path);
+      await userEvent.keyboard("{Enter}");
+    };
+    await submitFolder(folder);
     await waiting.promise;
+    const [firstRef] = scopes.waitForProject.mock.calls[0]!;
 
     if (outcome === "dismissed") {
       await act(() => {
         dispatchCommandPalette({ _tag: "SetOpen", open: false });
         draftStore.setProjectDraftThreadId(newer, draftId);
         openCommandPalette({ open: "new-thread-in" });
-        update.resolve({
-          environmentId,
-          id: ProjectId.make("added"),
-          title: "added",
-          workspaceRoot: "/workspace/added",
-          repositoryIdentity: null,
-          defaultModelSelection: null,
-          createdAt: "2026-03-01T00:00:00.000Z",
-          updatedAt: "2026-03-01T00:00:00.000Z",
-          scripts: [],
-        });
+        update.resolve(project(firstRef.projectId));
       });
       await expect.element(page.getByRole("combobox")).toBeInTheDocument();
+      expect(draftStore.getDraftSession(draftId)?.projectId).toBe(newer.projectId);
+    } else if (outcome === "backed out of") {
+      await page.getByRole("combobox").fill("");
+      const nextUpdate = Promise.withResolvers<EnvironmentProject>();
+      scopes.waitForProject.mockReturnValueOnce(nextUpdate.promise);
+      const nextFolder = `${folder}-next`;
+      await submitFolder(nextFolder);
+      expect(scopes.waitForProject).toHaveBeenCalledTimes(2);
+      const [nextRef] = scopes.waitForProject.mock.calls[1]!;
+      await act(() => update.resolve(project(firstRef.projectId)));
+      await expect.element(page.getByRole("combobox")).toHaveValue(nextFolder);
+      expect(draftStore.getDraftSession(draftId)?.projectId).toBe(original.projectId);
+      await userEvent.keyboard("{Enter}");
+      expect(scopes.waitForProject).toHaveBeenCalledTimes(2);
+      await act(() => nextUpdate.resolve(project(nextRef.projectId, nextFolder)));
+      await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+      expect(draftStore.getDraftSession(draftId)?.projectId).toBe(nextRef.projectId);
     } else {
       await userEvent.keyboard("{Enter}");
       expect(scopes.waitForProject).toHaveBeenCalledTimes(1);
@@ -197,10 +221,14 @@ it.each(["dismissed", "timed out"] as const)(
           description: expect.stringContaining("It will appear in the sidebar"),
         }),
       );
+      expect(draftStore.getDraftSession(draftId)?.projectId).toBe(original.projectId);
+      scopes.waitForProject.mockResolvedValueOnce(project(firstRef.projectId));
+      await act(() => openCommandPalette({ open: "add-project", draftId }));
+      await submitFolder(folder);
+      await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+      expect(scopes.waitForProject).toHaveBeenNthCalledWith(2, firstRef);
+      expect(draftStore.getDraftSession(draftId)?.projectId).toBe(firstRef.projectId);
     }
-    expect(draftStore.getDraftSession(draftId)?.projectId).toBe(
-      outcome === "dismissed" ? newer.projectId : original.projectId,
-    );
     expect(draftStore.getComposerDraft(draftId)?.prompt).toBe("Keep this draft");
   },
 );

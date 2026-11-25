@@ -146,6 +146,9 @@ import {
   usePrimaryEnvironmentId,
 } from "../state/environments";
 import {
+  readProject,
+  readProjects,
+  subscribeProject,
   useAnyEnvironmentHiding,
   useDelegatedUnderParent,
   useHiddenThreadKeys,
@@ -171,6 +174,7 @@ import {
   isFilesystemBrowseQuery,
   isScratchProject,
   isUnsupportedWindowsProjectPath,
+  normalizeProjectPathForComparison,
   resolveProjectPathForDispatch,
 } from "@t3tools/client-runtime/state/projects";
 import { resolvePastedPath } from "@t3tools/shared/path";
@@ -333,6 +337,18 @@ function openIntentView(
 }
 
 const NEW_THREAD_NO_PROJECT_VALUE = "new-thread-in:no-project";
+
+const pendingFolderProjects = new Map<string, ScopedProjectRef>();
+
+function rememberFolderProject(key: string, ref: ScopedProjectRef): void {
+  if (readProject(ref) !== null) return;
+  pendingFolderProjects.set(key, ref);
+  const unsubscribe = subscribeProject(ref, (project) => {
+    if (project === null) return;
+    if (pendingFolderProjects.get(key) === ref) pendingFolderProjects.delete(key);
+    unsubscribe();
+  });
+}
 
 export function CommandPalette({ children }: { children: ReactNode }) {
   useCommandPaletteMount();
@@ -592,13 +608,20 @@ function OpenCommandPaletteDialog(props: {
   const [addProjectDraftId] = useState(() =>
     props.openIntent?.kind === "add-project" ? (props.openIntent.draftId ?? null) : null,
   );
-  const draftProjectAddPending = useRef(false);
+  const draftProjectAddPending = useRef<symbol | null>(null);
   const isCurrentAddProjectIntent = () =>
     addProjectDraftId === null || useCommandPaletteStore.getState().openIntent === props.openIntent;
-  const runProjectAdd = <A,>(add: () => Promise<A>): Promise<A> => {
-    draftProjectAddPending.current = addProjectDraftId !== null;
-    return add().finally(() => {
-      draftProjectAddPending.current = false;
+  const runProjectAdd = (
+    add: (ownsStep: () => boolean) => Promise<void>,
+    onSettled?: () => void,
+  ): Promise<void> => {
+    const step = addProjectDraftId === null ? null : Symbol();
+    draftProjectAddPending.current = step;
+    const ownsStep = () => draftProjectAddPending.current === step && isCurrentAddProjectIntent();
+    return add(ownsStep).finally(() => {
+      if (draftProjectAddPending.current !== step) return;
+      draftProjectAddPending.current = null;
+      onSettled?.();
     });
   };
   const moveDraftToAddedProject = async (project: EnvironmentProject): Promise<boolean> => {
@@ -608,11 +631,14 @@ function OpenCommandPaletteDialog(props: {
     await navigate({ to: "/draft/$draftId", params: { draftId: addProjectDraftId } });
     return true;
   };
-  const openAddedProject = async (projectRef: ScopedProjectRef): Promise<void> => {
-    if (!isCurrentAddProjectIntent()) return;
+  const openAddedProject = async (
+    projectRef: ScopedProjectRef,
+    ownsStep: () => boolean,
+  ): Promise<void> => {
+    if (!ownsStep()) return;
     if (addProjectDraftId !== null) {
       const project = await waitForProject(projectRef).catch((error: unknown) => {
-        if (isCurrentAddProjectIntent()) {
+        if (ownsStep()) {
           toastManager.add(
             stackedThreadToast({
               type: "error",
@@ -628,12 +654,13 @@ function OpenCommandPaletteDialog(props: {
         }
         return null;
       });
-      if (project === null || !isCurrentAddProjectIntent()) return;
+      if (project === null || !ownsStep()) return;
       if (await moveDraftToAddedProject(project)) return;
+      if (!ownsStep()) return;
     }
     await handleNewThread(projectRef);
   };
-  const createNewProject = useNewProject(openAddedProject);
+  const createNewProject = useNewProject();
   const cloneLookupGeneration = useRef(0);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
@@ -1041,7 +1068,16 @@ function OpenCommandPaletteDialog(props: {
     )
     .slice(0, RECENT_THREAD_LIMIT);
 
+  const invalidateProjectAddStep = useStableCallback((): void => {
+    if (draftProjectAddPending.current === null) return;
+    draftProjectAddPending.current = null;
+    newProjectSubmittingRef.current = false;
+    setIsCreatingNewProject(false);
+    setIsRemoteProjectCloning(false);
+  });
+
   const pushPaletteView = useStableCallback((view: CommandPaletteView): void => {
+    invalidateProjectAddStep();
     browseNavigation.invalidate();
     dispatchSearch({ type: "push", view });
     highlightClearedRef.current = true;
@@ -1049,6 +1085,7 @@ function OpenCommandPaletteDialog(props: {
   });
 
   function popView(): void {
+    invalidateProjectAddStep();
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
@@ -2063,7 +2100,7 @@ function OpenCommandPaletteDialog(props: {
     if (cwd.length === 0) return;
 
     const existing = findProjectByPath(
-      projects.filter((project) => project.environmentId === input.environmentId),
+      readProjects().filter((project) => project.environmentId === input.environmentId),
       cwd,
     );
     if (existing) {
@@ -2110,7 +2147,12 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    if (!readEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope)) {
+    const folderKey = JSON.stringify([input.environmentId, normalizeProjectPathForComparison(cwd)]);
+    const pendingProject = pendingFolderProjects.get(folderKey);
+    if (
+      !pendingProject &&
+      !readEnvironmentScope(input.environmentId, AuthOrchestrationOperateScope)
+    ) {
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -2120,37 +2162,39 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
-    await runProjectAdd(async () => {
-      const projectId = newProjectId();
-      const createResult = await createProject({
-        environmentId: input.environmentId,
-        input: {
-          projectId,
-          title: inferProjectTitleFromPath(cwd),
-          workspaceRoot: cwd,
-          createWorkspaceRootIfMissing: true,
-          defaultModelSelection: null,
-        },
-      });
-      if (!isCurrentAddProjectIntent()) return;
-      if (createResult._tag === "Failure") {
-        if (!isAtomCommandInterrupted(createResult)) {
-          const error = squashAtomCommandFailure(createResult);
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: gt("Failed to add project"),
-              description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
-            }),
-          );
+    await runProjectAdd(async (ownsStep) => {
+      let projectRef = pendingProject;
+      if (projectRef === undefined) {
+        const projectId = newProjectId();
+        const createResult = await createProject({
+          environmentId: input.environmentId,
+          input: {
+            projectId,
+            title: inferProjectTitleFromPath(cwd),
+            workspaceRoot: cwd,
+            createWorkspaceRootIfMissing: true,
+            defaultModelSelection: null,
+          },
+        });
+        if (createResult._tag === "Failure") {
+          if (ownsStep() && !isAtomCommandInterrupted(createResult)) {
+            const error = squashAtomCommandFailure(createResult);
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: gt("Failed to add project"),
+                description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
+              }),
+            );
+          }
+          return;
         }
-        return;
+        projectRef = scopeProjectRef(input.environmentId, projectId);
+        rememberFolderProject(folderKey, projectRef);
       }
 
-      const navigationResult = await settlePromise(() =>
-        openAddedProject(scopeProjectRef(input.environmentId, projectId)),
-      );
-      if (!isCurrentAddProjectIntent()) return;
+      const navigationResult = await settlePromise(() => openAddedProject(projectRef, ownsStep));
+      if (!ownsStep()) return;
       if (navigationResult._tag === "Failure") {
         const error = squashAtomCommandFailure(navigationResult);
         toastManager.add(
@@ -2205,19 +2249,25 @@ function OpenCommandPaletteDialog(props: {
     }
     newProjectSubmittingRef.current = true;
     setIsCreatingNewProject(true);
-    const created = await runProjectAdd(() =>
-      settlePromise(() =>
-        createNewProject({
-          environmentId: newProjectFlow.environmentId,
-          name: newProjectName,
-          publishTo: newProjectPublishes ? newProjectPublishTarget : null,
-        }),
-      ),
+    await runProjectAdd(
+      async (ownsStep) => {
+        const created = await settlePromise(() =>
+          createNewProject({
+            environmentId: newProjectFlow.environmentId,
+            name: newProjectName,
+            publishTo: newProjectPublishes ? newProjectPublishTarget : null,
+            openProject: (projectRef) => openAddedProject(projectRef, ownsStep),
+          }),
+        );
+        if (!ownsStep()) return;
+        if (created._tag === "Failure") throw squashAtomCommandFailure(created);
+        if (created.value) setOpen(false);
+      },
+      () => {
+        newProjectSubmittingRef.current = false;
+        setIsCreatingNewProject(false);
+      },
     );
-    newProjectSubmittingRef.current = false;
-    setIsCreatingNewProject(false);
-    if (created._tag === "Failure") throw squashAtomCommandFailure(created);
-    if (created.value && isCurrentAddProjectIntent()) setOpen(false);
   }
 
   function getDefaultCloneDestination(
@@ -2395,58 +2445,61 @@ function OpenCommandPaletteDialog(props: {
     }
 
     setIsRemoteProjectCloning(true);
-    await runProjectAdd(async () => {
-      const startResult = await startProjectClone({
-        environmentId: addProjectCloneFlow.environmentId,
-        input: {
-          projectId: newProjectId(),
-          title: inferProjectTitleFromPath(destinationPath),
-          createdAt: new Date().toISOString(),
-          remoteUrl: addProjectCloneFlow.remoteUrl,
-          destinationPath,
-        },
-      });
-      if (!isCurrentAddProjectIntent()) return;
-      if (startResult._tag === "Failure") {
-        if (!isAtomCommandInterrupted(startResult)) {
+    await runProjectAdd(
+      async (ownsStep) => {
+        const startResult = await startProjectClone({
+          environmentId: addProjectCloneFlow.environmentId,
+          input: {
+            projectId: newProjectId(),
+            title: inferProjectTitleFromPath(destinationPath),
+            createdAt: new Date().toISOString(),
+            remoteUrl: addProjectCloneFlow.remoteUrl,
+            destinationPath,
+          },
+        });
+        if (!ownsStep()) return;
+        if (startResult._tag === "Failure") {
+          if (!isAtomCommandInterrupted(startResult)) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: gt("Clone failed"),
+                description: errorMessage(squashAtomCommandFailure(startResult), m),
+              }),
+            );
+          }
+          return;
+        }
+        if (addProjectDraftId === null) setOpen(false);
+        void suggestAppAccessForRemote(
+          addProjectCloneFlow.environmentId,
+          addProjectCloneFlow.remoteUrl,
+        );
+        const projectRef = scopeProjectRef(
+          addProjectCloneFlow.environmentId,
+          startResult.value.projectId,
+        );
+        if (addProjectDraftId === null) {
+          await waitForProject(projectRef, 3_000).catch(() => null);
+        }
+        const navigationResult = await settlePromise(() => openAddedProject(projectRef, ownsStep));
+        if (!ownsStep()) return;
+        if (navigationResult._tag === "Failure") {
+          const error = squashAtomCommandFailure(navigationResult);
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: gt("Clone failed"),
-              description: errorMessage(squashAtomCommandFailure(startResult), m),
+              title: gt("Failed to open project"),
+              description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
             }),
           );
         }
-        return;
-      }
-      if (addProjectDraftId === null) setOpen(false);
-      void suggestAppAccessForRemote(
-        addProjectCloneFlow.environmentId,
-        addProjectCloneFlow.remoteUrl,
-      );
-      const projectRef = scopeProjectRef(
-        addProjectCloneFlow.environmentId,
-        startResult.value.projectId,
-      );
-      if (addProjectDraftId === null) {
-        await waitForProject(projectRef, 3_000).catch(() => null);
-      }
-      const navigationResult = await settlePromise(() => openAddedProject(projectRef));
-      if (!isCurrentAddProjectIntent()) return;
-      if (navigationResult._tag === "Failure") {
-        const error = squashAtomCommandFailure(navigationResult);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: gt("Failed to open project"),
-            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
-          }),
-        );
-      }
-      if (addProjectDraftId !== null) setOpen(false);
-    }).finally(() => {
-      setIsRemoteProjectCloning(false);
-    });
+        if (addProjectDraftId !== null) setOpen(false);
+      },
+      () => {
+        setIsRemoteProjectCloning(false);
+      },
+    );
   }
 
   const browseTo = async (name: string): Promise<void> => {
