@@ -16,6 +16,7 @@ import {
   builtinFetchUsesHttp2,
   ignoreMacosTypeOfServiceEinval,
   installHttp1FetchDispatcher,
+  refuseTelemetryHosts,
 } from "./outboundHttp.ts";
 
 // Non-secret, self-signed 127.0.0.1 certificate, valid until 2126; ALPN h2 requires TLS.
@@ -161,6 +162,54 @@ if (calls === 0) throw new Error("fetch did not call setTypeOfService");
       ]);
       expect(child.exitCode, child.stderr).toBe(0);
       expect(child.stdout.trim()).toBe("1.1");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
+
+describe("refuseTelemetryHosts", () => {
+  it("fails lookups for blocked hosts and passes every other host through", async () => {
+    const looked: Array<string> = [];
+    const dns = {
+      lookup: (hostname: string, callback: (error: Error | null, address?: string) => void) => {
+        looked.push(hostname);
+        callback(null, "192.0.2.1");
+      },
+    };
+    refuseTelemetryHosts(dns);
+    const resolve = (hostname: string) =>
+      new Promise<unknown>((done) =>
+        (dns.lookup as typeof dns.lookup)(hostname, (error, address) => done(error ?? address)),
+      );
+
+    expect(await resolve("us.i.posthog.com")).toMatchObject({ code: "ENOTFOUND" });
+    expect(await resolve("ingest.t3.codes")).toMatchObject({ code: "ENOTFOUND" });
+    expect(await resolve("github.com")).toBe("192.0.2.1");
+    expect(looked).toEqual(["github.com"]);
+  });
+
+  // A child process, so patching the real resolver cannot leak into other tests.
+  it.effect("stops built-in fetch before it resolves a blocked host", () =>
+    Effect.gen(function* () {
+      const child = yield* runNode([
+        "--input-type=module",
+        "--eval",
+        `
+import { createRequire } from "node:module";
+import { refuseTelemetryHosts } from ${JSON.stringify(new URL("./outboundHttp.ts", import.meta.url).href)};
+const NodeDns = createRequire(import.meta.url)("node:dns");
+const resolved = [];
+const lookup = NodeDns.lookup;
+NodeDns.lookup = function (hostname, ...rest) {
+  resolved.push(hostname);
+  return lookup.call(this, hostname, ...rest);
+};
+refuseTelemetryHosts();
+const failure = await fetch("https://ingest.t3.codes/batch").then(() => null, (error) => error);
+console.log(JSON.stringify({ code: failure?.cause?.code, resolved }));
+`,
+      ]);
+      expect(child.exitCode, child.stderr).toBe(0);
+      expect(JSON.parse(child.stdout)).toEqual({ code: "ENOTFOUND", resolved: [] });
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

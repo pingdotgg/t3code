@@ -3,12 +3,9 @@ import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as Tracer from "effect/Tracer";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import * as HttpTraceContext from "effect/http/HttpTraceContext";
-import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as Metrics from "../observability/Metrics.ts";
@@ -98,11 +95,6 @@ export const layer = HttpApiBuilder.group(
       const relayDeliveryId = Option.isSome(relay) ? relay.value.deliveryId : undefined;
       const relayReceivedAt = Option.isSome(relay) ? relay.value.receivedAt : undefined;
 
-      // A relay delivery joins the relay's trace, and goes to the T3 Connect
-      // tracer with it. Anyone else's traceparent is never trusted.
-      const relayParent = Option.isSome(relay)
-        ? HttpTraceContext.fromHeaders(request.headers)
-        : Option.none<Tracer.ExternalSpan>();
       if (params.hookId.startsWith(Workflows.HOOK_PREFIX)) {
         if (ManagedPolicy.deniedBy(managedPolicy, "webhookTasks") !== undefined) {
           return json(403, { error: "blocked_by_policy" }, "blocked_by_policy");
@@ -153,10 +145,6 @@ export const layer = HttpApiBuilder.group(
           ...(relayReceivedAt ? { receivedAt: relayReceivedAt } : {}),
         })
         .pipe(
-          Option.isSome(relayParent)
-            ? (effect) =>
-                effect.pipe(Effect.withParentSpan(relayParent.value), withRelayClientTracing)
-            : (effect) => effect,
           Effect.catchCause((cause) =>
             Effect.logWarning("Webhook delivery failed").pipe(
               Effect.annotateLogs({ hookId: params.hookId }),

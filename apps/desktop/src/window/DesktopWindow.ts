@@ -46,6 +46,7 @@ import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts"
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 import { installMainWindowRemoteRequestHeaderPolicy } from "./RemoteRequestHeaders.ts";
+import { installTelemetryRequestBlock } from "./TelemetryRequestBlock.ts";
 
 const TITLEBAR_HEIGHT = 40;
 
@@ -1059,6 +1060,7 @@ export const make = Effect.gen(function* () {
         isDevelopment: environment.isDevelopment,
       },
     );
+    const detachTelemetryRequestBlock = installTelemetryRequestBlock(window.webContents.session);
     loadApplication();
     if (environment.isDevelopment) {
       window.webContents.openDevTools({ mode: "detach" });
@@ -1071,6 +1073,7 @@ export const make = Effect.gen(function* () {
       if (remoteRequestHeaderOwner === window) {
         remoteRequestHeaderOwner = null;
         detachRemoteRequestHeaders();
+        detachTelemetryRequestBlock();
       }
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });

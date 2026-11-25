@@ -1,4 +1,5 @@
 import type { DesktopAppBranding } from "@t3tools/contracts";
+import { CLI_RELEASES_PAGE_URL, FORK_REPOSITORY_URL } from "@t3tools/shared/cliRelease";
 import {
   formatAppDisplayName,
   resolveHostedAppChannelLabel,
@@ -30,6 +31,6 @@ export const APP_DISPLAY_NAME =
   injectedDesktopAppBranding?.displayName ??
   formatAppDisplayName({ baseName: APP_BASE_NAME, stageLabel: APP_STAGE_LABEL });
 export const APP_VERSION = import.meta.env.APP_VERSION || "0.0.0";
-export const DESKTOP_DOWNLOAD_URL = "https://t3.codes/download";
-// Redirects to the App Store or Google Play to match the phone that opens it.
-export const MOBILE_APP_URL = "https://t3.codes/mobile";
+export const DESKTOP_DOWNLOAD_URL = `${CLI_RELEASES_PAGE_URL}/latest`;
+export const MOBILE_APP_URL = FORK_REPOSITORY_URL;
+export const PRIVACY_POLICY_URL = `${FORK_REPOSITORY_URL}/blob/main/docs/user/telemetry.md`;

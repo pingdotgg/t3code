@@ -33,6 +33,7 @@ import { assetEnvironment } from "../../state/assets";
 import { readProject, readThreadShell } from "../../state/entities";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironment } from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
+import { readShareableOrigin } from "../../state/shareableOrigin";
 import { allReachableShellsLiveAtom } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
@@ -211,7 +212,11 @@ export function DesktopWebLinkCoordinator() {
       await pairFromLink(pairingUrl);
       return;
     }
-    const appPath = promptLinkAppPath(url);
+    // A link copied from this machine names its own web app, so it opens here instead.
+    const appPath = promptLinkAppPath(
+      url,
+      readShareableOrigin(primaryEnvironment?.environmentId ?? null),
+    );
     if (appPath !== null) {
       await router.navigate({ href: appPath });
       return;

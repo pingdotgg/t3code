@@ -1,8 +1,11 @@
 # Product usage data
 
 PseudoCode sends no product usage events, relay traces, or crash reports to PseudoCode, T3, or any
-third party, on any surface: desktop, web, the `t3` CLI, and the iOS and Android apps. Diagnostics
-leave your machine only when you point them at a receiver yourself, as below.
+third party, on any surface: desktop, web, the `t3` CLI, and the iOS and Android apps. It does not
+read other tools' sign-in files to identify you, and it creates no device or install id for
+analytics. The server and desktop app also refuse connections to T3 Code's analytics and tracing
+hosts, so no settings or environment variables are needed. Diagnostics leave your machine only
+when you point them at a receiver yourself, as below.
 
 ## Agent activity for mobile notifications
 

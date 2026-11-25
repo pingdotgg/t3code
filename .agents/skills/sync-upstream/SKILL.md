@@ -61,6 +61,15 @@ Run it before the sync PR merges. Its defaults compare against `origin/main`, wh
 the old fork once the PR lands. Done when every line it lists is restored or accounted for in the PR
 body.
 
+Upstream keeps adding analytics, owner hashing and trace export; the fork has none. A conflict
+inside code the fork deleted is resolved by keeping it deleted, and upstream code that adds new
+analytics calls is removed, not stubbed. `scripts/no-upstream-telemetry.test.ts` fails on anything
+that slips through; see [08_product-analytics.md](../../../docs/internals/08_product-analytics.md).
+
+The CLI release repository and `pseudocode-v` tag prefix in `packages/shared/src/cliRelease.ts`
+(and in `scripts/install.sh` and `scripts/install.ps1`) stay on the fork. Taking upstream's lines
+makes SSH installs and `t3 update` install upstream's build; `cliRelease.test.ts` fails if they do.
+
 ### 4. Bump the version
 
 Raise the version in the 4 files [ship-pseudocode](../ship-pseudocode/SKILL.md) names, and commit

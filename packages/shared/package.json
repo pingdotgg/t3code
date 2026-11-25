@@ -227,9 +227,9 @@
       "types": "./src/dpopCommon.ts",
       "import": "./src/dpopCommon.ts"
     },
-    "./telemetryId": {
-      "types": "./src/telemetryId.ts",
-      "import": "./src/telemetryId.ts"
+    "./telemetryBlocklist": {
+      "types": "./src/telemetryBlocklist.ts",
+      "import": "./src/telemetryBlocklist.ts"
     },
     "./relayAuth": {
       "types": "./src/relayAuth.ts",
@@ -295,10 +295,6 @@
       "types": "./src/composerTrigger.ts",
       "import": "./src/composerTrigger.ts"
     },
-    "./triagePrompt": {
-      "types": "./src/triagePrompt.ts",
-      "import": "./src/triagePrompt.ts"
-    },
     "./pullRequestComposerTrigger": {
       "types": "./src/pullRequestComposerTrigger.ts",
       "import": "./src/pullRequestComposerTrigger.ts"
@@ -338,10 +334,6 @@
     "./relayClient": {
       "types": "./src/relayClient.ts",
       "import": "./src/relayClient.ts"
-    },
-    "./relayTracing": {
-      "types": "./src/relayTracing.ts",
-      "import": "./src/relayTracing.ts"
     },
     "./preview": {
       "types": "./src/preview.ts",

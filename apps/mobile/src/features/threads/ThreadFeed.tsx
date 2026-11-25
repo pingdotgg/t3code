@@ -43,7 +43,6 @@ import {
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
-import { FeedbackRequestCard } from "./FeedbackRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import {
@@ -86,8 +85,8 @@ import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   hasThreadLinks,
-  hostedThreadLink,
   parseThreadLinkHref,
+  shareableThreadLink,
   threadLinkRefs,
 } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
@@ -246,7 +245,6 @@ import {
   isContextCompactionActivityGroup,
   isContextHandoffActivityGroup,
   isLinkRequestActivityGroup,
-  isFeedbackRequestActivityGroup,
   isSecretRequestActivityGroup,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
@@ -280,6 +278,7 @@ import { ThreadMcpApp } from "./McpAppWebView";
 import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
+import { readShareableOrigin } from "../../state/shareableOrigin";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
 import {
   agentWorkingDirectories,
@@ -2203,16 +2202,6 @@ function renderFeedEntry(
     );
   }
 
-  if (entry.type === "activity-group" && isFeedbackRequestActivityGroup(entry)) {
-    return (
-      <FeedbackRequestCard
-        environmentId={props.environmentId}
-        projectedItem={entry.activities[0]!.projectedItem}
-        iconColor={iconSubtleColor}
-      />
-    );
-  }
-
   if (entry.type === "activity-group" && isLinkRequestActivityGroup(entry)) {
     return (
       <LinkRequestCard
@@ -3527,7 +3516,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const thread = resolveLinkedThread(href);
       if (thread) {
         if (actionId === "open-thread") onMarkdownLinkPress(href);
-        else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
+        else if (actionId === "copy-thread-link")
+          copyTextWithHaptic(
+            shareableThreadLink(thread, readShareableOrigin(thread.environmentId)),
+          );
         return;
       }
       const deviceUrl = deviceLoopbackUrl(href);

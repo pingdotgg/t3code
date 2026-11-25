@@ -1,5 +1,4 @@
 import {
-  type AgentFeedbackMode,
   type AuthMcpClientAccess,
   type EnvironmentId,
   McpCapabilityUnavailableError,
@@ -15,7 +14,7 @@ import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { formatThreadLink, hostedThreadLink } from "@t3tools/shared/threadLinks";
+import { formatThreadLink, shareableThreadLink } from "@t3tools/shared/threadLinks";
 
 const ALL_MCP_CAPABILITIES = [
   "preview",
@@ -55,8 +54,8 @@ export interface McpClientCaller {
   readonly narrowedTo?: ClientModes | undefined;
   /** A linked environment's thread this request is made for (`T3-Sender-Thread`). */
   readonly senderThread?: OrchestrationV2LinkedSender | undefined;
-  /** An outside client's thread links go through this hosted app, as Copy thread's do. */
-  readonly hostedAppUrl?: string | undefined;
+  /** An outside client's thread links open this server's web app at the origin it called. */
+  readonly threadLinkOrigin?: string | undefined;
 }
 
 /**
@@ -156,8 +155,6 @@ export interface McpInvocationScope {
   readonly client: McpClientCaller | undefined;
   /** False while the Linked environments beta is off here; `/mcp` reads it per request. */
   readonly linkedEnvironments?: boolean;
-  /** The Agent feedback mode here; `/mcp` reads it per request. Unset is off. */
-  readonly agentFeedback?: AgentFeedbackMode;
   /** The broadest runtime mode an administrator lets a thread run in here. Unset is full access. */
   readonly runtimeModeCeiling?: RuntimeMode | undefined;
   /** True while Labs → Workflows is on here; `/mcp` reads it per request. Unset is off. */
@@ -173,7 +170,7 @@ export interface McpInvocationScope {
 
 /**
  * T3 Code renders `t3-thread://` links as thread chips. Other MCP clients cannot open them, so
- * they get the hosted link Copy thread copies, which opens the thread in either app or a browser.
+ * they get a link to this server's web app at the address they reached it on.
  * A known `title` labels the chip for clients that cannot load this environment's threads.
  */
 export const threadLinkFor = (
@@ -181,11 +178,9 @@ export const threadLinkFor = (
   threadId: ThreadId,
   title?: string,
 ): string => {
-  const hostedAppUrl = scope.client?.hostedAppUrl;
+  const origin = scope.client?.threadLinkOrigin;
   const ref = { environmentId: scope.environmentId, threadId };
-  return hostedAppUrl === undefined
-    ? formatThreadLink(ref, title)
-    : hostedThreadLink(ref, hostedAppUrl);
+  return origin === undefined ? formatThreadLink(ref, title) : shareableThreadLink(ref, origin);
 };
 
 export class McpInvocationContext extends Context.Service<
@@ -235,13 +230,6 @@ export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.linkedEnvironments !== false;
-};
-
-/** `McpSchema.EnabledWhen` for agent feedback tools, for every client including `t3 feedback`. */
-export const hiddenWhileFeedbackOff = (): boolean => {
-  const fiber = Fiber.getCurrent();
-  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
-  return scope?.agentFeedback !== undefined && scope.agentFeedback !== "off";
 };
 
 /** `McpSchema.EnabledWhen` for workflow event types: outside clients only, while Workflows is on. */

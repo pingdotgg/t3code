@@ -8,15 +8,15 @@ description: Build and ship the PseudoCode fork of T3 Code. Covers the signed ma
 PseudoCode is the pseudoseed fork of T3 Code. Every artifact is built on a Mac by hand, because
 upstream's release workflow cannot run in this fork (see [CI cannot release this fork](#ci-cannot-release-this-fork)).
 
-Two ship targets exist: a signed macOS DMG and an iOS TestFlight build. Windows, Linux, and Android
-are unbuilt here.
+Two ship targets exist: a signed macOS DMG with the darwin-arm64 `t3` CLI archive, and an iOS
+TestFlight build. Windows, Linux, and Android are unbuilt here.
 
 ## Ship it
 
 One command each. Both run from anywhere in the repo.
 
 ```sh
-.agents/skills/ship-pseudocode/scripts/ship-mac.sh          # arm64 DMG; the fork ships no Intel build
+.agents/skills/ship-pseudocode/scripts/ship-mac.sh          # arm64 DMG and t3 CLI; no Intel build
 .agents/skills/ship-pseudocode/scripts/ship-ios.sh          # TestFlight upload
 ```
 
@@ -55,6 +55,30 @@ upload as done and processing rather than waiting on it.
 
 `ship-ios.sh` bumps only the `.env.local` it runs in, so copy in the one with the highest
 `T3CODE_IOS_BUILD_NUMBER` first.
+
+## The t3 CLI archive
+
+SSH remote installs, `t3 update`, server self-update, and the mobile "check for server update"
+all read the fork's GitHub releases, not upstream's. The repository and the `pseudocode-v` tag
+prefix live in one place, `packages/shared/src/cliRelease.ts`; `scripts/install.sh` and
+`scripts/install.ps1` repeat them because shell cannot import it. An upstream sync that touches
+those lines must keep the fork values, or every one of those paths installs upstream's build.
+
+`ship-mac.sh` builds `t3-<version>-darwin-arm64.tar.gz` after the DMG verifies, signs it with the
+same Developer ID, notarizes it through the same keychain profile (`APPLE_KEYCHAIN_PROFILE`, read
+by `scripts/build-cli-archive.ts`), runs `scripts/smoke-cli-archive.ts`, writes `SHA256SUMS`, and
+uploads both to the release. A missing "Notarized t3" line fails the run.
+
+Only darwin-arm64 builds here. Node single-executables do not run on Intel Macs, so there is no
+darwin-x64 archive anywhere. Linux archives bundle `libatomic` found through `ldd` and `dpkg` and
+need `patchelf`, so they need a Linux host or container. Windows cross-builds need `cargo-xwin`
+and the MSVC Rust targets, and ship unsigned without Azure Trusted Signing. A release's
+`SHA256SUMS` lists what it publishes. On any other platform an SSH host stops with "publishes no
+t3 archive for <platform>" and `t3 update` with "No release archive was published", both before
+downloading; the fix is to install that `t3` version on the host by hand.
+
+The fork publishes no nightly or preview builds, so `t3 update --channel` accepts only `stable`
+and the mobile check compares every host against the latest stable release.
 
 ## Credentials
 
@@ -141,3 +165,5 @@ been done.
 | `Failed to create release, "workflow" scope`  | `gh` resolved to the `upstream` remote, where this account has read only. The script passes `--repo` derived from `origin`.                                        |
 | Release tag and DMG filename disagree         | The version bump missed `apps/server/package.json`.                                                                                                                |
 | "Check for updates" does nothing              | The build ran without `T3CODE_DESKTOP_UPDATE_REPOSITORY`, so the app has no `app-update.yml` and reports updates as disabled.                                      |
+| `The t3 CLI archive was NOT notarized`        | No notary credentials reached `build-cli-archive.ts`, so it signed without notarizing. A hand-run build must export `APPLE_KEYCHAIN_PROFILE`.                      |
+| SSH host: `publishes no t3 archive for ...`   | The release has no archive for that host. Only darwin-arm64 ships; install that `t3` version on the host by hand.                                                  |

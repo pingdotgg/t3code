@@ -79,6 +79,7 @@ function makeFakeBrowserWindow() {
       setPermissionRequestHandler: vi.fn(),
       webRequest: {
         onBeforeSendHeaders: vi.fn(),
+        onBeforeRequest: vi.fn(),
       },
     },
     copyImageAt: vi.fn(),
