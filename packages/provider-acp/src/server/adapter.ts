@@ -8718,6 +8718,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         reportStartupPhase = Effect.fn("AcpAdapterV2.reportStartupPhase")(function* (
           requested: string | undefined,
         ) {
+          const updatedAt = yield* DateTime.now;
           // `launch` describes the next turn, so an open turn (one being stopped too) never shows it.
           const phase =
             requested ??
@@ -8729,7 +8730,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           providerSession = {
             ...reported,
             ...(phase === undefined ? {} : { startupPhase: phase }),
-            updatedAt: yield* DateTime.now,
+            updatedAt,
           };
           yield* emitProviderEvent({ type: "provider_session.updated", driver, providerSession });
         });
