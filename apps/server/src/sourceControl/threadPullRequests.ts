@@ -9,6 +9,7 @@ export const {
   legacyThreadPullRequestKey,
   threadPullRequestKeysEqual,
   threadPullRequestKeyOf,
+  storedThreadPullRequestKey,
   resolveThreadPullRequestChains,
   threadPullRequestsOf,
   applyThreadPullRequestLinkUpdate,
