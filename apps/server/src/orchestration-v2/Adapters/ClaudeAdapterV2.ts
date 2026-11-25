@@ -916,12 +916,18 @@ export class ClaudeSettingsLaunchArgError extends Schema.TaggedError<ClaudeSetti
   {
     path: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
+    mustResolveForSkillDenyList: Schema.optionalKey(Schema.Literal(true)),
   },
 ) {
   override get message(): string {
+    if (this.mustResolveForSkillDenyList) {
+      return "Claude cannot enforce denied skills because the --settings launch argument did not resolve to a JSON object.";
+    }
     return `Claude could not read the --settings launch argument${this.path === undefined ? "" : ` at ${this.path}`} as a JSON object. Fix it in the Claude launch arguments, then send the message again.`;
   }
 }
+
+const isClaudeSettingsLaunchArgError = Schema.is(ClaudeSettingsLaunchArgError);
 
 export interface ClaudeAgentSdkQueryRunnerShape {
   readonly allocateSessionId: Effect.Effect<string, ClaudeAgentSdkQueryRunnerError>;
@@ -2590,6 +2596,10 @@ export function makeClaudeQueryOptions(input: {
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
 }): ClaudeAgentSdkQueryOptions {
+  const skillDeny = input.skillDeny?.names.length ? input.skillDeny : undefined;
+  if (skillDeny !== undefined && typeof input.sdkSettings === "string") {
+    throw new ClaudeSettingsLaunchArgError({ mustResolveForSkillDenyList: true });
+  }
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
   const {
     // claudeLaunchArgDirectories reads every --add-dir into additionalDirectories.
@@ -2678,19 +2688,19 @@ export function makeClaudeQueryOptions(input: {
               : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),
           },
         } as ClaudeSdkSettings);
-  const skillRules = input.skillDeny?.names.map((name) => `Skill(${name})`) ?? [];
-  const denyRules = [...skillRules, ...(input.skillDeny?.readRules ?? [])];
+  const skillRules = skillDeny?.names.map((name) => `Skill(${name})`) ?? [];
+  const denyRules = [...skillRules, ...(skillDeny?.readRules ?? [])];
   const disallowedTools = [...(input.disallowedTools ?? []), ...denyRules];
   const flagSettings =
     typeof effectiveQuerySettings === "object" ? effectiveQuerySettings : undefined;
   const enforcedSettings =
-    input.skillDeny === undefined
+    skillDeny === undefined
       ? effectiveQuerySettings
       : {
           ...flagSettings,
           skillOverrides: {
             ...flagSettings?.skillOverrides,
-            ...Object.fromEntries(input.skillDeny.names.map((name) => [name, "off" as const])),
+            ...Object.fromEntries(skillDeny.names.map((name) => [name, "off" as const])),
           },
           permissions: {
             ...flagSettings?.permissions,
@@ -13795,8 +13805,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
-          const queryOptions = makeClaudeQueryOptions({
-            agentFeedback: turnInput.agentFeedback ?? "off",
+          const queryOptionsInput = {
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
             nativeThreadId,
@@ -13844,6 +13853,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
+          } satisfies Parameters<typeof makeClaudeQueryOptions>[0];
+          const queryOptions = yield* Effect.try({
+            try: () => makeClaudeQueryOptions(queryOptionsInput),
+            catch: (cause) => {
+              if (isClaudeSettingsLaunchArgError(cause)) return cause;
+              throw cause;
+            },
           });
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")

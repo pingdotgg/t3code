@@ -530,6 +530,41 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     });
   });
 
+  it.each([
+    { resume: false, sdkSettings: "/private/claude-settings.json" },
+    { resume: true, sdkSettings: '{"env":{"ANTHROPIC_API_KEY":"private-key"}}' },
+  ])(
+    "refuses unresolved --settings launch arguments with denied skills ($resume)",
+    ({ resume, sdkSettings }) => {
+      assert.throws(
+        () =>
+          ClaudeAdapterV2.makeClaudeQueryOptions({
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            nativeThreadId: "native-unresolved-settings",
+            resume,
+            cwd: "/workspace",
+            sdkSettings,
+            settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow: "400000" },
+            skillDeny: { names: ["denied-fixture"], readRules: [] },
+          }),
+        "Claude cannot enforce denied skills because the --settings launch argument did not resolve to a JSON object.",
+      );
+    },
+  );
+
+  it("keeps unresolved --settings launch arguments without denied skills", () => {
+    const sdkSettings = "/private/claude-settings.json";
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "native-unrestricted-settings",
+      resume: false,
+      cwd: "/workspace",
+      sdkSettings,
+      skillDeny: { names: [], readRules: [] },
+    });
+    assert.equal(options.settings, sdkSettings);
+  });
+
   it("sends the auto-compact window as the env var Claude Code prefers", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
