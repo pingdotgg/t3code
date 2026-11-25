@@ -1856,7 +1856,7 @@
   "67f5b13c3c7bcd40": "Share with guest",
   "82da5b8b340217ac": "Restart agent session",
   "963d099509eabcd6": "Agent session will restart",
-  "1d384d4fe7888a09": "Your next message starts a fresh session.",
+  "71ed7c0da0b93c77": "Your next message restarts the agent. This conversation is kept.",
   "e4b61c891fed297e": "Go to file",
   "d2ccdb8cd3297212": "Add project",
   "594bcbef04093f72": "Open WSL folder",
