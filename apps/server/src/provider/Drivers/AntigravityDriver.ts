@@ -44,7 +44,9 @@ import {
   antigravityAuthUsesBrowser,
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
+  prepareAntigravityHelperProfile,
   prepareAntigravityProfile,
+  resolveAntigravityHelperProfileDirectory,
   resolveAntigravityInstanceDirectories,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
@@ -220,9 +222,12 @@ export const AntigravityDriver: ProviderDriver<
         Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
       );
 
+    const helperProfileDirectory = resolveAntigravityHelperProfileDirectory(path, profileDirectory);
+
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      options?: { readonly isolatedHelper?: boolean },
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
@@ -249,13 +254,22 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
-      const profile = yield* prepareAntigravityProfile({
-        profileDirectory,
-        baseEnv: processEnvironment,
-        auth,
-        userHome,
-        tempDirectory: directories.runtimeTemp,
-      }).pipe(
+      const profile = yield* (
+        options?.isolatedHelper === true
+          ? prepareAntigravityHelperProfile({
+              profileDirectory,
+              baseEnv: processEnvironment,
+              auth,
+              tempDirectory: directories.runtimeTemp,
+            })
+          : prepareAntigravityProfile({
+              profileDirectory,
+              baseEnv: processEnvironment,
+              auth,
+              userHome,
+              tempDirectory: directories.runtimeTemp,
+            })
+      ).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -308,7 +322,7 @@ export const AntigravityDriver: ProviderDriver<
     });
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
-      input: AntigravityAdapterV2RuntimeInput,
+      input: AntigravityAdapterV2RuntimeInput & { readonly isolatedHelper?: boolean },
     ): Effect.fn.Return<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
       AcpErrors.AcpError | ProviderSetupError,
@@ -316,12 +330,13 @@ export const AntigravityDriver: ProviderDriver<
     > {
       // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
       // agent's shell through `baseEnv`.
-      const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
+      const { processEnvironment: threadEnvironment, isolatedHelper, ...runtimeInput } = input;
       const { executable, spawn } = yield* prepareSpawn(
         runtimeInput.cwd,
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        isolatedHelper === true ? { isolatedHelper: true } : undefined,
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
@@ -372,8 +387,11 @@ export const AntigravityDriver: ProviderDriver<
     });
 
     const makeDisposableRuntime = Effect.fn("AntigravityDriver.makeDisposableRuntime")(function* (
-      input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl">,
+      input: Pick<AntigravityAcpRuntimeInput, "onAuthorizationUrl"> & {
+        readonly isolatedHelper?: boolean;
+      },
     ) {
+      const isolatedHelper = input.isolatedHelper === true;
       const cwd = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-antigravity-setup-" })
         .pipe(
@@ -389,7 +407,7 @@ export const AntigravityDriver: ProviderDriver<
       let sessionId: string | undefined;
       yield* Effect.addFinalizer(() =>
         removeAntigravitySessionFiles({
-          profileDirectory,
+          profileDirectory: isolatedHelper ? helperProfileDirectory : profileDirectory,
           sessionId,
           cwd,
         }).pipe(
@@ -400,6 +418,7 @@ export const AntigravityDriver: ProviderDriver<
       const runtime = yield* makeRuntime({
         cwd,
         mcpServers: [],
+        isolatedHelper,
         ...(input.onAuthorizationUrl ? { onAuthorizationUrl: input.onAuthorizationUrl } : {}),
       });
       return {
@@ -583,7 +602,7 @@ export const AntigravityDriver: ProviderDriver<
           Effect.provideService(Path.Path, path),
           Effect.catch(() => Effect.logWarning("Could not save Antigravity permission modes.")),
         ),
-      supportsTextGeneration: isAntigravityTextGenerationAvailable(profileDirectory).pipe(
+      supportsTextGeneration: isAntigravityTextGenerationAvailable(helperProfileDirectory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
         Effect.orElseSucceed(() => false),
@@ -634,12 +653,14 @@ export const AntigravityDriver: ProviderDriver<
     });
     const textGeneration = yield* makeAntigravityTextGeneration({
       profileDirectory,
+      helperProfileDirectory,
       defaultModel,
       withProcess: authFlow.withProcess,
       makeRuntime: (cwd) =>
         makeRuntime({
           cwd,
           mcpServers: [],
+          isolatedHelper: true,
         }),
     });
 
@@ -651,7 +672,7 @@ export const AntigravityDriver: ProviderDriver<
           .withProcess(
             Scope.close(processScope, Exit.void),
             Effect.gen(function* () {
-              const runtime = yield* makeDisposableRuntime({});
+              const runtime = yield* makeDisposableRuntime({ isolatedHelper: true });
               const started = yield* runtime.start();
               yield* publishCatalog(started, runtime);
             }),
