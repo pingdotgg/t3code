@@ -200,6 +200,7 @@ import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtoco
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as AgentctlSandboxes from "./agentctl/AgentctlSandboxes.ts";
+import * as DirectPush from "./push/DirectPush.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -1490,6 +1491,7 @@ export const layerWsRpc = (
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
       const sandboxes = yield* AgentctlSandboxes.AgentctlSandboxes;
+      const directPush = yield* DirectPush.DirectPush;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
@@ -1901,6 +1903,7 @@ export const layerWsRpc = (
           threadLinkMetadata: true,
           shellOlderSettled: true,
           agentctlSandboxes: true,
+          directPush: true,
           threadResumeCompletionMarker: true,
           threadSnapshotPagination: true,
           threadFind: true,
@@ -3336,6 +3339,12 @@ export const layerWsRpc = (
         [WS_METHODS.agentctlPullManifestRoots]: (input) =>
           sandboxes.pullManifestRoots(input.folders),
         [WS_METHODS.subscribeAgentctlSandboxes]: (_input) => sandboxes.changes,
+        [WS_METHODS.directPushRegisterDevice]: (input) => directPush.registerDevice(input),
+        [WS_METHODS.directPushUnregisterDevice]: (input) => directPush.unregisterDevice(input),
+        [WS_METHODS.directPushGetStatus]: (_input) => directPush.getStatus,
+        [WS_METHODS.directPushSetCredentials]: (input) => directPush.setCredentials(input),
+        [WS_METHODS.directPushClearCredentials]: (_input) => directPush.clearCredentials,
+        [WS_METHODS.directPushSendTest]: (_input) => directPush.sendTest,
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
             Effect.gen(function* () {

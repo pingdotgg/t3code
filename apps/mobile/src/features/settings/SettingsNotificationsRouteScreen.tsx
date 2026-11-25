@@ -25,7 +25,6 @@ import { Linking, Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { m as resolveMessage } from "../../i18n/messages";
 
-import { AppText as Text } from "../../components/ui/AppText";
 import {
   createEnvironmentCommand,
   isAtomCommandInterrupted,
@@ -67,6 +66,7 @@ import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
+import { DirectPushNotificationsScreen } from "./DirectPushNotificationsScreen";
 
 const updateLiveActivityPreference = createEnvironmentCommand(connectionAtomRuntime, {
   label: "updateLiveActivityPreference",
@@ -188,20 +188,8 @@ function useNotificationsReady(): boolean {
 }
 
 export function SettingsNotificationsRouteScreen() {
-  const gt = useGT();
   if (!hasCloudPublicConfig()) {
-    return (
-      <SettingsScreen title={gt("Notifications")}>
-        <ScrollView
-          contentInsetAdjustmentBehavior="automatic"
-          contentContainerClassName="px-5 pt-4"
-        >
-          <Text className="text-base text-foreground-muted">
-            {gt("Notifications require {product} in this app build.", { product: "T3 Connect" })}
-          </Text>
-        </ScrollView>
-      </SettingsScreen>
-    );
+    return <DirectPushNotificationsScreen />;
   }
 
   return <ConfiguredSettingsNotificationsRouteScreen />;

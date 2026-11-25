@@ -379,6 +379,10 @@
       "types": "./src/state/sandboxes.ts",
       "default": "./src/state/sandboxes.ts"
     },
+    "./state/directPush": {
+      "types": "./src/state/directPush.ts",
+      "default": "./src/state/directPush.ts"
+    },
     "./state/source-control": {
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"

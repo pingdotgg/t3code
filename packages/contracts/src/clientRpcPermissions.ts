@@ -94,6 +94,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.agentctlAddManifestRoot]: AuthSettingsWriteScope,
   [WS_METHODS.agentctlRemoveManifestRoot]: AuthSettingsWriteScope,
   [WS_METHODS.agentctlPullManifestRoots]: AuthSettingsWriteScope,
+  [WS_METHODS.directPushSetCredentials]: AuthSettingsWriteScope,
+  [WS_METHODS.directPushClearCredentials]: AuthSettingsWriteScope,
+  [WS_METHODS.directPushSendTest]: AuthSettingsWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

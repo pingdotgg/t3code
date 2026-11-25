@@ -32,6 +32,34 @@ if (
   );
 }
 
+// Your own Apple team. With a paid team and T3CODE_IOS_BUNDLE_ID, every capability is kept so the
+// app can receive the environment's own pushes (directPush); upstream's OTA channel would ship
+// upstream's JS, so updates stay off unless T3CODE_MOBILE_UPDATES_ENABLED=1. A Personal Team build
+// signs with it too; without one, Expo picks the local signing identity's team.
+const ownTeamId = repoEnv.T3CODE_IOS_TEAM_ID?.trim() || undefined;
+const ownTeamBundleIdentifier = repoEnv.T3CODE_IOS_BUNDLE_ID?.trim() || undefined;
+const isIosOwnTeamBuild =
+  !isIosPersonalTeamBuild && (ownTeamId !== undefined || ownTeamBundleIdentifier !== undefined);
+
+if (ownTeamId !== undefined && !/^[A-Z0-9]{10}$/.test(ownTeamId)) {
+  throw new Error("T3CODE_IOS_TEAM_ID must be your 10-character Apple team ID.");
+}
+if (isIosPersonalTeamBuild && ownTeamBundleIdentifier !== undefined) {
+  throw new Error(
+    "A Personal Team build takes its bundle id from T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID, not T3CODE_IOS_BUNDLE_ID.",
+  );
+}
+if (isIosOwnTeamBuild) {
+  if (!ownTeamId) {
+    throw new Error("T3CODE_IOS_TEAM_ID must be set when T3CODE_IOS_BUNDLE_ID is set.");
+  }
+  if (!ownTeamBundleIdentifier || !IOS_BUNDLE_IDENTIFIER_PATTERN.test(ownTeamBundleIdentifier)) {
+    throw new Error(
+      "T3CODE_IOS_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code when T3CODE_IOS_TEAM_ID is set.",
+    );
+  }
+}
+
 const DEVELOPMENT_ASSETS = {
   appIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIosIconPng),
   iosIcon: fromRepoRoot(BRAND_ASSET_PATHS.developmentIconComposerProject),
@@ -116,7 +144,7 @@ const variant = VARIANT_CONFIG[APP_VARIANT];
 const HOSTED_APP_HOST = "app.t3.codes";
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
-  : variant.iosBundleIdentifier;
+  : (ownTeamBundleIdentifier ?? variant.iosBundleIdentifier);
 
 const dmSansFonts = {
   regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
@@ -240,7 +268,9 @@ const config: ExpoConfig = {
   icon: variant.assets.appIcon,
   userInterfaceStyle: "automatic",
   updates: {
-    enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
+    enabled: isIosOwnTeamBuild
+      ? repoEnv.T3CODE_MOBILE_UPDATES_ENABLED === "1"
+      : repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
     url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
@@ -251,7 +281,7 @@ const config: ExpoConfig = {
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
-    appleTeamId: "ARK85ZXQ4Z",
+    appleTeamId: ownTeamId ?? (isIosPersonalTeamBuild ? undefined : "ARK85ZXQ4Z"),
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,

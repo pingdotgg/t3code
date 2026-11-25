@@ -595,8 +595,11 @@ export default defineConfig({
           "**/{test-fixtures,*TestFixtures}.ts",
           "apps/mobile/src/features/development/**",
           "packages/client-runtime/src/rpc/**",
-          // The fork's Sandboxes UI is English in every locale.
+          // The fork's Sandboxes and direct push UI is English in every locale.
           "apps/web/src/sandboxes/**",
+          "apps/web/src/components/settings/DirectPushSettings.tsx",
+          "apps/mobile/src/features/settings/DirectPushNotificationsScreen.tsx",
+          "apps/mobile/src/features/agent-awareness/directPushRegistration.ts",
         ],
         rules: { "t3code/no-untranslated-copy": "error" },
       },

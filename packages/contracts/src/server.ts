@@ -733,6 +733,8 @@ export const ServerConfig = Schema.Struct({
   shellRevealInFileManager: Schema.optionalKey(Schema.Boolean),
   /** The server manages agentctl Sandboxes on its machine and relays them at `/sandbox/<name>/`. */
   agentctlSandboxes: Schema.optionalKey(Schema.Boolean),
+  /** The server sends push notifications to Apple itself, for app builds signed with the user's team. */
+  directPush: Schema.optionalKey(Schema.Boolean),
   shellRevealInFileManagerKind: Schema.optionalKey(FileManagerRevealKind),
   threadResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /** Send window fields only when advertised. */

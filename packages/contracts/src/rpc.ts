@@ -356,6 +356,14 @@ import {
   AgentctlSandboxesSnapshot,
 } from "./agentctl.ts";
 import {
+  DirectPushCredentialsInput,
+  DirectPushError,
+  DirectPushRegisterDeviceInput,
+  DirectPushStatus,
+  DirectPushTestResult,
+  DirectPushUnregisterDeviceInput,
+} from "./directPush.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -560,6 +568,12 @@ export const WS_METHODS = {
   agentctlAddManifestRoot: "agentctl.addManifestRoot",
   agentctlRemoveManifestRoot: "agentctl.removeManifestRoot",
   agentctlPullManifestRoots: "agentctl.pullManifestRoots",
+  directPushRegisterDevice: "directPush.registerDevice",
+  directPushUnregisterDevice: "directPush.unregisterDevice",
+  directPushGetStatus: "directPush.getStatus",
+  directPushSetCredentials: "directPush.setCredentials",
+  directPushClearCredentials: "directPush.clearCredentials",
+  directPushSendTest: "directPush.sendTest",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -2051,6 +2065,50 @@ const WsAgentctlPullManifestRootsRpc = agentctlRpc(
   AgentctlPullManifestRootsInput,
   AgentctlPullResult,
 );
+const directPushRpc = <
+  const Tag extends string,
+  Payload extends Schema.Top,
+  Success extends Schema.Top,
+>(
+  tag: Tag,
+  payload: Payload,
+  success: Success,
+) =>
+  Rpc.make(tag, {
+    payload,
+    success,
+    error: Schema.Union([DirectPushError, EnvironmentAuthorizationError]),
+  });
+const WsDirectPushRegisterDeviceRpc = directPushRpc(
+  WS_METHODS.directPushRegisterDevice,
+  DirectPushRegisterDeviceInput,
+  Schema.Void,
+);
+const WsDirectPushUnregisterDeviceRpc = directPushRpc(
+  WS_METHODS.directPushUnregisterDevice,
+  DirectPushUnregisterDeviceInput,
+  Schema.Void,
+);
+const WsDirectPushGetStatusRpc = directPushRpc(
+  WS_METHODS.directPushGetStatus,
+  Schema.Struct({}),
+  DirectPushStatus,
+);
+const WsDirectPushSetCredentialsRpc = directPushRpc(
+  WS_METHODS.directPushSetCredentials,
+  DirectPushCredentialsInput,
+  DirectPushStatus,
+);
+const WsDirectPushClearCredentialsRpc = directPushRpc(
+  WS_METHODS.directPushClearCredentials,
+  Schema.Struct({}),
+  DirectPushStatus,
+);
+const WsDirectPushSendTestRpc = directPushRpc(
+  WS_METHODS.directPushSendTest,
+  Schema.Struct({}),
+  DirectPushTestResult,
+);
 const WsSubscribeAgentctlSandboxesRpc = Rpc.make(WS_METHODS.subscribeAgentctlSandboxes, {
   payload: Schema.Struct({}),
   success: AgentctlSandboxesSnapshot,
@@ -2590,6 +2648,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentctlRemoveManifestRootRpc,
   WsAgentctlPullManifestRootsRpc,
   WsSubscribeAgentctlSandboxesRpc,
+  WsDirectPushRegisterDeviceRpc,
+  WsDirectPushUnregisterDeviceRpc,
+  WsDirectPushGetStatusRpc,
+  WsDirectPushSetCredentialsRpc,
+  WsDirectPushClearCredentialsRpc,
+  WsDirectPushSendTestRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

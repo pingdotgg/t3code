@@ -233,6 +233,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.agentctlListManifestRoots]: AuthOrchestrationReadScope,
   [WS_METHODS.agentctlRefreshManifestRoots]: AuthOrchestrationReadScope,
   [WS_METHODS.agentctlGetSettings]: AuthOrchestrationReadScope,
+  // The phone registers in the background, so only the server checks these.
+  [WS_METHODS.directPushRegisterDevice]: AuthOrchestrationReadScope,
+  [WS_METHODS.directPushUnregisterDevice]: AuthOrchestrationReadScope,
+  [WS_METHODS.directPushGetStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAgentctlSandboxes]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,

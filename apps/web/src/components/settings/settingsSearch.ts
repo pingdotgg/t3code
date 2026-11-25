@@ -743,6 +743,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "phone-notifications",
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's direct push UI is English
+    title: "Phone notifications",
+    to: "/settings/general",
+    environmentOnly: true,
+    searchTerms: ["push apns apple iphone ios mobile key p8 team"],
+  },
+  {
     id: "time-format",
     title: msg("Time format"),
     to: "/settings/general",

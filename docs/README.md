@@ -69,6 +69,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Development and local builds](./operations/development.md)
 - [Scenarios: real-app proof for a fix](./operations/scenarios.md)
 - [Releasing and installing the fork's desktop app](./operations/fork-desktop-build.md)
+- [The fork's iOS app and its push notifications](./operations/fork-ios-app.md)
 - [T3 Connect setup](./operations/connect-setup.md)
 - [Release](./operations/release.md)
 - [Observability](./operations/observability.md)
