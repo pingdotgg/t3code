@@ -70,9 +70,13 @@ export function resolveFilesystemReadAccess(
 
 export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
   const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
-  const directoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
+  // A bare drive has no separator, so it would otherwise filter its own listing by "D:".
+  const browseQuery = /^[a-zA-Z]:$/.test(query) ? `${query}\\` : query;
+  const directoryPath = isBrowsing ? getBrowseDirectoryPath(browseQuery) : "";
   const filterQuery =
-    isBrowsing && !hasTrailingPathSeparator(query) ? getBrowseLeafPathSegment(query) : "";
+    isBrowsing && !hasTrailingPathSeparator(browseQuery)
+      ? getBrowseLeafPathSegment(browseQuery)
+      : "";
   const parentPath = isBrowsing ? getBrowseParentPath(directoryPath) : null;
 
   return {
@@ -239,6 +243,21 @@ export function createFilesystemEnvironmentAtoms<R, E>(
     addTaskFolderRepository: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:workspace:add-task-folder-repository",
       tag: WS_METHODS.workspaceAddTaskFolderRepository,
+    }),
+    /** A project's `worktreeLayout` commands as its `t3.json` holds them now, and whether each is approved. */
+    layoutCommands: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:layout-commands",
+      tag: WS_METHODS.workspaceLayoutCommands,
+      staleTimeMs: 0,
+    }),
+    /** The same read as a one-off, for a check made as a worktree thread is about to start. */
+    readLayoutCommands: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:workspace:read-layout-commands",
+      tag: WS_METHODS.workspaceLayoutCommands,
+    }),
+    approveLayoutCommands: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:workspace:approve-layout-commands",
+      tag: WS_METHODS.workspaceApproveLayoutCommands,
     }),
   };
 }

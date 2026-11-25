@@ -9,6 +9,8 @@ import {
   COMPOSER_CONTEXT_TERMINAL_TEXT_MAX_CHARS,
 } from "@t3tools/contracts";
 import type {
+  ChatFileAttachment,
+  ChatImageAttachment,
   ComposerContextId,
   ComposerContextRecord,
   EnvironmentContextRecord,
@@ -488,39 +490,59 @@ export function fileContextReference(file: ComposerFileAttachment): ComposerCont
   };
 }
 
+export type ComposerContextAttachment =
+  | ComposerImageAttachment
+  | ComposerFileAttachment
+  | (Omit<ComposerImageAttachment, "file"> & {
+      readonly file: File | null;
+      readonly uploadedAttachmentId?: string | undefined;
+    })
+  | ChatImageAttachment
+  | ChatFileAttachment;
+
 export interface BoundComposerAttachment {
-  attachment: ComposerImageAttachment | ComposerFileAttachment;
+  attachment: ComposerContextAttachment;
   attachmentId: string;
+  contextId?: ComposerContextId | undefined;
 }
 
 /** Returns null until the attachment has a server id. */
 export function uploadedAttachmentContextRecord(
-  attachment: ComposerImageAttachment | ComposerFileAttachment,
+  attachment: ComposerContextAttachment,
   upload: AttachmentUploadState | undefined,
+  contextId?: ComposerContextId,
 ): ImageContextRecord | FileContextRecord | null {
   const attachmentId =
-    attachment.type === "file" && attachment.uploadedAttachmentId !== undefined
+    "uploadedAttachmentId" in attachment && attachment.uploadedAttachmentId !== undefined
       ? attachment.uploadedAttachmentId
       : upload?.status === "ready"
         ? upload.attachmentId
         : undefined;
-  return attachmentId === undefined ? null : attachmentContextRecord({ attachment, attachmentId });
+  return attachmentId === undefined
+    ? null
+    : attachmentContextRecord({ attachment, attachmentId, contextId });
 }
 
 export function attachmentContextRecord(
   bound: BoundComposerAttachment,
 ): ImageContextRecord | FileContextRecord {
-  const { attachment, attachmentId } = bound;
+  const { attachment, attachmentId, contextId } = bound;
   const base = {
     version: 1 as const,
-    contextId: toKindScopedComposerContextId(attachment.type, attachment.id),
+    contextId: contextId ?? toKindScopedComposerContextId(attachment.type, attachment.id),
     label: sanitizeComposerContextLabel(attachment.name, attachment.type),
     attachmentId,
     name: attachment.name,
     mimeType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
   };
-  return attachment.type === "image" ? { ...base, kind: "image" } : { ...base, kind: "file" };
+  return attachment.type === "image"
+    ? {
+        ...base,
+        kind: "image",
+        ...(attachment.source !== undefined ? { source: attachment.source } : {}),
+      }
+    : { ...base, kind: "file" };
 }
 
 export function buildMessageContext(input: {

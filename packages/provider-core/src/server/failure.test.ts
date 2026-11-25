@@ -132,6 +132,16 @@ it("preserves actionable T3 errors wrapped by turn startup", () => {
     });
     assert.equal(makeProviderFailure({ cause: Cause.fail(cause) }).message, error.message);
   }
+  const unanswered = {
+    _tag: "CodexAppServerUnresponsiveError",
+    message: "Codex app-server did not answer turn/start within 2 minutes.",
+  };
+  assert.equal(
+    makeProviderFailure({
+      cause: Cause.fail({ _tag: "ProviderAdapterEventStreamError", cause: unanswered }),
+    }).message,
+    unanswered.message,
+  );
 });
 
 it("names how the provider process exited and the stage it failed in, without its output", () => {
@@ -327,6 +337,28 @@ it("does not serialize arbitrary provider causes", () => {
     code: null,
     retryable: null,
   });
+});
+
+it("keeps only trusted Google account verification URLs on provider failures", () => {
+  const validUrls = [
+    "https://accounts.google.com/v3/signin/continue?plt=fixture&flowName=GlifWebSignIn",
+    "https://accounts.google.com/signin/continue?sarp=1&scc=1&plt=fixture",
+  ];
+  for (const url of validUrls) {
+    assert.equal(makeProviderFailure({ verificationUrl: url }).verificationUrl, url);
+  }
+  for (const invalid of [
+    undefined,
+    "",
+    "http://accounts.google.com/v3/signin/continue?plt=fixture",
+    "https://accounts.google.com/v3/signin/continue?",
+    "https://accounts.google.com/logout?continue=https://example.invalid",
+    "https://accounts.google.com.example.invalid/v3/signin/continue?plt=fixture",
+    "https://accounts.google.com/v3/signin/continue?plt=fixture#frag",
+    "https://accounts.google.com/v3/signin/continue?plt=fixture\u0007",
+  ]) {
+    assert.isUndefined(makeProviderFailure({ verificationUrl: invalid }).verificationUrl);
+  }
 });
 
 it.effect("keys terminal failure items by provider turn across retries and fallback paths", () =>

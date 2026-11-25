@@ -247,10 +247,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           threadId: String(threadId),
           ...repositoryParams,
           confirmAction: confirmableAction,
-          branchName,
-          includesCommit: String(
-            input.action === "commit_push" || input.action === "commit_push_pr",
-          ),
         }),
       );
       return;
