@@ -453,7 +453,12 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     offersSideChat: props.offersSideChat === true,
   });
   // Stop-and-send: the transcript lands asynchronously, so the send waits for its commit.
-  const voiceSendRef = useRef({ pending: false, committed: false });
+  // The record keeps the draft the tap targeted, so a send never carries over to another draft.
+  const voiceSendRef = useRef<{
+    pending: boolean;
+    committed: boolean;
+    draftKey: string | null;
+  }>({ pending: false, committed: false, draftKey: null });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
     label: props.selectedThread.title || gt("Untitled thread"),
@@ -461,7 +466,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     selection: composerMenu.selection,
     hidden: props.hidden,
     onChangeDraftMessage: (text) => {
-      if (voiceSendRef.current.pending) voiceSendRef.current.committed = true;
+      if (voiceSendRef.current.pending && voiceSendRef.current.draftKey === composerDraftKey) {
+        voiceSendRef.current.committed = true;
+      }
       setComposerDraftText(composerDraftKey, text);
     },
     onChangeSelection: composerMenu.onSelectionChange,
@@ -610,19 +617,21 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   });
 
   const sendDictation = () => {
-    voiceSendRef.current = { pending: true, committed: false };
+    voiceSendRef.current = { pending: true, committed: false, draftKey: composerDraftKey };
     void voiceInput.stop();
   };
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a stop-and-send tap sends only after the transcript commits; handleSend reads this render's draft and locks, which are stale at tap time
   useEffect(() => {
     const action = resolvePendingVoiceSend({
-      ...voiceSendRef.current,
+      pending: voiceSendRef.current.pending,
+      committed: voiceSendRef.current.committed,
+      targetsCurrentDraft: voiceSendRef.current.draftKey === composerDraftKey,
       phase: voiceInput.state.phase,
       canSend,
     });
     if (action === "wait") return;
-    voiceSendRef.current = { pending: false, committed: false };
+    voiceSendRef.current = { pending: false, committed: false, draftKey: null };
     if (action === "send") void handleSend();
   });
 

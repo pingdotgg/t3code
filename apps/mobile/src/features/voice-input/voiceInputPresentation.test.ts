@@ -27,7 +27,13 @@ describe("resolveVoiceComposerPresentation", () => {
 });
 
 describe("resolvePendingVoiceSend", () => {
-  const pending = { pending: true, committed: true, phase: "idle", canSend: true } as const;
+  const pending = {
+    pending: true,
+    committed: true,
+    targetsCurrentDraft: true,
+    phase: "idle",
+    canSend: true,
+  } as const;
 
   it.each([
     ["the transcript landed and the draft can be sent", pending, "send"],
@@ -41,6 +47,12 @@ describe("resolvePendingVoiceSend", () => {
     ["recording is still finishing", { ...pending, committed: false, phase: "recording" }, "wait"],
     ["transcription is running", { ...pending, committed: false, phase: "transcribing" }, "wait"],
     ["no voice send was requested", { ...pending, pending: false }, "wait"],
+    ["the composer moved to another draft", { ...pending, targetsCurrentDraft: false }, "clear"],
+    [
+      "the composer moved to another draft mid-recording",
+      { ...pending, committed: false, targetsCurrentDraft: false, phase: "recording" },
+      "clear",
+    ],
   ] as const)("%s", (_case, input, expected) => {
     expect(resolvePendingVoiceSend(input)).toBe(expected);
   });

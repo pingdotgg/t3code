@@ -84,14 +84,18 @@ export type PendingVoiceSendAction = "send" | "clear" | "wait";
 /**
  * Decides what a stop-and-send tap does once dictation settles. Idle alone is not enough:
  * cancelling during transcription also lands in idle, so only a committed transcript sends.
+ * A send applies only to the draft the tap targeted.
  */
 export function resolvePendingVoiceSend(input: {
   readonly pending: boolean;
   readonly committed: boolean;
+  /** False once the composer shows a different draft than the one the tap targeted. */
+  readonly targetsCurrentDraft: boolean;
   readonly phase: VoiceInputState["phase"];
   readonly canSend: boolean;
 }): PendingVoiceSendAction {
   if (!input.pending) return "wait";
+  if (!input.targetsCurrentDraft) return "clear";
   if (input.phase === "error") return "clear";
   if (input.phase !== "idle") return "wait";
   return input.committed && input.canSend ? "send" : "clear";
