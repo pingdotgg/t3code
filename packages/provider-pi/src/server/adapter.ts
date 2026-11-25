@@ -4277,7 +4277,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 PiRpcError: (error) => {
                   if (
                     boundary.type !== "entry" ||
-                    targetFile !== undefined ||
                     boundaryFile != null ||
                     error.operation !== "fork" ||
                     error.detail !== "Invalid entry ID for forking"
