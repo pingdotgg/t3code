@@ -1,5 +1,5 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
-import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useLocation, useRouter } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { RotateCcwIcon } from "lucide-react";
@@ -18,6 +18,7 @@ import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice"
 import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import { useRenderedSettingsPathname } from "../components/settings/useRenderedSettingsPathname";
+import { SettingsPageSkeleton } from "../components/settings/SettingsPageSkeleton";
 import {
   retainSettingsScope,
   validateSettingsRouteSearch,
@@ -172,10 +173,16 @@ function SettingsContentLayout() {
               <AppRouteModalClose />
             </div>
           </header>
-          <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
+          <div
+            key={`${contentScopeKey}:${restoreSignal}`}
+            className="relative min-h-0 flex flex-1 flex-col"
+          >
             <SettingsScopeBoundary pathname={pathname}>
               <Outlet />
             </SettingsScopeBoundary>
+            {navPathname !== pathname && navPathname.startsWith("/settings/") ? (
+              <SettingsPageSkeleton />
+            ) : null}
           </div>
         </div>
       </div>
@@ -186,9 +193,8 @@ function SettingsContentLayout() {
 function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
+  const router = useRouter();
   const pathname = useRenderedSettingsPathname();
-  // A scope change during a pending navigation keeps going to the page that was clicked.
-  const targetPathname = useLocation({ select: (location) => location.pathname });
   return (
     <SettingsScopeProvider
       search={rawSearch}
@@ -197,7 +203,9 @@ function SettingsRouteLayout() {
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
         void navigate({
-          to: targetPathname,
+          // Read at call time: subscribing would hand every scope consumer a new context value on
+          // each click. A pending navigation's target wins over the page still on screen.
+          to: router.state.location.pathname,
           search: () => ({
             project: next.project,
             machine: next.machine,
