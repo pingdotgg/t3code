@@ -129,7 +129,12 @@ const LOGIN_SHELL_ENV_NAMES = [
   "JAVA_HOME",
   "PNPM_HOME",
 ] as const;
-const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
+const WINDOWS_PROFILE_ENV_NAMES = [
+  "PATH",
+  "FNM_DIR",
+  "FNM_MULTISHELL_PATH",
+  "T3CODE_TELEMETRY_ENABLED",
+] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
 const ANDROID_SDK_ENV_NAMES = ["ANDROID_HOME", "ANDROID_SDK_ROOT"] as const;
 const FALLBACK_LC_CTYPE = "en_US.UTF-8";
@@ -453,6 +458,9 @@ const installWindowsEnvironment = Effect.fn("desktop.shellEnvironment.installWin
     }
     if (!config.env.FNM_MULTISHELL_PATH && profile.FNM_MULTISHELL_PATH) {
       config.env.FNM_MULTISHELL_PATH = profile.FNM_MULTISHELL_PATH;
+    }
+    if (!config.env.T3CODE_TELEMETRY_ENABLED && profile.T3CODE_TELEMETRY_ENABLED) {
+      config.env.T3CODE_TELEMETRY_ENABLED = profile.T3CODE_TELEMETRY_ENABLED;
     }
     return Boolean(noProfile.PATH && profile.PATH);
   },

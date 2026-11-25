@@ -3,6 +3,8 @@ import {
   groupWorkflowRuns,
   listedWorkflowRuns,
   workflowChip,
+  workflowQuestionKinds,
+  workflowRunAsksKind,
   workflowRunLists,
   workflowRunNow,
   workflowRunState,
@@ -17,18 +19,21 @@ import { AsyncResult } from "effect/reactivity";
 import { useNavigation } from "@react-navigation/native";
 import { msg, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RelativeTime } from "../../components/RelativeTime";
 import { AppText as Text } from "../../components/ui/AppText";
+import { Chip } from "../../components/ui/Chip";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { cn } from "../../lib/cn";
 import { useEnvironments } from "../../state/environments";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { formatEnvironmentQueryError } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const TABS = [
   {
@@ -113,6 +118,8 @@ function EnvironmentRuns(props: {
   readonly label: string | null;
   readonly snapshot: WorkflowRunsSnapshot;
   readonly tab: WorkflowListTab;
+  /** The kind of question to narrow Needs you to; null for every run in it. */
+  readonly kind: string | null;
 }) {
   const navigation = useNavigation();
   const gt = useGT();
@@ -120,9 +127,14 @@ function EnvironmentRuns(props: {
   const [showSkipped, setShowSkipped] = useState(false);
   const { snapshot, tab } = props;
   const visible = listedWorkflowRuns(snapshot.runs, showSkipped);
-  const listed = workflowRunLists(
+  const inTab = workflowRunLists(
     groupWorkflowRuns(snapshot.workflows, visible.runs, snapshot.questions),
   )[tab];
+  const kind = tab === "needs-you" ? props.kind : null;
+  const listed =
+    kind === null
+      ? inTab
+      : inTab.filter((node) => workflowRunAsksKind(snapshot.workflows, node, kind));
   return (
     <View>
       {props.label === null ? null : (
@@ -132,7 +144,7 @@ function EnvironmentRuns(props: {
       )}
       {listed.length === 0 ? (
         <Text className="px-5 py-6 text-center text-sm text-foreground-muted">
-          {m(NOTHING[tab])}
+          {kind === null ? m(NOTHING[tab]) : gt("No questions of this kind wait on you.")}
         </Text>
       ) : (
         listed.map((node) => (
@@ -167,6 +179,19 @@ function EnvironmentRuns(props: {
 
 const TAB_ORDER: ReadonlyArray<WorkflowListTab> = ["needs-you", "running", "all"];
 
+/** What waits on a person in each environment, as the kinds of question are counted from. */
+const needsYouSources = (snapshots: ReadonlyArray<WorkflowRunsSnapshot>) =>
+  snapshots.map((snapshot) => ({
+    workflows: snapshot.workflows,
+    nodes: workflowRunLists(
+      groupWorkflowRuns(
+        snapshot.workflows,
+        listedWorkflowRuns(snapshot.runs, false).runs,
+        snapshot.questions,
+      ),
+    )["needs-you"],
+  }));
+
 /** The Workflows tab: what waits on you first, in every environment this device is connected to. */
 export function WorkflowsScreen() {
   const { environments, isReady } = useEnvironments();
@@ -179,6 +204,8 @@ export function WorkflowsScreen() {
       JSON.stringify(environments.map((environment) => environment.environmentId)),
     ),
   );
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   if (isReady && environments.length === 0) {
     return (
       <EmptyState
@@ -211,6 +238,20 @@ export function WorkflowsScreen() {
       ),
     ) ?? "all";
   const shown = tab ?? opening;
+  // The pick stays when its last question is answered: the rest must not appear in its place.
+  const kind =
+    shown === "needs-you" && AsyncResult.isSuccess(preferences)
+      ? (preferences.value.workflowQuestionKind ?? null)
+      : null;
+  const kinds =
+    shown === "needs-you"
+      ? workflowQuestionKinds(needsYouSources(withRuns.map(({ snapshot }) => snapshot)), kind)
+      : [];
+  const pickKind = (next: string | undefined) => {
+    // Held here, so answering the kind's last question does not move the list on.
+    setTab("needs-you");
+    void savePreferences({ workflowQuestionKind: next });
+  };
   return (
     <ScreenScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -248,6 +289,30 @@ export function WorkflowsScreen() {
               role="tab"
             />
           </View>
+          {kinds.length === 0 ? null : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerClassName="gap-2 px-5 pb-2"
+            >
+              <Chip
+                label={gt("All kinds", { $context: "filter, every kind of workflow question" })}
+                selected={kind === null}
+                onPress={() => pickKind(undefined)}
+              />
+              {kinds.map((candidate) => (
+                <Chip
+                  key={candidate.kind}
+                  label={`${
+                    candidate.label ??
+                    gt("Other", { $context: "workflow questions that have no kind" })
+                  } ${candidate.count}`}
+                  selected={kind === candidate.kind}
+                  onPress={() => pickKind(candidate.kind)}
+                />
+              ))}
+            </ScrollView>
+          )}
           {withRuns.map(({ environment, snapshot }) => (
             <EnvironmentRuns
               key={environment.environmentId}
@@ -255,6 +320,7 @@ export function WorkflowsScreen() {
               label={environments.length > 1 ? environment.label : null}
               snapshot={snapshot}
               tab={shown}
+              kind={kind}
             />
           ))}
         </>

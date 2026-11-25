@@ -86,7 +86,9 @@ const isDefinition = (value: unknown): value is WorkflowDefinition =>
   typeof (value as WorkflowDefinition).body === "function" &&
   // The engine walks these at start, and a file can export an object that only looks like one.
   Array.isArray((value as WorkflowDefinition).triggers) &&
-  Array.isArray((value as WorkflowDefinition).resumeAfter);
+  Array.isArray((value as WorkflowDefinition).resumeAfter) &&
+  typeof (value as WorkflowDefinition).asks === "object" &&
+  (value as WorkflowDefinition).asks !== null;
 
 // The API is handed to a file as globals, which the whole process shares, so files load one at
 // a time. A load that was given up on still runs, so `T3.workflow` registers with the load whose

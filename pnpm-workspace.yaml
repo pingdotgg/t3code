@@ -111,7 +111,7 @@ overrides:
   expo-audio: 58.0.11
   expo-network: 58.0.4
   "@clerk/expo-native-components": 0.4.4
-  "@cursor/sdk": 1.4.2
+  "@cursor/sdk": 1.5.0
   expo-sharing: 58.0.22
   expo-widgets: 58.0.27
   "@ff-labs/fff-node": 0.11.0
@@ -276,10 +276,9 @@ patchedDependencies:
   # Electron net requests never emit "socket", so upstream's idle timeout never fires and a
   # stalled update download hangs forever.
   electron-updater@6.8.9: patches/electron-updater@6.8.9.patch
-  # Local agents honor the attribution settings in the user's Cursor CLI cli-config.json, stream
-  # shell output while it runs, expose agent.resume() (the protocol's ResumeAction), and offer
-  # background shells to the host so they can outlive the run.
-  "@cursor/sdk@1.4.2": patches/@cursor__sdk@1.4.2.patch
+  # Local agents expose agent.resume() (the protocol's ResumeAction), report startup progress,
+  # offer background shells to the host, and refresh a cached model list on a miss.
+  "@cursor/sdk@1.5.0": patches/@cursor__sdk@1.5.0.patch
   # A failed Artifacts.cached effect hangs every later caller: https://github.com/alchemy-run/alchemy/issues/2981
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
   # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
@@ -336,12 +335,12 @@ minimumReleaseAgeExclude:
   - "@anthropic-ai/claude-agent-sdk@0.3.321"
   - "@pierre/diffs@1.7.0-beta.4"
   - "@pierre/highlights@0.5.0"
-  - "@cursor/sdk-darwin-arm64@1.4.1"
-  - "@cursor/sdk-darwin-x64@1.4.1"
-  - "@cursor/sdk-linux-arm64@1.4.1"
-  - "@cursor/sdk-linux-x64@1.4.1"
-  - "@cursor/sdk-win32-x64@1.4.1"
-  - "@cursor/sdk@1.4.1"
+  - "@cursor/sdk-darwin-arm64@1.5.0"
+  - "@cursor/sdk-darwin-x64@1.5.0"
+  - "@cursor/sdk-linux-arm64@1.5.0"
+  - "@cursor/sdk-linux-x64@1.5.0"
+  - "@cursor/sdk-win32-x64@1.5.0"
+  - "@cursor/sdk@1.5.0"
   - "@effect/atom-react@4.1.5"
   - "@effect/graphql-generator@4.1.5"
   - "@effect/openapi-generator@4.1.5"

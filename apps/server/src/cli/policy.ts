@@ -96,14 +96,15 @@ const checkCommand = Command.make("check", {
   Command.withDescription("Validate a policy file before deploying it."),
   Command.withHandler(
     Effect.fn("cli.policy.check")(function* ({ file }) {
+      const policyFile = yield* expandHomePath(file);
       // Startup treats a missing file as no policy; a draft that is not there checks nothing.
-      if (!(yield* (yield* FileSystem.FileSystem).exists(file))) {
+      if (!(yield* (yield* FileSystem.FileSystem).exists(policyFile))) {
         return yield* new CliError.UserError({
           cause: file,
           userMessage: `No policy file at ${file}.`,
         });
       }
-      const policy = yield* ManagedPolicy.load(file);
+      const policy = yield* ManagedPolicy.load(policyFile);
       yield* Console.log(describePolicy(policy, yield* ManagedPolicy.loadedPolicy(policy)));
     }),
   ),
@@ -151,10 +152,11 @@ const templatesCommand = Command.make("templates", {
       if (profile._tag === "Invalid") {
         return yield* new CliError.UserError({ cause: document, userMessage: profile.reason });
       }
+      const outputDir = yield* expandHomePath(directory);
       const files = [
-        [path.join(directory, "windows", "t3code.admx"), windowsAdmx()],
-        [path.join(directory, "windows", "en-US", "t3code.adml"), windowsAdml()],
-        [path.join(directory, "macos", "t3code.mobileconfig"), profile.profile],
+        [path.join(outputDir, "windows", "t3code.admx"), windowsAdmx()],
+        [path.join(outputDir, "windows", "en-US", "t3code.adml"), windowsAdml()],
+        [path.join(outputDir, "macos", "t3code.mobileconfig"), profile.profile],
       ] as const;
       for (const [file, contents] of files) {
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });

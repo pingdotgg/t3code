@@ -3723,10 +3723,40 @@ export const make = Effect.gen(function* () {
     );
     return { key, read };
   };
-  const diff: PullRequestService["Service"]["diff"] = (input) => {
-    const { key, read } = readDiff(input);
-    return staleDiff.serve(key, read.pipe(Effect.map((read) => read.value)));
+  // A host reads a commit's diff from the repository, not from the change request, so a named
+  // commit is forwarded only as the one oid the change request's own commit list gives for it.
+  const withListedCommit = <I extends PullRequestRef & { readonly commit?: string | undefined }>(
+    operation: string,
+    input: I,
+    read: (input: I) => Effect.Effect<PullRequestActivity, PullRequestError>,
+  ): Effect.Effect<I, PullRequestError> => {
+    const wanted = input.commit?.toLowerCase();
+    if (wanted === undefined) return Effect.succeed(input);
+    return read(input).pipe(
+      Effect.flatMap(({ commits }) => {
+        const listed = /^[0-9a-f]{7,64}$/.test(wanted)
+          ? commits.filter((commit) => commit.oid.toLowerCase().startsWith(wanted))
+          : [];
+        const [commit] = listed;
+        return commit !== undefined && listed.length === 1
+          ? Effect.succeed({ ...input, commit: commit.oid })
+          : Effect.fail(
+              new PullRequestOperationError({
+                operation,
+                detail: "This commit is not part of the change request.",
+                reason: "not-found",
+              }),
+            );
+      }),
+    );
   };
+  const diff: PullRequestService["Service"]["diff"] = (input) =>
+    withListedCommit("diff", input, activity).pipe(
+      Effect.flatMap((input) => {
+        const { key, read } = readDiff(input);
+        return staleDiff.serve(key, read.pipe(Effect.map((read) => read.value)));
+      }),
+    );
 
   const filesViewedCache = yield* Cache.makeWith(
     (key: string) => {
@@ -4146,18 +4176,23 @@ export const make = Effect.gen(function* () {
     return walk(undefined);
   };
   // PR read access does not grant arbitrary repository reads with the project credential; restrict to changed files.
+  const listedActivity = credentialCached(activity);
   const diffFileContents: PullRequestService["Service"]["diffFileContents"] = (input) =>
-    changesFile(input).pipe(
-      Effect.flatMap((changed) =>
-        changed
-          ? readDiffFileContents(input)
-          : Effect.fail(
-              new PullRequestOperationError({
-                operation: "diffFileContents",
-                detail: "This file is not part of the change request.",
-                reason: "not-found",
-              }),
-            ),
+    withListedCommit("diffFileContents", input, listedActivity).pipe(
+      Effect.flatMap((input) =>
+        changesFile(input).pipe(
+          Effect.flatMap((changed) =>
+            changed
+              ? readDiffFileContents(input)
+              : Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "diffFileContents",
+                    detail: "This file is not part of the change request.",
+                    reason: "not-found",
+                  }),
+                ),
+          ),
+        ),
       ),
     );
 

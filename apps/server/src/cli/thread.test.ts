@@ -767,5 +767,10 @@ it.live("resolves a path inside a git worktree of the project's repository to th
     assert.strictEqual(ambiguous._tag, "ThreadUsageError");
     assert.include(ambiguous.message, "sample (project-sample)");
     assert.include(ambiguous.message, "feature (project-feature)");
+
+    // An inherited relative GIT_DIR resolves against Git's cwd, where no repository is.
+    vi.stubEnv("GIT_DIR", ".git");
+    yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllEnvs()));
+    assert.deepStrictEqual(yield* resolveFrom([sample], path.join(worktree, "pkg")), sample);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
