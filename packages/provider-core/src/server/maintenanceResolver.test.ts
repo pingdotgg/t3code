@@ -127,7 +127,11 @@ function stdoutSpawner(
   exitCodeOf: (args: ReadonlyArray<string>) => number = () => 0,
 ) {
   return ChildProcessSpawner.make((command) => {
-    const { command: executable, args, options: spawnOptions } = command as unknown as {
+    const {
+      command: executable,
+      args,
+      options: spawnOptions,
+    } = command as unknown as {
       readonly command: string;
       readonly args: ReadonlyArray<string>;
       readonly options: { readonly env: Record<string, unknown> };
@@ -556,7 +560,9 @@ it.layer(
           ),
           Effect.provideService(
             HttpClient.HttpClient,
-            HttpClient.make(() => Effect.die("the npm view answer must not fall back to the registry")),
+            HttpClient.make(() =>
+              Effect.die("the npm view answer must not fall back to the registry"),
+            ),
           ),
         );
         expect(cacheDirs).toHaveLength(1);
