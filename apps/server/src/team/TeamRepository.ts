@@ -741,26 +741,34 @@ const make = Effect.gen(function* () {
 
     listLatestTurnAttributions: Effect.fn("TeamRepository.listLatestTurnAttributions")(
       function* (teamId) {
-        // Keep the most recent non-steering runs per thread so queued runs never evict an active run's author.
+        // Keep the 5 most recent non-steering runs per thread plus any non-terminal run so queued turns never evict an active run's author on reconnect.
         const rows = yield* runSql(
           "listLatestTurnAttributions",
           sql<TurnMetaRow>`
           SELECT turn_id, thread_id, author_member_id, author_pseudo, created_at
           FROM (
             SELECT
+              t.rowid AS row_ord,
               t.turn_id,
               t.thread_id,
               t.author_member_id,
               m.pseudo AS author_pseudo,
               t.created_at,
-              ROW_NUMBER() OVER (PARTITION BY t.thread_id ORDER BY t.rowid DESC) AS rn
+              ROW_NUMBER() OVER (PARTITION BY t.thread_id ORDER BY t.rowid DESC) AS rn,
+              EXISTS (
+                SELECT 1
+                FROM orchestration_v2_projection_runs r
+                WHERE r.run_id = t.turn_id
+                  AND r.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+              ) AS is_non_terminal
             FROM team_turn_meta t
             INNER JOIN team_thread_meta tm ON tm.thread_id = t.thread_id
             INNER JOIN team_members m ON m.id = t.author_member_id
             WHERE tm.team_id = ${teamId}
               AND t.turn_id NOT LIKE 'msg:%'
           )
-          WHERE rn <= 5
+          WHERE rn <= 5 OR is_non_terminal = 1
+          ORDER BY row_ord ASC
         `,
         );
         return rows.map(mapTurnMetaRow);

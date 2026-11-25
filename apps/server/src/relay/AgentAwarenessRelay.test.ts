@@ -1379,6 +1379,22 @@ describe("AgentAwarenessRelay team notification gating", () => {
         yield* relay.drain;
         assert.equal(publications.length, 2);
         assert.isNull(publications[1]?.state);
+
+        // Relay binding change revisits live published threads even when omitted from catchUpThreads.
+        allowPublish = true;
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.drain;
+        assert.equal(publications.length, 3);
+        assert.equal(publications[2]?.state?.phase, "running");
+
+        allowPublish = false;
+        yield* PubSub.publish(triggers, { type: "relayBinding" });
+        yield* TestClock.adjust("1 second");
+        yield* relay.drain;
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.equal(publications.length, 4);
+        assert.isNull(publications[3]?.state);
       }),
   );
 });

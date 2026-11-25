@@ -6,9 +6,14 @@ import {
   ThreadId,
   type TeamMember,
   type TeamPseudo,
+  type TeamStateStreamEvent,
   type TeamWorkspace,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import { describe, expect, it } from "@effect/vitest";
 import {
   applyTeamStreamEvent,
   countFollowedTeamThreads,
@@ -19,6 +24,7 @@ import {
   isTeamColleagueThread,
   resolveTeamThreadCreatorPseudo,
   resolveTeamThreadNotificationDecision,
+  scanTeamStateStream,
   shouldNotifyForTeamThread,
   shouldShowThreadInTeamFilter,
 } from "./index.ts";
@@ -396,4 +402,43 @@ describe("team client-runtime state and presentation", () => {
     ]);
     expect(countFollowedTeamThreads(pollutedFollowed)).toBe(1);
   });
+
+  it.effect(
+    "does not emit EMPTY_TEAM_ENVIRONMENT_STATE before the first server snapshot arrives",
+    () =>
+      Effect.gen(function* () {
+        const events = yield* Queue.unbounded<TeamStateStreamEvent>();
+        const observed: Array<TeamId | null> = [];
+        const collector = yield* scanTeamStateStream(Stream.fromQueue(events)).pipe(
+          Stream.tap((next) =>
+            Effect.sync(() => {
+              observed.push(next.team?.id ?? null);
+            }),
+          ),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        // Before any server snapshot arrives, the stream must emit nothing so clients stay deferred.
+        yield* Effect.yieldNow;
+        expect(observed).toEqual([]);
+
+        yield* Queue.offer(events, {
+          version: 1,
+          type: "snapshot",
+          payload: {
+            team,
+            currentMember: bob,
+            members: [alice, bob],
+            invites: [],
+            threadAttributions: [],
+            followedThreadIds: [],
+            latestTurnAttributions: [],
+          },
+        });
+        yield* Fiber.join(collector);
+        expect(observed).toEqual([teamId]);
+      }),
+  );
 });

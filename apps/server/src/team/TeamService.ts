@@ -1177,8 +1177,6 @@ const make = Effect.gen(function* () {
     }
     if (
       input.cloudUserId !== undefined &&
-      input.cloudUserId !== null &&
-      relayBindingOption.value.cloudUserId !== null &&
       relayBindingOption.value.cloudUserId !== input.cloudUserId
     ) {
       return false;

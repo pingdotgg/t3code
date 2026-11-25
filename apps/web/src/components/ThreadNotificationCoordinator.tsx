@@ -342,18 +342,23 @@ export function startThreadNotifications(
     }
     entry.reconnecting = false;
     entry.previous = next;
+    const now = Date.now();
     for (const [threadId, pendingDeferred] of entry.deferred) {
       const current = next.get(threadId);
       if (
         current === undefined ||
         current.thread.archivedAt !== null ||
-        current.thread.latestRun?.runId !== pendingDeferred.state.thread.latestRun?.runId
+        current.raw.latestRunStopRequested === true ||
+        current.thread.latestRun?.runId !== pendingDeferred.state.thread.latestRun?.runId ||
+        (pendingDeferred.kind === "input" &&
+          current.attention !== pendingDeferred.state.attention) ||
+        (pendingDeferred.kind === "completion" && !current.settled) ||
+        isSnoozedForNotification(current.thread, current.completedAt, now)
       ) {
         entry.deferred.delete(threadId);
       }
     }
     entry.gate.retain(new Set(next.keys()));
-    const now = Date.now();
     for (const [prior, state] of changed) {
       entry.gate.observe(state.thread.id, prior, state, {
         archived: state.thread.archivedAt !== null,
@@ -387,6 +392,7 @@ export function startThreadNotifications(
           return;
         }
         entry.reconnecting = true;
+        entry.deferred.clear();
         entry.gate.pause();
       },
       { immediate: true },
@@ -430,7 +436,20 @@ export function startThreadNotifications(
         });
         if (decision === "allow") {
           entry.deferred.delete(threadId);
-          present(environmentId, deferred.state, deferred.kind);
+          const current = entry.previous.get(threadId);
+          const now = Date.now();
+          if (
+            current !== undefined &&
+            current.thread.archivedAt === null &&
+            current.raw.latestRunStopRequested !== true &&
+            current.thread.latestRun?.runId === latestRunId &&
+            (deferred.kind === "input"
+              ? current.attention === deferred.state.attention
+              : current.settled) &&
+            !isSnoozedForNotification(current.thread, current.completedAt, now)
+          ) {
+            present(environmentId, current, deferred.kind);
+          }
         } else if (decision === "suppress") {
           entry.deferred.delete(threadId);
         } else {

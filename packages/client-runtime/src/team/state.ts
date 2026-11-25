@@ -182,7 +182,13 @@ export function applyTeamStreamEvent(
       const latestTurnByThreadId = new Map(current.latestTurnByThreadId);
       latestTurnByThreadId.set(turn.threadId, turn);
       const turnAuthorByTurnId = new Map(current.turnAuthorByTurnId);
+      turnAuthorByTurnId.delete(turn.turnId);
       turnAuthorByTurnId.set(turn.turnId, turn);
+      while (turnAuthorByTurnId.size > MAX_TRACKED_TURN_ATTRIBUTIONS) {
+        const oldestKey = turnAuthorByTurnId.keys().next().value;
+        if (oldestKey === undefined) break;
+        turnAuthorByTurnId.delete(oldestKey);
+      }
       return {
         ...current,
         latestTurnByThreadId,
@@ -209,6 +215,18 @@ export function applyTeamStreamEvent(
   }
 }
 
+const MAX_TRACKED_TURN_ATTRIBUTIONS = 1_000;
+
+export function scanTeamStateStream<E, R>(
+  stream: Stream.Stream<TeamStateStreamEvent, E, R>,
+): Stream.Stream<TeamEnvironmentState, E, R> {
+  // Drop Stream.scan's synthetic initial seed so clients stay unresolved until the first server snapshot lands.
+  return stream.pipe(
+    Stream.scan(() => EMPTY_TEAM_ENVIRONMENT_STATE, applyTeamStreamEvent),
+    Stream.drop(1),
+  );
+}
+
 export function createTeamEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
 ) {
@@ -218,9 +236,7 @@ export function createTeamEnvironmentAtoms<R, E>(
         followStreamInEnvironment(
           environmentId,
           Stream.suspend(() =>
-            subscribe(TEAM_WS_METHODS.teamSubscribeState, {}).pipe(
-              Stream.scan(() => EMPTY_TEAM_ENVIRONMENT_STATE, applyTeamStreamEvent),
-            ),
+            scanTeamStateStream(subscribe(TEAM_WS_METHODS.teamSubscribeState, {})),
           ),
         ),
       )

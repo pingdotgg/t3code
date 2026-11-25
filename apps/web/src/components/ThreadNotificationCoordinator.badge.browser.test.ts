@@ -763,4 +763,46 @@ it("defers notifications and sound across team stream races without leaking coll
   expect(TestNotification.sent).toHaveLength(1);
   expect(TestNotification.sent[0]?.options.body).toBe("alice: Test thread");
   expect(state.sound).toHaveBeenCalledTimes(1);
+
+  // Race C: An approval request on run-race-approval is deferred waiting for turnAttributed,
+  // then resolves on the same run before attribution arrives -> late attribution must NOT fire a stale alert.
+  state.shells.set(
+    "one",
+    shell({
+      hasPendingApprovals: true,
+      pendingRequestId: "req-resolved-before-attr",
+      latestTurn: { turnId: "run-race-approval", state: "running", completedAt: null },
+    }),
+  );
+  expect(TestNotification.sent).toHaveLength(1);
+
+  // Approval is answered while run-race-approval keeps running.
+  state.shells.set(
+    "one",
+    shell({
+      hasPendingApprovals: false,
+      pendingRequestId: "req-resolved-before-attr",
+      latestTurn: { turnId: "run-race-approval", state: "running", completedAt: null },
+    }),
+  );
+
+  // Late turnAttributed lands confirming Bob authored run-race-approval -> still 0 new notifications or sounds.
+  const bobApprovalRun = {
+    turnId: "run-race-approval",
+    threadId,
+    authorMemberId: bobId,
+    authorPseudo: bob.pseudo,
+    createdAt: "2026-09-13T07:02:30.000Z",
+  };
+  state.teamStates.set("one", {
+    ...teamState,
+    latestTurnByThreadId: new Map([[threadId, bobApprovalRun]]),
+    turnAuthorByTurnId: new Map([
+      [aliceRun1.turnId, aliceRun1],
+      [bobRun.turnId, bobRun],
+      [bobApprovalRun.turnId, bobApprovalRun],
+    ]),
+  });
+  expect(TestNotification.sent).toHaveLength(1);
+  expect(state.sound).toHaveBeenCalledTimes(1);
 });

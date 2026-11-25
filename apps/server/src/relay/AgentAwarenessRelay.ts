@@ -917,14 +917,24 @@ export const make = Effect.gen(function* () {
       projects: projectSnapshot.projects,
       threads: [...activitySnapshot.threads, ...liveChildren.filter((thread) => thread !== null)],
     });
-    if (activeThreadIds.length === 0) {
+    const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const candidateThreadIds = new Set<ThreadId>(activeThreadIds);
+    for (const threadId of publishedStateByThread.keys()) {
+      if (hasLivePublishedState(publishedStateByThread, threadId)) {
+        candidateThreadIds.add(threadId);
+      }
+    }
+    for (const threadId of heldCompletions) {
+      candidateThreadIds.add(threadId);
+    }
+    if (candidateThreadIds.size === 0) {
       yield* Effect.logDebug("agent activity snapshot has no publishable threads");
       return "published" as const;
     }
     yield* Effect.logInfo("publishing active agent activity snapshot", {
-      count: activeThreadIds.length,
+      count: candidateThreadIds.size,
     });
-    yield* Effect.forEach(activeThreadIds, enqueueThreadPublish, { discard: true });
+    yield* Effect.forEach(candidateThreadIds, enqueueThreadPublish, { discard: true });
     yield* worker.drain;
     return "published" as const;
   });

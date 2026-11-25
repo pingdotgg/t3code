@@ -4,6 +4,7 @@ export {
   EMPTY_TEAM_ENVIRONMENT_STATE,
   previewTeamInviteEffect,
   redeemTeamInviteAndConnectEffect,
+  scanTeamStateStream,
   type TeamEnvironmentState,
   type TeamInviteJoinInput,
   type TeamInviteJoinResult,

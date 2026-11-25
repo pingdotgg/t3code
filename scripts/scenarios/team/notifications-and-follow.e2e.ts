@@ -113,8 +113,8 @@ test("team notifications stay silent for unfollowed colleague threads, fire whil
   // Confirm Alice's own thread does NOT show a Follow button in her header.
   expect(await alice.page.getByTestId("team-thread-follow-button").count()).toBe(0);
 
-  // While Bob's window is STILL unfocused, confirm his live shell + team stream received Alice's
-  // completed thread AND he recorded 0 notifications for Alice's unfollowed Turn 1.
+  // While Bob's window is STILL unfocused, confirm his live client receives Alice's thread and
+  // completed Turn 1 output, and verify he recorded 0 notifications for Alice's unfollowed Turn 1.
   const bobThreadRow = bob.page
     .locator("aside, [data-sidebar='sidebar']")
     .first()
@@ -125,17 +125,13 @@ test("team notifications stay silent for unfollowed colleague threads, fire whil
       timeout: 20_000,
     })
     .toContain("alice: Release checklist");
-  await expect
-    .poll(async () => (await bobThreadRow.textContent().catch(() => "")) ?? "", {
-      timeout: 15_000,
-    })
-    .not.toContain("Working");
-  expect(await bob.notifications()).toEqual([]);
-
-  // 4. Bob refocuses, opens Alice's thread via the sidebar row, and clicks Follow in the thread header.
-  await bob.setWindowFocused(true);
   await bobThreadRow.focus();
   await bobThreadRow.press("Enter");
+  await waitForAssistantTurnSettled(bob.page, 1);
+  expect(await bob.notifications()).toEqual([]);
+
+  // 4. Bob refocuses and clicks Follow in the thread header.
+  await bob.setWindowFocused(true);
 
   const followButton = bob.page.getByTestId("team-thread-follow-button");
   await followButton.waitFor({ state: "visible", timeout: 15_000 });

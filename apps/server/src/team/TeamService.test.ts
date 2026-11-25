@@ -756,12 +756,19 @@ describe("TeamService", () => {
             cloudUserId: "cloud-alice",
           }),
         ).toBe(false);
-        // Mismatched cloud user ID (e.g., relinked to another cloud account) fails closed.
+        // Mismatched or missing cloud user ID fails closed when relay binding is tied to a cloud account.
         expect(
           yield* team.shouldPublishRelayNotificationForThread({
             threadId: aliceThreadId,
             turnId: "run-alice-1",
             cloudUserId: "cloud-someone-else",
+          }),
+        ).toBe(false);
+        expect(
+          yield* team.shouldPublishRelayNotificationForThread({
+            threadId: aliceThreadId,
+            turnId: "run-alice-1",
+            cloudUserId: null,
           }),
         ).toBe(false);
         // Post-team unattributed threads fail closed; pre-team legacy threads stay allowed.
@@ -970,6 +977,37 @@ describe("TeamService", () => {
         if (turnEvent?.type === "turnAttributed") {
           expect(turnEvent.payload.turnId).toBe("run-bob-fresh-2");
         }
+
+        // Snapshot retains active/non-terminal run attribution even when >5 newer turns are queued behind it.
+        const activeBobRunId = "run-bob-active-held";
+        yield* team.recordTurnAuthored({
+          sessionId: bobSession1.sessionId,
+          threadId: aliceThreadId,
+          turnId: activeBobRunId,
+        });
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id,
+            status, requested_at, completed_at, payload_json
+          ) VALUES (
+            ${activeBobRunId}, ${aliceThreadId}, 1, 'codex', NULL,
+            'running', '2026-01-01T00:00:00.000Z', NULL, '{}'
+          )
+        `;
+        for (let i = 1; i <= 6; i += 1) {
+          yield* team.recordTurnAuthored({
+            sessionId: ownerSession.sessionId,
+            threadId: aliceThreadId,
+            turnId: `run-alice-queued-${i}`,
+          });
+        }
+        const reconnectedSnapshot = yield* team.getState(bobSession1.sessionId);
+        expect(
+          reconnectedSnapshot.latestTurnAttributions.some(
+            (turn) =>
+              turn.turnId === activeBobRunId && turn.authorMemberId === bobRedeemed.member.id,
+          ),
+        ).toBe(true);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });
