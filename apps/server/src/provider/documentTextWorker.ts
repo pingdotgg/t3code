@@ -398,6 +398,7 @@ function* table(node: XmlNode): Generator<TextPart, void> {
     const repeat = repeatCount(row.attrs["number-rows-repeated"]);
     for (let index = 0; index < repeat; index++) {
       if (++rowCount > 10_000) throw new Truncation("Row limit");
+      if (rowCount === 1) yield LINE_START;
       let column = 0;
       let gap = 0;
       for (const cell of cells) {
