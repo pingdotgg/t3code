@@ -1550,7 +1550,8 @@ describe("CursorAdapterV2", () => {
           interactionMode: "default",
           cwd: workspace,
         });
-        // Each adapter is one server process; both reach the same Cursor agent on disk.
+        // Each adapter is one server process; both reach the same Cursor agent and data directory.
+        const host = yield* Layer.build(TestProviderHost.layer({ cwd: workspace }));
         const makeAdapter = makeCursorAdapterV2({
           instanceId,
           environment: { HOME: workspace },
@@ -1588,7 +1589,7 @@ describe("CursorAdapterV2", () => {
                   }),
               }),
           }),
-          Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+          Effect.provide(host),
         );
         const now = yield* DateTime.now;
         const appThread = {

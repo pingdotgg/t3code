@@ -11,6 +11,7 @@ import type {
 } from "@cursor/sdk";
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import {
   isOrchestrationV2WorkActive,
   defaultInstanceIdForDriver,
@@ -1047,6 +1048,10 @@ const addCursorTurnUsage = (
   };
 };
 
+const SentPromptJson = Schema.fromJsonString(
+  Schema.Struct({ runId: Schema.String, text: Schema.String }),
+);
+
 interface CursorLiveAgent {
   readonly nativeThreadId: string;
   readonly storeCwd: string;
@@ -1113,6 +1118,47 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
           readonly message: string | SDKUserMessage;
           readonly runtimeInstructions: string | undefined;
         } | null>(null);
+        // A restart wipes interruptedPrompt before the run ends, so each sent prompt is also kept on disk.
+        const sentPromptPath = (agent: string) =>
+          path.join(
+            host.paths.stateDir,
+            "cursor-sent-prompts",
+            `${encodeURIComponent(agent)}.json`,
+          );
+        const saveSentPrompt = (sent: {
+          readonly agent: string;
+          readonly runId: string;
+          readonly text: string;
+        }) =>
+          fileSystem
+            .makeDirectory(path.dirname(sentPromptPath(sent.agent)), { recursive: true })
+            .pipe(
+              Effect.andThen(
+                writeFileStringAtomically({
+                  filePath: sentPromptPath(sent.agent),
+                  contents: JSON.stringify({ runId: sent.runId, text: sent.text }),
+                }),
+              ),
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestration-v2.cursor-sent-prompt-save-failed", { cause }),
+              ),
+            );
+        const forgetSentPrompt = (agent: string) =>
+          fileSystem.remove(sentPromptPath(agent), { force: true }).pipe(Effect.ignore);
+        const readSentPrompt = (agent: string) =>
+          fileSystem.readFileString(sentPromptPath(agent)).pipe(
+            Effect.flatMap(Schema.decodeEffect(SentPromptJson)),
+            Effect.map((sent) => ({
+              agent,
+              runId: sent.runId,
+              text: sent.text,
+              message: sent.text,
+              runtimeInstructions: undefined,
+            })),
+            Effect.orElseSucceed(() => null),
+          );
         // A native resume's own run may stop before it checkpoints; the request is still in history.
         const resumedAgent = yield* Ref.make<string | null>(null);
         const warnedUnsupportedSandbox = yield* Ref.make(false);
@@ -2633,6 +2679,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               input.context.session.runCheckpointed?.(input.context.run.runId) ??
               Effect.succeed(false)
             ).pipe(Effect.orElseSucceed(() => false)));
+          if (input.status !== "interrupted" && input.context.prompt !== undefined) {
+            yield* forgetSentPrompt(input.context.run.agentId);
+          }
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver: CursorAgentSdk.CURSOR_PROVIDER,
@@ -2994,7 +3043,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     backgroundWait: false,
                     runtime: undefined,
                   };
-            const interrupted = yield* Ref.get(interruptedPrompt);
+            const remembered = yield* Ref.get(interruptedPrompt);
+            const interrupted =
+              remembered?.agent === agent.nativeThreadId
+                ? remembered
+                : yield* readSentPrompt(agent.nativeThreadId);
             const runCheckpointed = (runId?: string) =>
               agent.session.runCheckpointed?.(runId) ?? Effect.succeed(false);
             const dropped =
@@ -3141,6 +3194,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               usage: undefined,
             };
             yield* Ref.set(activeTurn, context);
+            if (prompt !== undefined) {
+              yield* saveSentPrompt({ agent: sdkRun.agentId, runId: sdkRun.runId, text: prompt });
+            }
             latestRunId = turnInput.runId;
             yield* emitProviderEvent({
               type: "provider_turn.updated",
@@ -3609,6 +3665,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                     runtime: undefined,
                   }),
                   Ref.set(interruptedPrompt, null),
+                  forgetSentPrompt(agent),
                   Ref.set(resumedAgent, null),
                   // A shell the discarded runs left running must not wake the rewound thread.
                   stopBackgroundShells(rollbackInput.providerThread.id),
