@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -230,7 +231,7 @@ it.effect(
 
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        const at = new Date(startupTime - 2 * minute).toISOString();
+        const at = DateTime.formatIso(DateTime.makeUnsafe(startupTime - 2 * minute));
         yield* sql`
         INSERT INTO orchestration_v2_projection_threads (
           thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
