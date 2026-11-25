@@ -3767,11 +3767,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       if (maxHistoryBytes === undefined) return listener;
       // Legacy viewers cannot resume a clipped sequence from snapshot metadata.
       let pending = TERMINAL_SEQUENCE_GROUND;
+      let clearSequence: number | undefined;
       return (event: TerminalAttachStreamEvent) => {
         if ("snapshot" in event) {
           const retained = retainTerminalSnapshotHistory(event.snapshot.history, maxHistoryBytes);
           if (!supportsSnapshotSequenceState) {
             pending = retained.historySequenceState ?? TERMINAL_SEQUENCE_GROUND;
+            clearSequence = undefined;
           }
           return listener({
             ...event,
@@ -3784,13 +3786,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         if (event.type === "cleared" && pending !== TERMINAL_SEQUENCE_GROUND) {
           // Clear may have consumed the terminator from queued output.
           const { pendingControlSequence, ...cleared } = event;
+          clearSequence = event.sequence;
           pending = terminalSequenceStateAfter(
             TERMINAL_SEQUENCE_GROUND,
             pendingControlSequence ?? "",
           );
           return listener(cleared);
         }
-        if (event.type !== "output" || pending === TERMINAL_SEQUENCE_GROUND) return listener(event);
+        if (event.type !== "output") return listener(event);
+        // Fanout of the pre-clear bytes can finish after the clear event.
+        if (
+          clearSequence !== undefined &&
+          event.sequence !== undefined &&
+          event.sequence <= clearSequence
+        ) {
+          return Effect.void;
+        }
+        if (pending === TERMINAL_SEQUENCE_GROUND) return listener(event);
         const continuation = skipTerminalSnapshotContinuation(pending, event.data);
         pending = continuation.state;
         return listener({ ...event, data: continuation.data });

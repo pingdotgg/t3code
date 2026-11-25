@@ -40,13 +40,36 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
       afterClear: "ready\r\n",
     },
     {
+      part: "terminator before a legacy clear",
+      publishing: "old output\r\n\u001b]0;Build ",
+      queued: "progress\u0007",
+      afterClear: "ready\r\n",
+      legacy: true,
+    },
+    {
+      part: "terminator after a legacy clear",
+      publishing: "old output\r\n\u001b]0;Build ",
+      queued: "",
+      pending: "\u001b]0;Build ",
+      afterClear: "progress\u0007ready\r\n",
+      legacy: true,
+    },
+    {
+      part: "terminator still being published at legacy clear",
+      publishing: "progress\u0007",
+      queued: "",
+      afterClear: "ready\r\n",
+      legacy: true,
+      prefix: "\u001b]0;Build ",
+    },
+    {
       part: "exit",
       publishing: "old output\r\n\u001b]0;Build ",
       queued: "progress\u0007",
       afterClear: "ready\r\n",
       exit: { exitCode: 42, signal: null },
     },
-  ])("keeps visible history correct when the title $part is queued", (row) =>
+  ])("keeps visible history and output correct across clear ($part)", (row) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const logsDir = yield* fs.makeTempDirectoryScoped();
@@ -93,14 +116,33 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
           Deferred.succeed(resume, undefined).pipe(Effect.andThen(Effect.sync(unsubscribe))),
       );
       const emitData = onData.mock.calls[0]![0];
-      emitData(row.publishing);
-      yield* Deferred.await(publishing);
-      yield* live;
-      emitData(row.queued);
+      if (row.prefix) {
+        emitData(row.prefix);
+        yield* live;
+      } else {
+        emitData(row.publishing);
+        yield* Deferred.await(publishing);
+        yield* live;
+      }
+      const legacy = row.legacy
+        ? yield* Stream.toPull(
+            manager.attachOutputStream({ ...input, maxHistoryBytes: 8 }, "legacy"),
+          )
+        : undefined;
+      if (legacy) {
+        expect((yield* legacy)[0]).toMatchObject({ type: "snapshot", snapshot: { history: "" } });
+      }
+      if (row.prefix) {
+        emitData(row.publishing);
+        yield* Deferred.await(publishing);
+        yield* live;
+      }
+      if (row.queued) emitData(row.queued);
       if (row.exit) onExit.mock.calls[0]![0](row.exit);
       yield* manager.clear(input);
       const [cleared] = yield* live;
       expect(cleared?.type).toBe("cleared");
+      if (legacy) expect((yield* legacy)[0]?.type).toBe("cleared");
       yield* Deferred.succeed(resume, undefined);
 
       if (row.exit) {
@@ -112,6 +154,9 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
       if (row.pending) expect(cleared).toMatchObject({ pendingControlSequence: row.pending });
       emitData(row.afterClear);
       yield* Deferred.await(printed);
+      if (legacy) {
+        expect((yield* legacy)[0]).toMatchObject({ type: "output", data: "ready\r\n" });
+      }
 
       const reopened = yield* Stream.toPull(manager.attachOutputStream(input, "reopened"));
       const [event] = yield* reopened;
