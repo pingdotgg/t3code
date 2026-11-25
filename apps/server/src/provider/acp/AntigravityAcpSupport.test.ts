@@ -60,14 +60,14 @@ function makeModelRuntime(
 
 describe("Antigravity release gates", () => {
   it.each([
-    { version: "1.5.0", ownName: false, advertisedAppend: false },
-    { version: "1.5.1", ownName: true, advertisedAppend: false },
-    { version: "1.5.7", ownName: true, advertisedAppend: true },
-    { version: undefined, ownName: false, advertisedAppend: false },
-    { version: "unknown", ownName: false, advertisedAppend: false },
+    { version: "1.5.0", advertisedAppend: false },
+    { version: "1.5.1", advertisedAppend: false },
+    { version: "1.5.7", advertisedAppend: true },
+    { version: undefined, advertisedAppend: false },
+    { version: "unknown", advertisedAppend: false },
   ])(
-    "$version: advertised system append $advertisedAppend, own client name $ownName",
-    ({ version, ownName, advertisedAppend }) => {
+    "$version: advertised system append $advertisedAppend, always uses own client name",
+    ({ version, advertisedAppend }) => {
       const initialize = {
         protocolVersion: 1,
         ...(advertisedAppend
@@ -84,7 +84,7 @@ describe("Antigravity release gates", () => {
           ? { antigravity: { systemPrompt: { append: "<pull_request_linking/>" } } }
           : undefined,
       );
-      expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
+      expect(antigravityClientInfo(version).name).toBe("t3-code");
     },
   );
 });

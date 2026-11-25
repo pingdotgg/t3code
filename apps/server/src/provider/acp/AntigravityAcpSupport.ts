@@ -71,8 +71,6 @@ function compareVersions(left: ReadonlyArray<number>, right: ReadonlyArray<numbe
   return 0;
 }
 
-// `agy acp` 1.5.1 offers every model to every ACP client; older runtimes allowlist editors.
-const OPEN_MODEL_ACCESS_RELEASE = [1, 5, 1] as const;
 // `agy acp` 1.5.0 steers a running turn with the next prompt; the 1.4 harness queues it.
 const PROMPT_STEERING_RELEASE = [1, 5, 0] as const;
 
@@ -103,12 +101,9 @@ export function antigravitySessionMeta(
     : undefined;
 }
 
-/** Older releases offer non-Gemini models only to allowlisted clients such as Zed. */
-export function antigravityClientInfo(version: string | null | undefined) {
-  const parsed = parseAntigravityVersion(version);
-  return parsed !== undefined && compareVersions(parsed, OPEN_MODEL_ACCESS_RELEASE) >= 0
-    ? { name: "t3-code", title: "T3 Code", version: packageJson.version }
-    : { name: "zed", version: "0.0.0" };
+/** Always identify honestly as T3 Code to the Antigravity ACP runtime. */
+export function antigravityClientInfo(_version?: string | null | undefined) {
+  return { name: "t3-code", title: "T3 Code", version: packageJson.version };
 }
 
 export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(function* (

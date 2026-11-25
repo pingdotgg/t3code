@@ -3,56 +3,28 @@ import * as NodeModule from "node:module";
 import type { AntigravitySettings, ServerProviderUsageWindow } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 
-export function antigravityUserAgent(platform: NodeJS.Platform, architecture: NodeJS.Architecture) {
-  return `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`;
-}
-
-const DAILY_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
-const PROD_ENDPOINT = "https://cloudcode-pa.googleapis.com";
-// The ACP runtime meters consumer tiers on the daily host and GCP-terms tiers on prod.
-// The sign-in method stands in for the tier.
-const ENDPOINTS = {
-  "oauth-personal": [DAILY_ENDPOINT, PROD_ENDPOINT],
-  "oauth-business": [PROD_ENDPOINT, DAILY_ENDPOINT],
-};
 const SUMMARY_WINDOW_MINS = new Map([
   ["5h", 5 * 60],
   ["weekly", 7 * 24 * 60],
 ]);
-const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
-const TokenFile = Schema.Struct({
-  client_id: Schema.NonEmptyString,
-  client_secret: Schema.NonEmptyString,
-  refresh_token: Schema.NonEmptyString,
-  project_id: Schema.optional(Schema.String),
-});
-// The 1.5.x CLI never writes acp_token.json: it keeps its sign-in in the OS keyring, or in
-// antigravity-oauth-token without one or when T3 bypasses the keyring. It stores no OAuth client, so T3 cannot refresh it.
-const CliToken = Schema.Struct({
-  token: Schema.Struct({
-    access_token: Schema.NonEmptyString,
-    refresh_token: Schema.optional(Schema.String),
-    expiry: Schema.optional(Schema.String),
-  }),
-});
-const TokenResponse = Schema.Struct({
-  access_token: Schema.NonEmptyString,
-  expires_in: Schema.Number.check(Schema.isGreaterThan(0)),
-});
+const AUTO_CACHE_TTL_MS = 5 * 60 * 1000;
+const MANUAL_MIN_INTERVAL_MS = 60 * 1000;
+
 const UserInfo = Schema.Struct({ id: Schema.NonEmptyString });
 const Quota = Schema.Struct({
   remainingFraction: Schema.optional(Schema.Number),
@@ -77,23 +49,25 @@ const Summary = Schema.Struct({
   ),
   buckets: Schema.optional(Schema.Array(Bucket)),
 });
-const Models = Schema.Struct({
-  models: Schema.Record(
-    Schema.String,
-    Schema.Struct({
-      modelProvider: Schema.optional(Schema.String),
-      quotaInfo: Schema.optional(Quota),
-      weeklyQuotaInfo: Schema.optional(Quota),
-    }),
-  ),
-});
 
-const decodeTokenFile = Schema.decodeEffect(Schema.fromJsonString(TokenFile));
-const decodeCliToken = Schema.decodeEffect(Schema.fromJsonString(CliToken));
-const decodeTokenResponse = Schema.decodeUnknownEffect(TokenResponse);
 const decodeUserInfo = Schema.decodeUnknownEffect(UserInfo);
 const decodeSummary = Schema.decodeUnknownEffect(Summary);
-const decodeModels = Schema.decodeUnknownEffect(Models);
+
+export class AntigravityCliUsageError extends Schema.TaggedError<AntigravityCliUsageError>()(
+  "AntigravityCliUsageError",
+  {
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+export function antigravityUserAgent(platform: NodeJS.Platform, architecture: NodeJS.Architecture) {
+  return `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`;
+}
 
 function iso(value: string | undefined): string | undefined {
   const parsed = value ? DateTime.make(value) : Option.none();
@@ -144,104 +118,6 @@ const sha256 = Effect.fnUntraced(function* (text: string) {
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 });
 
-/** go-keyring stores UTF-8, which it prefixes and encodes on macOS. */
-export function decodeGoKeyringSecret(secret: ArrayLike<number>): string {
-  // The binding resolves a plain number array at runtime despite its Uint8Array type.
-  const text = new TextDecoder().decode(Uint8Array.from(secret));
-  if (text.startsWith("go-keyring-base64:")) {
-    return Buffer.from(text.slice("go-keyring-base64:".length), "base64").toString("utf8");
-  }
-  if (text.startsWith("go-keyring-encoded:")) {
-    return Buffer.from(text.slice("go-keyring-encoded:".length), "hex").toString("utf8");
-  }
-  return text;
-}
-
-class AntigravityKeyringError extends Schema.TaggedError<AntigravityKeyringError>()(
-  "AntigravityKeyringError",
-  { cause: Schema.Defect() },
-) {
-  override get message(): string {
-    return "Could not read the Antigravity sign-in from the system keyring.";
-  }
-}
-
-// A single-executable server resolves packages on disk only through `require`.
-const requireExternal = NodeModule.createRequire(import.meta.url);
-
-/**
- * go-keyring's Windows target is `gemini:antigravity`; @napi-rs/keyring reads `antigravity.gemini`,
- * and its `withTarget` overwrites the target with an empty secret before reading.
- */
-export function readWindowsCliCredential(
-  architecture: NodeJS.Architecture,
-): Uint8Array | undefined {
-  // CREDENTIALW offsets and the pointers below are 64-bit.
-  if (architecture !== "x64" && architecture !== "arm64") {
-    throw new Error(`no credential access on ${architecture}`);
-  }
-  const { DataType, load, open } = requireExternal("ffi-rs") as typeof import("ffi-rs");
-  open({ library: "t3-advapi32", path: "advapi32.dll" });
-  open({ library: "t3-kernel32", path: "kernel32.dll" });
-  const copy = (into: Buffer, from: bigint) =>
-    load({
-      library: "t3-kernel32",
-      funcName: "RtlMoveMemory",
-      retType: DataType.Void,
-      paramsType: [DataType.U8Array, DataType.BigInt, DataType.BigInt],
-      paramsValue: [into, from, BigInt(into.length)],
-    });
-  const out = Buffer.alloc(8);
-  const read = load({
-    library: "t3-advapi32",
-    funcName: "CredReadW",
-    retType: DataType.I32,
-    // CRED_TYPE_GENERIC
-    paramsType: [DataType.WString, DataType.U32, DataType.U32, DataType.U8Array],
-    paramsValue: ["gemini:antigravity", 1, 0, out],
-    errno: true as const,
-  });
-  if (read.value === 0) {
-    // ERROR_NOT_FOUND
-    if (read.errnoCode === 1168) return undefined;
-    throw new Error(`CredReadW failed with Windows error ${read.errnoCode}`);
-  }
-  const credential = out.readBigUInt64LE();
-  try {
-    // CredentialBlobSize is a DWORD at 32 and CredentialBlob a pointer at 40.
-    const header = Buffer.alloc(48);
-    copy(header, credential);
-    const size = header.readUInt32LE(32);
-    if (size === 0) return undefined;
-    const blob = Buffer.alloc(size);
-    copy(blob, header.readBigUInt64LE(40));
-    return blob;
-  } finally {
-    load({
-      library: "t3-advapi32",
-      funcName: "CredFree",
-      retType: DataType.Void,
-      paramsType: [DataType.BigInt],
-      paramsValue: [credential],
-    });
-  }
-}
-
-// Loaded lazily: a native binding that fails to load must not take the provider down.
-const readCliKeyringSecret = (platform: NodeJS.Platform, architecture: NodeJS.Architecture) =>
-  Effect.tryPromise({
-    try: async () => {
-      const secret =
-        platform === "win32"
-          ? readWindowsCliCredential(architecture)
-          : await new (
-              requireExternal("@napi-rs/keyring") as typeof import("@napi-rs/keyring")
-            ).AsyncEntry("gemini", "antigravity").getSecret();
-      return secret ? decodeGoKeyringSecret(secret) : undefined;
-    },
-    catch: (cause) => new AntigravityKeyringError({ cause }),
-  });
-
 /** Keys an account by its Google ID, which matches across machines and hubs; refresh tokens do not. */
 export const antigravityAccountFingerprint = (userInfo: unknown) =>
   decodeUserInfo(userInfo).pipe(Effect.flatMap((info) => sha256(`google-account\0${info.id}`)));
@@ -284,222 +160,422 @@ function summaryWindows(summary: typeof Summary.Type, requestedAt: number) {
   return [...windows.values()];
 }
 
-/** Older accounts expose model quotas without a window length. Do not invent a reset cadence. */
-function modelWindows(models: typeof Models.Type) {
-  const windows = new Map<string, ServerProviderUsageWindow>();
-  for (const [modelId, model] of Object.entries(models.models)) {
-    const family =
-      model.modelProvider === "MODEL_PROVIDER_GOOGLE" || modelId.startsWith("gemini-")
-        ? "Gemini"
-        : model.modelProvider === "MODEL_PROVIDER_ANTHROPIC" || modelId.startsWith("claude-")
-          ? "Claude"
-          : model.modelProvider === "MODEL_PROVIDER_OPENAI" || modelId.startsWith("gpt-")
-            ? "GPT"
-            : undefined;
-    if (!family) continue;
-    for (const [suffix, quota] of [
-      ["quota", model.quotaInfo],
-      ["weekly", model.weeklyQuotaInfo],
-    ] as const) {
-      if (!quota) continue;
-      const window = quotaWindow(
-        `${family.toLowerCase()}-${suffix}`,
-        `${family} · ${suffix === "weekly" ? "Weekly" : "Reported quota"}`,
-        quota,
-        suffix === "weekly" ? "weekly" : "other",
-        suffix === "weekly" ? 7 * 24 * 60 : undefined,
-      );
-      if (!window) continue;
-      const previous = windows.get(window.id);
-      if (!previous || window.usedPercent > previous.usedPercent) windows.set(window.id, window);
+// A single-executable server resolves native addons on disk only through `require`.
+const requireExternal = NodeModule.createRequire(import.meta.url);
+
+function stripAnsiPreserveLines(input: string): string {
+  return (
+    input
+      // Turn cursor positioning and line moves into newlines so TUI cells stay separated.
+      .replace(/\x1b\[\d*(?:;\d*)?[Hf]/g, "\n")
+      .replace(/\x1b\[\d*[ABEF]/g, "\n")
+      .replace(/\x1b\[\d*[CDG]/g, " ")
+      .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
+      .replace(/\x1b[()][A-Z0-9]/g, "")
+      .replace(/\r/g, "\n")
+  );
+}
+
+function parseRefreshDurationMs(text: string): number | undefined {
+  const match = /Refreshes\s+in\s+([^\n]+)/i.exec(text);
+  if (!match?.[1]) return undefined;
+  let totalMs = 0;
+  let matched = false;
+  for (const part of match[1].matchAll(/(\d+)\s*([dhms])/gi)) {
+    matched = true;
+    const value = Number(part[1]);
+    const unit = part[2]?.toLowerCase();
+    if (unit === "d") totalMs += value * 86_400_000;
+    else if (unit === "h") totalMs += value * 3_600_000;
+    else if (unit === "m") totalMs += value * 60_000;
+    else if (unit === "s") totalMs += value * 1_000;
+  }
+  return matched && totalMs > 0 ? totalMs : undefined;
+}
+
+function normalizeCliQuotaGroup(rawHeader: string): {
+  readonly idPrefix: string;
+  readonly display: string;
+} {
+  const upper = rawHeader.trim().toUpperCase();
+  if (upper.includes("ARGON")) return { idPrefix: "gemini-argon", display: "Gemini Argon" };
+  if (upper.includes("CARBON")) return { idPrefix: "gemini-carbon", display: "Gemini Carbon" };
+  if (upper.includes("GEMINI")) return { idPrefix: "gemini", display: "Gemini" };
+  if (upper.includes("CLAUDE") || upper.includes("GPT") || upper.includes("3P")) {
+    return { idPrefix: "3p", display: "Claude & GPT (shared)" };
+  }
+  const slug =
+    upper
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "group";
+  return { idPrefix: slug, display: rawHeader.trim() };
+}
+
+export interface ParsedAntigravityCliUsage {
+  readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
+  readonly accountEmail?: string;
+}
+
+/**
+ * Parses the rendered output of the official `agy` CLI `/usage` view into T3 usage windows.
+ * Keeps T3 from reading OAuth tokens or calling undocumented Google backend endpoints directly.
+ */
+export function parseAntigravityCliUsageOutput(
+  rawOutput: string,
+  nowMs: number,
+): ParsedAntigravityCliUsage | undefined {
+  const clean = stripAnsiPreserveLines(rawOutput);
+  const startIdx = clean.lastIndexOf("Models & Quota");
+  if (startIdx === -1) return undefined;
+  const frame = clean.slice(startIdx);
+
+  const accountMatch = /Account:\s*([^\s\n]+)/i.exec(frame);
+  const accountEmail = accountMatch?.[1]?.trim() || undefined;
+
+  const groupMatches = [
+    ...frame.matchAll(/(?:^|\n)\s*([A-Z0-9 &+/_-]{3,40}\s+MODELS)\s*(?:\n|$)/g),
+  ];
+  if (groupMatches.length === 0) return undefined;
+
+  const blockSpecs = [
+    {
+      re: /Five\s+Hour\s+Limit\s+Remaining/i,
+      suffix: "5h",
+      labelSuffix: "5-hour",
+      kind: "session" as const,
+      windowDurationMins: 5 * 60,
+    },
+    {
+      re: /Weekly\s+Limit\s+Remaining/i,
+      suffix: "weekly",
+      labelSuffix: "Weekly",
+      kind: "weekly" as const,
+      windowDurationMins: 7 * 24 * 60,
+    },
+  ];
+
+  const windows: ServerProviderUsageWindow[] = [];
+  const seenIds = new Set<string>();
+
+  for (let i = 0; i < groupMatches.length; i++) {
+    const match = groupMatches[i];
+    if (!match?.[1] || match.index === undefined) continue;
+    const sectionStart = match.index + match[0].length;
+    const sectionEnd =
+      i + 1 < groupMatches.length ? (groupMatches[i + 1]?.index ?? frame.length) : frame.length;
+    const section = frame.slice(sectionStart, sectionEnd);
+    const { idPrefix, display } = normalizeCliQuotaGroup(match[1]);
+
+    const foundBlocks = blockSpecs
+      .map((spec) => {
+        const hit = spec.re.exec(section);
+        return hit
+          ? { ...spec, index: hit.index, endOfTitle: hit.index + hit[0].length }
+          : undefined;
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined)
+      .toSorted((left, right) => left.index - right.index);
+
+    for (let j = 0; j < foundBlocks.length; j++) {
+      const block = foundBlocks[j];
+      if (!block) continue;
+      const blockEnd =
+        j + 1 < foundBlocks.length ? (foundBlocks[j + 1]?.index ?? section.length) : section.length;
+      const slice = section.slice(block.endOfTitle, blockEnd);
+      const percentMatch = /(\d+(?:\.\d+)?)\s*%/.exec(slice);
+      if (!percentMatch?.[1]) continue;
+      const remainingPct = Math.max(0, Math.min(100, Number(percentMatch[1])));
+      if (!Number.isFinite(remainingPct)) continue;
+      const usedPercent = Math.round((100 - remainingPct) * 100) / 100;
+      const refreshMs = parseRefreshDurationMs(slice);
+      const id = `${idPrefix}-${block.suffix}`;
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+
+      windows.push({
+        id,
+        label: `${display} · ${block.labelSuffix}`,
+        kind: block.kind,
+        usedPercent,
+        windowDurationMins: block.windowDurationMins,
+        ...(refreshMs === undefined
+          ? {}
+          : { resetsAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs + refreshMs)) }),
+      });
     }
   }
-  return [...windows.values()];
+
+  if (windows.length === 0) return undefined;
+
+  const kindOrder: Record<ServerProviderUsageWindow["kind"], number> = {
+    session: 0,
+    weekly: 1,
+    monthly: 2,
+    other: 3,
+  };
+  const groupOrder = (id: string) => (id.startsWith("gemini-") ? 0 : id.startsWith("3p-") ? 1 : 2);
+  windows.sort((left, right) => {
+    const groupDiff = groupOrder(left.id) - groupOrder(right.id);
+    if (groupDiff !== 0) return groupDiff;
+    return (kindOrder[left.kind] ?? 9) - (kindOrder[right.kind] ?? 9);
+  });
+
+  return {
+    windows,
+    ...(accountEmail ? { accountEmail } : {}),
+  };
 }
+
+export interface AntigravityCliUsageRunInput {
+  readonly executablePath: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly cwd: string;
+}
+
+const runOfficialAgyUsagePty = Effect.fn("AntigravityUsageProbe.runOfficialAgyUsagePty")(function* (
+  input: AntigravityCliUsageRunInput,
+) {
+  const pty = yield* Effect.try({
+    try: () => requireExternal("node-pty") as typeof import("node-pty"),
+    catch: (cause) =>
+      new AntigravityCliUsageError({ detail: "Could not load node-pty for agy CLI.", cause }),
+  });
+
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  env.TERM = env.TERM || "xterm-256color";
+
+  const bannerReady = yield* Deferred.make<void>();
+  const quotaReady = yield* Deferred.make<void>();
+  const exited = yield* Deferred.make<void>();
+
+  let raw = "";
+  let sentUsage = false;
+
+  const proc = yield* Effect.acquireRelease(
+    Effect.try({
+      try: () =>
+        pty.spawn(input.executablePath, [], {
+          name: "xterm-256color",
+          cols: 120,
+          rows: 42,
+          cwd: input.cwd,
+          env,
+        }),
+      catch: (cause) =>
+        new AntigravityCliUsageError({
+          detail: `Could not launch Antigravity CLI at '${input.executablePath}'.`,
+          cause,
+        }),
+    }),
+    (handle) =>
+      Effect.gen(function* () {
+        yield* Effect.sync(() => {
+          try {
+            handle.write("\x1b");
+            handle.write("\x03\x03");
+          } catch {
+            // Ignore write errors if the CLI already exited.
+          }
+        });
+        yield* Effect.sleep("250 millis");
+        yield* Effect.sync(() => {
+          try {
+            handle.kill();
+          } catch {
+            // Ignore kill errors if already terminated.
+          }
+        });
+      }),
+  );
+
+  proc.onData((chunk) => {
+    raw += chunk;
+    const clean = stripAnsiPreserveLines(raw);
+    if (clean.includes("Antigravity CLI")) {
+      Deferred.doneUnsafe(bannerReady, Exit.void);
+    }
+    if (sentUsage && clean.includes("Models & Quota") && clean.includes("Limit Remaining")) {
+      const parsed = parseAntigravityCliUsageOutput(raw, 0);
+      if (parsed && parsed.windows.length >= 2) {
+        Deferred.doneUnsafe(quotaReady, Exit.void);
+      }
+    }
+  });
+
+  proc.onExit(() => {
+    Deferred.doneUnsafe(exited, Exit.void);
+  });
+
+  yield* Effect.raceFirst(Deferred.await(bannerReady), Deferred.await(exited)).pipe(
+    Effect.timeout("10 seconds"),
+    Effect.ignore,
+  );
+
+  yield* Effect.sleep("900 millis");
+  sentUsage = true;
+  yield* Effect.sync(() => {
+    try {
+      proc.write("/usage");
+    } catch {
+      // Handled below if output is missing.
+    }
+  });
+  yield* Effect.sleep("350 millis");
+  yield* Effect.sync(() => {
+    try {
+      proc.write("\r");
+    } catch {
+      // Handled below if output is missing.
+    }
+  });
+
+  yield* Effect.raceFirst(Deferred.await(quotaReady), Deferred.await(exited)).pipe(
+    Effect.timeout("18 seconds"),
+    Effect.ignore,
+  );
+  // Allow the final BubbleTea frame (all model groups) to finish flushing.
+  yield* Effect.sleep("700 millis");
+
+  if (!parseAntigravityCliUsageOutput(raw, 0)) {
+    return yield* new AntigravityCliUsageError({
+      detail: "Official agy CLI did not return a parseable /usage summary.",
+    });
+  }
+  return raw;
+});
 
 export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* (input: {
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
-  readonly readKeyringSecret?: Effect.Effect<string | undefined, AntigravityKeyringError>;
+  readonly resolveExecutable?: Effect.Effect<string, AntigravityCliUsageError>;
+  readonly environment?: NodeJS.ProcessEnv;
+  readonly runCliUsage?: (
+    args: AntigravityCliUsageRunInput,
+  ) => Effect.Effect<string, AntigravityCliUsageError>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
   const crypto = yield* Digest.Digest;
-  const platform = yield* HostProcess.Platform;
-  const architecture = yield* HostProcess.Architecture;
-  const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const cliTokenPath = path.join(
     input.profileDirectory,
     "antigravity-acp",
     "antigravity-oauth-token",
   );
-  const readKeyringSecret = input.readKeyringSecret ?? readCliKeyringSecret(platform, architecture);
-  let cached:
-    | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
-    | undefined;
-  let generation = 0;
+  const runCliUsage =
+    input.runCliUsage ??
+    ((args: AntigravityCliUsageRunInput) => runOfficialAgyUsagePty(args).pipe(Effect.scoped));
 
-  const request = (request: HttpClientRequest.HttpClientRequest) =>
-    client.execute(request).pipe(
-      Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.json),
-      Effect.timeout("10 seconds"),
-    );
+  let cached:
+    | {
+        readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
+        readonly credentialFingerprint?: string;
+        readonly cachedAtMs: number;
+      }
+    | undefined;
+  let forceRefreshRequested = false;
+
   const read = Effect.gen(function* () {
-    const startedGeneration = generation;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
       return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     }
-    const now = yield* Clock.currentTimeMillis;
-    let accessToken: string;
-    let account: string;
-    let projectId: string | undefined;
-    if (!(yield* fs.exists(tokenPath))) {
-      cached = undefined;
-      // Google account instances bypass the keyring, whose one entry every profile shares.
-      const stored = (yield* fs.exists(cliTokenPath))
-        ? yield* fs.readFileString(cliTokenPath)
-        : input.authMethod === "oauth-business"
-          ? yield* readKeyringSecret
-          : undefined;
-      if (stored === undefined) {
-        return makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "unsupported",
-          message: "Sign in with Google to see Antigravity limits.",
-        });
-      }
-      const { token } = yield* decodeCliToken(stored);
-      if (!(Date.parse(token.expiry ?? "") > now + 60_000)) {
-        return makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message:
-            "Antigravity's saved sign-in has expired. Start an Antigravity turn to renew it, then refresh limits.",
-        });
-      }
-      accessToken = token.access_token;
-      account = yield* request(
-        HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
-          HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
-        ),
-      ).pipe(
-        Effect.flatMap(antigravityAccountFingerprint),
-        Effect.catch(() => sha256(`antigravity-cli\0${token.refresh_token || accessToken}`)),
-      );
-    } else {
-      const token = yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile));
-      projectId = token.project_id;
-      const fingerprint = yield* sha256(
-        `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
-      );
-      if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
-        cached = undefined;
-        const refreshed = yield* request(
-          HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
-            HttpClientRequest.bodyUrlParams({
-              client_id: token.client_id,
-              client_secret: token.client_secret,
-              refresh_token: token.refresh_token,
-              grant_type: "refresh_token",
-            }),
-          ),
-        ).pipe(Effect.flatMap(decodeTokenResponse));
-        accessToken = refreshed.access_token;
-        // Use Google account IDs to merge accounts across environments; refresh tokens differ per machine.
-        account = yield* request(
-          HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
-            HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
-          ),
-        ).pipe(
-          Effect.flatMap(antigravityAccountFingerprint),
-          Effect.orElseSucceed(() => fingerprint),
-        );
-        if (generation === startedGeneration) {
-          cached = {
-            fingerprint,
-            account,
-            accessToken,
-            expiresAt: now + refreshed.expires_in * 1000,
-          };
-        }
-      } else {
-        accessToken = cached.accessToken;
-        account = cached.account;
+
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (cached !== undefined) {
+      const ageMs = nowMs - cached.cachedAtMs;
+      const withinAutoWindow = !forceRefreshRequested && ageMs < AUTO_CACHE_TTL_MS;
+      const withinSafetyFloor = ageMs < MANUAL_MIN_INTERVAL_MS;
+      if (withinAutoWindow || withinSafetyFloor) {
+        return {
+          ...makeUsageLimits({ checkedAt, windows: [...cached.windows] }),
+          ...(cached.credentialFingerprint
+            ? { credentialFingerprint: cached.credentialFingerprint }
+            : {}),
+        };
       }
     }
-    const endpoints = ENDPOINTS[input.authMethod];
-    // Merge endpoints because quota groups differ; the metered host's reading of a bucket wins.
-    const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
-      operation: string,
-      parse: (
-        response: unknown,
-        requestedAt: number,
-      ) => Effect.Effect<ServerProviderUsageWindow[], E>,
-    ) {
-      const responses = yield* Effect.forEach(
-        endpoints,
-        (endpoint) =>
-          Effect.gen(function* () {
-            // Capture each request after auth, so refresh latency does not widen the tolerance.
-            const requestedAt = yield* Clock.currentTimeMillis;
-            return yield* request(
-              HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
-                HttpClientRequest.setHeaders({
-                  Authorization: `Bearer ${accessToken}`,
-                  "User-Agent": antigravityUserAgent(platform, architecture),
-                }),
-                HttpClientRequest.bodyJsonUnsafe(projectId ? { project: projectId } : {}),
-              ),
-            ).pipe(
-              Effect.flatMap((response) => parse(response, requestedAt)),
-              Effect.orElseSucceed(() => []),
-            );
-          }),
-        { concurrency: "unbounded" },
-      );
-      const windows = new Map<string, ServerProviderUsageWindow>();
-      for (const window of responses.flat()) {
-        if (!windows.has(window.id)) windows.set(window.id, window);
-      }
-      return [...windows.values()];
+
+    forceRefreshRequested = false;
+
+    const executablePath = input.resolveExecutable
+      ? yield* input.resolveExecutable.pipe(Effect.orElseSucceed(() => "agy"))
+      : "agy";
+
+    // Pass clean environment to the unmodified official CLI; only scope GEMINI_HOME when this
+    // profile holds its own CLI token file so both isolated profiles and native keyring work.
+    const baseEnv = input.environment ?? process.env;
+    const cleanEnv: NodeJS.ProcessEnv = { ...baseEnv };
+    delete cleanEnv.ELECTRON_RUN_AS_NODE;
+    delete cleanEnv.GEMINI_HOME;
+    const hasProfileToken = yield* fs.exists(cliTokenPath).pipe(Effect.orElseSucceed(() => false));
+    if (hasProfileToken) {
+      cleanEnv.GEMINI_HOME = input.profileDirectory;
+    }
+
+    const rawOutput = yield* runCliUsage({
+      executablePath,
+      env: cleanEnv,
+      cwd: homeDirectory,
     });
-    const summary = yield* fetchWindows("retrieveUserQuotaSummary", antigravitySummaryWindows);
-    const windows = summary.length
-      ? summary
-      : yield* fetchWindows("fetchAvailableModels", (response) =>
-          decodeModels(response).pipe(Effect.map(modelWindows)),
-        );
-    if (windows.length === 0) {
+    const parsedAtMs = yield* Clock.currentTimeMillis;
+    const parsed = parseAntigravityCliUsageOutput(rawOutput, parsedAtMs);
+    if (!parsed || parsed.windows.length === 0) {
       return makeUnavailableUsageLimits({
         checkedAt,
         reason: "probeFailed",
-        message: "Antigravity did not return usable quota information.",
+        message: "Official Antigravity CLI did not return usable quota information.",
       });
     }
-    return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: account };
+
+    const credentialFingerprint = parsed.accountEmail
+      ? yield* sha256(`google-account-cli\0${parsed.accountEmail.toLowerCase()}`)
+      : undefined;
+
+    cached = {
+      windows: parsed.windows,
+      ...(credentialFingerprint ? { credentialFingerprint } : {}),
+      cachedAtMs: parsedAtMs,
+    };
+
+    return {
+      ...makeUsageLimits({ checkedAt, windows: [...parsed.windows] }),
+      ...(credentialFingerprint ? { credentialFingerprint } : {}),
+    };
   });
+
   const probe = read.pipe(
     Effect.provideService(Digest.Digest, crypto),
     Effect.timeout("30 seconds"),
     Effect.catch(() =>
       Effect.gen(function* () {
+        const checkedAt = DateTime.formatIso(yield* DateTime.now);
+        if (cached !== undefined) {
+          return {
+            ...makeUsageLimits({ checkedAt, windows: [...cached.windows] }),
+            ...(cached.credentialFingerprint
+              ? { credentialFingerprint: cached.credentialFingerprint }
+              : {}),
+          };
+        }
         return makeUnavailableUsageLimits({
-          checkedAt: DateTime.formatIso(yield* DateTime.now),
+          checkedAt,
           reason: "probeFailed",
           message: "Could not read Antigravity limits. Refresh provider status to retry.",
         });
       }),
     ),
   );
+
   return {
     probe,
     clear: Effect.sync(() => {
-      cached = undefined;
-      generation++;
+      forceRefreshRequested = true;
     }),
   };
 });
