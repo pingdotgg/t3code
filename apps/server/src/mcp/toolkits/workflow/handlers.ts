@@ -96,6 +96,19 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
             .pipe(Effect.mapError(refused));
           return { delivery };
         }
+        if (input.action === "withdraw") {
+          const runId = yield* required(input.runId, "runId");
+          const wait = yield* required(input.wait, "wait");
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const by =
+            scope.thread !== undefined
+              ? `thread ${scope.thread.threadId}`
+              : (scope.client?.label ?? "a person");
+          const withdrawal = yield* workflows
+            .withdraw(runId, wait, { by, reason: input.reason })
+            .pipe(Effect.mapError(refused));
+          return { withdrawal, ...(yield* workflows.get(runId).pipe(Effect.mapError(refused))) };
+        }
         if (input.action === "store_set" || input.action === "store_delete") {
           const key = yield* required(input.key, "key");
           const value =
