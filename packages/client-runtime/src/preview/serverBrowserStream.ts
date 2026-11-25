@@ -1,5 +1,10 @@
 // @effect-diagnostics globalTimers:off globalFetch:off - This browser and WebView transport runs without an Effect runtime.
-import { type DeviceHubAccess, withDeviceHubQuery } from "../device/hubAccess.ts";
+import {
+  type DeviceHubAccess,
+  openDeviceHubSocket,
+  withDeviceHubQuery,
+} from "../device/hubAccess.ts";
+import type { EnvironmentSocket } from "../state/environmentSocket.ts";
 import {
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   type PreviewStreamHostSetup,
@@ -9,6 +14,7 @@ import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
 export const PREVIEW_STREAM_BASE_PATH = "/api/preview-stream";
+export const PREVIEW_STREAM_SOCKET_PATH = "/ws";
 
 export interface PreviewStreamViewport {
   readonly width: number;
@@ -212,8 +218,11 @@ export interface PreviewStreamTarget {
   readonly interactive?: boolean;
 }
 
+export type PreviewFrame = ArrayBuffer | Uint8Array<ArrayBuffer>;
+
 export interface PreviewStreamEvents {
-  readonly onFrame: (jpeg: ArrayBuffer) => void;
+  /** A view on a socket that runs the secure channel. */
+  readonly onFrame: (jpeg: PreviewFrame) => void;
   readonly onViewport: (viewport: PreviewStreamViewport) => void;
   readonly onProbe?: (probe: PreviewStreamProbe) => void;
   readonly onPointer?: (pointer: PreviewStreamPointer) => void;
@@ -248,9 +257,12 @@ export function createPreviewStreamClient(
     maxHeight: String(Math.max(1, Math.round(target.maxHeight))),
   });
   if (target.interactive === false) query.set("interactive", "false");
-  const url = withDeviceHubQuery(`${target.access.wsBase}/ws?${query.toString()}`, target.access);
+  const url = withDeviceHubQuery(
+    `${target.access.wsBase}${PREVIEW_STREAM_SOCKET_PATH}?${query.toString()}`,
+    target.access,
+  );
   let stopped = false;
-  let socket: WebSocket | null = null;
+  let socket: EnvironmentSocket | null = null;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let failures = 0;
   let control: PreviewStreamControl | null = null;
@@ -272,7 +284,7 @@ export function createPreviewStreamClient(
 
   const connect = () => {
     if (stopped) return;
-    const ws = new WebSocket(url);
+    const ws = openDeviceHubSocket(target.access, url);
     ws.binaryType = "arraybuffer";
     socket = ws;
     let opened = false;
@@ -283,13 +295,12 @@ export function createPreviewStreamClient(
     });
     ws.addEventListener("message", (event) => {
       if (socket !== ws) return;
-      if (event.data instanceof ArrayBuffer) {
+      if (typeof event.data !== "string") {
         failures = 0;
         ws.send(ACK_MESSAGE);
         events.onFrame(event.data);
         return;
       }
-      if (typeof event.data !== "string") return;
       let message: unknown;
       try {
         message = JSON.parse(event.data);
@@ -457,7 +468,7 @@ export function createPreviewStreamClient(
 }
 
 export interface PreviewFramePainter {
-  readonly paint: (jpeg: ArrayBuffer) => void;
+  readonly paint: (jpeg: PreviewFrame) => void;
   readonly stop: () => void;
 }
 
@@ -469,8 +480,8 @@ export function createPreviewFramePainter(
   const context = canvas.getContext("2d");
   let stopped = false;
   let decoding = false;
-  let waiting: ArrayBuffer | null = null;
-  const draw = (jpeg: ArrayBuffer) => {
+  let waiting: PreviewFrame | null = null;
+  const draw = (jpeg: PreviewFrame) => {
     decoding = true;
     void createImageBitmap(new Blob([jpeg], { type: "image/jpeg" }))
       .then((bitmap) => {

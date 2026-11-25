@@ -22,6 +22,7 @@ import {
   makeEnvironmentHttpApiUrlBuilder,
 } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
+import { makeEnvironmentSocketOpener } from "../state/environmentSocket.ts";
 import { VoiceTranscriptionError } from "./transcription.ts";
 
 const INFERENCE_OR_DOWNLOAD_TIMEOUT_MS = 30 * 60_000;
@@ -160,7 +161,8 @@ export const transcribeCloudPcm = (
   );
 };
 
-export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
+/** The live transcription socket's URL, and how to open it when its ticket is bound to the device key. */
+export const getEnvironmentSpeechStream = (prepared: PreparedConnection) => {
   let endpoint = prepared.httpBaseUrl;
   return request({
     group: "auth",
@@ -172,11 +174,16 @@ export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
     },
     run: ({ client, headers }) => client.webSocketTicketFor({ headers, params: { use: "media" } }),
   }).pipe(
-    Effect.map(({ ticket }) => {
+    Effect.flatMap(({ ticket }) => {
       const url = new URL(SPEECH_STREAM_PATH, endpoint);
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       url.searchParams.set("wsTicket", Redacted.value(ticket));
-      return url.toString();
+      return makeEnvironmentSocketOpener(prepared, Redacted.value(ticket)).pipe(
+        Effect.map((createSocket) => ({
+          url: url.toString(),
+          ...(createSocket === undefined ? {} : { createSocket }),
+        })),
+      );
     }),
   );
 };

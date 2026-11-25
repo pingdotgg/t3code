@@ -1,4 +1,5 @@
 import { createDeviceEnvironmentAtoms } from "@t3tools/client-runtime/state/device";
+import { DEVICE_STREAM_SOCKET_PATHS } from "@t3tools/client-runtime/device/hub-access";
 import { resolveDeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -23,7 +24,12 @@ const deviceHubAccessAtom = Atom.family((environmentId: EnvironmentId) =>
         );
         return prepared === null
           ? Effect.never
-          : resolveDeviceHubAccess({ prepared, hubBasePath: "/api/device-hub" });
+          : // The stream runs in a WebView that cannot sign, so its upgrade proofs come signed.
+            resolveDeviceHubAccess({
+              prepared,
+              hubBasePath: "/api/device-hub",
+              socketPaths: DEVICE_STREAM_SOCKET_PATHS,
+            });
       })
       .pipe(Atom.withLabel(`mobile-device-hub-access:${environmentId}`)),
   ),

@@ -5,6 +5,7 @@
  * stream.
  */
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import type { HttpClient } from "effect/http";
 
@@ -15,6 +16,7 @@ import * as ManagedRelay from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import type { DeviceHubAccess } from "../device/hubAccess.ts";
+import { makeEnvironmentSocketOpener, socketProofUrl } from "./environmentSocket.ts";
 
 export { type DeviceHubAccess, withDeviceHubQuery } from "../device/hubAccess.ts";
 
@@ -45,18 +47,39 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
   function* (input: {
     readonly prepared: PreparedConnection;
     readonly hubBasePath: string;
-  }): Effect.fn.Return<DeviceHubAccess, RemoteEnvironmentRequestError, HttpClient.HttpClient> {
+    /** Socket paths under the hub base to sign proofs for, when the access is sent as JSON. */
+    readonly socketPaths?: ReadonlyArray<string>;
+  }): Effect.fn.Return<
+    DeviceHubAccess,
+    RemoteEnvironmentRequestError | ManagedRelay.ManagedRelayDpopProofCreationError,
+    HttpClient.HttpClient
+  > {
     const httpBase = environmentEndpointUrl(input.prepared.httpBaseUrl, input.hubBasePath);
     const wsBase = httpBase.replace(/^http/, "ws");
     if (input.prepared.httpAuthorization === null) {
       return { httpBase, wsBase, query: {}, credentials: true };
     }
-    const ticket = yield* mintMediaTicket(input.prepared);
+    const ticket = Redacted.value((yield* mintMediaTicket(input.prepared)).ticket);
+    const openSocket = yield* makeEnvironmentSocketOpener(input.prepared, ticket);
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const socketProofs =
+      openSocket === undefined || Option.isNone(signer) || input.socketPaths === undefined
+        ? undefined
+        : Object.fromEntries(
+            yield* Effect.forEach(input.socketPaths, (path) => {
+              const url = new URL(`${wsBase}${path}`);
+              return signer.value
+                .createProof({ method: "GET", url: socketProofUrl(url), accessToken: ticket })
+                .pipe(Effect.map((proof) => [url.pathname, proof] as const));
+            }),
+          );
     return {
       httpBase,
       wsBase,
-      query: { wsTicket: Redacted.value(ticket.ticket) },
+      query: { wsTicket: ticket },
       credentials: false,
+      ...(openSocket === undefined ? {} : { openSocket }),
+      ...(socketProofs === undefined ? {} : { socketProofs }),
     };
   },
 );

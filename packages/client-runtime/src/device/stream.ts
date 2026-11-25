@@ -9,7 +9,8 @@ import {
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import { createCanvasFrameSink, type DeviceFrameSink } from "./frame.ts";
-import { type DeviceHubAccess, withDeviceHubQuery } from "./hubAccess.ts";
+import { type DeviceHubAccess, openDeviceHubSocket, withDeviceHubQuery } from "./hubAccess.ts";
+import type { EnvironmentSocket } from "../state/environmentSocket.ts";
 import type { DevicePlatform } from "@t3tools/contracts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -204,14 +205,14 @@ export function avcCodecString(bytes: Uint8Array): string {
   return `avc1.${hex(bytes[1]!)}${hex(bytes[2]!)}${hex(bytes[3]!)}`;
 }
 
-export function parseSemuPacket(raw: ArrayBuffer): {
+export function parseSemuPacket(raw: ArrayBuffer | Uint8Array): {
   readonly data: Uint8Array;
   readonly isKey: boolean | null;
   readonly timestamp: number | null;
 } {
-  const bytes = new Uint8Array(raw);
+  const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
   if (bytes.byteLength > SEMU_HEADER_BYTES) {
-    const view = new DataView(raw, 0, SEMU_HEADER_BYTES);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, SEMU_HEADER_BYTES);
     if (view.getUint32(0, false) === SEMU_MAGIC && view.getUint8(4) === 1) {
       const pts = view.getBigUint64(8, false);
       return {
@@ -430,7 +431,7 @@ export function createDeviceStreamClient(
 
   let stopped = true;
   let lastHomePress = -Infinity;
-  let socket: WebSocket | null = null;
+  let socket: EnvironmentSocket | null = null;
   let controller: AbortController | null = null;
   const retryTimers = new Map<"video" | "input", ReturnType<typeof setTimeout>>();
   let primeController: AbortController | null = null;
@@ -1139,15 +1140,15 @@ export function createDeviceStreamClient(
     const session = generation;
     if (!serveSimOnly) await primeIosHelper(session);
     if (stopped || generation !== session) return;
-    const ws = new WebSocket(wsUrl(`/helper/ws?device=${device}`));
+    const ws = openDeviceHubSocket(access, wsUrl(`/helper/ws?device=${device}`));
     ws.binaryType = "arraybuffer";
     socket = ws;
     iosInputAdmitted = false;
     iosInputUnavailable = false;
     ws.onmessage = (event) => {
       if (stopped || socket !== ws) return;
-      if (!(event.data instanceof ArrayBuffer)) return;
-      const bytes = new Uint8Array(event.data);
+      if (typeof event.data === "string") return;
+      const bytes = event.data instanceof Uint8Array ? event.data : new Uint8Array(event.data);
       if (socket !== ws || stopped || bytes.length < 1) return;
       if (bytes[0] === IOS_TAG_INPUT_ADMITTED) {
         iosInputAdmitted = true;
@@ -1230,7 +1231,8 @@ export function createDeviceStreamClient(
   /** `inputOnly` keeps a socket for input beside a WebRTC feed, so its reconnects leave video alone. */
   const connectAndroid = (inputOnly = false) => {
     if (stopped) return;
-    const ws = new WebSocket(
+    const ws = openDeviceHubSocket(
+      access,
       wsUrl(`/ws?device=${device}&${inputOnly ? "video=0" : "frame-meta=1"}`),
     );
     ws.binaryType = "arraybuffer";
@@ -1253,7 +1255,6 @@ export function createDeviceStreamClient(
         }
         return;
       }
-      if (!(event.data instanceof ArrayBuffer)) return;
       const packet = parseSemuPacket(event.data);
       const needsScan =
         packet.isKey === null ||

@@ -9,6 +9,7 @@ import {
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import type { OpenEnvironmentSocket } from "../state/environmentSocket.ts";
 
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamEvent));
 
@@ -20,7 +21,7 @@ export function openSpeechStream(input: {
   readonly canSend: () => boolean;
   readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (error: Error) => void;
-  readonly createSocket?: (url: string) => WebSocket;
+  readonly createSocket?: OpenEnvironmentSocket;
 }) {
   input.signal.throwIfAborted();
   const socket = (input.createSocket ?? ((url) => new WebSocket(url)))(input.url);

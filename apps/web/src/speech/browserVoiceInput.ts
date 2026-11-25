@@ -3,7 +3,7 @@ import {
   requireCloudSpeechKey,
   transcribeCloudPcm,
   getEnvironmentSpeechStatus,
-  getEnvironmentSpeechStreamUrl,
+  getEnvironmentSpeechStream,
   openSpeechStream,
   throwIfVoiceTranscriptionAborted,
   transcribeEnvironmentPcm,
@@ -130,13 +130,13 @@ export function createBrowserVoiceInputPlatform(input: {
     ) {
       return batch;
     }
-    const url = await runEnvironmentSpeech(getEnvironmentSpeechStreamUrl(input.prepared), options);
+    const socket = await runEnvironmentSpeech(getEnvironmentSpeechStream(input.prepared), options);
     if (!canStream()) return batch;
     return {
       locale: nativeStreaming ? language : batchLocale,
       transcribe: transcribeRecording,
       streaming: openSpeechStream({
-        url,
+        ...socket,
         canSend: input.hasAudioConsent,
         options: recordingOptions,
         signal: options.signal,
