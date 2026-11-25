@@ -148,6 +148,7 @@ describe("team notification gating helpers", () => {
       creatorPseudo: alice.pseudo,
       viewId,
       locked: false,
+      lockedByMemberId: null,
       createdAt: "2026-01-01T00:00:01.000Z",
     };
     return {
@@ -160,6 +161,7 @@ describe("team notification gating helpers", () => {
       },
       currentMember: bob,
       members: [alice, bob],
+      views: [],
       invites: [],
       threadAttributions: [attribution],
       followedThreadIds: new Set(),
@@ -169,6 +171,7 @@ describe("team notification gating helpers", () => {
         [aliceId, alice],
         [bobId, bob],
       ]),
+      viewById: new Map(),
       attributionByThreadId: new Map([[aliceThreadId, attribution]]),
       ...overrides,
     };

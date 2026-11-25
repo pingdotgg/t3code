@@ -12,6 +12,7 @@ import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/threa
 import {
   AuthOrchestrationOperateScope,
   type ScopedThreadRef,
+  type TeamViewId,
   type ThreadId,
   type ContextMenuSource,
 } from "@t3tools/contracts";
@@ -49,7 +50,12 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
-import { readTeamThreadFollowActionState } from "../state/team";
+import {
+  readTeamThreadAccessActionState,
+  readTeamThreadFollowActionState,
+  readTeamThreadPostPermission,
+} from "../state/team";
+import { useTeamThreadAccessActions } from "../components/team/useTeamThreadAccessActions";
 import { useTeamThreadFollowToggle } from "../components/team/useTeamThreadFollowToggle";
 import { useCopyToClipboard } from "./useCopyToClipboard";
 import { useNewThreadHandler } from "./useHandleNewThread";
@@ -101,6 +107,7 @@ export function useThreadActionMenu(input: {
     reportFailure: false,
   });
   const { setFollowing } = useTeamThreadFollowToggle();
+  const { setThreadView, setThreadLocked } = useTeamThreadAccessActions();
   const handleNewThread = useNewThreadHandler();
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -136,9 +143,18 @@ export function useThreadActionMenu(input: {
     };
     const isRegeneratingTitle = thread.titleRegeneration != null;
     const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
+    const teamAccessActions = readTeamThreadAccessActionState(
+      threadRef.environmentId,
+      threadRef.threadId,
+    );
+    const canTeamPost = readTeamThreadPostPermission(
+      threadRef.environmentId,
+      threadRef.threadId,
+    ).canPost;
     const items = buildThreadActionMenuItems({
-      canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
-      canTriage: threadTriagePermitted(threadRef.environmentId),
+      canOperate:
+        readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) && canTeamPost,
+      canTriage: threadTriagePermitted(threadRef.environmentId) && canTeamPost,
       canFind: onFind !== undefined,
       canRename: onStartRename !== undefined,
       branch: thread.branch ?? null,
@@ -153,23 +169,34 @@ export function useThreadActionMenu(input: {
       hasCompletedRun: thread.latestRun?.completedAt != null,
       supports,
       snoozePresets,
-      canShareWithGuest,
+      canShareWithGuest: canShareWithGuest && canTeamPost,
       canTurnIntoProject: canTurnThreadIntoProject(threadRef),
       teamFollow: readTeamThreadFollowActionState(threadRef.environmentId, threadRef.threadId),
+      teamView: teamAccessActions.teamView,
+      teamLock: teamAccessActions.teamLock,
     });
     const run = async (action: ThreadActionMenuId) => {
       const api = readLocalApi();
       if (!api) return;
       if (
         threadActionRequiresOperate(action) &&
-        !(isThreadTriageAction(action)
+        (!(isThreadTriageAction(action)
           ? threadTriagePermitted(threadRef.environmentId)
-          : readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope))
+          : readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) ||
+          !readTeamThreadPostPermission(threadRef.environmentId, threadRef.threadId).canPost)
       ) {
         failureToast(
           m(msg("Thread action unavailable")),
           new Error(m(msg("This connection cannot change threads."))),
         );
+        return;
+      }
+      if (action.startsWith("team-view:")) {
+        await setThreadView({
+          environmentId: threadRef.environmentId,
+          threadId: threadRef.threadId,
+          viewId: action.slice("team-view:".length) as TeamViewId,
+        });
         return;
       }
       if (action.startsWith("snooze:")) {
@@ -240,6 +267,14 @@ export function useThreadActionMenu(input: {
             environmentId: threadRef.environmentId,
             threadId: threadRef.threadId,
             follow: action === "follow",
+          });
+          return;
+        case "team-lock":
+        case "team-unlock":
+          await setThreadLocked({
+            environmentId: threadRef.environmentId,
+            threadId: threadRef.threadId,
+            locked: action === "team-lock",
           });
           return;
         case "unsettle":

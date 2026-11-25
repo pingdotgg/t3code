@@ -201,6 +201,23 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             return { sequence: result.sequence, targetThreadId };
           }
           const targetThreadId = ThreadId.make(`${commandId}:fork`);
+          const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+          const preparedAttribution = Option.isSome(maybeTeam)
+            ? yield* maybeTeam.value
+                .prepareThreadInheritedFromParent({
+                  parentThreadId: projection.thread.id,
+                  threadId: targetThreadId,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new OrchestratorMcpFailure({
+                        code: "orchestration_error",
+                        message: error.message,
+                      }),
+                  ),
+                )
+            : false;
           const result = yield* threads
             .dispatch({
               type: "thread.fork",
@@ -212,8 +229,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               createdBy: "agent",
               creationSource: "mcp",
             })
-            .pipe(Effect.mapError(dispatchFailure));
-          const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+            .pipe(
+              Effect.onError(() =>
+                preparedAttribution && Option.isSome(maybeTeam)
+                  ? maybeTeam.value.rollbackPreparedThreadAttribution(targetThreadId)
+                  : Effect.void,
+              ),
+              Effect.mapError(dispatchFailure),
+            );
           if (Option.isSome(maybeTeam)) {
             yield* maybeTeam.value.recordThreadInheritedFromParent({
               parentThreadId: projection.thread.id,

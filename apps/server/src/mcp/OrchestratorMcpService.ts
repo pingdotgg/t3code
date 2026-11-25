@@ -67,6 +67,7 @@ import {
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
+import { derive as deriveOrchestrationId } from "@t3tools/provider-core/server/IdAllocator";
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -3035,6 +3036,23 @@ const make = Effect.gen(function* () {
           // ThreadManagementService.dispatch is the chokepoint for this command
           // type's own enablement check, using the same command id and its
           // receipt-replay exemption, so no separate assert runs here.
+          const derivedChildThreadId = deriveOrchestrationId.delegatedTaskThread({ commandId });
+          const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+          const preparedAttribution = Option.isSome(maybeTeam)
+            ? yield* maybeTeam.value
+                .prepareThreadInheritedFromParent({
+                  parentThreadId: scope.thread.threadId,
+                  threadId: derivedChildThreadId,
+                })
+                .pipe(
+                  Effect.mapError((error) =>
+                    failure(
+                      "orchestration_error",
+                      `Unable to prepare team attribution for delegated task: ${error.message}`,
+                    ),
+                  ),
+                )
+            : false;
           const result = yield* threadManagement
             .dispatch({
               type: "delegated_task.request",
@@ -3056,6 +3074,11 @@ const make = Effect.gen(function* () {
               completionWake: input.mode === "wait" ? "settled_only" : "always",
             })
             .pipe(
+              Effect.onError(() =>
+                preparedAttribution && Option.isSome(maybeTeam)
+                  ? maybeTeam.value.rollbackPreparedThreadAttribution(derivedChildThreadId)
+                  : Effect.void,
+              ),
               Effect.mapError((error) =>
                 error._tag === "ThreadManagementProviderInstanceDisabledError"
                   ? threadManagementFailure(error)
@@ -3082,6 +3105,15 @@ const make = Effect.gen(function* () {
             (stored) =>
               stored.event.type === "run.created" && stored.event.threadId === childThreadId,
           );
+          if (childThreadId !== null && Option.isSome(maybeTeam)) {
+            yield* maybeTeam.value.recordThreadInheritedFromParent({
+              parentThreadId: scope.thread.threadId,
+              threadId: childThreadId,
+              ...(childRunEvent?.event.type === "run.created"
+                ? { turnId: childRunEvent.event.payload.id }
+                : {}),
+            });
+          }
           if (
             childThreadId !== null &&
             childRunEvent?.event.type === "run.created" &&
@@ -3397,6 +3429,22 @@ const make = Effect.gen(function* () {
                       text: request.prompt,
                       attachments: [],
                     };
+              const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+              const preparedAttribution = Option.isSome(maybeTeam)
+                ? yield* maybeTeam.value
+                    .prepareThreadInheritedFromParent({
+                      parentThreadId: scope.thread.threadId,
+                      threadId,
+                    })
+                    .pipe(
+                      Effect.mapError((error) =>
+                        failure(
+                          "orchestration_error",
+                          `Unable to prepare team attribution for thread ${index + 1}: ${error.message}`,
+                        ),
+                      ),
+                    )
+                : false;
               const created = yield* threadManagement
                 .dispatch({
                   type: "thread.create",
@@ -3418,6 +3466,11 @@ const make = Effect.gen(function* () {
                   ...(initialMessage === undefined ? {} : { initialMessage }),
                 })
                 .pipe(
+                  Effect.onError(() =>
+                    preparedAttribution && Option.isSome(maybeTeam)
+                      ? maybeTeam.value.rollbackPreparedThreadAttribution(threadId)
+                      : Effect.void,
+                  ),
                   Effect.mapError((error) =>
                     failure(
                       "orchestration_error",
@@ -3425,7 +3478,6 @@ const make = Effect.gen(function* () {
                     ),
                   ),
                 );
-              const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
               if (Option.isSome(maybeTeam)) {
                 yield* maybeTeam.value.recordThreadInheritedFromParent({
                   parentThreadId: scope.thread.threadId,

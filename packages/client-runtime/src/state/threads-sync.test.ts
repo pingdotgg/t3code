@@ -869,6 +869,19 @@ describe("EnvironmentThreads", () => {
       status: "empty",
       loads: [0, 0],
     },
+    // Team thread read denials hide restricted threads without retrying over HTTP.
+    {
+      label: "a socket-only open marks a team-restricted thread deleted",
+      socketSnapshots: true,
+      httpSnapshot: { _tag: "missing" },
+      failure: new EnvironmentAuthorizationError({
+        message: "You do not have permission to view this thread.",
+        requiredScope: "orchestration:read",
+        requiredPermission: "team:thread:read",
+      }),
+      status: "deleted",
+      loads: [0, 0],
+    },
     // HTTP already answered this attempt, so the error shows before the usual retry.
     {
       label: "an HTTP open shows the error",

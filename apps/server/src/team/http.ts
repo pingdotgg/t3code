@@ -32,12 +32,16 @@ const mapTeamHttpError = (error: TeamOperationError) => {
     case "invite_exhausted":
     case "invite_revoked":
     case "invite_expired":
+    case "last_owner":
+    case "default_view_protected":
+    case "view_name_taken":
       return new TeamHttpConflictError({ code: error.code, message: error.message });
     case "not_found":
     case "not_configured":
       return new TeamHttpNotFoundError({ code: error.code, message: error.message });
     case "invalid_pseudo":
     case "invite_invalid":
+    case "invalid_input":
     case "forbidden":
       return new TeamHttpBadRequestError({ code: error.code, message: error.message });
     case "internal":

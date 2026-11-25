@@ -139,6 +139,14 @@ export const isAuthorizationFailure = (cause: Cause.Cause<unknown>) =>
     (reason) => reason._tag === "Fail" && isEnvironmentAuthorizationError(reason.error),
   );
 
+export const isTeamThreadReadDeniedFailure = (cause: Cause.Cause<unknown>) =>
+  cause.reasons.some(
+    (reason) =>
+      reason._tag === "Fail" &&
+      isEnvironmentAuthorizationError(reason.error) &&
+      reason.error.requiredPermission === "team:thread:read",
+  );
+
 const MAX_EXPECTED_FAILURE_RETRY_DELAY_MS = 30_000;
 const STREAM_FAILURE_RETRY_DELAY = Duration.seconds(1);
 

@@ -1,4 +1,4 @@
-import { beforeEach } from "vite-plus/test";
+import { afterAll, beforeEach } from "vite-plus/test";
 import { commands } from "vite-plus/test/browser";
 
 import { initializeI18n } from "../src/i18n/initializeI18n";
@@ -11,6 +11,8 @@ declare module "vite-plus/test/browser" {
     pointerDown: () => Promise<void>;
     /** Defined in vite.config.ts. Releases the primary button. */
     pointerUp: () => Promise<void>;
+    /** Defined in vite.config.ts. Triggers Chromium GC on CI between test files. */
+    collectGarbage: () => Promise<void>;
   }
 }
 
@@ -20,6 +22,18 @@ declare module "vite-plus/test/browser" {
 // running and can move the mouse after its own afterEach.
 beforeEach(async () => {
   await commands.resetPointer();
+});
+
+afterAll(async () => {
+  // Serialized CI browser runs reuse one BrowserContext across test files; clear web storage so
+  // persisted stores (e.g. composer drafts) cannot leak into the next file.
+  try {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  } catch {
+    // Ignore if a test stubbed or restricted storage.
+  }
+  await commands.collectGarbage();
 });
 
 // The app initializes GT at startup; components using its hooks need the same here.

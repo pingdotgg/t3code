@@ -1,9 +1,12 @@
 import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  type AuthSessionId,
   type OrchestrationProjectShell,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
@@ -17,8 +20,10 @@ import {
   failEnvironmentInternal,
   failEnvironmentInvalidRequest,
   failEnvironmentNotFound,
+  failEnvironmentOperationForbidden,
   requireEnvironmentScope,
 } from "../auth/http.ts";
+import * as TeamService from "../team/TeamService.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { traceLocalHandlerWork } from "../cloud/traceRelayRequest.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -66,6 +71,17 @@ export const layer = HttpApiBuilder.group(
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
+    const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
+
+    const assertTeamThreadReadable = Effect.fn("http.orchestration.assertTeamThreadReadable")(
+      function* (sessionId: AuthSessionId, threadId: ThreadId) {
+        if (Option.isNone(teamServiceOption)) return;
+        const readable = yield* teamServiceOption.value.canReadThread(sessionId, threadId);
+        if (!readable) {
+          return yield* failEnvironmentOperationForbidden("team_thread_access_denied");
+        }
+      },
+    );
 
     const enrichProjectShells = Effect.fn("http.orchestration.enrichProjectShells")(
       (projects: ReadonlyArray<OrchestrationProjectShell>) =>
@@ -83,39 +99,64 @@ export const layer = HttpApiBuilder.group(
         ),
     );
 
-    const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(
-      function* (options: {
+    const loadShellSnapshot = Effect.fn("http.orchestration.loadShellSnapshot")(function* (
+      sessionId: AuthSessionId,
+      options: {
         readonly omitIdleSubagents: boolean;
         readonly omitOlderSettled: boolean;
-      }) {
-        const { snapshot } = yield* loadSubscriberShellSnapshot({
-          sql,
-          listShellIndex: threadManagement.listActiveShellIndex(),
-          readThreads: (threadIds) =>
-            threadManagement.readShellSnapshot({
-              location: "active",
-              ...(threadIds === undefined ? {} : { threadIds }),
-            }),
-          listProjects: projectStore.listShells(),
-          latestSequence: applicationEvents.latestApplicationSequence,
-          options,
-        });
-        const projects = yield* enrichProjectShells(snapshot.projects);
-        return { ...snapshot, projects, projectIdentities: projectIdentitiesDigest(projects) };
       },
-    );
+    ) {
+      const { snapshot } = yield* loadSubscriberShellSnapshot({
+        sql,
+        listShellIndex: threadManagement.listActiveShellIndex(),
+        readThreads: (threadIds) =>
+          threadManagement.readShellSnapshot({
+            location: "active",
+            ...(threadIds === undefined ? {} : { threadIds }),
+          }),
+        listProjects: projectStore.listShells(),
+        latestSequence: applicationEvents.latestApplicationSequence,
+        options,
+      });
+      const filteredThreads =
+        Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured())
+          ? yield* teamServiceOption.value
+              .filterReadableThreadIds(
+                sessionId,
+                snapshot.threads.map((thread) => thread.id),
+              )
+              .pipe(
+                Effect.map((readableIds) =>
+                  snapshot.threads.filter((thread) => readableIds.has(thread.id)),
+                ),
+              )
+          : snapshot.threads;
+      const projects = yield* enrichProjectShells(snapshot.projects);
+      return {
+        ...snapshot,
+        threads: filteredThreads,
+        projects,
+        projectIdentities: projectIdentitiesDigest(projects),
+      };
+    });
 
     // A client that holds rows names their cursor; a small answer tells it to keep them.
-    const answerShellSnapshot = Effect.fn("http.orchestration.answerShellSnapshot")((query: {
-      readonly omitIdleSubagents?: string;
-      readonly omitOlderSettled?: string;
-      readonly resumeFrom?: string;
-    }) => {
+    const answerShellSnapshot = Effect.fn("http.orchestration.answerShellSnapshot")(function* (
+      sessionId: AuthSessionId,
+      query: {
+        readonly omitIdleSubagents?: string;
+        readonly omitOlderSettled?: string;
+        readonly resumeFrom?: string;
+      },
+    ) {
+      const isTeam =
+        Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured());
       const resumeFrom = query.resumeFrom === undefined ? Number.NaN : Number(query.resumeFrom);
-      return loadShellUnlessResumable({
+      return yield* loadShellUnlessResumable({
         events: applicationEvents,
-        resumeFrom: Number.isSafeInteger(resumeFrom) && resumeFrom >= 0 ? resumeFrom : undefined,
-        loadSnapshot: loadShellSnapshot({
+        resumeFrom:
+          !isTeam && Number.isSafeInteger(resumeFrom) && resumeFrom >= 0 ? resumeFrom : undefined,
+        loadSnapshot: loadShellSnapshot(sessionId, {
           omitIdleSubagents: query.omitIdleSubagents === "1",
           omitOlderSettled: query.omitOlderSettled === "1",
         }),
@@ -189,8 +230,8 @@ export const layer = HttpApiBuilder.group(
         "shellSnapshot",
         Effect.fn("environment.orchestration.shellSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          return yield* answerShellSnapshot(args.query).pipe(
+          const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          return yield* answerShellSnapshot(session.sessionId, args.query).pipe(
             traceLocalHandlerWork,
             Effect.catch((cause) =>
               failEnvironmentInternal("orchestration_snapshot_failed", cause),
@@ -202,7 +243,8 @@ export const layer = HttpApiBuilder.group(
         "threadSnapshot",
         Effect.fn("environment.orchestration.threadSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          yield* assertTeamThreadReadable(session.sessionId, args.params.threadId);
           const body = yield* loadThreadSnapshot(
             args.params.threadId,
             "orchestration_thread_snapshot_failed",
@@ -227,7 +269,8 @@ export const layer = HttpApiBuilder.group(
         "threadTranscript",
         Effect.fn("environment.orchestration.threadTranscript")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          yield* assertTeamThreadReadable(session.sessionId, args.params.threadId);
           return yield* threadManagement.getThreadTranscript(args.params.threadId).pipe(
             Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
             traceLocalHandlerWork,
@@ -252,7 +295,8 @@ export const layer = HttpApiBuilder.group(
         "threadBoundedSnapshot",
         Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          yield* assertTeamThreadReadable(session.sessionId, args.params.threadId);
           const snapshot = yield* loadThreadSnapshotWindow(
             args.params.threadId,
             undefined,
@@ -278,7 +322,8 @@ export const layer = HttpApiBuilder.group(
         "threadHistoryPage",
         Effect.fn("environment.orchestration.threadHistoryPage")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
-          yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+          yield* assertTeamThreadReadable(session.sessionId, args.params.threadId);
           const decoded = Result.try(() => decodeThreadHistoryCursor(args.query.cursor));
           if (Result.isFailure(decoded)) {
             const cause = decoded.failure;

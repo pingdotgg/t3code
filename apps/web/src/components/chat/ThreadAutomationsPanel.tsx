@@ -8,6 +8,7 @@ import { CalendarClockIcon, PencilIcon, PlayIcon, Settings2Icon } from "lucide-r
 import { useState } from "react";
 import {
   AuthOrchestrationOperateScope,
+  canManageTeamViews,
   type EnvironmentId,
   type ScheduledTask,
   type ThreadId,
@@ -28,6 +29,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 import { readEnvironmentScope } from "../../state/session";
+import { useTeamEnvironmentState } from "../../state/team";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -74,6 +76,22 @@ function taskScheduleLine(
 }
 
 export function ThreadAutomationsPanel(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+}) {
+  const teamState = useTeamEnvironmentState(props.environmentId);
+  if (
+    teamState.team !== null &&
+    (teamState.currentMember === null ||
+      teamState.currentMember.status !== "active" ||
+      !canManageTeamViews(teamState.currentMember.role))
+  ) {
+    return null;
+  }
+  return <ThreadAutomationsPanelContent {...props} />;
+}
+
+function ThreadAutomationsPanelContent(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {

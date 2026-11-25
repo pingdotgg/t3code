@@ -48,6 +48,7 @@ import { GuestShareIndicator } from "./GuestShareControls";
 import { formatTeamThreadTitle } from "@t3tools/client-runtime/team";
 import { useTeamThreadCreatorPseudo } from "../../state/team";
 import { TeamPseudoPrefix } from "../team/TeamPseudoPrefix";
+import { TeamThreadAccessControls } from "../team/TeamThreadAccessControls";
 import { TeamThreadFollowButton } from "../team/TeamThreadFollowButton";
 
 interface ChatHeaderProps {
@@ -425,6 +426,12 @@ export const ChatHeader = memo(function ChatHeader({
           ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread ? (
+        <TeamThreadAccessControls
+          environmentId={activeThreadEnvironmentId}
+          threadId={activeThreadId}
+        />
+      ) : null}
       {isServerThread ? (
         <TeamThreadFollowButton
           environmentId={activeThreadEnvironmentId}

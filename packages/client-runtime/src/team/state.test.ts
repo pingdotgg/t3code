@@ -1,4 +1,5 @@
 import {
+  ALL_TEAM_ROLES,
   EnvironmentId,
   TeamId,
   TeamMemberId,
@@ -7,6 +8,7 @@ import {
   type TeamMember,
   type TeamPseudo,
   type TeamStateStreamEvent,
+  type TeamView,
   type TeamWorkspace,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -16,14 +18,20 @@ import * as Stream from "effect/Stream";
 import { describe, expect, it } from "@effect/vitest";
 import {
   applyTeamStreamEvent,
+  canCurrentMemberChangeThreadView,
+  canCurrentMemberToggleThreadLock,
   countFollowedTeamThreads,
   EMPTY_TEAM_ENVIRONMENT_STATE,
   formatTeamThreadTitle,
   hasActiveTeamEnvironment,
   isFollowingTeamThread,
   isTeamColleagueThread,
+  isTeamThreadLocked,
+  listAccessibleTeamViews,
   resolveTeamThreadCreatorPseudo,
   resolveTeamThreadNotificationDecision,
+  resolveTeamThreadPostPermission,
+  resolveTeamThreadView,
   scanTeamStateStream,
   shouldNotifyForTeamThread,
   shouldShowThreadInTeamFilter,
@@ -51,6 +59,18 @@ const alice: TeamMember = {
   pseudo: "alice" as TeamPseudo,
   role: "owner",
   status: "active",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+};
+
+const defaultView: TeamView = {
+  id: viewId,
+  teamId,
+  name: "Default",
+  description: null,
+  isDefault: true,
+  readRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+  postRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
@@ -95,6 +115,7 @@ describe("team client-runtime state and presentation", () => {
         team,
         currentMember: bob,
         members: [alice, bob],
+        views: [defaultView],
         invites: [],
         threadAttributions: [
           {
@@ -104,6 +125,7 @@ describe("team client-runtime state and presentation", () => {
             creatorPseudo: alice.pseudo,
             viewId,
             locked: false,
+            lockedByMemberId: null,
             createdAt: "2026-01-01T00:00:01.000Z",
           },
           {
@@ -113,6 +135,7 @@ describe("team client-runtime state and presentation", () => {
             creatorPseudo: bob.pseudo,
             viewId,
             locked: false,
+            lockedByMemberId: null,
             createdAt: "2026-01-01T00:00:02.000Z",
           },
         ],
@@ -187,6 +210,7 @@ describe("team client-runtime state and presentation", () => {
         team,
         currentMember: bob,
         members: [alice, bob],
+        views: [defaultView],
         invites: [],
         threadAttributions: [
           {
@@ -196,6 +220,7 @@ describe("team client-runtime state and presentation", () => {
             creatorPseudo: alice.pseudo,
             viewId,
             locked: false,
+            lockedByMemberId: null,
             createdAt: "2026-01-01T00:00:01.000Z",
           },
           {
@@ -205,6 +230,7 @@ describe("team client-runtime state and presentation", () => {
             creatorPseudo: bob.pseudo,
             viewId,
             locked: false,
+            lockedByMemberId: null,
             createdAt: "2026-01-01T00:00:02.000Z",
           },
         ],
@@ -431,6 +457,7 @@ describe("team client-runtime state and presentation", () => {
             team,
             currentMember: bob,
             members: [alice, bob],
+            views: [defaultView],
             invites: [],
             threadAttributions: [],
             followedThreadIds: [],
@@ -450,6 +477,7 @@ describe("team client-runtime state and presentation", () => {
         team,
         currentMember: bob,
         members: [alice, bob],
+        views: [defaultView],
         invites: [],
         threadAttributions: [
           {
@@ -459,6 +487,7 @@ describe("team client-runtime state and presentation", () => {
             creatorPseudo: alice.pseudo,
             viewId,
             locked: false,
+            lockedByMemberId: null,
             createdAt: "2026-01-01T00:00:01.000Z",
           },
         ],
@@ -485,5 +514,120 @@ describe("team client-runtime state and presentation", () => {
     expect(hydrated.latestTurnByThreadId.get(aliceThreadId)?.turnId).toBe("run-alice-newest");
     expect(hydrated.turnAuthorByTurnId.get("run-bob-active")?.authorMemberId).toBe(bobId);
     expect(hydrated.turnAuthorByTurnId.get("run-alice-newest")?.authorMemberId).toBe(aliceId);
+  });
+
+  it("tracks views, view deletions, thread removal, post permissions, and lock controls", () => {
+    const announcementsViewId = TeamViewId.make("view-announcements");
+    const announcementsView: TeamView = {
+      id: announcementsViewId,
+      teamId,
+      name: "Announcements",
+      description: "Read-only for regulars",
+      isDefault: false,
+      readRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+      postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z",
+    };
+    let state = applyTeamStreamEvent(EMPTY_TEAM_ENVIRONMENT_STATE, {
+      version: 1,
+      type: "snapshot",
+      payload: {
+        team,
+        currentMember: bob,
+        members: [alice, bob],
+        views: [defaultView],
+        invites: [],
+        threadAttributions: [
+          {
+            threadId: aliceThreadId,
+            teamId,
+            creatorMemberId: aliceId,
+            creatorPseudo: alice.pseudo,
+            viewId: announcementsViewId,
+            locked: false,
+            lockedByMemberId: null,
+            createdAt: "2026-01-01T00:00:01.000Z",
+          },
+          {
+            threadId: bobThreadId,
+            teamId,
+            creatorMemberId: bobId,
+            creatorPseudo: bob.pseudo,
+            viewId: announcementsViewId,
+            locked: false,
+            lockedByMemberId: null,
+            createdAt: "2026-01-01T00:00:02.000Z",
+          },
+        ],
+        followedThreadIds: [aliceThreadId],
+        latestTurnAttributions: [],
+      },
+    });
+
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "viewUpserted",
+      payload: announcementsView,
+    });
+    expect(state.views.map((view) => view.name)).toEqual(["Default", "Announcements"]);
+    expect(resolveTeamThreadView({ teamState: state, threadId: aliceThreadId })?.name).toBe(
+      "Announcements",
+    );
+    expect(listAccessibleTeamViews(state).map((view) => view.id)).toEqual([
+      viewId,
+      announcementsViewId,
+    ]);
+    expect(canCurrentMemberChangeThreadView(state)).toBe(false);
+    expect(canCurrentMemberToggleThreadLock(state)).toBe(false);
+
+    // Bob cannot post in Alice's thread in Announcements, but can post in his own thread.
+    expect(resolveTeamThreadPostPermission({ teamState: state, threadId: aliceThreadId })).toEqual({
+      canPost: false,
+      blockReason: "view_read_only",
+    });
+    expect(resolveTeamThreadPostPermission({ teamState: state, threadId: bobThreadId })).toEqual({
+      canPost: true,
+      blockReason: null,
+    });
+
+    // Locking Bob's own thread blocks even Bob.
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "threadAttributed",
+      payload: {
+        threadId: bobThreadId,
+        teamId,
+        creatorMemberId: bobId,
+        creatorPseudo: bob.pseudo,
+        viewId: announcementsViewId,
+        locked: true,
+        lockedByMemberId: aliceId,
+        createdAt: "2026-01-01T00:00:02.000Z",
+      },
+    });
+    expect(isTeamThreadLocked({ teamState: state, threadId: bobThreadId })).toBe(true);
+    expect(resolveTeamThreadPostPermission({ teamState: state, threadId: bobThreadId })).toEqual({
+      canPost: false,
+      blockReason: "locked",
+    });
+
+    // threadRemoved evicts attribution and follow state immediately.
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "threadRemoved",
+      payload: { threadId: aliceThreadId },
+    });
+    expect(state.attributionByThreadId.has(aliceThreadId)).toBe(false);
+    expect(state.followedThreadIds.has(aliceThreadId)).toBe(false);
+
+    // viewDeleted removes view and reassigns threads back to Default View.
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "viewDeleted",
+      payload: { viewId: announcementsViewId, fallbackViewId: viewId },
+    });
+    expect(state.viewById.has(announcementsViewId)).toBe(false);
+    expect(state.attributionByThreadId.get(bobThreadId)?.viewId).toBe(viewId);
   });
 });

@@ -1,14 +1,18 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  ALL_TEAM_ROLES,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthRelayWriteScope,
   AuthSessionId,
+  AuthStandardClientScopes,
+  CommandId,
   MessageId,
   RunId,
+  TeamMemberId,
   ThreadId,
   type AuthClientMetadata,
   type OrchestrationV2DomainEvent,
@@ -77,6 +81,7 @@ describe("TeamService", () => {
         team: null,
         currentMember: null,
         members: [],
+        views: [],
         invites: [],
         threadAttributions: [],
         followedThreadIds: [],
@@ -502,11 +507,13 @@ describe("TeamService", () => {
           sessionId: ownerSession.sessionId,
           threadId: ThreadId.make("thread-stream-2"),
         });
+        yield* team.updateMyPseudo({
+          sessionId: ownerSession.sessionId,
+          payload: { pseudo: "alice-updated" },
+        });
         const suspendedEvents = yield* Fiber.join(suspendedFiber);
-        expect(suspendedEvents.map((event) => event.type)).toEqual([
-          "snapshot",
-          "threadAttributed",
-        ]);
+        // Suspended members must skip inviteUpserted and unseen restricted threads (no threadRemoved ID leak).
+        expect(suspendedEvents.map((event) => event.type)).toEqual(["snapshot", "memberUpserted"]);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 
@@ -1009,5 +1016,702 @@ describe("TeamService", () => {
           ),
         ).toBe(true);
       }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "enforces RBAC role hierarchy, higher-role protection, last-owner protection, and session revocation on suspend/remove",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({ subject: "alice-owner" });
+        const init = yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "RBAC Team", ownerPseudo: "alice" },
+        });
+        const alice = init.owner;
+
+        const inviteAndJoin = (pseudo: string, role: "admin" | "modo" | "regular") =>
+          Effect.gen(function* () {
+            const created = yield* team.createInvite({
+              sessionId: aliceSession.sessionId,
+              payload: { role, prefilledPseudo: pseudo },
+            });
+            const redeemed = yield* team.redeemInvite({
+              token: created.token,
+              pseudo,
+              client: testClient,
+            });
+            const verified = yield* sessions.verify(redeemed.accessToken);
+            return { member: redeemed.member, token: redeemed.accessToken, session: verified };
+          });
+
+        const dana = yield* inviteAndJoin("dana", "admin");
+        const charlie = yield* inviteAndJoin("charlie", "modo");
+        const bob = yield* inviteAndJoin("bob", "regular");
+
+        const expectErrorCode = <A, E>(effect: Effect.Effect<A, E>, code: string) =>
+          Effect.gen(function* () {
+            const exit = yield* Effect.exit(effect);
+            expect(exit._tag).toBe("Failure");
+            if (exit._tag === "Failure") {
+              expect(Cause.squash(exit.cause)).toMatchObject({
+                _tag: "TeamOperationError",
+                code,
+              });
+            }
+          });
+
+        // Regular member cannot change roles or member status.
+        yield* expectErrorCode(
+          team.updateMemberRole({
+            sessionId: bob.session.sessionId,
+            payload: { memberId: bob.member.id, role: "modo" },
+          }),
+          "forbidden",
+        );
+        yield* expectErrorCode(
+          team.updateMemberStatus({
+            sessionId: bob.session.sessionId,
+            payload: { memberId: charlie.member.id, status: "suspended" },
+          }),
+          "forbidden",
+        );
+
+        // Modo (Charlie) can promote Bob to modo, but cannot assign admin or modify admin/owner.
+        yield* expectErrorCode(
+          team.updateMemberRole({
+            sessionId: charlie.session.sessionId,
+            payload: { memberId: bob.member.id, role: "admin" },
+          }),
+          "forbidden",
+        );
+        yield* expectErrorCode(
+          team.updateMemberRole({
+            sessionId: charlie.session.sessionId,
+            payload: { memberId: dana.member.id, role: "regular" },
+          }),
+          "forbidden",
+        );
+        yield* expectErrorCode(
+          team.updateMemberStatus({
+            sessionId: charlie.session.sessionId,
+            payload: { memberId: dana.member.id, status: "suspended" },
+          }),
+          "forbidden",
+        );
+        const bobPromoted = yield* team.updateMemberRole({
+          sessionId: charlie.session.sessionId,
+          payload: { memberId: bob.member.id, role: "modo" },
+        });
+        expect(bobPromoted.role).toBe("modo");
+        const bobDemoted = yield* team.updateMemberRole({
+          sessionId: charlie.session.sessionId,
+          payload: { memberId: bob.member.id, role: "regular" },
+        });
+        expect(bobDemoted.role).toBe("regular");
+
+        // Admin (Dana) cannot promote to owner or modify owner.
+        yield* expectErrorCode(
+          team.updateMemberRole({
+            sessionId: dana.session.sessionId,
+            payload: { memberId: charlie.member.id, role: "owner" },
+          }),
+          "forbidden",
+        );
+        yield* expectErrorCode(
+          team.updateMemberRole({
+            sessionId: dana.session.sessionId,
+            payload: { memberId: alice.id, role: "admin" },
+          }),
+          "forbidden",
+        );
+
+        // Last active owner cannot be demoted, suspended, or removed.
+        yield* expectErrorCode(
+          team.updateMemberRole({
+            sessionId: aliceSession.sessionId,
+            payload: { memberId: alice.id, role: "admin" },
+          }),
+          "last_owner",
+        );
+        yield* expectErrorCode(
+          team.updateMemberStatus({
+            sessionId: aliceSession.sessionId,
+            payload: { memberId: alice.id, status: "suspended" },
+          }),
+          "last_owner",
+        );
+
+        // Once Dana is promoted to owner, Alice can demote herself to admin; Dana as sole owner is then protected.
+        const danaOwner = yield* team.updateMemberRole({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: dana.member.id, role: "owner" },
+        });
+        expect(danaOwner.role).toBe("owner");
+        const aliceDemoted = yield* team.updateMemberRole({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: alice.id, role: "admin" },
+        });
+        expect(aliceDemoted.role).toBe("admin");
+        yield* expectErrorCode(
+          team.updateMemberRole({
+            sessionId: dana.session.sessionId,
+            payload: { memberId: dana.member.id, role: "admin" },
+          }),
+          "last_owner",
+        );
+
+        // Suspending Bob immediately revokes his active session.
+        const bobSuspended = yield* team.updateMemberStatus({
+          sessionId: charlie.session.sessionId,
+          payload: { memberId: bob.member.id, status: "suspended" },
+        });
+        expect(bobSuspended.status).toBe("suspended");
+        const bobVerifyAfterSuspend = yield* Effect.exit(sessions.verify(bob.token));
+        expect(bobVerifyAfterSuspend._tag).toBe("Failure");
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "enforces server-side Views CRUD, read/post policies, thread locking, and live revocation",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({ subject: "alice-views" });
+        const init = yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "Views Team", ownerPseudo: "alice" },
+        });
+
+        const inviteAndJoin = (pseudo: string, role: "admin" | "modo" | "regular") =>
+          Effect.gen(function* () {
+            const created = yield* team.createInvite({
+              sessionId: aliceSession.sessionId,
+              payload: { role, prefilledPseudo: pseudo },
+            });
+            const redeemed = yield* team.redeemInvite({
+              token: created.token,
+              pseudo,
+              client: testClient,
+            });
+            const verified = yield* sessions.verify(redeemed.accessToken);
+            return { member: redeemed.member, session: verified };
+          });
+
+        const dana = yield* inviteAndJoin("dana", "admin");
+        const charlie = yield* inviteAndJoin("charlie", "modo");
+        const bob = yield* inviteAndJoin("bob", "regular");
+
+        const initialState = yield* team.getState(aliceSession.sessionId);
+        expect(initialState.views).toHaveLength(1);
+        const defaultView = initialState.views[0]!;
+        expect(defaultView.isDefault).toBe(true);
+        expect(defaultView.readRule.roles).toEqual([...ALL_TEAM_ROLES]);
+
+        // Default view cannot be deleted, and non-admins cannot create views.
+        const deleteDefaultExit = yield* Effect.exit(
+          team.deleteView({
+            sessionId: aliceSession.sessionId,
+            payload: { viewId: defaultView.id },
+          }),
+        );
+        expect(deleteDefaultExit._tag).toBe("Failure");
+        if (deleteDefaultExit._tag === "Failure") {
+          expect(Cause.squash(deleteDefaultExit.cause)).toMatchObject({
+            code: "default_view_protected",
+          });
+        }
+        const charlieCreateViewExit = yield* Effect.exit(
+          team.createView({
+            sessionId: charlie.session.sessionId,
+            payload: {
+              name: "Unauthorized",
+              readRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+              postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+            },
+          }),
+        );
+        expect(charlieCreateViewExit._tag).toBe("Failure");
+
+        // Owner creates Staff Only, Announcements, and Admin Only views.
+        const staffOnly = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Staff Only",
+            description: "Visible to modo+ only",
+            readRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+            postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+          },
+        });
+        const announcements = yield* team.createView({
+          sessionId: dana.session.sessionId,
+          payload: {
+            name: "Announcements",
+            readRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+            postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+          },
+        });
+        const adminOnly = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Admin Only",
+            readRule: { roles: ["owner", "admin"], memberIds: [] },
+            postRule: { roles: ["owner", "admin"], memberIds: [] },
+          },
+        });
+
+        // Duplicate view name (case-insensitive) fails with view_name_taken.
+        const dupViewExit = yield* Effect.exit(
+          team.createView({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              name: "staff only",
+              readRule: { roles: ["owner"], memberIds: [] },
+              postRule: { roles: ["owner"], memberIds: [] },
+            },
+          }),
+        );
+        expect(dupViewExit._tag).toBe("Failure");
+        if (dupViewExit._tag === "Failure") {
+          expect(Cause.squash(dupViewExit.cause)).toMatchObject({ code: "view_name_taken" });
+        }
+
+        // Bob's state lists only views Bob can read (Default + Announcements, NOT Staff Only / Admin Only).
+        const bobState = yield* team.getState(bob.session.sessionId);
+        expect(bobState.views.map((view) => view.name).toSorted()).toEqual([
+          "Announcements",
+          "Default",
+        ]);
+
+        // Alice creates a thread in Default View; Bob follows it and can read & post initially.
+        const aliceThreadId = ThreadId.make("thread-alice-default");
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: aliceThreadId,
+        });
+        yield* team.followThread({
+          sessionId: bob.session.sessionId,
+          payload: { threadId: aliceThreadId },
+        });
+        expect(yield* team.canReadThread(bob.session.sessionId, aliceThreadId)).toBe(true);
+        expect(yield* team.canPostInThread(bob.session.sessionId, aliceThreadId)).toBe(true);
+
+        // Subscribe Bob to live team state and access changes, then Charlie (modo) moves thread to Staff Only.
+        const bobStreamFiber = yield* team
+          .streamState(bob.session.sessionId)
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+        const accessChangeFiber = yield* team
+          .subscribeAccessChanges()
+          .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        // Charlie cannot move thread to Admin Only (inaccessible to Charlie), nor can Bob move any thread.
+        const charlieToAdminExit = yield* Effect.exit(
+          team.setThreadView({
+            sessionId: charlie.session.sessionId,
+            payload: { threadId: aliceThreadId, viewId: adminOnly.id },
+          }),
+        );
+        expect(charlieToAdminExit._tag).toBe("Failure");
+        const bobMoveExit = yield* Effect.exit(
+          team.setThreadView({
+            sessionId: bob.session.sessionId,
+            payload: { threadId: aliceThreadId, viewId: announcements.id },
+          }),
+        );
+        expect(bobMoveExit._tag).toBe("Failure");
+
+        const moved = yield* team.setThreadView({
+          sessionId: charlie.session.sessionId,
+          payload: { threadId: aliceThreadId, viewId: staffOnly.id },
+        });
+        expect(moved.viewId).toBe(staffOnly.id);
+
+        // Bob immediately loses read/post access, receives threadRemoved, and is removed from notification recipients.
+        expect(yield* team.canReadThread(bob.session.sessionId, aliceThreadId)).toBe(false);
+        expect(yield* team.canPostInThread(bob.session.sessionId, aliceThreadId)).toBe(false);
+        expect(
+          yield* team.shouldNotifyMemberForThread({
+            memberId: bob.member.id,
+            threadId: aliceThreadId,
+          }),
+        ).toBe(false);
+        const bobEvents = yield* Fiber.join(bobStreamFiber);
+        expect(bobEvents[1]).toMatchObject({
+          type: "threadRemoved",
+          payload: { threadId: aliceThreadId },
+        });
+        expect((yield* Fiber.join(accessChangeFiber)).length).toBe(1);
+
+        // Move Alice's thread to Announcements -> Bob can read it again, CANNOT post in it.
+        yield* team.setThreadView({
+          sessionId: aliceSession.sessionId,
+          payload: { threadId: aliceThreadId, viewId: announcements.id },
+        });
+        expect(yield* team.canReadThread(bob.session.sessionId, aliceThreadId)).toBe(true);
+        expect(yield* team.canPostInThread(bob.session.sessionId, aliceThreadId)).toBe(false);
+        const bobDispatchInAliceExit = yield* Effect.exit(
+          team.assertCanDispatchCommand(bob.session.sessionId, {
+            type: "message.dispatch",
+            commandId: CommandId.make("cmd-bob-blocked"),
+            threadId: aliceThreadId,
+            messageId: MessageId.make("msg-bob-blocked"),
+            createdBy: "user",
+            creationSource: "web",
+            text: "Trying to post",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          }),
+        );
+        expect(bobDispatchInAliceExit._tag).toBe("Failure");
+        if (bobDispatchInAliceExit._tag === "Failure") {
+          expect(Cause.squash(bobDispatchInAliceExit.cause)).toMatchObject({
+            _tag: "EnvironmentAuthorizationError",
+          });
+        }
+
+        // Bob CAN create his own thread in Announcements and post in it, until Alice locks it.
+        yield* team.assertCanLaunchThread({
+          sessionId: bob.session.sessionId,
+          viewId: announcements.id,
+          locked: false,
+        });
+        const bobCannotLaunchLockedExit = yield* Effect.exit(
+          team.assertCanLaunchThread({
+            sessionId: bob.session.sessionId,
+            viewId: announcements.id,
+            locked: true,
+          }),
+        );
+        expect(bobCannotLaunchLockedExit._tag).toBe("Failure");
+
+        const bobThreadId = ThreadId.make("thread-bob-announcements");
+        yield* team.prepareThreadAttribution({
+          sessionId: bob.session.sessionId,
+          threadId: bobThreadId,
+          viewId: announcements.id,
+          locked: false,
+        });
+        expect(yield* team.canPostInThread(bob.session.sessionId, bobThreadId)).toBe(true);
+
+        // Charlie (modo) cannot lock threads; Alice (owner) locks Bob's own thread -> blocks Bob AND Charlie, allows Alice & Dana.
+        const charlieLockExit = yield* Effect.exit(
+          team.setThreadLocked({
+            sessionId: charlie.session.sessionId,
+            payload: { threadId: bobThreadId, locked: true },
+          }),
+        );
+        expect(charlieLockExit._tag).toBe("Failure");
+
+        const lockedAttr = yield* team.setThreadLocked({
+          sessionId: aliceSession.sessionId,
+          payload: { threadId: bobThreadId, locked: true },
+        });
+        expect(lockedAttr.locked).toBe(true);
+        expect(lockedAttr.lockedByMemberId).toBe(init.owner.id);
+        expect(yield* team.canPostInThread(bob.session.sessionId, bobThreadId)).toBe(false);
+        expect(yield* team.canPostInThread(charlie.session.sessionId, bobThreadId)).toBe(false);
+        expect(yield* team.canPostInThread(aliceSession.sessionId, bobThreadId)).toBe(true);
+        expect(yield* team.canPostInThread(dana.session.sessionId, bobThreadId)).toBe(true);
+
+        // Unlocking restores Bob's post permission in his own thread.
+        const unlockedAttr = yield* team.setThreadLocked({
+          sessionId: dana.session.sessionId,
+          payload: { threadId: bobThreadId, locked: false },
+        });
+        expect(unlockedAttr.locked).toBe(false);
+        expect(unlockedAttr.lockedByMemberId).toBeNull();
+        expect(yield* team.canPostInThread(bob.session.sessionId, bobThreadId)).toBe(true);
+
+        // Deleting Announcements view reassigns Bob's thread back to Default View.
+        const deleted = yield* team.deleteView({
+          sessionId: aliceSession.sessionId,
+          payload: { viewId: announcements.id },
+        });
+        expect(deleted).toEqual({ deleted: true, fallbackViewId: defaultView.id });
+        const stateAfterDelete = yield* team.getState(aliceSession.sessionId);
+        expect(
+          stateAfterDelete.threadAttributions.find((attr) => attr.threadId === bobThreadId)?.viewId,
+        ).toBe(defaultView.id);
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "reconciles session scopes on admin-tier role changes, revokes DPoP keys on suspension, enforces guest-share/workflow/delete/fork guards, validates memberIds, and prevents streamState threadId leaks",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({
+          subject: "owner-alice",
+          method: "browser-session-cookie",
+          scopes: AuthStandardClientScopes,
+        });
+        yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "Acme", ownerPseudo: "alice" },
+        });
+
+        const adminInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "admin", prefilledPseudo: "dana" },
+        });
+        const danaRedeemed = yield* team.redeemInvite({
+          token: adminInvite.token,
+          pseudo: "dana",
+          client: { deviceType: "desktop" },
+          proofKeyThumbprint: "jkt-dana",
+        });
+        const danaVerifiedBefore = yield* sessions.verify(danaRedeemed.accessToken);
+        expect(danaVerifiedBefore.scopes).toContain(AuthAccessWriteScope);
+
+        const regularInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob" },
+        });
+        const bobRedeemed = yield* team.redeemInvite({
+          token: regularInvite.token,
+          pseudo: "bob",
+          client: { deviceType: "desktop" },
+          proofKeyThumbprint: "jkt-bob",
+        });
+        const bobVerifiedBefore = yield* sessions.verify(bobRedeemed.accessToken);
+        expect(bobVerifiedBefore.scopes).not.toContain(AuthAccessWriteScope);
+
+        // 1. Demoting Dana (admin -> regular) narrows DB session scopes AND triggers awaitInvalidation.
+        const danaInvalidationFiber = yield* Effect.forkChild(
+          sessions.awaitInvalidation(danaVerifiedBefore.sessionId, "jkt-dana"),
+        );
+        yield* Effect.yieldNow;
+        yield* team.updateMemberRole({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: danaRedeemed.member.id, role: "regular" },
+        });
+        yield* Fiber.join(danaInvalidationFiber);
+        const danaVerifiedAfterDemote = yield* sessions.verify(danaRedeemed.accessToken);
+        expect(danaVerifiedAfterDemote.scopes).not.toContain(AuthAccessWriteScope);
+
+        // 1b. Bootstrap race: demotion landing BEFORE awaitInvalidation starts still invalidates immediately when expectedScopes are passed.
+        yield* sessions.awaitInvalidation(
+          danaVerifiedBefore.sessionId,
+          "jkt-dana",
+          danaVerifiedBefore.scopes,
+        );
+
+        // 2. Promoting Bob (regular -> admin) broadens DB session scopes AND triggers awaitInvalidation.
+        const bobInvalidationFiber = yield* Effect.forkChild(
+          sessions.awaitInvalidation(bobVerifiedBefore.sessionId, "jkt-bob"),
+        );
+        yield* Effect.yieldNow;
+        yield* team.updateMemberRole({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: bobRedeemed.member.id, role: "admin" },
+        });
+        yield* Fiber.join(bobInvalidationFiber);
+        const bobVerifiedAfterPromote = yield* sessions.verify(bobRedeemed.accessToken);
+        expect(bobVerifiedAfterPromote.scopes).toContain(AuthAccessWriteScope);
+
+        // Demote Bob back to regular for RBAC checks below.
+        yield* team.updateMemberRole({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: bobRedeemed.member.id, role: "regular" },
+        });
+
+        // 3. View memberIds validation rejects unknown member IDs.
+        const invalidMemberExit = yield* Effect.exit(
+          team.createView({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              name: "Bad View",
+              readRule: {
+                roles: ["owner"],
+                memberIds: [TeamMemberId.make("member-does-not-exist")],
+              },
+              postRule: { roles: ["owner"], memberIds: [] },
+            },
+          }),
+        );
+        expect(invalidMemberExit._tag).toBe("Failure");
+
+        // 4. Create Staff Only view & test streamState non-leakage of unseen restricted threadIds.
+        const staffOnly = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Staff Only",
+            readRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+            postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+          },
+        });
+        const bobStateEvents: Array<TeamStateStreamEvent> = [];
+        const bobStateFiber = yield* Effect.forkChild(
+          team.streamState(bobVerifiedBefore.sessionId).pipe(
+            Stream.take(2),
+            Stream.runForEach((event) =>
+              Effect.sync(() => {
+                bobStateEvents.push(event);
+              }),
+            ),
+          ),
+        );
+        yield* Effect.yieldNow;
+
+        // Brand-new Staff Only thread must NOT leak a threadRemoved event to Bob.
+        const unseenSecretThreadId = ThreadId.make("thread-unseen-secret");
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: unseenSecretThreadId,
+          viewId: staffOnly.id,
+        });
+        // A Default-view thread Bob CAN read arrives as event #2 (proving the unseen secret was skipped).
+        const visibleDefaultThreadId = ThreadId.make("thread-visible-default");
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: visibleDefaultThreadId,
+        });
+        yield* Fiber.join(bobStateFiber);
+        expect(bobStateEvents).toHaveLength(2);
+        expect(bobStateEvents[0]?.type).toBe("snapshot");
+        expect(bobStateEvents[1]?.type).toBe("threadAttributed");
+        if (bobStateEvents[1]?.type === "threadAttributed") {
+          expect(bobStateEvents[1].payload.threadId).toBe(visibleDefaultThreadId);
+        }
+
+        // 5. Guest share, workflow, and scheduled-task guards.
+        expect(
+          (yield* Effect.exit(
+            team.assertCanCreateGuestShare(bobVerifiedBefore.sessionId, unseenSecretThreadId),
+          ))._tag,
+        ).toBe("Failure");
+        yield* team.assertCanCreateGuestShare(aliceSession.sessionId, unseenSecretThreadId);
+        expect(
+          (yield* Effect.exit(team.assertCanUseWorkflows(bobVerifiedBefore.sessionId)))._tag,
+        ).toBe("Failure");
+        yield* team.assertCanUseWorkflows(aliceSession.sessionId);
+        expect(
+          (yield* Effect.exit(team.assertCanUseScheduledTasks(bobVerifiedBefore.sessionId)))._tag,
+        ).toBe("Failure");
+        yield* team.assertCanUseScheduledTasks(aliceSession.sessionId);
+
+        // 6. thread.delete restriction: colleague cannot delete Alice's thread even in Default View.
+        const bobDeleteAliceExit = yield* Effect.exit(
+          team.assertCanDispatchCommand(bobVerifiedBefore.sessionId, {
+            type: "thread.delete",
+            commandId: CommandId.make("cmd-del-1"),
+            threadId: visibleDefaultThreadId,
+          }),
+        );
+        expect(bobDeleteAliceExit._tag).toBe("Failure");
+        yield* team.assertCanDispatchCommand(aliceSession.sessionId, {
+          type: "thread.delete",
+          commandId: CommandId.make("cmd-del-2"),
+          threadId: visibleDefaultThreadId,
+        });
+
+        // 7. thread.fork inherits restricted viewId via prepareThreadInheritedFromParent.
+        const forkedSecretId = ThreadId.make("thread-forked-secret");
+        const preparedFork = yield* team.prepareThreadInheritedFromParent({
+          parentThreadId: unseenSecretThreadId,
+          threadId: forkedSecretId,
+          creatorSessionId: aliceSession.sessionId,
+        });
+        expect(preparedFork).toBe(true);
+        expect(yield* team.canReadThread(bobVerifiedBefore.sessionId, forkedSecretId)).toBe(false);
+        expect(yield* team.canReadThread(aliceSession.sessionId, forkedSecretId)).toBe(true);
+
+        // 8. Post-team unattributed threads fail closed for regular members (owner retains access).
+        const unattributedPostTeamId = ThreadId.make("thread-post-team-no-meta");
+        expect(yield* team.canReadThread(bobVerifiedBefore.sessionId, unattributedPostTeamId)).toBe(
+          false,
+        );
+        expect(yield* team.canReadThread(aliceSession.sessionId, unattributedPostTeamId)).toBe(
+          true,
+        );
+        const filteredIds = yield* team.filterReadableThreadIds(bobVerifiedBefore.sessionId, [
+          unattributedPostTeamId,
+          visibleDefaultThreadId,
+        ]);
+        expect(filteredIds.has(unattributedPostTeamId)).toBe(false);
+        expect(filteredIds.has(visibleDefaultThreadId)).toBe(true);
+
+        // 8b. MCP child of a pre-team legacy parent thread gets Default View attribution so regular members can read it.
+        const sql = yield* SqlClient.SqlClient;
+        const legacyParentId = ThreadId.make("thread-legacy-parent-for-mcp");
+        yield* sql`
+          INSERT INTO orchestration_v2_projection_threads (
+            thread_id, project_id, title, default_provider, runtime_mode,
+            interaction_mode, active_provider_thread_id, created_at, updated_at,
+            archived_at, deleted_at, payload_json
+          ) VALUES (
+            ${legacyParentId}, 'proj-legacy', 'Legacy parent', 'codex', 'full-access',
+            'default', NULL, '1969-12-31T23:59:59.000Z', '1969-12-31T23:59:59.000Z',
+            NULL, NULL, '{}'
+          )
+        `;
+        const legacyMcpChildId = ThreadId.make("thread-legacy-mcp-child");
+        const preparedLegacyChild = yield* team.prepareThreadInheritedFromParent({
+          parentThreadId: legacyParentId,
+          threadId: legacyMcpChildId,
+        });
+        expect(preparedLegacyChild).toBe(true);
+        expect(yield* team.canReadThread(bobVerifiedBefore.sessionId, legacyMcpChildId)).toBe(true);
+
+        // 9. Suspending Dana revokes her session (and DPoP key) immediately.
+        yield* team.updateMemberStatus({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: danaRedeemed.member.id, status: "suspended" },
+        });
+        const danaVerifyAfterSuspend = yield* Effect.exit(
+          sessions.verify(danaRedeemed.accessToken),
+        );
+        expect(danaVerifyAfterSuspend._tag).toBe("Failure");
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "fails closed on TeamRepository errors across read, batch filter, post, and prepare",
+    () => {
+      const repoError = new TeamRepository.TeamRepositoryError({
+        operation: "injected",
+        cause: new Error("SQLite busy"),
+      });
+      const failingRepoLayer = Layer.mock(TeamRepository.TeamRepository)({
+        getWorkspace: () => Effect.fail(repoError),
+        getThreadAttribution: () => Effect.fail(repoError),
+        getMemberForSession: () => Effect.fail(repoError),
+        listViews: () => Effect.fail(repoError),
+        listThreadAttributions: () => Effect.fail(repoError),
+        findThreadIdByAttachmentSegment: () => Effect.fail(repoError),
+      });
+      const failingServiceLayer = TeamService.layer.pipe(
+        Layer.provideMerge(failingRepoLayer),
+        Layer.provideMerge(
+          Layer.mock(SessionStore.SessionStore)({
+            cookieName: "test",
+            legacyCookieName: undefined,
+            revoke: () => Effect.succeed(false),
+          }),
+        ),
+        Layer.provideMerge(NodeCrypto.layer),
+      );
+      const sid = AuthSessionId.make("sess-fault");
+      const tid = ThreadId.make("thread-fault");
+      return Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        expect(yield* team.isTeamConfigured()).toBe(true);
+        expect(yield* team.canReadThread(sid, tid)).toBe(false);
+        expect(yield* team.canReadAttachment(sid, `${tid}-att-1`)).toBe(false);
+        expect(yield* team.canPostInThread(sid, tid)).toBe(false);
+        expect((yield* team.filterReadableThreadIds(sid, [tid])).size).toBe(0);
+        expect(
+          (yield* Effect.exit(team.prepareThreadAttribution({ sessionId: sid, threadId: tid })))
+            ._tag,
+        ).toBe("Failure");
+      }).pipe(Effect.provide(failingServiceLayer));
+    },
   );
 });

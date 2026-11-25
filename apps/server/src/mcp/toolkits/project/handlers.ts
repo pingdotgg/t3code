@@ -456,6 +456,24 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             )?.supportedRuntimeModes,
           });
         }
+        const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
+        const preparedAttribution =
+          caller !== undefined && Option.isSome(teamServiceOption)
+            ? yield* teamServiceOption.value
+                .prepareThreadInheritedFromParent({
+                  parentThreadId: caller.id,
+                  threadId,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (error) =>
+                      new OrchestratorMcpFailure({
+                        code: "orchestration_error",
+                        message: error.message,
+                      }),
+                  ),
+                )
+            : false;
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -488,6 +506,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             ? {}
             : { workflowRun: input.workflowRun }),
         }).pipe(
+          Effect.onError(() =>
+            preparedAttribution && Option.isSome(teamServiceOption)
+              ? teamServiceOption.value.rollbackPreparedThreadAttribution(threadId)
+              : Effect.void,
+          ),
           Effect.mapError((error) => {
             if (error._tag === "AttachmentClaimError") {
               return new OrchestratorMcpFailure({
@@ -513,15 +536,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         );
         const thread = result.projection.thread;
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
-        if (caller !== undefined && !result.resumed) {
-          const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
-          if (Option.isSome(teamServiceOption)) {
-            yield* teamServiceOption.value.recordThreadInheritedFromParent({
-              parentThreadId: caller.id,
-              threadId: thread.id,
-              ...(run ? { turnId: run.id } : {}),
-            });
-          }
+        if (caller !== undefined && !result.resumed && Option.isSome(teamServiceOption)) {
+          yield* teamServiceOption.value.recordThreadInheritedFromParent({
+            parentThreadId: caller.id,
+            threadId: thread.id,
+            ...(run ? { turnId: run.id } : {}),
+          });
         }
         return {
           threadId: thread.id,

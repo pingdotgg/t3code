@@ -465,13 +465,18 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
-    /** Completes when a live socket's session is revoked or expires without a renewal for its DPoP key. */
+    /** Completes when a live socket's session is revoked, its scopes change, or it expires without a renewal for its DPoP key. */
     readonly awaitInvalidation: (
       sessionId: AuthSessionId,
       proofKeyThumbprint?: string,
+      expectedScopes?: ReadonlyArray<AuthEnvironmentScope>,
     ) => Effect.Effect<void, SessionCredentialVerificationError>;
     readonly revoke: (
       sessionId: AuthSessionId,
+    ) => Effect.Effect<boolean, SessionCredentialInternalError>;
+    readonly updateScopes: (
+      sessionId: AuthSessionId,
+      scopes: ReadonlyArray<AuthEnvironmentScope>,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
@@ -1024,6 +1029,7 @@ const make = Effect.gen(function* () {
       }
       const renewedToken = yield* signClaims({
         ...claims,
+        scopes: row.value.scopes,
         iat: now.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       });
@@ -1202,6 +1208,25 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const updateScopes: SessionStore["Service"]["updateScopes"] = Effect.fn(
+    "SessionStore.updateScopes",
+  )(function* (sessionId, scopes) {
+    const updated = yield* authSessions
+      .updateScopes({ sessionId, scopes })
+      .pipe(
+        Effect.mapError((cause) => new SessionCredentialVerificationError({ sessionId, cause })),
+      );
+    if (updated) {
+      const session = yield* loadActiveSession(sessionId).pipe(
+        Effect.mapError((cause) => new SessionCredentialVerificationError({ sessionId, cause })),
+      );
+      if (Option.isSome(session)) {
+        yield* emitUpsert(session.value);
+      }
+    }
+    return updated;
+  });
+
   const proofKeyThumbprintOf: SessionStore["Service"]["proofKeyThumbprintOf"] = (sessionId) =>
     authSessions
       .getProofKeyThumbprint({ sessionId })
@@ -1260,6 +1285,7 @@ const make = Effect.gen(function* () {
   const awaitInvalidation = Effect.fn(function* (
     sessionId: AuthSessionId,
     proofKeyThumbprint?: string,
+    expectedScopes?: ReadonlyArray<AuthEnvironmentScope>,
   ) {
     return yield* Effect.scoped(
       Effect.gen(function* () {
@@ -1275,6 +1301,7 @@ const make = Effect.gen(function* () {
             );
         const original = yield* readRow(sessionId);
         if (Option.isNone(original)) return;
+        const baselineScopes = expectedScopes ?? original.value.scopes;
         // Media tickets carry no proof key, so their streams follow the session's own.
         const renewalKey =
           proofKeyThumbprint ??
@@ -1287,20 +1314,38 @@ const make = Effect.gen(function* () {
                 ),
               ),
           );
-        // Revoking any session the socket has used closes it. Events only wake this loop
-        // and the rows decide: revocations are written before they are published, and
-        // clientRemoved also reports an expired session losing its last socket.
+        // Revoking a session or changing its scopes closes sockets that still hold stale grants.
         const chain = [sessionId];
+        const hasSameScopes = (
+          left: ReadonlyArray<AuthEnvironmentScope>,
+          right: ReadonlyArray<AuthEnvironmentScope>,
+        ) => left.length === right.length && left.every((scope) => right.includes(scope));
         const nextRemoval = Effect.gen(function* () {
           while (true) {
             const change = yield* PubSub.take(subscription);
             if (change.type === "clientRemoved" && chain.includes(change.sessionId)) return;
+            if (
+              change.type === "clientUpserted" &&
+              chain.includes(change.clientSession.sessionId) &&
+              !hasSameScopes(baselineScopes, change.clientSession.scopes)
+            ) {
+              return;
+            }
           }
         });
         let current = original.value;
         while (true) {
           const rows = yield* Effect.forEach(chain, readRow);
-          if (rows.some((row) => Option.isNone(row) || row.value.revokedAt !== null)) return;
+          if (
+            rows.some(
+              (row) =>
+                Option.isNone(row) ||
+                row.value.revokedAt !== null ||
+                !hasSameScopes(baselineScopes, row.value.scopes),
+            )
+          ) {
+            return;
+          }
           // Renewal moves a session's expiry in place, so the snapshot can be stale.
           const currentRow = rows.at(-1);
           if (currentRow !== undefined && Option.isSome(currentRow)) current = currentRow.value;
@@ -1327,7 +1372,7 @@ const make = Effect.gen(function* () {
           if (
             Option.isNone(successor) ||
             successor.value.subject !== original.value.subject ||
-            !original.value.scopes.every((scope) => successor.value.scopes.includes(scope))
+            !baselineScopes.every((scope) => successor.value.scopes.includes(scope))
           ) {
             return;
           }
@@ -1353,6 +1398,7 @@ const make = Effect.gen(function* () {
       return Stream.fromPubSub(changesPubSub);
     },
     revoke,
+    updateScopes,
     revokeAllExcept,
     proofKeyThumbprintOf,
     revokeByProofKey,

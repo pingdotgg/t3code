@@ -1,17 +1,25 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import {
+  canCurrentMemberChangeThreadView,
+  canCurrentMemberToggleThreadLock,
   createTeamEnvironmentAtoms,
   EMPTY_TEAM_ENVIRONMENT_STATE,
   isFollowingTeamThread,
   isTeamColleagueThread,
+  isTeamThreadLocked,
+  listAccessibleTeamViews,
   previewTeamInviteEffect,
   redeemTeamInviteAndConnectEffect,
+  resolveTeamThreadPostPermission,
+  resolveTeamThreadView,
+  TEAM_THREAD_POST_ALLOWED,
   type TeamEnvironmentState,
   type TeamInviteJoinInput,
   type TeamInvitePreviewInput,
+  type TeamThreadPostPermission,
 } from "@t3tools/client-runtime/team";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, TeamView, TeamViewId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -210,6 +218,171 @@ export function readTeamThreadFollowActionState(
   );
   if (!canMutate) return null;
   return { isFollowing: state.isFollowing };
+}
+
+export interface TeamThreadAccessViewState {
+  readonly isTeamThread: boolean;
+  readonly view: TeamView | null;
+  readonly locked: boolean;
+  readonly canChangeView: boolean;
+  readonly canToggleLock: boolean;
+  readonly accessibleViews: ReadonlyArray<TeamView>;
+}
+
+const EMPTY_THREAD_ACCESS_STATE: TeamThreadAccessViewState = {
+  isTeamThread: false,
+  view: null,
+  locked: false,
+  canChangeView: false,
+  canToggleLock: false,
+  accessibleViews: [],
+};
+
+const teamThreadAccessStateAtom = Atom.family((threadKey: string) =>
+  Atom.make((get): TeamThreadAccessViewState => {
+    const separatorIndex = threadKey.indexOf("\0");
+    if (separatorIndex === -1) return EMPTY_THREAD_ACCESS_STATE;
+    const environmentId = threadKey.slice(0, separatorIndex) as EnvironmentId;
+    const threadId = threadKey.slice(separatorIndex + 1) as ThreadId;
+    const result = get(teamEnvironment.state(environmentId));
+    if (result._tag !== "Success" || result.value.team === null) {
+      return EMPTY_THREAD_ACCESS_STATE;
+    }
+    const teamState = result.value;
+    return {
+      isTeamThread: true,
+      view: resolveTeamThreadView({ teamState, threadId }),
+      locked: isTeamThreadLocked({ teamState, threadId }),
+      canChangeView: canCurrentMemberChangeThreadView(teamState),
+      canToggleLock: canCurrentMemberToggleThreadLock(teamState),
+      accessibleViews: listAccessibleTeamViews(teamState),
+    };
+  }).pipe(Atom.withLabel(`team:thread-access-state:${threadKey}`)),
+);
+
+const teamThreadPostPermissionAtom = Atom.family((threadKey: string) =>
+  Atom.make((get): TeamThreadPostPermission => {
+    const separatorIndex = threadKey.indexOf("\0");
+    if (separatorIndex === -1) return TEAM_THREAD_POST_ALLOWED;
+    const environmentId = threadKey.slice(0, separatorIndex) as EnvironmentId;
+    const threadId = threadKey.slice(separatorIndex + 1) as ThreadId;
+    const result = get(teamEnvironment.state(environmentId));
+    if (result._tag !== "Success" || result.value.team === null) {
+      return TEAM_THREAD_POST_ALLOWED;
+    }
+    return resolveTeamThreadPostPermission({ teamState: result.value, threadId });
+  }).pipe(Atom.withLabel(`team:thread-post-permission:${threadKey}`)),
+);
+
+export function useTeamThreadAccessState(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): TeamThreadAccessViewState {
+  return useAtomValue(teamThreadAccessStateAtom(`${environmentId}\0${threadId}`));
+}
+
+export function useTeamThreadPostPermission(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): TeamThreadPostPermission {
+  return useAtomValue(teamThreadPostPermissionAtom(`${environmentId}\0${threadId}`));
+}
+
+export function readTeamThreadPostPermission(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): TeamThreadPostPermission {
+  return appAtomRegistry.get(teamThreadPostPermissionAtom(`${environmentId}\0${threadId}`));
+}
+
+export interface TeamThreadAccessMenuState {
+  readonly teamView: {
+    readonly currentViewId: TeamViewId | null;
+    readonly views: ReadonlyArray<{ readonly id: TeamViewId; readonly name: string }>;
+  } | null;
+  readonly teamLock: {
+    readonly isLocked: boolean;
+  } | null;
+}
+
+export function readTeamThreadAccessActionState(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): TeamThreadAccessMenuState {
+  const access = appAtomRegistry.get(teamThreadAccessStateAtom(`${environmentId}\0${threadId}`));
+  if (!access.isTeamThread) {
+    return { teamView: null, teamLock: null };
+  }
+  const canMutateView =
+    access.canChangeView &&
+    appAtomRegistry.get(teamEnvironment.setThreadView.permissionAtom(environmentId));
+  const canMutateLock =
+    access.canToggleLock &&
+    appAtomRegistry.get(teamEnvironment.setThreadLocked.permissionAtom(environmentId));
+  return {
+    teamView: canMutateView
+      ? {
+          currentViewId: access.view?.id ?? null,
+          views: access.accessibleViews.map((view) => ({ id: view.id, name: view.name })),
+        }
+      : null,
+    teamLock: canMutateLock ? { isLocked: access.locked } : null,
+  };
+}
+
+export interface TeamDraftAccessOptions {
+  readonly viewId: TeamViewId | null;
+  readonly locked: boolean;
+}
+
+const EMPTY_DRAFT_ACCESS_OPTIONS: TeamDraftAccessOptions = {
+  viewId: null,
+  locked: false,
+};
+
+const teamDraftAccessOptionsMapAtom = Atom.make<ReadonlyMap<string, TeamDraftAccessOptions>>(
+  new Map(),
+).pipe(Atom.keepAlive, Atom.withLabel("team:draft-access-options"));
+
+const teamDraftAccessOptionsForKeyAtom = Atom.family((draftKey: string) =>
+  Atom.make(
+    (get): TeamDraftAccessOptions =>
+      get(teamDraftAccessOptionsMapAtom).get(draftKey) ?? EMPTY_DRAFT_ACCESS_OPTIONS,
+  ).pipe(Atom.withLabel(`team:draft-access-options:${draftKey}`)),
+);
+
+export function useTeamDraftAccessOptions(draftKey: string): TeamDraftAccessOptions {
+  return useAtomValue(teamDraftAccessOptionsForKeyAtom(draftKey));
+}
+
+export function readTeamDraftAccessOptions(draftKey: string): TeamDraftAccessOptions {
+  return (
+    appAtomRegistry.get(teamDraftAccessOptionsMapAtom).get(draftKey) ?? EMPTY_DRAFT_ACCESS_OPTIONS
+  );
+}
+
+export function setTeamDraftViewId(draftKey: string, viewId: TeamViewId | null): void {
+  const current = appAtomRegistry.get(teamDraftAccessOptionsMapAtom);
+  const existing = current.get(draftKey) ?? EMPTY_DRAFT_ACCESS_OPTIONS;
+  const next = new Map(current);
+  next.set(draftKey, { ...existing, viewId });
+  appAtomRegistry.set(teamDraftAccessOptionsMapAtom, next);
+}
+
+export function setTeamDraftLocked(draftKey: string, locked: boolean): void {
+  const current = appAtomRegistry.get(teamDraftAccessOptionsMapAtom);
+  const existing = current.get(draftKey) ?? EMPTY_DRAFT_ACCESS_OPTIONS;
+  const next = new Map(current);
+  next.set(draftKey, { ...existing, locked });
+  appAtomRegistry.set(teamDraftAccessOptionsMapAtom, next);
+}
+
+export function clearTeamDraftAccessOptions(draftKey: string): void {
+  const current = appAtomRegistry.get(teamDraftAccessOptionsMapAtom);
+  if (!current.has(draftKey)) return;
+  const next = new Map(current);
+  next.delete(draftKey);
+  appAtomRegistry.set(teamDraftAccessOptionsMapAtom, next);
 }
 
 export const previewTeamInvite = createRuntimeCommand(connectionAtomRuntime, {

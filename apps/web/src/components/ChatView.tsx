@@ -210,6 +210,12 @@ import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
+import { TeamDraftAccessControls } from "./team/TeamDraftAccessControls";
+import {
+  formatTeamThreadPostBlockReason,
+  teamReadOnlyComposerBannerItem,
+} from "./team/teamComposerBanner";
+import { useTeamThreadPostPermission } from "../state/team";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -481,6 +487,13 @@ export default function ChatView(props: ChatViewProps) {
   const embedded = parentPanel !== undefined;
   const panelHostShell = useQuietThreadShell(parentPanel?.hostRef ?? null);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const teamThreadPostPermission = useTeamThreadPostPermission(environmentId, threadId);
+  const canPostToActiveThread = routeKind !== "server" || teamThreadPostPermission.canPost;
+  const effectiveCanOperateThread = canOperateThread && canPostToActiveThread;
+  const teamPostDisabledReason =
+    routeKind === "server"
+      ? formatTeamThreadPostBlockReason(teamThreadPostPermission.blockReason, messages)
+      : null;
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
@@ -1457,7 +1470,7 @@ export default function ChatView(props: ChatViewProps) {
     providerStatuses.find((status) => status.instanceId === activeRuntime?.providerInstanceId) ??
     activeProviderStatus;
   const supportsConversationRollback =
-    canOperateThread &&
+    effectiveCanOperateThread &&
     conversationProviderStatus !== null &&
     conversationProviderStatus.supportsConversationRollback !== false;
   const phase = derivePhase(activeRuntime);
@@ -1980,7 +1993,8 @@ export default function ChatView(props: ChatViewProps) {
   const { focusComposer: focusComposerStable, scheduleComposerFocus: scheduleComposerFocusStable } =
     useComposerFocus(composerRef);
   const canInterruptRunningThread =
-    canOperateThread && deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
+    effectiveCanOperateThread &&
+    deriveCanInterruptRunningThread(activeThread !== undefined, activeRuntime);
   const onInterrupt = async () => {
     if (
       !activeThread ||
@@ -2598,7 +2612,7 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
-    canOperateThread,
+    canOperateThread: effectiveCanOperateThread,
     clientSettingsHydrated,
     activeThread,
     activeThreadId,
@@ -2652,7 +2666,7 @@ export default function ChatView(props: ChatViewProps) {
     providerStatuses,
   );
   const compactThreadUnavailable =
-    !canOperateThread ||
+    !effectiveCanOperateThread ||
     !activeThread ||
     !activeThreadHasCompactableConversation ||
     !activeProject ||
@@ -2839,8 +2853,13 @@ export default function ChatView(props: ChatViewProps) {
           ),
         ]
       : [];
+    const teamReadOnlyBanner = isServerThread
+      ? teamReadOnlyComposerBannerItem(teamThreadPostPermission, messages)
+      : null;
+    const teamReadOnlyItems = teamReadOnlyBanner === null ? [] : [teamReadOnlyBanner];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
+        ...teamReadOnlyItems,
         ...feedbackBannerItems,
         ...fallbackItems,
         ...limitRecoveryItems,
@@ -2853,6 +2872,7 @@ export default function ChatView(props: ChatViewProps) {
       ];
     }
     return [
+      ...teamReadOnlyItems,
       ...feedbackBannerItems,
       ...fallbackItems,
       ...limitRecoveryItems,
@@ -3011,7 +3031,7 @@ export default function ChatView(props: ChatViewProps) {
   // Side chats do not nest or start from subagents, and older servers would fork a listed thread.
   const sideChatsOffered =
     !embedded &&
-    canOperateThread &&
+    effectiveCanOperateThread &&
     activeThread?.lineage.sideChat !== true &&
     !isSubagentThread &&
     serverConfig?.environment.capabilities.sideChats === true;
@@ -3654,7 +3674,7 @@ export default function ChatView(props: ChatViewProps) {
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}
                   onRespondToApproval={onRespondToApprovalStable}
-                  canOperateThread={canOperateThread}
+                  canOperateThread={effectiveCanOperateThread}
                   threadDetailRef={routeThreadDetailRef}
                   entriesInput={timelineEntriesInput}
                   draftEntries={isServerThread ? null : draftTimelineEntries}
@@ -3852,7 +3872,7 @@ export default function ChatView(props: ChatViewProps) {
                             ) : null}
                             {!composerMounted ? null : (
                               <ChatComposer
-                                canOperateThread={canOperateThread}
+                                canOperateThread={effectiveCanOperateThread}
                                 reportedModelSelection={reportedModelSelection}
                                 multipleModelSelections={multipleModelSelections}
                                 supportsMultipleModels={
@@ -3895,17 +3915,19 @@ export default function ChatView(props: ChatViewProps) {
                                 sendDisabledReason={
                                   !canOperateThread
                                     ? gt("This connection cannot change threads.")
-                                    : isEnvironmentChanging
-                                      ? gt("Preparing machine")
-                                      : isRevertingCheckpoint
-                                        ? gt("Rewinding conversation")
-                                        : feedbackUploading
-                                          ? gt("Sending feedback")
-                                          : threadDetailLoading
-                                            ? gt("Messages loading")
-                                            : worktreeSetupBlocksSend
-                                              ? gt("Preparing worktree")
-                                              : projectCloneSendBlockReason
+                                    : teamPostDisabledReason !== null
+                                      ? teamPostDisabledReason
+                                      : isEnvironmentChanging
+                                        ? gt("Preparing machine")
+                                        : isRevertingCheckpoint
+                                          ? gt("Rewinding conversation")
+                                          : feedbackUploading
+                                            ? gt("Sending feedback")
+                                            : threadDetailLoading
+                                              ? gt("Messages loading")
+                                              : worktreeSetupBlocksSend
+                                                ? gt("Preparing worktree")
+                                                : projectCloneSendBlockReason
                                 }
                                 isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                                 bannerItems={
@@ -4066,16 +4088,22 @@ export default function ChatView(props: ChatViewProps) {
                                     ? {}
                                     : {
                                         trailing: (
-                                          <ComposerContextPermissions
-                                            environmentId={environmentId}
-                                            runtimeMode={runtimeMode}
-                                            supportedRuntimeModes={draftSupportedRuntimeModes(
-                                              activeProviderStatus?.supportedRuntimeModes,
-                                              multipleModelSelections,
-                                              providerStatuses,
-                                            )}
-                                            onRuntimeModeChange={handleRuntimeModeChangeStable}
-                                          />
+                                          <div className="flex items-center gap-1.5">
+                                            <TeamDraftAccessControls
+                                              environmentId={environmentId}
+                                              draftKey={routeThreadKey}
+                                            />
+                                            <ComposerContextPermissions
+                                              environmentId={environmentId}
+                                              runtimeMode={runtimeMode}
+                                              supportedRuntimeModes={draftSupportedRuntimeModes(
+                                                activeProviderStatus?.supportedRuntimeModes,
+                                                multipleModelSelections,
+                                                providerStatuses,
+                                              )}
+                                              onRuntimeModeChange={handleRuntimeModeChangeStable}
+                                            />
+                                          </div>
                                         ),
                                       })}
                                 />

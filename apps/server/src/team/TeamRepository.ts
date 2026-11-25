@@ -1,8 +1,13 @@
 import {
+  ALL_TEAM_ROLES,
+  canChangeTeamMemberRole,
+  canManageTeamMembers,
+  canModifyTeamMember,
   type AuthSessionId,
   TeamId,
   TeamInviteId,
   TeamMemberId,
+  type TeamAccessRule,
   type TeamInvite,
   type TeamMember,
   type TeamMemberStatus,
@@ -11,6 +16,7 @@ import {
   type TeamSessionBinding,
   type TeamThreadAttribution,
   type TeamTurnAttribution,
+  type TeamView,
   TeamViewId,
   type TeamWorkspace,
   ThreadId,
@@ -21,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
 import { runTeamMigrations } from "./migrations.ts";
 
 export class TeamRepositoryError extends Schema.TaggedError<TeamRepositoryError>()(
@@ -55,7 +62,50 @@ export class TeamAlreadyConfiguredError extends Schema.TaggedError<TeamAlreadyCo
   }
 }
 
+export class TeamLastOwnerProtectedError extends Schema.TaggedError<TeamLastOwnerProtectedError>()(
+  "TeamLastOwnerProtectedError",
+  {},
+) {
+  override get message(): string {
+    return "A team must always retain at least one active owner.";
+  }
+}
+
+export class TeamViewNameAlreadyTakenError extends Schema.TaggedError<TeamViewNameAlreadyTakenError>()(
+  "TeamViewNameAlreadyTakenError",
+  {
+    viewName: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `A view named "${this.viewName}" already exists in this team.`;
+  }
+}
+
+export class TeamDefaultViewProtectedError extends Schema.TaggedError<TeamDefaultViewProtectedError>()(
+  "TeamDefaultViewProtectedError",
+  {},
+) {
+  override get message(): string {
+    return "The built-in Default View cannot be deleted.";
+  }
+}
+
+export class TeamMemberForbiddenError extends Schema.TaggedError<TeamMemberForbiddenError>()(
+  "TeamMemberForbiddenError",
+  {
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
 const isTeamAlreadyConfiguredError = Schema.is(TeamAlreadyConfiguredError);
+const isTeamLastOwnerProtectedError = Schema.is(TeamLastOwnerProtectedError);
+const isTeamDefaultViewProtectedError = Schema.is(TeamDefaultViewProtectedError);
+const isTeamMemberForbiddenError = Schema.is(TeamMemberForbiddenError);
 
 export interface StoredTeamInviteRecord extends TeamInvite {
   readonly tokenHash: string;
@@ -114,7 +164,22 @@ interface ThreadMetaRow {
   readonly creator_pseudo: string;
   readonly view_id: string;
   readonly locked: number;
+  readonly locked_by_member_id: string | null;
   readonly created_at: string;
+}
+
+interface ViewRow {
+  readonly id: string;
+  readonly team_id: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly is_default: number;
+  readonly read_roles_json: string;
+  readonly read_member_ids_json: string;
+  readonly post_roles_json: string;
+  readonly post_member_ids_json: string;
+  readonly created_at: string;
+  readonly updated_at: string;
 }
 
 interface TurnMetaRow {
@@ -157,6 +222,49 @@ const mapInviteRow = (row: InviteRow): StoredTeamInviteRecord => ({
   createdAt: row.created_at,
 });
 
+const parseRoleArray = (json: string): ReadonlyArray<TeamRole> => {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+    const allowed = new Set<string>(ALL_TEAM_ROLES);
+    return parsed.filter(
+      (value): value is TeamRole => typeof value === "string" && allowed.has(value),
+    );
+  } catch {
+    return [];
+  }
+};
+
+const parseMemberIdArray = (json: string): ReadonlyArray<TeamMemberId> => {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => TeamMemberId.make(value));
+  } catch {
+    return [];
+  }
+};
+
+const mapViewRow = (row: ViewRow): TeamView => ({
+  id: TeamViewId.make(row.id),
+  teamId: TeamId.make(row.team_id),
+  name: row.name,
+  description: row.description,
+  isDefault: row.is_default === 1,
+  readRule: {
+    roles: [...parseRoleArray(row.read_roles_json)],
+    memberIds: [...parseMemberIdArray(row.read_member_ids_json)],
+  },
+  postRule: {
+    roles: [...parseRoleArray(row.post_roles_json)],
+    memberIds: [...parseMemberIdArray(row.post_member_ids_json)],
+  },
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
 const mapThreadMetaRow = (row: ThreadMetaRow): TeamThreadAttribution => ({
   threadId: ThreadId.make(row.thread_id),
   teamId: TeamId.make(row.team_id),
@@ -164,6 +272,8 @@ const mapThreadMetaRow = (row: ThreadMetaRow): TeamThreadAttribution => ({
   creatorPseudo: row.creator_pseudo as TeamPseudo,
   viewId: TeamViewId.make(row.view_id),
   locked: row.locked === 1,
+  lockedByMemberId:
+    row.locked_by_member_id !== null ? TeamMemberId.make(row.locked_by_member_id) : null,
   createdAt: row.created_at,
 });
 
@@ -174,6 +284,9 @@ const mapTurnMetaRow = (row: TurnMetaRow): TeamTurnAttribution => ({
   authorPseudo: row.author_pseudo as TeamPseudo,
   createdAt: row.created_at,
 });
+
+const StringArrayJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
+const encodeStringArrayJson = Schema.encodeSync(StringArrayJsonSchema);
 
 const errorChainIncludes = (cause: unknown, needle: string): boolean => {
   const seen = new Set<unknown>();
@@ -232,6 +345,55 @@ export class TeamRepository extends Context.Service<
       Option.Option<TeamMember>,
       TeamRepositoryError | TeamPseudoAlreadyTakenError
     >;
+    readonly updateMemberRole: (input: {
+      readonly teamId: TeamId;
+      readonly actorMemberId: TeamMemberId;
+      readonly memberId: TeamMemberId;
+      readonly role: TeamRole;
+      readonly updatedAt: string;
+    }) => Effect.Effect<
+      Option.Option<{ readonly previousRole: TeamRole; readonly member: TeamMember }>,
+      TeamRepositoryError | TeamLastOwnerProtectedError | TeamMemberForbiddenError
+    >;
+    readonly updateMemberStatus: (input: {
+      readonly teamId: TeamId;
+      readonly actorMemberId: TeamMemberId;
+      readonly memberId: TeamMemberId;
+      readonly status: TeamMemberStatus;
+      readonly updatedAt: string;
+    }) => Effect.Effect<
+      Option.Option<TeamMember>,
+      TeamRepositoryError | TeamLastOwnerProtectedError | TeamMemberForbiddenError
+    >;
+    readonly listSessionIdsForMember: (
+      memberId: TeamMemberId,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, TeamRepositoryError>;
+    readonly listViews: (
+      teamId: TeamId,
+    ) => Effect.Effect<ReadonlyArray<TeamView>, TeamRepositoryError>;
+    readonly getViewById: (
+      viewId: TeamViewId,
+    ) => Effect.Effect<Option.Option<TeamView>, TeamRepositoryError>;
+    readonly createView: (
+      view: TeamView,
+    ) => Effect.Effect<void, TeamRepositoryError | TeamViewNameAlreadyTakenError>;
+    readonly updateView: (input: {
+      readonly teamId: TeamId;
+      readonly viewId: TeamViewId;
+      readonly name?: string;
+      readonly description?: string | null;
+      readonly readRule?: TeamAccessRule;
+      readonly postRule?: TeamAccessRule;
+      readonly updatedAt: string;
+    }) => Effect.Effect<
+      Option.Option<TeamView>,
+      TeamRepositoryError | TeamViewNameAlreadyTakenError
+    >;
+    readonly deleteViewAndReassignThreads: (input: {
+      readonly teamId: TeamId;
+      readonly viewId: TeamViewId;
+      readonly fallbackViewId: TeamViewId;
+    }) => Effect.Effect<boolean, TeamRepositoryError | TeamDefaultViewProtectedError>;
     readonly createInvite: (
       invite: StoredTeamInviteRecord,
     ) => Effect.Effect<void, TeamRepositoryError>;
@@ -262,8 +424,24 @@ export class TeamRepository extends Context.Service<
       readonly teamId: TeamId;
       readonly creatorMemberId: TeamMemberId;
       readonly viewId: TeamViewId;
+      readonly locked?: boolean;
+      readonly lockedByMemberId?: TeamMemberId | null;
       readonly createdAt: string;
     }) => Effect.Effect<Option.Option<TeamThreadAttribution>, TeamRepositoryError>;
+    readonly updateThreadView: (input: {
+      readonly teamId: TeamId;
+      readonly threadId: ThreadId;
+      readonly viewId: TeamViewId;
+    }) => Effect.Effect<Option.Option<TeamThreadAttribution>, TeamRepositoryError>;
+    readonly updateThreadLocked: (input: {
+      readonly teamId: TeamId;
+      readonly threadId: ThreadId;
+      readonly locked: boolean;
+      readonly lockedByMemberId: TeamMemberId | null;
+    }) => Effect.Effect<Option.Option<TeamThreadAttribution>, TeamRepositoryError>;
+    readonly deleteThreadAttribution: (
+      threadId: ThreadId,
+    ) => Effect.Effect<void, TeamRepositoryError>;
     readonly listThreadAttributions: (
       teamId: TeamId,
     ) => Effect.Effect<ReadonlyArray<TeamThreadAttribution>, TeamRepositoryError>;
@@ -294,6 +472,13 @@ export class TeamRepository extends Context.Service<
     readonly getThreadCreatedAtInProjection: (
       threadId: ThreadId,
     ) => Effect.Effect<Option.Option<string>, TeamRepositoryError>;
+    readonly listThreadCreatedAtInProjection: (
+      threadIds: ReadonlyArray<ThreadId>,
+    ) => Effect.Effect<ReadonlyMap<ThreadId, string>, TeamRepositoryError>;
+    readonly findThreadIdByAttachmentSegment: (input: {
+      readonly teamId: TeamId;
+      readonly segment: string;
+    }) => Effect.Effect<Option.Option<ThreadId>, TeamRepositoryError>;
     readonly followThread: (input: {
       readonly threadId: ThreadId;
       readonly memberId: TeamMemberId;
@@ -364,6 +549,27 @@ const make = Effect.gen(function* () {
                 1,
                 ${input.team.name},
                 ${input.team.defaultViewId},
+                ${input.team.createdAt},
+                ${input.team.updatedAt}
+              )
+            `;
+            yield* sql`
+              INSERT INTO team_views (
+                id, team_id, name, description, is_default,
+                read_roles_json, read_member_ids_json,
+                post_roles_json, post_member_ids_json,
+                created_at, updated_at
+              )
+              VALUES (
+                ${input.team.defaultViewId},
+                ${input.team.id},
+                'Default',
+                NULL,
+                1,
+                ${encodeStringArrayJson(ALL_TEAM_ROLES)},
+                '[]',
+                ${encodeStringArrayJson(ALL_TEAM_ROLES)},
+                '[]',
                 ${input.team.createdAt},
                 ${input.team.updatedAt}
               )
@@ -491,6 +697,328 @@ const make = Effect.gen(function* () {
       );
       return rows[0] ? Option.some(mapMemberRow(rows[0])) : Option.none();
     }),
+
+    updateMemberRole: Effect.fn("TeamRepository.updateMemberRole")(function* (input) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const actorRows = yield* sql<MemberRow>`
+              SELECT id, team_id, pseudo, role, status, created_at, updated_at
+              FROM team_members
+              WHERE id = ${input.actorMemberId} AND team_id = ${input.teamId}
+              LIMIT 1
+            `;
+            const actor = actorRows[0];
+            if (!actor || actor.status !== "active" || !canManageTeamMembers(actor.role)) {
+              return yield* new TeamMemberForbiddenError({
+                reason: "Only active modo, admin, and owner members can manage member roles.",
+              });
+            }
+            const currentRows = yield* sql<MemberRow>`
+              SELECT id, team_id, pseudo, role, status, created_at, updated_at
+              FROM team_members
+              WHERE id = ${input.memberId} AND team_id = ${input.teamId}
+              LIMIT 1
+            `;
+            const current = currentRows[0];
+            if (!current) {
+              return Option.none<{
+                readonly previousRole: TeamRole;
+                readonly member: TeamMember;
+              }>();
+            }
+            if (current.status === "removed") {
+              return yield* new TeamMemberForbiddenError({
+                reason: "Cannot change the role of a removed member.",
+              });
+            }
+            if (!canModifyTeamMember(actor.role, current.role)) {
+              return yield* new TeamMemberForbiddenError({
+                reason: `You cannot modify a member whose role "${current.role}" is higher than your own "${actor.role}".`,
+              });
+            }
+            if (!canChangeTeamMemberRole(actor.role, current.role, input.role)) {
+              return yield* new TeamMemberForbiddenError({
+                reason: `You cannot assign role "${input.role}" above your own role "${actor.role}".`,
+              });
+            }
+            if (current.role === "owner" && current.status === "active" && input.role !== "owner") {
+              const owners = yield* sql<{ readonly count: number }>`
+                SELECT COUNT(*) AS count
+                FROM team_members
+                WHERE team_id = ${input.teamId} AND role = 'owner' AND status = 'active'
+              `;
+              if ((owners[0]?.count ?? 0) <= 1) {
+                return yield* new TeamLastOwnerProtectedError({});
+              }
+            }
+            const updatedRows = yield* sql<MemberRow>`
+              UPDATE team_members
+              SET role = ${input.role}, updated_at = ${input.updatedAt}
+              WHERE id = ${input.memberId} AND team_id = ${input.teamId} AND status != 'removed'
+              RETURNING id, team_id, pseudo, role, status, created_at, updated_at
+            `;
+            return updatedRows[0]
+              ? Option.some({
+                  previousRole: current.role,
+                  member: mapMemberRow(updatedRows[0]),
+                })
+              : Option.none<{ readonly previousRole: TeamRole; readonly member: TeamMember }>();
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            isTeamLastOwnerProtectedError(cause) || isTeamMemberForbiddenError(cause)
+              ? cause
+              : new TeamRepositoryError({ operation: "updateMemberRole", cause }),
+          ),
+        );
+    }),
+
+    updateMemberStatus: Effect.fn("TeamRepository.updateMemberStatus")(function* (input) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const actorRows = yield* sql<MemberRow>`
+              SELECT id, team_id, pseudo, role, status, created_at, updated_at
+              FROM team_members
+              WHERE id = ${input.actorMemberId} AND team_id = ${input.teamId}
+              LIMIT 1
+            `;
+            const actor = actorRows[0];
+            if (!actor || actor.status !== "active" || !canManageTeamMembers(actor.role)) {
+              return yield* new TeamMemberForbiddenError({
+                reason: "Only active modo, admin, and owner members can suspend or remove members.",
+              });
+            }
+            const currentRows = yield* sql<MemberRow>`
+              SELECT id, team_id, pseudo, role, status, created_at, updated_at
+              FROM team_members
+              WHERE id = ${input.memberId} AND team_id = ${input.teamId}
+              LIMIT 1
+            `;
+            const current = currentRows[0];
+            if (!current) {
+              return Option.none<TeamMember>();
+            }
+            if (!canModifyTeamMember(actor.role, current.role)) {
+              return yield* new TeamMemberForbiddenError({
+                reason: `You cannot modify a member whose role "${current.role}" is higher than your own "${actor.role}".`,
+              });
+            }
+            if (current.status === "removed" && input.status !== "removed") {
+              return yield* new TeamMemberForbiddenError({
+                reason: "Removed members cannot be reactivated; send a new invite instead.",
+              });
+            }
+            if (
+              current.role === "owner" &&
+              current.status === "active" &&
+              input.status !== "active"
+            ) {
+              const owners = yield* sql<{ readonly count: number }>`
+                SELECT COUNT(*) AS count
+                FROM team_members
+                WHERE team_id = ${input.teamId} AND role = 'owner' AND status = 'active'
+              `;
+              if ((owners[0]?.count ?? 0) <= 1) {
+                return yield* new TeamLastOwnerProtectedError({});
+              }
+            }
+            const updatedRows = yield* sql<MemberRow>`
+              UPDATE team_members
+              SET status = ${input.status}, updated_at = ${input.updatedAt}
+              WHERE id = ${input.memberId} AND team_id = ${input.teamId}
+              RETURNING id, team_id, pseudo, role, status, created_at, updated_at
+            `;
+            return updatedRows[0] ? Option.some(mapMemberRow(updatedRows[0])) : Option.none();
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            isTeamLastOwnerProtectedError(cause) || isTeamMemberForbiddenError(cause)
+              ? cause
+              : new TeamRepositoryError({ operation: "updateMemberStatus", cause }),
+          ),
+        );
+    }),
+
+    listSessionIdsForMember: Effect.fn("TeamRepository.listSessionIdsForMember")(
+      function* (memberId) {
+        const rows = yield* runSql(
+          "listSessionIdsForMember",
+          sql<{ readonly session_id: string }>`
+            SELECT session_id
+            FROM team_session_meta
+            WHERE member_id = ${memberId}
+          `,
+        );
+        return rows.map((row) => row.session_id as AuthSessionId);
+      },
+    ),
+
+    listViews: Effect.fn("TeamRepository.listViews")(function* (teamId) {
+      const rows = yield* runSql(
+        "listViews",
+        sql<ViewRow>`
+          SELECT id, team_id, name, description, is_default,
+                 read_roles_json, read_member_ids_json,
+                 post_roles_json, post_member_ids_json,
+                 created_at, updated_at
+          FROM team_views
+          WHERE team_id = ${teamId}
+          ORDER BY is_default DESC, created_at ASC
+        `,
+      );
+      return rows.map(mapViewRow);
+    }),
+
+    getViewById: Effect.fn("TeamRepository.getViewById")(function* (viewId) {
+      const rows = yield* runSql(
+        "getViewById",
+        sql<ViewRow>`
+          SELECT id, team_id, name, description, is_default,
+                 read_roles_json, read_member_ids_json,
+                 post_roles_json, post_member_ids_json,
+                 created_at, updated_at
+          FROM team_views
+          WHERE id = ${viewId}
+          LIMIT 1
+        `,
+      );
+      return rows[0] ? Option.some(mapViewRow(rows[0])) : Option.none();
+    }),
+
+    createView: Effect.fn("TeamRepository.createView")(function* (view) {
+      yield* sql`
+        INSERT INTO team_views (
+          id, team_id, name, description, is_default,
+          read_roles_json, read_member_ids_json,
+          post_roles_json, post_member_ids_json,
+          created_at, updated_at
+        )
+        VALUES (
+          ${view.id},
+          ${view.teamId},
+          ${view.name},
+          ${view.description},
+          ${view.isDefault ? 1 : 0},
+          ${encodeStringArrayJson(view.readRule.roles)},
+          ${encodeStringArrayJson(view.readRule.memberIds)},
+          ${encodeStringArrayJson(view.postRule.roles)},
+          ${encodeStringArrayJson(view.postRule.memberIds)},
+          ${view.createdAt},
+          ${view.updatedAt}
+        )
+      `.pipe(
+        Effect.mapError((cause) =>
+          isUniqueConstraintError(cause)
+            ? new TeamViewNameAlreadyTakenError({ viewName: view.name })
+            : new TeamRepositoryError({ operation: "createView", cause }),
+        ),
+      );
+    }),
+
+    updateView: Effect.fn("TeamRepository.updateView")(function* (input) {
+      const existing = yield* runSql(
+        "updateView.select",
+        sql<ViewRow>`
+          SELECT id, team_id, name, description, is_default,
+                 read_roles_json, read_member_ids_json,
+                 post_roles_json, post_member_ids_json,
+                 created_at, updated_at
+          FROM team_views
+          WHERE id = ${input.viewId} AND team_id = ${input.teamId}
+          LIMIT 1
+        `,
+      );
+      const current = existing[0];
+      if (!current) {
+        return Option.none<TeamView>();
+      }
+      const nextName = input.name ?? current.name;
+      const nextDescription =
+        input.description !== undefined ? input.description : current.description;
+      const nextReadRolesJson =
+        input.readRule !== undefined
+          ? encodeStringArrayJson(input.readRule.roles)
+          : current.read_roles_json;
+      const nextReadMemberIdsJson =
+        input.readRule !== undefined
+          ? encodeStringArrayJson(input.readRule.memberIds)
+          : current.read_member_ids_json;
+      const nextPostRolesJson =
+        input.postRule !== undefined
+          ? encodeStringArrayJson(input.postRule.roles)
+          : current.post_roles_json;
+      const nextPostMemberIdsJson =
+        input.postRule !== undefined
+          ? encodeStringArrayJson(input.postRule.memberIds)
+          : current.post_member_ids_json;
+
+      const updated = yield* sql<ViewRow>`
+        UPDATE team_views
+        SET
+          name = ${nextName},
+          description = ${nextDescription},
+          read_roles_json = ${nextReadRolesJson},
+          read_member_ids_json = ${nextReadMemberIdsJson},
+          post_roles_json = ${nextPostRolesJson},
+          post_member_ids_json = ${nextPostMemberIdsJson},
+          updated_at = ${input.updatedAt}
+        WHERE id = ${input.viewId} AND team_id = ${input.teamId}
+        RETURNING id, team_id, name, description, is_default,
+                  read_roles_json, read_member_ids_json,
+                  post_roles_json, post_member_ids_json,
+                  created_at, updated_at
+      `.pipe(
+        Effect.mapError((cause) =>
+          isUniqueConstraintError(cause)
+            ? new TeamViewNameAlreadyTakenError({ viewName: nextName })
+            : new TeamRepositoryError({ operation: "updateView", cause }),
+        ),
+      );
+      return updated[0] ? Option.some(mapViewRow(updated[0])) : Option.none();
+    }),
+
+    deleteViewAndReassignThreads: Effect.fn("TeamRepository.deleteViewAndReassignThreads")(
+      function* (input) {
+        return yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const existing = yield* sql<{ readonly id: string; readonly is_default: number }>`
+                SELECT id, is_default
+                FROM team_views
+                WHERE id = ${input.viewId} AND team_id = ${input.teamId}
+                LIMIT 1
+              `;
+              const row = existing[0];
+              if (!row) return false;
+              if (row.is_default === 1) {
+                return yield* new TeamDefaultViewProtectedError({});
+              }
+              yield* sql`
+                UPDATE team_thread_meta
+                SET view_id = ${input.fallbackViewId}
+                WHERE team_id = ${input.teamId} AND view_id = ${input.viewId}
+              `;
+              const deleted = yield* sql<{ readonly id: string }>`
+                DELETE FROM team_views
+                WHERE id = ${input.viewId} AND team_id = ${input.teamId} AND is_default = 0
+                RETURNING id
+              `;
+              return deleted.length > 0;
+            }),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              isTeamDefaultViewProtectedError(cause)
+                ? cause
+                : new TeamRepositoryError({ operation: "deleteViewAndReassignThreads", cause }),
+            ),
+          );
+      },
+    ),
 
     createInvite: Effect.fn("TeamRepository.createInvite")(function* (invite) {
       yield* runSql(
@@ -641,14 +1169,15 @@ const make = Effect.gen(function* () {
         "recordThreadAttribution.insert",
         sql`
           INSERT OR IGNORE INTO team_thread_meta (
-            thread_id, team_id, creator_member_id, view_id, locked, created_at
+            thread_id, team_id, creator_member_id, view_id, locked, locked_by_member_id, created_at
           )
           VALUES (
             ${input.threadId},
             ${input.teamId},
             ${input.creatorMemberId},
             ${input.viewId},
-            0,
+            ${input.locked === true ? 1 : 0},
+            ${input.locked === true ? (input.lockedByMemberId ?? input.creatorMemberId) : null},
             ${input.createdAt}
           )
         `,
@@ -657,7 +1186,7 @@ const make = Effect.gen(function* () {
         "recordThreadAttribution.select",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 t.view_id, t.locked, t.created_at
+                 t.view_id, t.locked, t.locked_by_member_id, t.created_at
           FROM team_thread_meta t
           INNER JOIN team_members m ON m.id = t.creator_member_id
           WHERE t.thread_id = ${input.threadId}
@@ -667,12 +1196,76 @@ const make = Effect.gen(function* () {
       return rows[0] ? Option.some(mapThreadMetaRow(rows[0])) : Option.none();
     }),
 
+    updateThreadView: Effect.fn("TeamRepository.updateThreadView")(function* (input) {
+      const updated = yield* runSql(
+        "updateThreadView.update",
+        sql<{ readonly thread_id: string }>`
+          UPDATE team_thread_meta
+          SET view_id = ${input.viewId}
+          WHERE thread_id = ${input.threadId} AND team_id = ${input.teamId}
+          RETURNING thread_id
+        `,
+      );
+      if (updated.length === 0) {
+        return Option.none<TeamThreadAttribution>();
+      }
+      const rows = yield* runSql(
+        "updateThreadView.select",
+        sql<ThreadMetaRow>`
+          SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
+                 t.view_id, t.locked, t.locked_by_member_id, t.created_at
+          FROM team_thread_meta t
+          INNER JOIN team_members m ON m.id = t.creator_member_id
+          WHERE t.thread_id = ${input.threadId}
+          LIMIT 1
+        `,
+      );
+      return rows[0] ? Option.some(mapThreadMetaRow(rows[0])) : Option.none();
+    }),
+
+    updateThreadLocked: Effect.fn("TeamRepository.updateThreadLocked")(function* (input) {
+      const updated = yield* runSql(
+        "updateThreadLocked.update",
+        sql<{ readonly thread_id: string }>`
+          UPDATE team_thread_meta
+          SET locked = ${input.locked ? 1 : 0},
+              locked_by_member_id = ${input.locked ? input.lockedByMemberId : null}
+          WHERE thread_id = ${input.threadId} AND team_id = ${input.teamId}
+          RETURNING thread_id
+        `,
+      );
+      if (updated.length === 0) {
+        return Option.none<TeamThreadAttribution>();
+      }
+      const rows = yield* runSql(
+        "updateThreadLocked.select",
+        sql<ThreadMetaRow>`
+          SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
+                 t.view_id, t.locked, t.locked_by_member_id, t.created_at
+          FROM team_thread_meta t
+          INNER JOIN team_members m ON m.id = t.creator_member_id
+          WHERE t.thread_id = ${input.threadId}
+          LIMIT 1
+        `,
+      );
+      return rows[0] ? Option.some(mapThreadMetaRow(rows[0])) : Option.none();
+    }),
+
+    deleteThreadAttribution: Effect.fn("TeamRepository.deleteThreadAttribution")(
+      function* (threadId) {
+        yield* runSql(
+          "deleteThreadAttribution",
+          sql`DELETE FROM team_thread_meta WHERE thread_id = ${threadId}`,
+        );
+      },
+    ),
+
     listThreadAttributions: Effect.fn("TeamRepository.listThreadAttributions")(function* (teamId) {
       const rows = yield* runSql(
         "listThreadAttributions",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 t.view_id, t.locked, t.created_at
+                 t.view_id, t.locked, t.locked_by_member_id, t.created_at
           FROM team_thread_meta t
           INNER JOIN team_members m ON m.id = t.creator_member_id
           WHERE t.team_id = ${teamId}
@@ -687,7 +1280,7 @@ const make = Effect.gen(function* () {
         "getThreadAttribution",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 t.view_id, t.locked, t.created_at
+                 t.view_id, t.locked, t.locked_by_member_id, t.created_at
           FROM team_thread_meta t
           INNER JOIN team_members m ON m.id = t.creator_member_id
           WHERE t.thread_id = ${threadId}
@@ -820,6 +1413,62 @@ const make = Effect.gen(function* () {
         );
         const createdAt = rows[0]?.created_at;
         return createdAt !== undefined ? Option.some(createdAt) : Option.none();
+      },
+    ),
+
+    listThreadCreatedAtInProjection: Effect.fn("TeamRepository.listThreadCreatedAtInProjection")(
+      function* (threadIds) {
+        const result = new Map<ThreadId, string>();
+        if (threadIds.length === 0) {
+          return result as ReadonlyMap<ThreadId, string>;
+        }
+        const uniqueIds = [...new Set(threadIds)];
+        const CHUNK_SIZE = 500;
+        for (let offset = 0; offset < uniqueIds.length; offset += CHUNK_SIZE) {
+          const chunk = uniqueIds.slice(offset, offset + CHUNK_SIZE);
+          const rows = yield* runSql(
+            "listThreadCreatedAtInProjection",
+            sql<{ readonly thread_id: string; readonly created_at: string }>`
+              SELECT thread_id, created_at
+              FROM orchestration_v2_projection_threads
+              WHERE thread_id IN ${sql.in(chunk)}
+            `,
+          );
+          for (const row of rows) {
+            result.set(ThreadId.make(row.thread_id), row.created_at);
+          }
+        }
+        return result as ReadonlyMap<ThreadId, string>;
+      },
+    ),
+
+    findThreadIdByAttachmentSegment: Effect.fn("TeamRepository.findThreadIdByAttachmentSegment")(
+      function* (input) {
+        const exactRows = yield* runSql(
+          "findThreadIdByAttachmentSegment.exact",
+          sql<{ readonly thread_id: string }>`
+            SELECT thread_id
+            FROM team_thread_meta
+            WHERE team_id = ${input.teamId} AND thread_id = ${input.segment}
+            LIMIT 1
+          `,
+        );
+        if (exactRows[0]) {
+          return Option.some(ThreadId.make(exactRows[0].thread_id));
+        }
+        // Only fall back to scanning sanitized thread IDs when the exact PK lookup misses (e.g. thread IDs with `:`).
+        const allRows = yield* runSql(
+          "findThreadIdByAttachmentSegment.fallback",
+          sql<{ readonly thread_id: string }>`
+            SELECT thread_id
+            FROM team_thread_meta
+            WHERE team_id = ${input.teamId}
+          `,
+        );
+        const matched = allRows.find(
+          (row) => toSafeThreadAttachmentSegment(ThreadId.make(row.thread_id)) === input.segment,
+        );
+        return matched ? Option.some(ThreadId.make(matched.thread_id)) : Option.none();
       },
     ),
 

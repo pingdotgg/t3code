@@ -24,8 +24,8 @@ export type TeamInviteId = typeof TeamInviteId.Type;
 export const TeamViewId = makeTeamEntityId("TeamViewId");
 export type TeamViewId = typeof TeamViewId.Type;
 
-const TEAM_ROLES = ["owner", "admin", "modo", "regular"] as const;
-export const TeamRole = Schema.Literals(TEAM_ROLES);
+export const ALL_TEAM_ROLES = ["owner", "admin", "modo", "regular"] as const;
+export const TeamRole = Schema.Literals(ALL_TEAM_ROLES);
 export type TeamRole = typeof TeamRole.Type;
 
 export const TEAM_ROLE_RANK: Readonly<Record<TeamRole, number>> = {
@@ -35,8 +35,17 @@ export const TEAM_ROLE_RANK: Readonly<Record<TeamRole, number>> = {
   regular: 1,
 };
 
+function isTeamAdminRole(role: TeamRole): boolean {
+  return role === "owner" || role === "admin";
+}
+
 /** Member invitations and role management start at `modo`. */
 export function canManageTeamInvites(role: TeamRole): boolean {
+  return TEAM_ROLE_RANK[role] >= TEAM_ROLE_RANK.modo;
+}
+
+/** Member role/status management starts at `modo`. */
+export function canManageTeamMembers(role: TeamRole): boolean {
   return TEAM_ROLE_RANK[role] >= TEAM_ROLE_RANK.modo;
 }
 
@@ -45,9 +54,39 @@ export function canAssignTeamRole(actorRole: TeamRole, targetRole: TeamRole): bo
   return canManageTeamInvites(actorRole) && TEAM_ROLE_RANK[targetRole] <= TEAM_ROLE_RANK[actorRole];
 }
 
+/** Cannot modify, demote, or remove a member whose current role is strictly higher than the actor's. */
+export function canModifyTeamMember(actorRole: TeamRole, targetCurrentRole: TeamRole): boolean {
+  return (
+    canManageTeamMembers(actorRole) &&
+    TEAM_ROLE_RANK[targetCurrentRole] <= TEAM_ROLE_RANK[actorRole]
+  );
+}
+
+export function canChangeTeamMemberRole(
+  actorRole: TeamRole,
+  targetCurrentRole: TeamRole,
+  nextRole: TeamRole,
+): boolean {
+  return (
+    canModifyTeamMember(actorRole, targetCurrentRole) && canAssignTeamRole(actorRole, nextRole)
+  );
+}
+
 export function assignableTeamRoles(actorRole: TeamRole): ReadonlyArray<TeamRole> {
   if (!canManageTeamInvites(actorRole)) return [];
-  return TEAM_ROLES.filter((role) => TEAM_ROLE_RANK[role] <= TEAM_ROLE_RANK[actorRole]);
+  return ALL_TEAM_ROLES.filter((role) => TEAM_ROLE_RANK[role] <= TEAM_ROLE_RANK[actorRole]);
+}
+
+export function canManageTeamViews(role: TeamRole): boolean {
+  return isTeamAdminRole(role);
+}
+
+export function canChangeThreadTeamView(role: TeamRole): boolean {
+  return TEAM_ROLE_RANK[role] >= TEAM_ROLE_RANK.modo;
+}
+
+export function canToggleTeamThreadLock(role: TeamRole): boolean {
+  return isTeamAdminRole(role);
 }
 
 export const TeamMemberStatus = Schema.Literals(["active", "suspended", "removed"]);
@@ -115,6 +154,95 @@ export const TeamSessionBinding = Schema.Struct({
 });
 export type TeamSessionBinding = typeof TeamSessionBinding.Type;
 
+export const TeamAccessRule = Schema.Struct({
+  roles: Schema.Array(TeamRole),
+  memberIds: Schema.Array(TeamMemberId),
+});
+export type TeamAccessRule = typeof TeamAccessRule.Type;
+
+export const TeamView = Schema.Struct({
+  id: TeamViewId,
+  teamId: TeamId,
+  name: TrimmedNonEmptyString,
+  description: Schema.NullOr(Schema.String),
+  isDefault: Schema.Boolean,
+  readRule: TeamAccessRule,
+  postRule: TeamAccessRule,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type TeamView = typeof TeamView.Type;
+
+function matchesTeamAccessRule(
+  rule: TeamAccessRule,
+  member: Pick<TeamMember, "id" | "role">,
+): boolean {
+  return rule.roles.includes(member.role) || rule.memberIds.includes(member.id);
+}
+
+/**
+ * `owner` and `admin` retain visibility over all views so threads cannot be orphaned.
+ * Other active members must match `view.readRule`.
+ */
+export function canMemberReadTeamView(
+  member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined,
+  view: Pick<TeamView, "readRule"> | null | undefined,
+): boolean {
+  if (!member || member.status !== "active") return false;
+  if (isTeamAdminRole(member.role)) return true;
+  if (!view) return false;
+  return matchesTeamAccessRule(view.readRule, member);
+}
+
+/** Any member who can read a view may create a thread in it; creating a locked thread needs owner/admin. */
+export function canMemberCreateThreadInTeamView(
+  member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined,
+  view: Pick<TeamView, "readRule"> | null | undefined,
+  locked = false,
+): boolean {
+  if (!member || member.status !== "active") return false;
+  if (locked && !canToggleTeamThreadLock(member.role)) return false;
+  return canMemberReadTeamView(member, view);
+}
+
+export function canMemberReadTeamThread(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly view: Pick<TeamView, "readRule"> | null | undefined;
+}): boolean {
+  return canMemberReadTeamView(input.member, input.view);
+}
+
+export type TeamThreadPostBlockReason = "ok" | "locked" | "view_read_only" | "no_access";
+
+export function resolveTeamThreadPostBlockReason(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly attribution: Pick<TeamThreadAttribution, "creatorMemberId" | "locked">;
+  readonly view: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
+}): TeamThreadPostBlockReason {
+  const { member, attribution, view } = input;
+  if (!canMemberReadTeamThread({ member, view }) || !member) {
+    return "no_access";
+  }
+  if (attribution.locked) {
+    return isTeamAdminRole(member.role) ? "ok" : "locked";
+  }
+  if (attribution.creatorMemberId === member.id) {
+    return "ok";
+  }
+  if (view && matchesTeamAccessRule(view.postRule, member)) {
+    return "ok";
+  }
+  return "view_read_only";
+}
+
+export function canMemberPostInTeamThread(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly attribution: Pick<TeamThreadAttribution, "creatorMemberId" | "locked">;
+  readonly view: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
+}): boolean {
+  return resolveTeamThreadPostBlockReason(input) === "ok";
+}
+
 export const TeamThreadAttribution = Schema.Struct({
   threadId: ThreadId,
   teamId: TeamId,
@@ -122,6 +250,7 @@ export const TeamThreadAttribution = Schema.Struct({
   creatorPseudo: TeamPseudo,
   viewId: TeamViewId,
   locked: Schema.Boolean,
+  lockedByMemberId: Schema.NullOr(TeamMemberId),
   createdAt: IsoDateTime,
 });
 export type TeamThreadAttribution = typeof TeamThreadAttribution.Type;
@@ -158,11 +287,23 @@ export const TeamThreadFollowChangedPayload = Schema.Struct({
 });
 export type TeamThreadFollowChangedPayload = typeof TeamThreadFollowChangedPayload.Type;
 
+export const TeamViewDeletedPayload = Schema.Struct({
+  viewId: TeamViewId,
+  fallbackViewId: TeamViewId,
+});
+export type TeamViewDeletedPayload = typeof TeamViewDeletedPayload.Type;
+
+export const TeamThreadRemovedPayload = Schema.Struct({
+  threadId: ThreadId,
+});
+export type TeamThreadRemovedPayload = typeof TeamThreadRemovedPayload.Type;
+
 export const TeamStateSnapshot = Schema.Struct({
   team: Schema.NullOr(TeamWorkspace),
   currentMember: Schema.NullOr(TeamMember),
   members: Schema.Array(TeamMember),
   invites: Schema.Array(TeamInvite),
+  views: Schema.Array(TeamView),
   threadAttributions: Schema.Array(TeamThreadAttribution),
   followedThreadIds: Schema.Array(ThreadId),
   latestTurnAttributions: Schema.Array(TeamTurnAttribution),
@@ -192,8 +333,23 @@ export const TeamStateStreamEvent = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    type: Schema.Literal("viewUpserted"),
+    payload: TeamView,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("viewDeleted"),
+    payload: TeamViewDeletedPayload,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     type: Schema.Literal("threadAttributed"),
     payload: TeamThreadAttribution,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("threadRemoved"),
+    payload: TeamThreadRemovedPayload,
   }),
   Schema.Struct({
     version: Schema.Literal(1),
@@ -252,6 +408,58 @@ export const TeamUpdateMyPseudoInput = Schema.Struct({
   pseudo: TrimmedNonEmptyString,
 });
 export type TeamUpdateMyPseudoInput = typeof TeamUpdateMyPseudoInput.Type;
+
+export const TeamUpdateMemberRoleInput = Schema.Struct({
+  memberId: TeamMemberId,
+  role: TeamRole,
+});
+export type TeamUpdateMemberRoleInput = typeof TeamUpdateMemberRoleInput.Type;
+
+export const TeamUpdateMemberStatusInput = Schema.Struct({
+  memberId: TeamMemberId,
+  status: TeamMemberStatus,
+});
+export type TeamUpdateMemberStatusInput = typeof TeamUpdateMemberStatusInput.Type;
+
+export const TeamCreateViewInput = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  description: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  readRule: TeamAccessRule,
+  postRule: TeamAccessRule,
+});
+export type TeamCreateViewInput = typeof TeamCreateViewInput.Type;
+
+export const TeamUpdateViewInput = Schema.Struct({
+  viewId: TeamViewId,
+  name: Schema.optionalKey(TrimmedNonEmptyString),
+  description: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  readRule: Schema.optionalKey(TeamAccessRule),
+  postRule: Schema.optionalKey(TeamAccessRule),
+});
+export type TeamUpdateViewInput = typeof TeamUpdateViewInput.Type;
+
+export const TeamDeleteViewInput = Schema.Struct({
+  viewId: TeamViewId,
+});
+export type TeamDeleteViewInput = typeof TeamDeleteViewInput.Type;
+
+export const TeamDeleteViewResult = Schema.Struct({
+  deleted: Schema.Boolean,
+  fallbackViewId: TeamViewId,
+});
+export type TeamDeleteViewResult = typeof TeamDeleteViewResult.Type;
+
+export const TeamSetThreadViewInput = Schema.Struct({
+  threadId: ThreadId,
+  viewId: TeamViewId,
+});
+export type TeamSetThreadViewInput = typeof TeamSetThreadViewInput.Type;
+
+export const TeamSetThreadLockedInput = Schema.Struct({
+  threadId: ThreadId,
+  locked: Schema.Boolean,
+});
+export type TeamSetThreadLockedInput = typeof TeamSetThreadLockedInput.Type;
 
 export const TeamCreateInviteInput = Schema.Struct({
   role: TeamRole,
@@ -319,6 +527,10 @@ export const TeamOperationErrorCode = Schema.Literals([
   "invite_expired",
   "invite_exhausted",
   "invite_revoked",
+  "last_owner",
+  "default_view_protected",
+  "view_name_taken",
+  "invalid_input",
   "not_found",
   "internal",
 ]);

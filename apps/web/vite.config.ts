@@ -135,6 +135,8 @@ const browserTestProject = {
   test: {
     name: "browser",
     include: ["src/**/*.browser.test.{ts,tsx}"],
+    // Run one Chromium page at a time on smaller CI runners to avoid Chromium OOM disconnects.
+    ...(isCi ? { fileParallelism: false } : {}),
     hookTimeout: 15_000,
     testTimeout: 15_000,
     setupFiles: ["./test/browserSetup.ts"],
@@ -159,6 +161,20 @@ const browserTestProject = {
         },
         pointerUp: async ({ page }) => {
           await page.mouse.up();
+        },
+        // Trigger Chromium GC between browser test files on CI (Chromium bug 530892387)
+        // since Vitest's built-in disk-space heuristic does not fire on 16 GB Linux runners.
+        collectGarbage: async ({ context, page }) => {
+          if (!isCi) return;
+          let cdp: Awaited<ReturnType<typeof context.newCDPSession>> | undefined;
+          try {
+            cdp = await context.newCDPSession(page);
+            await cdp.send("HeapProfiler.collectGarbage");
+          } catch {
+            // Best-effort memory relief; ignore if the browser session is already closing.
+          } finally {
+            await cdp?.detach().catch(() => {});
+          }
         },
       },
     },

@@ -39,6 +39,7 @@ import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   isAuthorizationFailure,
+  isTeamThreadReadDeniedFailure,
   request,
   subscribeDynamicWithInput,
   subscriptionRetryDelay,
@@ -1211,6 +1212,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           yield* Queue.offer(resubscribes, undefined);
         }),
         onExpectedFailure: Effect.fn("EnvironmentThreadState.onExpectedFailure")(function* (cause) {
+          if (isTeamThreadReadDeniedFailure(cause)) {
+            yield* setDeleted();
+            if (resumeCache?.owner === owner) resumeCache.snapshot = undefined;
+            return;
+          }
           const retryOverHttp = !isAuthorizationFailure(cause) && (yield* failedSocketOnlyOpen);
           if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
         }),

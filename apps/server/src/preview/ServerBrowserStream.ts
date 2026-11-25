@@ -4,11 +4,13 @@ import {
   AuthPreviewOperateScope,
   PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE,
   PreviewStreamHostSetup,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
@@ -26,6 +28,7 @@ import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import { requestUrl } from "../requestUrl.ts";
+import * as TeamService from "../team/TeamService.ts";
 
 const PREVIEW_STREAM_ROUTE_PREFIX = "/api/preview-stream";
 const TAB_GONE_CODE = 4404;
@@ -73,157 +76,213 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
   }
   const session = yield* authenticateMediaRequest(AuthOrchestrationReadScope);
   const params = url.value.searchParams;
-  const canOperate =
+  const requestedInteractive =
     session.scopes.includes(AuthPreviewOperateScope) && params.get("interactive") !== "false";
   const threadId = params.get("threadId") ?? "";
   const tabId = params.get("tabId") ?? "";
   if (threadId.length === 0 || tabId.length === 0) {
     return HttpServerResponse.text("Not Found", { status: 404 });
   }
-  const sessions = yield* SessionStore.SessionStore;
-  const stream = Effect.scoped(
+  const brandedThreadId = ThreadId.make(threadId);
+  const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+  return yield* Effect.scoped(
     Effect.gen(function* () {
-      const attached = yield* browser
-        .attachViewer({
-          threadId,
-          tabId,
-          canOperate,
-          maxWidth: intParam(params, "maxWidth", 1280, 7680),
-          maxHeight: intParam(params, "maxHeight", 800, 4320),
-          quality: intParam(params, "quality", DEFAULT_QUALITY, 100),
-        })
-        .pipe(
-          Effect.map((viewer) => ({ _tag: "attached" as const, viewer })),
-          Effect.catchTags({
-            ServerBrowserTabNotFoundError: () => Effect.succeed({ _tag: "gone" as const }),
-            ServerBrowserLaunchError: (error) => {
-              const setup = hostSetup(error.cause);
-              return setup === undefined
-                ? Effect.fail(error)
-                : Effect.succeed({ _tag: "hostSetup" as const, reason: encodeHostSetup(setup) });
-            },
-          }),
-        );
-      const incoming = NodeHttpServerRequest.toIncomingMessage(request);
-      // JPEGs are already compressed. Disabling deflate also keeps all
-      // pending writes in the socket buffer we bound below, not a zlib queue.
-      delete incoming.headers["sec-websocket-extensions"];
-      const transport = incoming.socket;
-      const socket = yield* request.upgrade;
-      const reader = yield* socket.reader;
-      const writer = yield* socket.writer;
-      // A refused upgrade reads as an auth failure to ticket clients, so a
-      // missing tab is a close code they stop on.
-      const gone = writer.write(new Socket.CloseEvent(TAB_GONE_CODE, "tab closed"));
-      if (attached._tag === "gone") {
-        yield* gone;
-        return HttpServerResponse.empty();
+      const teamAccessChanges = Option.isSome(maybeTeam)
+        ? yield* maybeTeam.value.openAccessChangeSubscription()
+        : null;
+      let canOperate = requestedInteractive;
+      if (Option.isSome(maybeTeam)) {
+        const readable = yield* maybeTeam.value.canReadThread(session.sessionId, brandedThreadId);
+        if (!readable) {
+          return HttpServerResponse.text("Forbidden", { status: 403 });
+        }
+        if (canOperate) {
+          canOperate = yield* maybeTeam.value.canPostInThread(session.sessionId, brandedThreadId);
+        }
       }
-      if (attached._tag === "hostSetup") {
-        yield* writer.write(
-          new Socket.CloseEvent(PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE, attached.reason),
-        );
-        return HttpServerResponse.empty();
-      }
-      const viewer = attached.viewer;
-      // `write` returns once the frame is queued, so Chromium's ack for each
-      // frame waits for the viewer's `ack` message instead. Only one frame
-      // is on the wire and only the newest waits behind it, so replies never
-      // queue behind stale images on a slow link.
-      let inFlight: Effect.Effect<void> | null = null;
-      let pending: Frame | null = null;
-      const disconnectSlowViewer = Effect.sync(() => transport.destroy()).pipe(
-        Effect.andThen(Effect.interrupt),
-      );
-      const write = (data: Uint8Array | string) =>
-        Effect.suspend(() => {
-          const bytes = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
-          if (transport.writableLength + bytes + 14 > MAX_SOCKET_BUFFER_BYTES) {
-            return disconnectSlowViewer;
+      const sessions = yield* SessionStore.SessionStore;
+      const stream = Effect.scoped(
+        Effect.gen(function* () {
+          const attached = yield* browser
+            .attachViewer({
+              threadId,
+              tabId,
+              canOperate,
+              maxWidth: intParam(params, "maxWidth", 1280, 7680),
+              maxHeight: intParam(params, "maxHeight", 800, 4320),
+              quality: intParam(params, "quality", DEFAULT_QUALITY, 100),
+            })
+            .pipe(
+              Effect.map((viewer) => ({ _tag: "attached" as const, viewer })),
+              Effect.catchTags({
+                ServerBrowserTabNotFoundError: () => Effect.succeed({ _tag: "gone" as const }),
+                ServerBrowserLaunchError: (error) => {
+                  const setup = hostSetup(error.cause);
+                  return setup === undefined
+                    ? Effect.fail(error)
+                    : Effect.succeed({
+                        _tag: "hostSetup" as const,
+                        reason: encodeHostSetup(setup),
+                      });
+                },
+              }),
+            );
+          const incoming = NodeHttpServerRequest.toIncomingMessage(request);
+          // JPEGs are already compressed. Disabling deflate also keeps all
+          // pending writes in the socket buffer we bound below, not a zlib queue.
+          delete incoming.headers["sec-websocket-extensions"];
+          const transport = incoming.socket;
+          const socket = yield* request.upgrade;
+          const reader = yield* socket.reader;
+          const writer = yield* socket.writer;
+          // A refused upgrade reads as an auth failure to ticket clients, so a
+          // missing tab is a close code they stop on.
+          const gone = writer.write(new Socket.CloseEvent(TAB_GONE_CODE, "tab closed"));
+          if (attached._tag === "gone") {
+            yield* gone;
+            return HttpServerResponse.empty();
           }
-          return writer.write(data);
-        });
-      const sendFrame = (frame: Frame) => {
-        inFlight = frame.ack;
-        return write(frame.data);
-      };
-      const sendOutput = Queue.take(viewer.output).pipe(
-        Effect.flatMap((output) => {
-          switch (output._tag) {
-            case "frame": {
-              if (inFlight === null) return sendFrame(output);
-              const superseded = pending;
-              pending = output;
-              // Never sent, but Chromium still waits for its ack.
-              return superseded ? Effect.forkScoped(superseded.ack) : Effect.void;
-            }
-            case "viewport":
-            case "control":
-            case "clipboard":
-            case "download":
-            case "fileChooser":
-            case "fileChooserClosed":
-            case "selectMenu":
-            case "selectMenuClosed":
-            case "popup":
-            case "pointer":
-            case "probe": {
-              const { _tag: type, ...data } = output;
-              return write(JSON.stringify({ type, ...data }));
-            }
-            case "gone":
-              return gone.pipe(Effect.andThen(Effect.interrupt));
-            case "reconnect":
-              return writer
-                .write(new Socket.CloseEvent(1012, "reconnect"))
-                .pipe(Effect.andThen(Effect.interrupt));
+          if (attached._tag === "hostSetup") {
+            yield* writer.write(
+              new Socket.CloseEvent(PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE, attached.reason),
+            );
+            return HttpServerResponse.empty();
           }
+          const viewer = attached.viewer;
+          // `write` returns once the frame is queued, so Chromium's ack for each
+          // frame waits for the viewer's `ack` message instead. Only one frame
+          // is on the wire and only the newest waits behind it, so replies never
+          // queue behind stale images on a slow link.
+          let inFlight: Effect.Effect<void> | null = null;
+          let pending: Frame | null = null;
+          const disconnectSlowViewer = Effect.sync(() => transport.destroy()).pipe(
+            Effect.andThen(Effect.interrupt),
+          );
+          const write = (data: Uint8Array | string) =>
+            Effect.suspend(() => {
+              const bytes = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
+              if (transport.writableLength + bytes + 14 > MAX_SOCKET_BUFFER_BYTES) {
+                return disconnectSlowViewer;
+              }
+              return writer.write(data);
+            });
+          const sendFrame = (frame: Frame) => {
+            inFlight = frame.ack;
+            return write(frame.data);
+          };
+          const sendOutput = Queue.take(viewer.output).pipe(
+            Effect.flatMap((output) => {
+              switch (output._tag) {
+                case "frame": {
+                  if (inFlight === null) return sendFrame(output);
+                  const superseded = pending;
+                  pending = output;
+                  // Never sent, but Chromium still waits for its ack.
+                  return superseded ? Effect.forkScoped(superseded.ack) : Effect.void;
+                }
+                case "viewport":
+                case "control":
+                case "clipboard":
+                case "download":
+                case "fileChooser":
+                case "fileChooserClosed":
+                case "selectMenu":
+                case "selectMenuClosed":
+                case "popup":
+                case "pointer":
+                case "probe": {
+                  const { _tag: type, ...data } = output;
+                  return write(JSON.stringify({ type, ...data }));
+                }
+                case "gone":
+                  return gone.pipe(Effect.andThen(Effect.interrupt));
+                case "reconnect":
+                  return writer
+                    .write(new Socket.CloseEvent(1012, "reconnect"))
+                    .pipe(Effect.andThen(Effect.interrupt));
+              }
+            }),
+          );
+          // Incoming messages share the session span; frame acknowledgements are frequent.
+          const receive = Effect.fnUntraced(function* (chunk: Uint8Array | string) {
+            const message = parseMessage(chunk);
+            // Ownership serializes actions in the service. Keep reading so dialog
+            // replies and takeover can unblock an action already waiting on the page.
+            if (!isAck(message))
+              return yield* canOperate
+                ? viewer.input(message).pipe(Effect.forkScoped, Effect.asVoid)
+                : Effect.void;
+            const ack = inFlight;
+            const next = pending;
+            inFlight = null;
+            pending = null;
+            // Forked: Chromium acks are paced and must not hold up input.
+            return yield* Effect.andThen(
+              ack ? Effect.forkScoped(ack) : Effect.void,
+              next ? sendFrame(next) : Effect.void,
+            );
+          });
+          const receiveInput = reader.pull.pipe(
+            Effect.flatMap((chunks) => Effect.forEach(chunks, receive, { discard: true })),
+          );
+          return yield* Effect.raceFirst(
+            Effect.forever(sendOutput),
+            Effect.forever(receiveInput),
+          ).pipe(Effect.onInterrupt(() => Effect.sync(() => transport.destroy())));
         }),
+      ).pipe(
+        Effect.catchTags({
+          ServerBrowserLaunchError: (error) =>
+            Effect.logWarning("server preview browser failed to start", {
+              cause: error.cause,
+            }).pipe(Effect.as(HttpServerResponse.text("Service Unavailable", { status: 503 }))),
+        }),
+        Effect.orElseSucceed(() => HttpServerResponse.empty()),
       );
-      // Incoming messages share the session span; frame acknowledgements are frequent.
-      const receive = Effect.fnUntraced(function* (chunk: Uint8Array | string) {
-        const message = parseMessage(chunk);
-        // Ownership serializes actions in the service. Keep reading so dialog
-        // replies and takeover can unblock an action already waiting on the page.
-        if (!isAck(message))
-          return yield* canOperate
-            ? viewer.input(message).pipe(Effect.forkScoped, Effect.asVoid)
-            : Effect.void;
-        const ack = inFlight;
-        const next = pending;
-        inFlight = null;
-        pending = null;
-        // Forked: Chromium acks are paced and must not hold up input.
-        return yield* Effect.andThen(
-          ack ? Effect.forkScoped(ack) : Effect.void,
-          next ? sendFrame(next) : Effect.void,
-        );
-      });
-      const receiveInput = reader.pull.pipe(
-        Effect.flatMap((chunks) => Effect.forEach(chunks, receive, { discard: true })),
-      );
-      return yield* Effect.raceFirst(Effect.forever(sendOutput), Effect.forever(receiveInput)).pipe(
-        Effect.onInterrupt(() => Effect.sync(() => transport.destroy())),
-      );
-    }),
-  ).pipe(
-    Effect.catchTags({
-      ServerBrowserLaunchError: (error) =>
-        Effect.logWarning("server preview browser failed to start", { cause: error.cause }).pipe(
-          Effect.as(HttpServerResponse.text("Service Unavailable", { status: 503 })),
+      const awaitTeamRevocation =
+        Option.isSome(maybeTeam) && teamAccessChanges !== null
+          ? teamAccessChanges.pipe(
+              Stream.filter(
+                (change) => change.type !== "threadView" || change.threadId === brandedThreadId,
+              ),
+              Stream.mapEffect(() =>
+                Effect.gen(function* () {
+                  const stillReadable = yield* maybeTeam.value.canReadThread(
+                    session.sessionId,
+                    brandedThreadId,
+                  );
+                  if (!stillReadable) return true;
+                  if (canOperate) {
+                    const stillPostable = yield* maybeTeam.value.canPostInThread(
+                      session.sessionId,
+                      brandedThreadId,
+                    );
+                    if (!stillPostable) return true;
+                  }
+                  return false;
+                }),
+              ),
+              Stream.filter((revoked) => revoked),
+              Stream.runHead,
+              Effect.as(HttpServerResponse.empty()),
+            )
+          : Effect.never;
+      return yield* Effect.raceFirst(
+        stream,
+        Effect.raceFirst(
+          sessions
+            .awaitInvalidation(session.sessionId, session.proofKeyThumbprint, session.scopes)
+            .pipe(
+              Effect.as(HttpServerResponse.empty()),
+              Effect.catchTags({
+                SessionCredentialVerificationError: (error) =>
+                  failEnvironmentInternal("internal_error", error),
+              }),
+            ),
+          awaitTeamRevocation,
         ),
+      );
     }),
-    Effect.orElseSucceed(() => HttpServerResponse.empty()),
-  );
-  return yield* Effect.raceFirst(
-    stream,
-    sessions.awaitInvalidation(session.sessionId).pipe(
-      Effect.as(HttpServerResponse.empty()),
-      Effect.catchTags({
-        SessionCredentialVerificationError: (error) =>
-          failEnvironmentInternal("internal_error", error),
-      }),
-    ),
   );
 });
 
@@ -242,9 +301,19 @@ const serveDownload = Effect.fnUntraced(function* (
   browser: ServerBrowser.ServerBrowser["Service"],
   params: URLSearchParams,
 ) {
-  yield* authenticateMediaRequest(AuthOrchestrationReadScope);
+  const session = yield* authenticateMediaRequest(AuthOrchestrationReadScope);
+  const threadId = params.get("threadId") ?? "";
+  const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+  if (Option.isSome(maybeTeam)) {
+    if (
+      threadId.length === 0 ||
+      !(yield* maybeTeam.value.canReadThread(session.sessionId, ThreadId.make(threadId)))
+    ) {
+      return HttpServerResponse.text("Forbidden", { status: 403 });
+    }
+  }
   const download = yield* browser.openDownload({
-    threadId: params.get("threadId") ?? "",
+    threadId,
     tabId: params.get("tabId") ?? "",
     downloadId: params.get("id") ?? "",
   });
@@ -263,7 +332,17 @@ const UPLOAD_MAX_FILES = 20;
 // The request span already covers this upload route.
 const receiveUpload = Effect.fnUntraced(
   function* (browser: ServerBrowser.ServerBrowser["Service"], params: URLSearchParams) {
-    yield* authenticateMediaRequest(AuthPreviewOperateScope);
+    const session = yield* authenticateMediaRequest(AuthPreviewOperateScope);
+    const threadId = params.get("threadId") ?? "";
+    const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+    if (Option.isSome(maybeTeam)) {
+      if (
+        threadId.length === 0 ||
+        !(yield* maybeTeam.value.canPostInThread(session.sessionId, ThreadId.make(threadId)))
+      ) {
+        return HttpServerResponse.text("Forbidden", { status: 403 });
+      }
+    }
     const request = yield* HttpServerRequest.HttpServerRequest;
     const fs = yield* FileSystem.FileSystem;
     const parts = yield* request.multipart.pipe(

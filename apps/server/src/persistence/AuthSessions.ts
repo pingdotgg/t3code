@@ -108,6 +108,12 @@ export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
 });
 export type SetAuthSessionLastConnectedAtInput = typeof SetAuthSessionLastConnectedAtInput.Type;
 
+export const UpdateAuthSessionScopesInput = Schema.Struct({
+  sessionId: AuthSessionId,
+  scopes: AuthEnvironmentScopes,
+});
+export type UpdateAuthSessionScopesInput = typeof UpdateAuthSessionScopesInput.Type;
+
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
@@ -139,6 +145,9 @@ export class AuthSessionRepository extends Context.Service<
     readonly setLastConnectedAt: (
       input: SetAuthSessionLastConnectedAtInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
+    readonly updateScopes: (
+      input: UpdateAuthSessionScopesInput,
+    ) => Effect.Effect<boolean, AuthSessionRepositoryError>;
     readonly getProofKeyThumbprint: (
       input: GetAuthSessionByIdInput,
     ) => Effect.Effect<Option.Option<string>, AuthSessionRepositoryError>;
@@ -346,6 +355,19 @@ export const make = Effect.gen(function* () {
         SET last_connected_at = ${lastConnectedAt}
         WHERE session_id = ${sessionId}
           AND revoked_at IS NULL
+      `,
+  });
+
+  const updateSessionScopesRows = SqlSchema.findAll({
+    Request: UpdateAuthSessionScopesInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ sessionId, scopes }) =>
+      sql`
+        UPDATE auth_sessions
+        SET scopes = ${JSON.stringify(scopes)}
+        WHERE session_id = ${sessionId}
+          AND revoked_at IS NULL
+        RETURNING session_id AS "sessionId"
       `,
   });
 
@@ -560,6 +582,18 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const updateScopes: AuthSessionRepository["Service"]["updateScopes"] = (input) =>
+    updateSessionScopesRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.updateScopes:query",
+          "AuthSessionRepository.updateScopes:encodeRequest",
+          { sessionId: input.sessionId },
+        ),
+      ),
+      Effect.map((rows) => rows.length > 0),
+    );
+
   const getProofKeyThumbprint: AuthSessionRepository["Service"]["getProofKeyThumbprint"] = (
     input,
   ) =>
@@ -596,6 +630,7 @@ export const make = Effect.gen(function* () {
     extend,
     revokeAllExcept,
     setLastConnectedAt,
+    updateScopes,
     getProofKeyThumbprint,
     revokeByProofKey,
   } satisfies AuthSessionRepository["Service"];
