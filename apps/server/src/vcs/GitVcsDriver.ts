@@ -1185,7 +1185,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   // that follows the previous commit, so a new or restarted worktree shows only its own commits.
   // A removal, a move past NESTED_REPOSITORY_DIFF_MAX_FILES or unreadable commits keep the line.
   const listNestedRepositoryRanges = Effect.fn("GitVcsDriver.listNestedRepositoryRanges")(
-    function* (cwd: string, from: string, to: string) {
+    function* (cwd: string, from: string, to: string, exclude: ReadonlyArray<string>) {
       const operation = "GitVcsDriver.checkpoints.diffCheckpoints";
       const raw = yield* execute({
         operation,
@@ -1201,6 +1201,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           "--no-ext-diff",
           `${from}^{commit}`,
           `${to}^{commit}`,
+          ...(exclude.length === 0 ? [] : ["--", ":(top)", ...exclude]),
         ],
         maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
         outputMode: "error",
@@ -1226,7 +1227,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         operation,
         cwd,
         args: ["rev-parse", "--show-toplevel"],
-      })).stdout.trimEnd();
+      })).stdout.replace(/\r?\n$/, "");
       const recordedWorktreeBranches = gitlinks.some((gitlink) =>
         isNumberedWorktreePath(gitlink.path),
       )
@@ -2705,16 +2706,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }
 
       const toRevision = input.range?.to ?? input.toCheckpointRef;
-      const nestedRanges = (yield* listNestedRepositoryRanges(
+      const nestedRanges = yield* listNestedRepositoryRanges(
         input.cwd,
         fromRevision,
         toRevision,
-      ).pipe(Effect.orElseSucceed(() => []))).filter(
-        ({ path: nestedPath }) =>
-          !input.excludePaths?.some(
-            (excluded) => nestedPath === excluded || nestedPath.startsWith(`${excluded}/`),
-          ),
-      );
+        diffExclusions,
+      ).pipe(Effect.orElseSucceed(() => []));
       const normalizedFilePaths = input.filePaths?.map(unaliasWorktreeDisplayPath);
       const nestedFilePaths = (prefix: string) =>
         normalizedFilePaths === undefined || normalizedFilePaths.includes(prefix)
