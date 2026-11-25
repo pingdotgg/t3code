@@ -66,7 +66,7 @@
   "2f6e4f7cd364da73": "Ожидалось",
   "9d11c93d4035de3e": "Произошло",
   "c87d0595693704f9": "Что сделано вместо этого",
-  "d7a4ea6ce5af44e0": "{speaker} · {count} симв.",
+  "ed5c85bb4aecb472": "{count, plural, one {{speaker} · {count} симв.} few {{speaker} · {count} симв.} many {{speaker} · {count} симв.} other {{speaker} · {count} симв.}}",
   "f5114fb9c40fd929": "Вы",
   "cd03eb1b84271c02": "Агент",
   "bfe1a60f3f9c60fb": "Ход {turn} · {what}",
