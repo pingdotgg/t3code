@@ -9,8 +9,8 @@ import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type { AxNode, Device, ProbeState } from "../mobile-behavior/device.ts";
-import type { Session } from "../mobile-behavior/session.ts";
+import type { AxNode, Device, ProbeState } from "../../mobile-behavior/device.ts";
+import type { Session } from "../../mobile-behavior/session.ts";
 import { stepOf, type PerfWindow, type Step } from "./report.ts";
 
 export class CaseFailure extends Schema.TaggedError<CaseFailure>()("CaseFailure", {

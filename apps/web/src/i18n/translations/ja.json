@@ -11053,7 +11053,7 @@
   "4889f7885396c26b": "ワークツリー",
   "2d96fe39105aae8f": "ローテーションされたログ",
   "1214c77f4bf1ee81": "ブラウザーの成果物",
-  "9831e9c703b3bdd0": "{omitted, plural, other {{environment}: 他に {count} 件の結果があります。}}",
+  "d9e33a2a8d404a96": "{omitted, plural, other {{environment}: 他に {count} 件の結果があります。}}",
   "c8192b219451a0d0": "{removed} 件削除、{kept} 件保持、{failed} 件失敗",
   "cbd8bf91a856906a": "{removed} 件削除、{kept} 件保持",
   "754564dc0b82aff7": "{count, plural, other {前回の実行: {when}。{bytes} を回収しました。{count} 件の項目を削除できませんでした。}}",
