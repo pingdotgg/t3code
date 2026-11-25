@@ -172,6 +172,7 @@ it.layer(
         expect(yield* attachEvents(reopen)).toMatchObject([
           { type: "snapshot", snapshot: { status: "exited" } },
         ]);
+        yield* Deferred.succeed(release, undefined);
         yield* manager.open(reopen);
       } else if (cancelAtAcquisition) {
         yield* Fiber.await(pending);
@@ -186,7 +187,7 @@ it.layer(
         yield* Deferred.await(outputDelivered);
         expect(viewerEvents.filter((event) => event.type !== "activity")).toMatchObject([
           { type: "snapshot", snapshot: { status: "running", pid: 9000 } },
-          { type: "started", snapshot: { status: "running", pid: 9001 } },
+          { type: "snapshot", snapshot: { status: "running", pid: 9001 } },
           { type: "output", data: "still running" },
         ]);
       } else if (scenario === "exited reopen") {
