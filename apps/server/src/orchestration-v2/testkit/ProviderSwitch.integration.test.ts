@@ -1668,6 +1668,7 @@ describe("orchestration v2 provider switching", () => {
     "other-error",
     "repaired-native",
     "background",
+    "opaque-bad-request",
   ] as const)("recovers invalid encrypted Codex history on the next prompt: %s", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1678,7 +1679,7 @@ describe("orchestration v2 provider switching", () => {
         const rejectedNativeThreads = yield* Ref.make<ReadonlySet<string>>(new Set());
         const pendingBackgroundWork = yield* Ref.make(false);
         const code =
-          scenario === "raw-error"
+          scenario === "raw-error" || scenario === "opaque-bad-request"
             ? "other"
             : scenario === "other-error"
               ? "serverOverloaded"
@@ -1699,14 +1700,19 @@ describe("orchestration v2 provider switching", () => {
             failure: makeProviderFailure({
               code,
               message:
-                scenario === "raw-error"
+                scenario === "opaque-bad-request"
                   ? JSON.stringify({
-                      error: {
-                        code: "invalid_encrypted_content",
-                        message: "Encrypted content could not be verified",
-                      },
+                      error: { message: "Bad Request", type: null, code: null, param: null },
+                      status: 400,
                     })
-                  : "Encrypted content could not be verified",
+                  : scenario === "raw-error"
+                    ? JSON.stringify({
+                        error: {
+                          code: "invalid_encrypted_content",
+                          message: "Encrypted content could not be verified",
+                        },
+                      })
+                    : "Encrypted content could not be verified",
               class: "provider_error",
             }),
             responseByRunOrdinal: { 1: "BASELINE_OK", 3: "RECOVERY_OK", 4: "FOLLOWUP_OK" },
