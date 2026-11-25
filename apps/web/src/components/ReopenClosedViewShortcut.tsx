@@ -6,7 +6,7 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { linkOptions, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef } from "react";
@@ -22,6 +22,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import {
   planNextReopen,
+  issuesSearchForRestore,
   pullRequestsSearchForRestore,
   reopenClosedView,
 } from "../reopenClosedView";
@@ -166,21 +167,7 @@ export function ReopenClosedViewShortcut() {
           })
         : linkOptions({
             to: "/issues",
-            search: {
-              ...readIssueListPreferences(),
-              ...(selected?.kind === "issue"
-                ? {
-                    ...(selected.environmentId === undefined
-                      ? {}
-                      : { selectedEnvironmentId: selected.environmentId as EnvironmentId }),
-                    selectedProjectId: selected.projectId as ProjectId,
-                    ...(selected.host === undefined ? {} : { selectedHost: selected.host }),
-                    tracker: selected.tracker,
-                    scope: selected.scope,
-                    key: selected.key,
-                  }
-                : {}),
-            },
+            search: issuesSearchForRestore(readIssueListPreferences(), selected),
           });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
