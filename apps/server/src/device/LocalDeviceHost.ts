@@ -118,16 +118,11 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
     return null;
   }
   const sdk = yield* androidSdk;
-  if (sdk.adb) return null;
   if (!sdk.root)
     return "Android SDK was not found. Install it with Android Studio or set ANDROID_HOME to your SDK directory.";
-  if (!sdk.emulator)
-    return `Android Emulator is missing from ${sdk.root}. Install it in Android Studio's SDK Manager.`;
-  if (!sdk.avdmanager) {
-    if (sdk.legacyAvdmanager)
-      return `The Android SDK command-line tools in ${sdk.root} appear to be an older, unsupported version. Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools.`;
-    return `Android SDK Command-line Tools (latest) are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
-  }
+  // Connected phones need only adb; emulator tooling gates AVD listing alone.
+  if (!sdk.adb)
+    return `Android SDK Platform-Tools are missing from ${sdk.root}. Install them in Android Studio's SDK Manager.`;
   return null;
 });
 
@@ -143,25 +138,12 @@ const androidSdk = Effect.gen(function* () {
   );
   const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
   const adbBinary = windows ? "adb.exe" : "adb";
-  const avdmanagerBinary = windows ? "avdmanager.bat" : "avdmanager";
   const inspect = Effect.fnUntraced(function* (root: string) {
     const adb = yield* exists(path.join(root, "platform-tools", adbBinary));
     const emulator = yield* exists(
       path.join(root, "emulator", windows ? "emulator.exe" : "emulator"),
     );
-    const avdmanager = yield* exists(
-      path.join(root, "cmdline-tools", "latest", "bin", avdmanagerBinary),
-    );
-    const legacyAvdmanager =
-      !avdmanager && (yield* exists(path.join(root, "tools", "bin", avdmanagerBinary)));
-    return {
-      root,
-      adb,
-      adbPath: adb ? path.join(root, "platform-tools", adbBinary) : null,
-      emulator,
-      avdmanager,
-      legacyAvdmanager,
-    };
+    return { root, adb, emulator };
   });
   const candidates = [
     ...explicit,
@@ -169,60 +151,23 @@ const androidSdk = Effect.gen(function* () {
     path.join(home, "Android", "Sdk"),
     path.join(environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "Android", "Sdk"),
   ];
-  const fromPath = Effect.gen(function* () {
-    const searchPath = environment.PATH ?? environment.Path ?? "";
-    for (const directory of searchPath.split(windows ? ";" : ":")) {
-      if (!directory) continue;
-      const adb = path.join(directory, adbBinary);
-      if (!(yield* exists(adb))) continue;
-      const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
-      const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
-      if (sdk.adb || sdk.emulator) return { ...sdk, adb: true, adbPath: resolved };
-      return {
-        root: null,
-        adb: true,
-        adbPath: resolved,
-        emulator: false,
-        avdmanager: false,
-        legacyAvdmanager: false,
-      };
-    }
-    return null;
-  });
-  // Google's Linux platform-tools are x86-only; ARM hosts use a native package on PATH.
-  const preferPath =
-    explicit.length === 0 && platform === "linux" && (yield* HostProcess.Architecture) === "arm64";
-  if (preferPath) {
-    const sdk = yield* fromPath;
-    if (sdk) {
-      if (sdk.emulator) return sdk;
-      for (const root of candidates) {
-        const candidate = yield* inspect(root);
-        if (candidate.emulator) return { ...candidate, adb: true, adbPath: sdk.adbPath };
-      }
-      return sdk;
-    }
-  }
   for (const root of candidates) {
     const sdk = yield* inspect(root);
     if (sdk.adb || sdk.emulator) return sdk;
   }
-  // PATH entries can be slow to stat, so other hosts try the standard locations first.
-  // An explicit root only suppresses this probe when it actually yielded an SDK.
-  if (!preferPath) {
-    const sdk = yield* fromPath;
-    if (sdk) return sdk;
+  // PATH entries can be slow to stat (network shares), so only consult them after the standard locations miss.
+  const searchPath = environment.PATH ?? environment.Path ?? "";
+  for (const directory of searchPath.split(windows ? ";" : ":")) {
+    if (!directory) continue;
+    const adb = path.join(directory, adbBinary);
+    if (!(yield* exists(adb))) continue;
+    const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
+    const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
+    if (sdk.adb || sdk.emulator) return sdk;
   }
   // No real SDK anywhere: report what the configured root is missing.
   if (explicit[0]) return yield* inspect(explicit[0]);
-  return {
-    root: null,
-    adb: false,
-    adbPath: null,
-    emulator: false,
-    avdmanager: false,
-    legacyAvdmanager: false,
-  };
+  return { root: null, adb: false, emulator: false };
 });
 
 const deviceHostEnvironment = (
@@ -957,15 +902,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.flatMap((sdk) =>
         runner.run({
           command:
-            command === "adb" && sdk.adbPath
-              ? sdk.adbPath
-              : command === "emulator" && sdk.root
-                ? path.join(
-                    sdk.root,
-                    "emulator",
-                    hostPlatform === "win32" ? "emulator.exe" : "emulator",
-                  )
-                : command,
+            command === "emulator" && sdk.root
+              ? path.join(
+                  sdk.root,
+                  "emulator",
+                  hostPlatform === "win32" ? "emulator.exe" : "emulator",
+                )
+              : command,
           args,
           cwd: workingDirectory,
           env: deviceHostEnvironment(environment, sdk.root, hostPlatform, path),
@@ -996,7 +939,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       token: running.hub.token,
       http: httpClient,
       run,
-      // Android gates AVD listing, which needs the emulator; adb alone lists phones.
       platformAvailable: (platform) =>
         platform === "android"
           ? currentSdk.pipe(Effect.map((sdk) => sdk.adb && sdk.emulator))

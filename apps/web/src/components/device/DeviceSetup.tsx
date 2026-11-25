@@ -178,7 +178,7 @@ export function platformSetupStatus(
             : resolve(msg("Xcode and iOS Simulator are available."))
           : host
             ? resolve(msg("The Android SDK and Emulator are available on {host}.", { host }))
-            : resolve(msg("The Android SDK and Emulator are available.")),
+            : resolve(msg("The Android SDK is available.")),
   };
 }
 

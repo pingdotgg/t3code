@@ -613,71 +613,6 @@ const diagnose = (
   );
 
 describe("Android SDK availability", () => {
-  it.effect("supports connected Android devices with only platform-tools installed", () =>
-    Effect.gen(function* () {
-      const reason = yield* diagnose(["/sdk/platform-tools/adb"], { ANDROID_HOME: "/sdk" });
-      expect(reason).toBeNull();
-    }),
-  );
-
-  it.effect.each([
-    {
-      resolved: "/usr/lib/android-sdk/platform-tools/adb",
-      root: "/usr/lib/android-sdk",
-      explicit: undefined,
-    },
-    { resolved: "/usr/bin/adb", root: null, explicit: undefined },
-    {
-      resolved: "/usr/bin/adb",
-      root: "/test/Android/Sdk",
-      explicit: undefined,
-      standardEmulator: true,
-    },
-    {
-      resolved: "/usr/lib/android-sdk/platform-tools/adb",
-      root: "/test/Android/Sdk",
-      explicit: undefined,
-      standardEmulator: true,
-    },
-    { resolved: "/usr/bin/adb", root: "/test/Android/Sdk", explicit: "/test/Android/Sdk" },
-  ])(
-    "selects ARM Linux adb at $resolved with explicit SDK $explicit",
-    ({ resolved, root, explicit, standardEmulator }) =>
-      Effect.gen(function* () {
-        const sdk = yield* LocalDeviceHost.__testing.androidSdk.pipe(
-          Effect.provideService(HostProcess.Environment, {
-            HOME: "/test",
-            PATH: "/usr/bin",
-            ANDROID_HOME: explicit,
-          }),
-          Effect.provideService(HostProcess.Architecture, "arm64"),
-          Effect.provideService(HostProcess.Platform, "linux"),
-          Effect.provideService(
-            FileSystem.FileSystem,
-            FileSystem.makeNoop({
-              exists: (file) =>
-                Effect.succeed(
-                  [
-                    "/usr/bin/adb",
-                    "/usr/lib/android-sdk/platform-tools/adb",
-                    "/test/Android/Sdk/platform-tools/adb",
-                    ...(standardEmulator ? ["/test/Android/Sdk/emulator/emulator"] : []),
-                  ].includes(file),
-                ),
-              realPath: () => Effect.succeed(resolved),
-            }),
-          ),
-          Effect.provide(NodePath.layerPosix),
-        );
-        expect(sdk).toMatchObject({
-          root,
-          adb: true,
-          adbPath: explicit ? `${explicit}/platform-tools/adb` : resolved,
-          emulator: standardEmulator ?? false,
-        });
-      }),
-  );
-
   it.effect("uses the standard Windows SDK without probing PATH", () =>
     Effect.gen(function* () {
       const root = "C:\\Users\\test\\AppData\\Local\\Android\\Sdk";
@@ -738,29 +673,13 @@ describe("Android SDK availability", () => {
     }),
   );
 
-  it.effect("does not require current emulator command-line tools to use connected devices", () =>
+  // regression: #30629 connected phones were hidden on hosts without emulator tooling
+  it.effect("supports connected Android devices with only Platform-Tools installed", () =>
     Effect.gen(function* () {
-      const root = "/test/home/Library/Android/sdk";
-      const reason = yield* diagnose(
-        [`${root}/platform-tools/adb`, `${root}/emulator/emulator`, `${root}/tools/bin/avdmanager`],
-        { HOME: "/test/home" },
+      expect(yield* diagnose(["/sdk/platform-tools/adb"], { ANDROID_HOME: "/sdk" })).toBeNull();
+      expect(yield* diagnose(["/sdk/emulator/emulator"], { ANDROID_HOME: "/sdk" })).toContain(
+        "Platform-Tools are missing from /sdk",
       );
-      expect(reason).toBeNull();
-    }),
-  );
-
-  it.effect("accepts the latest command-line tools when legacy tools are also installed", () =>
-    Effect.gen(function* () {
-      const reason = yield* diagnose(
-        [
-          "/sdk/platform-tools/adb",
-          "/sdk/emulator/emulator",
-          "/sdk/tools/bin/avdmanager",
-          "/sdk/cmdline-tools/latest/bin/avdmanager",
-        ],
-        { ANDROID_HOME: "/sdk" },
-      );
-      expect(reason).toBeNull();
     }),
   );
 

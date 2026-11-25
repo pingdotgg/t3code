@@ -33,11 +33,9 @@ Studio's Device Manager. T3 Code detects standard SDK locations; set
 `ANDROID_HOME` for a custom location. The panel explains missing dependencies.
 After installing SDK tools, restart the environment server and refresh devices.
 
-Physical Android devices need only SDK Platform-Tools. Connect a USB device and
-approve USB debugging, or run `adb connect <address>:<port>` on the device host
-for network debugging. For a device on Tailscale, use its Tailscale address.
-Approve the debugging key on the device if prompted, then refresh devices in T3
-Code. The device host must be able to reach that address.
+Physical Android devices need only SDK Platform-Tools. Connect the device over
+USB and approve USB debugging, or run `adb connect <address>:<port>` on the
+device host for wireless debugging, then refresh devices.
 
 Android emulator video also needs `ffmpeg` with the libx264 encoder on the device
 host's PATH, or an executable selected by `SERVE_EMU_FFMPEG` on that host. If

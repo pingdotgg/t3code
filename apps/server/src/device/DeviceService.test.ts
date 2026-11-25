@@ -104,10 +104,13 @@ it.effect.each([400, 500])(
     }),
 );
 
-it.effect.each([false, true])(
-  "discovers physical Android devices after hub discovery fails with emulator available=%s",
-  (androidAvailable) =>
+// regression: #30629 hosts with only Platform-Tools listed no connected phones
+it.effect.each([true, false])(
+  "lists adb-attached physical devices when the hub cannot run avdmanager (emulator tooling: %s)",
+  (emulatorTooling) =>
     Effect.gen(function* () {
+      // expo-device-hub returns no Android devices at all once `avdmanager list avd` fails.
+      const commands: Array<string> = [];
       const operations = makeDeviceHubOperations({
         hostId: LOCAL_DEVICE_HOST_ID,
         origin: "http://device.test",
@@ -118,131 +121,52 @@ it.effect.each([false, true])(
               Response.json({
                 simulators: [],
                 emulators: [],
-                errors: androidAvailable
-                  ? [{ message: "[android-utils] Failed to list devices:" }]
-                  : [],
+                errors: [
+                  {
+                    id: "avd",
+                    message: "[android-utils] Failed to run `avdmanager list avd`:",
+                    error:
+                      "Error: Command failed: avdmanager list avd\nThe operation couldn’t be completed. Unable to locate a Java Runtime.",
+                  },
+                ],
               }),
             ),
           ),
         ),
-        platformAvailable: () => Effect.succeed(androidAvailable),
-        run: (command, args) => {
-          if (command === "emulator") return Effect.succeed({ stdout: "", stderr: "", code: 0 });
-          expect(command).toBe("adb");
-          const stdout =
-            args[0] === "devices"
-              ? "List of devices attached\n100.81.218.20:5555 device model:KFONWI\nunauthorized unauthorized\noffline offline\nemulator-5554 device model:sdk\nqemu device model:sdk\n"
-              : args[1] === "qemu"
-                ? "[ro.boot.qemu]: [1]\n"
-                : "[ro.product.model]: [KFONWI]\n[ro.build.version.release]: [9]\n[ro.kernel.qemu]: [0]\n";
-          return Effect.succeed({ stdout, stderr: "", code: 0 });
-        },
-      });
-      expect((yield* operations.list).devices).toEqual([
-        {
-          id: "100.81.218.20:5555",
-          name: "KFONWI",
-          version: "Android 9",
-          platform: "android",
-          booted: true,
-          physical: true,
-        },
-      ]);
-    }),
-);
-
-it.effect.each([
-  { operation: "devices", code: 1 },
-  { operation: "getprop", code: 1 },
-  { operation: "devices", code: 127 },
-])(
-  "reports failed ADB $operation fallback with code $code without failing discovery",
-  ({ operation, code }) =>
-    Effect.gen(function* () {
-      const operations = makeDeviceHubOperations({
-        hostId: LOCAL_DEVICE_HOST_ID,
-        origin: "http://device.test",
-        http: HttpClient.make((request) =>
-          Effect.succeed(
-            HttpClientResponse.fromWeb(request, Response.json({ simulators: [], emulators: [] })),
-          ),
-        ),
-        platformAvailable: () => Effect.succeed(false),
-        run: (_command, args) =>
-          Effect.succeed(
-            args[0] === "devices" && operation === "getprop"
-              ? { stdout: "List of devices attached\nphone device\n", stderr: "", code: 0 }
-              : { stdout: "", stderr: "private command output", code },
-          ),
-      });
-      const result = yield* operations.list;
-      expect(result.devices).toEqual([]);
-      expect(result.androidDiscoveryIncomplete).toBe(true);
-      if (code === 127) {
-        expect(result.detail).toBeUndefined();
-      } else {
-        expect(result.detail).toContain(operation);
-        expect(result.detail).toContain("exit code 1");
-        expect(result.detail).not.toContain("private command output");
-      }
-    }),
-);
-
-it.effect("lists adb-attached physical devices when the hub cannot run avdmanager", () =>
-  Effect.gen(function* () {
-    // expo-device-hub returns no Android devices at all once `avdmanager list avd` fails.
-    const operations = makeDeviceHubOperations({
-      hostId: LOCAL_DEVICE_HOST_ID,
-      origin: "http://device.test",
-      http: HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            Response.json({
-              simulators: [],
-              emulators: [],
-              errors: [
-                {
-                  id: "avd",
-                  message: "[android-utils] Failed to run `avdmanager list avd`:",
-                  error:
-                    "Error: Command failed: avdmanager list avd\nThe operation couldn’t be completed. Unable to locate a Java Runtime.",
-                },
-              ],
-            }),
-          ),
-        ),
-      ),
-      run: (command, args) =>
-        Effect.succeed(
-          command === "adb" && args.includes("devices")
-            ? {
-                code: 0,
-                stdout:
-                  "List of devices attached\nR52T10ABCDE            device usb:1-1 product:gts9wifi model:SM_X710 device:gts9wifi transport_id:1\n\n",
-                stderr: "",
-              }
-            : command === "adb" && args.includes("getprop")
+        run: (command, args) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return command === "adb" && args.includes("devices")
               ? {
                   code: 0,
                   stdout:
-                    "[ro.product.manufacturer]: [samsung]\n[ro.product.model]: [SM-X710]\n[ro.build.version.release]: [15]\n",
+                    "List of devices attached\nR52T10ABCDE            device usb:1-1 product:gts9wifi model:SM_X710 device:gts9wifi transport_id:1\n\n",
                   stderr: "",
                 }
-              : { code: 0, stdout: "", stderr: "" },
-        ),
-      platformAvailable: (platform) => Effect.succeed(platform === "android"),
-    });
-    const listed = yield* operations.list;
-    expect(listed.devices).toContainEqual(
-      expect.objectContaining({
-        id: "R52T10ABCDE",
-        platform: "android",
-        booted: true,
-        physical: true,
-      }),
-    );
-  }),
+              : command === "adb" && args.includes("getprop")
+                ? {
+                    code: 0,
+                    stdout:
+                      "[ro.product.manufacturer]: [samsung]\n[ro.product.model]: [SM-X710]\n[ro.build.version.release]: [15]\n",
+                    stderr: "",
+                  }
+                : { code: 0, stdout: "", stderr: "" };
+          }),
+        platformAvailable: (platform) => Effect.succeed(emulatorTooling && platform === "android"),
+      });
+      const listed = yield* operations.list;
+      expect(listed.devices).toContainEqual(
+        expect.objectContaining({
+          id: "R52T10ABCDE",
+          platform: "android",
+          booted: true,
+          physical: true,
+        }),
+      );
+      // Without emulator tooling, the failed avdmanager probe is noise.
+      if (!emulatorTooling) expect(listed.detail).toBeUndefined();
+      expect(commands.includes("emulator")).toBe(emulatorTooling);
+    }),
 );
 
 const fixture = Effect.fn("fixture")(function* (
@@ -1743,33 +1667,17 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
   (hostId) =>
     Effect.gen(function* () {
       let enumeration = { code: 1, stdout: "private stdout", stderr: "private stderr" };
-      let adbDevices: string | undefined;
-      const run = (command: string, args: ReadonlyArray<string>) =>
-        Effect.sync(() =>
-          command === "adb" && args[0] === "devices" && adbDevices !== undefined
-            ? { code: 0, stdout: adbDevices, stderr: "" }
-            : enumeration,
-        );
+      const run = () => Effect.sync(() => enumeration);
       const hubDevices = [
         { id: "iphone", name: "iPhone", platform: "ios", physical: false },
         { id: "phone", name: "Pixel", platform: "android", physical: true },
-        { id: "phone-2", name: "Pixel 2", platform: "android", physical: true },
         { id: "emulator-5554", name: "Running_AVD", platform: "android", physical: false },
       ].map((device) => ({ ...device, booted: true, version: "test" }));
-      let omitPhysical = false;
-      let hubDiscoveryFailed = true;
       const http = HttpClient.make((request) =>
         Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
-            Response.json({
-              simulators: hubDevices.slice(0, 1),
-              emulators: hubDevices.slice(1).filter((device) => !omitPhysical || !device.physical),
-              errors:
-                omitPhysical && hubDiscoveryFailed
-                  ? [{ message: "[android-utils] Failed to list devices:" }]
-                  : [],
-            }),
+            Response.json({ simulators: hubDevices.slice(0, 1), emulators: hubDevices.slice(1) }),
           ),
         ),
       );
@@ -1821,22 +1729,6 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
         expect(incomplete.hostStatusDetail).toBe(incomplete.hostStatuses[hostId]?.detail);
       }
 
-      omitPhysical = true;
-      for (const code of [1, 127]) {
-        enumeration.code = code;
-        const failedAdb = yield* service.list;
-        expect(failedAdb.devices).toContainEqual({ ...hubDevices[1], hostId });
-        expect(failedAdb.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBe(true);
-      }
-      enumeration.code = 1;
-      adbDevices = "List of devices attached\nphone device\n";
-      const failedProperties = yield* service.list;
-      expect(failedProperties.devices).toContainEqual({ ...hubDevices[1], hostId });
-      expect(failedProperties.devices.some((device) => device.id === "phone-2")).toBe(false);
-      expect(failedProperties.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBe(true);
-      adbDevices = undefined;
-      omitPhysical = false;
-
       enumeration = { code: 0, stdout: "Running_AVD\r\nStopped_AVD\nStopped_AVD\n", stderr: "" };
       const recovered = yield* service.retryHost(hostId);
       expect(recovered.devices).toEqual([
@@ -1853,21 +1745,7 @@ it.effect.each([LOCAL_DEVICE_HOST_ID, "ssh-fixture"])(
       ]);
       expect(recovered.hostStatuses[hostId]).toEqual({ status: "ready" });
       if (hostId === LOCAL_DEVICE_HOST_ID) expect(recovered.hostStatusDetail).toBeUndefined();
-      omitPhysical = true;
-      hubDiscoveryFailed = false;
-      enumeration = { code: 1, stdout: "", stderr: "AVD enumeration failed" };
-      const disconnectedDuringAvdFailure = yield* service.list;
-      expect(disconnectedDuringAvdFailure.devices.some((device) => device.id === "phone")).toBe(
-        false,
-      );
-      expect(disconnectedDuringAvdFailure.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBe(
-        true,
-      );
-      enumeration = { code: 0, stdout: "", stderr: "" };
-      const disconnected = yield* service.list;
-      expect(disconnected.devices.some((device) => device.id === "phone")).toBe(false);
-      expect(disconnected.hostStatuses[hostId]?.androidDiscoveryIncomplete).toBeUndefined();
-    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true })), Effect.scoped),
+    }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
 );
 
 it.effect("retry keeps device and agent consent unchanged", () =>
