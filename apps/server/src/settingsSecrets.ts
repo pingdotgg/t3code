@@ -15,6 +15,7 @@ import {
   isSecretReference,
   secretSettingsFields,
 } from "@t3tools/contracts";
+import * as Predicate from "effect/Predicate";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { cursorClient } from "@t3tools/provider-cursor/client";
 import { grokClient } from "@t3tools/provider-grok/client";
@@ -295,8 +296,13 @@ export function withoutRemovedSecretProviderReferences(
   };
 }
 
-const destination = (url: unknown) =>
-  typeof url === "string" && URL.canParse(url) ? new URL(url).href : url;
+/** A URL in the form two spellings of one address share: `URL` normalization, no trailing slash on the path. */
+const destination = (url: unknown) => {
+  if (typeof url !== "string" || !URL.canParse(url)) return url;
+  const parsed = new URL(url);
+  parsed.pathname = parsed.pathname.replace(/\/+$/, "");
+  return parsed.href;
+};
 
 /** Per provider driver, the config field holding a secret and the one naming where it is sent. */
 const providerSecretDestinations = new Map<string, readonly [secret: string, url: string]>([
@@ -338,14 +344,12 @@ export function withoutRedirectedSecrets(
       Object.entries(next.providerInstances).map(([instanceId, instance]) => {
         const fields = providerSecretDestinations.get(instance.driver);
         const previous = current.providerInstances[instanceId as ProviderInstanceId];
-        const isRecord = (config: unknown): config is object =>
-          config !== null && typeof config === "object" && !Array.isArray(config);
         return [
           instanceId,
           fields !== undefined &&
           previous?.driver === instance.driver &&
-          isRecord(instance.config) &&
-          isRecord(previous.config)
+          Predicate.isObject(instance.config) &&
+          Predicate.isObject(previous.config)
             ? { ...instance, config: rebound(instance.config, previous.config, ...fields) }
             : instance,
         ];

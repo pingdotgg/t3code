@@ -2011,6 +2011,54 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         secrets(yield* service.updateSettings(patch({ ...elsewhere, secret: reference }))),
         kept(""),
       );
+
+      const sameAddress = [
+        {
+          serverUrl: "http://127.0.0.1:4096/",
+          hubUrl: "https://hub.test//",
+          baseUrl: "https://router.test/v1/",
+        },
+        {
+          serverUrl: "HTTP://127.0.0.1:4096",
+          hubUrl: "https://HUB.test:443",
+          baseUrl: "https://Router.test/v1//",
+        },
+      ];
+      const otherAddress = [
+        {
+          serverUrl: "http://127.0.0.1:4097",
+          hubUrl: "https://hub.test:8443",
+          baseUrl: "https://router.test:8443/v1",
+        },
+        {
+          serverUrl: "https://127.0.0.1:4096",
+          hubUrl: "http://hub.test",
+          baseUrl: "http://router.test/v1",
+        },
+        {
+          serverUrl: "http://127.0.0.1:4096/api",
+          hubUrl: "https://hub.test/api/",
+          baseUrl: "https://router.test/V1",
+        },
+        {
+          serverUrl: "http://127.0.0.1:4096/?team=a",
+          hubUrl: "https://hub.test?team=a",
+          baseUrl: "https://router.test/v1/v1/",
+        },
+      ];
+      for (const [addresses, expected] of [
+        [sameAddress, kept("saved-fixture")],
+        [otherAddress, kept("")],
+      ] as const) {
+        for (const address of addresses) {
+          yield* service.updateSettings(patch({ ...saved, secret: "saved-fixture" }));
+          assert.deepEqual(
+            secrets(yield* service.updateSettings(patch({ ...address, secret: SECRET_REDACTED }))),
+            expected,
+            JSON.stringify(address),
+          );
+        }
+      }
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
