@@ -1021,7 +1021,7 @@ function SpeechModelBrowser(props: {
             }}
           />
         </InputGroup>
-        <Menu>
+        <Menu onOpenChange={(open) => (open ? undefined : setLanguageSearch(""))}>
           <MenuTrigger
             render={<Button variant="outline" className="max-w-56" />}
             aria-label={gt("Filter by language: {languagesLabel}", { languagesLabel })}

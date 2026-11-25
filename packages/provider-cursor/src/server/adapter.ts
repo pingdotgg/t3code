@@ -2494,8 +2494,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 );
               }
               return;
+            case "shell-tool-call-delta":
             case "shell-output-delta": {
-              const toolCallId = update.event.toolCallId;
+              const toolCallId =
+                update.type === "shell-tool-call-delta" ? update.callId : update.event.toolCallId;
               const shell =
                 typeof toolCallId === "string"
                   ? context.tools.get(toolCallId)
@@ -2505,7 +2507,10 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               if (shell?.toolCall.type !== "shell") {
                 return;
               }
-              const chunk = shellOutputText(update.event);
+              const chunk =
+                update.type === "shell-tool-call-delta"
+                  ? update.content
+                  : shellOutputText(update.event);
               if (chunk.length === 0) return;
               // Persist output once; live hub deltas avoid quadratic event-store growth.
               shell.streamedOutput += chunk;

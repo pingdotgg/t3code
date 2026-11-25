@@ -1,5 +1,9 @@
 # Wiki update log
 
+## 2026-11-25
+
+- Recorded the [upstream integration candidate](upstream-integration.md) through `6bb4e3d9d6` and its Git checkpoint and Android notification boundaries.
+
 ## 2026-11-24
 
 - Recorded the [upstream candidate](upstream-integration.md) through `1a01d7ee6f` and its Git/Jujutsu integration points.

@@ -16,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
@@ -641,7 +642,7 @@ class AgentNotificationChannelsTest {
     AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
     val running = mapOf(
       "device_id" to "device",
-      "user_id" to "user",
+      "user_hash" to "60a4ea94a99303630c40fff23f4de5c06a8f978289a3889f31edfac3b89f85d7",
       "updated_at" to System.currentTimeMillis().toString(),
       "active" to "true",
       "activity_title" to "Agent activity"

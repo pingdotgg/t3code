@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as RelayConfiguration from "../src/Config.ts";
+import { androidRecipientData } from "@t3tools/shared/agentActivityAndroid";
 import * as FcmAssertionSigner from "@t3tools/shared/FcmAssertionSigner";
 import * as FcmClient from "@t3tools/shared/FcmClient";
 
@@ -101,8 +102,7 @@ const main = Effect.gen(function* () {
         alert: title !== null,
         data: {
           t3_kind: "agent_activity",
-          device_id: device.deviceId,
-          user_id: device.userId,
+          ...androidRecipientData(device.userId, device.deviceId, null),
           updated_at: String(now),
           active: String(active),
           activity_title: active

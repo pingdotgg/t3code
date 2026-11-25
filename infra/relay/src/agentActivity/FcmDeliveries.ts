@@ -24,6 +24,7 @@ import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "@t3tools/shared/FcmClient";
 import {
   androidActivityData,
+  androidRecipientData,
   fitFcmData,
   androidAlertForState,
   androidAlertForAggregate,
@@ -230,8 +231,7 @@ const make = Effect.gen(function* () {
       if (!displayedAggregate && !alert && !previousAggregate && job.state !== null) return;
       const data: Record<string, string> = {
         t3_kind: "agent_activity",
-        device_id: job.deviceId,
-        user_id: job.userId,
+        ...androidRecipientData(job.userId, job.deviceId, target.app_version),
         updated_at: String(now.epochMilliseconds),
         ...androidActivityData(displayedAggregate),
         ...alert,

@@ -4,7 +4,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import type { CheckpointStoreError } from "./Errors.ts";
-import type { VcsCheckpointOps, CheckpointCaptureResult } from "../vcs/VcsDriver.ts";
+import type {
+  VcsCheckpointOps,
+  VcsCheckpointRange,
+  CheckpointCaptureResult,
+} from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 export interface CaptureCheckpointInput {
@@ -15,6 +19,8 @@ export interface CaptureCheckpointInput {
   /** Folders below `cwd` (relative, `/`-separated) that have their own checkpoints. */
   readonly excludePaths?: ReadonlyArray<string>;
 }
+
+export type CheckpointRange = VcsCheckpointRange;
 
 export interface CaptureHeadCheckpointInput {
   readonly cwd: string;
@@ -49,12 +55,16 @@ export interface DiffCheckpointsInput {
   readonly filePaths?: ReadonlyArray<string>;
   /** Folders below `cwd` left out of the diff, as in a capture. */
   readonly excludePaths?: ReadonlyArray<string>;
+  /** The refs' range as their capture returned it; the refs are then not read. */
+  readonly range?: VcsCheckpointRange;
 }
 
 export interface ListAuthoredPathsInput {
   readonly cwd: string;
   readonly fromCheckpointRef: CheckpointRef;
   readonly toCheckpointRef: CheckpointRef;
+  /** The refs' range as their capture returned it; the refs are then not read. */
+  readonly range?: VcsCheckpointRange;
 }
 
 export interface DeleteCheckpointRefsInput {

@@ -26,6 +26,7 @@ import * as Socket from "effect/socket/Socket";
 
 import {
   androidActivityData,
+  androidRecipientData,
   fitFcmData,
   androidAlertForState,
 } from "@t3tools/shared/agentActivityAndroid";
@@ -196,8 +197,7 @@ const main = Effect.gen(function* () {
             alert: alert !== null,
             data: fitFcmData({
               t3_kind: "agent_activity",
-              device_id: device.deviceId,
-              user_id: device.userId,
+              ...androidRecipientData(device.userId, device.deviceId, null),
               updated_at: String(now),
               ...androidActivityData(aggregate),
               ...alert,

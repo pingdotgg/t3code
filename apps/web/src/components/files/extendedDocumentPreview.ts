@@ -6,7 +6,10 @@ import {
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import { decodeHTMLAttribute, decodeHTMLStrict as decodeEntities } from "entities";
 import type JSZip from "jszip";
-import { terminalOutputPlainText } from "@t3tools/shared/terminalOutput";
+import {
+  terminalOutputCollapseRedraws,
+  terminalOutputPlainText,
+} from "@t3tools/shared/terminalOutput";
 
 import { type OfficeWorkerResult, type NotebookCell } from "./officePreviewProtocol";
 import { PreviewError } from "./previewFailure";
@@ -462,11 +465,10 @@ export async function openEpub(archive: JSZip): Promise<OfficeWorkerResult> {
     const entry = path ? archive.file(path) : null;
     if (!entry || !path) continue;
     const chapter = parseXml(await entry.async("string"));
+    const title = text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter).trim();
+    const last = title.charCodeAt(119);
     pages.push({
-      title:
-        text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter)
-          .trim()
-          .slice(0, 120) || undefined,
+      title: title.slice(0, last >= 0xd800 && last <= 0xdbff ? 119 : 120) || undefined,
       html: await epubHtml(chapter, archive, path),
     });
   }
@@ -497,15 +499,6 @@ function tracebackLines(value: unknown): unknown {
   return frames.map((frame, index) =>
     index && !frames[index - 1]!.endsWith("\n") ? `\n${frame}` : frame,
   );
-}
-// tqdm redraws a progress bar after a carriage return; JupyterLab shows only what the last
-// redraws leave on the line. Walking the frames from the last keeps this linear.
-function lastFrame(line: string): string {
-  let row = "";
-  for (const frame of line.split("\r").reverse())
-    // A cut through a surrogate pair blanks the glyph's other half, as a terminal does.
-    if (frame.length > row.length) row += frame.slice(row.length).replace(/^[\udc00-\udfff]/u, " ");
-  return row;
 }
 export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   if (bytes.byteLength > 8 * 1024 * 1024) throw new PreviewError({ code: "notebook-too-large" });
@@ -539,9 +532,7 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
             notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
           );
           const text =
-            output.output_type === "stream" && /\r(?!\n)/.test(plain)
-              ? plain.replaceAll("\r\n", "\n").split("\n").map(lastFrame).join("\n")
-              : plain;
+            output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;
           if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
           const summary = [output.ename, output.evalue]
             .filter((part) => typeof part === "string")
@@ -592,6 +583,7 @@ const rtfCodePageLabel = (codePage: number) =>
       950: "big5",
       874: "windows-874",
       10000: "macintosh",
+      54936: "gb18030",
     } as Record<number, string>
   )[codePage] ?? `windows-${codePage}`;
 
