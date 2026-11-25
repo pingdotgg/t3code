@@ -1354,12 +1354,7 @@ export const make = Effect.gen(function* () {
       (compressed
         ? Math.min(MAX_IMPORTED_TRANSCRIPT_BYTES, decompressionBudget.bytesRemaining)
         : expected.size);
-    if (
-      (compressed
-        ? readBytes === 0 || readBytes > decompressionBudget.bytesRemaining
-        : readBytes > expected.size) ||
-      readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES
-    ) {
+    if ((!compressed && readBytes > expected.size) || readBytes > MAX_IMPORTED_TRANSCRIPT_BYTES) {
       return null;
     }
 
