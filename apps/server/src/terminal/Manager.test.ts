@@ -695,6 +695,16 @@ it.layer(
     }),
   );
 
+  it.effect("opens while Git work holds the checkout", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      yield* withWorkspaceLease(path.resolve(input.cwd), manager.open(input), "checkout");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+    }),
+  );
+
   it.effect("keeps attach streams live when a terminal id is closed and reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

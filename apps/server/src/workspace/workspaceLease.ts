@@ -4,17 +4,40 @@ import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 
-const leases = new Map<string, { semaphore: Semaphore.Semaphore; users: number }>();
+const FOLDER_PERMITS = Number.MAX_SAFE_INTEGER;
+
+const leases = new Map<
+  string,
+  { checkout: Semaphore.Semaphore; folder: Semaphore.Semaphore; users: number }
+>();
+
+/**
+ * - `exclusive` removes, recreates, or rewrites the folder, so it waits for every other lease.
+ * - `checkout` changes branches, the index, or commits; it waits for `exclusive` and `checkout`.
+ * - `shared` only needs the folder to stay put, such as a terminal starting in it.
+ */
+type WorkspaceLeaseMode = "exclusive" | "checkout" | "shared";
 
 export const withWorkspaceLease = <A, E, R>(
   cwd: string,
   effect: Effect.Effect<A, E, R>,
+  mode: WorkspaceLeaseMode = "exclusive",
 ): Effect.Effect<A, E, R> =>
   Effect.suspend(() => {
-    const lease = leases.get(cwd) ?? { semaphore: Semaphore.makeUnsafe(1), users: 0 };
+    const lease = leases.get(cwd) ?? {
+      checkout: Semaphore.makeUnsafe(1),
+      folder: Semaphore.makeUnsafe(FOLDER_PERMITS),
+      users: 0,
+    };
     leases.set(cwd, lease);
     lease.users++;
-    return lease.semaphore.withPermit(effect).pipe(
+    const held =
+      mode === "shared"
+        ? lease.folder.withPermit(effect)
+        : mode === "checkout"
+          ? lease.checkout.withPermit(effect)
+          : lease.checkout.withPermit(lease.folder.withPermits(FOLDER_PERMITS)(effect));
+    return held.pipe(
       Effect.ensuring(
         Effect.sync(() => {
           lease.users--;

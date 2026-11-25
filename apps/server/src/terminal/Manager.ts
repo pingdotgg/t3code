@@ -3572,13 +3572,25 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return liveSession;
   });
 
-  const openLocked = (input: TerminalOpenInput, supportsSnapshotSequenceState?: boolean) =>
-    withWorkspaceLease(
-      path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input).pipe(
-        Effect.map((session) => snapshot(session, supportsSnapshotSequenceState)),
-      ),
+  // Git work on the checkout must not hold terminals back. Recreating a missing folder needs
+  // the exclusive lease, so only a missing cwd retries under it.
+  const openLocked = (input: TerminalOpenInput, supportsSnapshotSequenceState?: boolean) => {
+    const workspace = path.resolve(input.worktreePath ?? input.cwd);
+    const openSnapshot = openWithWorkspaceLease(input).pipe(
+      Effect.map((session) => snapshot(session, supportsSnapshotSequenceState)),
     );
+    return withWorkspaceLease(
+      workspace,
+      openSnapshot.pipe(
+        Effect.provideService(TerminalCwdRecovery, TerminalCwdRecovery.defaultValue()),
+      ),
+      "shared",
+    ).pipe(
+      Effect.catchTags({
+        TerminalCwdNotFoundError: () => withWorkspaceLease(workspace, openSnapshot),
+      }),
+    );
+  };
 
   const open: TerminalManager["Service"]["open"] = (input) =>
     withThreadLock(
