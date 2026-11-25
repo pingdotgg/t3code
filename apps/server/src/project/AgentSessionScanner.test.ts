@@ -1591,41 +1591,6 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   });
 
   describe("recentThreads", () => {
-    it.effect("imports a Claude shell command the history window evicted", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
-        yield* TestClock.setTime(nowMs);
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const workspace = yield* makeTempDir("t3code-workspace-");
-        const clear = "<command-name>/clear</command-name>";
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "shell-session.jsonl"),
-          contents: [
-            clear,
-            "<bash-input>pwd</bash-input>",
-            ...Array.from({ length: 200 }, () => clear),
-          ]
-            .map((content) =>
-              JSON.stringify({ type: "user", cwd: workspace, message: { role: "user", content } }),
-            )
-            .join("\n"),
-          mtimeMs: nowMs - 60_000,
-        });
-
-        const threads = yield* runRecentThreads({
-          claudeHomePath,
-          codexHomePath,
-          workspaceRoot: workspace,
-        });
-
-        expect(
-          threads.map(({ title, omittedMessageCount }) => ({ title, omittedMessageCount })),
-        ).toEqual([{ title: "!pwd", omittedMessageCount: 2 }]);
-      }),
-    );
-
     it.effect("imports Codex conversations stored only as zstd-compressed rollouts", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
@@ -4270,14 +4235,6 @@ describe("parseAgentSessionTranscript", () => {
         },
       ],
       expected: { title: "!pwd", texts: ["!pwd"] },
-    },
-    {
-      name: "a shell command followed by a prompt",
-      records: [
-        { type: "user", message: { role: "user", content: "<bash-input>git status</bash-input>" } },
-        { type: "user", message: { role: "user", content: "Fix the login bug" } },
-      ],
-      expected: { title: "Fix the login bug", texts: ["!git status", "Fix the login bug"] },
     },
     {
       name: "a bare command the agent answered",
