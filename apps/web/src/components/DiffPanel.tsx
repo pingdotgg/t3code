@@ -224,9 +224,58 @@ function DiffFileHeaderSuffix({
   );
 }
 
-// A module function: built inline, the map gets no compiler cache, nor does anything reading it.
+// Header renderers come from module factories: the compiler caches each on its inputs, and its
+// closure keeps only those, not a whole DiffPanel render. Every file's header re-renders when one changes.
 function reviewFileStats(source: ReviewDiffPreviewSource | null) {
   return new Map(source?.files?.map((file) => [file.path, file]));
+}
+
+function headerFilenameSuffixRenderer(
+  source: ReviewDiffPreviewSource | null,
+  fileStates: ReadonlyMap<string, { readonly error: boolean; readonly truncated: boolean }>,
+  workspaceRoot: string | undefined,
+  onRetry: (path: string) => void,
+) {
+  const fileStats = reviewFileStats(source);
+  return (fileDiff: FileDiffMetadata) => {
+    const path = resolveFileDiffPath(fileDiff);
+    const state = fileStates.get(path);
+    return (
+      <DiffFileHeaderSuffix
+        filePath={path}
+        workspaceRoot={workspaceRoot}
+        hasStat={fileStats.has(path)}
+        error={state?.error ?? false}
+        truncated={state?.truncated ?? false}
+        onRetry={onRetry}
+      />
+    );
+  };
+}
+
+function headerMetadataRenderer(source: ReviewDiffPreviewSource | null) {
+  const fileStats = reviewFileStats(source);
+  return (fileDiff: FileDiffMetadata) => {
+    const stat = fileStats.get(resolveFileDiffPath(fileDiff));
+    return stat ? <DiffStatLabel additions={stat.additions} deletions={stat.deletions} /> : null;
+  };
+}
+
+function headerPrefixRenderer(
+  onToggle: (fileKey: string) => void,
+  loadPendingFile: (fileKey: string, filePath: string) => void,
+) {
+  return (fileDiff: FileDiffMetadata, fileKey: string, collapsed: boolean) => (
+    <DiffFileCollapseToggle
+      filePath={resolveFileDiffPath(fileDiff)}
+      fileKey={fileKey}
+      collapsed={collapsed}
+      onToggle={onToggle}
+      {...(fileDiff.cacheKey?.endsWith(":pending")
+        ? { load: () => loadPendingFile(fileKey, resolveFileDiffPath(fileDiff)) }
+        : {})}
+    />
+  );
 }
 
 interface DiffPanelProps {
@@ -931,38 +980,14 @@ export default function DiffPanel({
     codeViewScroll.discard();
     updateCollapsedDiffFiles((current) => toggleAllDiffFiles(shownFileKeys, current));
   };
-  // Named, not inline in the viewer's JSX, so the compiler caches them: every file's header
-  // re-renders when one of them changes.
-  const fileStats = reviewFileStats(lazySource);
-  const renderHeaderFilenameSuffix = (fileDiff: FileDiffMetadata) => {
-    const path = resolveFileDiffPath(fileDiff);
-    const state = fileStates.get(path);
-    return (
-      <DiffFileHeaderSuffix
-        filePath={path}
-        workspaceRoot={activeCwd}
-        hasStat={fileStats.has(path)}
-        error={state?.error ?? false}
-        truncated={state?.truncated ?? false}
-        onRetry={retry}
-      />
-    );
-  };
-  const renderHeaderMetadata = (fileDiff: FileDiffMetadata) => {
-    const stat = fileStats.get(resolveFileDiffPath(fileDiff));
-    return stat ? <DiffStatLabel additions={stat.additions} deletions={stat.deletions} /> : null;
-  };
-  const renderHeaderPrefix = (fileDiff: FileDiffMetadata, fileKey: string, collapsed: boolean) => (
-    <DiffFileCollapseToggle
-      filePath={resolveFileDiffPath(fileDiff)}
-      fileKey={fileKey}
-      collapsed={collapsed}
-      onToggle={toggleDiffFileCollapsed}
-      {...(fileDiff.cacheKey?.endsWith(":pending")
-        ? { load: () => loadPendingFile(fileKey, resolveFileDiffPath(fileDiff)) }
-        : {})}
-    />
+  const renderHeaderFilenameSuffix = headerFilenameSuffixRenderer(
+    lazySource,
+    fileStates,
+    activeCwd,
+    retry,
   );
+  const renderHeaderMetadata = headerMetadataRenderer(lazySource);
+  const renderHeaderPrefix = headerPrefixRenderer(toggleDiffFileCollapsed, loadPendingFile);
 
   const selectTurn = (runId: RunId) => {
     if (!routeThreadRef) return;
