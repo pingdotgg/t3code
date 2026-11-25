@@ -4214,8 +4214,18 @@
   "e1189d2e582b008d": "Manter a sessão atual",
   "a4380762611c94e4": "Controle de versão",
   "7b1660b4b27bdfbb": "Ver",
+  "3e96cf915b1d079b": "Parar {title}",
   "ce591b4de647ecda": "Abrir {title}",
+  "12bd21d2f9722d9c": "Executar {title} novamente",
   "4a9a6f6111329b54": "Recarregar {title}",
+  "ff38aeebd8197da1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " parada. Toque para executar novamente."
+  ],
   "12f0890f800baa7a": "Página indisponível",
   "9c5a2e144cefdf2f": "Somente leitura",
   "12d03e02951725b0": "Lê projetos e threads. Não pode iniciar, enviar mensagens nem alterar nada.",

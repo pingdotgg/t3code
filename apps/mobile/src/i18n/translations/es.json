@@ -4214,8 +4214,18 @@
   "e1189d2e582b008d": "Mantener la sesión actual",
   "a4380762611c94e4": "Control de versiones",
   "7b1660b4b27bdfbb": "Ver",
+  "3e96cf915b1d079b": "Detener {title}",
   "ce591b4de647ecda": "Abrir {title}",
+  "12bd21d2f9722d9c": "Volver a ejecutar {title}",
   "4a9a6f6111329b54": "Recargar {title}",
+  "ff38aeebd8197da1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " detenida. Toca para volver a ejecutarla."
+  ],
   "12f0890f800baa7a": "Página no disponible",
   "9c5a2e144cefdf2f": "Solo lectura",
   "12d03e02951725b0": "Leer proyectos e hilos. No puede iniciar, enviar mensajes ni cambiar nada.",

@@ -4214,8 +4214,18 @@
   "e1189d2e582b008d": "Garder la session actuelle",
   "a4380762611c94e4": "Gestion de versions",
   "7b1660b4b27bdfbb": "Voir",
+  "3e96cf915b1d079b": "Arrêter {title}",
   "ce591b4de647ecda": "Ouvrir {title}",
+  "12bd21d2f9722d9c": "Relancer {title}",
   "4a9a6f6111329b54": "Recharger {title}",
+  "ff38aeebd8197da1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " arrêtée. Touchez pour la relancer."
+  ],
   "12f0890f800baa7a": "Page indisponible",
   "9c5a2e144cefdf2f": "Lecture seule",
   "12d03e02951725b0": "Lire les projets et les fils. Ne peut rien démarrer, envoyer ni modifier.",

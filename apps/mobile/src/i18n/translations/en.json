@@ -4221,8 +4221,18 @@
   "e1189d2e582b008d": "Keep the current session",
   "a4380762611c94e4": "Source control",
   "7b1660b4b27bdfbb": "View",
+  "3e96cf915b1d079b": "Stop {title}",
   "ce591b4de647ecda": "Open {title}",
+  "12bd21d2f9722d9c": "Run {title} again",
   "4a9a6f6111329b54": "Reload {title}",
+  "ff38aeebd8197da1": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " stopped. Tap to run it again."
+  ],
   "12f0890f800baa7a": "Page unavailable",
   "9c5a2e144cefdf2f": "Read only",
   "12d03e02951725b0": "Read projects and threads. Cannot start, message or change anything.",

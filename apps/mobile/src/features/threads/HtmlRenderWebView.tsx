@@ -9,7 +9,7 @@ import {
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
-import { T, useGT } from "gt-react-native";
+import { T, useGT, Var } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -201,6 +201,8 @@ export function ThreadHtmlRender(props: {
   if (uri === null && asset._tag === "Success") setUri(asset.url);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // A stopped page is unmounted, so a runaway script stops using the CPU.
+  const [stopped, setStopped] = useState(false);
   const retried = useRef(false);
   const handleLoadError = () => {
     if (retried.current) {
@@ -217,7 +219,21 @@ export function ThreadHtmlRender(props: {
 
   return (
     <View style={{ marginBottom: ROW_BOTTOM_MARGIN }}>
-      <View style={{ height: ACTION_ROW_HEIGHT }} className="flex-row items-start justify-end">
+      <View
+        style={{ height: ACTION_ROW_HEIGHT }}
+        className="flex-row items-start justify-end gap-2"
+      >
+        {uri !== null && !failed && !stopped ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={gt("Stop {title}", { title })}
+            hitSlop={8}
+            className="h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
+            onPress={() => setStopped(true)}
+          >
+            <SymbolView name="stop.fill" size={12} tintColor={props.iconColor} type="monochrome" />
+          </Pressable>
+        ) : null}
         {uri !== null && !failed ? (
           <Pressable
             accessibilityRole="button"
@@ -246,7 +262,23 @@ export function ThreadHtmlRender(props: {
         ) : null}
       </View>
       <View style={{ height }}>
-        {uri !== null && !failed ? (
+        {stopped ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={gt("Run {title} again", { title })}
+            className="flex-1 items-center justify-center"
+            onPress={() => {
+              retried.current = false;
+              setStopped(false);
+            }}
+          >
+            <Text className="text-sm text-foreground-muted">
+              <T>
+                <Var>{title}</Var> stopped. Tap to run it again.
+              </T>
+            </Text>
+          </Pressable>
+        ) : uri !== null && !failed ? (
           <HtmlRenderWebView
             key={`${uri}:${attempt}`}
             uri={uri}
