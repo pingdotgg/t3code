@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useState, type RefObject } from "react";
 import { Pressable, TextInput, type TextInputInstance, View } from "react-native";
 
 import { SymbolView } from "./AppSymbol";
@@ -24,6 +24,18 @@ export function SearchField({
   onChangeText,
 }: SearchFieldProps) {
   const { scale, mediumIconSize } = useAndroidControlSizing();
+  const [text, setText] = useState(value);
+  const [previousValue, setPreviousValue] = useState(value);
+  if (previousValue !== value) {
+    setPreviousValue(value);
+    setText(value);
+  }
+  const changeText = (next: string) => {
+    // The workspace header receives its props a commit later. Echo native input immediately
+    // so TextInput cannot restore the old query and cancel an IME's composing span.
+    setText(next);
+    onChangeText(next);
+  };
   return (
     <View
       className="min-w-0 flex-1 flex-row items-center rounded-full border border-input-border bg-input"
@@ -52,16 +64,16 @@ export function SearchField({
         selectionHandleColorClassName="accent-focus"
         className="min-w-0 flex-1 font-sans text-base text-foreground"
         style={{ minHeight: Math.max(48, 42 * scale), paddingVertical: 7 * scale }}
-        value={value}
-        onChangeText={onChangeText}
+        value={text}
+        onChangeText={changeText}
       />
-      {value.length > 0 ? (
+      {text.length > 0 ? (
         <Pressable
           accessibilityLabel={clearAccessibilityLabel}
           accessibilityRole="button"
           hitSlop={10}
           onPress={() => {
-            onChangeText("");
+            changeText("");
             inputRef.current?.focus();
           }}
         >
