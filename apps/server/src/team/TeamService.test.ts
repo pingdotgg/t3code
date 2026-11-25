@@ -10,13 +10,18 @@ import {
   AuthSessionId,
   AuthStandardClientScopes,
   CommandId,
+  EnvironmentId,
   MessageId,
   NodeId,
+  ProjectId,
+  ProviderInstanceId,
   RunId,
   RuntimeRequestId,
   TeamMemberId,
   ThreadId,
+  effectiveTeamThreadNoteHash,
   type AuthClientMetadata,
+  type ModelSelection,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
   type TeamStateStreamEvent,
@@ -88,6 +93,9 @@ describe("TeamService", () => {
         threadAttributions: [],
         followedThreadIds: [],
         latestTurnAttributions: [],
+        teamProjects: [],
+        environments: [],
+        threadNotes: [],
       });
 
       const threadId = ThreadId.make("thread-personal-1");
@@ -2054,6 +2062,303 @@ describe("TeamService", () => {
         expect(childAttr.creatorMemberId).toBe(charlie.member.id);
         expect(yield* team.canReadThread(bob.sessionId, charlieChildThreadId)).toBe(false);
         expect(yield* team.canReadThread(charlie.sessionId, charlieChildThreadId)).toBe(true);
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "enforces Milestone 5 team projects, per-environment ACLs, absolute local-execution boundary, immutable hash-pinned thread notes, empty prompts, and TOCTOU concurrent note re-anchoring",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({ subject: "alice-m5" });
+        const init = yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "M5 Team", ownerPseudo: "alice" },
+        });
+        const inviteAndJoin = (pseudo: string, role: "admin" | "modo" | "regular") =>
+          Effect.gen(function* () {
+            const created = yield* team.createInvite({
+              sessionId: aliceSession.sessionId,
+              payload: { role, prefilledPseudo: pseudo },
+            });
+            const redeemed = yield* team.redeemInvite({
+              token: created.token,
+              pseudo,
+              client: testClient,
+            });
+            const verified = yield* sessions.verify(redeemed.accessToken);
+            return { member: redeemed.member, sessionId: verified.sessionId };
+          });
+        const bob = yield* inviteAndJoin("bob", "regular");
+        const charlie = yield* inviteAndJoin("charlie", "modo");
+
+        // 1. Team Projects assignment (owner/admin only) + repo identity correlation.
+        const projectId = ProjectId.make("proj-m5-core");
+        const bobAssignExit = yield* Effect.exit(
+          team.assignProject({
+            sessionId: bob.sessionId,
+            payload: { projectId, defaultViewId: null, repoIdentityKey: "github.com/acme/m5" },
+          }),
+        );
+        expect(bobAssignExit._tag).toBe("Failure");
+        const assigned = yield* team.assignProject({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            projectId,
+            defaultViewId: init.team.defaultViewId,
+            repoIdentityKey: "github.com/acme/m5",
+          },
+        });
+        expect(assigned.projectId).toBe(projectId);
+        expect(assigned.repoIdentityKey).toBe("github.com/acme/m5");
+
+        // 2. Team Environments & per-environment ACLs (Entry 0 default protected; restricted env hidden & blocked for regular Bob).
+        const aliceState0 = yield* team.getState(aliceSession.sessionId);
+        const defaultEnv = (aliceState0.environments ?? []).find((env) => env.isDefault);
+        expect(defaultEnv).toBeDefined();
+        const detachDefaultExit = yield* Effect.exit(
+          team.detachEnvironment({
+            sessionId: aliceSession.sessionId,
+            payload: { environmentId: defaultEnv!.environmentId },
+          }),
+        );
+        expect(detachDefaultExit._tag).toBe("Failure");
+
+        const restrictedEnvId = EnvironmentId.make("env-gpu-m5");
+        const attached = yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: restrictedEnvId,
+            name: "GPU Runner",
+            accessRule: { roles: ["owner", "admin"], memberIds: [] },
+          },
+        });
+        expect(attached.environmentId).toBe(restrictedEnvId);
+
+        // Regular Bob cannot see restrictedEnvId in getState, filterAccessibleEnvironmentIds, or assertCanAccessEnvironment.
+        const bobState = yield* team.getState(bob.sessionId);
+        expect((bobState.environments ?? []).map((e) => e.environmentId)).not.toContain(
+          restrictedEnvId,
+        );
+        expect(
+          (yield* team.filterAccessibleEnvironmentIds(bob.sessionId, [
+            defaultEnv!.environmentId,
+            restrictedEnvId,
+          ])).has(restrictedEnvId),
+        ).toBe(false);
+        expect(
+          (yield* Effect.exit(team.assertCanAccessEnvironment(bob.sessionId, restrictedEnvId)))
+            ._tag,
+        ).toBe("Failure");
+        yield* team.assertCanAccessEnvironment(aliceSession.sessionId, restrictedEnvId);
+
+        // 3. Local-to-Team thread syncing + absolute local-execution boundary (even owner Alice cannot execute on Bob's local thread).
+        const bobLocalThreadId = ThreadId.make("thread-bob-local-1");
+        const bobLaptopEnvId = EnvironmentId.make("env-bob-laptop");
+        const modelSelection: ModelSelection = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5",
+          options: [],
+        };
+        const syncedResult = yield* team.syncLocalThread({
+          sessionId: bob.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            projectId,
+            executionEnvironmentId: bobLaptopEnvId,
+            executionEnvironmentLabel: "Bob Laptop",
+            title: "Local debugging",
+            branch: "feat/local",
+            modelSelection,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:01.000Z",
+            runs: [],
+            messages: [],
+          },
+        });
+        expect(syncedResult.attribution.isLocalSynced).toBe(true);
+        expect(syncedResult.attribution.executionEnvironmentId).toBe(bobLaptopEnvId);
+        expect(syncedResult.attribution.creatorMemberId).toBe(bob.member.id);
+
+        // Alice (owner) cannot overwrite Bob's local-synced thread nor dispatch/execute on it!
+        expect(
+          (yield* Effect.exit(
+            team.syncLocalThread({
+              sessionId: aliceSession.sessionId,
+              payload: {
+                threadId: bobLocalThreadId,
+                projectId,
+                executionEnvironmentId: bobLaptopEnvId,
+                executionEnvironmentLabel: "Hijack",
+                title: "Hijack",
+                branch: null,
+                modelSelection,
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:02.000Z",
+                runs: [],
+                messages: [],
+              },
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertCanExecuteOnThreadEnvironment(aliceSession.sessionId, bobLocalThreadId),
+          ))._tag,
+        ).toBe("Failure");
+
+        // 4. Immutable hash-pinned Thread Notes, author delete only while pending, owner Edit preserving originalBody,
+        //    empty prompt dispatch, hash-mismatch rejection, zero implicit injection, and TOCTOU concurrent re-anchoring.
+        const aliceNote = yield* team.createThreadNote({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            body: "Check the null guard in parser.ts",
+          },
+        });
+        expect(aliceNote.status).toBe("pending");
+        expect(aliceNote.authorRole).toBe("owner");
+        expect(aliceNote.originalContentHash.length).toBeGreaterThan(10);
+
+        const charlieNote = yield* team.createThreadNote({
+          sessionId: charlie.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            body: "Temporary note to delete",
+          },
+        });
+        // Non-author (Alice) cannot delete Charlie's note; Charlie can delete while pending.
+        expect(
+          (yield* Effect.exit(
+            team.deleteThreadNote({
+              sessionId: aliceSession.sessionId,
+              payload: { noteId: charlieNote.id },
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        const deletedNote = yield* team.deleteThreadNote({
+          sessionId: charlie.sessionId,
+          payload: { noteId: charlieNote.id },
+        });
+        expect(deletedNote.deleted).toBe(true);
+
+        // Owner Bob edits Alice's note -> preserves originalBody, computes new editedContentHash, marks accepted.
+        const editedNote = yield* team.editThreadNote({
+          sessionId: bob.sessionId,
+          payload: {
+            noteId: aliceNote.id,
+            editedBody: "Check the null guard in parser.ts and add a regression test",
+            status: "accepted",
+          },
+        });
+        expect(editedNote.originalBody).toBe("Check the null guard in parser.ts");
+        expect(editedNote.editedBody).toBe(
+          "Check the null guard in parser.ts and add a regression test",
+        );
+        expect(editedNote.editedContentHash).not.toBeNull();
+        expect(editedNote.editedContentHash).not.toBe(editedNote.originalContentHash);
+
+        // Concurrent note arrives from Charlie right before Bob dispatches!
+        const concurrentNote = yield* team.createThreadNote({
+          sessionId: charlie.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            body: "Wait, also check edge case Z!",
+          },
+        });
+        expect(concurrentNote.status).toBe("pending");
+
+        // Hash mismatch is rejected (e.g., passing stale originalContentHash after edit).
+        const staleHashExit = yield* Effect.exit(
+          team.consumeAcceptedNotes({
+            sessionId: bob.sessionId,
+            payload: {
+              threadId: bobLocalThreadId,
+              targetTurnId: "msg:turn-2",
+              acceptedNotes: [
+                { noteId: editedNote.id, contentHash: editedNote.originalContentHash },
+              ],
+            },
+          }),
+        );
+        expect(staleHashExit._tag).toBe("Failure");
+
+        // Consuming with exact editedContentHash succeeds, builds attributed prompt, consumes ONLY editedNote,
+        // and atomically re-anchors concurrentNote AFTER "msg:turn-2" (still pending, never implicitly injected!).
+        const consumed = yield* team.consumeAcceptedNotes({
+          sessionId: bob.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            targetTurnId: "msg:turn-2",
+            acceptedNotes: [
+              { noteId: editedNote.id, contentHash: effectiveTeamThreadNoteHash(editedNote) },
+            ],
+          },
+        });
+        expect(consumed.consumedNotes.map((n) => n.id)).toEqual([editedNote.id]);
+        expect(consumed.reanchoredNoteIds).toEqual([concurrentNote.id]);
+        expect(consumed.formattedPromptPrefix).toContain(
+          "[Note from alice (edited & approved by bob)]:",
+        );
+        expect(consumed.formattedPromptPrefix).toContain("add a regression test");
+        expect(consumed.formattedPromptPrefix).not.toContain("edge case Z");
+
+        const notesAfterConsume = yield* team.listThreadNotes({
+          sessionId: bob.sessionId,
+          payload: { threadId: bobLocalThreadId },
+        });
+        const consumedRecord = notesAfterConsume.find((n) => n.id === editedNote.id);
+        const reanchoredRecord = notesAfterConsume.find((n) => n.id === concurrentNote.id);
+        expect(consumedRecord?.status).toBe("consumed");
+        expect(consumedRecord?.includedInTurnId).toBe("msg:turn-2");
+        expect(reanchoredRecord?.status).toBe("pending");
+        expect(reanchoredRecord?.anchorTurnId).toBe("msg:turn-2");
+
+        // 5. Remote thread empty prompt ("") dispatch with explicit teamAcceptedNotes succeeds and injects attributed text.
+        const remoteThreadId = ThreadId.make("thread-alice-remote-m5");
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: remoteThreadId,
+        });
+        const bobRemoteNote = yield* team.createThreadNote({
+          sessionId: bob.sessionId,
+          payload: {
+            threadId: remoteThreadId,
+            body: "Run the smoke tests",
+          },
+        });
+        const acceptedRemoteNote = yield* team.resolveThreadNote({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            noteId: bobRemoteNote.id,
+            status: "accepted",
+            expectedContentHash: bobRemoteNote.originalContentHash,
+          },
+        });
+        const normalized = yield* team.assertAndNormalizeDispatchCommand(aliceSession.sessionId, {
+          type: "message.dispatch",
+          commandId: CommandId.make("cmd-empty-with-note"),
+          threadId: remoteThreadId,
+          messageId: MessageId.make("msg-empty-with-note"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          teamAcceptedNotes: [
+            {
+              noteId: acceptedRemoteNote.id,
+              contentHash: effectiveTeamThreadNoteHash(acceptedRemoteNote),
+            },
+          ],
+        });
+        expect(normalized.type).toBe("message.dispatch");
+        if (normalized.type === "message.dispatch") {
+          expect(normalized.text).toContain("[Note from bob (approved by alice)]:");
+          expect(normalized.text).toContain("Run the smoke tests");
+        }
       }).pipe(Effect.provide(makeTestLayer())),
   );
 

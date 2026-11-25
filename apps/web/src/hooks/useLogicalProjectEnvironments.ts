@@ -2,6 +2,12 @@ import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operation
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
+  extractProjectRepoIdentityKey,
+  listAccessibleTeamEnvironments,
+  resolveProjectTeamAssignment,
+} from "@t3tools/client-runtime/team";
+import {
+  canMemberAccessTeamEnvironment,
   type EnvironmentId,
   type ProjectId,
   resolveEnvironmentMachineKind,
@@ -14,6 +20,7 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { useProjects } from "../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
+import { useTeamStatesByEnvironment } from "../state/team";
 import { useClientSettings } from "./useSettings";
 
 export function useLogicalProjectEnvironments(
@@ -24,18 +31,34 @@ export function useLogicalProjectEnvironments(
   const allProjects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const teamStates = useTeamStatesByEnvironment();
 
   if (!activeProject) return [];
   const environmentById = new Map(
     environments.map((environment) => [environment.environmentId, environment]),
   );
+  const teamAssignment = resolveProjectTeamAssignment({ project: activeProject, teamStates });
+  const isEnvBlockedByTeamAcl = (environmentId: EnvironmentId): boolean => {
+    if (!teamAssignment || environmentId === primaryEnvironmentId) return false;
+    const teamEnv = teamAssignment.teamState.environmentById.get(environmentId);
+    if (!teamEnv) return false;
+    return !canMemberAccessTeamEnvironment(teamAssignment.teamState.currentMember, teamEnv);
+  };
   const envs: EnvironmentOption[] = [];
-  const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
+  const seenEnvIds = new Set<EnvironmentId>();
+  const pushEnvironment = (
+    environmentId: EnvironmentId,
+    projectId: ProjectId | null,
+    labelOverride?: string,
+  ) => {
+    if (seenEnvIds.has(environmentId)) return;
+    if (isEnvBlockedByTeamAcl(environmentId)) return;
+    seenEnvIds.add(environmentId);
     const environment = environmentById.get(environmentId) ?? null;
     envs.push({
       environmentId,
       projectId,
-      label: environment?.label ?? environmentId,
+      label: labelOverride ?? environment?.label ?? environmentId,
       isPrimary: environmentId === primaryEnvironmentId,
       machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
     });
@@ -59,12 +82,39 @@ export function useLogicalProjectEnvironments(
     }
   } else {
     const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
-    const seen = new Set<string>();
     for (const p of allProjects) {
-      if (seen.has(p.environmentId)) continue;
       if (deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) !== logicalKey) continue;
-      seen.add(p.environmentId);
       pushEnvironment(p.environmentId, p.id);
+    }
+    if (teamAssignment) {
+      const repoKey =
+        extractProjectRepoIdentityKey(activeProject.repositoryIdentity) ??
+        teamAssignment.assignment.repoIdentityKey;
+      for (const teamEnv of listAccessibleTeamEnvironments(teamAssignment.teamState)) {
+        if (seenEnvIds.has(teamEnv.environmentId)) continue;
+        const matchedProject =
+          teamEnv.environmentId === teamAssignment.teamEnvironmentId
+            ? allProjects.find(
+                (p) =>
+                  p.environmentId === teamEnv.environmentId &&
+                  p.id === teamAssignment.assignment.projectId,
+              )
+            : repoKey !== null
+              ? allProjects.find(
+                  (p) =>
+                    p.environmentId === teamEnv.environmentId &&
+                    extractProjectRepoIdentityKey(p.repositoryIdentity) === repoKey,
+                )
+              : undefined;
+        pushEnvironment(
+          teamEnv.environmentId,
+          matchedProject?.id ??
+            (teamEnv.environmentId === teamAssignment.teamEnvironmentId
+              ? teamAssignment.assignment.projectId
+              : null),
+          teamEnv.name,
+        );
+      }
     }
   }
   envs.sort((a, b) => {

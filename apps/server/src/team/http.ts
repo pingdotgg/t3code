@@ -35,6 +35,11 @@ const mapTeamHttpError = (error: TeamOperationError) => {
     case "last_owner":
     case "default_view_protected":
     case "view_name_taken":
+    case "default_environment_protected":
+    case "environment_already_attached":
+    case "note_hash_mismatch":
+    case "note_not_pending":
+    case "note_already_consumed":
       return new TeamHttpConflictError({ code: error.code, message: error.message });
     case "not_found":
     case "not_configured":
@@ -43,6 +48,7 @@ const mapTeamHttpError = (error: TeamOperationError) => {
     case "invite_invalid":
     case "invalid_input":
     case "forbidden":
+    case "environment_unavailable":
       return new TeamHttpBadRequestError({ code: error.code, message: error.message });
     case "internal":
       return new TeamHttpInternalError({ code: error.code, message: error.message });

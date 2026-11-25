@@ -184,6 +184,85 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
         `;
     }),
   },
+  {
+    id: 4,
+    name: "TeamProjectsEnvironmentsAndNotes",
+    up: Effect.fn("TeamMigrations.TeamProjectsEnvironmentsAndNotes")(function* (
+      sql: SqlClient.SqlClient,
+    ) {
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_project_meta (
+            project_id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            default_view_id TEXT,
+            repo_identity_key TEXT,
+            assigned_by_member_id TEXT NOT NULL REFERENCES team_members(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_project_meta_team_repo
+            ON team_project_meta (team_id, repo_identity_key)
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_environments (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            environment_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+            peer_link_id TEXT,
+            access_roles_json TEXT NOT NULL,
+            access_member_ids_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_team_environments_team_env
+            ON team_environments (team_id, environment_id)
+        `;
+      yield* sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_team_environments_team_default
+            ON team_environments (team_id)
+            WHERE is_default = 1
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_thread_notes (
+            id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            author_member_id TEXT NOT NULL REFERENCES team_members(id),
+            original_body TEXT NOT NULL,
+            original_content_hash TEXT NOT NULL,
+            edited_body TEXT,
+            edited_content_hash TEXT,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'rejected', 'consumed')),
+            anchor_turn_id TEXT,
+            anchor_seq INTEGER NOT NULL DEFAULT 0,
+            included_in_turn_id TEXT,
+            resolved_by_member_id TEXT REFERENCES team_members(id),
+            resolved_at TEXT,
+            created_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_thread_notes_thread_order
+            ON team_thread_notes (thread_id, anchor_seq, created_at)
+        `;
+      yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_thread_notes_team_thread_status
+            ON team_thread_notes (team_id, thread_id, status)
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_thread_env_labels (
+            thread_id TEXT PRIMARY KEY,
+            execution_environment_label TEXT NOT NULL
+          )
+        `;
+    }),
+  },
 ];
 
 /**

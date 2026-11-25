@@ -573,6 +573,12 @@ it("gates team thread notifications by creator, follow state, and completing tur
     ]),
     viewById: new Map(),
     attributionByThreadId: new Map([[threadId, attribution]]),
+    teamProjects: [],
+    projectAssignmentByProjectId: new Map(),
+    projectAssignmentByRepoKey: new Map(),
+    environments: [],
+    environmentById: new Map(),
+    threadNotesByThreadId: new Map(),
   };
 
   state.teamStates.set("one", baseTeamState);
@@ -706,6 +712,12 @@ it("defers notifications and sound across team stream races without leaking coll
     ]),
     viewById: new Map(),
     attributionByThreadId: new Map([[threadId, attribution]]),
+    teamProjects: [],
+    projectAssignmentByProjectId: new Map(),
+    projectAssignmentByRepoKey: new Map(),
+    environments: [],
+    environmentById: new Map(),
+    threadNotesByThreadId: new Map(),
   };
 
   // Race A: Shell completes while team metadata is still loading -> must NOT notify or play sound.

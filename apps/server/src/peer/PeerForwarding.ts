@@ -26,6 +26,8 @@ import { assertNotLinked } from "../mcp/linkOrigin.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { readCaller, unavailable } from "../mcp/threadAccess.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as TeamMcpAccess from "../team/mcpAccess.ts";
+import * as TeamService from "../team/TeamService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
 
@@ -117,6 +119,21 @@ const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
   const crypto = yield* Digest.Digest;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
+
+  const withTeamMcpContext = <A, E>(
+    scope: Scope,
+    effect: Effect.Effect<A, E, never>,
+  ): Effect.Effect<A, E, never> => {
+    const withScope = Effect.provideService(
+      effect,
+      McpInvocationContext.McpInvocationContext,
+      scope,
+    );
+    return Option.isSome(teamServiceOption)
+      ? Effect.provideService(withScope, TeamService.TeamService, teamServiceOption.value)
+      : withScope;
+  };
 
   /**
    * The caller's own limits and thread, which travel with every forwarded call: the peer sees only the
@@ -174,6 +191,7 @@ const make = Effect.gen(function* () {
     params: unknown,
   ) {
     const { caller, limits } = yield* forwardingCaller(scope);
+    yield* withTeamMcpContext(scope, TeamMcpAccess.assertCanAccessEnvironment(environmentId));
     const encoded = (yield* Schema.encodeUnknownEffect(parameters as Schema.Encoder<unknown>)(
       params,
     ).pipe(Effect.mapError(unavailable))) as Record<string, unknown>;
@@ -296,9 +314,14 @@ const make = Effect.gen(function* () {
       yield* forwardingCaller(scope);
       yield* requireEnabled;
       const listed = yield* links.list.pipe(Effect.mapError(linkStorageFailure));
+      const accessibleIds = yield* withTeamMcpContext(
+        scope,
+        TeamMcpAccess.filterAccessibleEnvironmentIds(listed.map((link) => link.environmentId)),
+      );
+      const visible = listed.filter((link) => accessibleIds.has(link.environmentId));
       return {
         environmentId: scope.environmentId,
-        links: listed.map((link) => ({
+        links: visible.map((link) => ({
           environmentId: link.environmentId,
           label: link.label,
           status: link.status,

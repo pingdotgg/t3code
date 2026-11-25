@@ -438,6 +438,8 @@ export const layerProduction = Layer.mergeAll(
     Layer.provide(Layer.merge(layerThreadManagementProvided, ProjectionStore.layer)),
   ),
   layer,
+  layerEventSink,
+  ProjectionStore.layer,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
   layerScheduledTaskProvided,

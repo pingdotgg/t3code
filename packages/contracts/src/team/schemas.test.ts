@@ -6,10 +6,14 @@ import {
   canAssignTeamRole,
   canChangeTeamMemberRole,
   canChangeThreadTeamView,
+  canManageTeamEnvironments,
   canManageTeamInvites,
+  canManageTeamProjects,
   canManageTeamViews,
+  canMemberAccessTeamEnvironment,
   canMemberCreateThreadInTeamView,
   canMemberInterruptTeamTurn,
+  canMemberLeaveTeamThreadNote,
   canMemberManageTeamQueuedRun,
   canMemberPostInTeamThread,
   canMemberPromoteTeamQueuedRun,
@@ -17,12 +21,20 @@ import {
   canMemberSteerActiveTeamTurn,
   canModifyTeamMember,
   canToggleTeamThreadLock,
+  effectiveTeamThreadNoteBody,
+  effectiveTeamThreadNoteHash,
+  formatAcceptedTeamNoteForPrompt,
   isValidTeamPseudo,
   parseTeamJoinLink,
+  requiresTeamNoteApprovalConfirmation,
+  resolveTeamThreadEnvironmentAccess,
   resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
+  TeamId,
   TeamMemberId,
+  TeamThreadNoteId,
 } from "./schemas.ts";
+import { EnvironmentId, ThreadId } from "../baseSchemas.ts";
 
 describe("team role hierarchy", () => {
   it("starts invite and role management at modo and caps assignments at actor role", () => {
@@ -453,5 +465,179 @@ describe("shouldNotifyTeamMemberForThread", () => {
     ],
   ])("evaluates %s -> %s", (_label, input, expected) => {
     expect(shouldNotifyTeamMemberForThread(input)).toBe(expected);
+  });
+});
+
+describe("Milestone 5 environments, local boundary, and thread notes", () => {
+  const owner = {
+    id: TeamMemberId.make("m-owner"),
+    role: "owner" as const,
+    status: "active" as const,
+  };
+  const admin = {
+    id: TeamMemberId.make("m-admin"),
+    role: "admin" as const,
+    status: "active" as const,
+  };
+  const modo = {
+    id: TeamMemberId.make("m-modo"),
+    role: "modo" as const,
+    status: "active" as const,
+  };
+  const regular = {
+    id: TeamMemberId.make("m-regular"),
+    role: "regular" as const,
+    status: "active" as const,
+  };
+
+  it("gates environment and project management to owner/admin and requires confirmation only for regular note authors", () => {
+    expect(canManageTeamEnvironments("owner")).toBe(true);
+    expect(canManageTeamEnvironments("admin")).toBe(true);
+    expect(canManageTeamEnvironments("modo")).toBe(false);
+    expect(canManageTeamEnvironments("regular")).toBe(false);
+
+    expect(canManageTeamProjects("owner")).toBe(true);
+    expect(canManageTeamProjects("admin")).toBe(true);
+    expect(canManageTeamProjects("modo")).toBe(false);
+    expect(canManageTeamProjects("regular")).toBe(false);
+
+    expect(requiresTeamNoteApprovalConfirmation("regular")).toBe(true);
+    expect(requiresTeamNoteApprovalConfirmation("modo")).toBe(false);
+    expect(requiresTeamNoteApprovalConfirmation("admin")).toBe(false);
+    expect(requiresTeamNoteApprovalConfirmation("owner")).toBe(false);
+  });
+
+  it("enforces per-environment ACLs and the absolute local-execution boundary (even against owner/admin)", () => {
+    const restrictedEnv = {
+      environmentId: EnvironmentId.make("env-gpu"),
+      name: "GPU Runner",
+      isDefault: false,
+      accessRule: { roles: ["owner", "admin"] as const, memberIds: [modo.id] as const },
+    };
+    expect(canMemberAccessTeamEnvironment(owner, restrictedEnv)).toBe(true);
+    expect(canMemberAccessTeamEnvironment(admin, restrictedEnv)).toBe(true);
+    expect(canMemberAccessTeamEnvironment(modo, restrictedEnv)).toBe(true);
+    expect(canMemberAccessTeamEnvironment(regular, restrictedEnv)).toBe(false);
+
+    const bobLocalAttr = {
+      creatorMemberId: regular.id,
+      creatorPseudo: "bob" as never,
+      isLocalSynced: true,
+      executionEnvironmentId: EnvironmentId.make("env-bob-laptop"),
+      executionEnvironmentLabel: "Bob Laptop",
+    };
+    // Even owner and admin cannot execute on Bob's local-synced thread!
+    expect(
+      resolveTeamThreadEnvironmentAccess({
+        member: owner,
+        attribution: bobLocalAttr,
+        environments: [restrictedEnv],
+      }),
+    ).toMatchObject({ canExecute: false, reason: "other_member_local" });
+    expect(
+      resolveTeamThreadEnvironmentAccess({
+        member: admin,
+        attribution: bobLocalAttr,
+        environments: [restrictedEnv],
+      }),
+    ).toMatchObject({ canExecute: false, reason: "other_member_local" });
+    // Bob himself can execute only when viewing on his local execution environment.
+    expect(
+      resolveTeamThreadEnvironmentAccess({
+        member: regular,
+        attribution: bobLocalAttr,
+        environments: [restrictedEnv],
+        viewingOnLocalExecutionEnvironment: true,
+      }),
+    ).toEqual({ canExecute: true, reason: "ok" });
+    // Remote restricted environment denies regular.
+    expect(
+      resolveTeamThreadEnvironmentAccess({
+        member: regular,
+        attribution: {
+          creatorMemberId: owner.id,
+          creatorPseudo: "alice" as never,
+          isLocalSynced: false,
+          executionEnvironmentId: restrictedEnv.environmentId,
+        },
+        environments: [restrictedEnv],
+      }),
+    ).toMatchObject({ canExecute: false, reason: "environment_acl_denied" });
+  });
+
+  it("gates note leaving by lock and view.postRule and formats attributed prompt blocks", () => {
+    const openView = {
+      readRule: { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] as const },
+      postRule: { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] as const },
+    };
+    const readOnlyView = {
+      readRule: { roles: ["owner", "admin", "modo", "regular"] as const, memberIds: [] as const },
+      postRule: { roles: ["owner", "admin"] as const, memberIds: [] as const },
+    };
+    expect(
+      canMemberLeaveTeamThreadNote({
+        member: regular,
+        attribution: { creatorMemberId: owner.id, locked: false },
+        view: openView,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberLeaveTeamThreadNote({
+        member: regular,
+        attribution: { creatorMemberId: owner.id, locked: true },
+        view: openView,
+      }),
+    ).toBe(false);
+    expect(
+      canMemberLeaveTeamThreadNote({
+        member: owner,
+        attribution: { creatorMemberId: regular.id, locked: true },
+        view: openView,
+      }),
+    ).toBe(true);
+    expect(
+      canMemberLeaveTeamThreadNote({
+        member: regular,
+        attribution: { creatorMemberId: owner.id, locked: false },
+        view: readOnlyView,
+      }),
+    ).toBe(false);
+
+    const baseNote = {
+      id: TeamThreadNoteId.make("note-1"),
+      threadId: ThreadId.make("t-1"),
+      teamId: TeamId.make("team-1"),
+      authorMemberId: regular.id,
+      authorPseudo: "bob" as never,
+      authorRole: "regular" as const,
+      originalBody: "Try running tests with --runInBand",
+      originalContentHash: "hash-orig",
+      editedBody: null,
+      editedContentHash: null,
+      status: "accepted" as const,
+      anchorTurnId: "run-1",
+      anchorSeq: 1,
+      includedInTurnId: null,
+      resolvedByMemberId: owner.id,
+      resolvedByPseudo: "alice" as never,
+      resolvedAt: "2026-01-01T00:00:00.000Z",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    expect(effectiveTeamThreadNoteBody(baseNote)).toBe("Try running tests with --runInBand");
+    expect(effectiveTeamThreadNoteHash(baseNote)).toBe("hash-orig");
+    expect(formatAcceptedTeamNoteForPrompt({ ...baseNote, approverPseudo: "alice" })).toBe(
+      "[Note from bob (approved by alice)]: Try running tests with --runInBand",
+    );
+
+    const editedNote = {
+      ...baseNote,
+      editedBody: "Run only unit tests first",
+      editedContentHash: "hash-edit",
+    };
+    expect(effectiveTeamThreadNoteBody(editedNote)).toBe("Run only unit tests first");
+    expect(effectiveTeamThreadNoteHash(editedNote)).toBe("hash-edit");
+    expect(formatAcceptedTeamNoteForPrompt({ ...editedNote, approverPseudo: "alice" })).toBe(
+      "[Note from bob (edited & approved by alice)]: Run only unit tests first",
+    );
   });
 });

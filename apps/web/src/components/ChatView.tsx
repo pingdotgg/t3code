@@ -212,10 +212,23 @@ import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { ComposerContextPermissions } from "./ComposerContextPermissions";
 import { TeamDraftAccessControls } from "./team/TeamDraftAccessControls";
 import {
+  formatTeamThreadEnvBlockReason,
   formatTeamThreadPostBlockReason,
+  teamInaccessibleEnvironmentBannerItem,
+  teamNoteModeComposerBannerItem,
+  teamPendingNotesComposerBannerItem,
   teamReadOnlyComposerBannerItem,
 } from "./team/teamComposerBanner";
-import { useTeamThreadPostPermission, useTeamThreadTurnControls } from "../state/team";
+import {
+  openTeamForkDialog,
+  setTeamThreadNoteMode,
+  teamEnvironment,
+  useTeamThreadContext,
+  useTeamThreadNoteMode,
+  useTeamThreadPostPermission,
+  useTeamThreadTurnControls,
+} from "../state/team";
+import { effectiveTeamThreadNoteHash, type TeamThreadNote } from "@t3tools/contracts";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -685,6 +698,9 @@ export default function ChatView(props: ChatViewProps) {
     const draft = store.getComposerDraft(composerDraftTarget);
     return draft ? composerDraftHasUserContent({ ...draft, prompt: "" }) : false;
   });
+  const composerHasPromptText = useComposerDraftStore(
+    (store) => (store.getComposerDraft(composerDraftTarget)?.prompt ?? "").trim().length > 0,
+  );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
@@ -2810,6 +2826,107 @@ export default function ChatView(props: ChatViewProps) {
       : null,
     messages,
   );
+  const connectedEnvironmentIds = environments
+    .filter((env) => env.connection.phase === "connected")
+    .map((env) => env.environmentId);
+  const teamThreadContext = useTeamThreadContext({
+    environmentId,
+    threadId,
+    project: activeProject,
+  });
+  const isTeamNoteModeRequested = useTeamThreadNoteMode(routeThreadKey);
+  const effectiveTeamNoteMode =
+    isServerThread &&
+    !teamThreadContext.envAccess.canExecute &&
+    teamThreadContext.canLeaveNote &&
+    isTeamNoteModeRequested;
+  const teamThreadAttribution =
+    teamThreadContext.teamState.attributionByThreadId.get(threadId) ?? null;
+  const teamThreadOwnerPseudo = teamThreadAttribution
+    ? (teamThreadContext.teamState.memberById.get(teamThreadAttribution.creatorMemberId)?.pseudo ??
+      teamThreadAttribution.creatorPseudo)
+    : null;
+  const teamThreadEnvLabel = teamThreadAttribution?.executionEnvironmentLabel ?? null;
+  const hasPendingTeamNotes =
+    isServerThread &&
+    teamThreadContext.envAccess.canExecute &&
+    teamThreadContext.pendingNotes.length > 0;
+  const hasAcceptedTeamNotes =
+    isServerThread &&
+    teamThreadContext.envAccess.canExecute &&
+    teamThreadContext.acceptedNotes.length > 0;
+  const teamEnvDisabledReason =
+    isServerThread && !teamThreadContext.envAccess.canExecute && !effectiveTeamNoteMode
+      ? formatTeamThreadEnvBlockReason(teamThreadContext.envAccess, teamThreadOwnerPseudo, messages)
+      : null;
+  const consumeAcceptedTeamNotesForCard = useAtomCommand(teamEnvironment.consumeAcceptedNotes, {
+    reportFailure: false,
+  });
+  const onDispatchAcceptedTeamNote = async (input: {
+    readonly note: TeamThreadNote;
+    readonly queueBehindActive: boolean;
+  }) => {
+    if (!activeThread || !teamThreadContext.teamEnvironmentId) return;
+    const messageIdForNote = newMessageId();
+    const acceptedRef = {
+      noteId: input.note.id,
+      contentHash: effectiveTeamThreadNoteHash(input.note),
+    };
+    const modelSelection =
+      composerRef.current?.getSendContext().selectedModelSelection ?? activeThread.modelSelection;
+    let promptText = "";
+    let teamAcceptedNotesArg: ReadonlyArray<typeof acceptedRef> | undefined;
+    if (teamThreadContext.isViewingOnLocalExecutionEnvironment) {
+      const consumed = await consumeAcceptedTeamNotesForCard({
+        environmentId: teamThreadContext.teamEnvironmentId,
+        input: {
+          threadId: activeThread.id,
+          targetTurnId: `msg:${messageIdForNote}`,
+          acceptedNotes: [acceptedRef],
+        },
+      });
+      if (consumed._tag === "Failure") {
+        if (!isAtomCommandInterrupted(consumed)) {
+          setThreadError(
+            activeThread.id,
+            thrownErrorMessage(squashAtomCommandFailure(consumed), m) ??
+              gt("Could not send accepted note."),
+          );
+        }
+        return;
+      }
+      promptText = consumed.value.formattedPromptPrefix;
+    } else {
+      teamAcceptedNotesArg = [acceptedRef];
+    }
+    const result = await startThreadTurn({
+      environmentId,
+      input: {
+        threadId: activeThread.id,
+        message: {
+          messageId: messageIdForNote,
+          role: "user",
+          text: promptText,
+          attachments: [],
+        },
+        modelSelection,
+        runtimeMode,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        ...(input.queueBehindActive ? { dispatchMode: "queue" as const } : {}),
+        ...(teamAcceptedNotesArg ? { teamAcceptedNotes: teamAcceptedNotesArg } : {}),
+        createdAt: new Date().toISOString(),
+      },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      setThreadError(
+        activeThread.id,
+        thrownErrorMessage(squashAtomCommandFailure(result), m) ??
+          gt("Could not send accepted note."),
+      );
+    }
+  };
+  const onDispatchAcceptedTeamNoteStable = useStableCallback(onDispatchAcceptedTeamNote);
+
   const composerBannerItems = (() => {
     const fallbackSelection = draftFallback?.selection;
     const defaultSelection =
@@ -2879,10 +2996,55 @@ export default function ChatView(props: ChatViewProps) {
           ),
         ]
       : [];
-    const teamReadOnlyBanner = isServerThread
-      ? teamReadOnlyComposerBannerItem(teamThreadPostPermission, messages)
+    const teamInaccessibleEnvBanner =
+      isServerThread && !teamThreadContext.envAccess.canExecute && !effectiveTeamNoteMode
+        ? teamInaccessibleEnvironmentBannerItem({
+            envAccess: teamThreadContext.envAccess,
+            ownerPseudo: teamThreadOwnerPseudo,
+            environmentLabel: teamThreadEnvLabel,
+            canLeaveNote: teamThreadContext.canLeaveNote,
+            onForkThread: () => {
+              if (!activeThread || !teamThreadContext.teamEnvironmentId) return;
+              openTeamForkDialog({
+                sourceEnvironmentId: environmentId,
+                sourceThreadId: activeThread.id,
+                sourceThreadTitle: activeThread.title,
+                teamEnvironmentId: teamThreadContext.teamEnvironmentId,
+                projectId: activeThread.projectId,
+                repositoryIdentity: activeProject?.repositoryIdentity,
+              });
+            },
+            onEnterNoteMode: () => {
+              setTeamThreadNoteMode(routeThreadKey, true);
+              scheduleComposerFocusStable();
+            },
+            resolve: messages,
+          })
+        : null;
+    const teamNoteModeBanner = effectiveTeamNoteMode
+      ? teamNoteModeComposerBannerItem({
+          ownerPseudo: teamThreadOwnerPseudo,
+          onCancel: () => setTeamThreadNoteMode(routeThreadKey, false),
+          resolve: messages,
+        })
       : null;
-    const teamReadOnlyItems = teamReadOnlyBanner === null ? [] : [teamReadOnlyBanner];
+    const teamPendingNotesBanner =
+      hasPendingTeamNotes && (composerHasPromptText || hasAcceptedTeamNotes)
+        ? teamPendingNotesComposerBannerItem({
+            pendingNotes: teamThreadContext.pendingNotes,
+            resolve: messages,
+          })
+        : null;
+    const teamReadOnlyBanner =
+      isServerThread && teamInaccessibleEnvBanner === null && !effectiveTeamNoteMode
+        ? teamReadOnlyComposerBannerItem(teamThreadPostPermission, messages)
+        : null;
+    const teamReadOnlyItems = [
+      ...(teamNoteModeBanner ? [teamNoteModeBanner] : []),
+      ...(teamInaccessibleEnvBanner ? [teamInaccessibleEnvBanner] : []),
+      ...(teamPendingNotesBanner ? [teamPendingNotesBanner] : []),
+      ...(teamReadOnlyBanner ? [teamReadOnlyBanner] : []),
+    ];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...teamReadOnlyItems,
@@ -3174,6 +3336,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const { onSend, captureDetachedSend } = useComposerSend({
     environmentId,
+    connectedEnvironmentIds,
     routeThreadKey,
     currentRouteThreadKeyRef,
     draftId,
@@ -3801,6 +3964,19 @@ export default function ChatView(props: ChatViewProps) {
                   hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                   emptyPlaceholderInset={composerReservedHeight}
                   topFadeEnabled={!hasTimelineTopBanner}
+                  teamNotes={isServerThread ? teamThreadContext.notes : undefined}
+                  teamNoteContext={
+                    isServerThread && teamThreadContext.teamEnvironmentId
+                      ? {
+                          teamEnvironmentId: teamThreadContext.teamEnvironmentId,
+                          currentMember: teamThreadContext.teamState.currentMember,
+                          canResolveNotes: teamThreadContext.canResolveNotes,
+                          isComposerEmpty: !composerHasPromptText && !composerHasNonPromptContent,
+                          isThreadRunning: phase === "running" || phase === "connecting",
+                          onDispatchAcceptedNote: onDispatchAcceptedTeamNoteStable,
+                        }
+                      : null
+                  }
                   {...(threadHistoryControls === undefined
                     ? {}
                     : { historyControls: threadHistoryControls })}
@@ -3942,22 +4118,34 @@ export default function ChatView(props: ChatViewProps) {
                                 canResume={canResume}
                                 isRevertingCheckpoint={isRevertingCheckpoint}
                                 sendDisabledReason={
-                                  !canOperateThread
-                                    ? gt("This connection cannot change threads.")
-                                    : teamPostDisabledReason !== null
-                                      ? teamPostDisabledReason
-                                      : isEnvironmentChanging
-                                        ? gt("Preparing machine")
-                                        : isRevertingCheckpoint
-                                          ? gt("Rewinding conversation")
-                                          : feedbackUploading
-                                            ? gt("Sending feedback")
-                                            : threadDetailLoading
-                                              ? gt("Messages loading")
-                                              : worktreeSetupBlocksSend
-                                                ? gt("Preparing worktree")
-                                                : projectCloneSendBlockReason
+                                  effectiveTeamNoteMode
+                                    ? null
+                                    : !canOperateThread
+                                      ? gt("This connection cannot change threads.")
+                                      : teamEnvDisabledReason !== null
+                                        ? teamEnvDisabledReason
+                                        : hasPendingTeamNotes
+                                          ? gt("Accept or reject pending notes before sending.")
+                                          : teamPostDisabledReason !== null
+                                            ? teamPostDisabledReason
+                                            : isEnvironmentChanging
+                                              ? gt("Preparing machine")
+                                              : isRevertingCheckpoint
+                                                ? gt("Rewinding conversation")
+                                                : feedbackUploading
+                                                  ? gt("Sending feedback")
+                                                  : threadDetailLoading
+                                                    ? gt("Messages loading")
+                                                    : worktreeSetupBlocksSend
+                                                      ? gt("Preparing worktree")
+                                                      : projectCloneSendBlockReason
                                 }
+                                allowEmptySend={hasAcceptedTeamNotes && !hasPendingTeamNotes}
+                                teamNoteMode={effectiveTeamNoteMode}
+                                onCancelTeamNoteMode={() =>
+                                  setTeamThreadNoteMode(routeThreadKey, false)
+                                }
+                                composerInputDisabled={teamEnvDisabledReason !== null}
                                 isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                                 bannerItems={
                                   isDraftHeroState || composerBannerItems.length === 0

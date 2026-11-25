@@ -856,7 +856,11 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(CodexManagedTokenBroker.layer),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(
-    TeamService.layer.pipe(Layer.provide(TeamRepository.layer), Layer.provide(layerPersistence)),
+    TeamService.layer.pipe(
+      Layer.provide(TeamRepository.layer),
+      Layer.provide(layerServerEnvironment),
+      Layer.provide(layerPersistence),
+    ),
   ),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(

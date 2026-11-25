@@ -159,6 +159,8 @@ import {
   toShellApplicationEvent,
   type ShellApplicationEvent,
 } from "./orchestration-v2/ShellStream.ts";
+import * as EventSink from "./orchestration-v2/EventSink.ts";
+import * as ProjectionStore from "./orchestration-v2/ProjectionStore.ts";
 import { ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION } from "./orchestration-v2/ProjectionStore.ts";
 import {
   coalesceLiveUpdatedEvents,
@@ -1648,6 +1650,8 @@ export const layerWsRpc = (
       const hostEnvironment = yield* HostProcess.Environment;
       const secretResolver = yield* SecretResolver.SecretResolver;
       const peerLinks = yield* PeerLinks.PeerLinks;
+      const eventSinkOption = yield* Effect.serviceOption(EventSink.EventSinkV2);
+      const projectionStoreOption = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
       const peerLinkRequests = yield* PeerLinkRequests.PeerLinkRequests;
       const peerThreadRelay = yield* PeerThreadRelay.PeerThreadRelay;
       const peerClientPairing = yield* PeerClientPairing.PeerClientPairing;
@@ -2211,6 +2215,7 @@ export const layerWsRpc = (
                             teamService,
                             currentSessionId,
                             result.storedEvents,
+                            effectiveCommand,
                           ).pipe(
                             Effect.andThen(
                               effectiveCommand.type === "run.interrupt" ||
@@ -2486,6 +2491,7 @@ export const layerWsRpc = (
             Effect.andThen(
               teamService.assertCanLaunchThread({
                 sessionId: currentSessionId,
+                projectId: input.projectId,
                 ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
                 ...(input.reuseExistingThread === undefined
                   ? {}
@@ -2507,6 +2513,7 @@ export const layerWsRpc = (
                     ? yield* teamService.prepareThreadAttribution({
                         sessionId: currentSessionId,
                         threadId: resolvedThreadId,
+                        projectId: input.projectId,
                         ...(input.teamViewId === undefined ? {} : { viewId: input.teamViewId }),
                         ...(input.teamLocked === undefined ? {} : { locked: input.teamLocked }),
                       })
@@ -2586,6 +2593,7 @@ export const layerWsRpc = (
                     // A resumed launch is a retry of one already counted.
                     Effect.tap((result) =>
                       recordTeamThreadLaunch(teamService, currentSessionId, result, {
+                        projectId: input.projectId,
                         ...(input.teamViewId === undefined ? {} : { viewId: input.teamViewId }),
                         ...(input.teamLocked === undefined ? {} : { locked: input.teamLocked }),
                       }),
@@ -3216,24 +3224,83 @@ export const layerWsRpc = (
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
         [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
         [WS_METHODS.peerLinksList]: (_input) =>
-          peerLinks.list.pipe(Effect.map((links) => ({ links }))),
+          peerLinks.list.pipe(
+            Effect.flatMap((links) =>
+              teamService
+                .filterAccessibleEnvironmentIds(
+                  currentSessionId,
+                  links.map((link) => link.environmentId),
+                )
+                .pipe(
+                  Effect.map((allowed) => ({
+                    links: links.filter((link) => allowed.has(link.environmentId)),
+                  })),
+                ),
+            ),
+          ),
         [WS_METHODS.peerLinksNames]: (_input) =>
-          peerLinks.names.pipe(Effect.map((links) => ({ links }))),
-        [WS_METHODS.peerLinksLink]: (input) => peerLinks.link(input),
-        [WS_METHODS.peerLinksUnlink]: ({ environmentId }) => peerLinks.unlink(environmentId),
-        [WS_METHODS.peerLinksSubscribeThread]: (input) => peerThreadRelay.subscribe(input),
+          peerLinks.names.pipe(
+            Effect.flatMap((links) =>
+              teamService
+                .filterAccessibleEnvironmentIds(
+                  currentSessionId,
+                  links.map((link) => link.environmentId),
+                )
+                .pipe(
+                  Effect.map((allowed) => ({
+                    links: links.filter((link) => allowed.has(link.environmentId)),
+                  })),
+                ),
+            ),
+          ),
+        [WS_METHODS.peerLinksLink]: (input) =>
+          teamService
+            .assertActorIsAdmin(
+              { kind: "session", sessionId: currentSessionId },
+              "Only owner and admin members can link remote environments.",
+              "team:environment:write",
+            )
+            .pipe(Effect.andThen(peerLinks.link(input))),
+        [WS_METHODS.peerLinksUnlink]: ({ environmentId }) =>
+          teamService
+            .assertActorIsAdmin(
+              { kind: "session", sessionId: currentSessionId },
+              "Only owner and admin members can unlink remote environments.",
+              "team:environment:write",
+            )
+            .pipe(Effect.andThen(peerLinks.unlink(environmentId))),
+        [WS_METHODS.peerLinksSubscribeThread]: (input) =>
+          Stream.unwrap(
+            teamService
+              .assertCanAccessEnvironment(currentSessionId, input.environmentId)
+              .pipe(Effect.as(peerThreadRelay.subscribe(input))),
+          ),
         [WS_METHODS.peerLinksThreadHistoryPage]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(
+              teamService.assertCanAccessEnvironment(currentSessionId, input.environmentId),
+            ),
             Effect.andThen(peerThreadRelay.historyPage(input)),
           ),
         [WS_METHODS.peerLinksThreadItem]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(
+              teamService.assertCanAccessEnvironment(currentSessionId, input.environmentId),
+            ),
             Effect.andThen(peerThreadRelay.item(input)),
           ),
         [WS_METHODS.peerLinksPairClient]: (input) =>
-          peerClientPairing.request(input, currentSession),
+          teamService
+            .assertCanAccessEnvironment(currentSessionId, input.environmentId)
+            .pipe(Effect.andThen(peerClientPairing.request(input, currentSession))),
         [WS_METHODS.peerLinksPairLink]: (input) =>
-          peerClientPairing.requestForLink(input, currentSession),
+          teamService
+            .assertActorIsAdmin(
+              { kind: "session", sessionId: currentSessionId },
+              "Only owner and admin members can pair remote environment links.",
+              "team:environment:write",
+            )
+            .pipe(Effect.andThen(peerClientPairing.requestForLink(input, currentSession))),
         [WS_METHODS.peerLinksAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
@@ -4328,7 +4395,14 @@ export const layerWsRpc = (
               Stream.concat(Stream.make(latest), changes),
             ),
           ),
-        ...makeTeamWsRpcHandlers(teamService, currentSessionId),
+        ...makeTeamWsRpcHandlers(teamService, currentSessionId, {
+          peerLinks,
+          projectService,
+          ...(Option.isSome(eventSinkOption) ? { eventSink: eventSinkOption.value } : {}),
+          ...(Option.isSome(projectionStoreOption)
+            ? { projectionStore: projectionStoreOption.value }
+            : {}),
+        }),
       });
       const splitHandlers: Pick<typeof handlers, SplitWsRpc["_tag"]> = handlers;
       const otherHandlers: Pick<typeof handlers, Exclude<ServerWsRpc, SplitWsRpc>["_tag"]> =

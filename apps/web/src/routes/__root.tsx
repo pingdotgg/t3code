@@ -19,7 +19,9 @@ import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+import { TeamForkThreadDialogHost } from "../components/team/TeamForkThreadDialog";
 import { TeamJoinDialogHost } from "../components/team/TeamJoinDialog";
+import { TeamLocalThreadSyncCoordinator } from "../components/team/TeamLocalThreadSyncCoordinator";
 import { TeamShortcutCoordinator } from "../components/team/TeamShortcutCoordinator";
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
@@ -207,6 +209,8 @@ function RootRouteBranch() {
       <CustomSnoozeDialogHost />
       <GuestShareDialogHost />
       <TeamJoinDialogHost />
+      <TeamForkThreadDialogHost />
+      <TeamLocalThreadSyncCoordinator />
       <TeamShortcutCoordinator />
       <ProjectCloneToastCoordinator />
       <ConnectDeviceApprovalCoordinator />

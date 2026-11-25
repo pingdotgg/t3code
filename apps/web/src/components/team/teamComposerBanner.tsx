@@ -1,9 +1,19 @@
 import type { TeamThreadPostPermission } from "@t3tools/client-runtime/team";
+import type { TeamThreadEnvironmentAccess, TeamThreadNote } from "@t3tools/contracts";
 import { msg } from "gt-react";
-import { EyeIcon, LockIcon } from "lucide-react";
+import {
+  AlertCircleIcon,
+  EyeIcon,
+  GitForkIcon,
+  LockIcon,
+  MonitorOffIcon,
+  StickyNoteIcon,
+  XIcon,
+} from "lucide-react";
 
 import type { MessageResolver } from "~/i18n/messages";
 import type { ComposerBannerStackItem } from "../chat/ComposerBannerStack";
+import { Button } from "../ui/button";
 
 export function formatTeamThreadPostBlockReason(
   blockReason: TeamThreadPostPermission["blockReason"],
@@ -21,6 +31,33 @@ export function formatTeamThreadPostBlockReason(
     default:
       return null;
   }
+}
+
+export function formatTeamThreadEnvBlockReason(
+  envAccess: TeamThreadEnvironmentAccess,
+  ownerPseudo: string | null,
+  resolve: MessageResolver,
+): string | null {
+  if (envAccess.canExecute) return null;
+  if (envAccess.reason === "other_member_local") {
+    return ownerPseudo
+      ? resolve(
+          msg(
+            "This thread runs exclusively on {owner}'s local machine. Fork it to an accessible environment or leave a note instead.",
+            { owner: ownerPseudo },
+          ),
+        )
+      : resolve(
+          msg(
+            "This thread runs on its owner's local machine. Fork it to an accessible environment or leave a note instead.",
+          ),
+        );
+  }
+  return resolve(
+    msg(
+      "Your role does not have execution access to this thread's environment. Fork it to an accessible environment or leave a note instead.",
+    ),
+  );
 }
 
 export function teamReadOnlyComposerBannerItem(
@@ -45,5 +82,138 @@ export function teamReadOnlyComposerBannerItem(
       </span>
     ),
     description: reason,
+  };
+}
+
+export function teamInaccessibleEnvironmentBannerItem(input: {
+  readonly envAccess: TeamThreadEnvironmentAccess;
+  readonly ownerPseudo: string | null;
+  readonly environmentLabel: string | null;
+  readonly canLeaveNote: boolean;
+  readonly onForkThread: () => void;
+  readonly onEnterNoteMode: () => void;
+  readonly resolve: MessageResolver;
+}): ComposerBannerStackItem | null {
+  const {
+    envAccess,
+    ownerPseudo,
+    environmentLabel,
+    canLeaveNote,
+    onForkThread,
+    onEnterNoteMode,
+    resolve,
+  } = input;
+  if (envAccess.canExecute) return null;
+
+  const title =
+    envAccess.reason === "other_member_local"
+      ? ownerPseudo
+        ? resolve(msg("Running on {owner}'s local environment", { owner: ownerPseudo }))
+        : resolve(msg("Running on owner's local environment"))
+      : environmentLabel
+        ? resolve(msg("Environment restricted ({environment})", { environment: environmentLabel }))
+        : resolve(msg("Environment restricted"));
+
+  const description = formatTeamThreadEnvBlockReason(envAccess, ownerPseudo, resolve);
+
+  return {
+    id: "team-inaccessible-environment",
+    variant: "warning",
+    icon: <MonitorOffIcon aria-hidden className="size-3.5" />,
+    title: (
+      <span data-testid="team-inaccessible-env-banner" data-reason={envAccess.reason}>
+        {title}
+      </span>
+    ),
+    description,
+    actions: (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          data-testid="team-fork-thread-button"
+          onClick={onForkThread}
+        >
+          <GitForkIcon />
+          {resolve(msg("Fork this thread"))}
+        </Button>
+        {canLeaveNote ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="default"
+            data-testid="team-leave-note-button"
+            onClick={onEnterNoteMode}
+          >
+            <StickyNoteIcon />
+            {resolve(msg("Leave a note"))}
+          </Button>
+        ) : null}
+      </div>
+    ),
+  };
+}
+
+export function teamNoteModeComposerBannerItem(input: {
+  readonly ownerPseudo: string | null;
+  readonly onCancel: () => void;
+  readonly resolve: MessageResolver;
+}): ComposerBannerStackItem {
+  const { ownerPseudo, onCancel, resolve } = input;
+  return {
+    id: "team-note-mode",
+    variant: "info",
+    icon: <StickyNoteIcon aria-hidden className="size-3.5" />,
+    title: (
+      <span data-testid="team-note-mode-banner">
+        {ownerPseudo
+          ? resolve(msg("Note mode: leave a note for {owner}", { owner: ownerPseudo }))
+          : resolve(msg("Note mode: leave a note for the thread owner"))}
+      </span>
+    ),
+    description: resolve(
+      msg("Notes are shown in the timeline and only sent to the agent if the owner accepts them."),
+    ),
+    actions: (
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        data-testid="team-note-mode-cancel"
+        onClick={onCancel}
+      >
+        <XIcon />
+        {resolve(msg("Cancel"))}
+      </Button>
+    ),
+  };
+}
+
+export function teamPendingNotesComposerBannerItem(input: {
+  readonly pendingNotes: ReadonlyArray<TeamThreadNote>;
+  readonly resolve: MessageResolver;
+}): ComposerBannerStackItem | null {
+  const { pendingNotes, resolve } = input;
+  if (pendingNotes.length === 0) return null;
+  const authors = [...new Set(pendingNotes.map((note) => note.authorPseudo))].join(", ");
+  return {
+    id: "team-pending-notes",
+    variant: "warning",
+    icon: <AlertCircleIcon aria-hidden className="size-3.5" />,
+    title: (
+      <span data-testid="team-pending-notes-bar" data-pending-count={pendingNotes.length}>
+        {pendingNotes.length === 1
+          ? resolve(
+              msg("1 pending note from {authors}. Accept or reject before sending.", { authors }),
+            )
+          : resolve(
+              msg("{count} pending notes from {authors}. Accept or reject before sending.", {
+                count: pendingNotes.length,
+                authors,
+              }),
+            )}
+      </span>
+    ),
   };
 }

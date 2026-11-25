@@ -41,6 +41,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TeamService from "../team/TeamService.ts";
 
 const PeerHttpApi = HttpApi.make(EnvironmentHttpApi.identifier)
   .add(EnvironmentHttpApi.groups.metadata)
@@ -252,15 +253,24 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const serverConfigOption = yield* Effect.serviceOption(ServerConfig.ServerConfig);
+  const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
   const teamHubOnly =
     Option.isSome(serverConfigOption) && serverConfigOption.value.teamHubOnly === true;
   const isOwnLoopback = yield* LoopbackHost;
   const enabled = teamHubOnly
     ? Effect.succeed(true)
-    : serverSettings.getSettings.pipe(
-        Effect.map((settings) => settings.linkedEnvironmentsEnabled),
-        Effect.orElseSucceed(() => false),
-      );
+    : Effect.gen(function* () {
+        if (
+          Option.isSome(teamServiceOption) &&
+          (yield* teamServiceOption.value.isTeamConfigured())
+        ) {
+          return true;
+        }
+        return yield* serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.linkedEnvironmentsEnabled),
+          Effect.orElseSucceed(() => false),
+        );
+      });
 
   /** A fresh name for one link's token; the row records it. */
   const newSecretName = random.randomBytes(16).pipe(

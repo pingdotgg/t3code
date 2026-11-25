@@ -512,11 +512,8 @@ const routed = Effect.fn("McpToolAccess.routed")(function* <Tools extends Record
         const target = PeerForwarding.remoteTarget(scope, environmentId);
         if (target === undefined) return yield* here(params);
         if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
-        // Peer links carry no per-environment team ACLs until M5, so only admins may forward across environments.
-        yield* TeamMcpAccess.assertIsAdmin(
-          "Cross-environment MCP forwarding requires owner or admin access.",
-          "team:environment:forward",
-        );
+        // Enforce per-environment team ACLs before forwarding across environments.
+        yield* TeamMcpAccess.assertCanAccessEnvironment(target);
         yield* (remote as RemoteCheck<typeof params>)(params);
         if (Option.isNone(forwarding)) return yield* linksUnavailable;
         const result = yield* forwarding.value.call(scope, tool, target, {

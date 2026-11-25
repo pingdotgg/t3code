@@ -6,6 +6,7 @@ import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { readCaller, unavailable } from "../../threadAccess.ts";
+import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import { EnvironmentToolkit } from "./tools.ts";
 
 export function preferences(settings: ServerSettings) {
@@ -44,6 +45,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
   t3_environment_read: McpToolAccess.reads(() =>
     Effect.gen(function* () {
       const { descriptor, settings } = yield* access;
+      yield* TeamMcpAccess.assertCanAccessEnvironment(descriptor.environmentId);
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
       return {
         environmentId: descriptor.environmentId,

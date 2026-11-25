@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
   type PreviewEvent,
+  type ProjectId,
   type TeamViewId,
   type TerminalMetadataStreamEvent,
 } from "@t3tools/contracts";
@@ -18,12 +19,24 @@ import { derive as deriveOrchestrationId } from "@t3tools/provider-core/server/I
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
+import type * as EventSink from "../orchestration-v2/EventSink.ts";
+import type * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ThreadLaunchResult } from "../orchestration-v2/ThreadLaunchService.ts";
+import type * as PeerLinks from "../peer/PeerLinks.ts";
+import type * as ProjectService from "../project/ProjectService.ts";
 import * as TeamService from "./TeamService.ts";
+
+export interface TeamWsHandlerDeps {
+  readonly peerLinks?: PeerLinks.PeerLinks["Service"];
+  readonly projectService?: ProjectService.ProjectService["Service"];
+  readonly eventSink?: EventSink.EventSinkV2["Service"];
+  readonly projectionStore?: ProjectionStore.ProjectionStoreV2["Service"];
+}
 
 export function makeTeamWsRpcHandlers(
   teamService: TeamService.TeamService["Service"],
   sessionId: AuthSessionId,
+  deps?: TeamWsHandlerDeps,
 ) {
   return {
     [TEAM_WS_METHODS.teamGetState]: () => teamService.getState(sessionId),
@@ -75,6 +88,64 @@ export function makeTeamWsRpcHandlers(
       teamService
         .listFollowedThreads(sessionId)
         .pipe(Effect.map((followedThreadIds) => ({ followedThreadIds }))),
+    [TEAM_WS_METHODS.teamAssignProject]: (
+      payload: Parameters<typeof teamService.assignProject>[0]["payload"],
+    ) =>
+      teamService.assignProject({
+        sessionId,
+        payload,
+        ...(deps?.projectService !== undefined ? { projectService: deps.projectService } : {}),
+      }),
+    [TEAM_WS_METHODS.teamUnassignProject]: (
+      payload: Parameters<typeof teamService.unassignProject>[0]["payload"],
+    ) => teamService.unassignProject({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamAttachEnvironment]: (
+      payload: Parameters<typeof teamService.attachEnvironment>[0]["payload"],
+    ) =>
+      teamService.attachEnvironment({
+        sessionId,
+        payload,
+        ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
+      }),
+    [TEAM_WS_METHODS.teamUpdateEnvironment]: (
+      payload: Parameters<typeof teamService.updateEnvironment>[0]["payload"],
+    ) => teamService.updateEnvironment({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamDetachEnvironment]: (
+      payload: Parameters<typeof teamService.detachEnvironment>[0]["payload"],
+    ) =>
+      teamService.detachEnvironment({
+        sessionId,
+        payload,
+        ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
+      }),
+    [TEAM_WS_METHODS.teamSyncLocalThread]: (
+      payload: Parameters<typeof teamService.syncLocalThread>[0]["payload"],
+    ) =>
+      teamService.syncLocalThread({
+        sessionId,
+        payload,
+        ...(deps?.eventSink !== undefined ? { eventSink: deps.eventSink } : {}),
+        ...(deps?.projectionStore !== undefined ? { projectionStore: deps.projectionStore } : {}),
+      }),
+    [TEAM_WS_METHODS.teamCreateThreadNote]: (
+      payload: Parameters<typeof teamService.createThreadNote>[0]["payload"],
+    ) => teamService.createThreadNote({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamDeleteThreadNote]: (
+      payload: Parameters<typeof teamService.deleteThreadNote>[0]["payload"],
+    ) => teamService.deleteThreadNote({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamResolveThreadNote]: (
+      payload: Parameters<typeof teamService.resolveThreadNote>[0]["payload"],
+    ) => teamService.resolveThreadNote({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamEditThreadNote]: (
+      payload: Parameters<typeof teamService.editThreadNote>[0]["payload"],
+    ) => teamService.editThreadNote({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamConsumeAcceptedNotes]: (
+      payload: Parameters<typeof teamService.consumeAcceptedNotes>[0]["payload"],
+    ) => teamService.consumeAcceptedNotes({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamListThreadNotes]: (
+      payload: Parameters<typeof teamService.listThreadNotes>[0]["payload"],
+    ) =>
+      teamService.listThreadNotes({ sessionId, payload }).pipe(Effect.map((notes) => ({ notes }))),
   };
 }
 
@@ -88,12 +159,17 @@ export const recordTeamDispatchEvents = (
   teamService: TeamService.TeamService["Service"],
   sessionId: AuthSessionId,
   storedEvents: ReadonlyArray<{ readonly event: OrchestrationV2DomainEvent }>,
+  command?: OrchestrationV2Command,
 ) =>
   Effect.forEach(
     storedEvents,
     ({ event }) => {
       if (event.type === "thread.created") {
-        return teamService.recordThreadCreated({ sessionId, threadId: event.payload.id });
+        return teamService.recordThreadCreated({
+          sessionId,
+          threadId: event.payload.id,
+          projectId: event.payload.projectId,
+        });
       }
       if (event.type === "run.created") {
         return teamService.recordTurnAuthored({
@@ -112,6 +188,24 @@ export const recordTeamDispatchEvents = (
       return Effect.void;
     },
     { discard: true },
+  ).pipe(
+    Effect.andThen(
+      command?.type === "message.dispatch"
+        ? (() => {
+            const createdRun = storedEvents.find(({ event }) => event.type === "run.created");
+            const targetTurnId =
+              createdRun && createdRun.event.type === "run.created"
+                ? createdRun.event.payload.id
+                : `msg:${command.messageId}`;
+            return teamService.finalizeNotesForDispatchedTurn({
+              sessionId,
+              threadId: command.threadId,
+              targetTurnId,
+              acceptedNotes: command.teamAcceptedNotes ?? [],
+            });
+          })()
+        : Effect.void,
+    ),
   );
 
 /**
@@ -123,6 +217,7 @@ export const recordTeamThreadLaunch = (
   sessionId: AuthSessionId,
   result: Pick<ThreadLaunchResult, "threadId" | "projection" | "resumed">,
   options?: {
+    readonly projectId?: ProjectId;
     readonly viewId?: TeamViewId;
     readonly locked?: boolean;
   },
@@ -137,6 +232,7 @@ export const recordTeamThreadLaunch = (
     .recordThreadCreated({
       sessionId,
       threadId: result.threadId,
+      ...(options?.projectId !== undefined ? { projectId: options.projectId } : {}),
       ...(options?.viewId !== undefined ? { viewId: options.viewId } : {}),
       ...(options?.locked !== undefined ? { locked: options.locked } : {}),
     })

@@ -48,7 +48,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { AuthMcpClientAccess } from "./auth.ts";
-import { TeamViewId } from "./team/schemas.ts";
+import { TeamAcceptedNoteRef, TeamViewId } from "./team/schemas.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
@@ -3621,6 +3621,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     messageId: MessageId,
     text: Schema.String,
+    /** Team Thread Notes explicitly approved and hash-pinned for inclusion in this turn. */
+    teamAcceptedNotes: Schema.optional(Schema.Array(TeamAcceptedNoteRef)),
     context: Schema.optional(OrchestrationMessageContext),
     attachments: Schema.Array(ChatAttachment),
     titleSeed: Schema.optional(TrimmedNonEmptyString),

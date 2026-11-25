@@ -2,27 +2,47 @@ import { useAtomValue } from "@effect/atom-react";
 import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import {
   canCurrentMemberChangeThreadView,
+  canCurrentMemberLeaveThreadNote,
+  canCurrentMemberResolveThreadNotes,
   canCurrentMemberToggleThreadLock,
   createTeamEnvironmentAtoms,
   EMPTY_TEAM_ENVIRONMENT_STATE,
   isFollowingTeamThread,
   isTeamColleagueThread,
   isTeamThreadLocked,
+  listAccessibleTeamEnvironments,
   listAccessibleTeamViews,
   previewTeamInviteEffect,
   redeemTeamInviteAndConnectEffect,
+  resolveProjectTeamAssignment,
+  resolveTeamThreadAcceptedNotes,
+  resolveTeamThreadEnvironmentAccessForClient,
+  resolveTeamThreadNotes,
+  resolveTeamThreadPendingNotes,
   resolveTeamThreadPostPermission,
   resolveTeamThreadTurnControls,
   resolveTeamThreadView,
+  TEAM_THREAD_ENV_ACCESS_ALLOWED,
   TEAM_THREAD_POST_ALLOWED,
   TEAM_THREAD_TURN_CONTROLS_DEFAULT,
+  type ResolvedProjectTeamAssignment,
   type TeamEnvironmentState,
   type TeamInviteJoinInput,
   type TeamInvitePreviewInput,
   type TeamThreadPostPermission,
   type TeamThreadTurnControls,
 } from "@t3tools/client-runtime/team";
-import type { EnvironmentId, TeamView, TeamViewId, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  RepositoryIdentity,
+  TeamEnvironment,
+  TeamThreadEnvironmentAccess,
+  TeamThreadNote,
+  TeamView,
+  TeamViewId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -415,3 +435,265 @@ export const redeemTeamInvite = createRuntimeCommand(connectionAtomRuntime, {
   label: "web:team:redeem-invite",
   execute: (input: TeamInviteJoinInput) => redeemTeamInviteAndConnectEffect(input),
 });
+
+export interface ResolvedThreadTeamContext {
+  readonly teamEnvironmentId: EnvironmentId | null;
+  readonly teamState: TeamEnvironmentState;
+  readonly isViewingOnLocalExecutionEnvironment: boolean;
+  readonly envAccess: TeamThreadEnvironmentAccess;
+  readonly canLeaveNote: boolean;
+  readonly canResolveNotes: boolean;
+  readonly notes: ReadonlyArray<TeamThreadNote>;
+  readonly pendingNotes: ReadonlyArray<TeamThreadNote>;
+  readonly acceptedNotes: ReadonlyArray<TeamThreadNote>;
+}
+
+const EMPTY_NOTES: ReadonlyArray<TeamThreadNote> = [];
+
+export function useProjectTeamAssignment(
+  project:
+    | {
+        readonly id: ProjectId;
+        readonly environmentId: EnvironmentId;
+        readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+      }
+    | null
+    | undefined,
+): ResolvedProjectTeamAssignment | null {
+  const teamStates = useTeamStatesByEnvironment();
+  return resolveProjectTeamAssignment({ project, teamStates });
+}
+
+export function useAccessibleTeamEnvironments(
+  teamEnvironmentId: EnvironmentId | null,
+): ReadonlyArray<TeamEnvironment> {
+  const teamState = useTeamEnvironmentState(teamEnvironmentId);
+  return listAccessibleTeamEnvironments(teamState);
+}
+
+/**
+ * Resolves team context, environment execution access, and thread notes for either:
+ * - a thread opened on a Team Server directly, or
+ * - a local-environment thread belonging to a team-assigned project (correlated via repo identity).
+ */
+export function useTeamThreadContext(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly project:
+    | {
+        readonly id: ProjectId;
+        readonly environmentId: EnvironmentId;
+        readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+      }
+    | null
+    | undefined;
+}): ResolvedThreadTeamContext {
+  const teamStates = useTeamStatesByEnvironment();
+  const directState = teamStates.get(input.environmentId) ?? null;
+  if (directState !== null && directState.team !== null) {
+    const envAccess = resolveTeamThreadEnvironmentAccessForClient({
+      teamState: directState,
+      threadId: input.threadId,
+      viewingOnLocalExecutionEnvironment: false,
+    });
+    const notes = resolveTeamThreadNotes({ teamState: directState, threadId: input.threadId });
+    return {
+      teamEnvironmentId: input.environmentId,
+      teamState: directState,
+      isViewingOnLocalExecutionEnvironment: false,
+      envAccess,
+      canLeaveNote: canCurrentMemberLeaveThreadNote({
+        teamState: directState,
+        threadId: input.threadId,
+      }),
+      canResolveNotes: canCurrentMemberResolveThreadNotes({
+        teamState: directState,
+        threadId: input.threadId,
+        viewingOnLocalExecutionEnvironment: false,
+      }),
+      notes,
+      pendingNotes: resolveTeamThreadPendingNotes({
+        teamState: directState,
+        threadId: input.threadId,
+      }),
+      acceptedNotes: resolveTeamThreadAcceptedNotes({
+        teamState: directState,
+        threadId: input.threadId,
+      }),
+    };
+  }
+  const assignment = resolveProjectTeamAssignment({ project: input.project, teamStates });
+  if (assignment !== null) {
+    const envAccess = resolveTeamThreadEnvironmentAccessForClient({
+      teamState: assignment.teamState,
+      threadId: input.threadId,
+      viewingOnLocalExecutionEnvironment: true,
+    });
+    const notes = resolveTeamThreadNotes({
+      teamState: assignment.teamState,
+      threadId: input.threadId,
+    });
+    return {
+      teamEnvironmentId: assignment.teamEnvironmentId,
+      teamState: assignment.teamState,
+      isViewingOnLocalExecutionEnvironment: true,
+      envAccess,
+      canLeaveNote: false,
+      canResolveNotes: canCurrentMemberResolveThreadNotes({
+        teamState: assignment.teamState,
+        threadId: input.threadId,
+        viewingOnLocalExecutionEnvironment: true,
+      }),
+      notes,
+      pendingNotes: resolveTeamThreadPendingNotes({
+        teamState: assignment.teamState,
+        threadId: input.threadId,
+      }),
+      acceptedNotes: resolveTeamThreadAcceptedNotes({
+        teamState: assignment.teamState,
+        threadId: input.threadId,
+      }),
+    };
+  }
+  return {
+    teamEnvironmentId: null,
+    teamState: EMPTY_TEAM_ENVIRONMENT_STATE,
+    isViewingOnLocalExecutionEnvironment: false,
+    envAccess: TEAM_THREAD_ENV_ACCESS_ALLOWED,
+    canLeaveNote: false,
+    canResolveNotes: false,
+    notes: EMPTY_NOTES,
+    pendingNotes: EMPTY_NOTES,
+    acceptedNotes: EMPTY_NOTES,
+  };
+}
+
+export function readTeamThreadNotesForSend(input: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly project:
+    | {
+        readonly id: ProjectId;
+        readonly environmentId: EnvironmentId;
+        readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+      }
+    | null
+    | undefined;
+  readonly connectedEnvironmentIds: ReadonlyArray<EnvironmentId>;
+}): {
+  readonly teamEnvironmentId: EnvironmentId | null;
+  readonly isViewingOnLocalExecutionEnvironment: boolean;
+  readonly envAccess: TeamThreadEnvironmentAccess;
+  readonly pendingNotes: ReadonlyArray<TeamThreadNote>;
+  readonly acceptedNotes: ReadonlyArray<TeamThreadNote>;
+} {
+  const direct = readTeamEnvironmentStateFromRegistry(appAtomRegistry, input.environmentId);
+  if (direct !== null && direct.team !== null) {
+    return {
+      teamEnvironmentId: input.environmentId,
+      isViewingOnLocalExecutionEnvironment: false,
+      envAccess: resolveTeamThreadEnvironmentAccessForClient({
+        teamState: direct,
+        threadId: input.threadId,
+        viewingOnLocalExecutionEnvironment: false,
+      }),
+      pendingNotes: resolveTeamThreadPendingNotes({ teamState: direct, threadId: input.threadId }),
+      acceptedNotes: resolveTeamThreadAcceptedNotes({
+        teamState: direct,
+        threadId: input.threadId,
+      }),
+    };
+  }
+  if (input.project) {
+    const teamStates = new Map<EnvironmentId, TeamEnvironmentState>();
+    for (const envId of input.connectedEnvironmentIds) {
+      const state = readTeamEnvironmentStateFromRegistry(appAtomRegistry, envId);
+      if (state !== null && state.team !== null) {
+        teamStates.set(envId, state);
+      }
+    }
+    const assignment = resolveProjectTeamAssignment({ project: input.project, teamStates });
+    if (assignment !== null) {
+      return {
+        teamEnvironmentId: assignment.teamEnvironmentId,
+        isViewingOnLocalExecutionEnvironment: true,
+        envAccess: resolveTeamThreadEnvironmentAccessForClient({
+          teamState: assignment.teamState,
+          threadId: input.threadId,
+          viewingOnLocalExecutionEnvironment: true,
+        }),
+        pendingNotes: resolveTeamThreadPendingNotes({
+          teamState: assignment.teamState,
+          threadId: input.threadId,
+        }),
+        acceptedNotes: resolveTeamThreadAcceptedNotes({
+          teamState: assignment.teamState,
+          threadId: input.threadId,
+        }),
+      };
+    }
+  }
+  return {
+    teamEnvironmentId: null,
+    isViewingOnLocalExecutionEnvironment: false,
+    envAccess: TEAM_THREAD_ENV_ACCESS_ALLOWED,
+    pendingNotes: EMPTY_NOTES,
+    acceptedNotes: EMPTY_NOTES,
+  };
+}
+
+const teamThreadNoteModeMapAtom = Atom.make<Readonly<Record<string, true>>>({}).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("team:thread-note-mode"),
+);
+
+const teamThreadNoteModeForKeyAtom = Atom.family((threadKey: string) =>
+  Atom.make((get): boolean => get(teamThreadNoteModeMapAtom)[threadKey] === true).pipe(
+    Atom.withLabel(`team:thread-note-mode:${threadKey}`),
+  ),
+);
+
+export function useTeamThreadNoteMode(threadKey: string): boolean {
+  return useAtomValue(teamThreadNoteModeForKeyAtom(threadKey));
+}
+
+export function readTeamThreadNoteMode(threadKey: string): boolean {
+  return appAtomRegistry.get(teamThreadNoteModeMapAtom)[threadKey] === true;
+}
+
+export function setTeamThreadNoteMode(threadKey: string, enabled: boolean): void {
+  const current = appAtomRegistry.get(teamThreadNoteModeMapAtom);
+  if ((current[threadKey] === true) === enabled) return;
+  if (enabled) {
+    appAtomRegistry.set(teamThreadNoteModeMapAtom, { ...current, [threadKey]: true });
+  } else {
+    const { [threadKey]: _removed, ...rest } = current;
+    appAtomRegistry.set(teamThreadNoteModeMapAtom, rest);
+  }
+}
+
+export interface TeamForkDialogRequest {
+  readonly sourceEnvironmentId: EnvironmentId;
+  readonly sourceThreadId: ThreadId;
+  readonly sourceThreadTitle: string;
+  readonly teamEnvironmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
+}
+
+const teamForkDialogRequestAtom = Atom.make<TeamForkDialogRequest | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("team:fork-dialog-request"),
+);
+
+export function useTeamForkDialogRequest(): TeamForkDialogRequest | null {
+  return useAtomValue(teamForkDialogRequestAtom);
+}
+
+export function openTeamForkDialog(request: TeamForkDialogRequest): void {
+  appAtomRegistry.set(teamForkDialogRequestAtom, request);
+}
+
+export function closeTeamForkDialog(): void {
+  appAtomRegistry.set(teamForkDialogRequestAtom, null);
+}

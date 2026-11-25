@@ -2,12 +2,16 @@ import {
   EnvironmentHttpApi,
   TEAM_WS_METHODS,
   type EnvironmentId,
+  type ProjectId,
+  type TeamEnvironment,
   type TeamInvite,
   type TeamMember,
   type TeamMemberId,
+  type TeamProjectAssignment,
   type TeamStateSnapshot,
   type TeamStateStreamEvent,
   type TeamThreadAttribution,
+  type TeamThreadNote,
   type TeamTurnAttribution,
   type TeamView,
   type TeamViewId,
@@ -55,6 +59,12 @@ export interface TeamEnvironmentState {
   readonly memberById: ReadonlyMap<TeamMemberId, TeamMember>;
   readonly viewById: ReadonlyMap<TeamViewId, TeamView>;
   readonly attributionByThreadId: ReadonlyMap<ThreadId, TeamThreadAttribution>;
+  readonly teamProjects: ReadonlyArray<TeamProjectAssignment>;
+  readonly projectAssignmentByProjectId: ReadonlyMap<ProjectId, TeamProjectAssignment>;
+  readonly projectAssignmentByRepoKey: ReadonlyMap<string, TeamProjectAssignment>;
+  readonly environments: ReadonlyArray<TeamEnvironment>;
+  readonly environmentById: ReadonlyMap<EnvironmentId, TeamEnvironment>;
+  readonly threadNotesByThreadId: ReadonlyMap<ThreadId, ReadonlyArray<TeamThreadNote>>;
 }
 
 export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
@@ -70,7 +80,43 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   memberById: new Map(),
   viewById: new Map(),
   attributionByThreadId: new Map(),
+  teamProjects: [],
+  projectAssignmentByProjectId: new Map(),
+  projectAssignmentByRepoKey: new Map(),
+  environments: [],
+  environmentById: new Map(),
+  threadNotesByThreadId: new Map(),
 };
+
+function sortTeamEnvironments(
+  environments: Iterable<TeamEnvironment>,
+): ReadonlyArray<TeamEnvironment> {
+  return [...environments].sort((a, b) => {
+    if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+    const byName = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    if (byName !== 0) return byName;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+}
+
+function sortTeamThreadNotes(notes: Iterable<TeamThreadNote>): ReadonlyArray<TeamThreadNote> {
+  return [...notes].sort((a, b) => {
+    if (a.anchorSeq !== b.anchorSeq) return a.anchorSeq - b.anchorSeq;
+    return a.createdAt.localeCompare(b.createdAt);
+  });
+}
+
+function buildProjectMaps(projects: ReadonlyArray<TeamProjectAssignment>) {
+  const projectAssignmentByProjectId = new Map<ProjectId, TeamProjectAssignment>();
+  const projectAssignmentByRepoKey = new Map<string, TeamProjectAssignment>();
+  for (const assignment of projects) {
+    projectAssignmentByProjectId.set(assignment.projectId, assignment);
+    if (assignment.repoIdentityKey !== null) {
+      projectAssignmentByRepoKey.set(assignment.repoIdentityKey, assignment);
+    }
+  }
+  return { projectAssignmentByProjectId, projectAssignmentByRepoKey };
+}
 
 function sortTeamViews(views: Iterable<TeamView>): ReadonlyArray<TeamView> {
   return [...views].sort((a, b) => {
@@ -97,6 +143,23 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     turnAuthorByTurnId.set(turn.turnId, turn);
     latestTurnByThreadId.set(turn.threadId, turn);
   }
+  const teamProjects = snapshot.teamProjects ?? [];
+  const { projectAssignmentByProjectId, projectAssignmentByRepoKey } =
+    buildProjectMaps(teamProjects);
+  const environments = sortTeamEnvironments(snapshot.environments ?? []);
+  const environmentById = new Map<EnvironmentId, TeamEnvironment>(
+    environments.map((env) => [env.environmentId, env] as const),
+  );
+  const notesGrouped = new Map<ThreadId, Array<TeamThreadNote>>();
+  for (const note of snapshot.threadNotes ?? []) {
+    const existing = notesGrouped.get(note.threadId);
+    if (existing) existing.push(note);
+    else notesGrouped.set(note.threadId, [note]);
+  }
+  const threadNotesByThreadId = new Map<ThreadId, ReadonlyArray<TeamThreadNote>>();
+  for (const [threadId, notes] of notesGrouped) {
+    threadNotesByThreadId.set(threadId, sortTeamThreadNotes(notes));
+  }
   return {
     team: snapshot.team,
     currentMember: snapshot.currentMember,
@@ -110,6 +173,12 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     memberById,
     viewById,
     attributionByThreadId,
+    teamProjects,
+    projectAssignmentByProjectId,
+    projectAssignmentByRepoKey,
+    environments,
+    environmentById,
+    threadNotesByThreadId,
   };
 }
 
@@ -158,6 +227,29 @@ export function applyTeamStreamEvent(
           turnsChanged = true;
         }
       }
+      const threadNotesByThreadId = new Map(current.threadNotesByThreadId);
+      let notesChanged = false;
+      for (const [threadId, notes] of threadNotesByThreadId) {
+        let listChanged = false;
+        const nextNotes = notes.map((note) => {
+          const updateAuthor =
+            note.authorMemberId === member.id &&
+            (note.authorPseudo !== member.pseudo || note.authorRole !== member.role);
+          const updateResolver =
+            note.resolvedByMemberId === member.id && note.resolvedByPseudo !== member.pseudo;
+          if (!updateAuthor && !updateResolver) return note;
+          listChanged = true;
+          return {
+            ...note,
+            ...(updateAuthor ? { authorPseudo: member.pseudo, authorRole: member.role } : {}),
+            ...(updateResolver ? { resolvedByPseudo: member.pseudo } : {}),
+          };
+        });
+        if (listChanged) {
+          threadNotesByThreadId.set(threadId, nextNotes);
+          notesChanged = true;
+        }
+      }
       return {
         ...current,
         currentMember,
@@ -170,6 +262,7 @@ export function applyTeamStreamEvent(
             }
           : {}),
         ...(turnsChanged ? { latestTurnByThreadId, turnAuthorByTurnId } : {}),
+        ...(notesChanged ? { threadNotesByThreadId } : {}),
       };
     }
 
@@ -265,7 +358,9 @@ export function applyTeamStreamEvent(
           turnsChanged = true;
         }
       }
-      if (!hadAttribution && !hadFollow && !turnsChanged) {
+      const threadNotesByThreadId = new Map(current.threadNotesByThreadId);
+      const hadNotes = threadNotesByThreadId.delete(threadId);
+      if (!hadAttribution && !hadFollow && !turnsChanged && !hadNotes) {
         return current;
       }
       return {
@@ -278,6 +373,7 @@ export function applyTeamStreamEvent(
           : {}),
         ...(hadFollow ? { followedThreadIds } : {}),
         ...(turnsChanged ? { latestTurnByThreadId, turnAuthorByTurnId } : {}),
+        ...(hadNotes ? { threadNotesByThreadId } : {}),
       };
     }
 
@@ -295,6 +391,89 @@ export function applyTeamStreamEvent(
       return {
         ...current,
         followedThreadIds,
+      };
+    }
+
+    case "projectAssigned": {
+      const assignment = event.payload;
+      const nextById = new Map(current.projectAssignmentByProjectId);
+      nextById.set(assignment.projectId, assignment);
+      const teamProjects = [...nextById.values()];
+      const { projectAssignmentByProjectId, projectAssignmentByRepoKey } =
+        buildProjectMaps(teamProjects);
+      return {
+        ...current,
+        teamProjects,
+        projectAssignmentByProjectId,
+        projectAssignmentByRepoKey,
+      };
+    }
+
+    case "projectUnassigned": {
+      const nextById = new Map(current.projectAssignmentByProjectId);
+      if (!nextById.delete(event.payload.projectId)) return current;
+      const teamProjects = [...nextById.values()];
+      const { projectAssignmentByProjectId, projectAssignmentByRepoKey } =
+        buildProjectMaps(teamProjects);
+      return {
+        ...current,
+        teamProjects,
+        projectAssignmentByProjectId,
+        projectAssignmentByRepoKey,
+      };
+    }
+
+    case "environmentUpserted": {
+      const env = event.payload;
+      const environmentById = new Map(current.environmentById);
+      environmentById.set(env.environmentId, env);
+      return {
+        ...current,
+        environments: sortTeamEnvironments(environmentById.values()),
+        environmentById,
+      };
+    }
+
+    case "environmentRemoved": {
+      const environmentById = new Map(current.environmentById);
+      if (!environmentById.delete(event.payload.environmentId)) return current;
+      return {
+        ...current,
+        environments: sortTeamEnvironments(environmentById.values()),
+        environmentById,
+      };
+    }
+
+    case "threadNoteUpserted": {
+      const note = event.payload;
+      const threadNotesByThreadId = new Map(current.threadNotesByThreadId);
+      const existing = threadNotesByThreadId.get(note.threadId) ?? [];
+      const nextNotes = sortTeamThreadNotes([
+        ...existing.filter((candidate) => candidate.id !== note.id),
+        note,
+      ]);
+      threadNotesByThreadId.set(note.threadId, nextNotes);
+      return {
+        ...current,
+        threadNotesByThreadId,
+      };
+    }
+
+    case "threadNoteDeleted": {
+      const { noteId, threadId } = event.payload;
+      const existing = current.threadNotesByThreadId.get(threadId);
+      if (!existing) return current;
+      const filtered = existing.filter((candidate) => candidate.id !== noteId);
+      if (filtered.length === existing.length) return current;
+      const threadNotesByThreadId = new Map(current.threadNotesByThreadId);
+      if (filtered.length === 0) {
+        threadNotesByThreadId.delete(threadId);
+      } else {
+        threadNotesByThreadId.set(threadId, filtered);
+      }
+      return {
+        ...current,
+        threadNotesByThreadId,
       };
     }
   }
@@ -381,6 +560,54 @@ export function createTeamEnvironmentAtoms<R, E>(
     setThreadLocked: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:set-thread-locked",
       tag: TEAM_WS_METHODS.teamSetThreadLocked,
+    }),
+    assignProject: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:assign-project",
+      tag: TEAM_WS_METHODS.teamAssignProject,
+    }),
+    unassignProject: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:unassign-project",
+      tag: TEAM_WS_METHODS.teamUnassignProject,
+    }),
+    attachEnvironment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:attach-environment",
+      tag: TEAM_WS_METHODS.teamAttachEnvironment,
+    }),
+    updateEnvironment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:update-environment",
+      tag: TEAM_WS_METHODS.teamUpdateEnvironment,
+    }),
+    detachEnvironment: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:detach-environment",
+      tag: TEAM_WS_METHODS.teamDetachEnvironment,
+    }),
+    syncLocalThread: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:sync-local-thread",
+      tag: TEAM_WS_METHODS.teamSyncLocalThread,
+    }),
+    createThreadNote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:create-thread-note",
+      tag: TEAM_WS_METHODS.teamCreateThreadNote,
+    }),
+    deleteThreadNote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:delete-thread-note",
+      tag: TEAM_WS_METHODS.teamDeleteThreadNote,
+    }),
+    resolveThreadNote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:resolve-thread-note",
+      tag: TEAM_WS_METHODS.teamResolveThreadNote,
+    }),
+    editThreadNote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:edit-thread-note",
+      tag: TEAM_WS_METHODS.teamEditThreadNote,
+    }),
+    consumeAcceptedNotes: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:consume-accepted-notes",
+      tag: TEAM_WS_METHODS.teamConsumeAcceptedNotes,
+    }),
+    listThreadNotes: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:list-thread-notes",
+      tag: TEAM_WS_METHODS.teamListThreadNotes,
     }),
   };
 }

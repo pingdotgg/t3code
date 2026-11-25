@@ -4,7 +4,7 @@ import * as NodeNet from "node:net";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentHttpApi, type TeamRole } from "@t3tools/contracts";
+import { CommandId, EnvironmentHttpApi, ProjectId, type TeamRole } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
@@ -23,7 +23,7 @@ import * as HttpApiClient from "effect/http-api/HttpApiClient";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 
 import { TEAM_APP_DIR, TEAM_SCENARIOS_HOME } from "../../e2e.team.config.ts";
-import { ScenarioError } from "../shell.ts";
+import { run, ScenarioError } from "../shell.ts";
 import { prepareHome, SCENARIO_MACHINE_ENV, start } from "../start-app.ts";
 import { environmentId, makeState, runPromise } from "../t3.ts";
 
@@ -38,15 +38,25 @@ export interface RecordedBrowserNotification {
   readonly tag: string;
 }
 
+export interface TeamProjectOptions {
+  readonly gitOriginUrl?: string;
+}
+
 export interface TeamMemberHandle {
   readonly pseudo: string;
   readonly role: TeamRole;
   readonly origin: string;
   readonly localServerOrigin: string;
+  readonly localEnvironmentId: string;
   readonly home: string;
   readonly context: BrowserContext;
   readonly page: Page;
   readonly open: (targetPath?: string) => Promise<void>;
+  readonly project: (
+    title: string,
+    files?: Readonly<Record<string, string | Uint8Array>>,
+    options?: TeamProjectOptions,
+  ) => Promise<string>;
   readonly notifications: () => Promise<ReadonlyArray<RecordedBrowserNotification>>;
   readonly clearNotifications: () => Promise<void>;
   readonly setWindowFocused: (focused: boolean) => Promise<void>;
@@ -64,11 +74,13 @@ export interface TeamServerHandle {
   readonly project: (
     title: string,
     files?: Readonly<Record<string, string | Uint8Array>>,
+    options?: TeamProjectOptions,
   ) => Promise<string>;
 }
 
 export interface TeamTopology extends AsyncDisposable {
   readonly teamServer: TeamServerHandle;
+  readonly extraRemoteEnvironments: ReadonlyArray<TeamServerHandle>;
   readonly members: Readonly<Record<string, TeamMemberHandle>>;
   readonly member: (pseudo: string) => TeamMemberHandle;
 }
@@ -329,6 +341,7 @@ const signInOrigin = Effect.fn("teamTopology.signInOrigin")(function* (input: {
 export async function startTeamTopology(input: {
   readonly viteUrl: string;
   readonly members: ReadonlyArray<TeamMemberSpec>;
+  readonly extraRemoteEnvironments?: number;
   readonly teamServerSettingsPatch?: Readonly<Record<string, unknown>>;
 }): Promise<TeamTopology> {
   const stack = new AsyncDisposableStack();
@@ -385,6 +398,106 @@ export async function startTeamTopology(input: {
     const teamEnvId = await runPromise(environmentId(startedTeamServer.origin));
     const teamStateApi = makeState(teamHome);
 
+    const createProjectWithOrigin = async (inputProject: {
+      readonly stateApi: ReturnType<typeof makeState>;
+      readonly serverHome: string;
+      readonly serverOrigin: string;
+      readonly devAuthToken: string;
+      readonly title: string;
+      readonly files?: Readonly<Record<string, string | Uint8Array>>;
+      readonly options?: TeamProjectOptions;
+    }): Promise<string> => {
+      if (!inputProject.options?.gitOriginUrl) {
+        return inputProject.stateApi.state.project(inputProject.title, inputProject.files ?? {});
+      }
+      const originUrl = inputProject.options.gitOriginUrl;
+      return runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const id1 = yield* randomUuid;
+          const id2 = yield* randomUuid;
+          yield* fs.makeDirectory(path.join(inputProject.serverHome, "workspaces"), {
+            recursive: true,
+          });
+          const parent = yield* fs.makeTempDirectory({
+            directory: path.join(inputProject.serverHome, "workspaces"),
+            prefix: "w-",
+          });
+          const workspace = path.join(parent, inputProject.title);
+          for (const [file, content] of Object.entries({
+            "README.md": "",
+            ...inputProject.files,
+          })) {
+            yield* fs.makeDirectory(path.dirname(path.join(workspace, file)), { recursive: true });
+            yield* typeof content === "string"
+              ? fs.writeFileString(path.join(workspace, file), content)
+              : fs.writeFile(path.join(workspace, file), content);
+          }
+          const git = (args: ReadonlyArray<string>) => run("git", args, { cwd: workspace });
+          const author = ["-c", "user.name=Scenario", "-c", "user.email=scenario@example.invalid"];
+          yield* git(["init", "--quiet", "--initial-branch=main"]);
+          yield* git(["remote", "add", "origin", originUrl]);
+          yield* git(["add", "--all"]);
+          yield* git([...author, "commit", "--quiet", "--message", "Initial commit"]);
+          const client = yield* HttpApiClient.make(EnvironmentHttpApi, {
+            baseUrl: inputProject.serverOrigin,
+          });
+          yield* client.projects.mutate({
+            headers: { authorization: `Bearer ${inputProject.devAuthToken}` },
+            payload: {
+              type: "project.create",
+              commandId: CommandId.make(id1),
+              projectId: ProjectId.make(id2),
+              title: inputProject.title,
+              workspaceRoot: workspace,
+            },
+          });
+          return workspace;
+        }).pipe(Effect.provide(FetchHttpClient.layer)),
+      );
+    };
+
+    const extraRemoteEnvironments: Array<TeamServerHandle> = [];
+    const extraCount = input.extraRemoteEnvironments ?? 0;
+    for (let i = 0; i < extraCount; i += 1) {
+      const extraPort = await Effect.runPromise(reservePort);
+      const extraHome = `${runDir}/remote-env-${i + 1}`;
+      const extraRawToken = (await Effect.runPromise(randomUuid)).replaceAll("-", "");
+      const extraDevAuthToken = `${extraRawToken}${extraRawToken}`;
+      const startedExtra = await startT3ServerProcess({
+        home: extraHome,
+        port: extraPort,
+        devUrl: allMemberOrigins[0] ?? input.viteUrl,
+        allowedOrigins: allMemberOrigins,
+        devAuthToken: extraDevAuthToken,
+        environmentLabel: `Remote Env ${i + 1}`,
+        settingsPatch: {
+          linkedEnvironmentsEnabled: true,
+          ...input.teamServerSettingsPatch,
+        },
+      });
+      stack.defer(() => startedExtra.stop());
+      const extraEnvId = await runPromise(environmentId(startedExtra.origin));
+      const extraStateApi = makeState(extraHome);
+      extraRemoteEnvironments.push({
+        origin: startedExtra.origin,
+        home: extraHome,
+        pairingToken: startedExtra.pairingToken,
+        environmentId: extraEnvId,
+        project: (title, files = {}, options) =>
+          createProjectWithOrigin({
+            stateApi: extraStateApi,
+            serverHome: extraHome,
+            serverOrigin: startedExtra.origin,
+            devAuthToken: extraDevAuthToken,
+            title,
+            files,
+            ...(options ? { options } : {}),
+          }),
+      });
+    }
+
     const browser: Browser = await chromium.launch({ headless: true });
     stack.defer(() => browser.close());
 
@@ -403,6 +516,8 @@ export async function startTeamTopology(input: {
           : { settingsPatch: input.teamServerSettingsPatch }),
       });
       stack.defer(() => localServer.stop());
+      const localEnvId = await runPromise(environmentId(localServer.origin));
+      const localStateApi = makeState(allocation.home);
 
       const proxy = await startMemberOriginProxy({
         proxyPort: allocation.proxyPort,
@@ -473,12 +588,23 @@ export async function startTeamTopology(input: {
         role: allocation.spec.role,
         origin: allocation.origin,
         localServerOrigin: localServer.origin,
+        localEnvironmentId: localEnvId,
         home: allocation.home,
         context,
         page,
         open: async (targetPath = "/") => {
           await page.goto(`${allocation.origin}${targetPath}`, { waitUntil: "domcontentloaded" });
         },
+        project: (title, files = {}, options) =>
+          createProjectWithOrigin({
+            stateApi: localStateApi,
+            serverHome: allocation.home,
+            serverOrigin: localServer.origin,
+            devAuthToken: allocation.devAuthToken,
+            title,
+            files,
+            ...(options ? { options } : {}),
+          }),
         notifications: async () =>
           page.evaluate(() => {
             const globalRecord = globalThis as unknown as {
@@ -526,8 +652,18 @@ export async function startTeamTopology(input: {
         home: teamHome,
         pairingToken: startedTeamServer.pairingToken,
         environmentId: teamEnvId,
-        project: (title, files = {}) => teamStateApi.state.project(title, files),
+        project: (title, files = {}, options) =>
+          createProjectWithOrigin({
+            stateApi: teamStateApi,
+            serverHome: teamHome,
+            serverOrigin: startedTeamServer.origin,
+            devAuthToken: `${teamRawToken}${teamRawToken}`,
+            title,
+            files,
+            ...(options ? { options } : {}),
+          }),
       },
+      extraRemoteEnvironments,
       members: memberHandles,
       member: (pseudo) => {
         const handle = memberHandles[pseudo];

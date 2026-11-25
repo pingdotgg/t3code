@@ -128,6 +128,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as ServerSettings from "../serverSettings.ts";
 import {
   clientModeCeiling,
+  McpInvocationContext,
   type McpInvocationScope,
   type McpThreadInvocationScope,
   requireThreadScope,
@@ -2927,9 +2928,8 @@ const make = Effect.gen(function* () {
           : PeerForwarding.remoteTarget(callerScope, input.target.environmentId);
       if (input.target !== undefined && environmentId !== undefined) {
         yield* requireCapability(callerScope);
-        yield* TeamMcpAccess.assertIsAdmin(
-          "Cross-environment delegation requires owner or admin access.",
-          "team:environment:forward",
+        yield* TeamMcpAccess.assertCanAccessEnvironment(environmentId).pipe(
+          Effect.provideService(McpInvocationContext, callerScope),
         );
         const scope = yield* requireThreadScope(callerScope, "delegate_task");
         // The task's child runs as an ordinary thread there; this thread keeps the task.

@@ -3,23 +3,32 @@ import {
   canChangeTeamMemberRole,
   canManageTeamMembers,
   canModifyTeamMember,
-  type AuthSessionId,
+  EnvironmentId,
+  ProjectId,
+  TeamEnvironmentRecordId,
   TeamId,
   TeamInviteId,
   TeamMemberId,
+  TeamThreadNoteId,
+  TeamViewId,
+  ThreadId,
+  type AuthSessionId,
+  type TeamAcceptedNoteRef,
   type TeamAccessRule,
+  type TeamEnvironment,
   type TeamInvite,
   type TeamMember,
   type TeamMemberStatus,
+  type TeamProjectAssignment,
   type TeamPseudo,
   type TeamRole,
   type TeamSessionBinding,
   type TeamThreadAttribution,
+  type TeamThreadNote,
+  type TeamThreadNoteStatus,
   type TeamTurnAttribution,
   type TeamView,
-  TeamViewId,
   type TeamWorkspace,
-  ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -102,10 +111,44 @@ export class TeamMemberForbiddenError extends Schema.TaggedError<TeamMemberForbi
   }
 }
 
+export class TeamDefaultEnvironmentProtectedError extends Schema.TaggedError<TeamDefaultEnvironmentProtectedError>()(
+  "TeamDefaultEnvironmentProtectedError",
+  {},
+) {
+  override get message(): string {
+    return "The Default Team Environment cannot be detached.";
+  }
+}
+
+export class TeamEnvironmentAlreadyAttachedError extends Schema.TaggedError<TeamEnvironmentAlreadyAttachedError>()(
+  "TeamEnvironmentAlreadyAttachedError",
+  {
+    environmentId: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Environment "${this.environmentId}" is already attached to this team.`;
+  }
+}
+
+export class TeamNoteStateConflictError extends Schema.TaggedError<TeamNoteStateConflictError>()(
+  "TeamNoteStateConflictError",
+  {
+    code: Schema.Literals(["note_hash_mismatch", "note_not_pending", "note_already_consumed"]),
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return this.reason;
+  }
+}
+
 const isTeamAlreadyConfiguredError = Schema.is(TeamAlreadyConfiguredError);
 const isTeamLastOwnerProtectedError = Schema.is(TeamLastOwnerProtectedError);
 const isTeamDefaultViewProtectedError = Schema.is(TeamDefaultViewProtectedError);
 const isTeamMemberForbiddenError = Schema.is(TeamMemberForbiddenError);
+const isTeamDefaultEnvironmentProtectedError = Schema.is(TeamDefaultEnvironmentProtectedError);
+const isTeamNoteStateConflictError = Schema.is(TeamNoteStateConflictError);
 
 export interface StoredTeamInviteRecord extends TeamInvite {
   readonly tokenHash: string;
@@ -165,6 +208,53 @@ interface ThreadMetaRow {
   readonly view_id: string;
   readonly locked: number;
   readonly locked_by_member_id: string | null;
+  readonly execution_environment_id: string | null;
+  readonly execution_environment_label: string | null;
+  readonly is_local_synced: number;
+  readonly created_at: string;
+}
+
+interface ProjectMetaRow {
+  readonly project_id: string;
+  readonly team_id: string;
+  readonly default_view_id: string | null;
+  readonly repo_identity_key: string | null;
+  readonly assigned_by_member_id: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+interface TeamEnvironmentRow {
+  readonly id: string;
+  readonly team_id: string;
+  readonly environment_id: string;
+  readonly name: string;
+  readonly is_default: number;
+  readonly peer_link_id: string | null;
+  readonly access_roles_json: string;
+  readonly access_member_ids_json: string;
+  readonly created_at: string;
+  readonly updated_at: string;
+}
+
+interface ThreadNoteRow {
+  readonly id: string;
+  readonly thread_id: string;
+  readonly team_id: string;
+  readonly author_member_id: string;
+  readonly author_pseudo: string;
+  readonly author_role: TeamRole;
+  readonly original_body: string;
+  readonly original_content_hash: string;
+  readonly edited_body: string | null;
+  readonly edited_content_hash: string | null;
+  readonly status: TeamThreadNoteStatus;
+  readonly anchor_turn_id: string | null;
+  readonly anchor_seq: number;
+  readonly included_in_turn_id: string | null;
+  readonly resolved_by_member_id: string | null;
+  readonly resolved_by_pseudo: string | null;
+  readonly resolved_at: string | null;
   readonly created_at: string;
 }
 
@@ -274,6 +364,57 @@ const mapThreadMetaRow = (row: ThreadMetaRow): TeamThreadAttribution => ({
   locked: row.locked === 1,
   lockedByMemberId:
     row.locked_by_member_id !== null ? TeamMemberId.make(row.locked_by_member_id) : null,
+  executionEnvironmentId:
+    row.execution_environment_id !== null ? EnvironmentId.make(row.execution_environment_id) : null,
+  executionEnvironmentLabel: row.execution_environment_label,
+  isLocalSynced: row.is_local_synced === 1,
+  createdAt: row.created_at,
+});
+
+const mapProjectMetaRow = (row: ProjectMetaRow): TeamProjectAssignment => ({
+  projectId: ProjectId.make(row.project_id),
+  teamId: TeamId.make(row.team_id),
+  defaultViewId: row.default_view_id !== null ? TeamViewId.make(row.default_view_id) : null,
+  repoIdentityKey: row.repo_identity_key,
+  assignedByMemberId: TeamMemberId.make(row.assigned_by_member_id),
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapEnvironmentRow = (row: TeamEnvironmentRow): TeamEnvironment => ({
+  id: TeamEnvironmentRecordId.make(row.id),
+  teamId: TeamId.make(row.team_id),
+  environmentId: EnvironmentId.make(row.environment_id),
+  name: row.name,
+  isDefault: row.is_default === 1,
+  peerLinkId: row.peer_link_id,
+  accessRule: {
+    roles: [...parseRoleArray(row.access_roles_json)],
+    memberIds: [...parseMemberIdArray(row.access_member_ids_json)],
+  },
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+const mapThreadNoteRow = (row: ThreadNoteRow): TeamThreadNote => ({
+  id: TeamThreadNoteId.make(row.id),
+  threadId: ThreadId.make(row.thread_id),
+  teamId: TeamId.make(row.team_id),
+  authorMemberId: TeamMemberId.make(row.author_member_id),
+  authorPseudo: row.author_pseudo as TeamPseudo,
+  authorRole: row.author_role,
+  originalBody: row.original_body,
+  originalContentHash: row.original_content_hash,
+  editedBody: row.edited_body,
+  editedContentHash: row.edited_content_hash,
+  status: row.status,
+  anchorTurnId: row.anchor_turn_id,
+  anchorSeq: row.anchor_seq,
+  includedInTurnId: row.included_in_turn_id,
+  resolvedByMemberId:
+    row.resolved_by_member_id !== null ? TeamMemberId.make(row.resolved_by_member_id) : null,
+  resolvedByPseudo: row.resolved_by_pseudo as TeamPseudo | null,
+  resolvedAt: row.resolved_at,
   createdAt: row.created_at,
 });
 
@@ -440,8 +581,25 @@ export class TeamRepository extends Context.Service<
       readonly viewId: TeamViewId;
       readonly locked?: boolean;
       readonly lockedByMemberId?: TeamMemberId | null;
+      readonly executionEnvironmentId?: EnvironmentId | null;
+      readonly executionEnvironmentLabel?: string | null;
+      readonly isLocalSynced?: boolean;
       readonly createdAt: string;
     }) => Effect.Effect<Option.Option<TeamThreadAttribution>, TeamRepositoryError>;
+    readonly upsertLocalSyncedThreadAttribution: (input: {
+      readonly threadId: ThreadId;
+      readonly teamId: TeamId;
+      readonly creatorMemberId: TeamMemberId;
+      readonly viewId: TeamViewId;
+      readonly locked?: boolean;
+      readonly lockedByMemberId?: TeamMemberId | null;
+      readonly executionEnvironmentId: EnvironmentId;
+      readonly executionEnvironmentLabel: string;
+      readonly createdAt: string;
+    }) => Effect.Effect<
+      Option.Option<TeamThreadAttribution>,
+      TeamRepositoryError | TeamMemberForbiddenError
+    >;
     readonly updateThreadView: (input: {
       readonly teamId: TeamId;
       readonly threadId: ThreadId;
@@ -539,6 +697,124 @@ export class TeamRepository extends Context.Service<
       TeamRepositoryError
     >;
     readonly clearRelayRecipientBinding: () => Effect.Effect<void, TeamRepositoryError>;
+    readonly listProjectAssignments: (
+      teamId: TeamId,
+    ) => Effect.Effect<ReadonlyArray<TeamProjectAssignment>, TeamRepositoryError>;
+    readonly getProjectAssignment: (
+      projectId: ProjectId,
+    ) => Effect.Effect<Option.Option<TeamProjectAssignment>, TeamRepositoryError>;
+    readonly upsertProjectAssignment: (
+      assignment: TeamProjectAssignment,
+    ) => Effect.Effect<TeamProjectAssignment, TeamRepositoryError>;
+    readonly deleteProjectAssignment: (input: {
+      readonly teamId: TeamId;
+      readonly projectId: ProjectId;
+    }) => Effect.Effect<boolean, TeamRepositoryError>;
+    readonly listEnvironments: (
+      teamId: TeamId,
+    ) => Effect.Effect<ReadonlyArray<TeamEnvironment>, TeamRepositoryError>;
+    readonly getEnvironmentByEnvironmentId: (input: {
+      readonly teamId: TeamId;
+      readonly environmentId: EnvironmentId;
+    }) => Effect.Effect<Option.Option<TeamEnvironment>, TeamRepositoryError>;
+    readonly ensureDefaultEnvironment: (input: {
+      readonly id: TeamEnvironmentRecordId;
+      readonly teamId: TeamId;
+      readonly environmentId: EnvironmentId;
+      readonly name: string;
+      readonly createdAt: string;
+    }) => Effect.Effect<TeamEnvironment, TeamRepositoryError>;
+    readonly createEnvironment: (
+      environment: TeamEnvironment,
+    ) => Effect.Effect<void, TeamRepositoryError | TeamEnvironmentAlreadyAttachedError>;
+    readonly updateEnvironment: (input: {
+      readonly teamId: TeamId;
+      readonly environmentId: EnvironmentId;
+      readonly name?: string;
+      readonly accessRule?: TeamAccessRule;
+      readonly updatedAt: string;
+    }) => Effect.Effect<Option.Option<TeamEnvironment>, TeamRepositoryError>;
+    readonly deleteEnvironment: (input: {
+      readonly teamId: TeamId;
+      readonly environmentId: EnvironmentId;
+    }) => Effect.Effect<boolean, TeamRepositoryError | TeamDefaultEnvironmentProtectedError>;
+    readonly getLatestRunInProjection: (threadId: ThreadId) => Effect.Effect<
+      Option.Option<{
+        readonly runId: string;
+        readonly status: string;
+        readonly userMessageId: string | null;
+      }>,
+      TeamRepositoryError
+    >;
+    readonly listThreadNotes: (input: {
+      readonly teamId: TeamId;
+      readonly threadId?: ThreadId;
+    }) => Effect.Effect<ReadonlyArray<TeamThreadNote>, TeamRepositoryError>;
+    readonly getThreadNoteById: (
+      noteId: TeamThreadNoteId,
+    ) => Effect.Effect<Option.Option<TeamThreadNote>, TeamRepositoryError>;
+    readonly createThreadNote: (input: {
+      readonly id: TeamThreadNoteId;
+      readonly threadId: ThreadId;
+      readonly teamId: TeamId;
+      readonly authorMemberId: TeamMemberId;
+      readonly originalBody: string;
+      readonly originalContentHash: string;
+      readonly anchorTurnId: string | null;
+      readonly createdAt: string;
+    }) => Effect.Effect<Option.Option<TeamThreadNote>, TeamRepositoryError>;
+    readonly deletePendingThreadNoteByAuthor: (input: {
+      readonly teamId: TeamId;
+      readonly noteId: TeamThreadNoteId;
+      readonly authorMemberId: TeamMemberId;
+    }) => Effect.Effect<
+      boolean,
+      TeamRepositoryError | TeamMemberForbiddenError | TeamNoteStateConflictError
+    >;
+    readonly resolveThreadNote: (input: {
+      readonly teamId: TeamId;
+      readonly noteId: TeamThreadNoteId;
+      readonly status: "pending" | "accepted" | "rejected";
+      readonly expectedContentHash?: string;
+      readonly resolvedByMemberId: TeamMemberId;
+      readonly resolvedAt: string;
+    }) => Effect.Effect<
+      Option.Option<TeamThreadNote>,
+      TeamRepositoryError | TeamNoteStateConflictError
+    >;
+    readonly editThreadNote: (input: {
+      readonly teamId: TeamId;
+      readonly noteId: TeamThreadNoteId;
+      readonly editedBody: string;
+      readonly editedContentHash: string;
+      readonly expectedOriginalContentHash?: string;
+      readonly status: "pending" | "accepted";
+      readonly resolvedByMemberId: TeamMemberId;
+      readonly resolvedAt: string;
+    }) => Effect.Effect<
+      Option.Option<TeamThreadNote>,
+      TeamRepositoryError | TeamNoteStateConflictError
+    >;
+    readonly consumeAcceptedNotesAndReanchorPending: (input: {
+      readonly teamId: TeamId;
+      readonly threadId: ThreadId;
+      readonly targetTurnId: string;
+      readonly acceptedNotes: ReadonlyArray<TeamAcceptedNoteRef>;
+      readonly resolvedByMemberId: TeamMemberId;
+      readonly resolvedAt: string;
+    }) => Effect.Effect<
+      {
+        readonly consumedNotes: ReadonlyArray<TeamThreadNote>;
+        readonly reanchoredNotes: ReadonlyArray<TeamThreadNote>;
+      },
+      TeamRepositoryError | TeamNoteStateConflictError
+    >;
+    readonly relinkNoteTurnId: (input: {
+      readonly teamId: TeamId;
+      readonly threadId: ThreadId;
+      readonly fromTurnId: string;
+      readonly toTurnId: string;
+    }) => Effect.Effect<ReadonlyArray<TeamThreadNote>, TeamRepositoryError>;
   }
 >()("t3/team/TeamRepository") {}
 
@@ -1200,33 +1476,134 @@ const make = Effect.gen(function* () {
     recordThreadAttribution: Effect.fn("TeamRepository.recordThreadAttribution")(function* (input) {
       yield* runSql(
         "recordThreadAttribution.insert",
-        sql`
-          INSERT OR IGNORE INTO team_thread_meta (
-            thread_id, team_id, creator_member_id, view_id, locked, locked_by_member_id, created_at
-          )
-          VALUES (
-            ${input.threadId},
-            ${input.teamId},
-            ${input.creatorMemberId},
-            ${input.viewId},
-            ${input.locked === true ? 1 : 0},
-            ${input.locked === true ? (input.lockedByMemberId ?? input.creatorMemberId) : null},
-            ${input.createdAt}
-          )
-        `,
+        sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT OR IGNORE INTO team_thread_meta (
+                thread_id, team_id, creator_member_id, view_id, locked, locked_by_member_id,
+                execution_environment_id, is_local_synced, created_at
+              )
+              VALUES (
+                ${input.threadId},
+                ${input.teamId},
+                ${input.creatorMemberId},
+                ${input.viewId},
+                ${input.locked === true ? 1 : 0},
+                ${input.locked === true ? (input.lockedByMemberId ?? input.creatorMemberId) : null},
+                ${input.executionEnvironmentId ?? null},
+                ${input.isLocalSynced === true ? 1 : 0},
+                ${input.createdAt}
+              )
+            `;
+            if (input.executionEnvironmentLabel != null) {
+              yield* sql`
+                INSERT OR IGNORE INTO team_thread_env_labels (thread_id, execution_environment_label)
+                VALUES (${input.threadId}, ${input.executionEnvironmentLabel})
+              `;
+            }
+          }),
+        ),
       );
       const rows = yield* runSql(
         "recordThreadAttribution.select",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 t.view_id, t.locked, t.locked_by_member_id, t.created_at
+                 t.view_id, t.locked, t.locked_by_member_id,
+                 t.execution_environment_id, el.execution_environment_label,
+                 t.is_local_synced, t.created_at
           FROM team_thread_meta t
           INNER JOIN team_members m ON m.id = t.creator_member_id
+          LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
           WHERE t.thread_id = ${input.threadId}
           LIMIT 1
         `,
       );
       return rows[0] ? Option.some(mapThreadMetaRow(rows[0])) : Option.none();
+    }),
+
+    upsertLocalSyncedThreadAttribution: Effect.fn(
+      "TeamRepository.upsertLocalSyncedThreadAttribution",
+    )(function* (input) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const existingRows = yield* sql<{
+              readonly team_id: string;
+              readonly creator_member_id: string;
+              readonly is_local_synced: number;
+              readonly execution_environment_id: string | null;
+            }>`
+              SELECT team_id, creator_member_id, is_local_synced, execution_environment_id
+              FROM team_thread_meta
+              WHERE thread_id = ${input.threadId}
+              LIMIT 1
+            `;
+            const existing = existingRows[0];
+            if (existing) {
+              if (
+                existing.team_id !== input.teamId ||
+                existing.creator_member_id !== input.creatorMemberId ||
+                existing.is_local_synced !== 1
+              ) {
+                return yield* new TeamMemberForbiddenError({
+                  reason: "Only the owner of a local-synced thread can update its synced state.",
+                });
+              }
+              yield* sql`
+                UPDATE team_thread_meta
+                SET execution_environment_id = ${input.executionEnvironmentId}
+                WHERE thread_id = ${input.threadId} AND team_id = ${input.teamId}
+              `;
+              yield* sql`
+                INSERT OR REPLACE INTO team_thread_env_labels (thread_id, execution_environment_label)
+                VALUES (${input.threadId}, ${input.executionEnvironmentLabel})
+              `;
+            } else {
+              yield* sql`
+                INSERT INTO team_thread_meta (
+                  thread_id, team_id, creator_member_id, view_id, locked, locked_by_member_id,
+                  execution_environment_id, is_local_synced, created_at
+                )
+                VALUES (
+                  ${input.threadId},
+                  ${input.teamId},
+                  ${input.creatorMemberId},
+                  ${input.viewId},
+                  ${input.locked === true ? 1 : 0},
+                  ${input.locked === true ? (input.lockedByMemberId ?? input.creatorMemberId) : null},
+                  ${input.executionEnvironmentId},
+                  1,
+                  ${input.createdAt}
+                )
+              `;
+              yield* sql`
+                INSERT OR REPLACE INTO team_thread_env_labels (thread_id, execution_environment_label)
+                VALUES (${input.threadId}, ${input.executionEnvironmentLabel})
+              `;
+            }
+            const rows = yield* sql<ThreadMetaRow>`
+              SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
+                     t.view_id, t.locked, t.locked_by_member_id,
+                     t.execution_environment_id, el.execution_environment_label,
+                     t.is_local_synced, t.created_at
+              FROM team_thread_meta t
+              INNER JOIN team_members m ON m.id = t.creator_member_id
+              LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
+              WHERE t.thread_id = ${input.threadId}
+              LIMIT 1
+            `;
+            return rows[0] ? Option.some(mapThreadMetaRow(rows[0])) : Option.none();
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) => {
+            if (isTeamMemberForbiddenError(cause)) return cause;
+            return new TeamRepositoryError({
+              operation: "upsertLocalSyncedThreadAttribution",
+              cause,
+            });
+          }),
+        );
     }),
 
     updateThreadView: Effect.fn("TeamRepository.updateThreadView")(function* (input) {
@@ -1246,9 +1623,12 @@ const make = Effect.gen(function* () {
         "updateThreadView.select",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 t.view_id, t.locked, t.locked_by_member_id, t.created_at
+                 t.view_id, t.locked, t.locked_by_member_id,
+                 t.execution_environment_id, el.execution_environment_label,
+                 t.is_local_synced, t.created_at
           FROM team_thread_meta t
           INNER JOIN team_members m ON m.id = t.creator_member_id
+          LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
           WHERE t.thread_id = ${input.threadId}
           LIMIT 1
         `,
@@ -1274,9 +1654,12 @@ const make = Effect.gen(function* () {
         "updateThreadLocked.select",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 t.view_id, t.locked, t.locked_by_member_id, t.created_at
+                 t.view_id, t.locked, t.locked_by_member_id,
+                 t.execution_environment_id, el.execution_environment_label,
+                 t.is_local_synced, t.created_at
           FROM team_thread_meta t
           INNER JOIN team_members m ON m.id = t.creator_member_id
+          LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
           WHERE t.thread_id = ${input.threadId}
           LIMIT 1
         `,
@@ -1288,7 +1671,12 @@ const make = Effect.gen(function* () {
       function* (threadId) {
         yield* runSql(
           "deleteThreadAttribution",
-          sql`DELETE FROM team_thread_meta WHERE thread_id = ${threadId}`,
+          sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`DELETE FROM team_thread_meta WHERE thread_id = ${threadId}`;
+              yield* sql`DELETE FROM team_thread_env_labels WHERE thread_id = ${threadId}`;
+            }),
+          ),
         );
       },
     ),
@@ -1298,9 +1686,12 @@ const make = Effect.gen(function* () {
         "listThreadAttributions",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 t.view_id, t.locked, t.locked_by_member_id, t.created_at
+                 t.view_id, t.locked, t.locked_by_member_id,
+                 t.execution_environment_id, el.execution_environment_label,
+                 t.is_local_synced, t.created_at
           FROM team_thread_meta t
           INNER JOIN team_members m ON m.id = t.creator_member_id
+          LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
           WHERE t.team_id = ${teamId}
           ORDER BY t.created_at DESC
         `,
@@ -1313,9 +1704,12 @@ const make = Effect.gen(function* () {
         "getThreadAttribution",
         sql<ThreadMetaRow>`
           SELECT t.thread_id, t.team_id, t.creator_member_id, m.pseudo AS creator_pseudo,
-                 t.view_id, t.locked, t.locked_by_member_id, t.created_at
+                 t.view_id, t.locked, t.locked_by_member_id,
+                 t.execution_environment_id, el.execution_environment_label,
+                 t.is_local_synced, t.created_at
           FROM team_thread_meta t
           INNER JOIN team_members m ON m.id = t.creator_member_id
+          LEFT JOIN team_thread_env_labels el ON el.thread_id = t.thread_id
           WHERE t.thread_id = ${threadId}
           LIMIT 1
         `,
@@ -1673,6 +2067,771 @@ const make = Effect.gen(function* () {
         yield* runSql("clearRelayRecipientBinding", sql`DELETE FROM team_relay_binding`);
       },
     ),
+
+    listProjectAssignments: Effect.fn("TeamRepository.listProjectAssignments")(function* (teamId) {
+      const rows = yield* runSql(
+        "listProjectAssignments",
+        sql<ProjectMetaRow>`
+          SELECT project_id, team_id, default_view_id, repo_identity_key,
+                 assigned_by_member_id, created_at, updated_at
+          FROM team_project_meta
+          WHERE team_id = ${teamId}
+          ORDER BY created_at ASC
+        `,
+      );
+      return rows.map(mapProjectMetaRow);
+    }),
+
+    getProjectAssignment: Effect.fn("TeamRepository.getProjectAssignment")(function* (projectId) {
+      const rows = yield* runSql(
+        "getProjectAssignment",
+        sql<ProjectMetaRow>`
+          SELECT project_id, team_id, default_view_id, repo_identity_key,
+                 assigned_by_member_id, created_at, updated_at
+          FROM team_project_meta
+          WHERE project_id = ${projectId}
+          LIMIT 1
+        `,
+      );
+      return rows[0] ? Option.some(mapProjectMetaRow(rows[0])) : Option.none();
+    }),
+
+    upsertProjectAssignment: Effect.fn("TeamRepository.upsertProjectAssignment")(
+      function* (assignment) {
+        const rows = yield* runSql(
+          "upsertProjectAssignment",
+          sql<ProjectMetaRow>`
+            INSERT INTO team_project_meta (
+              project_id, team_id, default_view_id, repo_identity_key,
+              assigned_by_member_id, created_at, updated_at
+            )
+            VALUES (
+              ${assignment.projectId},
+              ${assignment.teamId},
+              ${assignment.defaultViewId},
+              ${assignment.repoIdentityKey},
+              ${assignment.assignedByMemberId},
+              ${assignment.createdAt},
+              ${assignment.updatedAt}
+            )
+            ON CONFLICT(project_id) DO UPDATE SET
+              team_id = excluded.team_id,
+              default_view_id = excluded.default_view_id,
+              repo_identity_key = COALESCE(excluded.repo_identity_key, team_project_meta.repo_identity_key),
+              updated_at = excluded.updated_at
+            RETURNING project_id, team_id, default_view_id, repo_identity_key,
+                      assigned_by_member_id, created_at, updated_at
+          `,
+        );
+        return rows[0] ? mapProjectMetaRow(rows[0]) : assignment;
+      },
+    ),
+
+    deleteProjectAssignment: Effect.fn("TeamRepository.deleteProjectAssignment")(function* (input) {
+      const rows = yield* runSql(
+        "deleteProjectAssignment",
+        sql<{ readonly project_id: string }>`
+          DELETE FROM team_project_meta
+          WHERE team_id = ${input.teamId} AND project_id = ${input.projectId}
+          RETURNING project_id
+        `,
+      );
+      return rows.length > 0;
+    }),
+
+    listEnvironments: Effect.fn("TeamRepository.listEnvironments")(function* (teamId) {
+      const rows = yield* runSql(
+        "listEnvironments",
+        sql<TeamEnvironmentRow>`
+          SELECT id, team_id, environment_id, name, is_default, peer_link_id,
+                 access_roles_json, access_member_ids_json, created_at, updated_at
+          FROM team_environments
+          WHERE team_id = ${teamId}
+          ORDER BY is_default DESC, LOWER(name) ASC, created_at ASC
+        `,
+      );
+      return rows.map(mapEnvironmentRow);
+    }),
+
+    getEnvironmentByEnvironmentId: Effect.fn("TeamRepository.getEnvironmentByEnvironmentId")(
+      function* (input) {
+        const rows = yield* runSql(
+          "getEnvironmentByEnvironmentId",
+          sql<TeamEnvironmentRow>`
+            SELECT id, team_id, environment_id, name, is_default, peer_link_id,
+                   access_roles_json, access_member_ids_json, created_at, updated_at
+            FROM team_environments
+            WHERE team_id = ${input.teamId} AND environment_id = ${input.environmentId}
+            LIMIT 1
+          `,
+        );
+        return rows[0] ? Option.some(mapEnvironmentRow(rows[0])) : Option.none();
+      },
+    ),
+
+    ensureDefaultEnvironment: Effect.fn("TeamRepository.ensureDefaultEnvironment")(
+      function* (input) {
+        const existing = yield* runSql(
+          "ensureDefaultEnvironment.select",
+          sql<TeamEnvironmentRow>`
+          SELECT id, team_id, environment_id, name, is_default, peer_link_id,
+                 access_roles_json, access_member_ids_json, created_at, updated_at
+          FROM team_environments
+          WHERE team_id = ${input.teamId} AND is_default = 1
+          LIMIT 1
+        `,
+        );
+        if (existing[0]) {
+          return mapEnvironmentRow(existing[0]);
+        }
+        yield* runSql(
+          "ensureDefaultEnvironment.insert",
+          sql`
+          INSERT OR IGNORE INTO team_environments (
+            id, team_id, environment_id, name, is_default, peer_link_id,
+            access_roles_json, access_member_ids_json, created_at, updated_at
+          )
+          VALUES (
+            ${input.id},
+            ${input.teamId},
+            ${input.environmentId},
+            ${input.name},
+            1,
+            NULL,
+            ${encodeStringArrayJson(ALL_TEAM_ROLES)},
+            '[]',
+            ${input.createdAt},
+            ${input.createdAt}
+          )
+        `,
+        );
+        const after = yield* runSql(
+          "ensureDefaultEnvironment.after",
+          sql<TeamEnvironmentRow>`
+          SELECT id, team_id, environment_id, name, is_default, peer_link_id,
+                 access_roles_json, access_member_ids_json, created_at, updated_at
+          FROM team_environments
+          WHERE team_id = ${input.teamId} AND is_default = 1
+          LIMIT 1
+        `,
+        );
+        if (after[0]) {
+          return mapEnvironmentRow(after[0]);
+        }
+        return {
+          id: input.id,
+          teamId: input.teamId,
+          environmentId: input.environmentId,
+          name: input.name,
+          isDefault: true,
+          peerLinkId: null,
+          accessRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+          createdAt: input.createdAt,
+          updatedAt: input.createdAt,
+        };
+      },
+    ),
+
+    createEnvironment: Effect.fn("TeamRepository.createEnvironment")(function* (environment) {
+      yield* sql`
+        INSERT INTO team_environments (
+          id, team_id, environment_id, name, is_default, peer_link_id,
+          access_roles_json, access_member_ids_json, created_at, updated_at
+        )
+        VALUES (
+          ${environment.id},
+          ${environment.teamId},
+          ${environment.environmentId},
+          ${environment.name},
+          ${environment.isDefault ? 1 : 0},
+          ${environment.peerLinkId},
+          ${encodeStringArrayJson(environment.accessRule.roles)},
+          ${encodeStringArrayJson(environment.accessRule.memberIds)},
+          ${environment.createdAt},
+          ${environment.updatedAt}
+        )
+      `.pipe(
+        Effect.mapError((cause) =>
+          isUniqueConstraintError(cause)
+            ? new TeamEnvironmentAlreadyAttachedError({ environmentId: environment.environmentId })
+            : new TeamRepositoryError({ operation: "createEnvironment", cause }),
+        ),
+      );
+    }),
+
+    updateEnvironment: Effect.fn("TeamRepository.updateEnvironment")(function* (input) {
+      return yield* runSql(
+        "updateEnvironment",
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const existingRows = yield* sql<TeamEnvironmentRow>`
+              SELECT id, team_id, environment_id, name, is_default, peer_link_id,
+                     access_roles_json, access_member_ids_json, created_at, updated_at
+              FROM team_environments
+              WHERE team_id = ${input.teamId} AND environment_id = ${input.environmentId}
+              LIMIT 1
+            `;
+            const existing = existingRows[0];
+            if (!existing) return Option.none<TeamEnvironment>();
+            const nextName = input.name ?? existing.name;
+            const nextAccessRoles =
+              input.accessRule !== undefined
+                ? encodeStringArrayJson(input.accessRule.roles)
+                : existing.access_roles_json;
+            const nextAccessMembers =
+              input.accessRule !== undefined
+                ? encodeStringArrayJson(input.accessRule.memberIds)
+                : existing.access_member_ids_json;
+            const updatedRows = yield* sql<TeamEnvironmentRow>`
+              UPDATE team_environments
+              SET name = ${nextName},
+                  access_roles_json = ${nextAccessRoles},
+                  access_member_ids_json = ${nextAccessMembers},
+                  updated_at = ${input.updatedAt}
+              WHERE team_id = ${input.teamId} AND environment_id = ${input.environmentId}
+              RETURNING id, team_id, environment_id, name, is_default, peer_link_id,
+                        access_roles_json, access_member_ids_json, created_at, updated_at
+            `;
+            return updatedRows[0] ? Option.some(mapEnvironmentRow(updatedRows[0])) : Option.none();
+          }),
+        ),
+      );
+    }),
+
+    deleteEnvironment: Effect.fn("TeamRepository.deleteEnvironment")(function* (input) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const existingRows = yield* sql<{ readonly is_default: number }>`
+              SELECT is_default
+              FROM team_environments
+              WHERE team_id = ${input.teamId} AND environment_id = ${input.environmentId}
+              LIMIT 1
+            `;
+            const existing = existingRows[0];
+            if (!existing) return false;
+            if (existing.is_default === 1) {
+              return yield* new TeamDefaultEnvironmentProtectedError({});
+            }
+            const deleted = yield* sql<{ readonly id: string }>`
+              DELETE FROM team_environments
+              WHERE team_id = ${input.teamId} AND environment_id = ${input.environmentId}
+              RETURNING id
+            `;
+            return deleted.length > 0;
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) => {
+            if (isTeamDefaultEnvironmentProtectedError(cause)) return cause;
+            return new TeamRepositoryError({ operation: "deleteEnvironment", cause });
+          }),
+        );
+    }),
+
+    getLatestRunInProjection: Effect.fn("TeamRepository.getLatestRunInProjection")(
+      function* (threadId) {
+        const rows = yield* runSql(
+          "getLatestRunInProjection",
+          sql<{
+            readonly run_id: string;
+            readonly status: string;
+            readonly payload_json: string;
+          }>`
+            SELECT run_id, status, payload_json
+            FROM orchestration_v2_projection_runs
+            WHERE thread_id = ${threadId}
+              AND status != 'queued'
+            ORDER BY ordinal DESC
+            LIMIT 1
+          `,
+        );
+        const row = rows[0];
+        if (!row) return Option.none();
+        return Option.some({
+          runId: row.run_id,
+          status: row.status,
+          userMessageId: extractRunUserMessageId(row.payload_json),
+        });
+      },
+    ),
+
+    listThreadNotes: Effect.fn("TeamRepository.listThreadNotes")(function* (input) {
+      const rows = yield* runSql(
+        "listThreadNotes",
+        input.threadId !== undefined
+          ? sql<ThreadNoteRow>`
+              SELECT n.id, n.thread_id, n.team_id,
+                     n.author_member_id, a.pseudo AS author_pseudo, a.role AS author_role,
+                     n.original_body, n.original_content_hash,
+                     n.edited_body, n.edited_content_hash,
+                     n.status, n.anchor_turn_id, n.anchor_seq,
+                     n.included_in_turn_id, n.resolved_by_member_id,
+                     r.pseudo AS resolved_by_pseudo, n.resolved_at, n.created_at
+              FROM team_thread_notes n
+              INNER JOIN team_members a ON a.id = n.author_member_id
+              LEFT JOIN team_members r ON r.id = n.resolved_by_member_id
+              WHERE n.team_id = ${input.teamId} AND n.thread_id = ${input.threadId}
+              ORDER BY n.anchor_seq ASC, n.created_at ASC
+            `
+          : sql<ThreadNoteRow>`
+              SELECT n.id, n.thread_id, n.team_id,
+                     n.author_member_id, a.pseudo AS author_pseudo, a.role AS author_role,
+                     n.original_body, n.original_content_hash,
+                     n.edited_body, n.edited_content_hash,
+                     n.status, n.anchor_turn_id, n.anchor_seq,
+                     n.included_in_turn_id, n.resolved_by_member_id,
+                     r.pseudo AS resolved_by_pseudo, n.resolved_at, n.created_at
+              FROM team_thread_notes n
+              INNER JOIN team_members a ON a.id = n.author_member_id
+              LEFT JOIN team_members r ON r.id = n.resolved_by_member_id
+              WHERE n.team_id = ${input.teamId}
+              ORDER BY n.anchor_seq ASC, n.created_at ASC
+            `,
+      );
+      return rows.map(mapThreadNoteRow);
+    }),
+
+    getThreadNoteById: Effect.fn("TeamRepository.getThreadNoteById")(function* (noteId) {
+      const rows = yield* runSql(
+        "getThreadNoteById",
+        sql<ThreadNoteRow>`
+          SELECT n.id, n.thread_id, n.team_id,
+                 n.author_member_id, a.pseudo AS author_pseudo, a.role AS author_role,
+                 n.original_body, n.original_content_hash,
+                 n.edited_body, n.edited_content_hash,
+                 n.status, n.anchor_turn_id, n.anchor_seq,
+                 n.included_in_turn_id, n.resolved_by_member_id,
+                 r.pseudo AS resolved_by_pseudo, n.resolved_at, n.created_at
+          FROM team_thread_notes n
+          INNER JOIN team_members a ON a.id = n.author_member_id
+          LEFT JOIN team_members r ON r.id = n.resolved_by_member_id
+          WHERE n.id = ${noteId}
+          LIMIT 1
+        `,
+      );
+      return rows[0] ? Option.some(mapThreadNoteRow(rows[0])) : Option.none();
+    }),
+
+    createThreadNote: Effect.fn("TeamRepository.createThreadNote")(function* (input) {
+      return yield* runSql(
+        "createThreadNote",
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const seqRows = yield* sql<{ readonly max_seq: number | null }>`
+              SELECT MAX(anchor_seq) AS max_seq
+              FROM team_thread_notes
+              WHERE thread_id = ${input.threadId}
+            `;
+            const nextSeq = (seqRows[0]?.max_seq ?? 0) + 1;
+            yield* sql`
+              INSERT INTO team_thread_notes (
+                id, thread_id, team_id, author_member_id,
+                original_body, original_content_hash,
+                edited_body, edited_content_hash,
+                status, anchor_turn_id, anchor_seq,
+                included_in_turn_id, resolved_by_member_id, resolved_at, created_at
+              )
+              VALUES (
+                ${input.id},
+                ${input.threadId},
+                ${input.teamId},
+                ${input.authorMemberId},
+                ${input.originalBody},
+                ${input.originalContentHash},
+                NULL,
+                NULL,
+                'pending',
+                ${input.anchorTurnId},
+                ${nextSeq},
+                NULL,
+                NULL,
+                NULL,
+                ${input.createdAt}
+              )
+            `;
+            const rows = yield* sql<ThreadNoteRow>`
+              SELECT n.id, n.thread_id, n.team_id,
+                     n.author_member_id, a.pseudo AS author_pseudo, a.role AS author_role,
+                     n.original_body, n.original_content_hash,
+                     n.edited_body, n.edited_content_hash,
+                     n.status, n.anchor_turn_id, n.anchor_seq,
+                     n.included_in_turn_id, n.resolved_by_member_id,
+                     r.pseudo AS resolved_by_pseudo, n.resolved_at, n.created_at
+              FROM team_thread_notes n
+              INNER JOIN team_members a ON a.id = n.author_member_id
+              LEFT JOIN team_members r ON r.id = n.resolved_by_member_id
+              WHERE n.id = ${input.id}
+              LIMIT 1
+            `;
+            return rows[0] ? Option.some(mapThreadNoteRow(rows[0])) : Option.none();
+          }),
+        ),
+      );
+    }),
+
+    deletePendingThreadNoteByAuthor: Effect.fn("TeamRepository.deletePendingThreadNoteByAuthor")(
+      function* (input) {
+        return yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const existingRows = yield* sql<{
+                readonly author_member_id: string;
+                readonly status: TeamThreadNoteStatus;
+              }>`
+                SELECT author_member_id, status
+                FROM team_thread_notes
+                WHERE id = ${input.noteId} AND team_id = ${input.teamId}
+                LIMIT 1
+              `;
+              const existing = existingRows[0];
+              if (!existing) return false;
+              if (existing.author_member_id !== input.authorMemberId) {
+                return yield* new TeamMemberForbiddenError({
+                  reason: "Only the note author can delete their own pending note.",
+                });
+              }
+              if (existing.status !== "pending") {
+                return yield* new TeamNoteStateConflictError({
+                  code: "note_not_pending",
+                  reason: "A note can only be deleted while it is still pending.",
+                });
+              }
+              const deleted = yield* sql<{ readonly id: string }>`
+                DELETE FROM team_thread_notes
+                WHERE id = ${input.noteId}
+                  AND team_id = ${input.teamId}
+                  AND author_member_id = ${input.authorMemberId}
+                  AND status = 'pending'
+                RETURNING id
+              `;
+              return deleted.length > 0;
+            }),
+          )
+          .pipe(
+            Effect.mapError((cause) => {
+              if (isTeamMemberForbiddenError(cause) || isTeamNoteStateConflictError(cause)) {
+                return cause;
+              }
+              return new TeamRepositoryError({
+                operation: "deletePendingThreadNoteByAuthor",
+                cause,
+              });
+            }),
+          );
+      },
+    ),
+
+    resolveThreadNote: Effect.fn("TeamRepository.resolveThreadNote")(function* (input) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const existingRows = yield* sql<{
+              readonly status: TeamThreadNoteStatus;
+              readonly original_content_hash: string;
+              readonly edited_content_hash: string | null;
+            }>`
+              SELECT status, original_content_hash, edited_content_hash
+              FROM team_thread_notes
+              WHERE id = ${input.noteId} AND team_id = ${input.teamId}
+              LIMIT 1
+            `;
+            const existing = existingRows[0];
+            if (!existing) return Option.none<TeamThreadNote>();
+            if (existing.status === "consumed") {
+              return yield* new TeamNoteStateConflictError({
+                code: "note_already_consumed",
+                reason: "This note has already been included in a turn and cannot be modified.",
+              });
+            }
+            const effectiveHash = existing.edited_content_hash ?? existing.original_content_hash;
+            if (
+              input.expectedContentHash !== undefined &&
+              effectiveHash !== input.expectedContentHash
+            ) {
+              return yield* new TeamNoteStateConflictError({
+                code: "note_hash_mismatch",
+                reason: "Note content hash mismatch; reload the note before approving.",
+              });
+            }
+            const resolvedBy = input.status === "pending" ? null : input.resolvedByMemberId;
+            const resolvedAt = input.status === "pending" ? null : input.resolvedAt;
+            yield* sql`
+              UPDATE team_thread_notes
+              SET status = ${input.status},
+                  resolved_by_member_id = ${resolvedBy},
+                  resolved_at = ${resolvedAt}
+              WHERE id = ${input.noteId} AND team_id = ${input.teamId} AND status != 'consumed'
+            `;
+            const rows = yield* sql<ThreadNoteRow>`
+              SELECT n.id, n.thread_id, n.team_id,
+                     n.author_member_id, a.pseudo AS author_pseudo, a.role AS author_role,
+                     n.original_body, n.original_content_hash,
+                     n.edited_body, n.edited_content_hash,
+                     n.status, n.anchor_turn_id, n.anchor_seq,
+                     n.included_in_turn_id, n.resolved_by_member_id,
+                     r.pseudo AS resolved_by_pseudo, n.resolved_at, n.created_at
+              FROM team_thread_notes n
+              INNER JOIN team_members a ON a.id = n.author_member_id
+              LEFT JOIN team_members r ON r.id = n.resolved_by_member_id
+              WHERE n.id = ${input.noteId}
+              LIMIT 1
+            `;
+            return rows[0] ? Option.some(mapThreadNoteRow(rows[0])) : Option.none();
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) => {
+            if (isTeamNoteStateConflictError(cause)) return cause;
+            return new TeamRepositoryError({ operation: "resolveThreadNote", cause });
+          }),
+        );
+    }),
+
+    editThreadNote: Effect.fn("TeamRepository.editThreadNote")(function* (input) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const existingRows = yield* sql<{
+              readonly status: TeamThreadNoteStatus;
+              readonly original_content_hash: string;
+            }>`
+              SELECT status, original_content_hash
+              FROM team_thread_notes
+              WHERE id = ${input.noteId} AND team_id = ${input.teamId}
+              LIMIT 1
+            `;
+            const existing = existingRows[0];
+            if (!existing) return Option.none<TeamThreadNote>();
+            if (existing.status === "consumed") {
+              return yield* new TeamNoteStateConflictError({
+                code: "note_already_consumed",
+                reason: "This note has already been included in a turn and cannot be edited.",
+              });
+            }
+            if (
+              input.expectedOriginalContentHash !== undefined &&
+              existing.original_content_hash !== input.expectedOriginalContentHash
+            ) {
+              return yield* new TeamNoteStateConflictError({
+                code: "note_hash_mismatch",
+                reason: "Original note content hash mismatch.",
+              });
+            }
+            yield* sql`
+              UPDATE team_thread_notes
+              SET edited_body = ${input.editedBody},
+                  edited_content_hash = ${input.editedContentHash},
+                  status = ${input.status},
+                  resolved_by_member_id = ${input.resolvedByMemberId},
+                  resolved_at = ${input.resolvedAt}
+              WHERE id = ${input.noteId} AND team_id = ${input.teamId} AND status != 'consumed'
+            `;
+            const rows = yield* sql<ThreadNoteRow>`
+              SELECT n.id, n.thread_id, n.team_id,
+                     n.author_member_id, a.pseudo AS author_pseudo, a.role AS author_role,
+                     n.original_body, n.original_content_hash,
+                     n.edited_body, n.edited_content_hash,
+                     n.status, n.anchor_turn_id, n.anchor_seq,
+                     n.included_in_turn_id, n.resolved_by_member_id,
+                     r.pseudo AS resolved_by_pseudo, n.resolved_at, n.created_at
+              FROM team_thread_notes n
+              INNER JOIN team_members a ON a.id = n.author_member_id
+              LEFT JOIN team_members r ON r.id = n.resolved_by_member_id
+              WHERE n.id = ${input.noteId}
+              LIMIT 1
+            `;
+            return rows[0] ? Option.some(mapThreadNoteRow(rows[0])) : Option.none();
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) => {
+            if (isTeamNoteStateConflictError(cause)) return cause;
+            return new TeamRepositoryError({ operation: "editThreadNote", cause });
+          }),
+        );
+    }),
+
+    consumeAcceptedNotesAndReanchorPending: Effect.fn(
+      "TeamRepository.consumeAcceptedNotesAndReanchorPending",
+    )(function* (input) {
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const consumedIds: Array<TeamThreadNoteId> = [];
+            const seenNoteIds = new Set<string>();
+            for (const ref of input.acceptedNotes) {
+              if (seenNoteIds.has(ref.noteId)) continue;
+              seenNoteIds.add(ref.noteId);
+              const existingRows = yield* sql<{
+                readonly status: TeamThreadNoteStatus;
+                readonly original_content_hash: string;
+                readonly edited_content_hash: string | null;
+              }>`
+                SELECT status, original_content_hash, edited_content_hash
+                FROM team_thread_notes
+                WHERE id = ${ref.noteId}
+                  AND team_id = ${input.teamId}
+                  AND thread_id = ${input.threadId}
+                LIMIT 1
+              `;
+              const existing = existingRows[0];
+              if (!existing) {
+                return yield* new TeamNoteStateConflictError({
+                  code: "note_hash_mismatch",
+                  reason: `Accepted note "${ref.noteId}" was not found on this thread.`,
+                });
+              }
+              if (existing.status === "consumed") {
+                return yield* new TeamNoteStateConflictError({
+                  code: "note_already_consumed",
+                  reason: `Accepted note "${ref.noteId}" was already consumed by an earlier turn.`,
+                });
+              }
+              if (existing.status !== "accepted") {
+                return yield* new TeamNoteStateConflictError({
+                  code: "note_not_pending",
+                  reason: `Note "${ref.noteId}" is "${existing.status}" and must be explicitly accepted before dispatch.`,
+                });
+              }
+              const effectiveHash = existing.edited_content_hash ?? existing.original_content_hash;
+              if (effectiveHash !== ref.contentHash) {
+                return yield* new TeamNoteStateConflictError({
+                  code: "note_hash_mismatch",
+                  reason: `Content hash mismatch for accepted note "${ref.noteId}".`,
+                });
+              }
+              yield* sql`
+                UPDATE team_thread_notes
+                SET status = 'consumed',
+                    included_in_turn_id = ${input.targetTurnId},
+                    resolved_by_member_id = ${input.resolvedByMemberId},
+                    resolved_at = ${input.resolvedAt}
+                WHERE id = ${ref.noteId}
+                  AND team_id = ${input.teamId}
+                  AND thread_id = ${input.threadId}
+                  AND status = 'accepted'
+              `;
+              consumedIds.push(ref.noteId);
+            }
+
+            // Atomically re-anchor any remaining pending notes (including concurrent arrivals) after this new turn.
+            const pendingRows = yield* sql<{ readonly id: string }>`
+              SELECT id
+              FROM team_thread_notes
+              WHERE team_id = ${input.teamId}
+                AND thread_id = ${input.threadId}
+                AND status = 'pending'
+              ORDER BY anchor_seq ASC, created_at ASC
+            `;
+            const reanchoredIds: Array<string> = [];
+            if (pendingRows.length > 0) {
+              const seqRows = yield* sql<{ readonly max_seq: number | null }>`
+                SELECT MAX(anchor_seq) AS max_seq
+                FROM team_thread_notes
+                WHERE thread_id = ${input.threadId}
+              `;
+              let nextSeq = (seqRows[0]?.max_seq ?? 0) + 1;
+              for (const pending of pendingRows) {
+                yield* sql`
+                  UPDATE team_thread_notes
+                  SET anchor_turn_id = ${input.targetTurnId},
+                      anchor_seq = ${nextSeq}
+                  WHERE id = ${pending.id}
+                    AND team_id = ${input.teamId}
+                    AND status = 'pending'
+                `;
+                reanchoredIds.push(pending.id);
+                nextSeq += 1;
+              }
+            }
+
+            const fetchByIds = (ids: ReadonlyArray<string>) =>
+              ids.length === 0
+                ? Effect.succeed([] as ReadonlyArray<ThreadNoteRow>)
+                : sql<ThreadNoteRow>`
+                    SELECT n.id, n.thread_id, n.team_id,
+                           n.author_member_id, a.pseudo AS author_pseudo, a.role AS author_role,
+                           n.original_body, n.original_content_hash,
+                           n.edited_body, n.edited_content_hash,
+                           n.status, n.anchor_turn_id, n.anchor_seq,
+                           n.included_in_turn_id, n.resolved_by_member_id,
+                           r.pseudo AS resolved_by_pseudo, n.resolved_at, n.created_at
+                    FROM team_thread_notes n
+                    INNER JOIN team_members a ON a.id = n.author_member_id
+                    LEFT JOIN team_members r ON r.id = n.resolved_by_member_id
+                    WHERE n.id IN ${sql.in(ids)}
+                    ORDER BY n.anchor_seq ASC, n.created_at ASC
+                  `;
+
+            const [consumedRows, reanchoredRows] = yield* Effect.all([
+              fetchByIds(consumedIds),
+              fetchByIds(reanchoredIds),
+            ]);
+            return {
+              consumedNotes: consumedRows.map(mapThreadNoteRow),
+              reanchoredNotes: reanchoredRows.map(mapThreadNoteRow),
+            };
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) => {
+            if (isTeamNoteStateConflictError(cause)) return cause;
+            return new TeamRepositoryError({
+              operation: "consumeAcceptedNotesAndReanchorPending",
+              cause,
+            });
+          }),
+        );
+    }),
+
+    relinkNoteTurnId: Effect.fn("TeamRepository.relinkNoteTurnId")(function* (input) {
+      return yield* runSql(
+        "relinkNoteTurnId",
+        sql.withTransaction(
+          Effect.gen(function* () {
+            const matched = yield* sql<{ readonly id: string }>`
+              SELECT id
+              FROM team_thread_notes
+              WHERE team_id = ${input.teamId}
+                AND thread_id = ${input.threadId}
+                AND (anchor_turn_id = ${input.fromTurnId} OR included_in_turn_id = ${input.fromTurnId})
+            `;
+            if (matched.length === 0) return [] as ReadonlyArray<TeamThreadNote>;
+            yield* sql`
+              UPDATE team_thread_notes
+              SET anchor_turn_id = CASE
+                    WHEN anchor_turn_id = ${input.fromTurnId} THEN ${input.toTurnId}
+                    ELSE anchor_turn_id
+                  END,
+                  included_in_turn_id = CASE
+                    WHEN included_in_turn_id = ${input.fromTurnId} THEN ${input.toTurnId}
+                    ELSE included_in_turn_id
+                  END
+              WHERE team_id = ${input.teamId}
+                AND thread_id = ${input.threadId}
+                AND (anchor_turn_id = ${input.fromTurnId} OR included_in_turn_id = ${input.fromTurnId})
+            `;
+            const ids = matched.map((row) => row.id);
+            const rows = yield* sql<ThreadNoteRow>`
+              SELECT n.id, n.thread_id, n.team_id,
+                     n.author_member_id, a.pseudo AS author_pseudo, a.role AS author_role,
+                     n.original_body, n.original_content_hash,
+                     n.edited_body, n.edited_content_hash,
+                     n.status, n.anchor_turn_id, n.anchor_seq,
+                     n.included_in_turn_id, n.resolved_by_member_id,
+                     r.pseudo AS resolved_by_pseudo, n.resolved_at, n.created_at
+              FROM team_thread_notes n
+              INNER JOIN team_members a ON a.id = n.author_member_id
+              LEFT JOIN team_members r ON r.id = n.resolved_by_member_id
+              WHERE n.id IN ${sql.in(ids)}
+              ORDER BY n.anchor_seq ASC, n.created_at ASC
+            `;
+            return rows.map(mapThreadNoteRow);
+          }),
+        ),
+      );
+    }),
   });
 });
 

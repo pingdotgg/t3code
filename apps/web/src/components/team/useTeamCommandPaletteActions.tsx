@@ -1,14 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   canCurrentMemberChangeThreadView,
   canCurrentMemberInterruptThread,
+  canCurrentMemberLeaveThreadNote,
   canCurrentMemberToggleThreadLock,
   hasActiveTeamEnvironment,
   isFollowingTeamThread,
   isTeamColleagueThread,
   isTeamThreadLocked,
   listAccessibleTeamViews,
+  resolveTeamThreadEnvironmentAccessForClient,
   resolveTeamThreadView,
 } from "@t3tools/client-runtime/team";
 import {
@@ -20,16 +22,20 @@ import { useGT } from "gt-react";
 import {
   BellIcon,
   BellOffIcon,
+  GitForkIcon,
   LayersIcon,
   LockIcon,
   OctagonXIcon,
+  StickyNoteIcon,
   UnlockIcon,
   UsersIcon,
 } from "lucide-react";
 
 import { useEnvironmentScope } from "~/state/session";
-import { useQuietThreadShell } from "~/state/entities";
+import { useProjects, useQuietThreadShell } from "~/state/entities";
 import {
+  openTeamForkDialog,
+  setTeamThreadNoteMode,
   teamEnvironment,
   toggleShowColleaguesThreads,
   toggleShowFollowedThreadsOnly,
@@ -81,6 +87,7 @@ export function useTeamCommandPaletteActions(
   const activeThreadShell = useQuietThreadShell(
     activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
   );
+  const allProjects = useProjects();
   const interruptThreadTurn = useOrchestrationCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
   });
@@ -183,6 +190,51 @@ export function useTeamCommandPaletteActions(
               threadId: activeThread.id,
               viewId: view.id,
             });
+          },
+        });
+      }
+    }
+    const envAccess = resolveTeamThreadEnvironmentAccessForClient({
+      teamState: activeTeamState,
+      threadId: activeThread.id,
+      viewingOnLocalExecutionEnvironment: false,
+    });
+    if (!envAccess.canExecute && activeThreadShell) {
+      const threadProject = allProjects.find(
+        (p) =>
+          p.environmentId === activeThread.environmentId && p.id === activeThreadShell.projectId,
+      );
+      items.push({
+        kind: "action",
+        value: "action:team-fork-thread",
+        searchTerms: ["team", "fork", "environment", "handoff", "copy", "thread"],
+        title: gt("Fork this thread to an accessible environment"),
+        icon: <GitForkIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          openTeamForkDialog({
+            sourceEnvironmentId: activeThread.environmentId,
+            sourceThreadId: activeThread.id,
+            sourceThreadTitle: activeThreadShell.title,
+            teamEnvironmentId: activeThread.environmentId,
+            projectId: activeThreadShell.projectId,
+            repositoryIdentity: threadProject?.repositoryIdentity,
+          });
+        },
+      });
+      if (
+        canCurrentMemberLeaveThreadNote({ teamState: activeTeamState, threadId: activeThread.id })
+      ) {
+        items.push({
+          kind: "action",
+          value: "action:team-leave-note",
+          searchTerms: ["team", "note", "comment", "suggest", "thread"],
+          title: gt("Leave a note on this thread"),
+          icon: <StickyNoteIcon className={ITEM_ICON_CLASS} />,
+          run: async () => {
+            setTeamThreadNoteMode(
+              scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id)),
+              true,
+            );
           },
         });
       }

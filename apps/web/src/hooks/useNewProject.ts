@@ -15,6 +15,7 @@ import { m } from "~/i18n/messages";
 import { waitForProject } from "~/state/entities";
 import { projectEnvironment } from "~/state/projects";
 import { sourceControlEnvironment } from "~/state/sourceControl";
+import { teamEnvironment } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { suggestAppAccessForRemote } from "../components/sourceControlAppAccessToast";
@@ -27,6 +28,9 @@ function errorMessage(error: unknown): string {
 
 export function useNewProject() {
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
+  const assignProjectToTeam = useAtomCommand(teamEnvironment.assignProject, {
+    reportFailure: false,
+  });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,
   });
@@ -77,6 +81,7 @@ export function useNewProject() {
     readonly environmentId: EnvironmentId;
     readonly name: string;
     readonly publishTo: NewProjectPublishTarget | null;
+    readonly assignToTeam?: boolean;
   }): Promise<boolean> => {
     const result = await createNew({
       environmentId: input.environmentId,
@@ -96,6 +101,12 @@ export function useNewProject() {
     }
 
     const { projectId, workspaceRoot, commitError } = result.value;
+    if (input.assignToTeam) {
+      void assignProjectToTeam({
+        environmentId: input.environmentId,
+        input: { projectId, defaultViewId: null },
+      });
+    }
     toastManager.add(
       stackedThreadToast(
         commitError === undefined

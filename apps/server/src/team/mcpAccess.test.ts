@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   AuthSessionId,
   EnvironmentId,
+  ProjectId,
   ProviderInstanceId,
   RunId,
   ThreadId,
@@ -496,5 +497,112 @@ describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () =
           expect(yield* peerLinks.enabled).toBe(true);
         }).pipe(Effect.provide(peerLayer));
       }).pipe(Effect.provide(makeTeamLayer({ teamHubOnly: true }))),
+  );
+
+  it.effect(
+    "enforces Milestone 5 per-environment ACLs and local-execution boundary across member-bound MCP tools",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({ subject: "alice-mcp-m5" });
+        yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "MCP M5 Team", ownerPseudo: "alice" },
+        });
+        const bobInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob" },
+        });
+        const bobRedeemed = yield* team.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob",
+          client: testClient,
+        });
+        const bobSession = yield* sessions.verify(bobRedeemed.accessToken);
+
+        // Attach a restricted remote environment (owner/admin only).
+        const restrictedEnvId = EnvironmentId.make("env-restricted-mcp");
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: restrictedEnvId,
+            name: "Restricted GPU",
+            accessRule: { roles: ["owner", "admin"], memberIds: [] },
+          },
+        });
+        const aliceState = yield* team.getState(aliceSession.sessionId);
+        const defaultEnvId = (aliceState.environments ?? []).find(
+          (e) => e.isDefault,
+        )!.environmentId;
+
+        // Regular Bob's MCP filter hides restrictedEnvId and assertCanAccessEnvironment denies it.
+        const bobAccessible = yield* withClientCaller(
+          bobSession.sessionId,
+          TeamMcpAccess.filterAccessibleEnvironmentIds([defaultEnvId, restrictedEnvId]),
+        );
+        expect(bobAccessible.has(defaultEnvId)).toBe(true);
+        expect(bobAccessible.has(restrictedEnvId)).toBe(false);
+        expect(
+          (yield* Effect.exit(
+            withClientCaller(
+              bobSession.sessionId,
+              TeamMcpAccess.assertCanAccessEnvironment(restrictedEnvId),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+
+        // Owner Alice's MCP caller CAN access restrictedEnvId.
+        yield* withClientCaller(
+          aliceSession.sessionId,
+          TeamMcpAccess.assertCanAccessEnvironment(restrictedEnvId),
+        );
+
+        // Bob syncs a local-environment thread; even owner Alice's MCP caller is blocked from executing on it!
+        const bobLocalThreadId = ThreadId.make("thread-bob-local-mcp");
+        yield* team.syncLocalThread({
+          sessionId: bobSession.sessionId,
+          payload: {
+            threadId: bobLocalThreadId,
+            projectId: ProjectId.make("proj-mcp-m5"),
+            executionEnvironmentId: EnvironmentId.make("env-bob-laptop-mcp"),
+            executionEnvironmentLabel: "Bob Laptop",
+            title: "Bob Local MCP Test",
+            branch: null,
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("codex"),
+              model: "gpt-5",
+              options: [],
+            },
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            runs: [],
+            messages: [],
+          },
+        });
+        // Alice can READ Bob's local-synced thread via MCP...
+        yield* withClientCaller(
+          aliceSession.sessionId,
+          TeamMcpAccess.assertCanReadThread(bobLocalThreadId),
+        );
+        // ...but CANNOT post, steer, or interrupt on it via MCP!
+        expect(
+          (yield* Effect.exit(
+            withClientCaller(
+              aliceSession.sessionId,
+              TeamMcpAccess.assertCanPostInThread(bobLocalThreadId),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            withClientCaller(
+              aliceSession.sessionId,
+              TeamMcpAccess.assertCanInterruptThread(bobLocalThreadId),
+            ),
+          ))._tag,
+        ).toBe("Failure");
+      }).pipe(Effect.provide(makeTeamLayer())),
   );
 });
