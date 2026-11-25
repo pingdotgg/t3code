@@ -1,7 +1,8 @@
-import type {
-  ProviderApprovalOption,
-  ProviderUserInputAnswers,
-  UserInputQuestion,
+import {
+  TrimmedNonEmptyString,
+  type ProviderApprovalOption,
+  type ProviderUserInputAnswers,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
@@ -703,6 +704,14 @@ function withAntigravityEditPatches(
 
 const ANTIGRAVITY_WEB_SEARCH_BARE_TITLE = /^\s*(?:searched|searching)\s*$/iu;
 
+const AntigravityWebSearchInput = Schema.Struct({
+  query: TrimmedNonEmptyString,
+  domain: Schema.optional(Schema.String),
+});
+const decodeAntigravityWebSearchInput = Schema.decodeUnknownOption(AntigravityWebSearchInput, {
+  onExcessProperty: "error",
+});
+
 /**
  * Antigravity titles `search_web` steps "Searched" (its `search: web` render hint is not sent
  * over ACP). Distinguish them from local search tools by the `search_web` schema (`query`,
@@ -719,17 +728,7 @@ function isAntigravityWebSearchToolCall(
   if (Array.isArray(data.locations) && data.locations.length > 0) {
     return false;
   }
-  const rawInput = data.rawInput;
-  if (!Predicate.isObject(rawInput)) {
-    return false;
-  }
-  const keys = Object.keys(rawInput);
-  return (
-    keys.length > 0 &&
-    typeof rawInput.query === "string" &&
-    rawInput.query.trim().length > 0 &&
-    keys.every((key) => key === "query" || key === "domain")
-  );
+  return Option.isSome(decodeAntigravityWebSearchInput(data.rawInput));
 }
 
 export function normalizeAntigravityToolCall(

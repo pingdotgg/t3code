@@ -923,6 +923,36 @@ describe("Antigravity tool results", () => {
       }).toolCall,
     );
     expect(grepQueryOnly.data.title).toBe("Grep");
+
+    const invalidDomain = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "file-4",
+          title: "Searched",
+          kind: "search",
+          status: "completed",
+          rawInput: { query: "news", domain: 42 },
+        },
+      }).toolCall,
+    );
+    expect(invalidDomain.data.title).toBe("Searched");
+
+    const blankQuery = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "file-5",
+          title: "Searched",
+          kind: "search",
+          status: "completed",
+          rawInput: { query: "   " },
+        },
+      }).toolCall,
+    );
+    expect(blankQuery.data.title).toBe("Searched");
   });
 });
 
