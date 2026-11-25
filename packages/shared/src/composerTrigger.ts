@@ -1,3 +1,5 @@
+import { parseMarkdownFileLink } from "./markdownLinks.ts";
+
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
@@ -16,21 +18,44 @@ function composerFileLinkBasename(path: string): string {
 // Emphasis markers too: `__init__.py` would otherwise render as bold "init.py",
 // which no longer matches the path, so the label shows beside the chip.
 function escapeMarkdownLinkLabel(label: string): string {
-  return label.replace(/[\\[\]*_]/g, "\\$&");
+  return label.replace(/[\\[\]*_&]/g, "\\$&");
 }
 
 function encodeMarkdownLinkDestination(path: string): string {
   return encodeURI(path)
     .replaceAll("(", "%28")
     .replaceAll(")", "%29")
+    .replaceAll("&", "%26")
     .replaceAll("#", "%23")
     .replaceAll("?", "%3F")
     .replaceAll("\\", "%5C");
 }
 
+const URI_OR_ROOTED_PATH_PATTERN = /^(?:[a-z][a-z\d+.-]*:|[\\/])/i;
+
+// A relative destination the parser rejects (`C%23/Program.cs`) gets `./`, as codexFileCitations does.
+function needsDotSlashPrefix(path: string): boolean {
+  return (
+    path.length > 0 &&
+    !parseMarkdownFileLink(encodeMarkdownLinkDestination(path)) &&
+    !URI_OR_ROOTED_PATH_PATTERN.test(path)
+  );
+}
+
 export function serializeComposerFileLink(path: string): string {
   const label = escapeMarkdownLinkLabel(composerFileLinkBasename(path));
-  return `[${label}](${encodeMarkdownLinkDestination(path)})`;
+  const destination = encodeMarkdownLinkDestination(path);
+  return `[${label}](${needsDotSlashPrefix(path) ? `./${destination}` : destination})`;
+}
+
+/** The file a composer link names. Drops only the `./` serializeComposerFileLink adds, not one the author wrote. */
+export function composerFileLinkPath(encodedDestination: string, decodedPath: string): string {
+  if (!encodedDestination.startsWith("./")) return decodedPath;
+  const bare = decodedPath.slice(2);
+  return needsDotSlashPrefix(bare) &&
+    encodeMarkdownLinkDestination(bare) === encodedDestination.slice(2)
+    ? bare
+    : decodedPath;
 }
 
 function clampCursor(text: string, cursor: number): number {
