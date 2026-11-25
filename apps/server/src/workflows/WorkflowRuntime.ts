@@ -650,8 +650,11 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     storeDelete: Effect.fn("Workflows.storeDelete")(function* (...input) {
       return yield* (yield* current).storeDelete(...input);
     }),
+    // Every reload starts a watcher over on a whole list, which is where the definition rides.
     watch: followed((live) => live.watch).pipe(
-      Stream.map(([snapshot, at]) => ({ ...snapshot, definition: at })),
+      Stream.map(([update, at]) =>
+        update._tag === "snapshot" ? { ...update, definition: at } : update,
+      ),
     ),
     counts: followed((live) => live.counts).pipe(Stream.map(([counts]) => counts)),
     sweep: Effect.flatMap(current, (live) => live.sweep),

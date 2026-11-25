@@ -171,6 +171,48 @@ export const WorkflowCounts = Schema.Struct({
 export type WorkflowCounts = typeof WorkflowCounts.Type;
 export type WorkflowRunsSnapshot = typeof WorkflowRunsSnapshot.Type;
 
+/**
+ * What a watcher of the runs list is sent: the whole list first and after every reload, then
+ * only what changed since the last frame, so one run moving does not resend every other run.
+ */
+export const WorkflowRunsUpdate = Schema.Union([
+  Schema.TaggedStruct("snapshot", WorkflowRunsSnapshot.fields),
+  Schema.TaggedStruct("changed", {
+    /** Runs new to the list or different from what was last sent. */
+    runs: Schema.Array(WorkflowRun),
+    /** Runs that left the list. */
+    removed: Schema.Array(Schema.String),
+    /** All open questions, when any of them changed. */
+    questions: Schema.optional(Schema.Array(WorkflowQuestion)),
+  }),
+]);
+export type WorkflowRunsUpdate = typeof WorkflowRunsUpdate.Type;
+
+/** The list once `update` is applied, in the order the server lists runs: newest first. */
+export function applyWorkflowRunsUpdate(
+  snapshot: WorkflowRunsSnapshot | undefined,
+  update: WorkflowRunsUpdate,
+): WorkflowRunsSnapshot {
+  if (update._tag === "snapshot") {
+    const { _tag, ...next } = update;
+    return next;
+  }
+  const base = snapshot ?? { workflows: [], runs: [], questions: [] };
+  const changed = new Map(update.runs.map((run) => [run.runId, run]));
+  const gone = new Set(update.removed);
+  const kept = base.runs.flatMap((run) => {
+    if (gone.has(run.runId)) return [];
+    const next = changed.get(run.runId);
+    changed.delete(run.runId);
+    return [next ?? run];
+  });
+  // Stable, so runs that started at the same moment keep the order they were sent in.
+  const runs = [...changed.values(), ...kept].sort((left, right) =>
+    left.startedAt === right.startedAt ? 0 : left.startedAt < right.startedAt ? 1 : -1,
+  );
+  return { ...base, runs, questions: update.questions ?? base.questions };
+}
+
 export const WorkflowRunsSubscribeInput = Schema.Struct({});
 
 export const WorkflowRunGetInput = Schema.Struct({ runId: Schema.String });

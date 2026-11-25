@@ -1,8 +1,9 @@
-import type {
-  WorkflowQuestion,
-  WorkflowRun,
-  WorkflowRunReference,
-  WorkflowStep,
+import {
+  applyWorkflowRunsUpdate,
+  type WorkflowQuestion,
+  type WorkflowRun,
+  type WorkflowRunReference,
+  type WorkflowStep,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -349,6 +350,33 @@ describe("the list of runs", () => {
     expect(workflowChip("issue")).toEqual(workflowChip("issue"));
     expect(workflowChip("𠮷野-report").letters).toBe("𠮷R");
     expect(workflowChip("a𝒜b").letters).toBe("A𝒜");
+  });
+});
+
+describe("applyWorkflowRunsUpdate", () => {
+  it("keeps the list a fresh snapshot would show, newest first", () => {
+    const asked = question("b");
+    const first = applyWorkflowRunsUpdate(undefined, {
+      _tag: "snapshot",
+      workflows: [],
+      runs: [run("c", { startedAt: at(3) }), run("b", { startedAt: at(2) }), run("a")],
+      questions: [asked],
+    });
+    const next = applyWorkflowRunsUpdate(first, {
+      _tag: "changed",
+      runs: [run("b", { startedAt: at(2), status: "completed" }), run("d", { startedAt: at(4) })],
+      removed: ["a"],
+    });
+    expect(next.runs.map((entry) => [entry.runId, entry.status])).toEqual([
+      ["d", "running"],
+      ["c", "running"],
+      ["b", "completed"],
+    ]);
+    expect(next.questions).toEqual([asked]);
+    expect(
+      applyWorkflowRunsUpdate(next, { _tag: "changed", runs: [], removed: [], questions: [] })
+        .questions,
+    ).toEqual([]);
   });
 });
 

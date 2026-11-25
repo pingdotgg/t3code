@@ -1,6 +1,11 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import {
+  applyWorkflowRunsUpdate,
+  type WorkflowRunsSnapshot,
+  type WorkflowRunsUpdate,
+} from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -25,6 +30,18 @@ import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
 import { engineTag, type WorkflowDefinition } from "./workflow.ts";
 import * as Workflows from "./Workflows.ts";
+
+// The list as a client holds it, folded from what `watch` sends.
+const listed = (updates: Stream.Stream<WorkflowRunsUpdate>) =>
+  updates.pipe(
+    Stream.mapAccum(
+      (): WorkflowRunsSnapshot | undefined => undefined,
+      (list, update) => {
+        const next = applyWorkflowRunsUpdate(list, update);
+        return [next, [next]] as const;
+      },
+    ),
+  );
 
 /** Waits to be let go. */
 const hold = `T3.workflow("hold", { version: 1, payload: Schema.Struct({}), returns: Schema.String }, () =>
@@ -145,7 +162,7 @@ it.effect(
         // The same change made outside the app is refused as a whole: the file still reads as the
         // version that runs, until it is put back.
         const told = (wanted: boolean) =>
-          workflows.watch.pipe(
+          listed(workflows.watch).pipe(
             Stream.filter((snapshot) => (snapshot.definition?.problem != null) === wanted),
             Stream.runHead,
           );
@@ -199,7 +216,7 @@ it.effect(
         // Someone breaks a file outside the app: its last good version keeps running, and the
         // other files go on changing.
         const problem = (wanted: boolean) =>
-          workflows.watch.pipe(
+          listed(workflows.watch).pipe(
             Stream.filter((snapshot) => (snapshot.definition?.problem != null) === wanted),
             Stream.runHead,
           );
@@ -287,7 +304,7 @@ it.effect(
         const workflows = yield* Workflows.Workflows;
         const definitions = yield* WorkflowRuntime.WorkflowDefinitions;
         const revision = Effect.map(
-          Stream.runHead(workflows.watch),
+          Stream.runHead(listed(workflows.watch)),
           (snapshot) => Option.getOrThrow(snapshot).definition?.revision ?? 0,
         );
         refuse = true;
@@ -300,7 +317,7 @@ it.effect(
         const before = yield* revision;
         refuse = false;
         yield* TestClock.adjust("30 seconds");
-        yield* workflows.watch.pipe(
+        yield* listed(workflows.watch).pipe(
           Stream.filter((snapshot) => (snapshot.definition?.revision ?? 0) > before),
           Stream.runHead,
         );
@@ -319,8 +336,8 @@ it.effect(
           ["greet@1", "hold@1"],
         ]);
         assert.include(
-          (yield* Stream.runHead(workflows.watch)).pipe(Option.getOrThrow).definition?.problem ??
-            "",
+          (yield* Stream.runHead(listed(workflows.watch))).pipe(Option.getOrThrow).definition
+            ?.problem ?? "",
           "did not start",
         );
       }).pipe(Effect.provide(runtime), Effect.scoped);
@@ -439,7 +456,7 @@ it.effect("a change held back by a run goes in once that run ends, with no furth
       const held = yield* workflows.start("hold", {}, { idempotencyKey: "h" });
       yield* workflows.waitFor(held.runId, (run) => run.status === "waiting");
       const problem = (wanted: boolean) =>
-        workflows.watch.pipe(
+        listed(workflows.watch).pipe(
           Stream.filter((snapshot) => (snapshot.definition?.problem != null) === wanted),
           Stream.runHead,
         );

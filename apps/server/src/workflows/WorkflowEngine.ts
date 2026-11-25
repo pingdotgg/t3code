@@ -26,7 +26,7 @@ import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { DurableDeferred, WorkflowEngine } from "effect/workflow";
-import { DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT } from "@t3tools/contracts";
+import { DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT, type WorkflowRunsUpdate } from "@t3tools/contracts";
 
 import { checkOutput, rejectionText } from "../orchestration-v2/runOutput.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -179,7 +179,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     resumesAt: resumes,
     parentRunId: row.parent_run_id,
     parentStep: row.parent_wait,
-    // Left out of a run with none: most have none, and every run is sent on every change.
+    // Left out of a run with none: most have none, and every run is in each whole list sent.
     ...(row.tags_json === "[]"
       ? {}
       : { tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string> }),
@@ -869,6 +869,28 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         Stream.fromSubscription(changes).pipe(
           Stream.debounce(WATCH_SETTLE),
           Stream.mapEffect(() => snapshot),
+        ),
+      ).pipe(
+        // Each list is told as what differs from the one before, which this watcher already has.
+        // A list with no difference is still sent: a client reads an open run's steps again on it.
+        Stream.mapAccum(
+          () => undefined as { runs: Map<string, string>; questions: string } | undefined,
+          (sent, next) => {
+            const runs = new Map(next.runs.map((run) => [run.runId, JSON.stringify(run)]));
+            const questions = JSON.stringify(next.questions);
+            const update: WorkflowRunsUpdate =
+              sent === undefined
+                ? { _tag: "snapshot", ...next }
+                : {
+                    _tag: "changed",
+                    runs: next.runs.filter(
+                      (run) => sent.runs.get(run.runId) !== runs.get(run.runId),
+                    ),
+                    removed: [...sent.runs.keys()].filter((runId) => !runs.has(runId)),
+                    ...(questions === sent.questions ? {} : { questions: next.questions }),
+                  };
+            return [{ runs, questions }, [update]] as const;
+          },
         ),
       );
     }),

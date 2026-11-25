@@ -3,7 +3,7 @@ import {
   type WorkflowHook,
   WorkflowQuestion,
   type WorkflowRunReference,
-  type WorkflowRunsSnapshot,
+  type WorkflowRunsUpdate,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
@@ -155,8 +155,8 @@ export class Workflows extends Context.Service<
     /** Set a key of the store from outside a run, as a person flipping a switch does. */
     readonly storeSet: (key: string, value: Schema.Json) => Effect.Effect<void, WorkflowInputError>;
     readonly storeDelete: (key: string) => Effect.Effect<void, WorkflowInputError>;
-    /** Recent runs and open questions, now and again after every change. */
-    readonly watch: Stream.Stream<WorkflowRunsSnapshot>;
+    /** Recent runs and open questions now, then what changed of them after every change. */
+    readonly watch: Stream.Stream<WorkflowRunsUpdate>;
     /** How much is going on, now and again whenever a count changes. */
     readonly counts: Stream.Stream<WorkflowCounts>;
     /**
@@ -201,7 +201,10 @@ export const disabled = Workflows.of({
   }),
   storeSet: refuse,
   storeDelete: refuse,
-  watch: Stream.concat(Stream.make({ workflows: [], runs: [], questions: [] }), Stream.never),
+  watch: Stream.concat(
+    Stream.make({ _tag: "snapshot" as const, workflows: [], runs: [], questions: [] }),
+    Stream.never,
+  ),
   counts: Stream.concat(Stream.make({ needsYou: 0, active: 0, total: 0 }), Stream.never),
   sweep: Effect.void,
 });
