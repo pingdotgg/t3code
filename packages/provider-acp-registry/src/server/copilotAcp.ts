@@ -64,6 +64,42 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 const childSessionId = (taskToolCallId: string) => `copilot-task:${taskToolCallId}`;
 
+// Autopilot ends a task with this tool, whose summary repeats the answer already shown.
+const TASK_COMPLETE_TOOL = "task_complete";
+
+type TaskCompleteUpdate = Extract<
+  AcpSchema.SessionUpdate,
+  { readonly sessionUpdate: "tool_call" | "tool_call_update" }
+>;
+
+/** The arguments a task_complete call was made with, from the ACP update or Copilot's metadata. */
+function taskCompleteInput(update: TaskCompleteUpdate): Record<string, unknown> {
+  return { ...record(update.rawInput), ...record(record(update._meta)?.[COPILOT_META_KEY]) };
+}
+
+function isTaskCompleteTool(update: TaskCompleteUpdate): boolean {
+  return (
+    update.title?.trim().toLowerCase() === TASK_COMPLETE_TOOL ||
+    record(update._meta)?.toolName === TASK_COMPLETE_TOOL ||
+    record(record(update._meta)?.[COPILOT_META_KEY])?.toolName === TASK_COMPLETE_TOOL
+  );
+}
+
+/** The summary text a task_complete call was given, from its arguments. */
+function taskCompleteSummary(data: Record<string, unknown>): string | undefined {
+  const summary = data.summary;
+  if (typeof summary === "string") return summary;
+  // Some Copilot builds pass the arguments as the JSON string the model produced.
+  const args = data.arguments ?? data.args;
+  if (typeof args !== "string") return undefined;
+  try {
+    const parsed = record(JSON.parse(args))?.summary;
+    return typeof parsed === "string" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // Copilot's tool_call reports MCP calls and glob/grep as kind "read" under a flattened title.
 type CopilotToolIdentity =
   | { readonly kind: "mcp"; readonly server: string; readonly tool: string }
@@ -75,6 +111,20 @@ interface CopilotSessionAttribution {
   delta: { readonly kind: string; readonly text: string; readonly task?: string } | undefined;
   readonly taskByAgentId: Map<string, string>;
   readonly toolIdentityByCallId: Map<string, CopilotToolIdentity>;
+}
+
+/**
+ * Autopilot answers, then calls task_complete with a summary that repeats the answer, then sends
+ * that summary as another assistant chunk. This tracks what the prompt has shown so the repeat
+ * can be dropped, keeping state across the per-chunk attribution that is released each time.
+ */
+interface AnswerRepeat {
+  /** Every assistant message chunk this prompt has sent. */
+  shown: string;
+  /** The summary of each task_complete call, by toolCallId, until the repeat it explains arrives. */
+  readonly summaries: Map<string, string>;
+  /** Characters of a repeated summary still to drop, so the answer shows once. */
+  dropping: number;
 }
 
 function copilotToolIdentity(data: Record<string, unknown>): CopilotToolIdentity | undefined {
@@ -104,6 +154,17 @@ export function makeCopilotSubagentRouting() {
     ) {
       sessions.delete(sessionId);
     }
+  };
+
+  // The answer so far survives the attribution above, which drops after each chunk.
+  const answers = new Map<string, AnswerRepeat>();
+  const answerFor = (sessionId: string) => {
+    let current = answers.get(sessionId);
+    if (current === undefined) {
+      current = { shown: "", summaries: new Map(), dropping: 0 };
+      answers.set(sessionId, current);
+    }
+    return current;
   };
 
   const registerExtensions = (context: AcpAdapterV2ExtensionContext) =>
@@ -139,6 +200,13 @@ export function makeCopilotSubagentRouting() {
           if (identity !== undefined && typeof data.toolCallId === "string") {
             session(event.sessionId).toolIdentityByCallId.set(data.toolCallId, identity);
           }
+          // Copilot's task_complete repeats the answer as its summary; remember which call said what.
+          if (data.toolName === TASK_COMPLETE_TOOL && typeof data.toolCallId === "string") {
+            const summary = taskCompleteSummary(data);
+            if (summary !== undefined) {
+              answerFor(event.sessionId).summaries.set(data.toolCallId, summary);
+            }
+          }
           return Effect.void;
         }
         case "subagent.completed":
@@ -173,6 +241,8 @@ export function makeCopilotSubagentRouting() {
         case "assistant.turn_start":
         case "assistant.idle": {
           if (event.agentId !== undefined || data.aborted === true) return Effect.void;
+          // The prompt's answer is settled, so the next prompt starts its own.
+          if (event.type === "assistant.idle") answers.delete(event.sessionId);
           return context.reportForegroundWork({
             sessionId: event.sessionId,
             state: event.type === "assistant.idle" ? "idle" : "running",
@@ -197,7 +267,6 @@ export function makeCopilotSubagentRouting() {
     ) {
       const delta = current.delta;
       current.delta = undefined;
-      release(notification.sessionId, current);
       const kind =
         update.sessionUpdate === "agent_message_chunk"
           ? "assistant.message_delta"
@@ -209,6 +278,7 @@ export function makeCopilotSubagentRouting() {
       ) {
         task = delta.task;
       }
+      release(notification.sessionId, current);
     } else if (
       update.sessionUpdate === "tool_call" ||
       update.sessionUpdate === "tool_call_update"
@@ -236,7 +306,46 @@ export function makeCopilotSubagentRouting() {
     return task === undefined ? normalized : { ...normalized, sessionId: childSessionId(task) };
   };
 
-  return { registerExtensions, normalizeSessionUpdate };
+  /**
+   * Autopilot pairs every task_complete with chunks that repeat the summary. When that summary is
+   * already the answer shown in this prompt, the repeat is the same text twice, so it is dropped.
+   */
+  const ignoreSessionUpdate = (notification: AcpSchema.SessionNotification): boolean => {
+    const update = notification.update;
+    // This runs before normalizeSessionUpdate, so the summary is read here, not from that path.
+    if (
+      (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") &&
+      isTaskCompleteTool(update)
+    ) {
+      const summary = taskCompleteSummary(taskCompleteInput(update));
+      if (summary !== undefined) {
+        answerFor(notification.sessionId).summaries.set(update.toolCallId, summary);
+      }
+      return false;
+    }
+    if (update.sessionUpdate !== "agent_message_chunk" || update.content.type !== "text") {
+      return false;
+    }
+    const current = answerFor(notification.sessionId);
+    const text = update.content.text;
+    if (current.dropping > 0) {
+      current.dropping = Math.max(current.dropping - text.length, 0);
+      return true;
+    }
+    for (const [toolCallId, summary] of current.summaries) {
+      // Drop only a chunk of the summary already shown in full: the answer before this chunk is
+      // the whole summary, and this chunk repeats part of it. A summary that differs from the
+      // answer is the only place its text appears, so it is kept.
+      if (summary.length === 0 || current.shown !== summary) continue;
+      current.summaries.delete(toolCallId);
+      current.shown = "";
+      return true;
+    }
+    current.shown += text;
+    return false;
+  };
+
+  return { registerExtensions, normalizeSessionUpdate, ignoreSessionUpdate };
 }
 
 export function extractCopilotSubagentUpdate(

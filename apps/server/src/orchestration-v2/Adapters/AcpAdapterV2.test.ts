@@ -4853,6 +4853,151 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  const copilotTaskCompleteReplies = (chunks: readonly string[], summary: string) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const mockAgentPath = yield* bundledMockAgentPath;
+      type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+      let sessionEvent:
+        | ((event: unknown) => Effect.Effect<void, EffectAcpErrors.AcpError>)
+        | undefined;
+      const routing = makeCopilotSubagentRouting();
+      const instanceId = ProviderInstanceId.make("copilot-task-complete-repeat");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          registerExtensions: routing.registerExtensions,
+          normalizeSessionUpdate: routing.normalizeSessionUpdate,
+          ignoreSessionUpdate: routing.ignoreSessionUpdate,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (next) =>
+                Effect.sync(() => {
+                  handler = next;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              handleExtNotification: (method, payload, next) =>
+                Effect.sync(() => {
+                  if (method === "github.com/copilot/sessionEvent") {
+                    sessionEvent = next as typeof sessionEvent;
+                  }
+                }).pipe(Effect.andThen(runtime.handleExtNotification(method, payload, next))),
+              prompt: () =>
+                Effect.gen(function* () {
+                  assert.isDefined(handler);
+                  assert.isDefined(sessionEvent);
+                  const sessionId = "mock-session-1";
+                  const raw = (type: string, data: object) =>
+                    sessionEvent!({ sessionId, type, data });
+                  const update = (next: EffectAcpSchema.SessionUpdate) =>
+                    handler!({ sessionId, update: next });
+                  // Copilot sends each chunk's raw delta just before the chunk.
+                  const chunk = (text: string) =>
+                    raw("assistant.message_delta", { deltaContent: text }).pipe(
+                      Effect.andThen(
+                        update({
+                          sessionUpdate: "agent_message_chunk",
+                          content: { type: "text", text },
+                        }),
+                      ),
+                    );
+                  for (const text of chunks) yield* chunk(text);
+                  // The autopilot nudge ends the turn; task_complete carries the summary.
+                  yield* raw("user.message", { content: "" });
+                  yield* update({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "complete-1",
+                    title: "task_complete",
+                    kind: "other",
+                    status: "completed",
+                    rawInput: { summary },
+                  });
+                  yield* chunk(summary);
+                  return { stopReason: "end_turn" as const };
+                }),
+            }),
+          }),
+        },
+      });
+      const threadId = ThreadId.make("copilot-task-complete-repeat-parent");
+      const modelSelection = { instanceId, model: "default" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("copilot-task-complete-repeat-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const items = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+      // Each reply's id is stable, and every update carries the item's full text so far.
+      const replies = new Map(
+        items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),
+      );
+      return [...replies.values()];
+    }).pipe(Effect.provide(layerTest));
+
+  it.effect("drops a Copilot task_complete summary only when it repeats the answer", () =>
+    Effect.gen(function* () {
+      const answer = "There are five possible next steps, starting with the schema.";
+      // The answer is shown once, then task_complete repeats it: the repeat is the only duplicate.
+      assert.deepEqual(
+        yield* copilotTaskCompleteReplies(
+          ["There are five possible next steps, ", "starting with the schema."],
+          answer,
+        ),
+        [answer],
+        "the repeat must not show the answer twice",
+      );
+      // A summary that says something new is the only place that text appears, so keep it.
+      assert.deepEqual(
+        yield* copilotTaskCompleteReplies(
+          ["There are five possible next steps, ", "starting with the schema."],
+          "Summary: there are five possible next steps, starting with the schema.",
+        ),
+        [
+          answer,
+          "Summary: there are five possible next steps, starting with the schema.",
+        ],
+        "a summary that differs from the answer must still show",
+      );
+      // With no earlier answer, the summary is all there is to show.
+      assert.deepEqual(
+        yield* copilotTaskCompleteReplies([], "Only a summary."),
+        ["Only a summary."],
+        "a summary with no earlier answer must still show",
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("projects ACP v2 fidelity updates into first-class orchestration items", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
