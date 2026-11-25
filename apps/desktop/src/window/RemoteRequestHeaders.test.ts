@@ -183,4 +183,24 @@ describe("RemoteRequestHeaders", () => {
       }),
     );
   });
+
+  it("keeps Origin on CORS preflights so proxies that answer desktop preflights still match (#42782)", () => {
+    // Electron passes `method` on every webRequest details object.
+    const preflight = {
+      url: "https://remote.example.com/api/auth/websocket-ticket/rpc",
+      method: "OPTIONS",
+      webContentsId: 42,
+      frame: { parent: null },
+      requestHeaders: {
+        Origin: "t3code://app",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "authorization,content-type,dpop",
+        "Sec-Fetch-Mode": "cors",
+      },
+    };
+
+    const headers = stripDesktopOriginHeaders(packagedPolicy, preflight);
+
+    assert.strictEqual((headers ?? preflight.requestHeaders).Origin, "t3code://app");
+  });
 });
