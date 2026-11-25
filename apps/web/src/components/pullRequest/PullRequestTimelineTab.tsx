@@ -28,8 +28,8 @@ import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m } from "~/i18n/messages";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
-import { readLocalApi } from "~/localApi";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { RelativeTime } from "~/components/RelativeTime";
 
@@ -219,7 +219,12 @@ function AddToChatButton({
   );
 }
 
-function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: string) => void }) {
+type OpenOnHost = (
+  url: string,
+  event: { readonly metaKey: boolean; readonly ctrlKey: boolean; readonly button?: number },
+) => void;
+
+function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: OpenOnHost }) {
   const gt = useGT();
   return url === null ? null : (
     <Button
@@ -227,7 +232,7 @@ function OpenOnHostButton({ url, onOpen }: { url: string | null; onOpen: (url: s
       variant="ghost-muted"
       className="-mr-1 shrink-0"
       aria-label={gt("Open activity on host")}
-      onClick={() => onOpen(url)}
+      onClick={(event) => onOpen(url, event)}
     >
       <ExternalLinkIcon className="size-3" />
     </Button>
@@ -247,7 +252,7 @@ function ConversationCard({
   event: PullRequestTimelineEvent;
   editable: PullRequestComment | null;
   cwd: string;
-  onOpen: (url: string) => void;
+  onOpen: OpenOnHost;
   reactions: ReactionSurface;
   showPath?: boolean;
   /** A reply goes with its conversation, from the card that heads it. */
@@ -402,7 +407,7 @@ function ConversationGroup({
   events: ReadonlyArray<PullRequestTimelineEvent>;
   editable: ReadonlyMap<string, PullRequestComment>;
   cwd: string;
-  onOpen: (url: string) => void;
+  onOpen: OpenOnHost;
   reactions: ReactionSurface;
 }) {
   const [open, setOpen] = useState(
@@ -493,7 +498,7 @@ function ReviewThreadEvent({
   detail: PullRequestDetailView;
   editable: ReadonlyMap<string, PullRequestComment>;
   cwd: string;
-  onOpen: (url: string) => void;
+  onOpen: OpenOnHost;
   reactions: ReactionSurface;
 }) {
   const gt = useGT();
@@ -734,7 +739,7 @@ function ReviewVerdictEvent({
   outcome: PullRequestReviewOutcome;
   stale: boolean;
   cwd: string;
-  onOpen: (url: string) => void;
+  onOpen: OpenOnHost;
   reactions: ReactionSurface;
 }) {
   const gt = useGT();
@@ -911,8 +916,9 @@ export function PullRequestTimelineTab({
   }, [revealUrl, targetIndex]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the hold observes DOM outside React and must end with the tab
   useEffect(() => () => stopHolding.current?.(), []);
-  const openOnHost = (url: string) => {
-    void readLocalApi()?.shell.openExternal(url);
+  const openLink = useOpenLink(threadRef);
+  const openOnHost: OpenOnHost = (url, event) => {
+    void openLink(url, { event }).catch(console.error);
   };
 
   const rowKey = (row: PullRequestTimelineRow) => {

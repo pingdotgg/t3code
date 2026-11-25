@@ -88,11 +88,13 @@ vi.mock(import("~/assets/assetUrls"), async (original) => {
   return {
     ...actual,
     useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) =>
-      stubbedAsset.failed
-        ? { _tag: "Failure" }
-        : stubbedAsset.url
-          ? { _tag: "Success", url: stubbedAsset.url }
-          : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
+      args[1] === null
+        ? { _tag: "Loading" }
+        : stubbedAsset.failed
+          ? { _tag: "Failure" }
+          : stubbedAsset.url
+            ? { _tag: "Success", url: stubbedAsset.url }
+            : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
     useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
       stubbedAsset.url
         ? args[1].map(() => stubbedAsset.url)
@@ -2039,7 +2041,10 @@ describe("MessagesTimeline attachments", () => {
             kind: "viewed-images",
             id: "viewed",
             createdAt: CREATED_AT,
-            paths: ["/repo/first.png", "/repo/second.png", "/repo/third.png"],
+            images: ["/repo/first.png", "/repo/second.png", "/repo/third.png"].map((path) => ({
+              path,
+              pending: false,
+            })),
           }}
         />
       </TimelineRowCtx>,
@@ -2074,7 +2079,10 @@ describe("MessagesTimeline attachments", () => {
             kind: "viewed-images",
             id: "viewed",
             createdAt: CREATED_AT,
-            paths: ["/repo/step-1.jpg", "/repo/step-3.jpg"],
+            images: ["/repo/step-1.jpg", "/repo/step-3.jpg"].map((path) => ({
+              path,
+              pending: false,
+            })),
           }}
         />
       </TimelineRowCtx>,
@@ -2094,6 +2102,63 @@ describe("MessagesTimeline attachments", () => {
     expect(size.height).toBeLessThanOrEqual(161);
     expect(size.width).toBeLessThanOrEqual(285);
     expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.02);
+  });
+
+  it("holds a loading frame for an image a running Read is opening, then shows the image", async () => {
+    // The file does not exist yet, so asking for it would fail.
+    stubbedAsset.failed = true;
+    onTestFinished(() => {
+      stubbedAsset.failed = false;
+      stubbedAsset.url = "";
+    });
+    const strip = (pending: boolean) => (
+      <TimelineRowCtx
+        value={
+          {
+            threadRef: { environmentId: ENVIRONMENT_ID, threadId: ThreadId.make("thread-1") },
+            workspaceRoot: "/repo",
+          } as never
+        }
+      >
+        <ViewedImagesTimelineRow
+          row={{
+            kind: "viewed-images",
+            id: "viewed",
+            createdAt: CREATED_AT,
+            images: [{ path: "/repo/later.png", pending }],
+          }}
+        />
+      </TimelineRowCtx>
+    );
+    await using screen = await renderElement(strip(true));
+    const frame = await vi.waitFor(() => {
+      const element = screen.container.querySelector<HTMLElement>(
+        '[data-image-gallery] [role="status"]',
+      );
+      expect(element?.getAttribute("aria-label")).toBe("Loading image");
+      return element!;
+    });
+    expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+    expect(screen.text()).not.toContain("Image unavailable");
+    const size = await vi.waitFor(() => {
+      const rect = frame.getBoundingClientRect();
+      expect(rect.width).toBeGreaterThan(0);
+      return rect;
+    });
+    expect(size.height).toBeLessThanOrEqual(161);
+    expect(Math.abs(size.width / size.height - 16 / 9)).toBeLessThan(0.02);
+
+    stubbedAsset.failed = false;
+    stubbedAsset.url =
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+    await screen.rerender(strip(false));
+    await vi.waitFor(() =>
+      expect(
+        screen.container.querySelector<HTMLImageElement>(
+          '[data-image-gallery] img[alt="later.png"]',
+        )?.className,
+      ).not.toContain("invisible"),
+    );
   });
 
   it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {

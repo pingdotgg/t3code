@@ -30,8 +30,9 @@ import {
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupSummaryKind,
-  workEntriesViewedImagePaths,
+  workEntriesViewedImages,
   type ToolGroupSummaryKind,
+  type ViewedImage,
   type WorkLogPresentationEntry,
   type WorkLogToolLifecycleStatus,
   workEntryHiddenByToolCallVisibility,
@@ -245,7 +246,7 @@ type ThreadFeedEntryContent =
       readonly id: string;
       readonly createdAt: string;
       readonly runId: RunId | null;
-      readonly paths: ReadonlyArray<string>;
+      readonly images: ReadonlyArray<ViewedImage>;
     }
   | {
       readonly type: "run-fold";
@@ -2237,14 +2238,14 @@ function appendActivityGroupRows(
       activeTail && isTrailingRun,
       resolve,
     );
-    const paths = workEntriesViewedImagePaths(groupableRun.map((activity) => activity.workEntry));
-    if (paths.length > 0) {
+    const images = workEntriesViewedImages(groupableRun.map((activity) => activity.workEntry));
+    if (images.length > 0) {
       result.push({
         type: "viewed-images",
         id: `${groupId}:viewed-images`,
         createdAt: groupableRun[0]!.createdAt,
         runId: groupableRun[0]!.runId,
-        paths,
+        images,
       });
     }
     groupableRun = [];
