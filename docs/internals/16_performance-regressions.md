@@ -72,7 +72,7 @@ machine for the pinned `playwright-core` with
   `*.census.json` in the artifacts says what dominates it.
 - Memory (heap and DOM after GC) is sampled on load, after the first visits, and after every
   measured round has run, not per switch. Renderer CPU is sampled while the working thread streams
-  its replayed turn; a window that turn outlasted is skipped and named. `--soak <n>` repeats every
+  its replayed turn; a window the turn ended before or during is skipped and named. `--soak <n>` repeats every
   case n times and fits heap, DOM and listener growth per iteration past warm-up.
 
 `--renders` counts React commits and component renders per step, the subtrees React bailed out
