@@ -3941,12 +3941,35 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.gen(function* () {
         const terminalId = input.terminalId;
         const session = yield* requireSession(input.threadId, terminalId);
+        let queuedExit: PendingProcessEvent | undefined;
+        // Discard pre-clear output while keeping the parser in sync with the PTY.
+        for (const event of session.pendingProcessEvents.slice(session.pendingProcessEventIndex)) {
+          if (event?.type === "exit") {
+            queuedExit = event;
+            session.pendingHistoryControlSequence = "";
+            break;
+          }
+          if (event?.type === "output") {
+            session.pendingHistoryControlSequence = sanitizeTerminalHistoryChunk(
+              session.pendingHistoryControlSequence,
+              event.data,
+            ).pendingControlSequence;
+          }
+        }
+        // Controls embedded in an unfinished CSI have already run before the clear.
+        if (session.pendingHistoryControlSequence.startsWith("\u001b[")) {
+          session.pendingHistoryControlSequence = session.pendingHistoryControlSequence.replace(
+            /[\x00-\x0f]/g,
+            "",
+          );
+        }
         session.history.clear();
-        session.pendingHistoryControlSequence = "";
-        session.pendingProcessEvents = [];
+        session.pendingProcessEvents = queuedExit ? [queuedExit] : [];
         session.pendingProcessEventIndex = 0;
-        session.processEventDrainRunning = false;
         const eventStamp = advanceEventSequence(session);
+        const pendingControlSequence = unfinishedSequenceReplay(
+          session.pendingHistoryControlSequence,
+        );
         // A drain waits for the key to go idle, which never happens while the shell keeps
         // printing; every reader of the file flushes it first.
         yield* persistWorker.enqueue(toSessionKey(input.threadId, terminalId), {
@@ -3958,6 +3981,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           threadId: input.threadId,
           terminalId,
           sequence: eventStamp.sequence,
+          ...(pendingControlSequence === "" ? {} : { pendingControlSequence }),
         });
       }),
     );
