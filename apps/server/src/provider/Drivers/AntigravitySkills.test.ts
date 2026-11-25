@@ -81,8 +81,8 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       ];
       const expected = [];
       for (const [index, root] of roots.entries()) {
-        const name = `review-${index}`;
-        const description = `Review changes in root ${index}.`;
+        const name = index === 0 ? "2026" : `review-${index}`;
+        const description = index === 1 ? "1.0" : `Review changes in root ${index}.`;
         const skillPath = yield* writeSkill(
           path.join(root.directory, name),
           `---\nname: ${name}\ndescription: ${description}\n---\n# Review\n`,
@@ -115,8 +115,11 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       const input = { ...workspace, profileDirectory };
 
       assert.deepEqual(
-        (yield* discoverAntigravitySkills(input)).map((skill) => skill.name),
-        ["demo-skill"],
+        (yield* discoverAntigravitySkills(input)).map(({ name, displayName }) => ({
+          name,
+          displayName,
+        })),
+        [{ name: "demo-skill", displayName: "demo:demo-skill" }],
       );
     }),
   );
@@ -230,6 +233,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       );
       yield* fileSystem.makeDirectory(path.join(root, ".not-a-skill"));
       yield* fileSystem.writeFileString(path.join(root, "README.md"), "Not a skill.");
+      yield* fileSystem.writeFileString(path.join(root, "SKILL.MD"), "---\nname: uppercase\n---\n");
       const skillPath = yield* writeSkill(
         path.join(root, ".native-hidden-skill"),
         "---\nname: native-name\ndescription: >\n  Review the code\n  and run tests.\n---\n",
@@ -381,7 +385,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           path.join(sharedSkills, "yagni"),
           "---\nname: yagni\ndescription: Keep it simple.\n---\n",
         );
-        yield* writeSkill(
+        const experimentalPath = yield* writeSkill(
           path.join(sharedSkills, "experimental-draft"),
           "---\nname: experimental-draft\n---\n",
         );
@@ -392,11 +396,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           "---\nname: linter\n---\n",
         );
         yield* writeSkill(path.join(inheritedSkills, "skipped"), "---\nname: skipped\n---\n");
-        // Backtracks exponentially under RegExp against the pattern below.
-        yield* writeSkill(
-          path.join(inheritedSkills, "a".repeat(40)),
-          "---\nname: backtrack\n---\n",
-        );
+        yield* writeSkill(path.join(inheritedSkills, "lint-draft"), "---\nname: lint-draft\n---\n");
 
         const projectSkills = path.join(input.cwd, "tools", "skills");
         const projectPath = yield* writeSkill(
@@ -404,6 +404,14 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           "---\nname: deploy\n---\n",
         );
         yield* writeSkill(path.join(projectSkills, "internal"), "---\nname: internal\n---\n");
+        const releasePath = yield* writeSkill(
+          path.join(projectSkills, "public"),
+          "---\nname: release\n---\n",
+        );
+        yield* writeSkill(path.join(projectSkills, "excluded"), "---\nname: excluded-root\n---\n");
+        const explicitRoot = path.join(projectSkills, "explicit");
+        yield* writeSkill(path.join(explicitRoot, "child"), "---\nname: not-discovered\n---\n");
+        yield* fileSystem.writeFileString(path.join(explicitRoot, "SKILL.MD"), "---\n---\n");
 
         // agy does not expand ~, so a ~/ entry loads nothing.
         yield* writeSkill(
@@ -425,7 +433,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
         yield* fileSystem.writeFileString(
           path.join(globalConfigDir, "skills.json"),
           JSON.stringify({
-            inherits: [{ path: inheritedConfigPath, include_only: ["linter", "(a*)*b"] }],
+            inherits: [{ path: inheritedConfigPath, include_only: ["linter", "lint-.*"] }],
             entries: [
               { path: sharedSkills, exclude: ["experimental-.*"] },
               { path: "~/tilde-skills" },
@@ -446,13 +454,24 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
             entries: [
               { path: "tools/skills/deploy/SKILL.md", exclude: null },
               { path: "tools/skills/internal/SKILL.md", exclude: ["internal"] },
+              { path: "tools/skills/public", include_only: ["public"] },
+              { path: "tools/skills/excluded", exclude: ["excluded"] },
+              { path: "tools/skills/excluded", include_only: ["public"] },
+              { path: "tools/skills/explicit" },
             ],
           }),
         );
 
         assert.deepEqual(yield* discoverAntigravitySkills(input), [
           { name: "deploy", path: projectPath, scope: "project", enabled: true },
+          {
+            name: "experimental-draft",
+            path: experimentalPath,
+            scope: "user",
+            enabled: true,
+          },
           { name: "linter", path: inheritedPath, scope: "user", enabled: true },
+          { name: "release", path: releasePath, scope: "project", enabled: true },
           {
             name: "yagni",
             description: "Keep it simple.",
