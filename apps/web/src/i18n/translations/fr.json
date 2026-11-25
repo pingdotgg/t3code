@@ -12910,6 +12910,11 @@
   "c92657bb7f2293ff": "Approbation requise",
   "f1e5c1be1ac92361": "Approuver",
   "fcb5f3c4d4753326": "Cette connexion ne peut pas approuver de commandes. Utilisez un client qui peut utiliser le terminal.",
+  "7150557773b3818b": "En file d’attente",
+  "efbeb3993ee2c3f5": "En attente de {pool}",
+  "0398ca6c1d24b92d": "en attente, le prochain",
+  "0af6d5ffd5166214": "{count, plural, one {en attente, {count} devant} other {en attente, {count} devant}}",
+  "49be26a27dcb30e5": "en attente",
   "4e96712d839ccbff": "{who} a répondu {choice}",
   "19097cfb8f5a79cf": [
     {

@@ -12905,6 +12905,11 @@
   "c92657bb7f2293ff": "Necesita aprobación",
   "f1e5c1be1ac92361": "Aprobar",
   "fcb5f3c4d4753326": "Esta conexión no puede aprobar comandos. Usa un cliente que pueda usar el terminal.",
+  "7150557773b3818b": "En cola",
+  "efbeb3993ee2c3f5": "En cola para {pool}",
+  "0398ca6c1d24b92d": "en cola, el siguiente",
+  "0af6d5ffd5166214": "{count, plural, one {en cola, {count} delante} other {en cola, {count} delante}}",
+  "49be26a27dcb30e5": "en cola",
   "4e96712d839ccbff": "{who} dijo {choice}",
   "19097cfb8f5a79cf": [
     {

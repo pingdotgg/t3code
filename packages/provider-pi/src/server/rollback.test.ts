@@ -72,9 +72,12 @@ it.effect.each([
   "checkpoint inherited by a prior fork",
   "repeated rollback after a handoff",
   "handoff prompt left in the source",
+  "a checkpoint recorded before upgrading, followed by a session switch",
   "switch timed out after attaching",
 ] as const)("restores exactly the retained Pi history for %s", (scenario) =>
   Effect.gen(function* () {
+    const repro =
+      scenario === "a checkpoint recorded before upgrading, followed by a session switch";
     const fs = yield* FileSystem.FileSystem;
     const dir = yield* fs.makeTempDirectoryScoped();
     const oldFile = `${dir}/old.jsonl`;
@@ -215,10 +218,10 @@ it.effect.each([
         nativeTurnRef:
           ordinal === 3 && scenario === "command-only handoff"
             ? null
-            : ordinal === 3 && scenario === "uncaptured handoff"
+            : ordinal === 3 && (scenario === "uncaptured handoff" || repro)
               ? ref("uncaptured", "weak")
               : ref(`u${ordinal}`),
-        ...(scenario === "legacy turns"
+        ...(scenario === "legacy turns" || (repro && ordinal < 3)
           ? {}
           : {
               nativeThreadRef: ref(
@@ -252,6 +255,15 @@ it.effect.each([
       yield* Fiber.join(events);
       assert.include(["error", "stopped"], runtime.providerSession.status);
       assert.deepEqual(sessionRequests, [{ type: "switch_session", file: oldFile }]);
+      return;
+    }
+    if (repro) {
+      const restored = yield* rollback.pipe(Effect.result);
+      assert.equal(restored._tag, "Success");
+      assert.deepEqual(
+        sessions.get(liveFile)?.map(({ id }) => id),
+        ["u1", "a1", "u2", "steer", "a2"],
+      );
       return;
     }
     const restored = yield* rollback;
