@@ -94,13 +94,14 @@ describe("UsageLimitsPooled next refill", () => {
     await using screen = await render(
       <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T17:30:00Z")} />,
     );
-    await expect.element(screen.getByText("↻ +30%", { exact: true })).toBeVisible();
-    await expect.element(screen.getByText("↻ +30% in 30m")).toBeVisible();
+    // The fork's "Next reset" stat reads "+<points> <time>"; the chart's refill labels have no time.
+    await expect.element(screen.getByText(/^\+60% /)).toBeVisible();
+    await expect.element(screen.getByText(/^\+20% /)).not.toBeInTheDocument();
 
     await screen.rerender(
       <UsageLimitsPooled presentations={presentations} now={Date.parse("2026-10-25T18:00:00Z")} />,
     );
-    await expect.element(screen.getByText(/^↻ \+\d+%$/)).not.toBeInTheDocument();
+    await expect.element(screen.getByText(/^\+\d+% /)).not.toBeInTheDocument();
   });
 });
 

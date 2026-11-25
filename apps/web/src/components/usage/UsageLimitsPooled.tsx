@@ -667,7 +667,7 @@ function PoolWindowCard({
   const from = now - horizon * 0.3;
   const formatTime = (at: number) =>
     formatUpcomingTimestamp(new Date(at).toISOString(), timestampFormat, now, undefined, m);
-  const nextRefill = projection.refills[0];
+  const nextRefill = projection.refills.find((refill) => refill.at > now);
   const firstEmpty = projection.firstEmpty
     ? pool.members.find((member) => member.account.key === projection.firstEmpty?.accountKey)
     : undefined;
