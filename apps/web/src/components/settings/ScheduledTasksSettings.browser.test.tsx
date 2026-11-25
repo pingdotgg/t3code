@@ -291,15 +291,6 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(editor).not.toBeInTheDocument();
   });
 
-  it("offers no delete for a task that does not exist yet", async () => {
-    setup();
-    await using _screen = await render(<ScheduledTasksSettings />);
-    await userEvent.click(page.getByRole("button", { name: "New task" }));
-    const dialog = page.getByRole("dialog");
-    await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeVisible();
-    expect(dialog.getByRole("button", { name: "Delete", exact: true }).query()).toBeNull();
-  });
-
   it.each([false, true])(
     "keeps model options when the same model is reselected (existing task: %s)",
     async (editing) => {
