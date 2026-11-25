@@ -108,6 +108,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.workflowsSubscribe]: "workflows",
   [WS_METHODS.workflowsCounts]: "workflows",
   [WS_METHODS.workflowsGet]: "workflows",
+  [WS_METHODS.workflowsAbout]: "workflows",
   [WS_METHODS.workflowsAnswer]: "workflows",
   [WS_METHODS.workflowsResume]: "workflows",
   [WS_METHODS.workflowsCancel]: "workflows",

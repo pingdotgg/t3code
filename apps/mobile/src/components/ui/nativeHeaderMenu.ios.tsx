@@ -1,8 +1,10 @@
+import { perfProbe } from "../../features/development/perf-probe-hooks";
 import { Toolbar } from "./Toolbar";
 
 import type { AppBarMenu, AppBarMenuItem } from "./AppBar.types";
 
 function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
+  const probe = perfProbe;
   return items.map((item) =>
     "items" in item ? (
       <Toolbar.Menu key={item.id} title={item.title} icon={item.icon} inline={item.inline}>
@@ -16,7 +18,14 @@ function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
         disabled={item.disabled}
         destructive={item.destructive}
         isOn={item.selected}
-        onPress={item.onPress}
+        onPress={
+          probe
+            ? () => {
+                probe.menuAction();
+                item.onPress();
+              }
+            : item.onPress
+        }
       >
         {item.title}
       </Toolbar.MenuAction>
