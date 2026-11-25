@@ -193,6 +193,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerProviderSessionManagerProvided,
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       layerRuntimePolicyProvided,
       TurnItemPositionStore.layer,
       // The same instance as thread management's, which hands over send-time recreations.
@@ -309,6 +310,7 @@ const layerManagedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
 const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       layerProjectSetupScriptRunner,
       layerManagedProjectFoldersProvided,
       layerThreadManagementProvided,

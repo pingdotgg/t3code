@@ -77,6 +77,7 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { skillDenyListRefusal } from "./RuntimePolicy.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
 // Without native resume, a released session comes back as a summary of the thread, so it stays longer.
@@ -333,6 +334,7 @@ interface LiveSessionEntry {
   /** Scope revocation to recorded credential ids so superseded sessions cannot revoke replacements opened before detach. */
   readonly mcpCredentialIdByThread: ReadonlyMap<ThreadId, string>;
   readonly supportsMultipleProviderThreads: boolean;
+  readonly deniedSkillsKey: string;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly eventSubscribers: Ref.Ref<
@@ -2519,6 +2521,7 @@ export const layerWithOptions = (
         eventSubscribers: Ref.Ref<
           ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
         >,
+        deniedSkillsKey: string,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
@@ -2642,6 +2645,14 @@ export const layerWithOptions = (
               Effect.map(({ loaded }) => loaded),
             ),
           resumeThread: (input) => {
+            if ((input.runtimePolicy?.deniedSkills?.join(",") ?? "") !== deniedSkillsKey) {
+              return Effect.fail(
+                new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: runtime.driver,
+                  detail: "session was started with a different skill deny list",
+                }),
+              );
+            }
             const threadId = input.threadId ?? input.providerThread.appThreadId;
             if (threadId === null || threadId === undefined) {
               return runtime.resumeThread(input);
@@ -3257,8 +3268,16 @@ export const layerWithOptions = (
               const key = sessionKey(input.providerSessionId);
               const live = (yield* Ref.get(sessions)).get(key);
               if (live !== undefined) yield* releaseForLinkedEnvironments(live);
+              const deniedSkillsKey = input.runtimePolicy.deniedSkills?.join(",") ?? "";
               const existing = (yield* Ref.get(sessions)).get(key);
               if (existing !== undefined) {
+                if (existing.deniedSkillsKey !== deniedSkillsKey) {
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause: "Provider session was started with a different skill deny list.",
+                  });
+                }
                 const attached = existing.attachedThreadIds.has(input.threadId);
                 if (!attached && !existing.supportsMultipleProviderThreads) {
                   return yield* new ProviderSessionOpenError({
@@ -3287,6 +3306,14 @@ export const layerWithOptions = (
                     }),
                 ),
               );
+              const refusal = skillDenyListRefusal(adapter, input.runtimePolicy);
+              if (refusal !== undefined) {
+                return yield* new ProviderSessionOpenError({
+                  instanceId: input.modelSelection.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  cause: refusal,
+                });
+              }
               const openedWithLinkedEnvironments = yield* readLinkedEnvironments;
               const prepared = yield* prepareMcpSession(
                 input.threadId,
@@ -3362,9 +3389,10 @@ export const layerWithOptions = (
               const eventSubscribers = yield* Ref.make<
                 ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
               >(new Map());
-              const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
+              const exposedRuntime = decorateRuntime(runtime, eventSubscribers, deniedSkillsKey);
               const entry: LiveSessionEntry = {
                 attachedThreadIds: new Set([input.threadId]),
+                deniedSkillsKey,
                 loadedProviderThreadKeyByThread: new Map(),
                 openedWithLinkedEnvironments,
                 linkedEnvironmentsByThread: new Map(),

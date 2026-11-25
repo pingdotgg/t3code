@@ -97,6 +97,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import { requireSkillDenyListSupport } from "../orchestration-v2/RuntimePolicy.ts";
 import {
   SUBAGENT_RESULT_TURN_ITEM_TYPES,
   subagentResultForRun,
@@ -1801,12 +1802,6 @@ const make = Effect.gen(function* () {
           cwd: input.refresh.cwd,
           resolve,
         });
-    if (input.profile.deniedSkills.length > 0 && driver !== "antigravity") {
-      return yield* failure(
-        "provider_unavailable",
-        `Provider ${instanceId} (${driver}) cannot enforce a skill deny list for a delegated task.`,
-      );
-    }
     const runtimeMode = yield* resolveRuntimeMode(input.parentMode, input.requestedMode, target);
     return { modelSelection: target.modelSelection, runtimeMode };
   });
@@ -2451,7 +2446,14 @@ const make = Effect.gen(function* () {
     const response = yield* input.mode === "wait"
       ? awaitTask(scope, taskId, key, input.timeoutMs, restore)
       : restore(readTask(scope, taskId, false, true));
-    return input.profile !== undefined && driver === "antigravity"
+    return driver === "antigravity" &&
+      (input.profile !== undefined ||
+        result.storedEvents.some(
+          ({ event }) =>
+            event.type === "thread.created" &&
+            event.threadId === childThreadId &&
+            Boolean(event.payload.deniedSkills?.length),
+        ))
       ? { ...response, notice: ANTIGRAVITY_SKILL_NOTICE }
       : response;
   });
@@ -3168,7 +3170,19 @@ const make = Effect.gen(function* () {
                     projectId: parent?.thread.projectId,
                     parentMode: limits.runtimeMode,
                   }).pipe(
-                    Effect.match({ onFailure: (error) => error.message, onSuccess: () => null }),
+                    Effect.flatMap(({ modelSelection }) =>
+                      requireSkillDenyListSupport(providerAdapters, modelSelection.instanceId, {
+                        deniedSkills: profile.deniedSkills,
+                        delegationProfile: name,
+                      }),
+                    ),
+                    Effect.match({
+                      onFailure: (error) =>
+                        error._tag === "SkillDenyListUnsupportedError"
+                          ? `Provider driver ${error.driver} cannot enforce a skill deny list.`
+                          : error.message,
+                      onSuccess: () => null,
+                    }),
                   );
                   return {
                     name,
@@ -3307,6 +3321,13 @@ const make = Effect.gen(function* () {
       }
       const isolation = profiled?.profile.checkout ?? input.isolation;
       if (input.target !== undefined && environmentId !== undefined) {
+        const parent = yield* loadCallerRecords(scope.thread.threadId, []);
+        if (parent.thread.deniedSkills?.length) {
+          return yield* failure(
+            "invalid_request",
+            "A linked environment cannot inherit this thread's denied skills. Delegate locally.",
+          );
+        }
         // The task's child runs as an ordinary thread there; this thread keeps the task.
         const { taskId } = yield* remoteDelegation.delegate(scope, {
           ...input,
@@ -3441,6 +3462,12 @@ const make = Effect.gen(function* () {
               parentNodeId,
               task: taskPrompt(input),
               ...(input.title === undefined ? {} : { title: input.title }),
+              ...(profiled === undefined
+                ? {}
+                : {
+                    delegationProfile: input.profile,
+                    deniedSkills: profiled.profile.deniedSkills,
+                  }),
               modelSelection,
               runtimeMode,
               interactionMode,

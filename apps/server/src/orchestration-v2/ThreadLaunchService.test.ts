@@ -287,6 +287,7 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.provide(
       Layer.mergeAll(
         layerExternalServices,
+        layerRegistry,
         layerLaunchThreads,
         layerReceipts,
         layerOrchestrator,
@@ -1671,6 +1672,70 @@ it.effect("fetches the origin base from the remote it already resolved", () => {
       refName: "main",
       remote: { remoteName: "origin", branchName: "main" },
     });
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("delegation pins a canonical skill deny list and nests without weakening it", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const parent = yield* launches.launch(
+      launchInput({
+        command: "command:skill-policy-parent",
+        thread: "thread:skill-policy-parent",
+        message: "Delegate a task",
+      }),
+    );
+    const run = parent.projection.runs[0];
+    assert.isDefined(run);
+    assert.isNotNull(run.rootNodeId);
+    const command = {
+      type: "delegated_task.request",
+      commandId: CommandId.make("command:skill-policy-child"),
+      createdBy: "agent",
+      creationSource: "mcp",
+      parentThreadId: parent.threadId,
+      parentRunId: run.id,
+      parentNodeId: run.rootNodeId,
+      task: "Delegate within the policy",
+      delegationProfile: "worker",
+      deniedSkills: ["zeta", "private:skill", "zeta"],
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    } as const;
+    const started = yield* threads.dispatch(command);
+    const child = started.storedEvents.find(({ event }) => event.type === "thread.created")?.event
+      .threadId;
+    assert.isDefined(child);
+    const replay = yield* threads.dispatch({ ...command, deniedSkills: [] });
+    assert.isTrue(replay.replayed);
+    const childProjection = yield* threads.getThreadProjection(child);
+    assert.deepEqual(childProjection.thread.deniedSkills, ["private:skill", "zeta"]);
+    assert.equal(childProjection.thread.delegationProfile, "worker");
+    const childRun = childProjection.runs[0];
+    assert.isDefined(childRun);
+    assert.isNotNull(childRun.rootNodeId);
+    const nested = yield* threads.dispatch({
+      ...command,
+      commandId: CommandId.make("command:skill-policy-nested"),
+      parentThreadId: child,
+      parentRunId: childRun.id,
+      parentNodeId: childRun.rootNodeId,
+      delegationProfile: "reviewer",
+      deniedSkills: ["private:skill", "alpha"],
+    });
+    const nestedId = nested.storedEvents.find(({ event }) => event.type === "thread.created")?.event
+      .threadId;
+    assert.isDefined(nestedId);
+    const nestedProjection = yield* threads.getThreadProjection(nestedId);
+    assert.deepEqual(nestedProjection.thread.deniedSkills, ["alpha", "private:skill", "zeta"]);
+    assert.equal(nestedProjection.thread.delegationProfile, "reviewer");
+    assert.notEqual(
+      nestedProjection.providerThreads[0]?.providerSessionId,
+      childProjection.providerThreads[0]?.providerSessionId,
+    );
   }).pipe(Effect.provide(harness.layer));
 });
 

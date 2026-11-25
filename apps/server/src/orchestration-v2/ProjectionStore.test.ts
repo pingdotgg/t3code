@@ -12,6 +12,7 @@ import {
   ContextHandoffId,
   MessageId,
   type ModelSelection,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadHistoryPage,
@@ -3851,6 +3852,56 @@ it.effect("lists every thread in the shell snapshot past SQLite's bound variable
 );
 
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
+  it.effect("keeps the original delegated skill policy on restart and replay", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sourceId = yield* addRolledBackRecoveryCandidate("skill-policy-source");
+      const source = yield* store.getThread(sourceId);
+      const threadId = ThreadId.make("thread:skill-policy-replay");
+      const created = {
+        id: EventId.make("event:skill-policy-created"),
+        type: "thread.created",
+        threadId,
+        occurredAt: source.createdAt,
+        payload: {
+          ...source,
+          id: threadId,
+          deniedSkills: ["git-work", "internal:private"],
+          delegationProfile: "worker",
+          lineage: {
+            parentThreadId: sourceId,
+            rootThreadId: sourceId,
+            relationshipToParent: "subagent",
+          },
+        },
+      } satisfies OrchestrationV2DomainEvent;
+      const updated = {
+        ...created,
+        id: EventId.make("event:skill-policy-updated"),
+        type: "thread.metadata-updated",
+        payload: {
+          ...created.payload,
+          title: "Renamed",
+          deniedSkills: [],
+          delegationProfile: "other",
+        },
+      } satisfies OrchestrationV2DomainEvent;
+      yield* store.apply(created);
+      yield* store.apply(updated);
+      const restored = yield* Effect.flatMap(ProjectionStore.ProjectionStoreV2, (fresh) =>
+        fresh.getThread(threadId),
+      ).pipe(Effect.provide(Layer.fresh(ProjectionStore.layer)));
+      const replayed = ProjectionStore.applyToProjection(
+        ProjectionStore.emptyProjection(created),
+        updated,
+      ).thread;
+      for (const thread of [restored, replayed]) {
+        assert.equal(thread.title, "Renamed");
+        assert.deepEqual(thread.deniedSkills, ["git-work", "internal:private"]);
+        assert.equal(thread.delegationProfile, "worker");
+      }
+    }),
+  );
   // regression: #21969 keep corrupt plan JSON in the typed read error
   it.effect("returns a typed read error for malformed stored plan JSON", () =>
     Effect.gen(function* () {

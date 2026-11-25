@@ -7,6 +7,7 @@ import {
   ModelSelection,
   NodeId,
   OrchestrationV2AppThread,
+  OrchestrationV2DeniedSkills,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
   OrchestrationV2PendingBackgroundTask,
@@ -66,6 +67,8 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   cwd: Schema.NullOr(Schema.String),
+  deniedSkills: Schema.optional(OrchestrationV2DeniedSkills),
+  delegationProfile: OrchestrationV2AppThread.fields.delegationProfile,
   approvalPolicy: Schema.optional(Schema.Unknown),
   sandboxPolicy: Schema.optional(Schema.Unknown),
   /**
@@ -889,6 +892,7 @@ export class ProviderAdapterV2 extends Context.Service<
      * skips its own check, which only knows the version from the last status probe.
      */
     readonly checksVersionAtHandshake?: boolean;
+    readonly supportsSkillDenyList?: boolean;
     readonly getCapabilities: () => Effect.Effect<
       OrchestrationV2ProviderCapabilities,
       ProviderAdapterV2Error

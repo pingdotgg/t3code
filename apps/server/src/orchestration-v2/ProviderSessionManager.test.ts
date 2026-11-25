@@ -479,10 +479,13 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly mcpConfigs?: Ref.Ref<
       ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
     >;
-    readonly beforeOpen?: (input: {
-      readonly providerSessionId: ProviderSessionId;
-      readonly initialProviderItemIdentityVersion?: 2;
-    }) => Effect.Effect<void>;
+    readonly supportsSkillDenyList?: boolean;
+    readonly beforeOpen?: (
+      input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
+    ) => Effect.Effect<void>;
+    readonly onResumeThread?: (
+      input: Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["resumeThread"]>[0],
+    ) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
@@ -518,6 +521,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: ProviderInstanceId.make("codex"),
     driver: CODEX_DRIVER,
+    supportsSkillDenyList: options.supportsSkillDenyList ?? false,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
@@ -609,7 +613,10 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             Ref.update(state, (current) => ({
               ...current,
               resumeCount: current.resumeCount + 1,
-            })).pipe(Effect.as(threadInput.providerThread)),
+            })).pipe(
+              Effect.andThen(options.onResumeThread?.(threadInput) ?? Effect.void),
+              Effect.as(threadInput.providerThread),
+            ),
           startTurn: () => options.startTurn ?? Effect.void,
           resumeTurn: () => options.startTurn ?? Effect.void,
           compactThread: () => options.startTurn ?? Effect.void,
@@ -660,10 +667,13 @@ function layerTest(input: {
   readonly mcpConfigs?: Ref.Ref<
     ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
   >;
-  readonly beforeOpen?: (input: {
-    readonly providerSessionId: ProviderSessionId;
-    readonly initialProviderItemIdentityVersion?: 2;
-  }) => Effect.Effect<void>;
+  readonly supportsSkillDenyList?: boolean;
+  readonly beforeOpen?: (
+    input: ProviderAdapter.ProviderAdapterV2OpenSessionInput,
+  ) => Effect.Effect<void>;
+  readonly onResumeThread?: (
+    input: Parameters<ProviderAdapter.ProviderAdapterV2SessionRuntime["resumeThread"]>[0],
+  ) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
@@ -716,7 +726,9 @@ function layerTest(input: {
         ? {}
         : { extensionStatuses: input.extensionStatuses }),
       ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+      supportsSkillDenyList: input.supportsSkillDenyList ?? false,
       ...(input.beforeOpen === undefined ? {} : { beforeOpen: input.beforeOpen }),
+      ...(input.onResumeThread === undefined ? {} : { onResumeThread: input.onResumeThread }),
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
@@ -1246,6 +1258,98 @@ it.effect("ProviderSessionManagerV2 opens provider sessions inside the installat
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 does not reuse a live session for a different skill deny list",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-session-skill-policy");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const openInput = { threadId, providerSessionId, modelSelection, runtimePolicy };
+        yield* manager.open(openInput);
+        const refusal = yield* manager
+          .open({
+            ...openInput,
+            runtimePolicy: { ...runtimePolicy, deniedSkills: ["private:skill"] },
+          })
+          .pipe(Effect.flip);
+        assert.include(String(refusal.cause), "different skill deny list");
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 passes the skill deny list to adapter open and native resume after a restart",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const opened = yield* Ref.make<ReadonlyArray<ReadonlyArray<string> | undefined>>([]);
+      const resumed = yield* Ref.make<ReadonlyArray<string> | undefined>(undefined);
+      const deniedSkills = ["git-work", "private:skill"];
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-session-skill-restart");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const policy = { ...runtimePolicy, deniedSkills, delegationProfile: "worker" };
+        const open = manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: policy,
+        });
+        const first = yield* open;
+        yield* manager.close(providerSessionId);
+        const second = yield* open;
+        assert.notStrictEqual(first, second);
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+          nativeThreadId: `native-${threadId}`,
+        });
+        yield* second.resumeThread({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy: policy,
+        });
+        assert.deepEqual(yield* Ref.get(opened), [deniedSkills, deniedSkills]);
+        assert.deepEqual(yield* Ref.get(resumed), deniedSkills);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            supportsSkillDenyList: true,
+            beforeOpen: (input) =>
+              Ref.update(opened, (lists) => [...lists, input.runtimePolicy.deniedSkills]),
+            onResumeThread: (input) => Ref.set(resumed, input.runtimePolicy?.deniedSkills),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>

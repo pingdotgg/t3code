@@ -56,6 +56,8 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
+import { requireSkillDenyListSupport } from "./RuntimePolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -289,6 +291,7 @@ const make = Effect.gen(function* () {
   const checkpointStore = yield* CheckpointStore.CheckpointStore;
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const providerAdapters = yield* ProviderAdapterRegistryV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
@@ -1629,16 +1632,25 @@ const make = Effect.gen(function* () {
                 : yield* threads
                     .getThreadRecords(threadId, ["runs"], { runIds: [runId] })
                     .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
-            if (
-              current !== null &&
-              !current.runs.some((run) => run.id === runId && run.status === "preparing")
-            ) {
-              return yield* releasePreparation(input.commandId);
+            const currentRun = current?.runs.find((run) => run.id === runId);
+            if (current !== null) {
+              if (currentRun?.status !== "preparing") {
+                return yield* releasePreparation(input.commandId);
+              }
+              const allowed = yield* requireSkillDenyListSupport(
+                providerAdapters,
+                currentRun.providerInstanceId,
+                current.thread,
+              ).pipe(Effect.result);
+              if (allowed._tag === "Failure") {
+                yield* failPreparedRun(input, threadId, currentRun.id, allowed.failure);
+                return yield* releasePreparation(input.commandId);
+              }
             }
             const boundWorktreePath = current?.thread.worktreePath ?? null;
             // A retry prepares the worktree the accepted launch asked for, not the
             // retry's own strategy, whose defaults may resolve differently.
-            const accepted = current?.runs.find((run) => run.id === runId)?.workspacePreparation;
+            const accepted = currentRun?.workspacePreparation;
             const preparationStrategy: ThreadLaunchWorkspaceStrategy =
               Option.isSome(launchReceipt) &&
               (accepted?.type === "worktree" || accepted?.type === "existing_worktree")
@@ -1721,6 +1733,7 @@ const make = Effect.gen(function* () {
       const run = runs.find((candidate) => candidate.id === input.runId);
       const workspacePreparation = run?.workspacePreparation;
       if (run?.status !== "preparing" || workspacePreparation === undefined) return;
+      yield* requireSkillDenyListSupport(providerAdapters, run.providerInstanceId, thread);
       if (!(yield* reservePreparation(input.commandId))) return;
       yield* scheduleRunPreparation(input, thread, run, workspacePreparation).pipe(
         Effect.onError(() => releasePreparation(input.commandId)),

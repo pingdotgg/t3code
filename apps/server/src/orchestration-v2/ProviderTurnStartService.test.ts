@@ -85,6 +85,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
+import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -179,6 +180,7 @@ function startWithMissingWorktree(
           runForThread: () => Effect.succeed({ status: "no-script" }),
         }),
         Layer.mock(ThreadWorktreeRestore)({ takeRecreated: () => Effect.undefined }),
+        ProviderAdapterRegistry.layerFromAdapters([]),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
@@ -474,6 +476,11 @@ it.each([
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly skillPolicy?: {
+    readonly driver: "codex" | "antigravity";
+    readonly deniedSkills: readonly string[];
+    readonly supported?: boolean;
+  };
   readonly manualContinuation?: boolean;
   readonly nativeResumeUnsupported?: boolean;
   readonly steeringRestart?: boolean;
@@ -1193,37 +1200,38 @@ function makeLocalCommandHarness(input: {
       : (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
           startTurn(ProviderAdapter.resumeTurnInput(input)),
   };
-  const open = vi.fn(() =>
-    input.sideChat !== undefined
-      ? Effect.succeed(sideChatSession as never)
-      : input.interruptOpen === true
-        ? Effect.interrupt
-        : "historyReadFailureAfterFallback" in input || "resumeFailure" in input
-          ? Effect.succeed(resumeFallbackSession as never)
-          : "ensureThreadFailure" in input
-            ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
-            : "openFailure" in input
-              ? Effect.sync(() => {
-                  if (input.interruptRunBeforeOpenFailure === true) interruptRun();
-                }).pipe(
-                  Effect.andThen(
-                    Effect.fail(
-                      new ProviderSessionManager.ProviderSessionOpenError({
-                        instanceId: newInstanceId,
-                        providerSessionId,
-                        cause: input.openFailure,
-                      }),
+  const open = vi.fn(
+    (_request: Parameters<ProviderSessionManager.ProviderSessionManagerV2Shape["open"]>[0]) =>
+      input.sideChat !== undefined
+        ? Effect.succeed(sideChatSession as never)
+        : input.interruptOpen === true
+          ? Effect.interrupt
+          : "historyReadFailureAfterFallback" in input || "resumeFailure" in input
+            ? Effect.succeed(resumeFallbackSession as never)
+            : "ensureThreadFailure" in input
+              ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
+              : "openFailure" in input
+                ? Effect.sync(() => {
+                    if (input.interruptRunBeforeOpenFailure === true) interruptRun();
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.fail(
+                        new ProviderSessionManager.ProviderSessionOpenError({
+                          instanceId: newInstanceId,
+                          providerSessionId,
+                          cause: input.openFailure,
+                        }),
+                      ),
                     ),
-                  ),
-                )
-              : input.failReadsAfterRunning === true || input.previousTurn !== undefined
-                ? Effect.succeed({
-                    driver: providerThread.driver,
-                    providerSession,
-                    ensureThread: () => Effect.succeed(providerThread),
-                    resumeThread: () => Effect.succeed(projection.providerThreads[0]),
-                  } as never)
-                : Effect.die("A local command must not open a native session."),
+                  )
+                : input.failReadsAfterRunning === true || input.previousTurn !== undefined
+                  ? Effect.succeed({
+                      driver: providerThread.driver,
+                      providerSession,
+                      ensureThread: () => Effect.succeed(providerThread),
+                      resumeThread: () => Effect.succeed(projection.providerThreads[0]),
+                    } as never)
+                  : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (
@@ -1355,6 +1363,20 @@ function makeLocalCommandHarness(input: {
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        ProviderAdapterRegistry.layerFromAdapters(
+          input.skillPolicy === undefined
+            ? []
+            : [
+                ProviderAdapter.ProviderAdapterV2.of({
+                  instanceId: newInstanceId,
+                  driver: ProviderDriverKind.make(input.skillPolicy.driver),
+                  supportsSkillDenyList: input.skillPolicy.supported ?? false,
+                  getCapabilities: () => Effect.die("not needed at the run boundary"),
+                  planSelectionTransition: () => Effect.die("not needed at the run boundary"),
+                  openSession: () => Effect.die("session manager test boundary"),
+                }),
+              ],
+        ),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff,
         }),
@@ -1444,9 +1466,9 @@ function makeLocalCommandHarness(input: {
           turnCompleted: () => Effect.void,
           runSettled: (report) => Effect.sync(() => void settledRuns.push(report.status)),
         }),
-        Layer.mock(RuntimePolicy.RuntimePolicyV2)({
-          resolve: resolveRuntimePolicy,
-        }),
+        input.skillPolicy === undefined
+          ? Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: resolveRuntimePolicy })
+          : RuntimePolicy.layer,
       ),
     ),
   );
@@ -1489,6 +1511,52 @@ function makeLocalCommandHarness(input: {
     }).pipe(Effect.provide(layer)),
   };
 }
+
+effectIt.effect.each([
+  { driver: "codex", deniedSkills: ["git-work"], allowed: false },
+  { driver: "codex", deniedSkills: ["git-work"], supported: true, allowed: true },
+  { driver: "antigravity", deniedSkills: ["git-work"], allowed: true },
+  { driver: "codex", deniedSkills: [], allowed: true },
+] as const)(
+  "checks $driver skill policy before starting a run (allowed: $allowed)",
+  (skillPolicy) => {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      skillPolicy,
+      openFailure: "stop after capturing session request",
+    });
+    const projection = harness.projection();
+    harness.setProjection({
+      ...projection,
+      thread: {
+        ...projection.thread,
+        deniedSkills: skillPolicy.deniedSkills,
+        delegationProfile: "worker",
+      },
+    });
+    return Effect.gen(function* () {
+      yield* harness.start;
+      if (skillPolicy.allowed) {
+        expect(harness.open.mock.calls[0]?.[0].runtimePolicy.deniedSkills).toEqual(
+          skillPolicy.deniedSkills,
+        );
+      } else {
+        expect(harness.open).not.toHaveBeenCalled();
+        expect(harness.createWorktree).not.toHaveBeenCalled();
+        expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+        expect(harness.projection().turnItems).toContainEqual(
+          expect.objectContaining({
+            type: "error",
+            failure: expect.objectContaining({
+              message:
+                'Delegation profile "worker" cannot run on driver codex with denied skills: git-work.',
+            }),
+          }),
+        );
+      }
+    });
+  },
+);
 
 function layerStartEffectWorker(
   harness: ReturnType<typeof makeLocalCommandHarness>,
@@ -2066,7 +2134,7 @@ effectIt.effect(
           failReadsAfterRunning: true,
         });
         const open = harness.open.getMockImplementation()!;
-        harness.open.mockImplementation(() =>
+        harness.open.mockImplementation((request) =>
           Effect.gen(function* () {
             expect(yield* git(worktreePath, ["branch", "--show-current"])).toBe("feature/restore");
             expect(yield* git(worktreePath, ["rev-parse", "HEAD"])).toBe(expected.tip);
@@ -2084,7 +2152,7 @@ effectIt.effect(
               ).toBe(expected.upstream);
             }
             expect(yield* branchConfig("t3-merge-base")).toBe(expected.base);
-            return yield* open();
+            return yield* open(request);
           }).pipe(Effect.orDie),
         );
 
@@ -2953,12 +3021,12 @@ effectIt.effect.each(["cleanup-first", "startup-first"])(
           .pipe(Effect.as({} as never), Effect.orDie),
       );
       const open = harness.open.getMockImplementation()!;
-      harness.open.mockImplementation(() =>
+      harness.open.mockImplementation((request) =>
         Effect.gen(function* () {
           expect(yield* fileSystem.exists(worktreePath).pipe(Effect.orDie)).toBe(true);
           yield* Deferred.succeed(openEntered, undefined);
           if (order === "startup-first") yield* Deferred.await(release);
-          return yield* open();
+          return yield* open(request);
         }),
       );
       let cleanupEntered = false;
@@ -3079,8 +3147,10 @@ effectIt.effect.each([
         failReadsAfterRunning: true,
       });
       const open = harness.open.getMockImplementation()!;
-      harness.open.mockImplementation(() =>
-        Effect.sync(() => order.push("provider session opened")).pipe(Effect.andThen(open())),
+      harness.open.mockImplementation((request) =>
+        Effect.sync(() => order.push("provider session opened")).pipe(
+          Effect.andThen(open(request)),
+        ),
       );
       // The reservation CheckpointRollbackServiceV2.execute holds around its
       // isolation check, provider rollback, and git restore of `restorePath`.

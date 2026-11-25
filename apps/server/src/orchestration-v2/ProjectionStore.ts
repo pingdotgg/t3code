@@ -1037,6 +1037,23 @@ export function emptyProjection(
   };
 }
 
+function preserveThreadSkillPolicy(
+  current: OrchestrationV2AppThread,
+  {
+    deniedSkills: _deniedSkills,
+    delegationProfile: _delegationProfile,
+    ...next
+  }: OrchestrationV2AppThread,
+): OrchestrationV2AppThread {
+  return {
+    ...next,
+    ...(current.deniedSkills === undefined ? {} : { deniedSkills: current.deniedSkills }),
+    ...(current.delegationProfile === undefined
+      ? {}
+      : { delegationProfile: current.delegationProfile }),
+  };
+}
+
 export function applyToProjection(
   projection: OrchestrationV2ThreadProjection,
   event: OrchestrationV2DomainEvent,
@@ -1076,7 +1093,7 @@ export function applyToProjection(
     case "thread.guest-share-updated":
       return {
         ...base,
-        thread: event.payload,
+        thread: preserveThreadSkillPolicy(projection.thread, event.payload),
       };
     // Reordering and PR refreshes preserve the orchestrator's activity timestamp.
     case "thread.active-reordered":
@@ -1085,14 +1102,14 @@ export function applyToProjection(
     case "thread.issue-synced":
       return {
         ...base,
-        thread: event.payload,
+        thread: preserveThreadSkillPolicy(projection.thread, event.payload),
         updatedAt: event.payload.updatedAt,
       };
     case "thread.visited":
     case "thread.marked-unread":
       return {
         ...projection,
-        thread: event.payload,
+        thread: preserveThreadSkillPolicy(projection.thread, event.payload),
       };
     case "thread.visit-recorded":
       return {
@@ -2604,7 +2621,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 archived_at = excluded.archived_at,
                 deleted_at = excluded.deleted_at,
-                payload_json = excluded.payload_json
+                payload_json = json_patch(excluded.payload_json, json_object(
+                  'deniedSkills', json_extract(orchestration_v2_projection_threads.payload_json, '$.deniedSkills'),
+                  'delegationProfile', json_extract(orchestration_v2_projection_threads.payload_json, '$.delegationProfile')
+                ))
             `;
               // EventSink applies committed events serially; retries retain the original membership.
               if (event.type === "thread.created" && event.payload.forkedFrom?.type === "run") {

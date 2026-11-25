@@ -83,6 +83,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import {
   isRestartNoteContinuation,
@@ -300,6 +301,7 @@ export const layer: Layer.Layer<
   | ProviderAuthService.ProviderAuthService
   | ProjectionStore.ProjectionStoreV2
   | ProviderSessionManager.ProviderSessionManagerV2
+  | ProviderAdapterRegistryV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
   | TurnItemPositionStore.TurnItemPositionStoreV2
@@ -321,6 +323,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const providerAdapters = yield* ProviderAdapterRegistryV2;
     const restoreMissingWorktree = yield* makeRestoreMissingWorktree;
     const worktreeRestore = yield* ThreadWorktreeRestore;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
@@ -725,6 +728,22 @@ export const layer: Layer.Layer<
           });
         },
       );
+      const skillPolicy = yield* RuntimePolicy.requireSkillDenyListSupport(
+        providerAdapters,
+        run.providerInstanceId,
+        projection.thread,
+      ).pipe(Effect.result);
+      if (skillPolicy._tag === "Failure") {
+        const error = skillPolicy.failure;
+        if (error._tag !== "SkillDenyListUnsupportedError") return yield* error;
+        yield* settleStartFailure({
+          signal: "skill-deny-list-unsupported",
+          title: "Provider does not support denied skills",
+          error,
+          message: error.message,
+        });
+        return;
+      }
       if (
         expandAssistantCitationsForProvider(providerMessage.text).length >
         PROVIDER_SEND_TURN_MAX_INPUT_CHARS

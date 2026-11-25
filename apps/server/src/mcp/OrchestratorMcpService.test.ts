@@ -1627,6 +1627,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           instanceIds.includes(instanceId)
             ? Effect.succeed({
                 instanceId,
+                driver: ProviderDriverKind.make(
+                  instanceId === antigravityInstanceId ? "antigravity" : "codex",
+                ),
               } as unknown as ProviderAdapter.ProviderAdapterV2["Service"])
             : Effect.fail(
                 new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({ instanceId }),
@@ -3742,9 +3745,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           { profile: "restricted" },
           { profile: "restricted", target: { model: "anthropic:claude-test" } },
         ]) {
-          const refusal = yield* start(input).pipe(Effect.flip);
-          assert.equal(refusal.code, "provider_unavailable");
-          assert.include(refusal.message, "cannot enforce a skill deny list");
+          yield* start(input);
+          assert.equal(dispatched.at(-1)?.delegationProfile, "restricted");
+          assert.deepEqual(dispatched.at(-1)?.deniedSkills, ["private:skill"]);
         }
         const wrongModel = yield* start({ target: { model: "openai:backup-model" } }).pipe(
           Effect.flip,
@@ -3784,7 +3787,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         const missing = yield* start({}).pipe(Effect.flip);
         assert.equal(missing.code, "provider_unavailable");
         assert.include(missing.message, "missing-pi is not registered");
-        assert.lengthOf(dispatched, 5);
+        assert.lengthOf(dispatched, 7);
       }).pipe(Effect.provide(serviceLayer));
     }),
   );

@@ -490,6 +490,7 @@ export function layerWithRegistry<Error>(
           tryHandlePromptCommand: () => Effect.succeed(false),
         }),
         layerRunExecutionServiceProvided,
+        layerProvidedRegistry,
         layerRuntime,
         layerServerConfig,
         layerServerSettings,

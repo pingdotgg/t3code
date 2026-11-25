@@ -1775,11 +1775,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerSessionIdFor = (input: {
     readonly adapter: ProviderAdapter.ProviderAdapterV2["Service"];
     readonly providerInstanceId: ProviderInstanceId;
-    readonly threadId: ThreadId;
+    readonly thread: OrchestrationV2AppThread;
   }) =>
     input.adapter.getCapabilities().pipe(
       Effect.flatMap((capabilities) =>
-        capabilities.sessions.supportsMultipleProviderThreadsPerSession
+        capabilities.sessions.supportsMultipleProviderThreadsPerSession &&
+        !input.thread.deniedSkills?.length
           ? Effect.succeed(
               idAllocator.derive.providerSession({
                 providerInstanceId: input.providerInstanceId,
@@ -1787,7 +1788,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             )
           : idAllocator.allocate.providerSession({
               providerInstanceId: input.providerInstanceId,
-              threadId: input.threadId,
+              threadId: input.thread.id,
             }),
       ),
     );
@@ -3093,7 +3094,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             providerSessionIdFor({
               adapter,
               providerInstanceId: queuedRun.providerInstanceId,
-              threadId,
+              thread: projection.thread,
             }),
           ),
           Effect.mapError(
@@ -6877,7 +6878,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerSessionIdFor({
             adapter: targetAdapter,
             providerInstanceId: input.modelSelection.instanceId,
-            threadId: input.command.threadId,
+            thread: input.projection.thread,
           }),
         ));
       const targetProviderThreadBase: OrchestrationV2ProviderThread =
@@ -8635,7 +8636,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerSessionIdFor({
             adapter,
             providerInstanceId: modelSelection.instanceId,
-            threadId: command.threadId,
+            thread: projection.thread,
           }),
         ));
       const providerThreadId =
@@ -9083,7 +9084,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerSessionIdFor({
           adapter,
           providerInstanceId: modelSelection.instanceId,
-          threadId: command.threadId,
+          thread: projection.thread,
         }),
       ));
     const existingProviderSession = projection.providerSessions.find(
@@ -10141,6 +10142,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.title === undefined ? {} : { title: command.title }),
         ordinal: (yield* subagentCount(command.parentThreadId)) + 1,
       });
+      const deniedSkills = [
+        ...new Set([
+          ...(parentProjection.thread.deniedSkills ?? []),
+          ...(command.deniedSkills ?? []),
+        ]),
+      ].sort();
+      const delegationProfile =
+        command.delegationProfile ?? parentProjection.thread.delegationProfile;
       const childThread: OrchestrationV2AppThread = {
         ...makeSubagentChildThread({
           parentThread: parentProjection.thread,
@@ -10156,6 +10165,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
+        deniedSkills,
+        ...(delegationProfile === undefined ? {} : { delegationProfile }),
         ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),
       };
       const task: OrchestrationV2Subagent = {

@@ -4,6 +4,8 @@ import {
   ModelSelection,
   OrchestrationV2AppThread,
   ProjectId,
+  OrchestrationV2DeniedSkills,
+  ProviderDriverKind,
   ProviderInstanceId,
   RuntimeMode,
   ThreadId,
@@ -19,6 +21,58 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import type * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+
+export class SkillDenyListUnsupportedError extends Schema.TaggedError<SkillDenyListUnsupportedError>()(
+  "SkillDenyListUnsupportedError",
+  {
+    driver: ProviderDriverKind,
+    deniedSkills: OrchestrationV2DeniedSkills,
+    delegationProfile: OrchestrationV2AppThread.fields.delegationProfile,
+  },
+) {
+  override get message(): string {
+    const profile =
+      this.delegationProfile === undefined
+        ? "Delegated thread"
+        : `Delegation profile "${this.delegationProfile}"`;
+    return `${profile} cannot run on driver ${this.driver} with denied skills: ${this.deniedSkills.join(", ")}.`;
+  }
+}
+
+type SkillPolicy = Pick<OrchestrationV2AppThread, "deniedSkills" | "delegationProfile">;
+
+export function skillDenyListRefusal(
+  adapter: Pick<ProviderAdapter.ProviderAdapterV2["Service"], "driver" | "supportsSkillDenyList">,
+  policy: SkillPolicy,
+): SkillDenyListUnsupportedError | undefined {
+  const { deniedSkills, delegationProfile } = policy;
+  if (
+    !deniedSkills?.length ||
+    adapter.supportsSkillDenyList === true ||
+    adapter.driver === "antigravity"
+  )
+    return;
+  return new SkillDenyListUnsupportedError({
+    driver: adapter.driver,
+    deniedSkills,
+    delegationProfile,
+  });
+}
+
+export const requireSkillDenyListSupport = (
+  adapters: ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"],
+  instanceId: ProviderInstanceId,
+  policy: SkillPolicy,
+) =>
+  !policy.deniedSkills?.length
+    ? Effect.void
+    : adapters.get(instanceId).pipe(
+        Effect.flatMap((adapter) => {
+          const refusal = skillDenyListRefusal(adapter, policy);
+          return refusal === undefined ? Effect.void : Effect.fail(refusal);
+        }),
+      );
 
 export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyResolveError>()(
   "RuntimePolicyResolveError",
@@ -194,6 +248,8 @@ export const layerFromProjectStore: Layer.Layer<
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
+          deniedSkills: input.thread.deniedSkills ?? [],
+          delegationProfile: input.thread.delegationProfile,
           ...(maxRuntimeMode === undefined ? {} : { maxRuntimeMode }),
           ...(workspace === undefined || workspace.folders.length === 0 ? {} : { workspace }),
         });
