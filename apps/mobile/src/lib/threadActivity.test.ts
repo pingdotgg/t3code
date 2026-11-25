@@ -15,6 +15,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { summarizeToolGroup } from "@t3tools/client-runtime/work-log/presentation";
+import { nextExpandedRuns, resolveRunInView } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -941,6 +942,58 @@ describe("buildThreadFeed", () => {
       "message-middle",
       "message-assistant",
     ]);
+  });
+
+  // regression: #42590 a turn ending under a released reader keeps the note being read
+  it("keeps the note a released reader is reading through the run's end and the next run", () => {
+    const middle = {
+      ...assistantMessage("2026-06-20T00:00:02.500Z"),
+      id: TurnItemId.make("item-middle"),
+      messageId: MessageId.make("message-middle"),
+      text: "The configuration is valid; checking the build next.",
+    };
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(command(), 1),
+      projected(middle, 2),
+      projected(assistantMessage(), 3),
+    ]);
+    const running = {
+      runId,
+      status: "running" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: null,
+    };
+    const completed = {
+      ...running,
+      status: "completed" as const,
+      completedAt: "2026-06-20T00:00:03.000Z",
+    };
+    const rows = deriveThreadFeedPresentation(feed, running, new Set());
+    const middleIndex = rows.findIndex((entry) => entry.id === "message-middle");
+    const readerRunId = resolveRunInView(
+      rows,
+      { scroll: middleIndex * 100, scrollLength: 100, positionAtIndex: (index) => index * 100 },
+      runId,
+      (entry) => (entry.type === "message" ? entry.message.runId : undefined),
+    );
+    expect(readerRunId).toBe(runId);
+
+    const ended = nextExpandedRuns(new Set<RunId>(), running, completed, readerRunId);
+    const nextRun = { ...running, runId: RunId.make("run-2") };
+    const afterNextRun = nextExpandedRuns(ended, completed, nextRun, readerRunId);
+    for (const expanded of [ended, afterNextRun]) {
+      expect(
+        deriveThreadFeedPresentation(feed, completed, expanded).map((entry) => entry.id),
+      ).toContain("message-middle");
+    }
+    expect(
+      deriveThreadFeedPresentation(
+        feed,
+        completed,
+        nextExpandedRuns(new Set<RunId>(), running, completed, null),
+      ).map((entry) => entry.id),
+    ).not.toContain("message-middle");
   });
 
   // regression: #21393 show plans and fold settled progress notes

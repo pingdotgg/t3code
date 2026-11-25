@@ -24,7 +24,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
-import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
+import {
+  nextExpandedRuns,
+  resolveRunInView,
+  resolveWorkGroupScrollAnchor,
+} from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
 import { preserveReadingPosition } from "~/lib/preserveReadingPosition";
@@ -623,10 +627,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   // The latest run whose rows a released reader can see: folding it would pull them away.
   const [readerSeenRunId, setReaderSeenRunId] = useState<RunId | null>(null);
-  const readerSeesRun = (runId: RunId | undefined) =>
-    runId !== undefined && !liveFollowEnabled && readerSeenRunId === runId;
-  // An interrupted run, or one the reader is reading, opens its fold; a newer run closes the
-  // previous run's unless the reader is still in it.
   const [observedLatestRun, setObservedLatestRun] = useState({
     identity: listIdentityKey,
     runId: latestRun?.runId,
@@ -643,26 +643,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
       status: latestRun?.status,
     });
     const previousRunId = observedLatestRun.runId;
-    if (
-      observedLatestRun.identity === listIdentityKey &&
-      latestRun &&
-      previousRunId !== undefined
-    ) {
-      if (latestRun.runId === previousRunId) {
-        if (
-          observedLatestRun.status === "running" &&
-          (latestRun.status === "interrupted" || readerSeesRun(latestRun.runId))
-        ) {
-          setExpandedRunIds((existing) => new Set(existing).add(latestRun.runId));
-        }
-      } else if (!readerSeesRun(previousRunId)) {
-        setExpandedRunIds((existing) => {
-          if (!existing.has(previousRunId)) return existing;
-          const next = new Set(existing);
-          next.delete(previousRunId);
-          return next;
-        });
-      }
+    if (observedLatestRun.identity === listIdentityKey && previousRunId !== undefined) {
+      const previous = { runId: previousRunId, status: observedLatestRun.status };
+      const readerRunId = liveFollowEnabled ? null : readerSeenRunId;
+      setExpandedRunIds((existing) =>
+        nextExpandedRuns(existing, previous, latestRun ?? null, readerRunId),
+      );
     }
   }
 
@@ -1065,24 +1051,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
   };
 
-  const readRunInView = (state: ReturnType<LegendListRef["getState"]>) => {
-    const runId = latestRun?.runId;
-    if (liveFollowEnabled || !runId) return null;
-    let firstIndex = -1;
-    for (let index = rows.length - 1; index >= 0; index -= 1) {
-      const row = rows[index]!;
-      if (row.kind !== "message" || !row.message.runId) continue;
-      if (row.message.runId !== runId) break;
-      firstIndex = index;
-    }
-    const top = firstIndex < 0 ? undefined : state.positionAtIndex(firstIndex);
-    return top !== undefined && top < state.scroll + state.scrollLength ? runId : null;
-  };
-
   const handleScroll = () => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || !state || state.data !== rows) return;
-    const seenRunId = readRunInView(state);
+    const seenRunId = liveFollowEnabled
+      ? null
+      : resolveRunInView(rows, state, latestRun?.runId, (row) =>
+          row.kind === "message" ? row.message.runId : undefined,
+        );
     setReaderSeenRunId((current) => (current === seenRunId ? current : seenRunId));
     const isAtEnd = rememberPosition(liveFollowEnabled && !anchoredEndSpace);
     if (isAtEnd !== undefined && !citationPositioning) {

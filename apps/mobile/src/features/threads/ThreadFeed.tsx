@@ -115,6 +115,7 @@ import {
   resolveViewedImageAsset,
   viewedImageMarkdownSource,
 } from "@t3tools/client-runtime/work-log/presentation";
+import { nextExpandedRuns, resolveRunInView } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import {
   renderCodexInlineDirectivesAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
@@ -3766,9 +3767,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // still leave it hundreds of points short of the end; isAtEnd stays true through that.
   const settling = props.feed.length > 0 && landedListKey !== feedThreadKey;
   const landingFallback = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The latest run whose rows a reader who stopped following can see: folding it would pull them away.
+  const [readerSeenRunId, setReaderSeenRunId] = useState<RunId | null>(null);
   const reportMetrics = (ready: boolean) => {
     const state = listRef.current?.getState();
     if (!state) return;
+    const seenRunId = state.isFollowingEnd
+      ? null
+      : resolveRunInView(
+          state.data as ReadonlyArray<GroupedThreadFeedRow>,
+          state,
+          props.latestRun?.runId,
+          (row) => (row.type === "message" ? row.message.runId : undefined),
+        );
+    setReaderSeenRunId((current) => (current === seenRunId ? current : seenRunId));
     if (
       settling &&
       ready &&
@@ -3918,27 +3930,21 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     return new Set(terminalIdsByTurn.values());
   })();
-  // An interrupted run unfolds; a run that is no longer latest folds back.
   const [previousLatestRun, setPreviousLatestRun] = useState(props.latestRun);
   if (previousLatestRun !== props.latestRun) {
     setPreviousLatestRun(props.latestRun);
-    const latest = props.latestRun;
-    const previous = previousLatestRun;
-    if (latest && previous) {
-      if (latest.runId !== previous.runId) {
-        if (expandedTurnIds.has(previous.runId)) {
-          setInteractionState((current) => {
-            const next = new Set(current.expandedTurnIds);
-            next.delete(previous.runId);
-            return { ...current, expandedTurnIds: next };
-          });
-        }
-      } else if (previous.status === "running" && latest.status === "interrupted") {
-        setInteractionState((current) => ({
-          ...current,
-          expandedTurnIds: new Set(current.expandedTurnIds).add(latest.runId),
-        }));
-      }
+    const latest = props.latestRun ?? null;
+    const previous = previousLatestRun ?? null;
+    if (nextExpandedRuns(expandedTurnIds, previous, latest, readerSeenRunId) !== expandedTurnIds) {
+      setInteractionState((current) => ({
+        ...current,
+        expandedTurnIds: nextExpandedRuns(
+          current.expandedTurnIds,
+          previous,
+          latest,
+          readerSeenRunId,
+        ),
+      }));
     }
   }
 
