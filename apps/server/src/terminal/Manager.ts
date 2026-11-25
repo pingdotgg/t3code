@@ -3890,12 +3890,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         const terminalId = input.terminalId;
         const session = yield* requireSession(input.threadId, terminalId);
         // Discard pre-clear output while keeping the parser in sync with the PTY.
-        for (
-          let index = session.pendingProcessEventIndex;
-          index < session.pendingProcessEvents.length;
-          index++
-        ) {
-          const event = session.pendingProcessEvents[index];
+        for (const event of session.pendingProcessEvents.slice(session.pendingProcessEventIndex)) {
           if (event?.type === "exit") {
             session.pendingHistoryControlSequence = "";
             break;
