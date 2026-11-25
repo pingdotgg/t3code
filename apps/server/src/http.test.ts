@@ -640,6 +640,27 @@ it.layer(
       expect(active.size).toBe(0);
     }),
   );
+
+  it.effect("serves static files whose names start with two dots", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-static-dotdot-" });
+      yield* fs.makeDirectory(path.join(staticDir, "..assets"));
+      yield* fs.writeFileString(path.join(staticDir, "..notes.txt"), "root notes");
+      yield* fs.writeFileString(path.join(staticDir, "..assets", "file.txt"), "nested file");
+      const request = yield* makeStaticRequest(staticDir);
+
+      for (const [resource, expectedBody] of [
+        ["/..notes.txt", "root notes"],
+        ["/..assets/file.txt", "nested file"],
+      ] as const) {
+        const response = yield* request(resource);
+        expect(response.status).toBe(200);
+        expect(yield* response.text).toBe(expectedBody);
+      }
+    }),
+  );
 });
 
 describe("video asset byte ranges", () => {

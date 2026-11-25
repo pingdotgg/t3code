@@ -732,13 +732,12 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     const staticRoot = path.resolve(staticDir);
     const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
     const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
-    const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
     const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
-    const hasPathTraversalSegment = staticRelativePath.startsWith("..");
+    const leadingParentSegment = /^\.\.(?:$|[/\\])/;
     if (
       staticRelativePath.length === 0 ||
-      hasRawLeadingParentSegment ||
-      hasPathTraversalSegment ||
+      leadingParentSegment.test(rawStaticRelativePath) ||
+      leadingParentSegment.test(staticRelativePath) ||
       staticRelativePath.includes("\0")
     ) {
       return HttpServerResponse.text("Invalid static file path", { status: 400 });
