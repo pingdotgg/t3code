@@ -1,8 +1,8 @@
 import "~/index.css";
 import { EnvironmentId, ProviderDriverKind, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { expect, it, onTestFinished, vi } from "vite-plus/test";
+import { cdp, page } from "vite-plus/test/browser";
 vi.mock(import("./CommandOutputPanel"), () => ({
   useCommandOutputStreaming: () => true,
   CommandOutputPanel: () => <div>Command output stream</div>,
@@ -126,4 +126,74 @@ it("gives a subagent the same status as the background work line", async () => {
   await expect
     .element(page.getByRole("dialog").getByText("Waiting", { exact: true }))
     .toBeVisible();
+});
+
+/** The text Chromium's accessibility tree gives a screen reader, in reading order. */
+async function screenReaderText() {
+  const session = cdp();
+  const { frameTree } = await session.send("Page.getFrameTree");
+  const frame = [frameTree, ...(frameTree.childFrames ?? [])].find(
+    (tree) => tree.frame.url === location.href,
+  );
+  const { nodes } = await session.send("Accessibility.getFullAXTree", {
+    frameId: frame!.frame.id,
+  });
+  return nodes
+    .filter((node) => !node.ignored && node.role?.value === "StaticText")
+    .map((node) => String(node.name?.value ?? ""))
+    .join("");
+}
+
+it("reads a background task's title and its timer as separate words", async () => {
+  vi.setSystemTime(Date.parse("2026-11-09T00:05:11Z"));
+  onTestFinished(() => void vi.useRealTimers());
+  await using _screen = await render(
+    <ThreadNow
+      attention={null}
+      syncPhase={null}
+      goal={null}
+      work={backgroundWorkNowItem({
+        environmentId: EnvironmentId.make("test"),
+        threadId: ThreadId.make("thread"),
+        tasks: [
+          {
+            taskId: "review-round",
+            kind: "command",
+            description: "neon-loop review round 1",
+            command: "sleep 600",
+            awaited: true,
+          },
+        ],
+        turnItems: [
+          {
+            id: TurnItemId.make("review-round"),
+            threadId: ThreadId.make("thread"),
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "running",
+            title: null,
+            startedAt: DateTime.makeUnsafe("2026-11-09T00:00:00Z"),
+            completedAt: null,
+            updatedAt: DateTime.makeUnsafe("2026-11-09T00:00:00Z"),
+            type: "command_execution",
+            input: "sleep 600",
+            output: "",
+          },
+        ],
+        stopDisabled: false,
+        stopping: false,
+        onStop: async () => undefined,
+        onOpenThread: () => undefined,
+      })}
+    />,
+  );
+  await expect.element(page.getByText("5m 11s")).toBeVisible();
+  const text = await screenReaderText();
+  expect(text).toContain("neon-loop review round 1");
+  expect(text).not.toMatch(/round 15m/);
 });
