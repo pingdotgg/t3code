@@ -5362,7 +5362,7 @@
   "9edae9f03274cab1": "{platform} のサポートが検出されませんでした。",
   "9ceeca01c1c48b48": "デバイスの検出で問題が報告されたため、{platform} のデバイスは表示されていません。",
   "6cfe3b4931af6f8a": "Xcode はインストールされていますが、利用できる iOS シミュレーターがありません。Xcode の [Settings] → [Components] でランタイムをインストールしてください。",
-  "22750cc2c6dc56c4": "Android SDK はインストールされていますが、仮想デバイスがありません。Android Studio → Device Manager で作成してください。",
+  "dbc3908dc1f730ab": "Android SDK はインストールされていますが、Android デバイスが見つかりません。USB デバッグを有効にしたスマートフォンを接続するか、Android Studio → Device Manager で仮想デバイスを作成してください。",
   "3e436963e11ea3bc": "{host} は Expo Simulators を使ってクラウドで iOS シミュレーターを起動します。",
   "1a6f2df32b8307a2": "{host} は Expo Simulators を使ってクラウドで Android エミュレーターを起動します。",
   "600c3e7ff64413cf": "{host} で Xcode と iOS シミュレーターを利用できます。",

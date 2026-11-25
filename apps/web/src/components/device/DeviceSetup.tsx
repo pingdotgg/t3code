@@ -152,7 +152,7 @@ export function platformSetupStatus(
             )
           : resolve(
               msg(
-                "The Android SDK is installed, but no virtual device exists. Create one in Android Studio → Device Manager.",
+                "The Android SDK is installed, but no Android device was found. Connect a phone with USB debugging on, or create a virtual device in Android Studio → Device Manager.",
               ),
             ),
     };

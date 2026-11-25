@@ -5385,7 +5385,7 @@
   "9edae9f03274cab1": "未检测到 {platform} 支持。",
   "9ceeca01c1c48b48": "设备发现报告了问题，因此没有列出 {platform} 设备。",
   "6cfe3b4931af6f8a": "已安装 Xcode，但没有可用的 iOS 模拟器。请在 Xcode 设置 → Components 中安装运行时。",
-  "22750cc2c6dc56c4": "已安装 Android SDK，但还没有虚拟设备。请在 Android Studio → Device Manager 中创建一个。",
+  "dbc3908dc1f730ab": "已安装 Android SDK，但未找到 Android 设备。请连接已开启 USB 调试的手机，或在 Android Studio → Device Manager 中创建虚拟设备。",
   "3e436963e11ea3bc": "{host} 使用 Expo Simulators 在云端启动 iOS 模拟器。",
   "1a6f2df32b8307a2": "{host} 使用 Expo Simulators 在云端启动 Android 模拟器。",
   "600c3e7ff64413cf": "{host} 上可以使用 Xcode 和 iOS 模拟器。",

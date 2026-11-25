@@ -5381,7 +5381,7 @@
   "9edae9f03274cab1": "{platform} support was not detected.",
   "9ceeca01c1c48b48": "No {platform} devices were listed because device discovery reported a problem.",
   "6cfe3b4931af6f8a": "Xcode is installed, but no iOS Simulator is available. Install a runtime in Xcode Settings → Components.",
-  "22750cc2c6dc56c4": "The Android SDK is installed, but no virtual device exists. Create one in Android Studio → Device Manager.",
+  "dbc3908dc1f730ab": "The Android SDK is installed, but no Android device was found. Connect a phone with USB debugging on, or create a virtual device in Android Studio → Device Manager.",
   "3e436963e11ea3bc": "{host} starts iOS Simulators in the cloud with Expo Simulators.",
   "1a6f2df32b8307a2": "{host} starts Android emulators in the cloud with Expo Simulators.",
   "600c3e7ff64413cf": "Xcode and iOS Simulator are available on {host}.",

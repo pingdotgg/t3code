@@ -35,8 +35,9 @@ After installing SDK tools, restart the environment server and refresh devices.
 
 Physical Android devices connected to the machine that hosts the environment
 server need only SDK Platform-Tools. Connect the device over USB and approve USB
-debugging, or run `adb connect <address>:<port>` on that machine for wireless
-debugging, then refresh devices.
+debugging. For wireless debugging, turn on **Wireless debugging** on the phone,
+pair it once with `adb pair <address>:<port>` on that machine, then run
+`adb connect <address>:<port>`. Refresh devices afterwards.
 
 Android emulator video also needs `ffmpeg` with the libx264 encoder on the device
 host's PATH, or an executable selected by `SERVE_EMU_FFMPEG` on that host. If
@@ -48,7 +49,8 @@ devices and iOS do not need ffmpeg.
 
 The screen is interactive: click and drag to touch, type while the screen is
 focused, and use the toolbar for Home, Back, and Recents on Android, rotate on
-iOS, and power off. Close the tab to stop watching; the device keeps running
+iOS, and power off. Some Xiaomi phones ignore touch and keys until **USB
+debugging (Security settings)** is on in Developer options. Close the tab to stop watching; the device keeps running
 unless you power it off. Closed tabs stay closed after a reload. To watch the
 device again, choose it from **+ → Device**.
 

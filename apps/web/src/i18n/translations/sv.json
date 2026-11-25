@@ -5380,7 +5380,7 @@
   "9edae9f03274cab1": "Stöd för {platform} upptäcktes inte.",
   "9ceeca01c1c48b48": "Inga {platform}-enheter listades eftersom enhetsidentifieringen rapporterade ett problem.",
   "6cfe3b4931af6f8a": "Xcode är installerat, men ingen iOS-simulator är tillgänglig. Installera en körmiljö i Xcode-inställningarna → Components.",
-  "22750cc2c6dc56c4": "Android SDK är installerat, men ingen virtuell enhet finns. Skapa en i Android Studio → Device Manager.",
+  "dbc3908dc1f730ab": "Android SDK är installerat, men ingen Android-enhet hittades. Anslut en telefon med USB-felsökning påslagen, eller skapa en virtuell enhet i Android Studio → Device Manager.",
   "3e436963e11ea3bc": "{host} startar iOS-simulatorer i molnet med Expo Simulators.",
   "1a6f2df32b8307a2": "{host} startar Android-emulatorer i molnet med Expo Simulators.",
   "600c3e7ff64413cf": "Xcode och iOS-simulatorn är tillgängliga på {host}.",

@@ -5379,7 +5379,7 @@
   "9edae9f03274cab1": "Поддержка {platform} не обнаружена.",
   "9ceeca01c1c48b48": "Устройства {platform} не показаны: поиск устройств сообщил о проблеме.",
   "6cfe3b4931af6f8a": "Xcode установлен, но нет доступного iOS Simulator. Установите среду выполнения в «Настройки Xcode → Components».",
-  "22750cc2c6dc56c4": "Android SDK установлен, но виртуальных устройств нет. Создайте его в «Android Studio → Device Manager».",
+  "dbc3908dc1f730ab": "Android SDK установлен, но устройства Android не найдены. Подключите телефон с включённой отладкой по USB или создайте виртуальное устройство в «Android Studio → Device Manager».",
   "3e436963e11ea3bc": "{host} запускает симуляторы iOS в облаке через Expo Simulators.",
   "1a6f2df32b8307a2": "{host} запускает эмуляторы Android в облаке через Expo Simulators.",
   "600c3e7ff64413cf": "Xcode и iOS Simulator доступны на {host}.",

@@ -5380,7 +5380,7 @@
   "9edae9f03274cab1": "La prise en charge de {platform} n’a pas été détectée.",
   "9ceeca01c1c48b48": "Aucun appareil {platform} n’a été listé, car la découverte d’appareils a signalé un problème.",
   "6cfe3b4931af6f8a": "Xcode est installé, mais aucun simulateur iOS n’est disponible. Installez un runtime dans Réglages de Xcode → Components.",
-  "22750cc2c6dc56c4": "Le SDK Android est installé, mais aucun appareil virtuel n’existe. Créez-en un dans Android Studio → Device Manager.",
+  "dbc3908dc1f730ab": "Le SDK Android est installé, mais aucun appareil Android n’a été trouvé. Connectez un téléphone avec le débogage USB activé, ou créez un appareil virtuel dans Android Studio → Device Manager.",
   "3e436963e11ea3bc": "{host} démarre des simulateurs iOS dans le cloud avec Expo Simulators.",
   "1a6f2df32b8307a2": "{host} démarre des émulateurs Android dans le cloud avec Expo Simulators.",
   "600c3e7ff64413cf": "Xcode et le simulateur iOS sont disponibles sur {host}.",
