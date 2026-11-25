@@ -319,7 +319,12 @@ it("presents completion notifications and sound as soon as the shell completes",
 });
 
 it.each([
-  { client: "desktop app", when: "at startup", bridge: {}, beforeGesture: 1 },
+  {
+    client: "desktop app",
+    when: "at startup",
+    bridge: { onNotificationBadgeClear: () => () => {} },
+    beforeGesture: 1,
+  },
   { client: "browser", when: "on the first gesture", bridge: undefined, beforeGesture: 0 },
 ])("readies notification sound in the $client $when", async ({ bridge, beforeGesture }) => {
   await using app = setup();
