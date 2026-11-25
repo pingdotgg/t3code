@@ -20,6 +20,7 @@ export function ThreadDetailsSection({
   return (
     <section
       {...props}
+      data-thread-details-section={headingId}
       aria-labelledby={showHeading ? headingId : undefined}
       aria-label={showHeading ? undefined : title}
       // A row can still render nothing (a fresh draft quiets Git actions), so an empty section

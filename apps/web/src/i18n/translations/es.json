@@ -11467,7 +11467,6 @@
   "ca8b75a7d7d7ce7e": "Duplicar tema",
   "f2043e87a10cb831": "Editar tema",
   "595bdeefcdc9bf31": "Exportar archivo de tema",
-  "b480281b3791b685": "Elige qué muestra la tarjeta de detalles del hilo. También puedes hacer clic derecho en la tarjeta.",
   "662288b90e19635f": "Restablecer los detalles del hilo al valor predeterminado",
   "871d059d88548434": "Detalles del hilo: {enabled} de {total} activados",
   "cec1fbb8b4c9180d": [
@@ -12921,5 +12920,15 @@
   "cad7e919311efc25": "Rama y worktree",
   "df74c436e01b97ff": "Terminales en ejecución",
   "df7ebb6a9956b51f": "Espaciador",
-  "acf922e6df970163": "Mostrar siempre, aunque esté vacía:"
+  "845de59dc5599bbd": "Control de versiones",
+  "9db2c6b4f5d086b4": "Linaje y chats laterales",
+  "5312a2a79a6d39cf": "Altura",
+  "9bfbb6a68489aac2": "Altura",
+  "cde118d616017041": "Igual para todos los hilos",
+  "a942e191017bff65": "Ajustar al contenido",
+  "86aeee3566767d60": "Las líneas se mantienen aunque un hilo no tenga nada para ellas.",
+  "6633a00c1e8e1733": "Una línea sin nada que mostrar se oculta.",
+  "564d42b3b753dd3f": "Elige qué muestra la tarjeta de detalles del hilo y en qué orden. También puedes hacer clic derecho en la tarjeta.",
+  "c0ede1d3fde64a54": "Secciones de detalles del hilo, de arriba abajo",
+  "a9c09e58a52fd070": "Desactivado"
 }

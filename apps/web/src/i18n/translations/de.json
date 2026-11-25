@@ -11472,7 +11472,6 @@
   "ca8b75a7d7d7ce7e": "Design duplizieren",
   "f2043e87a10cb831": "Design bearbeiten",
   "595bdeefcdc9bf31": "Design-Datei exportieren",
-  "b480281b3791b685": "Wähle, was die Karte mit Thread-Details anzeigt. Du kannst auch mit der rechten Maustaste auf die Karte klicken.",
   "662288b90e19635f": "Thread-Details auf Standard zurücksetzen",
   "871d059d88548434": "Thread-Details: {enabled} von {total} an",
   "cec1fbb8b4c9180d": [
@@ -12926,5 +12925,15 @@
   "cad7e919311efc25": "Branch und Worktree",
   "df74c436e01b97ff": "Laufende Terminals",
   "df7ebb6a9956b51f": "Abstand",
-  "acf922e6df970163": "Immer anzeigen, auch wenn leer:"
+  "845de59dc5599bbd": "Versionsverwaltung",
+  "9db2c6b4f5d086b4": "Herkunft und Nebenchats",
+  "5312a2a79a6d39cf": "Höhe",
+  "9bfbb6a68489aac2": "Höhe",
+  "cde118d616017041": "Für jeden Thread gleich",
+  "a942e191017bff65": "An Inhalt anpassen",
+  "86aeee3566767d60": "Zeilen bleiben, auch wenn ein Thread nichts für sie hat.",
+  "6633a00c1e8e1733": "Eine Zeile ohne Inhalt wird ausgeblendet.",
+  "564d42b3b753dd3f": "Wähle, was die Thread-Details-Karte zeigt und in welcher Reihenfolge. Du kannst auch mit der rechten Maustaste auf die Karte klicken.",
+  "c0ede1d3fde64a54": "Abschnitte der Thread-Details, oberster zuerst",
+  "a9c09e58a52fd070": "Aus"
 }

@@ -138,6 +138,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import {
   SidebarRowLayoutEditingContext,
+  sidebarRowItemFlexClassName,
   type SidebarRowItemId,
   type SidebarRowLayout,
   type SidebarRowLine,
@@ -1129,7 +1130,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       ref={isRegeneratingTitle ? observeVisibleAnimation : undefined}
       className={cn(
         "min-w-0 text-start text-sm transition-opacity motion-reduce:transition-none",
-        titleStretches ? "flex-1" : "shrink",
+        sidebarRowItemFlexClassName({ id: "title", form: null, key: "title" }, titleStretches),
         shouldRecede ? "font-normal" : "font-medium",
         isRegeneratingTitle
           ? "relative truncate text-muted-foreground"
@@ -1306,7 +1307,12 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         ) : null;
       case "projectName":
         return props.projectDisplayName ? (
-          <span className="min-w-0 shrink truncate font-normal text-secondary-label text-xs">
+          <span
+            className={cn(
+              "truncate font-normal text-secondary-label text-xs",
+              sidebarRowItemFlexClassName(token, titleStretches),
+            )}
+          >
             {props.projectDisplayName}
           </span>
         ) : null;
@@ -1328,14 +1334,24 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             <TooltipPopup side="top">{props.environmentLabel}</TooltipPopup>
           </Tooltip>
         ) : (
-          <span className="flex min-w-0 shrink items-center gap-1.5 text-secondary-label text-xs">
+          <span
+            className={cn(
+              "flex items-center gap-1.5 text-secondary-label text-xs",
+              sidebarRowItemFlexClassName(token, titleStretches),
+            )}
+          >
             {environmentIcon}
             <span className="min-w-0 truncate">{props.environmentLabel}</span>
           </span>
         );
       case "branch":
         return checkoutThread.branch ? (
-          <span className="flex min-w-0 shrink items-center gap-1.5 text-secondary-label text-xs">
+          <span
+            className={cn(
+              "flex items-center gap-1.5 text-secondary-label text-xs",
+              sidebarRowItemFlexClassName(token, titleStretches),
+            )}
+          >
             <ThreadWorktreeIndicator thread={checkoutThread} />
             <span className="flex min-w-0">
               <MiddleTruncate value={checkoutThread.branch} showTitle={false} />
@@ -1358,7 +1374,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           </span>
         );
       case "spacer":
-        return <span className="min-w-0 flex-1" />;
+        return <span className={sidebarRowItemFlexClassName(token, titleStretches)} />;
       case "title":
         return (
           <>
@@ -1410,9 +1426,11 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           .flatMap((line) => withoutFolderItems(props.layout[line])),
       }
     : props.layout;
-  // Folder rows merge the card's other lines into one, which keeps whenever any line is kept.
+  // Folder rows merge the card's other lines into one, which keeps whenever any line is kept. A
+  // line with no items is never kept: it would only add an empty row to every card.
   const kept = (line: "middle" | "bottom") =>
-    inFolderVariant ? props.layout.keepLines.length > 0 : props.layout.keepLines.includes(line);
+    (inFolderVariant ? props.layout.keepLines.length > 0 : props.layout.keepLines.includes(line)) &&
+    lineTokens[line].some((token) => token.id !== "spacer");
   const folds = (line: "middle" | "bottom") =>
     layoutEditing === null &&
     !kept(line) &&

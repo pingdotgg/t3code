@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  moveThreadDetailsSection,
+  resolveThreadDetailsOrder,
   resolveThreadDetailsVisibility,
   setThreadDetailsItem,
   THREAD_DETAILS_ITEMS,
@@ -32,5 +34,43 @@ describe("thread details items", () => {
 
     const hidden = { threadDetailsItems: { servers: false }, threadDetailsUsageEnabled: false };
     expect(setThreadDetailsItem(hidden, servers, true)).toEqual({});
+  });
+
+  it("orders sections from the saved list, keeping unknown ids out and missing ones near their default neighbor", () => {
+    expect(
+      resolveThreadDetailsOrder({
+        threadDetailsOrder: [
+          "relationships",
+          "retired",
+          "workspace",
+          "versionControl",
+          "automations",
+          "usage",
+          "context",
+          "relationships",
+        ],
+      }),
+    ).toEqual([
+      "relationships",
+      "workspace",
+      "versionControl",
+      "servers",
+      "automations",
+      "usage",
+      "context",
+    ]);
+  });
+
+  it("saves an order equal to the default as empty", () => {
+    const order = resolveThreadDetailsOrder({ threadDetailsOrder: [] });
+    const moved = moveThreadDetailsSection(order, "relationships", -10);
+    expect(moved[0]).toBe("relationships");
+    expect(
+      moveThreadDetailsSection(
+        resolveThreadDetailsOrder({ threadDetailsOrder: moved }),
+        "relationships",
+        4,
+      ),
+    ).toEqual([]);
   });
 });

@@ -11482,7 +11482,6 @@
   "ca8b75a7d7d7ce7e": "Duplicate theme",
   "f2043e87a10cb831": "Edit theme",
   "595bdeefcdc9bf31": "Export theme file",
-  "b480281b3791b685": "Choose what the thread details card shows. You can also right-click the card.",
   "662288b90e19635f": "Reset thread details to default",
   "871d059d88548434": "Thread details: {enabled} of {total} on",
   "cec1fbb8b4c9180d": [
@@ -12935,5 +12934,15 @@
   "cad7e919311efc25": "Branch and worktree",
   "df74c436e01b97ff": "Running terminals",
   "df7ebb6a9956b51f": "Spacer",
-  "acf922e6df970163": "Always show, even when empty:"
+  "845de59dc5599bbd": "Version control",
+  "9db2c6b4f5d086b4": "Lineage and side chats",
+  "5312a2a79a6d39cf": "Height",
+  "9bfbb6a68489aac2": "Height",
+  "cde118d616017041": "Same for every thread",
+  "a942e191017bff65": "Fit content",
+  "86aeee3566767d60": "Lines stay even when a thread has nothing for them.",
+  "6633a00c1e8e1733": "A line with nothing to show folds away.",
+  "564d42b3b753dd3f": "Choose what the thread details card shows, and in what order. You can also right-click the card.",
+  "c0ede1d3fde64a54": "Thread details sections, top first",
+  "a9c09e58a52fd070": "Off"
 }

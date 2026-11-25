@@ -53,6 +53,7 @@ import {
   resolveSidebarRowLayout,
   setSidebarRowLineKept,
   setSidebarRowTokenForm,
+  sidebarRowItemFlexClassName,
   storedSidebarRowLayout,
   withoutSidebarRowItem,
 } from "../sidebar/sidebarRowLayout";
@@ -494,10 +495,7 @@ function EditableLine(props: {
         dragging={item.token.key === props.draggingKey}
         onSelect={props.onSelect}
         // Mirrors the row: the title fills its line unless a spacer there does.
-        stretches={
-          item.token.id === "spacer" ||
-          (item.token.id === "title" && !props.items.some((other) => other.token.id === "spacer"))
-        }
+        titleStretches={!props.items.some((other) => other.token.id === "spacer")}
       />,
     );
   }
@@ -524,7 +522,7 @@ function EditableItem(props: {
   selected: boolean;
   dragging: boolean;
   onSelect: (key: string) => void;
-  stretches: boolean;
+  titleStretches: boolean;
 }) {
   const label = useItemLabel();
   const { attributes, listeners, setNodeRef } = useDraggable({ id: props.token.key });
@@ -555,7 +553,7 @@ function EditableItem(props: {
       }}
       className={cn(
         "relative inline-flex min-w-0 cursor-grab touch-none items-center rounded-sm outline-1 active:cursor-grabbing",
-        props.stretches ? "flex-1" : "shrink",
+        sidebarRowItemFlexClassName(props.token, props.titleStretches),
         isSpacer && "min-w-4 self-stretch",
         props.selected
           ? "outline-ring outline-solid"
@@ -581,29 +579,38 @@ function EditableItem(props: {
   );
 }
 
-/** Kept lines hold their height when a thread has nothing for them, so cards line up. */
+/** Fit content lets a line fold when a thread has nothing for it; same height keeps every line. */
 function KeepLinesControl(props: { layout: SidebarRowLayout }) {
   const gt = useGT();
+  const fixed = props.layout.keepLines.length > 0;
+  const setFixed = (kept: boolean) =>
+    saveLayout(
+      setSidebarRowLineKept(setSidebarRowLineKept(props.layout, "middle", kept), "bottom", kept),
+    );
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
       <span className="text-muted-foreground">
-        <T>Always show, even when empty:</T>
+        <T context="sidebar thread card height">Height</T>
       </span>
-      {(["middle", "bottom"] as const).map((line) => {
-        const kept = props.layout.keepLines.includes(line);
-        return (
+      <span role="group" aria-label={gt("Height")} className="inline-flex items-center gap-0.5">
+        {[false, true].map((value) => (
           <Button
-            key={line}
+            key={String(value)}
             type="button"
             size="xs"
-            variant={kept ? "secondary" : "ghost-muted"}
-            aria-pressed={kept}
-            onClick={() => saveLayout(setSidebarRowLineKept(props.layout, line, !kept))}
+            variant={fixed === value ? "secondary" : "ghost-muted"}
+            aria-pressed={fixed === value}
+            onClick={() => setFixed(value)}
           >
-            {line === "middle" ? gt("Middle line") : gt("Bottom line")}
+            {value ? gt("Same for every thread") : gt("Fit content")}
           </Button>
-        );
-      })}
+        ))}
+      </span>
+      <span className="basis-full text-muted-foreground">
+        {fixed
+          ? gt("Lines stay even when a thread has nothing for them.")
+          : gt("A line with nothing to show folds away.")}
+      </span>
     </div>
   );
 }
