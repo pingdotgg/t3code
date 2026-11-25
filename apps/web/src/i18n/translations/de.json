@@ -1297,7 +1297,7 @@
   "c13753167634f7aa": "Datei gelesen",
   "5ce648cd03020fd9": "{path} gelesen +{count} weitere",
   "5d6c2898401c94e6": "{path} gelesen",
-  "612170d804b03320": "{count, plural, one {{count} fehlerhafter oder inkonsistenter Nutzungseintrag wurde übersprungen; die Nutzung ist möglicherweise unvollständig.} other {{count} fehlerhafte oder inkonsistente Nutzungseinträge wurden übersprungen; die Nutzung ist möglicherweise unvollständig.}}",
+  "69150fe436b3a0c2": "{count, plural, one {{count} fehlerhafter oder inkonsistenter Nutzungseintrag wurde übersprungen; die Nutzung ist möglicherweise unvollständig.} other {{count} fehlerhafte oder inkonsistente Nutzungseinträge wurden übersprungen; die Nutzung ist möglicherweise unvollständig.}}",
   "ee448ceb6820ce2f": "{environment} verwendet eine ältere Serverversion und wird nicht in die Summen einbezogen.",
   "732708950237004e": "Dieser Client ist älter als der Server auf {environment}; seine Nutzung wird nicht in die Summen einbezogen.",
   "9758c2ede06aa19b": "heute {hour}",

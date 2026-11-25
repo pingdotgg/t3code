@@ -1297,7 +1297,7 @@
   "c13753167634f7aa": "Read file",
   "5ce648cd03020fd9": "Read {path} +{count} more",
   "5d6c2898401c94e6": "Read {path}",
-  "612170d804b03320": "{count, plural, one {{count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.} other {{count} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.}}",
+  "69150fe436b3a0c2": "{count, plural, one {{count} malformed or inconsistent usage record was skipped; usage may be incomplete.} other {{count} malformed or inconsistent usage records were skipped; usage may be incomplete.}}",
   "ee448ceb6820ce2f": "{environment} runs an older server version and is excluded from totals.",
   "732708950237004e": "This client is older than the server on {environment}; its usage is excluded from totals.",
   "9758c2ede06aa19b": "{hour} today",
