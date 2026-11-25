@@ -12,6 +12,9 @@ const mocks = vi.hoisted(() => ({
   connectSshEnvironment: vi.fn<() => Promise<AtomCommandResult<void, Error>>>(async () =>
     AsyncResult.success(undefined),
   ),
+  connectPairing: vi.fn<
+    (input: { readonly host: string }) => Promise<AtomCommandResult<void, Error>>
+  >(async () => AsyncResult.success(undefined)),
   refresh: () => {},
 }));
 
@@ -22,6 +25,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 vi.mock(import("~/connection/onboarding"), async (original) => ({
   ...(await original()),
   connectSshEnvironment: mocks.connectSshEnvironment as never,
+  connectPairing: mocks.connectPairing as never,
 }));
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
@@ -43,17 +47,32 @@ vi.mock(import("~/state/server"), async (original) => ({
 
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
 
+const devbox = { environmentId: "devbox", label: "Devbox", relayManaged: false } as never;
+
 function Owner() {
   const [open, setOpen] = useState(false);
+  const [routeTarget, setRouteTarget] = useState<typeof devbox | null>(null);
   const [error, setError] = useState<string | null>(null);
   return (
     <AppAtomRegistryProvider>
+      <button
+        type="button"
+        onClick={() => {
+          setRouteTarget(devbox);
+          setOpen(true);
+        }}
+      >
+        Add a route to Devbox
+      </button>
       <AddEnvironmentDialog
         open={open}
-        routeTarget={null}
+        routeTarget={routeTarget}
         error={error}
         savedEnvironments={[]}
-        onOpenChange={setOpen}
+        onOpenChange={(next) => {
+          if (next) setRouteTarget(null);
+          setOpen(next);
+        }}
         onErrorChange={setError}
       />
     </AppAtomRegistryProvider>
@@ -62,6 +81,7 @@ function Owner() {
 
 function setup() {
   mocks.connectSshEnvironment.mockClear();
+  mocks.connectPairing.mockClear();
   return stubGlobal("desktopBridge", {});
 }
 
@@ -146,7 +166,7 @@ describe("AddEnvironmentDialog", () => {
     await expect
       .element(page.getByRole("dialog").getByRole("button", { name: /Connecting to devbox…$/ }))
       .toBeDisabled();
-    await expect.element(page.getByText(/opening an SSH tunnel/)).toBeInTheDocument();
+    await expect.element(page.getByText(/^Starting T3 Code on devbox/)).toBeInTheDocument();
     finishConnection(AsyncResult.failure(Cause.fail(new Error("dismissed SSH attempt"))));
     await userEvent.fill(page.getByPlaceholder("backend.example.com"), "devbox.example.com");
     await userEvent.fill(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
@@ -154,5 +174,94 @@ describe("AddEnvironmentDialog", () => {
       .element(page.getByRole("dialog").getByRole("button", { name: "Connect & add" }))
       .toBeEnabled();
     await expect.element(page.getByText(/dismissed SSH attempt/)).not.toBeInTheDocument();
+  });
+
+  describe("a dismissed Remote link attempt", () => {
+    function holdPairing() {
+      let finish!: (result: AtomCommandResult<void, Error>) => void;
+      mocks.connectPairing.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      return (result: AtomCommandResult<void, Error>) => finish(result);
+    }
+
+    async function startPairingAndDismiss() {
+      await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+      await userEvent.fill(page.getByPlaceholder("backend.example.com"), "slow.example.com");
+      await userEvent.fill(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
+      await userEvent.click(
+        page.getByRole("dialog").getByRole("button", { name: "Connect & add" }),
+      );
+      await userEvent.keyboard("{Escape}");
+      await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    }
+
+    it("keeps its error out of the reopened form", async () => {
+      using _bridge = setup();
+      await using _screen = await render(<Owner />);
+      const finish = holdPairing();
+
+      await startPairingAndDismiss();
+      await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+      await expect
+        .element(page.getByRole("dialog").getByRole("button", { name: /Pairing with/ }))
+        .toBeDisabled();
+      finish(AsyncResult.failure(Cause.fail(new Error("dismissed pairing timed out"))));
+
+      await expect
+        .element(page.getByRole("dialog").getByRole("button", { name: "Connect & add" }))
+        .toBeInTheDocument();
+      await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("does not close the reopened dialog when it succeeds", async () => {
+      using _bridge = setup();
+      await using _screen = await render(<Owner />);
+      const finish = holdPairing();
+
+      await startPairingAndDismiss();
+      await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+      finish(AsyncResult.success(undefined));
+
+      await expect
+        .element(page.getByRole("dialog").getByRole("button", { name: "Connect & add" }))
+        .toBeInTheDocument();
+      await expect.element(page.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    it("does not lock a dialog for another machine", async () => {
+      using _bridge = setup();
+      await using _screen = await render(<Owner />);
+      const finish = holdPairing();
+
+      await startPairingAndDismiss();
+      await userEvent.click(page.getByRole("button", { name: "Add a route to Devbox" }));
+      await expect.element(page.getByPlaceholder("backend.example.com")).toBeEnabled();
+      await expect.element(page.getByText(/slow\.example\.com/)).not.toBeInTheDocument();
+      finish(AsyncResult.failure(Cause.fail(new Error("dismissed pairing timed out"))));
+      await expect
+        .element(page.getByRole("dialog").getByRole("button", { name: "Add route" }))
+        .toBeInTheDocument();
+      await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+    });
+  });
+
+  it("submits Remote link with Enter and explains a missing pairing code", async () => {
+    using _bridge = setup();
+    await using _screen = await render(<Owner />);
+
+    await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+    await userEvent.fill(page.getByPlaceholder("backend.example.com"), "devbox.example.com");
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Enter a pairing code.");
+    expect(mocks.connectPairing).not.toHaveBeenCalled();
+
+    await userEvent.fill(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(mocks.connectPairing).toHaveBeenCalledOnce();
   });
 });
