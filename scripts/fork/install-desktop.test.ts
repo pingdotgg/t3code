@@ -7,29 +7,49 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import {
   buildEnvironment,
   cacheDirectory,
+  followsAnotherFeed,
   localBuildVersion,
   parseArguments,
   parseChecksums,
   parseDesktopEntryName,
-  releaseAssetName,
+  releaseAssetNames,
   renderLauncher,
   replace,
 } from "./install-desktop.ts";
 
-describe("releaseAssetName", () => {
+describe("followsAnotherFeed", () => {
+  it("tells this repository's installs from upstream's and other forks'", () => {
+    const feed = (owner: string, repo = "t3code") =>
+      `owner: ${owner}\nrepo: ${repo}\nprovider: github\nupdaterCacheDirName: t3code-updater\n`;
+    expect(followsAnotherFeed(feed("martinothamar"))).toBe(false);
+    expect(followsAnotherFeed(feed("pingdotgg"))).toBe(true);
+    expect(followsAnotherFeed(feed("someone"))).toBe(true);
+    expect(followsAnotherFeed(feed("martinothamar", "t3code-other"))).toBe(true);
+    // Earlier fork builds carry no feed.
+    expect(followsAnotherFeed("")).toBe(false);
+  });
+});
+
+describe("releaseAssetNames", () => {
   it("names each platform's build the way electron-builder writes it", () => {
     const version = "0.0.46-preview.20261011.3";
-    expect(releaseAssetName(version, "linux", "x64")).toBe(`T3-Code-${version}-x86_64.AppImage`);
-    expect(releaseAssetName(version, "linux", "arm64")).toBe(`T3-Code-${version}-arm64.AppImage`);
-    expect(releaseAssetName(version, "darwin", "arm64")).toBe(`T3-Code-${version}-arm64.dmg`);
-    expect(releaseAssetName(version, "darwin", "x64")).toBe(`T3-Code-${version}-x64.dmg`);
-    expect(releaseAssetName(version, "win32", "x64")).toBe(`T3-Code-${version}-x64.exe`);
-    expect(releaseAssetName(version, "win32", "arm64")).toBe(`T3-Code-${version}-arm64.exe`);
+    expect(releaseAssetNames(version, "linux", "x64")).toEqual([
+      `T3-Code-${version}-x86_64.AppImage`,
+      "T3-Code-x86_64.AppImage",
+    ]);
+    expect(releaseAssetNames(version, "linux", "arm64")).toEqual([
+      `T3-Code-${version}-arm64.AppImage`,
+      "T3-Code-arm64.AppImage",
+    ]);
+    expect(releaseAssetNames(version, "darwin", "arm64")).toEqual([`T3-Code-${version}-arm64.dmg`]);
+    expect(releaseAssetNames(version, "darwin", "x64")).toEqual([`T3-Code-${version}-x64.dmg`]);
+    expect(releaseAssetNames(version, "win32", "x64")).toEqual([`T3-Code-${version}-x64.exe`]);
+    expect(releaseAssetNames(version, "win32", "arm64")).toEqual([`T3-Code-${version}-arm64.exe`]);
   });
 
   it("has nothing for a target the release does not build", () => {
-    expect(releaseAssetName("0.0.46", "linux", "ia32")).toBeUndefined();
-    expect(releaseAssetName("0.0.46", "freebsd", "x64")).toBeUndefined();
+    expect(releaseAssetNames("0.0.46", "linux", "ia32")).toBeUndefined();
+    expect(releaseAssetNames("0.0.46", "freebsd", "x64")).toBeUndefined();
   });
 });
 

@@ -1,13 +1,15 @@
 # Publishes the fork's desktop apps and the T3 server archives its SSH hosts and Sandboxes install,
 # under one version, as a release of this repository. Run it by hand from the Actions tab.
 #
-# The version is upstream's preview form, `<core>-preview.<date>.<run>`. A desktop build with such a
-# version gets no update feed (isDesktopPreviewVersion in scripts/build-desktop-artifact.ts), so
-# the apps never replace themselves, and the app installs the server archive of that same version
-# from this repository's releases (packages/ssh/src/remoteServerOverrides.ts).
+# The version is upstream's preview form, `<core>-preview.<date>.<run>`. The apps follow this
+# repository's releases as their update feed (scripts/build-desktop-artifact.ts), except unsigned
+# macOS builds, which macOS would refuse to update. The app installs the server archive of its own
+# version from these releases (packages/ssh/src/remoteServerOverrides.ts).
 #
 # Packaging is upstream's release-desktop.yml, called once per target as release.yml does: it
-# needs only the `js-bundle` artifact built here, and skips signing without the secrets.
+# needs only the `js-bundle` artifact built here, and skips signing without the secrets. macOS
+# builds are signed and notarized with this repository's Developer ID secrets, which
+# release-desktop.yml accepts without upstream's passkey provisioning profile, a fork edit.
 #
 # A run on `main` builds and becomes the latest release. A run on any other branch, such as a
 # `sync/<date>` branch, only builds and leaves its apps and server archives as artifacts, for
@@ -172,6 +174,8 @@ jobs:
   # its WSL backend embeds the Linux archive of its own arch, which release-desktop.yml waits for
   # by the name of the job that builds it, `Build Linux <arch>`. As in release.yml, Windows builds
   # on Linux and runs its packaged binaries on a Windows `verify_runner`.
+  # The `FORK_MAC_RUNNER` variable moves both macOS builds to a self-hosted runner's label, since
+  # GitHub's hosted macOS runners often go unassigned (docs/operations/fork-desktop-build.md).
   desktop:
     name: Desktop
     needs: [preflight, build_bundle]
@@ -198,7 +202,7 @@ jobs:
             resource_key: linux-arm64
             cli_archive: true
           - label: macOS arm64
-            runner: macos-15
+            runner: ${{ vars.FORK_MAC_RUNNER || 'macos-15' }}
             platform: mac
             target: dmg
             arch: arm64
@@ -207,7 +211,7 @@ jobs:
             cli_archive: true
             launch_check: true
           - label: macOS x64
-            runner: macos-15
+            runner: ${{ vars.FORK_MAC_RUNNER || 'macos-15' }}
             platform: mac
             target: dmg
             arch: x64
@@ -233,10 +237,18 @@ jobs:
             resource_key: win32-arm64
             cli_archive: false
     uses: ./.github/workflows/release-desktop.yml
+    # Only the macOS builds sign.
+    secrets:
+      CSC_LINK: ${{ matrix.platform == 'mac' && secrets.CSC_LINK || '' }}
+      CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.CSC_KEY_PASSWORD || '' }}
+      APPLE_API_KEY: ${{ matrix.platform == 'mac' && secrets.APPLE_API_KEY || '' }}
+      APPLE_API_KEY_ID: ${{ matrix.platform == 'mac' && secrets.APPLE_API_KEY_ID || '' }}
+      APPLE_API_ISSUER: ${{ matrix.platform == 'mac' && secrets.APPLE_API_ISSUER || '' }}
     with:
       version: ${{ needs.preflight.outputs.version }}
       ref: ${{ github.sha }}
-      release_channel: preview
+      # `preview` would drop the updater manifests; the version still marks the build a preview.
+      release_channel: latest
       relay_client_tracing: false
       clerk_publishable_key: ""
       clerk_jwt_template: ""
@@ -272,7 +284,15 @@ jobs:
         with:
           fetch-depth: 0
           filter: tree:0
-          sparse-checkout: .github
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/scripts...
 
       - name: Download desktop apps
         uses: actions/download-artifact@v8
@@ -292,6 +312,30 @@ jobs:
           run-id: ${{ inputs.from_run || github.run_id }}
           github-token: ${{ github.token }}
 
+      # electron-updater reads one manifest per platform and picks the file for its arch, so each
+      # platform's arches are merged into one, and every file a manifest names must be released.
+      - name: Merge updater manifests
+        working-directory: release-assets
+        run: |
+          set -euo pipefail
+          rm -f builder-debug.yml
+          node ../scripts/merge-update-manifests.ts --platform win \
+            latest-win-x64.yml latest-win-arm64.yml latest.yml
+          rm latest-win-x64.yml latest-win-arm64.yml
+          # Unsigned macOS builds carry no feed, and then neither arch has a manifest.
+          if [[ -f latest-mac.yml || -f latest-mac-x64.yml ]]; then
+            node ../scripts/merge-update-manifests.ts --platform mac latest-mac.yml latest-mac-x64.yml
+            rm latest-mac-x64.yml
+          fi
+          for manifest in latest-linux.yml latest-linux-arm64.yml latest.yml; do
+            [[ -f "$manifest" ]] || { echo "Missing updater manifest $manifest." >&2; exit 1; }
+          done
+          for manifest in *.yml; do
+            for file in $(sed -nE 's/^[ -]*url: *//p' "$manifest"); do
+              [[ -f "$file" ]] || { echo "$manifest names $file, which the release lacks." >&2; exit 1; }
+            done
+          done
+
       # The SSH installer and scripts/fork/install-desktop.ts both verify downloads against this.
       - name: Write checksums
         working-directory: release-assets
@@ -308,6 +352,16 @@ jobs:
           BUILD_RUN: ${{ inputs.from_run || github.run_id }}
         run: |
           set -euo pipefail
+          # The apps update to the latest release only when it is newer, so publishing an older
+          # build as latest would hold every install back until the next release.
+          if ! latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>latest-error.txt)"; then
+            grep -q "release not found" latest-error.txt || { cat latest-error.txt >&2; exit 1; }
+          fi
+          latest="${latest#v}"
+          if [[ -n "$latest" && "$(printf '%s\n%s\n' "$latest" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" ]]; then
+            echo "The latest release, $latest, is newer than $VERSION; build and test main again." >&2
+            exit 1
+          fi
           # Only for the notes, so a failed fetch leaves the base unknown rather than the release.
           git fetch --quiet --filter=tree:0 https://github.com/pingdotgg/t3code.git \
             'refs/tags/v*:refs/tags/v*' || true

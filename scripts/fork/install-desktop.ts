@@ -41,8 +41,8 @@ const DESKTOP_TARGETS: Partial<
 };
 
 // Only the version of T3CODE_DESKTOP_* passes; the rest move output or add a feed. CARGO_TARGET_DIR
-// hides the native helpers the build copies. GITHUB_REPOSITORY adds an update feed that would
-// replace the app with upstream's, and without a feed a publish token fails electron-builder.
+// hides the native helpers the build copies. GITHUB_REPOSITORY adds an update feed, which would
+// replace a source build with a release, and without a feed a publish token fails electron-builder.
 const REMOVED_BUILD_ENV = new Set([
   "CARGO_TARGET_DIR",
   "GITHUB_REPOSITORY",
@@ -85,8 +85,7 @@ export function buildEnvironment(env: NodeJS.ProcessEnv, version: string): NodeJ
 /**
  * The version of a source build no release was published from: the form the
  * Fork release workflow gives its releases (scripts/resolve-nightly-release.ts
- * --channel preview), with run 0, which no workflow run has. As a preview
- * version it gets no update feed.
+ * --channel preview), with run 0, which no workflow run has.
  */
 export function localBuildVersion(packageVersion: string, date: Date): string {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(packageVersion);
@@ -182,20 +181,39 @@ function run(command: string, args: ReadonlyArray<string>, cwd = repoRoot): void
   if (result.status !== 0) fail(`${command} exited with code ${result.status ?? "unknown"}.`);
 }
 
+function readIfExists(file: string): string {
+  return NodeFS.existsSync(file) ? NodeFS.readFileSync(file, "utf8") : "";
+}
+
+/** An app's `app-update.yml` naming another repository updates it away from this one's builds. */
+export function followsAnotherFeed(appUpdateYml: string): boolean {
+  if (!appUpdateYml) return false;
+  const field = (name: string) =>
+    new RegExp(`^${name}: *['"]?([^'"\\s]+)`, "m").exec(appUpdateYml)?.[1];
+  return `${field("owner")}/${field("repo")}` !== RELEASE_REPOSITORY;
+}
+
 function succeeds(command: string, args: ReadonlyArray<string>): string | undefined {
   const result = NodeChildProcess.spawnSync(command, args, { encoding: "utf8" });
   return result.status === 0 ? result.stdout : undefined;
 }
 
-/** The release asset holding the desktop app for a platform and arch, if the fork builds one. */
-export function releaseAssetName(
+/**
+ * The names the release asset holding the desktop app may have, if the fork builds one for the
+ * platform and arch. A release with an update feed names its AppImage without the version.
+ */
+export function releaseAssetNames(
   version: string,
   targetPlatform: NodeJS.Platform,
   targetArch: string,
-): string | undefined {
+): ReadonlyArray<string> | undefined {
   const target = DESKTOP_TARGETS[targetPlatform];
   const assetArch = target?.arches[targetArch];
-  return target && assetArch ? `T3-Code-${version}-${assetArch}${target.extension}` : undefined;
+  if (!target || !assetArch) return undefined;
+  const versioned = `T3-Code-${version}-${assetArch}${target.extension}`;
+  return targetPlatform === "linux"
+    ? [versioned, `T3-Code-${assetArch}${target.extension}`]
+    : [versioned];
 }
 
 /** `sha256sum` output: one `<hex>  <name>` line per file, `*` before binary-mode names. */
@@ -266,11 +284,16 @@ async function releasedVersion(sha: string): Promise<string | undefined> {
 }
 
 /** Downloads a release asset into `dir` and checks it against the release's SHA256SUMS. */
-async function downloadAsset(version: string, name: string, dir: string): Promise<string> {
+async function downloadAsset(
+  version: string,
+  names: ReadonlyArray<string>,
+  dir: string,
+): Promise<string> {
   const base = `https://github.com/${RELEASE_REPOSITORY}/releases/download/v${version}`;
   const sums = parseChecksums(await (await fetchOk(`${base}/SHA256SUMS`)).text());
-  const expected = sums.get(name);
-  if (!expected) fail(`Release v${version} has no ${name}.`);
+  const name = names.find((candidate) => sums.has(candidate));
+  if (!name) fail(`Release v${version} has no ${names.join(" or ")}.`);
+  const expected = sums.get(name)!;
   const destination = NodePath.join(dir, name);
   const response = await fetchOk(`${base}/${encodeURIComponent(name)}`);
   log(`Downloading ${name}...`);
@@ -486,12 +509,13 @@ function findUpstreamInstalls(): Array<UpstreamInstall> {
     const installedCasks = new Set(succeeds("brew", ["list", "--cask", "-1"])?.split("\n"));
     const casks = Object.keys(UPSTREAM_CASKS).filter((cask) => installedCasks.has(cask));
     const caskApps = new Set(casks.map((cask) => UPSTREAM_CASKS[cask]));
-    // Upstream builds ship an update feed; the fork's build has none.
     const apps = NodeFS.readdirSync("/Applications").filter(
       (app) =>
         app.startsWith("T3 Code") &&
         !caskApps.has(app) &&
-        NodeFS.existsSync(NodePath.join("/Applications", app, "Contents/Resources/app-update.yml")),
+        followsAnotherFeed(
+          readIfExists(NodePath.join("/Applications", app, "Contents/Resources/app-update.yml")),
+        ),
     );
     return [
       // A cask's zap stanza deletes ~/.t3/userdata, so never suggest --zap.
@@ -526,7 +550,7 @@ function findUpstreamInstalls(): Array<UpstreamInstall> {
         "resources",
         "app-update.yml",
       );
-      if (!NodeFS.existsSync(updateFeed)) return [];
+      if (!followsAnotherFeed(readIfExists(updateFeed))) return [];
       // The per-user installer only uninstalls a per-user install with its app ID.
       const perUser = PSPath?.includes("HKEY_CURRENT_USER") ?? false;
       return [
@@ -593,7 +617,7 @@ function install(artifact: string): void {
 async function main(): Promise<void> {
   const options = parseArguments(process.argv.slice(2));
   const target = DESKTOP_TARGETS[platform];
-  if (!target || !releaseAssetName("0.0.0", platform, arch)) {
+  if (!target || !releaseAssetNames("0.0.0", platform, arch)) {
     fail(`The fork has no desktop build for ${platform} ${arch}.`);
   }
 
@@ -639,7 +663,7 @@ async function main(): Promise<void> {
     const downloadDir = NodeFS.mkdtempSync(NodePath.join(cacheDir, "release-"));
     try {
       install(
-        await downloadAsset(version, releaseAssetName(version, platform, arch)!, downloadDir),
+        await downloadAsset(version, releaseAssetNames(version, platform, arch)!, downloadDir),
       );
     } finally {
       removeLeftover(downloadDir);

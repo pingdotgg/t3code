@@ -27,15 +27,77 @@ release that matches its own version, and a host's T3 server installs its own re
 agentctl Sandboxes (`packages/ssh/src/remoteServerOverrides.ts`). So the fork's server changes
 reach Sandboxes, and an app always gets the server built with it.
 
-Nothing is signed. The apps carry no update feed, so they never replace themselves; installing a
-newer release is running the install script again.
+## Updates
+
+The apps update themselves from this repository's releases: each release carries electron-updater's
+manifests (`latest.yml`, `latest-linux.yml`, `latest-linux-arm64.yml`, and `latest-mac.yml` when the
+macOS apps are signed), and an
+installed app offers
+the latest release once it is newer, then downloads it and restarts when you choose. Reconnecting
+to an SSH host afterwards installs the matching server there. The release refuses a build older
+than the latest release, which would hold every install back.
+
+The first release with a feed has to be installed with the install script once; an earlier fork
+build has no feed to find it. A source build gets no feed either.
+
+macOS installs an update only when it is signed like the running app, so a macOS build carries a
+feed only when it is signed (see [Signing the macOS apps](#signing-the-macos-apps)). Without the
+signing secrets, the macOS apps are unsigned and updating them is running the install script again.
+Nothing else is signed: Windows and Linux update unsigned.
+
+## Signing the macOS apps
+
+The macOS apps and the darwin-arm64 server archive are signed with a Developer ID and notarized
+when the repository has these Actions secrets:
+
+- `CSC_LINK`: a `Developer ID Application` certificate with its private key, exported from Keychain
+  Access as a `.p12` and base64-encoded (`base64 -i cert.p12 | pbcopy`).
+- `CSC_KEY_PASSWORD`: the `.p12`'s export password.
+- `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`: an App Store Connect team API key with
+  the Developer role, for notarization: the downloaded `.p8`'s contents, its key ID and the issuer
+  ID.
+
+Leave the `APPLE_TEAM_ID` variable and `MACOS_PROVISIONING_PROFILE` secret of upstream's
+[release setup](./release.md#2-apple-signing--notarization-setup-macos) unset. Upstream's profile
+grants passkeys to its app ID, `com.t3tools.t3code`, which only upstream's team can hold, so the
+fork's apps are signed without it, and passkeys in the in-app browser stay off as in unsigned
+builds.
+
+A Mac with an unsigned fork build installs the first signed release with the install script, and
+then asks once for the keychain password, since the signed app reads the keychain item the unsigned
+one created.
+
+## A Mac as the macOS runner
+
+GitHub's hosted macOS runners have often gone unassigned since November 2026: a job waits 15
+minutes and is cancelled before any step runs, and re-running it may take hours to succeed. Setting
+the repository variable `FORK_MAC_RUNNER` to a self-hosted runner's label runs both macOS builds
+there instead; an Apple Silicon Mac builds the x64 app too. Unset it to go back to `macos-15`.
+
+Each job runs in a fresh clone of a prepared [Tart](https://github.com/openai/tart) virtual machine,
+registered for that job alone and deleted afterwards, as on GitHub's runners: upstream's release
+workflow expects a clean machine, and no job leaves anything behind on this public repository's
+runner. Only Fork release, which only people with write access can start, names its label. On a Mac
+with Homebrew, signed in to `gh` as an admin of the repository:
+
+```sh
+scripts/fork/setup-mac-runner.sh
+```
+
+It prepares the VM, adding the Developer ID intermediate certificates that Xcode would otherwise
+bring, runs the clones from a LaunchAgent that logs to
+`~/Library/Application Support/fork-mac-runner/loop.log`, keeps the Mac from sleeping, requires
+approval for every external contributor's pull request workflows, and sets `FORK_MAC_RUNNER`. The
+runner works in the VM's logged-in session, where the launch check can open the app, and the
+LaunchAgent needs this Mac's user logged in. The two macOS builds run one after the other.
 
 ## The version
 
 Releases use upstream's preview form, `<core>-preview.<YYYYMMDD>.<run>`, such as
 `0.1.1-preview.20261017.3`, where `<core>` is the next patch after `apps/desktop/package.json`'s
-version and `<run>` the workflow's run number. The desktop build gives a preview version no update
-feed, which keeps the CI build from pointing the app at this repository's releases. Each release
+version and `<run>` the workflow's run number, so a later release always has a higher version.
+Upstream gives its preview builds no update feed, since they sit beside its stable releases; a
+build from this repository is the exception (`scripts/build-desktop-artifact.ts`). Each release
 notes the upstream stable release or nightly it is based on.
 
 The app is named T3 Code (Beta), like upstream's preview builds. Earlier fork builds were named
@@ -43,7 +105,7 @@ T3 Code (Alpha) or T3 Code (Nightly); on macOS those apps stay beside the new ap
 them, which the install script reminds you of.
 
 The client warns about a server older than itself by comparing core versions only for previews, so
-it does not notice a Sandbox on an older fork release with the same core. Reinstalling the app and
+it does not notice a Sandbox on an older fork release with the same core. Updating the app and
 reconnecting installs the matching server.
 
 ## Installing
@@ -64,13 +126,14 @@ checks the download against the release's `SHA256SUMS` and installs:
   and would replace a per-user upstream install, so the script refuses to run while one is
   installed.
 
-Running it again replaces the previous install in place. It reports an upstream install it finds,
+Running it again replaces the previous install in place, though an app with a feed updates
+itself. It reports an upstream install it finds,
 such as the AUR package or the Homebrew cask, but never removes one. Remove an upstream install if
 you want only the fork's: it updates itself to upstream builds. Do not use
 `brew uninstall --zap`, which deletes `~/.t3/userdata`.
 
 Install with the script rather than from the release page: a browser marks the download, so
-Gatekeeper blocks the unsigned macOS app and SmartScreen warns about the Windows installer.
+Gatekeeper blocks an unsigned macOS app and SmartScreen warns about the Windows installer.
 
 ## Building from source
 

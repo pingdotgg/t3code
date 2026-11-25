@@ -554,6 +554,46 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("gives a fork's preview releases its own feed, except unsigned macOS builds", () =>
+    Effect.gen(function* () {
+      const publishOf = (platform: "linux" | "mac" | "win", target: string, signed: boolean) =>
+        createBuildConfig(
+          platform,
+          target,
+          "0.1.1-preview.20261125.42",
+          signed,
+          false,
+          undefined,
+          undefined,
+        ).pipe(Effect.map((config) => config.publish));
+      const forkFeed = [
+        { provider: "github", owner: "martinothamar", repo: "t3code", releaseType: "release" },
+      ];
+
+      assert.deepStrictEqual(yield* publishOf("linux", "AppImage", false), forkFeed);
+      assert.deepStrictEqual(yield* publishOf("win", "nsis", false), forkFeed);
+      assert.deepStrictEqual(yield* publishOf("mac", "dmg", true), forkFeed);
+      assert.isNull(yield* publishOf("mac", "dmg", false));
+
+      const pullRequest = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.1.1-pr.55.1",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.isNull(pullRequest.publish);
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "martinothamar/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("names the Electron window class in the Linux desktop entry", () =>
     Effect.gen(function* () {
       const linux = yield* createBuildConfig(
@@ -1583,7 +1623,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       browserPasskeys: false,
     });
 
-    assert.deepStrictEqual(configuration.rpDomains, [
+    assert.deepStrictEqual(configuration?.rpDomains, [
       "clerk.example.com",
       "example.clerk.accounts.dev",
     ]);
@@ -1595,6 +1635,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.match(entitlements, /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\/>/u);
     assert.notInclude(entitlements, "keychain-access-groups");
     assert.notInclude(entitlements, "com.apple.developer.web-browser.public-key-credential");
+
+    const developerIdOnly = resolveMacPasskeySigningConfiguration({
+      T3CODE_CLERK_PASSKEY_RP_DOMAINS: "clerk.example.com",
+    });
+    assert.isUndefined(developerIdOnly);
+    const developerIdEntitlements = renderMacPasskeyEntitlements(developerIdOnly, {
+      touchIdKeychainAccessGroup: undefined,
+      browserPasskeys: false,
+    });
+    assert.notInclude(developerIdEntitlements, "com.apple.application-identifier");
+    assert.notInclude(developerIdEntitlements, "com.apple.developer.associated-domains");
+    assert.match(
+      developerIdEntitlements,
+      /<dict>\s*<key>com\.apple\.security\.cs\.allow-jit<\/key>/u,
+    );
+    assert.match(
+      developerIdEntitlements,
+      /<key>com\.apple\.security\.device\.camera<\/key>\s*<true\/>/u,
+    );
   });
 
   it("grants in-app browser passkey entitlements only when the provisioning profile does", () => {
