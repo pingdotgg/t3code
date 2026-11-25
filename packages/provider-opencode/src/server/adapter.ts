@@ -2814,6 +2814,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             ids.add(part.id);
             turn.partIdsByMessage.set(part.messageID, ids);
           }
+          if (part.type === "text" || part.type === "reasoning" || part.type === "tool")
+            yield* completeRetry(part.sessionID);
           switch (part.type) {
             case "text":
             case "reasoning":
@@ -2896,20 +2898,36 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           turn: ActiveOpenCodeTurn,
           startedAt: DateTime.Utc,
         ) {
-          const claimed = yield* eventPermit.withPermit(
-            Effect.sync(() => {
-              const retry = turn.retry;
-              if (!turnIsLive(state, turn) || retry === null || retry.startedAt !== startedAt)
-                return false;
-              turn.retryBudgetFailure = { ...retry.failure, retryable: false };
-              return true;
+          // lifecyclePermit queues expiry behind a Stop and keeps replacement admission out of cleanup.
+          yield* state.lifecyclePermit.withPermit(
+            Effect.gen(function* () {
+              const claimed = yield* eventPermit.withPermit(
+                Effect.sync(() => {
+                  const retry = turn.retry;
+                  if (!turnIsLive(state, turn) || retry === null || retry.startedAt !== startedAt)
+                    return false;
+                  turn.retryBudgetFailure = { ...retry.failure, retryable: false };
+                  return true;
+                }),
+              );
+              if (!claimed) return;
+              yield* cleanupSessionWork(state, abortRootSession(state)).pipe(
+                Effect.tapError(() =>
+                  Effect.gen(function* () {
+                    if (turn.finalized || nativeStreamFailure !== null) return;
+                    nativeStreamFailure = makeProviderFailure({
+                      message:
+                        "OpenCode could not cancel a usage-limit retry; reconnect the provider session.",
+                      class: "transport_error",
+                    });
+                    yield* updateProviderSession("error", nativeStreamFailure.message);
+                  }),
+                ),
+                Effect.ignore({ log: true }),
+              );
+              yield* eventPermit.withPermit(finalizeTurn(state, turn, "failed"));
             }),
           );
-          if (!claimed) return;
-          yield* cleanupSessionWork(state, abortRootSession(state)).pipe(
-            Effect.ignore({ log: true }),
-          );
-          yield* eventPermit.withPermit(finalizeTurn(state, turn, "failed"));
         });
 
         const updateRetry = Effect.fnUntraced(function* (
