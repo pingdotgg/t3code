@@ -5711,5 +5711,7 @@
   "9be40a016dc63138": "Download the model again to use it for dictation.",
   "ce63a11bca54e095": "Unlink",
   "16182194d9202688": "Remove",
-  "1fa254d98545ab8e": "Download failed. Try again."
+  "1fa254d98545ab8e": "Download failed. Try again.",
+  "e5c5b014c7bff41a": "Swipe left on an installed model to remove it.",
+  "d7403a7fed071f40": "This model is selected for dictation. Download it again to use it after removal."
 }

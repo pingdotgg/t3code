@@ -5,8 +5,9 @@ import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Platform, View } from "react-native";
+import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -65,6 +66,11 @@ function VoiceModelsSheet({
   const gt = useGT();
   const language = new Intl.DateTimeFormat().resolvedOptions().locale.split("-")[0]!.toLowerCase();
   const [query, setQuery] = useState("");
+  const openSwipeable = useRef<SwipeableMethods>(null);
+  const closeSwipeable = () => {
+    openSwipeable.current?.close();
+    openSwipeable.current = null;
+  };
   const needle = query.trim().toLowerCase();
   const models = voice.models.filter((model) =>
     `${model.name} ${model.description} ${model.languages.join(" ")}`
@@ -78,7 +84,10 @@ function VoiceModelsSheet({
       closeAccessibilityLabel={gt("Close transcription models")}
       clearAccessibilityLabel={gt("Clear model search")}
       query={query}
-      onQueryChange={setQuery}
+      onQueryChange={(value) => {
+        closeSwipeable();
+        setQuery(value);
+      }}
     >
       {({ paddingBottom }) => (
         <LegendList
@@ -93,16 +102,21 @@ function VoiceModelsSheet({
           automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
           keyboardDismissMode={Platform.OS === "ios" ? "interactive" : "on-drag"}
           keyboardShouldPersistTaps="handled"
+          onScrollBeginDrag={closeSwipeable}
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom }}
           ListHeaderComponent={
-            label === undefined || voice.canManage ? undefined : (
+            voice.canManage && models.some((model) => model.state === "installed") ? (
+              <Text className="pb-3 text-xs text-foreground-muted">
+                <T>Swipe left on an installed model to remove it.</T>
+              </Text>
+            ) : label !== undefined && !voice.canManage ? (
               <Text className="pb-3 text-xs text-foreground-muted">
                 <T>
                   This connection can’t change settings on <Var>{label}</Var>.
                 </T>
               </Text>
-            )
+            ) : undefined
           }
           renderItem={({ item, index }) => (
             <View
@@ -112,7 +126,20 @@ function VoiceModelsSheet({
                 index === models.length - 1 && "rounded-b-2xl",
               )}
             >
-              <VoiceModelRow model={item} voice={voice} separated={index > 0} language={language} />
+              <VoiceModelRow
+                model={item}
+                voice={voice}
+                separated={index > 0}
+                language={language}
+                onSwipeableOpen={(methods) => {
+                  if (openSwipeable.current === methods) return;
+                  closeSwipeable();
+                  openSwipeable.current = methods;
+                }}
+                onSwipeableClose={(methods) => {
+                  if (openSwipeable.current === methods) openSwipeable.current = null;
+                }}
+              />
             </View>
           )}
           ListEmptyComponent={

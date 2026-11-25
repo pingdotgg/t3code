@@ -14,8 +14,11 @@ import {
   type EnvironmentSpeechModel,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Platform, Pressable, Text as NativeText, View } from "react-native";
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from "react-native-gesture-handler/ReanimatedSwipeable";
 import { m } from "../../i18n/messages";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -235,28 +238,7 @@ function ModelStats(props: { readonly model: VoiceModel; readonly language: stri
   );
 }
 
-function DownloadedGlyph() {
-  return (
-    <View className="size-6">
-      <SymbolView
-        name="tray.and.arrow.down"
-        size={Platform.OS === "android" ? 24 : 22}
-        tintColorClassName="accent-icon"
-        type="monochrome"
-        weight="regular"
-      />
-      <View className="absolute -right-1.5 -bottom-1 size-3.5 items-center justify-center rounded-full bg-primary ring-2 ring-grouped-card">
-        <SymbolView
-          name="checkmark"
-          size={9}
-          tintColorClassName="accent-primary-foreground"
-          type="monochrome"
-          weight="bold"
-        />
-      </View>
-    </View>
-  );
-}
+const FAIL_OFFSET_Y: [number, number] = [-10, 10];
 
 export function VoiceModelRow(props: {
   readonly model: VoiceModel;
@@ -264,16 +246,47 @@ export function VoiceModelRow(props: {
   readonly separated: boolean;
   /** The language whose benchmark score to show, when the model has one. */
   readonly language: string;
+  readonly onSwipeableOpen: (methods: SwipeableMethods) => void;
+  readonly onSwipeableClose: (methods: SwipeableMethods) => void;
 }) {
   const gt = useGT();
+  const swipeable = useRef<SwipeableMethods>(null);
   const { model, voice, separated } = props;
   const meta = <ModelStats model={model} language={props.language} />;
   const disabled = !voice.canManage || voice.busy || voice.downloading;
   if (model.state === "installed") {
     const linked = Boolean(model.linkedFrom);
-    return (
+    const actionLabel = linked ? gt("Unlink") : gt("Remove", { $context: "verb" });
+    const accessibilityLabel = linked
+      ? gt("Unlink {model}", { model: model.name })
+      : gt("Remove {model}", { model: model.name });
+    const confirmRemoval = () => {
+      swipeable.current?.close();
+      Dialog.confirm({
+        title: linked
+          ? gt("Unlink {model}?", { model: model.name })
+          : gt("Remove {model}?", { model: model.name }),
+        message: linked
+          ? gt("Your model file stays on disk.")
+          : model.active
+            ? gt("This model is selected for dictation. Download it again to use it after removal.")
+            : gt("Download the model again to use it for dictation."),
+        confirmText: actionLabel,
+        destructive: !linked,
+        onConfirm: () => voice.remove(model),
+      });
+    };
+    const choice = (
       <ListChoiceRow
-        leading={<DownloadedGlyph />}
+        leading={
+          <SymbolView
+            name={linked ? "link" : "internaldrive"}
+            size={Platform.OS === "android" ? 24 : 22}
+            tintColorClassName="accent-icon"
+            type="monochrome"
+            weight="regular"
+          />
+        }
         label={model.name}
         description={model.description}
         meta={meta}
@@ -281,41 +294,52 @@ export function VoiceModelRow(props: {
         separated={separated}
         disabled={disabled}
         onPress={() => voice.select(model)}
-        trailingAction={
-          voice.canManage ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={
-                linked
-                  ? gt("Unlink {model}", { model: model.name })
-                  : gt("Remove {model}", { model: model.name })
+        accessibilityActions={
+          disabled ? undefined : [{ name: "remove", label: accessibilityLabel }]
+        }
+        onAccessibilityAction={
+          disabled
+            ? undefined
+            : ({ nativeEvent }) => {
+                if (nativeEvent.actionName === "remove") confirmRemoval();
               }
-              disabled={disabled}
-              onPress={() =>
-                Dialog.confirm({
-                  title: linked
-                    ? gt("Unlink {model}?", { model: model.name })
-                    : gt("Remove {model}?", { model: model.name }),
-                  message: linked
-                    ? gt("Your model file stays on disk.")
-                    : gt("Download the model again to use it for dictation."),
-                  confirmText: linked ? gt("Unlink") : gt("Remove", { $context: "verb" }),
-                  destructive: !linked,
-                  onConfirm: () => voice.remove(model),
-                })
-              }
-              className="mr-2 size-11 shrink-0 items-center justify-center rounded-lg active:bg-row-hover disabled:opacity-45"
-            >
-              <SymbolView
-                name={linked ? "link" : "trash"}
-                size={18}
-                tintColorClassName="accent-icon-muted"
-                type="monochrome"
-              />
-            </Pressable>
-          ) : undefined
         }
       />
+    );
+    if (disabled) return choice;
+    return (
+      <ReanimatedSwipeable
+        key={model.id}
+        ref={swipeable}
+        dragOffsetFromRight={-8}
+        failOffsetY={FAIL_OFFSET_Y}
+        overshootRight={false}
+        onSwipeableWillOpen={() => {
+          if (swipeable.current) props.onSwipeableOpen(swipeable.current);
+        }}
+        onSwipeableClose={() => {
+          if (swipeable.current) props.onSwipeableClose(swipeable.current);
+        }}
+        renderRightActions={() => (
+          <Pressable
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            onPress={confirmRemoval}
+            className="min-w-20 items-center justify-center gap-1 bg-danger px-3 active:opacity-75"
+          >
+            <SymbolView
+              name={linked ? "link" : "trash"}
+              size={18}
+              tintColorClassName="accent-danger-foreground"
+            />
+            <Text textRole="footnote" className="font-t3-medium text-danger-foreground">
+              {actionLabel}
+            </Text>
+          </Pressable>
+        )}
+      >
+        {choice}
+      </ReanimatedSwipeable>
     );
   }
   const progress = model.downloaded === undefined ? undefined : model.downloaded / model.size;
