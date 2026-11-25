@@ -48,7 +48,7 @@ import {
   type Woke,
   type WorkflowDefinition,
 } from "./workflow.ts";
-import { issueReference, noteFor, stepReferences } from "./runReferences.ts";
+import { issueReference, noteFor, stepReferences, subjectSet } from "./runReferences.ts";
 import { forStep, KeyValues, layerKeyValues, EngineLink, layerEngineLink } from "./stepServices.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import { answerProblem, settleTurn, TurnEnd, TurnWatch } from "./workflowAgent.ts";
@@ -193,6 +193,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     ...(row.tags_json === "[]"
       ? {}
       : { tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string> }),
+    ...(row.subject_json === null ? {} : { subject: WorkflowStore.subjectOf(row.subject_json) }),
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
@@ -341,6 +342,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       // The key is unique, so the row holding it is the run, even one another version started.
       const holder = yield* store.runByKey(name, options.idempotencyKey);
       if (holder !== undefined && holder.run_id !== runId) return yield* other(holder);
+      if (earlier === undefined && options.subject !== undefined) {
+        yield* subjectSet(store, runId, options.subject);
+      }
       yield* withEngine(engine.execute(payload, { discard: true }));
       if (options.parent !== undefined) {
         // The key named a run that someone else started: it would never tell this parent.
@@ -1079,8 +1083,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         yield* wake(late, answered);
         return "delivered" as const;
       }
-      // The kept copy went to a wait that opened, or was dropped as already delivered.
-      if (outcome === "gone") return "delivered" as const;
+      if (outcome === "claimed") continue;
+      if (yield* store.signalSeen(options.id)) return "delivered" as const;
+      return yield* new WorkflowInputError({ problem: "Buffered signal expired or was removed." });
     }
   });
   const signal: Workflows["Service"]["signal"] = Effect.fn("Workflows.signal")(
@@ -1237,6 +1242,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         status: row.status,
         detail: row.detail,
         tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string>,
+        subject: row.subject_json === null ? null : WorkflowStore.subjectOf(row.subject_json),
         startedAt: row.started_at,
         endedAt: row.ended_at,
       }));
@@ -1286,10 +1292,38 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }),
     list: Effect.fn("Workflows.list")(function* (filter) {
       const rows =
-        filter?.tag === undefined
+        filter?.tag === undefined && filter?.subject === undefined
           ? yield* store.runs(filter?.status)
-          : yield* store.runsWhere({ status: filter.status, tag: filter.tag });
+          : yield* store.runsWhere({
+              status: filter.status,
+              tag: filter.tag,
+              subject: filter.subject,
+            });
       return rows.map(toRun);
+    }),
+    about: Effect.fn("Workflows.about")(function* (item) {
+      // Keyed as the subject was kept, so an item named without its address is found too.
+      const identity =
+        item.issue !== undefined
+          ? issueReference(item.issue)
+          : item.pullRequest !== undefined
+            ? pullRequestReferenceOf(item.pullRequest, { url: item.subject })
+            : undefined;
+      const found = [
+        ...(yield* store.runsWhere({ subject: item.subject })),
+        ...(identity === undefined
+          ? []
+          : yield* store.runsWhere({ subject: { kind: identity.kind, key: identity.key } })),
+      ];
+      const runs = [...new Map(found.map((row) => [row.run_id, row])).values()]
+        .toSorted((left, right) =>
+          left.started_at === right.started_at ? 0 : left.started_at < right.started_at ? 1 : -1,
+        )
+        .slice(0, 500)
+        .map(toRun);
+      const about = new Set(runs.map((run) => run.runId));
+      const open = yield* questions;
+      return { runs, questions: open.filter((question) => about.has(question.runId)) };
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (runId, done) {
       // Subscribed before the first look, so a change in between is not missed.

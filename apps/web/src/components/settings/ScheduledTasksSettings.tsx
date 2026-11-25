@@ -146,7 +146,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useSearchableSetting } from "./settingsSearch";
 import {
   SettingsPageContainer,
@@ -154,6 +153,7 @@ import {
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
 } from "./settingsLayout";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_SHORT = [
@@ -651,19 +651,18 @@ function ScheduledTaskEnvironmentList({
           environments: entries.join(", "),
         });
         return (
-          <Tooltip key={label}>
-            <TooltipTrigger
-              render={
-                <p
-                  className="truncate px-3 py-2.5 text-xs text-muted-foreground sm:px-4"
-                  role="status"
-                />
-              }
-            >
-              {summary}
-            </TooltipTrigger>
-            <TooltipPopup>{summary}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            key={label}
+            render={
+              <p
+                className="truncate px-3 py-2.5 text-xs text-muted-foreground sm:px-4"
+                role="status"
+              />
+            }
+            label={summary}
+          >
+            {summary}
+          </SharedTooltipTrigger>
         );
       })}
     </SettingsGroup>
