@@ -1663,7 +1663,14 @@ export const layerWithOptions = (
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
                   Effect.catchCause(() => Effect.succeed(false)),
                 );
+          const hasLiveNativeSubagents =
+            probedRuntime.hasLiveNativeSubagents === undefined
+              ? false
+              : yield* probedRuntime.hasLiveNativeSubagents.pipe(
+                  Effect.catchCause(() => Effect.succeed(false)),
+                );
           const hasPendingWork =
+            hasLiveNativeSubagents ||
             providerHasPendingWork ||
             // Closing now would skip the archive of a child whose parent has not taken its result.
             Option.isSome(
@@ -1677,8 +1684,9 @@ export const layerWithOptions = (
             const now = yield* Clock.currentTimeMillis;
             const pinnedSinceMs = entry.pinnedSinceMs ?? now;
             const pinnedForMs = now - pinnedSinceMs;
-            // Give quiet native subagents a longer window, but still reap stale provider state.
+            // Adapters without a native liveness signal can only justify a bounded extension.
             const extendSubagentPin =
+              probedRuntime.hasLiveNativeSubagents === undefined &&
               pinnedForMs >= maxIdlePinMs &&
               pinnedForMs < maxIdlePinMs * 2 &&
               providerHasPendingWork &&
@@ -1710,7 +1718,7 @@ export const layerWithOptions = (
                     ),
                 ),
               );
-            if (pinnedForMs < maxIdlePinMs || extendSubagentPin) {
+            if (hasLiveNativeSubagents || pinnedForMs < maxIdlePinMs || extendSubagentPin) {
               const shouldContinuePin = yield* Ref.modify(sessions, (latest) => {
                 const latestEntry = latest.get(key);
                 if (

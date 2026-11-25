@@ -638,6 +638,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           readonly turn: ActivePiTurn;
           readonly toolCallId: string;
           readonly emitted: Map<string, string>;
+          live: boolean;
         }
       >();
       // The launch snapshot arrives before the tool result that names its run.
@@ -1561,7 +1562,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         // Async launches return no results; their members arrive in the subagent-async widget.
         const asyncId = recordString(details, "asyncId");
         if (!emitted && asyncId !== undefined && !piAsyncRuns.has(asyncId)) {
-          const tracked = { turn, toolCallId, emitted: new Map<string, string>() };
+          const tracked = { turn, toolCallId, emitted: new Map<string, string>(), live: false };
           piAsyncRuns.set(asyncId, tracked);
           // Keeps the run ingesting after the coordinator's turn ends, until the run settles.
           yield* emit({
@@ -1656,6 +1657,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           readonly turn: ActivePiTurn;
           readonly toolCallId: string;
           readonly emitted: Map<string, string>;
+          live: boolean;
         },
         run: unknown,
       ) {
@@ -1681,6 +1683,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           });
         }
         const runStatus = piAsyncSubagentStatus(recordString(run, "state"));
+        tracked.live = !childrenSettled || runStatus === "running" || runStatus === "pending";
         if (runStatus === undefined || runStatus === "running" || runStatus === "pending") return;
         // pi-subagents can settle the run one snapshot before its last step.
         if (!childrenSettled) return;
@@ -3391,6 +3394,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         backgroundTasksEndWithProcess: true,
         // An async pi-subagents run dies with the Pi process, so the session stays loaded for it.
         hasPendingBackgroundWork: Effect.sync(() => pendingWake !== null || piAsyncRuns.size > 0),
+        hasLiveNativeSubagents: Effect.sync(() =>
+          latestAsyncSnapshotRuns.some((run) => {
+            const id = recordString(run, "id");
+            return id !== undefined && piAsyncRuns.get(id)?.live === true;
+          }),
+        ),
         hasPendingBackgroundWorkForThread: (providerThread, probe) =>
           Effect.sync(
             () =>

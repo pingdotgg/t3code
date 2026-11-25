@@ -3845,7 +3845,7 @@ describe("PiAdapterV2", () => {
         agent: "scout",
         model: "anthropic/claude-haiku-5-5",
       });
-      const emitSnapshot = (state: string, alpha: string, beta: string) =>
+      const emitSnapshot = (state: string, alpha: string, beta: string, runId = "wf-1") =>
         fake.emit({
           type: "extension_ui_request",
           id: `widget-${state}`,
@@ -3858,7 +3858,7 @@ describe("PiAdapterV2", () => {
               generatedAt: 2_000,
               runs: [
                 {
-                  id: "wf-1",
+                  id: runId,
                   kind: "workflow",
                   label: "scout, scout",
                   state,
@@ -3897,7 +3897,7 @@ describe("PiAdapterV2", () => {
           return { statuses: [...statuses.values()].toSorted(), pending };
         });
       // The launch snapshot precedes the tool result that names the run.
-      yield* emitSnapshot("running", "running", "running");
+      yield* emitSnapshot("queued", "queued", "queued");
       yield* fake.emit({
         type: "tool_execution_end",
         toolCallId: "call_wf",
@@ -3922,9 +3922,19 @@ describe("PiAdapterV2", () => {
         },
       });
       assert.deepEqual(yield* collect("marker-1"), {
-        statuses: ["running", "running"],
+        statuses: ["pending", "pending"],
         pending: [true],
       });
+      assert.isTrue(yield* runtime.hasLiveNativeSubagents!);
+      yield* emitSnapshot("running", "running", "running");
+      assert.deepEqual(yield* collect("marker-running"), {
+        statuses: ["running", "running"],
+        pending: [],
+      });
+      assert.isTrue(yield* runtime.hasLiveNativeSubagents!);
+      yield* emitSnapshot("running", "running", "running", "untracked");
+      assert.deepEqual(yield* collect("marker-missing"), { statuses: [], pending: [] });
+      assert.isFalse(yield* runtime.hasLiveNativeSubagents!);
       // The run dies with the Pi process, so an idle release must wait for it.
       const otherThread = { ...providerThread, id: ProviderThreadId.make("other-provider-thread") };
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
@@ -3945,6 +3955,7 @@ describe("PiAdapterV2", () => {
         pending: [false],
       });
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasLiveNativeSubagents!);
       assert.isFalse(
         yield* runtime.hasPendingBackgroundWorkForThread!(providerThread, {
           includeSubagents: true,

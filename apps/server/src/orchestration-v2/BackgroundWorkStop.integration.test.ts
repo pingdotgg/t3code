@@ -104,6 +104,9 @@ const stopEarlierBackgroundWork = ({
               : {
                   backgroundTasksEndWithProcess: true as const,
                   hasPendingBackgroundWork: Effect.sync(() => pendingWork),
+                  hasLiveNativeSubagents: Effect.sync(
+                    () => idlePin === "finished subagent" && pendingWork,
+                  ),
                 }),
             ...(failedStart
               ? {
@@ -211,10 +214,33 @@ const stopEarlierBackgroundWork = ({
       if (idlePin !== undefined) {
         const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
         const providerSessionId = ProviderSessionId.make("session:idle-pin");
+        const runtimePolicy = {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd,
+        } as const;
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
         if (idlePin !== "command") {
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection,
+            runtimePolicy,
+          });
           const now = yield* DateTime.now;
           yield* sink.write({
             events: [
+              {
+                id: EventId.make("idle-provider-thread"),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: providerThread,
+              },
               {
                 id: EventId.make("idle-subagent"),
                 type: "subagent.updated",
@@ -229,7 +255,7 @@ const stopEarlierBackgroundWork = ({
                   createdBy: "agent",
                   driver,
                   providerInstanceId: instanceId,
-                  providerThreadId: null,
+                  providerThreadId: providerThread.id,
                   childThreadId: null,
                   nativeTaskRef: { driver, nativeId: "idle-subagent", strength: "strong" },
                   prompt: "Run a background task",
@@ -245,22 +271,20 @@ const stopEarlierBackgroundWork = ({
             ],
           });
         }
-        yield* manager.open({
-          threadId,
-          providerSessionId,
-          modelSelection,
-          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd },
-        });
         const isOpen = manager.get(providerSessionId).pipe(Effect.map(Option.isSome));
         yield* TestClock.adjust("2 minutes");
         assert.isTrue(yield* isOpen);
         yield* TestClock.adjust("4 hours");
-        assert.equal(yield* isOpen, idlePin !== "command");
+        assert.equal(yield* isOpen, idlePin === "finished subagent");
         if (idlePin === "finished subagent") {
+          yield* TestClock.adjust("4 hours");
+          assert.isTrue(yield* isOpen);
+          assert.equal(
+            (yield* orchestrator.getThreadProjection(threadId)).subagents[0]?.status,
+            "running",
+          );
           pendingWork = false;
           yield* TestClock.adjust("2 minutes");
-        } else if (idlePin === "stale subagent") {
-          yield* TestClock.adjust("4 hours");
         }
         assert.isFalse(yield* isOpen);
         return;
