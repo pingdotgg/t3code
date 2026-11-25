@@ -1667,6 +1667,11 @@ export function createServerEnvironmentAtoms<R, E>(
       },
       isFinal: (detail) => detail.run.endedAt !== null,
     }),
+    // Read when an item's view opens: the live list holds only the newest runs of every subject.
+    workflowRunsAbout: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workflows:about",
+      tag: WS_METHODS.workflowsAbout,
+    }),
     // Read again whenever the server loads the files or finds them wrong, which `revision` says.
     workflowDefinition: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:workflows:definition",

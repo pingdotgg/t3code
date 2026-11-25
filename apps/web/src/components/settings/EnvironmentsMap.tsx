@@ -863,8 +863,11 @@ function FleetCanvas({
     if (event.key === "+" || event.key === "=") zoom(1.25);
     else if (event.key === "-") zoom(0.8);
     else if (event.key === "0") fit();
-    else if (event.key === "Escape") onSelect(null);
-    else return;
+    else if (event.key === "Escape" && selection !== null) {
+      // Base UI's dialog closes on a document Esc listener.
+      event.stopPropagation();
+      onSelect(null);
+    } else return;
     event.preventDefault();
   };
 
@@ -1020,6 +1023,12 @@ function FleetCanvas({
         onPointerUp={(event) => endDrag(event, false)}
         onPointerCancel={(event) => endDrag(event, true)}
         onLostPointerCapture={(event) => endDrag(event, true)}
+        // Safari does not focus a clicked button, so its keys would skip the map.
+        onClick={(event) =>
+          (event.target as Element)
+            .closest<HTMLElement>("button[data-fleet-item]")
+            ?.focus({ preventScroll: true })
+        }
         onKeyDown={onKeyDown}
       >
         {view === null ? null : (
