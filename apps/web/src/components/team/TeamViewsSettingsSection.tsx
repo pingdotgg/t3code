@@ -20,6 +20,7 @@ import { LayersIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 import { m } from "~/i18n/messages";
+import { readLocalApi } from "~/localApi";
 import { teamEnvironment } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { SettingsRow, SettingsSection } from "../settings/settingsLayout";
@@ -80,6 +81,7 @@ function toggleItem<T>(list: ReadonlyArray<T>, item: T, checked: boolean): Reado
 
 function formatRuleSummary(
   rule: TeamAccessRule,
+  kind: "read" | "post",
   memberById: ReadonlyMap<TeamMemberId, TeamMember>,
   gt: ReturnType<typeof useGT>,
 ): string {
@@ -94,7 +96,7 @@ function formatRuleSummary(
     parts.push(names.join(", "));
   }
   if (parts.length === 0) {
-    return gt("Owners & admins only");
+    return kind === "read" ? gt("Owners & admins only") : gt("Thread creator only");
   }
   return parts.join(" · ");
 }
@@ -195,6 +197,15 @@ export function TeamViewsSettingsSection({
   };
 
   const handleDelete = async (view: TeamView) => {
+    const confirmMessage = [
+      gt('Delete view "{viewName}"?', { viewName: view.name }),
+      gt("Threads in this view will be moved to the Default view."),
+    ].join("\n");
+    const api = readLocalApi();
+    const confirmed = api
+      ? await api.dialogs.confirm(confirmMessage, { variant: "destructive" })
+      : typeof window === "undefined" || window.confirm(confirmMessage);
+    if (!confirmed) return;
     setDeletingViewId(view.id);
     const result = await runDeleteView({
       environmentId,
@@ -313,7 +324,9 @@ export function TeamViewsSettingsSection({
                   </p>
                   <div className="space-y-1.5">
                     {ALL_TEAM_ROLES.map((role) => {
-                      const checked = draft.isDefault || draft.readRoles.includes(role);
+                      const isAlwaysReadableRole = role === "owner" || role === "admin";
+                      const checked =
+                        draft.isDefault || isAlwaysReadableRole || draft.readRoles.includes(role);
                       return (
                         <label
                           key={role}
@@ -321,7 +334,7 @@ export function TeamViewsSettingsSection({
                         >
                           <Checkbox
                             checked={checked}
-                            disabled={saving || draft.isDefault}
+                            disabled={saving || draft.isDefault || isAlwaysReadableRole}
                             data-testid={`team-view-read-role-${role}`}
                             onCheckedChange={(nextChecked) => {
                               const isChecked = nextChecked === true;
@@ -340,6 +353,9 @@ export function TeamViewsSettingsSection({
                       );
                     })}
                   </div>
+                  <p className="text-2xs text-muted-foreground">
+                    <T>Owners and admins can always read all views.</T>
+                  </p>
                   {!draft.isDefault && activeMembers.length > 0 ? (
                     <div className="border-t border-border/50 pt-2">
                       <p className="mb-1.5 text-2xs text-muted-foreground">
@@ -504,12 +520,12 @@ export function TeamViewsSettingsSection({
                   <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
                     <span>
                       {gt("Read: {summary}", {
-                        summary: formatRuleSummary(view.readRule, memberById, gt),
+                        summary: formatRuleSummary(view.readRule, "read", memberById, gt),
                       })}
                     </span>
                     <span>
                       {gt("Post: {summary}", {
-                        summary: formatRuleSummary(view.postRule, memberById, gt),
+                        summary: formatRuleSummary(view.postRule, "post", memberById, gt),
                       })}
                     </span>
                   </div>

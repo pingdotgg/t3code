@@ -8,9 +8,11 @@ import {
   AuthOrchestrationOperateScope,
   AuthRelayWriteScope,
   AuthSessionId,
+  AuthStandardClientScopes,
   CommandId,
   MessageId,
   RunId,
+  TeamMemberId,
   ThreadId,
   type AuthClientMetadata,
   type OrchestrationV2DomainEvent,
@@ -505,9 +507,13 @@ describe("TeamService", () => {
           sessionId: ownerSession.sessionId,
           threadId: ThreadId.make("thread-stream-2"),
         });
+        yield* team.updateMyPseudo({
+          sessionId: ownerSession.sessionId,
+          payload: { pseudo: "alice-updated" },
+        });
         const suspendedEvents = yield* Fiber.join(suspendedFiber);
-        // Suspended members must not receive inviteUpserted or thread metadata; restricted threads emit threadRemoved.
-        expect(suspendedEvents.map((event) => event.type)).toEqual(["snapshot", "threadRemoved"]);
+        // Suspended members must skip inviteUpserted and unseen restricted threads (no threadRemoved ID leak).
+        expect(suspendedEvents.map((event) => event.type)).toEqual(["snapshot", "memberUpserted"]);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 
@@ -1432,5 +1438,247 @@ describe("TeamService", () => {
           stateAfterDelete.threadAttributions.find((attr) => attr.threadId === bobThreadId)?.viewId,
         ).toBe(defaultView.id);
       }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "reconciles session scopes on admin-tier role changes, revokes DPoP keys on suspension, enforces guest-share/workflow/delete/fork guards, validates memberIds, and prevents streamState threadId leaks",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({
+          subject: "owner-alice",
+          method: "browser-session-cookie",
+          scopes: AuthStandardClientScopes,
+        });
+        yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "Acme", ownerPseudo: "alice" },
+        });
+
+        const adminInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "admin", prefilledPseudo: "dana" },
+        });
+        const danaRedeemed = yield* team.redeemInvite({
+          token: adminInvite.token,
+          pseudo: "dana",
+          client: { deviceType: "desktop" },
+          proofKeyThumbprint: "jkt-dana",
+        });
+        const danaVerifiedBefore = yield* sessions.verify(danaRedeemed.accessToken);
+        expect(danaVerifiedBefore.scopes).toContain(AuthAccessWriteScope);
+
+        const regularInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob" },
+        });
+        const bobRedeemed = yield* team.redeemInvite({
+          token: regularInvite.token,
+          pseudo: "bob",
+          client: { deviceType: "desktop" },
+          proofKeyThumbprint: "jkt-bob",
+        });
+        const bobVerifiedBefore = yield* sessions.verify(bobRedeemed.accessToken);
+        expect(bobVerifiedBefore.scopes).not.toContain(AuthAccessWriteScope);
+
+        // 1. Demoting Dana (admin -> regular) narrows DB session scopes AND triggers awaitInvalidation.
+        const danaInvalidationFiber = yield* Effect.forkChild(
+          sessions.awaitInvalidation(danaVerifiedBefore.sessionId, "jkt-dana"),
+        );
+        yield* Effect.yieldNow;
+        yield* team.updateMemberRole({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: danaRedeemed.member.id, role: "regular" },
+        });
+        yield* Fiber.join(danaInvalidationFiber);
+        const danaVerifiedAfterDemote = yield* sessions.verify(danaRedeemed.accessToken);
+        expect(danaVerifiedAfterDemote.scopes).not.toContain(AuthAccessWriteScope);
+
+        // 2. Promoting Bob (regular -> admin) broadens DB session scopes AND triggers awaitInvalidation.
+        const bobInvalidationFiber = yield* Effect.forkChild(
+          sessions.awaitInvalidation(bobVerifiedBefore.sessionId, "jkt-bob"),
+        );
+        yield* Effect.yieldNow;
+        yield* team.updateMemberRole({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: bobRedeemed.member.id, role: "admin" },
+        });
+        yield* Fiber.join(bobInvalidationFiber);
+        const bobVerifiedAfterPromote = yield* sessions.verify(bobRedeemed.accessToken);
+        expect(bobVerifiedAfterPromote.scopes).toContain(AuthAccessWriteScope);
+
+        // Demote Bob back to regular for RBAC checks below.
+        yield* team.updateMemberRole({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: bobRedeemed.member.id, role: "regular" },
+        });
+
+        // 3. View memberIds validation rejects unknown member IDs.
+        const invalidMemberExit = yield* Effect.exit(
+          team.createView({
+            sessionId: aliceSession.sessionId,
+            payload: {
+              name: "Bad View",
+              readRule: {
+                roles: ["owner"],
+                memberIds: [TeamMemberId.make("member-does-not-exist")],
+              },
+              postRule: { roles: ["owner"], memberIds: [] },
+            },
+          }),
+        );
+        expect(invalidMemberExit._tag).toBe("Failure");
+
+        // 4. Create Staff Only view & test streamState non-leakage of unseen restricted threadIds.
+        const staffOnly = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Staff Only",
+            readRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+            postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+          },
+        });
+        const bobStateEvents: Array<TeamStateStreamEvent> = [];
+        const bobStateFiber = yield* Effect.forkChild(
+          team.streamState(bobVerifiedBefore.sessionId).pipe(
+            Stream.take(2),
+            Stream.runForEach((event) =>
+              Effect.sync(() => {
+                bobStateEvents.push(event);
+              }),
+            ),
+          ),
+        );
+        yield* Effect.yieldNow;
+
+        // Brand-new Staff Only thread must NOT leak a threadRemoved event to Bob.
+        const unseenSecretThreadId = ThreadId.make("thread-unseen-secret");
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: unseenSecretThreadId,
+          viewId: staffOnly.id,
+        });
+        // A Default-view thread Bob CAN read arrives as event #2 (proving the unseen secret was skipped).
+        const visibleDefaultThreadId = ThreadId.make("thread-visible-default");
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId: visibleDefaultThreadId,
+        });
+        yield* Fiber.join(bobStateFiber);
+        expect(bobStateEvents).toHaveLength(2);
+        expect(bobStateEvents[0]?.type).toBe("snapshot");
+        expect(bobStateEvents[1]?.type).toBe("threadAttributed");
+        if (bobStateEvents[1]?.type === "threadAttributed") {
+          expect(bobStateEvents[1].payload.threadId).toBe(visibleDefaultThreadId);
+        }
+
+        // 5. Guest share & workflow guards.
+        expect(
+          (yield* Effect.exit(
+            team.assertCanCreateGuestShare(bobVerifiedBefore.sessionId, unseenSecretThreadId),
+          ))._tag,
+        ).toBe("Failure");
+        yield* team.assertCanCreateGuestShare(aliceSession.sessionId, unseenSecretThreadId);
+        expect(
+          (yield* Effect.exit(team.assertCanUseWorkflows(bobVerifiedBefore.sessionId)))._tag,
+        ).toBe("Failure");
+        yield* team.assertCanUseWorkflows(aliceSession.sessionId);
+
+        // 6. thread.delete restriction: colleague cannot delete Alice's thread even in Default View.
+        const bobDeleteAliceExit = yield* Effect.exit(
+          team.assertCanDispatchCommand(bobVerifiedBefore.sessionId, {
+            type: "thread.delete",
+            commandId: CommandId.make("cmd-del-1"),
+            threadId: visibleDefaultThreadId,
+          }),
+        );
+        expect(bobDeleteAliceExit._tag).toBe("Failure");
+        yield* team.assertCanDispatchCommand(aliceSession.sessionId, {
+          type: "thread.delete",
+          commandId: CommandId.make("cmd-del-2"),
+          threadId: visibleDefaultThreadId,
+        });
+
+        // 7. thread.fork inherits restricted viewId via prepareThreadInheritedFromParent.
+        const forkedSecretId = ThreadId.make("thread-forked-secret");
+        const preparedFork = yield* team.prepareThreadInheritedFromParent({
+          parentThreadId: unseenSecretThreadId,
+          threadId: forkedSecretId,
+          creatorSessionId: aliceSession.sessionId,
+        });
+        expect(preparedFork).toBe(true);
+        expect(yield* team.canReadThread(bobVerifiedBefore.sessionId, forkedSecretId)).toBe(false);
+        expect(yield* team.canReadThread(aliceSession.sessionId, forkedSecretId)).toBe(true);
+
+        // 8. Post-team unattributed threads fail closed for regular members (owner retains access).
+        const unattributedPostTeamId = ThreadId.make("thread-post-team-no-meta");
+        expect(yield* team.canReadThread(bobVerifiedBefore.sessionId, unattributedPostTeamId)).toBe(
+          false,
+        );
+        expect(yield* team.canReadThread(aliceSession.sessionId, unattributedPostTeamId)).toBe(
+          true,
+        );
+        const filteredIds = yield* team.filterReadableThreadIds(bobVerifiedBefore.sessionId, [
+          unattributedPostTeamId,
+          visibleDefaultThreadId,
+        ]);
+        expect(filteredIds.has(unattributedPostTeamId)).toBe(false);
+        expect(filteredIds.has(visibleDefaultThreadId)).toBe(true);
+
+        // 9. Suspending Dana revokes her session (and DPoP key) immediately.
+        yield* team.updateMemberStatus({
+          sessionId: aliceSession.sessionId,
+          payload: { memberId: danaRedeemed.member.id, status: "suspended" },
+        });
+        const danaVerifyAfterSuspend = yield* Effect.exit(
+          sessions.verify(danaRedeemed.accessToken),
+        );
+        expect(danaVerifyAfterSuspend._tag).toBe("Failure");
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "fails closed on TeamRepository errors across read, batch filter, post, and prepare",
+    () => {
+      const repoError = new TeamRepository.TeamRepositoryError({
+        operation: "injected",
+        cause: new Error("SQLite busy"),
+      });
+      const failingRepoLayer = Layer.mock(TeamRepository.TeamRepository)({
+        getWorkspace: () => Effect.fail(repoError),
+        getThreadAttribution: () => Effect.fail(repoError),
+        getMemberForSession: () => Effect.fail(repoError),
+        listViews: () => Effect.fail(repoError),
+        listThreadAttributions: () => Effect.fail(repoError),
+        findThreadIdByAttachmentSegment: () => Effect.fail(repoError),
+      });
+      const failingServiceLayer = TeamService.layer.pipe(
+        Layer.provideMerge(failingRepoLayer),
+        Layer.provideMerge(
+          Layer.mock(SessionStore.SessionStore)({
+            cookieName: "test",
+            legacyCookieName: undefined,
+            revoke: () => Effect.succeed(false),
+          }),
+        ),
+        Layer.provideMerge(NodeCrypto.layer),
+      );
+      const sid = AuthSessionId.make("sess-fault");
+      const tid = ThreadId.make("thread-fault");
+      return Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        expect(yield* team.isTeamConfigured()).toBe(true);
+        expect(yield* team.canReadThread(sid, tid)).toBe(false);
+        expect(yield* team.canReadAttachment(sid, `${tid}-att-1`)).toBe(false);
+        expect(yield* team.canPostInThread(sid, tid)).toBe(false);
+        expect((yield* team.filterReadableThreadIds(sid, [tid])).size).toBe(0);
+        expect(
+          (yield* Effect.exit(team.prepareThreadAttribution({ sessionId: sid, threadId: tid })))
+            ._tag,
+        ).toBe("Failure");
+      }).pipe(Effect.provide(failingServiceLayer));
+    },
   );
 });

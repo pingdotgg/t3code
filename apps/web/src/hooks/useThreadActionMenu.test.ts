@@ -67,6 +67,7 @@ vi.mock("../state/threads", () => ({ threadEnvironment: { updateMetadata: "metad
 vi.mock("../state/team", () => ({
   readTeamThreadFollowActionState: () => null,
   readTeamThreadAccessActionState: () => ({ teamView: null, teamLock: null }),
+  readTeamThreadPostPermission: () => ({ canPost: true, blockReason: null }),
   teamEnvironment: {
     followThread: "follow",
     unfollowThread: "unfollow",

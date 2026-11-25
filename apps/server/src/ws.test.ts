@@ -901,6 +901,11 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
   Layer.mock(TeamService.TeamService)({
+    isTeamConfigured: () => Effect.succeed(false),
+    assertCanReadThread: () => Effect.void,
+    assertCanPostInThread: () => Effect.void,
+    assertCanCreateGuestShare: () => Effect.void,
+    assertCanUseWorkflows: () => Effect.void,
     recordThreadCreated: () => Effect.void,
     recordTurnAuthored: () => Effect.void,
   }),

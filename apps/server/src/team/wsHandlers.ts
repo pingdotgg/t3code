@@ -3,11 +3,11 @@ import {
   type AssetResource,
   type AuthSessionId,
   type EnvironmentAuthorizationError,
+  type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2SearchThreadsResult,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
-  type OrchestrationV2ThreadStreamItem,
   type TeamViewId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -261,34 +261,60 @@ export const assertCanReadAssetResource = (
   }
 };
 
+export const prepareTeamDispatchAttribution = (
+  teamService: TeamService.TeamService["Service"],
+  sessionId: AuthSessionId,
+  command: OrchestrationV2Command,
+): Effect.Effect<ThreadId | null, EnvironmentAuthorizationError> => {
+  if (command.type === "thread.create") {
+    return teamService
+      .prepareThreadAttribution({
+        sessionId,
+        threadId: command.threadId,
+      })
+      .pipe(Effect.map((prepared) => (prepared ? command.threadId : null)));
+  }
+  if (command.type === "thread.fork") {
+    return teamService
+      .prepareThreadInheritedFromParent({
+        parentThreadId: command.sourceThreadId,
+        threadId: command.targetThreadId,
+        creatorSessionId: sessionId,
+      })
+      .pipe(Effect.map((prepared) => (prepared ? command.targetThreadId : null)));
+  }
+  return Effect.succeed(null);
+};
+
 /**
- * Guards an active `subscribeThread` stream against live access revocation (e.g., moving the thread
- * to a narrower Team View, editing view read rules, or demoting/removing the member).
+ * Guards any thread-scoped stream (`subscribeThread`, `subscribeCommandOutput`,
+ * `subscribePromptSuggestion`, `searchThreadStream`, `subscribeWorktreeSetup`, `terminalAttach`,
+ * `terminalObserve`) against live access revocation. Subscribes to team access changes before the
+ * initial authorization check so revocations racing with stream bootstrap are never missed.
  */
-export const guardThreadStreamForSession = <E, R>(
+export const guardThreadScopedStreamForSession = <A, E, R>(
   teamService: TeamService.TeamService["Service"],
   sessionId: AuthSessionId,
   threadId: ThreadId,
-  stream: Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>,
-): Stream.Stream<OrchestrationV2ThreadStreamItem, E | EnvironmentAuthorizationError, R> => {
-  const revocationStream: Stream.Stream<never, EnvironmentAuthorizationError> = teamService
-    .subscribeAccessChanges()
-    .pipe(
-      Stream.mapEffect((change) => {
-        if (change.type === "threadView" && change.threadId !== threadId) {
-          return Effect.void;
-        }
-        return teamService.assertCanReadThread(sessionId, threadId);
-      }),
-      Stream.filter(() => false),
-    ) as Stream.Stream<never, EnvironmentAuthorizationError>;
-
-  return Stream.unwrap(
-    teamService
-      .assertCanReadThread(sessionId, threadId)
-      .pipe(Effect.as(Stream.merge(stream, revocationStream, { haltStrategy: "either" }))),
+  stream: Stream.Stream<A, E, R>,
+): Stream.Stream<A, E | EnvironmentAuthorizationError, R> =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const accessChanges = yield* teamService.openAccessChangeSubscription();
+      yield* teamService.assertCanReadThread(sessionId, threadId);
+      const revocationStream: Stream.Stream<never, EnvironmentAuthorizationError> =
+        accessChanges.pipe(
+          Stream.mapEffect((change) => {
+            if (change.type === "threadView" && change.threadId !== threadId) {
+              return Effect.void;
+            }
+            return teamService.assertCanReadThread(sessionId, threadId);
+          }),
+          Stream.filter(() => false),
+        ) as Stream.Stream<never, EnvironmentAuthorizationError>;
+      return Stream.merge(stream, revocationStream, { haltStrategy: "either" });
+    }),
   );
-};
 
 /**
  * Merges live team access-change snapshots into `subscribeShell` so moving a thread to a narrower

@@ -13,6 +13,7 @@ import {
   AssetWorkspacePathValidationError,
   AssetWorkspaceResolutionError,
   AssetWorkspaceRootNormalizationError,
+  AuthSessionId,
   SOURCE_CONTROL_MEDIA_ASSET,
   ThreadId,
   NativeAppIconReference,
@@ -70,6 +71,7 @@ import {
   type OpenMediaFile,
 } from "./MediaFile.ts";
 import * as WorkspacePreviewRevisions from "./WorkspacePreviewRevisions.ts";
+import * as TeamService from "../team/TeamService.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -137,6 +139,8 @@ const AssetClaimsSchema = Schema.Union([
     baseRelativePath: Schema.String,
     /** The opened page, which the files it requests are tracked under; absent on older URLs. */
     entryFileName: Schema.optionalKey(Schema.String),
+    teamSessionId: Schema.optionalKey(AuthSessionId),
+    teamThreadId: Schema.optionalKey(ThreadId),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -144,6 +148,8 @@ const AssetClaimsSchema = Schema.Union([
     kind: Schema.Literal("workspace-file-exact"),
     workspaceRoot: Schema.String,
     relativePath: Schema.String,
+    teamSessionId: Schema.optionalKey(AuthSessionId),
+    teamThreadId: Schema.optionalKey(ThreadId),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -153,6 +159,8 @@ const AssetClaimsSchema = Schema.Union([
     download: Schema.optionalKey(Schema.Boolean),
     device: Schema.String,
     inode: Schema.String,
+    teamSessionId: Schema.optionalKey(AuthSessionId),
+    teamThreadId: Schema.optionalKey(ThreadId),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -163,6 +171,7 @@ const AssetClaimsSchema = Schema.Union([
     fileName: Schema.optionalKey(Schema.String),
     mimeType: Schema.optionalKey(Schema.String),
     renderIntent: Schema.optionalKey(Schema.Literal("mcp-app")),
+    teamSessionId: Schema.optionalKey(AuthSessionId),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -196,6 +205,7 @@ const AssetClaimsSchema = Schema.Union([
     threadId: ThreadId,
     itemId: TurnItemId,
     index: Schema.Number,
+    teamSessionId: Schema.optionalKey(AuthSessionId),
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -610,6 +620,11 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   readonly projectFaviconPath?: string;
   /** Where a cloned project's checkout stands, while the clone tracker still knows it. */
   readonly projectCheckout?: "pending" | "cloned";
+  /** Binds thread/attachment asset URLs to live team access checks at download time. */
+  readonly teamAccess?: {
+    readonly sessionId: AuthSessionId;
+    readonly threadId?: ThreadId;
+  };
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -953,6 +968,22 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       Math.ceil(expiresAt / HTML_ATTACHMENT_TOKEN_BUCKET_MS) * HTML_ATTACHMENT_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };
   }
+  if (input.teamAccess !== undefined) {
+    if (claims.kind === "attachment" || claims.kind === "tool-output-image") {
+      claims = { ...claims, teamSessionId: input.teamAccess.sessionId };
+    } else if (
+      (claims.kind === "workspace-file" ||
+        claims.kind === "workspace-file-exact" ||
+        claims.kind === "media-file-exact") &&
+      input.teamAccess.threadId !== undefined
+    ) {
+      claims = {
+        ...claims,
+        teamSessionId: input.teamAccess.sessionId,
+        teamThreadId: input.teamAccess.threadId,
+      };
+    }
+  }
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
   const signer = yield* AssetSigner.AssetSigner;
   const signature = yield* signer
@@ -986,6 +1017,21 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+
+  if ("teamSessionId" in claims && claims.teamSessionId !== undefined) {
+    const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+    if (Option.isSome(maybeTeam)) {
+      const allowed =
+        claims.kind === "attachment"
+          ? yield* maybeTeam.value.canReadAttachment(claims.teamSessionId, claims.attachmentId)
+          : claims.kind === "tool-output-image"
+            ? yield* maybeTeam.value.canReadThread(claims.teamSessionId, claims.threadId)
+            : "teamThreadId" in claims && claims.teamThreadId !== undefined
+              ? yield* maybeTeam.value.canReadThread(claims.teamSessionId, claims.teamThreadId)
+              : true;
+      if (!allowed) return null;
+    }
+  }
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;

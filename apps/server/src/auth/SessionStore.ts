@@ -473,6 +473,10 @@ export class SessionStore extends Context.Service<
     readonly revoke: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
+    readonly updateScopes: (
+      sessionId: AuthSessionId,
+      scopes: ReadonlyArray<AuthEnvironmentScope>,
+    ) => Effect.Effect<boolean, SessionCredentialInternalError>;
     readonly revokeAllExcept: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
@@ -1024,6 +1028,7 @@ const make = Effect.gen(function* () {
       }
       const renewedToken = yield* signClaims({
         ...claims,
+        scopes: row.value.scopes,
         iat: now.epochMilliseconds,
         exp: expiresAt.epochMilliseconds,
       });
@@ -1202,6 +1207,25 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const updateScopes: SessionStore["Service"]["updateScopes"] = Effect.fn(
+    "SessionStore.updateScopes",
+  )(function* (sessionId, scopes) {
+    const updated = yield* authSessions
+      .updateScopes({ sessionId, scopes })
+      .pipe(
+        Effect.mapError((cause) => new SessionCredentialVerificationError({ sessionId, cause })),
+      );
+    if (updated) {
+      const session = yield* loadActiveSession(sessionId).pipe(
+        Effect.mapError((cause) => new SessionCredentialVerificationError({ sessionId, cause })),
+      );
+      if (Option.isSome(session)) {
+        yield* emitUpsert(session.value);
+      }
+    }
+    return updated;
+  });
+
   const proofKeyThumbprintOf: SessionStore["Service"]["proofKeyThumbprintOf"] = (sessionId) =>
     authSessions
       .getProofKeyThumbprint({ sessionId })
@@ -1287,20 +1311,38 @@ const make = Effect.gen(function* () {
                 ),
               ),
           );
-        // Revoking any session the socket has used closes it. Events only wake this loop
-        // and the rows decide: revocations are written before they are published, and
-        // clientRemoved also reports an expired session losing its last socket.
+        // Revoking a session or changing its scopes closes sockets that still hold stale grants.
         const chain = [sessionId];
+        const hasSameScopes = (
+          left: ReadonlyArray<AuthEnvironmentScope>,
+          right: ReadonlyArray<AuthEnvironmentScope>,
+        ) => left.length === right.length && left.every((scope) => right.includes(scope));
         const nextRemoval = Effect.gen(function* () {
           while (true) {
             const change = yield* PubSub.take(subscription);
             if (change.type === "clientRemoved" && chain.includes(change.sessionId)) return;
+            if (
+              change.type === "clientUpserted" &&
+              chain.includes(change.clientSession.sessionId) &&
+              !hasSameScopes(original.value.scopes, change.clientSession.scopes)
+            ) {
+              return;
+            }
           }
         });
         let current = original.value;
         while (true) {
           const rows = yield* Effect.forEach(chain, readRow);
-          if (rows.some((row) => Option.isNone(row) || row.value.revokedAt !== null)) return;
+          if (
+            rows.some(
+              (row) =>
+                Option.isNone(row) ||
+                row.value.revokedAt !== null ||
+                !hasSameScopes(original.value.scopes, row.value.scopes),
+            )
+          ) {
+            return;
+          }
           // Renewal moves a session's expiry in place, so the snapshot can be stale.
           const currentRow = rows.at(-1);
           if (currentRow !== undefined && Option.isSome(currentRow)) current = currentRow.value;
@@ -1353,6 +1395,7 @@ const make = Effect.gen(function* () {
       return Stream.fromPubSub(changesPubSub);
     },
     revoke,
+    updateScopes,
     revokeAllExcept,
     proofKeyThumbprintOf,
     revokeByProofKey,

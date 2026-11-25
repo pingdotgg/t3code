@@ -3,7 +3,6 @@ import {
   canMemberCreateThreadInTeamView,
   canMemberReadTeamView,
   canToggleTeamThreadLock,
-  matchesTeamAccessRule,
   resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
   type EnvironmentId,
@@ -256,16 +255,11 @@ export function resolveTeamThreadPostPermission(input: {
     return { canPost: false, blockReason: "no_access" };
   }
   const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
-  const view = resolveTeamThreadView({ teamState, threadId });
   if (attribution === null) {
-    if (!canMemberReadTeamView(member, view)) {
-      return { canPost: false, blockReason: "no_access" };
-    }
-    if (view && !matchesTeamAccessRule(view.postRule, member)) {
-      return { canPost: false, blockReason: "view_read_only" };
-    }
+    // Match server semantics for pre-team legacy threads and avoid flashing read-only before attribution lands.
     return TEAM_THREAD_POST_ALLOWED;
   }
+  const view = resolveTeamThreadView({ teamState, threadId });
   const reason = resolveTeamThreadPostBlockReason({
     member,
     attribution,

@@ -267,6 +267,7 @@ import {
 import {
   readTeamThreadAccessActionState,
   readTeamThreadFollowActionState,
+  readTeamThreadPostPermission,
   useShowColleaguesThreads,
   useShowFollowedThreadsOnly,
   useTeamStatesByEnvironment,
@@ -2752,14 +2753,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           threadRef.environmentId,
           threadRef.threadId,
         );
+        const canTeamPost = readTeamThreadPostPermission(
+          threadRef.environmentId,
+          threadRef.threadId,
+        ).canPost;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
-              canOperate: readEnvironmentScope(
-                threadRef.environmentId,
-                AuthOrchestrationOperateScope,
-              ),
-              canTriage: threadTriagePermitted(threadRef.environmentId),
+              canOperate:
+                readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) &&
+                canTeamPost,
+              canTriage: threadTriagePermitted(threadRef.environmentId) && canTeamPost,
               branch: thread.branch ?? null,
               // An archived project is not a filter choice.
               projectFilter:
@@ -2777,9 +2781,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
               hasCompletedRun: thread.latestRun?.completedAt != null,
-              canShareWithGuest: appAtomRegistry.get(
-                canShareWithGuestAtom(threadRef.environmentId),
-              ),
+              canShareWithGuest:
+                appAtomRegistry.get(canShareWithGuestAtom(threadRef.environmentId)) && canTeamPost,
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               teamFollow: readTeamThreadFollowActionState(
                 threadRef.environmentId,

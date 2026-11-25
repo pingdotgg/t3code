@@ -2,6 +2,8 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ALL_TEAM_ROLES,
+  AuthStandardClientScopes,
+  CommandId,
   EnvironmentId,
   ProjectId,
   ThreadId,
@@ -34,7 +36,8 @@ import {
   filterSearchThreadsResultForSession,
   filterShellSnapshotForSession,
   filterThreadRecordByReadableIds,
-  guardThreadStreamForSession,
+  guardThreadScopedStreamForSession,
+  prepareTeamDispatchAttribution,
   withTeamShellAccessUpdates,
 } from "./wsHandlers.ts";
 
@@ -209,7 +212,7 @@ describe("Team WS access enforcement helpers", () => {
           Effect.forkChild,
         );
 
-        const bobThreadFiber = yield* guardThreadStreamForSession(
+        const bobThreadFiber = yield* guardThreadScopedStreamForSession(
           team,
           bobSession.sessionId,
           publicThreadId,
@@ -265,6 +268,101 @@ describe("Team WS access enforcement helpers", () => {
         expect(yield* team.canReadThread(bobSession.sessionId, publicThreadId)).toBe(true);
         // Sanity check unused import avoided:
         expect(EnvironmentId.make("env-1")).toBe("env-1");
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "terminates auxiliary thread-scoped streams (e.g. command output / terminal) on live view narrowing and inherits view on thread.fork",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const aliceSession = yield* sessions.issue({
+          subject: "owner-alice",
+          method: "browser-session-cookie",
+          scopes: AuthStandardClientScopes,
+        });
+        yield* team.initializeTeam({
+          sessionId: aliceSession.sessionId,
+          payload: { name: "Acme", ownerPseudo: "alice" },
+        });
+        const bobInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob" },
+        });
+        const bobRedeemed = yield* team.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob",
+          client: { deviceType: "desktop" },
+        });
+        const bobSession = yield* sessions.verify(bobRedeemed.accessToken);
+
+        const staffOnly = yield* team.createView({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            name: "Staff Only",
+            readRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+            postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+          },
+        });
+
+        const threadId = ThreadId.make("thread-aux-stream");
+        yield* team.recordThreadCreated({
+          sessionId: aliceSession.sessionId,
+          threadId,
+        });
+
+        // Auxiliary stream (simulating command output / prompt suggestion / terminal attach)
+        const chunksQueue = yield* Queue.unbounded<string>();
+        yield* Queue.offer(chunksQueue, "chunk-1");
+        const received: Array<string> = [];
+        const auxFiber = yield* Effect.forkChild(
+          guardThreadScopedStreamForSession(
+            team,
+            bobSession.sessionId,
+            threadId,
+            Stream.fromQueue(chunksQueue),
+          ).pipe(
+            Stream.runForEach((chunk) =>
+              Effect.sync(() => {
+                received.push(chunk);
+              }),
+            ),
+            Effect.exit,
+          ),
+        );
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        expect(received).toEqual(["chunk-1"]);
+
+        // Move thread into Staff Only -> auxiliary stream terminates immediately with auth error.
+        yield* team.setThreadView({
+          sessionId: aliceSession.sessionId,
+          payload: { threadId, viewId: staffOnly.id },
+        });
+        const auxExit = yield* Fiber.join(auxFiber);
+        expect(auxExit._tag).toBe("Failure");
+        if (auxExit._tag === "Failure") {
+          expect(Cause.squash(auxExit.cause)).toMatchObject({
+            _tag: "EnvironmentAuthorizationError",
+          });
+        }
+
+        // prepareTeamDispatchAttribution on thread.fork inherits restricted Staff Only view.
+        const forkedThreadId = ThreadId.make("thread-aux-fork");
+        const prepared = yield* prepareTeamDispatchAttribution(team, aliceSession.sessionId, {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-fork-1"),
+          sourceThreadId: threadId,
+          targetThreadId: forkedThreadId,
+          sourcePoint: { type: "latest_stable" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        expect(prepared).toBe(forkedThreadId);
+        expect(yield* team.canReadThread(bobSession.sessionId, forkedThreadId)).toBe(false);
+        expect(yield* team.canReadThread(aliceSession.sessionId, forkedThreadId)).toBe(true);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });

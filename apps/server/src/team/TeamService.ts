@@ -75,12 +75,12 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import {
   PENDING_ATTACHMENT_THREAD_SEGMENT,
   parseThreadSegmentFromAttachmentId,
-  toSafeThreadAttachmentSegment,
 } from "../attachmentStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import { rpcInitialItems } from "../rpcInitialItems.ts";
@@ -165,6 +165,35 @@ const teamPostAuthError = (message = "You do not have permission to post in this
     requiredPermission: "team:thread:post",
   });
 
+const teamAdminAuthError = (
+  message = "Only owner and admin members can perform this operation.",
+  requiredPermission = "team:admin",
+) =>
+  new EnvironmentAuthorizationError({
+    message,
+    requiredScope: AuthAccessWriteScope,
+    requiredPermission,
+  });
+
+const isPreTeamLegacyTimestamp = (
+  team: TeamWorkspace,
+  threadCreatedAt: string | undefined,
+): boolean => {
+  if (threadCreatedAt === undefined) return false;
+  const threadCreatedMs = Date.parse(threadCreatedAt);
+  const teamCreatedMs = Date.parse(team.createdAt);
+  return (
+    Number.isFinite(threadCreatedMs) &&
+    Number.isFinite(teamCreatedMs) &&
+    threadCreatedMs < teamCreatedMs
+  );
+};
+
+const isTeamAdminOrOwner = (member: TeamMember | null): boolean =>
+  member !== null &&
+  member.status === "active" &&
+  (member.role === "owner" || member.role === "admin");
+
 export class TeamService extends Context.Service<
   TeamService,
   {
@@ -176,6 +205,11 @@ export class TeamService extends Context.Service<
       sessionId: AuthSessionId,
     ) => Stream.Stream<TeamStateStreamEvent, TeamOperationError>;
     readonly subscribeAccessChanges: () => Stream.Stream<TeamAccessChangeEvent>;
+    readonly openAccessChangeSubscription: () => Effect.Effect<
+      Stream.Stream<TeamAccessChangeEvent>,
+      never,
+      Scope.Scope
+    >;
     readonly initializeTeam: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamInitializeInput;
@@ -271,6 +305,13 @@ export class TeamService extends Context.Service<
       sessionId: AuthSessionId,
       command: OrchestrationV2Command,
     ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertCanCreateGuestShare: (
+      sessionId: AuthSessionId,
+      threadId: ThreadId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertCanUseWorkflows: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
     readonly followThread: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamThreadFollowInput;
@@ -317,7 +358,12 @@ export class TeamService extends Context.Service<
       readonly threadId: ThreadId;
       readonly viewId?: TeamViewId;
       readonly locked?: boolean;
-    }) => Effect.Effect<boolean>;
+    }) => Effect.Effect<boolean, EnvironmentAuthorizationError>;
+    readonly prepareThreadInheritedFromParent: (input: {
+      readonly parentThreadId: ThreadId;
+      readonly threadId: ThreadId;
+      readonly creatorSessionId?: AuthSessionId;
+    }) => Effect.Effect<boolean, EnvironmentAuthorizationError>;
     readonly rollbackPreparedThreadAttribution: (threadId: ThreadId) => Effect.Effect<void>;
     readonly recordTurnAuthored: (input: {
       readonly sessionId: AuthSessionId;
@@ -359,18 +405,24 @@ const make = Effect.gen(function* () {
     );
 
   const isTeamConfigured = Effect.fn("TeamService.isTeamConfigured")(function* () {
-    const workspace = yield* repository
-      .getWorkspace()
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
-    return Option.isSome(workspace);
+    const workspace = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.isTeamConfigured lookup failed; failing closed", { cause }),
+      ),
+      Effect.match({
+        onFailure: () => true,
+        onSuccess: (option) => Option.isSome(option),
+      }),
+    );
+    return workspace;
   });
 
-  const subscribeAccessChanges = () =>
-    Stream.unwrap(
-      PubSub.subscribe(accessChangesPubSub).pipe(
-        Effect.map((subscription) => Stream.fromSubscription(subscription)),
-      ),
+  const openAccessChangeSubscription = () =>
+    PubSub.subscribe(accessChangesPubSub).pipe(
+      Effect.map((subscription) => Stream.fromSubscription(subscription)),
     );
+
+  const subscribeAccessChanges = () => Stream.unwrap(openAccessChangeSubscription());
 
   const validatePseudo = Effect.fn("TeamService.validatePseudo")(function* (raw: string) {
     const normalized = normalizeTeamPseudo(raw);
@@ -516,6 +568,9 @@ const make = Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(eventsPubSub);
         const snapshot = yield* getState(sessionId);
         let currentMember = snapshot.currentMember;
+        let knownReadableThreadIds = new Set<ThreadId>(
+          snapshot.threadAttributions.map((attribution) => attribution.threadId),
+        );
         const liveEvents = Stream.fromSubscription(subscription).pipe(
           Stream.mapEffect((event) =>
             Effect.gen(function* () {
@@ -526,6 +581,9 @@ const make = Effect.gen(function* () {
               ) {
                 const fresh = yield* getState(sessionId);
                 currentMember = fresh.currentMember;
+                knownReadableThreadIds = new Set<ThreadId>(
+                  fresh.threadAttributions.map((attribution) => attribution.threadId),
+                );
                 return Option.some<TeamStateStreamEvent>({
                   version: 1 as const,
                   type: "snapshot" as const,
@@ -541,6 +599,9 @@ const make = Effect.gen(function* () {
                   if (accessChanged) {
                     const fresh = yield* getState(sessionId);
                     currentMember = fresh.currentMember;
+                    knownReadableThreadIds = new Set<ThreadId>(
+                      fresh.threadAttributions.map((attribution) => attribution.threadId),
+                    );
                     return Option.some<TeamStateStreamEvent>({
                       version: 1 as const,
                       type: "snapshot" as const,
@@ -568,13 +629,19 @@ const make = Effect.gen(function* () {
               }
               if (event.type === "threadAttributed") {
                 const readable = yield* canReadThread(sessionId, event.payload.threadId);
-                return readable
-                  ? Option.some<TeamStateStreamEvent>(event)
-                  : Option.some<TeamStateStreamEvent>({
-                      version: 1 as const,
-                      type: "threadRemoved" as const,
-                      payload: { threadId: event.payload.threadId },
-                    });
+                if (readable) {
+                  knownReadableThreadIds.add(event.payload.threadId);
+                  return Option.some<TeamStateStreamEvent>(event);
+                }
+                // Only emit threadRemoved when revoking a thread this subscriber already knew about.
+                if (knownReadableThreadIds.delete(event.payload.threadId)) {
+                  return Option.some<TeamStateStreamEvent>({
+                    version: 1 as const,
+                    type: "threadRemoved" as const,
+                    payload: { threadId: event.payload.threadId },
+                  });
+                }
+                return Option.none<TeamStateStreamEvent>();
               }
               if (event.type === "turnAttributed") {
                 const readable = yield* canReadThread(sessionId, event.payload.threadId);
@@ -675,6 +742,93 @@ const make = Effect.gen(function* () {
     return { team, owner } satisfies TeamInitializeResult;
   });
 
+  const revokeSessionsForMember = Effect.fn("TeamService.revokeSessionsForMember")(function* (
+    memberId: TeamMemberId,
+  ) {
+    const sessionIds = yield* repository.listSessionIdsForMember(memberId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.revokeSessionsForMember list failed", {
+          memberId,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => [] as ReadonlyArray<AuthSessionId>),
+    );
+    const proofKeys = new Set<string>();
+    yield* Effect.forEach(
+      sessionIds,
+      (memberSessionId) =>
+        Effect.gen(function* () {
+          const maybeJkt = yield* sessionStore
+            .proofKeyThumbprintOf(memberSessionId)
+            .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+          if (Option.isSome(maybeJkt)) {
+            proofKeys.add(maybeJkt.value);
+          }
+          yield* sessionStore.revoke(memberSessionId).pipe(Effect.ignore);
+        }),
+      { discard: true },
+    );
+    yield* Effect.forEach(
+      [...proofKeys],
+      (proofKeyThumbprint) => sessionStore.revokeByProofKey(proofKeyThumbprint).pipe(Effect.ignore),
+      { discard: true },
+    );
+  });
+
+  const reconcileMemberSessionScopes = Effect.fn("TeamService.reconcileMemberSessionScopes")(
+    function* (memberId: TeamMemberId, nextRole: TeamRole) {
+      const nextScopes = scopesForTeamRole(nextRole);
+      const sessionIds = yield* repository.listSessionIdsForMember(memberId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.reconcileMemberSessionScopes list failed", {
+            memberId,
+            cause,
+          }),
+        ),
+        Effect.orElseSucceed(() => [] as ReadonlyArray<AuthSessionId>),
+      );
+      yield* Effect.forEach(
+        sessionIds,
+        (memberSessionId) =>
+          sessionStore.updateScopes(memberSessionId, nextScopes).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("TeamService.reconcileMemberSessionScopes update failed", {
+                memberId,
+                memberSessionId,
+                cause,
+              }),
+            ),
+            Effect.ignore,
+          ),
+        { discard: true },
+      );
+    },
+  );
+
+  const validateAccessRuleMemberIds = Effect.fn("TeamService.validateAccessRuleMemberIds")(
+    function* (teamId: TeamId, rules: ReadonlyArray<TeamAccessRule | undefined>) {
+      const requestedIds = new Set<TeamMemberId>();
+      for (const rule of rules) {
+        if (!rule) continue;
+        for (const memberId of rule.memberIds) {
+          requestedIds.add(memberId);
+        }
+      }
+      if (requestedIds.size === 0) return;
+      const members = yield* repository.listMembers(teamId).pipe(Effect.mapError(toInternalError));
+      const validIds = new Set(members.map((member) => member.id));
+      for (const memberId of requestedIds) {
+        if (!validIds.has(memberId)) {
+          return yield* new TeamOperationError({
+            code: "invalid_input",
+            message: `Unknown team member ID "${memberId}" in view access rule.`,
+          });
+        }
+      }
+    },
+  );
+
   const updateMemberRole = Effect.fn("TeamService.updateMemberRole")(function* (input: {
     readonly sessionId: AuthSessionId;
     readonly payload: TeamUpdateMemberRoleInput;
@@ -725,6 +879,7 @@ const make = Effect.gen(function* () {
     const updated = yield* repository
       .updateMemberRole({
         teamId: team.id,
+        actorMemberId: actor.id,
         memberId: target.id,
         role: input.payload.role,
         updatedAt,
@@ -738,6 +893,13 @@ const make = Effect.gen(function* () {
                 message: error.message,
               }),
             ),
+          TeamMemberForbiddenError: (error) =>
+            Effect.fail(
+              new TeamOperationError({
+                code: "forbidden",
+                message: error.message,
+              }),
+            ),
           TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
         }),
       );
@@ -747,9 +909,15 @@ const make = Effect.gen(function* () {
         message: "Team member could not be found.",
       });
     }
-    yield* publish({ version: 1, type: "memberUpserted", payload: updated.value });
-    yield* publishAccessChange({ type: "member", memberId: updated.value.id });
-    return updated.value;
+    const { previousRole, member: updatedMember } = updated.value;
+    const prevIsAdminTier = previousRole === "owner" || previousRole === "admin";
+    const nextIsAdminTier = updatedMember.role === "owner" || updatedMember.role === "admin";
+    if (prevIsAdminTier !== nextIsAdminTier) {
+      yield* reconcileMemberSessionScopes(updatedMember.id, updatedMember.role);
+    }
+    yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
+    yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
+    return updatedMember;
   });
 
   const updateMemberStatus = Effect.fn("TeamService.updateMemberStatus")(function* (input: {
@@ -796,6 +964,7 @@ const make = Effect.gen(function* () {
     const updated = yield* repository
       .updateMemberStatus({
         teamId: team.id,
+        actorMemberId: actor.id,
         memberId: target.id,
         status: input.payload.status,
         updatedAt,
@@ -809,6 +978,13 @@ const make = Effect.gen(function* () {
                 message: error.message,
               }),
             ),
+          TeamMemberForbiddenError: (error) =>
+            Effect.fail(
+              new TeamOperationError({
+                code: "forbidden",
+                message: error.message,
+              }),
+            ),
           TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
         }),
       );
@@ -819,14 +995,7 @@ const make = Effect.gen(function* () {
       });
     }
     if (updated.value.status !== "active") {
-      const sessionIds = yield* repository
-        .listSessionIdsForMember(updated.value.id)
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<AuthSessionId>));
-      yield* Effect.forEach(
-        sessionIds,
-        (memberSessionId) => sessionStore.revoke(memberSessionId).pipe(Effect.ignore),
-        { discard: true },
-      );
+      yield* revokeSessionsForMember(updated.value.id);
     }
     yield* publish({ version: 1, type: "memberUpserted", payload: updated.value });
     yield* publishAccessChange({ type: "member", memberId: updated.value.id });
@@ -856,6 +1025,9 @@ const make = Effect.gen(function* () {
       input.payload.description !== undefined && input.payload.description !== null
         ? input.payload.description.trim() || null
         : null;
+    const readRule = normalizeAccessRule(input.payload.readRule);
+    const postRule = normalizeAccessRule(input.payload.postRule);
+    yield* validateAccessRuleMemberIds(team.id, [readRule, postRule]);
     const nowIso = DateTime.formatIso(yield* DateTime.now);
     const viewId = TeamViewId.make(
       `view_${yield* random.uuidV4().pipe(Effect.mapError(toInternalError))}`,
@@ -866,8 +1038,8 @@ const make = Effect.gen(function* () {
       name,
       description,
       isDefault: false,
-      readRule: normalizeAccessRule(input.payload.readRule),
-      postRule: normalizeAccessRule(input.payload.postRule),
+      readRule,
+      postRule,
       createdAt: nowIso,
       updatedAt: nowIso,
     };
@@ -933,6 +1105,15 @@ const make = Effect.gen(function* () {
         : input.payload.description === null
           ? null
           : input.payload.description.trim() || null;
+    const nextReadRule =
+      input.payload.readRule !== undefined
+        ? normalizeAccessRule(input.payload.readRule)
+        : undefined;
+    const nextPostRule =
+      input.payload.postRule !== undefined
+        ? normalizeAccessRule(input.payload.postRule)
+        : undefined;
+    yield* validateAccessRuleMemberIds(team.id, [nextReadRule, nextPostRule]);
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const updated = yield* repository
       .updateView({
@@ -940,12 +1121,8 @@ const make = Effect.gen(function* () {
         viewId: existing.id,
         ...(nextName !== undefined ? { name: nextName } : {}),
         ...(nextDescription !== undefined ? { description: nextDescription } : {}),
-        ...(input.payload.readRule !== undefined
-          ? { readRule: normalizeAccessRule(input.payload.readRule) }
-          : {}),
-        ...(input.payload.postRule !== undefined
-          ? { postRule: normalizeAccessRule(input.payload.postRule) }
-          : {}),
+        ...(nextReadRule !== undefined ? { readRule: nextReadRule } : {}),
+        ...(nextPostRule !== undefined ? { postRule: nextPostRule } : {}),
         updatedAt,
       })
       .pipe(
@@ -1438,39 +1615,36 @@ const make = Effect.gen(function* () {
     sessionId: AuthSessionId,
     threadId: ThreadId,
   ) {
-    const workspaceOption = yield* repository
-      .getWorkspace()
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+    const workspaceOption = yield* repository.getWorkspace();
     if (Option.isNone(workspaceOption)) {
       return { kind: "personal" as const };
     }
     const team = workspaceOption.value;
-    const attributionOption = yield* repository
-      .getThreadAttribution(threadId)
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()));
-    if (Option.isNone(attributionOption)) {
-      return { kind: "unattributed" as const, team };
-    }
-    if (attributionOption.value.teamId !== team.id) {
-      return { kind: "wrong_team" as const };
-    }
-    const [memberOption, viewOption, defaultViewOption] = yield* Effect.all([
-      repository
-        .getMemberForSession(sessionId)
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>())),
-      repository
-        .getViewById(attributionOption.value.viewId)
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamView>())),
-      attributionOption.value.viewId === team.defaultViewId
-        ? Effect.succeed(Option.none<TeamView>())
-        : repository
-            .getViewById(team.defaultViewId)
-            .pipe(Effect.orElseSucceed(() => Option.none<TeamView>())),
+    const [attributionOption, memberOption] = yield* Effect.all([
+      repository.getThreadAttribution(threadId),
+      repository.getMemberForSession(sessionId),
     ]);
     const member =
       Option.isSome(memberOption) && memberOption.value.teamId === team.id
         ? memberOption.value
         : null;
+    if (Option.isNone(attributionOption)) {
+      const createdAtOption = yield* repository.getThreadCreatedAtInProjection(threadId);
+      const isLegacyPreTeam = isPreTeamLegacyTimestamp(
+        team,
+        Option.getOrUndefined(createdAtOption),
+      );
+      return { kind: "unattributed" as const, team, member, isLegacyPreTeam };
+    }
+    if (attributionOption.value.teamId !== team.id) {
+      return { kind: "wrong_team" as const };
+    }
+    const [viewOption, defaultViewOption] = yield* Effect.all([
+      repository.getViewById(attributionOption.value.viewId),
+      attributionOption.value.viewId === team.defaultViewId
+        ? Effect.succeed(Option.none<TeamView>())
+        : repository.getViewById(team.defaultViewId),
+    ]);
     const view = Option.getOrNull(viewOption) ?? Option.getOrNull(defaultViewOption);
     return {
       kind: "team_thread" as const,
@@ -1485,14 +1659,25 @@ const make = Effect.gen(function* () {
     sessionId: AuthSessionId,
     threadId: ThreadId,
   ) {
-    const ctx = yield* resolveThreadAccessContext(sessionId, threadId);
-    if (ctx.kind === "personal" || ctx.kind === "unattributed") {
-      return true;
-    }
-    if (ctx.kind === "wrong_team") {
-      return false;
-    }
-    return canMemberReadTeamThread({ member: ctx.member, view: ctx.view });
+    return yield* resolveThreadAccessContext(sessionId, threadId).pipe(
+      Effect.map((ctx) => {
+        if (ctx.kind === "personal") return true;
+        if (ctx.kind === "wrong_team") return false;
+        if (ctx.kind === "unattributed") {
+          if (!ctx.member || ctx.member.status !== "active") return false;
+          // Post-team unattributed threads fail closed for non-admin members; pre-team legacy threads stay readable.
+          return ctx.isLegacyPreTeam || isTeamAdminOrOwner(ctx.member);
+        }
+        return canMemberReadTeamThread({ member: ctx.member, view: ctx.view });
+      }),
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.canReadThread failed; denying access", {
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
   });
 
   const assertCanReadThread = Effect.fn("TeamService.assertCanReadThread")(function* (
@@ -1509,27 +1694,48 @@ const make = Effect.gen(function* () {
     sessionId: AuthSessionId,
     attachmentId: string,
   ) {
-    const workspaceOption = yield* repository
-      .getWorkspace()
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
-    if (Option.isNone(workspaceOption)) {
-      return true;
-    }
-    const segment = parseThreadSegmentFromAttachmentId(attachmentId);
-    if (segment === null || segment === PENDING_ATTACHMENT_THREAD_SEGMENT) {
-      return true;
-    }
-    const team = workspaceOption.value;
-    const attributions = yield* repository
-      .listThreadAttributions(team.id)
-      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadAttribution>));
-    const matched = attributions.find(
-      (attribution) => toSafeThreadAttachmentSegment(attribution.threadId) === segment,
+    return yield* Effect.gen(function* () {
+      const workspaceOption = yield* repository.getWorkspace();
+      if (Option.isNone(workspaceOption)) {
+        return true;
+      }
+      const team = workspaceOption.value;
+      const memberOption = yield* repository.getMemberForSession(sessionId);
+      const member =
+        Option.isSome(memberOption) && memberOption.value.teamId === team.id
+          ? memberOption.value
+          : null;
+      if (!member || member.status !== "active") {
+        return false;
+      }
+      const segment = parseThreadSegmentFromAttachmentId(attachmentId);
+      if (segment === null || segment === PENDING_ATTACHMENT_THREAD_SEGMENT) {
+        return true;
+      }
+      const matchedThreadId = yield* repository.findThreadIdByAttachmentSegment({
+        teamId: team.id,
+        segment,
+      });
+      if (Option.isNone(matchedThreadId)) {
+        // Check projection for pre-team legacy threads when no attribution exists yet.
+        const createdAtOption = yield* repository.getThreadCreatedAtInProjection(
+          segment as ThreadId,
+        );
+        return (
+          isPreTeamLegacyTimestamp(team, Option.getOrUndefined(createdAtOption)) ||
+          isTeamAdminOrOwner(member)
+        );
+      }
+      return yield* canReadThread(sessionId, matchedThreadId.value);
+    }).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.canReadAttachment failed; denying access", {
+          attachmentId,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
     );
-    if (!matched) {
-      return true;
-    }
-    return yield* canReadThread(sessionId, matched.threadId);
   });
 
   const assertCanReadAttachment = Effect.fn("TeamService.assertCanReadAttachment")(function* (
@@ -1551,63 +1757,87 @@ const make = Effect.gen(function* () {
     if (threadIds.length === 0) {
       return new Set<ThreadId>() as ReadonlySet<ThreadId>;
     }
-    const workspaceOption = yield* repository
-      .getWorkspace()
-      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
-    if (Option.isNone(workspaceOption)) {
-      return new Set<ThreadId>(threadIds) as ReadonlySet<ThreadId>;
-    }
-    const team = workspaceOption.value;
-    const [memberOption, views, attributions] = yield* Effect.all([
-      repository
-        .getMemberForSession(sessionId)
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>())),
-      repository.listViews(team.id).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamView>)),
-      repository
-        .listThreadAttributions(team.id)
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadAttribution>)),
-    ]);
-    const member =
-      Option.isSome(memberOption) && memberOption.value.teamId === team.id
-        ? memberOption.value
-        : null;
-    const viewById = new Map(views.map((view) => [view.id, view] as const));
-    const defaultView = viewById.get(team.defaultViewId) ?? null;
-    const attributionByThreadId = new Map(
-      attributions.map((attribution) => [attribution.threadId, attribution] as const),
+    return yield* Effect.gen(function* () {
+      const workspaceOption = yield* repository.getWorkspace();
+      if (Option.isNone(workspaceOption)) {
+        return new Set<ThreadId>(threadIds) as ReadonlySet<ThreadId>;
+      }
+      const team = workspaceOption.value;
+      const [memberOption, views, attributions] = yield* Effect.all([
+        repository.getMemberForSession(sessionId),
+        repository.listViews(team.id),
+        repository.listThreadAttributions(team.id),
+      ]);
+      const member =
+        Option.isSome(memberOption) && memberOption.value.teamId === team.id
+          ? memberOption.value
+          : null;
+      if (!member || member.status !== "active") {
+        return new Set<ThreadId>() as ReadonlySet<ThreadId>;
+      }
+      const viewById = new Map(views.map((view) => [view.id, view] as const));
+      const defaultView = viewById.get(team.defaultViewId) ?? null;
+      const attributionByThreadId = new Map(
+        attributions.map((attribution) => [attribution.threadId, attribution] as const),
+      );
+      const unattributedIds = threadIds.filter((threadId) => !attributionByThreadId.has(threadId));
+      const createdAtByThreadId =
+        unattributedIds.length > 0 && !isTeamAdminOrOwner(member)
+          ? yield* repository.listThreadCreatedAtInProjection(unattributedIds)
+          : new Map<ThreadId, string>();
+      const allowed = new Set<ThreadId>();
+      for (const threadId of threadIds) {
+        const attribution = attributionByThreadId.get(threadId);
+        if (!attribution) {
+          if (
+            isTeamAdminOrOwner(member) ||
+            isPreTeamLegacyTimestamp(team, createdAtByThreadId.get(threadId))
+          ) {
+            allowed.add(threadId);
+          }
+          continue;
+        }
+        const view = viewById.get(attribution.viewId) ?? defaultView;
+        if (canMemberReadTeamThread({ member, view })) {
+          allowed.add(threadId);
+        }
+      }
+      return allowed as ReadonlySet<ThreadId>;
+    }).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.filterReadableThreadIds failed; failing closed", { cause }),
+      ),
+      Effect.orElseSucceed(() => new Set<ThreadId>() as ReadonlySet<ThreadId>),
     );
-    const allowed = new Set<ThreadId>();
-    for (const threadId of threadIds) {
-      const attribution = attributionByThreadId.get(threadId);
-      if (!attribution) {
-        allowed.add(threadId);
-        continue;
-      }
-      const view = viewById.get(attribution.viewId) ?? defaultView;
-      if (canMemberReadTeamThread({ member, view })) {
-        allowed.add(threadId);
-      }
-    }
-    return allowed as ReadonlySet<ThreadId>;
   });
 
   const canPostInThread = Effect.fn("TeamService.canPostInThread")(function* (
     sessionId: AuthSessionId,
     threadId: ThreadId,
   ) {
-    const ctx = yield* resolveThreadAccessContext(sessionId, threadId);
-    if (ctx.kind === "personal" || ctx.kind === "unattributed") {
-      return true;
-    }
-    if (ctx.kind === "wrong_team") {
-      return false;
-    }
-    return (
-      resolveTeamThreadPostBlockReason({
-        member: ctx.member,
-        attribution: ctx.attribution,
-        view: ctx.view,
-      }) === "ok"
+    return yield* resolveThreadAccessContext(sessionId, threadId).pipe(
+      Effect.map((ctx) => {
+        if (ctx.kind === "personal") return true;
+        if (ctx.kind === "wrong_team") return false;
+        if (ctx.kind === "unattributed") {
+          if (!ctx.member || ctx.member.status !== "active") return false;
+          return ctx.isLegacyPreTeam || isTeamAdminOrOwner(ctx.member);
+        }
+        return (
+          resolveTeamThreadPostBlockReason({
+            member: ctx.member,
+            attribution: ctx.attribution,
+            view: ctx.view,
+          }) === "ok"
+        );
+      }),
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.canPostInThread failed; denying access", {
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => false),
     );
   });
 
@@ -1615,12 +1845,29 @@ const make = Effect.gen(function* () {
     sessionId: AuthSessionId,
     threadId: ThreadId,
   ) {
-    const ctx = yield* resolveThreadAccessContext(sessionId, threadId);
-    if (ctx.kind === "personal" || ctx.kind === "unattributed") {
+    const ctx = yield* resolveThreadAccessContext(sessionId, threadId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertCanPostInThread failed; denying access", {
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.mapError(() => teamPostAuthError()),
+    );
+    if (ctx.kind === "personal") {
       return;
     }
     if (ctx.kind === "wrong_team") {
       return yield* teamPostAuthError();
+    }
+    if (ctx.kind === "unattributed") {
+      if (!ctx.member || ctx.member.status !== "active") {
+        return yield* teamPostAuthError("This session is not bound to an active team member.");
+      }
+      if (!ctx.isLegacyPreTeam && !isTeamAdminOrOwner(ctx.member)) {
+        return yield* teamPostAuthError();
+      }
+      return;
     }
     const reason = resolveTeamThreadPostBlockReason({
       member: ctx.member,
@@ -1639,22 +1886,137 @@ const make = Effect.gen(function* () {
     return yield* teamPostAuthError();
   });
 
+  const assertCanCreateGuestShare = Effect.fn("TeamService.assertCanCreateGuestShare")(function* (
+    sessionId: AuthSessionId,
+    threadId: ThreadId,
+  ) {
+    const ctx = yield* resolveThreadAccessContext(sessionId, threadId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertCanCreateGuestShare failed; denying access", {
+          threadId,
+          cause,
+        }),
+      ),
+      Effect.mapError(() =>
+        teamAdminAuthError(
+          "You do not have permission to create a guest share for this thread.",
+          "team:guest_share:create",
+        ),
+      ),
+    );
+    if (ctx.kind === "personal") {
+      return;
+    }
+    if (ctx.kind === "wrong_team") {
+      return yield* teamAdminAuthError(
+        "You do not have permission to create a guest share for this thread.",
+        "team:guest_share:create",
+      );
+    }
+    if (!ctx.member || ctx.member.status !== "active") {
+      return yield* teamAdminAuthError(
+        "This session is not bound to an active team member.",
+        "team:guest_share:create",
+      );
+    }
+    if (ctx.kind === "unattributed") {
+      if (!ctx.isLegacyPreTeam && !isTeamAdminOrOwner(ctx.member)) {
+        return yield* teamAdminAuthError(
+          "You do not have permission to create a guest share for this thread.",
+          "team:guest_share:create",
+        );
+      }
+      return;
+    }
+    if (!canMemberReadTeamThread({ member: ctx.member, view: ctx.view })) {
+      return yield* teamReadAuthError();
+    }
+    const reason = resolveTeamThreadPostBlockReason({
+      member: ctx.member,
+      attribution: ctx.attribution,
+      view: ctx.view,
+    });
+    if (reason !== "ok") {
+      return yield* teamPostAuthError(
+        "You do not have permission to create a guest share for this thread.",
+      );
+    }
+    const viewReadableByAllRoles =
+      ctx.view !== null && ALL_TEAM_ROLES.every((role) => ctx.view!.readRule.roles.includes(role));
+    if (!viewReadableByAllRoles && !isTeamAdminOrOwner(ctx.member)) {
+      return yield* teamAdminAuthError(
+        "Only owner and admin members can share threads from restricted views.",
+        "team:guest_share:create",
+      );
+    }
+  });
+
+  const assertCanUseWorkflows = Effect.fn("TeamService.assertCanUseWorkflows")(function* (
+    sessionId: AuthSessionId,
+  ) {
+    const workspaceOption = yield* repository.getWorkspace().pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertCanUseWorkflows workspace lookup failed", { cause }),
+      ),
+      Effect.mapError(() =>
+        teamAdminAuthError(
+          "Only owner and admin members can access team workflows.",
+          "team:workflows",
+        ),
+      ),
+    );
+    if (Option.isNone(workspaceOption)) {
+      return;
+    }
+    const memberOption = yield* repository.getMemberForSession(sessionId).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("TeamService.assertCanUseWorkflows member lookup failed", { cause }),
+      ),
+      Effect.mapError(() =>
+        teamAdminAuthError(
+          "Only owner and admin members can access team workflows.",
+          "team:workflows",
+        ),
+      ),
+    );
+    const member =
+      Option.isSome(memberOption) && memberOption.value.teamId === workspaceOption.value.id
+        ? memberOption.value
+        : null;
+    if (!isTeamAdminOrOwner(member)) {
+      return yield* teamAdminAuthError(
+        "Only owner and admin members can access team workflows.",
+        "team:workflows",
+      );
+    }
+  });
+
   const assertCanCreateThreadInView = Effect.fn("TeamService.assertCanCreateThreadInView")(
     function* (input: {
       readonly sessionId: AuthSessionId;
       readonly viewId?: TeamViewId;
       readonly locked?: boolean;
     }) {
-      const workspaceOption = yield* repository
-        .getWorkspace()
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+      const workspaceOption = yield* repository.getWorkspace().pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.assertCanCreateThreadInView workspace lookup failed", {
+            cause,
+          }),
+        ),
+        Effect.mapError(() => teamPostAuthError()),
+      );
       if (Option.isNone(workspaceOption)) {
         return;
       }
       const team = workspaceOption.value;
-      const memberOption = yield* repository
-        .getMemberForSession(input.sessionId)
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+      const memberOption = yield* repository.getMemberForSession(input.sessionId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.assertCanCreateThreadInView member lookup failed", {
+            cause,
+          }),
+        ),
+        Effect.mapError(() => teamPostAuthError()),
+      );
       const member =
         Option.isSome(memberOption) && memberOption.value.teamId === team.id
           ? memberOption.value
@@ -1666,9 +2028,15 @@ const make = Effect.gen(function* () {
         return yield* teamPostAuthError("Only owner and admin members can create locked threads.");
       }
       const targetViewId = input.viewId ?? team.defaultViewId;
-      const viewOption = yield* repository
-        .getViewById(targetViewId)
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamView>()));
+      const viewOption = yield* repository.getViewById(targetViewId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.assertCanCreateThreadInView view lookup failed", {
+            targetViewId,
+            cause,
+          }),
+        ),
+        Effect.mapError(() => teamPostAuthError()),
+      );
       const view =
         Option.isSome(viewOption) && viewOption.value.teamId === team.id ? viewOption.value : null;
       if (!canMemberCreateThreadInTeamView(member, view, input.locked === true)) {
@@ -1712,10 +2080,63 @@ const make = Effect.gen(function* () {
       case "thread.mark-unread":
         yield* assertCanReadThread(sessionId, command.threadId);
         return;
-      case "thread.fork":
-        yield* assertCanReadThread(sessionId, command.sourceThreadId);
-        yield* assertCanCreateThreadInView({ sessionId });
+      case "thread.delete": {
+        const ctx = yield* resolveThreadAccessContext(sessionId, command.threadId).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("TeamService.assertCanDispatchCommand(thread.delete) failed", {
+              threadId: command.threadId,
+              cause,
+            }),
+          ),
+          Effect.mapError(() =>
+            teamPostAuthError("You do not have permission to delete this thread."),
+          ),
+        );
+        if (ctx.kind === "personal") return;
+        if (ctx.kind === "wrong_team") {
+          return yield* teamPostAuthError("You do not have permission to delete this thread.");
+        }
+        if (!ctx.member || ctx.member.status !== "active") {
+          return yield* teamPostAuthError("This session is not bound to an active team member.");
+        }
+        if (ctx.kind === "unattributed") {
+          if (!ctx.isLegacyPreTeam && !isTeamAdminOrOwner(ctx.member)) {
+            return yield* teamPostAuthError("You do not have permission to delete this thread.");
+          }
+          return;
+        }
+        if (!isTeamAdminOrOwner(ctx.member) && ctx.attribution.creatorMemberId !== ctx.member.id) {
+          return yield* teamPostAuthError(
+            "Only the thread creator, admins, or owners can delete this thread.",
+          );
+        }
+        if (!isTeamAdminOrOwner(ctx.member) && ctx.attribution.locked) {
+          return yield* teamPostAuthError(
+            "This thread is locked. Only owners and admins can delete it.",
+          );
+        }
         return;
+      }
+      case "thread.fork": {
+        const sourceCtx = yield* resolveThreadAccessContext(sessionId, command.sourceThreadId).pipe(
+          Effect.tapError((cause) =>
+            Effect.logWarning("TeamService.assertCanDispatchCommand(thread.fork) failed", {
+              sourceThreadId: command.sourceThreadId,
+              cause,
+            }),
+          ),
+          Effect.mapError(() => teamReadAuthError()),
+        );
+        if (sourceCtx.kind === "personal") return;
+        yield* assertCanReadThread(sessionId, command.sourceThreadId);
+        const inheritedViewId =
+          sourceCtx.kind === "team_thread" ? sourceCtx.attribution.viewId : undefined;
+        yield* assertCanCreateThreadInView({
+          sessionId,
+          ...(inheritedViewId !== undefined ? { viewId: inheritedViewId } : {}),
+        });
+        return;
+      }
       case "thread.merge_back":
         yield* assertCanReadThread(sessionId, command.sourceThreadId);
         yield* assertCanPostInThread(sessionId, command.targetThreadId);
@@ -1803,6 +2224,13 @@ const make = Effect.gen(function* () {
         return yield* new TeamOperationError({
           code: "not_found",
           message: "Thread not found.",
+        });
+      }
+      const readable = yield* canReadThread(input.sessionId, input.payload.threadId);
+      if (!readable) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "You do not have permission to view this thread.",
         });
       }
     }
@@ -2306,22 +2734,22 @@ const make = Effect.gen(function* () {
       readonly viewId?: TeamViewId;
       readonly locked?: boolean;
     }) {
-      const workspaceOption = yield* repository
-        .getWorkspace()
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
-      if (Option.isNone(workspaceOption)) return false;
-      const existing = yield* repository
-        .getThreadAttribution(input.threadId)
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()));
-      if (Option.isSome(existing)) return false;
-      const memberOption = yield* repository
-        .getMemberForSession(input.sessionId)
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
-      if (Option.isNone(memberOption)) return false;
-      const locked = input.locked === true && canToggleTeamThreadLock(memberOption.value.role);
-      const nowIso = DateTime.formatIso(yield* DateTime.now);
-      const inserted = yield* repository
-        .recordThreadAttribution({
+      return yield* Effect.gen(function* () {
+        const workspaceOption = yield* repository.getWorkspace();
+        if (Option.isNone(workspaceOption)) return false;
+        const existing = yield* repository.getThreadAttribution(input.threadId);
+        if (Option.isSome(existing)) return false;
+        const memberOption = yield* repository.getMemberForSession(input.sessionId);
+        if (
+          Option.isNone(memberOption) ||
+          memberOption.value.teamId !== workspaceOption.value.id ||
+          memberOption.value.status !== "active"
+        ) {
+          return yield* teamPostAuthError("This session is not bound to an active team member.");
+        }
+        const locked = input.locked === true && canToggleTeamThreadLock(memberOption.value.role);
+        const nowIso = DateTime.formatIso(yield* DateTime.now);
+        const inserted = yield* repository.recordThreadAttribution({
           threadId: input.threadId,
           teamId: workspaceOption.value.id,
           creatorMemberId: memberOption.value.id,
@@ -2329,11 +2757,92 @@ const make = Effect.gen(function* () {
           locked,
           lockedByMemberId: locked ? memberOption.value.id : null,
           createdAt: nowIso,
-        })
-        .pipe(Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()));
-      return Option.isSome(inserted);
+        });
+        if (Option.isNone(inserted)) {
+          return yield* teamPostAuthError("Failed to prepare team thread attribution.");
+        }
+        return true;
+      }).pipe(
+        Effect.tapError((cause) =>
+          cause._tag === "EnvironmentAuthorizationError"
+            ? Effect.void
+            : Effect.logWarning("TeamService.prepareThreadAttribution failed", {
+                threadId: input.threadId,
+                cause,
+              }),
+        ),
+        Effect.mapError((cause) =>
+          cause._tag === "EnvironmentAuthorizationError"
+            ? cause
+            : teamPostAuthError("Failed to prepare team thread attribution."),
+        ),
+      );
     },
   );
+
+  const prepareThreadInheritedFromParent = Effect.fn(
+    "TeamService.prepareThreadInheritedFromParent",
+  )(function* (input: {
+    readonly parentThreadId: ThreadId;
+    readonly threadId: ThreadId;
+    readonly creatorSessionId?: AuthSessionId;
+  }) {
+    return yield* Effect.gen(function* () {
+      const workspaceOption = yield* repository.getWorkspace();
+      if (Option.isNone(workspaceOption)) return false;
+      const team = workspaceOption.value;
+      const existing = yield* repository.getThreadAttribution(input.threadId);
+      if (Option.isSome(existing)) return false;
+      const parentAttribution = yield* repository.getThreadAttribution(input.parentThreadId);
+      let creatorMemberId: TeamMemberId | null = null;
+      let viewId = team.defaultViewId;
+      if (Option.isSome(parentAttribution) && parentAttribution.value.teamId === team.id) {
+        creatorMemberId = parentAttribution.value.creatorMemberId;
+        viewId = parentAttribution.value.viewId;
+      }
+      if (input.creatorSessionId !== undefined) {
+        const actorOption = yield* repository.getMemberForSession(input.creatorSessionId);
+        if (
+          Option.isNone(actorOption) ||
+          actorOption.value.teamId !== team.id ||
+          actorOption.value.status !== "active"
+        ) {
+          return yield* teamPostAuthError("This session is not bound to an active team member.");
+        }
+        creatorMemberId = actorOption.value.id;
+      }
+      if (creatorMemberId === null) {
+        return false;
+      }
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const inserted = yield* repository.recordThreadAttribution({
+        threadId: input.threadId,
+        teamId: team.id,
+        creatorMemberId,
+        viewId,
+        createdAt: nowIso,
+      });
+      if (Option.isNone(inserted)) {
+        return yield* teamPostAuthError("Failed to prepare inherited team thread attribution.");
+      }
+      return true;
+    }).pipe(
+      Effect.tapError((cause) =>
+        cause._tag === "EnvironmentAuthorizationError"
+          ? Effect.void
+          : Effect.logWarning("TeamService.prepareThreadInheritedFromParent failed", {
+              parentThreadId: input.parentThreadId,
+              threadId: input.threadId,
+              cause,
+            }),
+      ),
+      Effect.mapError((cause) =>
+        cause._tag === "EnvironmentAuthorizationError"
+          ? cause
+          : teamPostAuthError("Failed to prepare inherited team thread attribution."),
+      ),
+    );
+  });
 
   const rollbackPreparedThreadAttribution = Effect.fn(
     "TeamService.rollbackPreparedThreadAttribution",
@@ -2442,6 +2951,7 @@ const make = Effect.gen(function* () {
           type: "threadAttributed",
           payload: attribution.value,
         });
+        yield* publishAccessChange({ type: "threadView", threadId: input.threadId });
       }
       if (input.turnId) {
         const inserted = yield* repository
@@ -2483,6 +2993,7 @@ const make = Effect.gen(function* () {
     getState,
     streamState,
     subscribeAccessChanges,
+    openAccessChangeSubscription,
     initializeTeam,
     updateMyPseudo,
     updateMemberRole,
@@ -2506,6 +3017,8 @@ const make = Effect.gen(function* () {
     assertCanPostInThread,
     assertCanLaunchThread,
     assertCanDispatchCommand,
+    assertCanCreateGuestShare,
+    assertCanUseWorkflows,
     followThread,
     unfollowThread,
     listFollowedThreads,
@@ -2517,6 +3030,7 @@ const make = Effect.gen(function* () {
     subscribeNotificationEvents,
     recordThreadCreated,
     prepareThreadAttribution,
+    prepareThreadInheritedFromParent,
     rollbackPreparedThreadAttribution,
     recordTurnAuthored,
     recordThreadInheritedFromParent,

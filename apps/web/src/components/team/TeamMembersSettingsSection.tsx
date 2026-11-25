@@ -19,6 +19,7 @@ import { ShieldIcon } from "lucide-react";
 import { useState } from "react";
 
 import { m } from "~/i18n/messages";
+import { readLocalApi } from "~/localApi";
 import { teamEnvironment } from "~/state/team";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { SettingsSection } from "../settings/settingsLayout";
@@ -93,6 +94,17 @@ export function TeamMembersSettingsSection({
 
   const handleStatusChange = async (member: TeamMember, nextStatus: TeamMemberStatus) => {
     if (member.status === nextStatus) return;
+    if (nextStatus === "removed") {
+      const confirmMessage = [
+        gt('Remove "{pseudo}" from the team?', { pseudo: member.pseudo }),
+        gt("This revokes all their sessions. Removed members cannot be reactivated."),
+      ].join("\n");
+      const api = readLocalApi();
+      const confirmed = api
+        ? await api.dialogs.confirm(confirmMessage, { variant: "destructive" })
+        : typeof window === "undefined" || window.confirm(confirmMessage);
+      if (!confirmed) return;
+    }
     setBusyMemberId(member.id);
     const result = await runUpdateMemberStatus({
       environmentId,

@@ -173,7 +173,7 @@ export const TeamView = Schema.Struct({
 });
 export type TeamView = typeof TeamView.Type;
 
-export function matchesTeamAccessRule(
+function matchesTeamAccessRule(
   rule: TeamAccessRule,
   member: Pick<TeamMember, "id" | "role">,
 ): boolean {

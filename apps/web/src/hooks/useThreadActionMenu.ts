@@ -50,7 +50,11 @@ import {
 } from "@t3tools/client-runtime/state/project-grouping";
 import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
-import { readTeamThreadAccessActionState, readTeamThreadFollowActionState } from "../state/team";
+import {
+  readTeamThreadAccessActionState,
+  readTeamThreadFollowActionState,
+  readTeamThreadPostPermission,
+} from "../state/team";
 import { useTeamThreadAccessActions } from "../components/team/useTeamThreadAccessActions";
 import { useTeamThreadFollowToggle } from "../components/team/useTeamThreadFollowToggle";
 import { useCopyToClipboard } from "./useCopyToClipboard";
@@ -143,9 +147,14 @@ export function useThreadActionMenu(input: {
       threadRef.environmentId,
       threadRef.threadId,
     );
+    const canTeamPost = readTeamThreadPostPermission(
+      threadRef.environmentId,
+      threadRef.threadId,
+    ).canPost;
     const items = buildThreadActionMenuItems({
-      canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
-      canTriage: threadTriagePermitted(threadRef.environmentId),
+      canOperate:
+        readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope) && canTeamPost,
+      canTriage: threadTriagePermitted(threadRef.environmentId) && canTeamPost,
       canFind: onFind !== undefined,
       canRename: onStartRename !== undefined,
       branch: thread.branch ?? null,
@@ -160,7 +169,7 @@ export function useThreadActionMenu(input: {
       hasCompletedRun: thread.latestRun?.completedAt != null,
       supports,
       snoozePresets,
-      canShareWithGuest,
+      canShareWithGuest: canShareWithGuest && canTeamPost,
       canTurnIntoProject: canTurnThreadIntoProject(threadRef),
       teamFollow: readTeamThreadFollowActionState(threadRef.environmentId, threadRef.threadId),
       teamView: teamAccessActions.teamView,
@@ -171,9 +180,10 @@ export function useThreadActionMenu(input: {
       if (!api) return;
       if (
         threadActionRequiresOperate(action) &&
-        !(isThreadTriageAction(action)
+        (!(isThreadTriageAction(action)
           ? threadTriagePermitted(threadRef.environmentId)
-          : readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope))
+          : readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) ||
+          !readTeamThreadPostPermission(threadRef.environmentId, threadRef.threadId).canPost)
       ) {
         failureToast(
           m(msg("Thread action unavailable")),

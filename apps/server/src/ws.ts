@@ -312,8 +312,9 @@ import {
   filterSearchThreadsResultForSession,
   filterShellSnapshotForSession,
   filterThreadRecordByReadableIds,
-  guardThreadStreamForSession,
+  guardThreadScopedStreamForSession,
   makeTeamWsRpcHandlers,
+  prepareTeamDispatchAttribution,
   recordTeamDispatchEvents,
   recordTeamThreadLaunch,
   withTeamShellAccessUpdates,
@@ -2105,7 +2106,21 @@ export const layerWsRpc = (
         [WS_METHODS.issuesComments]: (input) => issues.comments(input),
         [WS_METHODS.issuesTemplates]: (input) => issues.templates(input),
         [WS_METHODS.issuesCandidates]: (input) => issues.candidates(input),
-        [WS_METHODS.issuesLinkedThreads]: (input) => threadIssues.linkedThreads(input),
+        [WS_METHODS.issuesLinkedThreads]: (input) =>
+          threadIssues.linkedThreads(input).pipe(
+            Effect.flatMap((result) =>
+              teamService
+                .filterReadableThreadIds(
+                  currentSessionId,
+                  result.threads.map((thread) => thread.id),
+                )
+                .pipe(
+                  Effect.map((readableIds) => ({
+                    threads: result.threads.filter((thread) => readableIds.has(thread.id)),
+                  })),
+                ),
+            ),
+          ),
         [WS_METHODS.issuesCreate]: (input) => issues.create(input),
         [WS_METHODS.issuesComment]: (input) => issues.comment(input),
         [WS_METHODS.issuesUpdate]: (input) => issues.update(input),
@@ -2135,13 +2150,11 @@ export const layerWsRpc = (
             Effect.andThen(teamService.assertCanDispatchCommand(currentSessionId, command)),
             Effect.andThen(
               Effect.gen(function* () {
-                const preparedAttribution =
-                  command.type === "thread.create"
-                    ? yield* teamService.prepareThreadAttribution({
-                        sessionId: currentSessionId,
-                        threadId: command.threadId,
-                      })
-                    : false;
+                const preparedThreadId = yield* prepareTeamDispatchAttribution(
+                  teamService,
+                  currentSessionId,
+                  command,
+                );
                 return yield* startup
                   .enqueueCommand(
                     (command.type === "prepared-run.retry"
@@ -2161,8 +2174,8 @@ export const layerWsRpc = (
                   )
                   .pipe(
                     Effect.onError(() =>
-                      preparedAttribution && command.type === "thread.create"
-                        ? teamService.rollbackPreparedThreadAttribution(command.threadId)
+                      preparedThreadId !== null
+                        ? teamService.rollbackPreparedThreadAttribution(preparedThreadId)
                         : Effect.void,
                     ),
                     Effect.tap((result) =>
@@ -2261,18 +2274,13 @@ export const layerWsRpc = (
               ),
             ),
         [ORCHESTRATION_V2_WS_METHODS.searchThreadStream]: (input) =>
-          Stream.unwrap(
-            teamService
-              .assertCanReadThread(currentSessionId, input.threadId)
-              .pipe(
-                Effect.as(
-                  threadManagement
-                    .searchThreadStream(input)
-                    .pipe(
-                      Stream.mapError((cause) => new OrchestrationV2SearchThreadError({ cause })),
-                    ),
-                ),
-              ),
+          guardThreadScopedStreamForSession(
+            teamService,
+            currentSessionId,
+            input.threadId,
+            threadManagement
+              .searchThreadStream(input)
+              .pipe(Stream.mapError((cause) => new OrchestrationV2SearchThreadError({ cause }))),
           ),
         [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) =>
           ThreadSearch.searchThreadsWithOlderSettledRows({
@@ -2586,67 +2594,114 @@ export const layerWsRpc = (
             subscribeOrchestrationV2Shell(input, { teamService, sessionId: currentSessionId }),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
-          guardThreadStreamForSession(
+          guardThreadScopedStreamForSession(
             teamService,
             currentSessionId,
             input.threadId,
             Stream.unwrap(
               Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-                Effect.andThen(teamService.assertCanReadThread(currentSessionId, input.threadId)),
                 Effect.andThen(threadViewers.view(input.threadId)),
                 Effect.andThen(subscribeOrchestrationV2Thread(input)),
               ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: (input) =>
-          Stream.unwrap(
-            Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
-              Effect.andThen(teamService.assertCanReadThread(currentSessionId, input.threadId)),
-              Effect.as(commandOutputHub.subscribe(input)),
+          guardThreadScopedStreamForSession(
+            teamService,
+            currentSessionId,
+            input.threadId,
+            Stream.unwrap(
+              Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+                Effect.as(commandOutputHub.subscribe(input)),
+              ),
             ),
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
-          Stream.unwrap(
-            teamService
-              .assertCanReadThread(currentSessionId, input.threadId)
-              .pipe(Effect.as(providerSessionManager.subscribePromptSuggestion(input.threadId))),
+          guardThreadScopedStreamForSession(
+            teamService,
+            currentSessionId,
+            input.threadId,
+            providerSessionManager.subscribePromptSuggestion(input.threadId),
           ),
         [WS_METHODS.workflowsSubscribe]: (input) =>
-          input.changes === true ? workflows.watch : Workflows.wholeLists(workflows.watch),
-        [WS_METHODS.workflowsCounts]: (_input) => workflows.counts,
+          Stream.unwrap(
+            teamService
+              .assertCanUseWorkflows(currentSessionId)
+              .pipe(
+                Effect.as(
+                  input.changes === true ? workflows.watch : Workflows.wholeLists(workflows.watch),
+                ),
+              ),
+          ),
+        [WS_METHODS.workflowsCounts]: (_input) =>
+          Stream.unwrap(
+            teamService.assertCanUseWorkflows(currentSessionId).pipe(Effect.as(workflows.counts)),
+          ),
         [WS_METHODS.workflowsGet]: (input) =>
-          workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+          teamService
+            .assertCanUseWorkflows(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+              ),
+            ),
         [WS_METHODS.workflowsAnswer]: (input) =>
-          serverAuth.listClientSessions(currentSessionId).pipe(
-            Effect.map((sessions) =>
-              EnvironmentAuth.clientSessionLabel(
-                sessions.find((session) => session.current)?.client,
+          teamService.assertCanUseWorkflows(currentSessionId).pipe(
+            Effect.andThen(
+              serverAuth.listClientSessions(currentSessionId).pipe(
+                Effect.map((sessions) =>
+                  EnvironmentAuth.clientSessionLabel(
+                    sessions.find((session) => session.current)?.client,
+                  ),
+                ),
+                Effect.orElseSucceed(() => EnvironmentAuth.clientSessionLabel(undefined)),
+                // The label names it to others; the session tells its own client the answer is its own.
+                Effect.map((label) => ({ label, sessionId: currentSessionId })),
+                Effect.flatMap((answeredBy) =>
+                  workflows.answer(
+                    input.runId,
+                    input.name,
+                    {
+                      choice: input.choice,
+                      ...(input.reason === undefined ? {} : { reason: input.reason }),
+                    },
+                    answeredBy,
+                  ),
+                ),
+                Effect.mapError(toWorkflowRequestError),
               ),
             ),
-            Effect.orElseSucceed(() => EnvironmentAuth.clientSessionLabel(undefined)),
-            // The label names it to others; the session tells its own client the answer is its own.
-            Effect.map((label) => ({ label, sessionId: currentSessionId })),
-            Effect.flatMap((answeredBy) =>
-              workflows.answer(
-                input.runId,
-                input.name,
-                {
-                  choice: input.choice,
-                  ...(input.reason === undefined ? {} : { reason: input.reason }),
-                },
-                answeredBy,
-              ),
-            ),
-            Effect.mapError(toWorkflowRequestError),
           ),
         [WS_METHODS.workflowsResume]: (input) =>
-          workflows.resume(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+          teamService
+            .assertCanUseWorkflows(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                workflows.resume(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
+              ),
+            ),
         [WS_METHODS.workflowsCancel]: (input) =>
-          workflows.cancel(input.runId, input.reason).pipe(Effect.mapError(toWorkflowRequestError)),
-        [WS_METHODS.workflowsGetDefinition]: (_input) => workflowDefinitions.read,
+          teamService
+            .assertCanUseWorkflows(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                workflows
+                  .cancel(input.runId, input.reason)
+                  .pipe(Effect.mapError(toWorkflowRequestError)),
+              ),
+            ),
+        [WS_METHODS.workflowsGetDefinition]: (_input) =>
+          teamService
+            .assertCanUseWorkflows(currentSessionId)
+            .pipe(Effect.andThen(workflowDefinitions.read)),
         [WS_METHODS.workflowsSaveDefinition]: (input) =>
-          workflowDefinitions.save(input.name, input.source),
-        [WS_METHODS.workflowsDeleteDefinition]: (input) => workflowDefinitions.remove(input.name),
+          teamService
+            .assertCanUseWorkflows(currentSessionId)
+            .pipe(Effect.andThen(workflowDefinitions.save(input.name, input.source))),
+        [WS_METHODS.workflowsDeleteDefinition]: (input) =>
+          teamService
+            .assertCanUseWorkflows(currentSessionId)
+            .pipe(Effect.andThen(workflowDefinitions.remove(input.name))),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
@@ -2668,6 +2723,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.guestShareCreate]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(teamService.assertCanCreateGuestShare(currentSessionId, input.threadId)),
             Effect.andThen(guestShares.create(input)),
           ),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
@@ -2910,6 +2966,7 @@ export const layerWsRpc = (
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(
             function* (input) {
+              yield* teamService.assertCanPostInThread(currentSessionId, input.threadId);
               const projection = yield* threadManagement.getThreadRecords(input.threadId, [
                 "providerThreads",
               ]);
@@ -2945,6 +3002,7 @@ export const layerWsRpc = (
             (effect, input) =>
               effect.pipe(
                 Effect.mapError((cause) =>
+                  cause._tag === "EnvironmentAuthorizationError" ||
                   isProviderUploadFeedbackError(cause)
                     ? cause
                     : new ProviderUploadFeedbackError({
@@ -3049,6 +3107,7 @@ export const layerWsRpc = (
           peerClientPairing.requestForLink(input, currentSession),
         [WS_METHODS.peerLinksAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            Effect.andThen(teamService.assertCanPostInThread(currentSessionId, input.threadId)),
             Effect.andThen(peerLinkRequests.answer(input)),
           ),
         [WS_METHODS.serverGetSettings]: (_input) =>
@@ -3146,6 +3205,18 @@ export const layerWsRpc = (
                 : listLinkedPullRequestThreads(key).pipe(
                     Effect.provideService(SqlClient.SqlClient, sql),
                   ),
+            ),
+            Effect.flatMap((result) =>
+              teamService
+                .filterReadableThreadIds(
+                  currentSessionId,
+                  result.threads.map((thread) => thread.id),
+                )
+                .pipe(
+                  Effect.map((readableIds) => ({
+                    threads: result.threads.filter((thread) => readableIds.has(thread.id)),
+                  })),
+                ),
             ),
           ),
         [WS_METHODS.pullRequestsDetail]: (input) =>
@@ -3283,11 +3354,18 @@ export const layerWsRpc = (
               ),
             ),
         [WS_METHODS.projectsCreateFromThread]: (input) =>
-          scratchThreadPromotion
-            .promote(input)
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
             .pipe(
-              Effect.mapError(
-                (cause) => new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+              Effect.andThen(
+                scratchThreadPromotion
+                  .promote(input)
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationDispatchCommandError({ message: cause.message, cause }),
+                    ),
+                  ),
               ),
             ),
         [WS_METHODS.projectCloneCancel]: (input) =>
@@ -3426,6 +3504,16 @@ export const layerWsRpc = (
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
             yield* assertCanReadAssetResource(teamService, currentSessionId, input.resource);
+            const teamAccess = (yield* teamService.isTeamConfigured())
+              ? {
+                  sessionId: currentSessionId,
+                  ...(input.resource._tag === "workspace-file" ||
+                  input.resource._tag === "media-file" ||
+                  input.resource._tag === "tool-output-image"
+                    ? { threadId: input.resource.threadId }
+                    : {}),
+                }
+              : undefined;
             const path = yield* Path.Path;
             if (
               input.resource._tag === "attachment" ||
@@ -3438,7 +3526,10 @@ export const layerWsRpc = (
                 path.isAbsolute(input.resource.path) &&
                 !isNetworkPath(input.resource.path))
             ) {
-              return yield* issueAssetUrl({ resource: input.resource });
+              return yield* issueAssetUrl({
+                resource: input.resource,
+                ...(teamAccess !== undefined ? { teamAccess } : {}),
+              });
             }
             if (input.resource._tag === "draft-workspace-file") {
               return yield* issueAssetUrl({
@@ -3503,6 +3594,7 @@ export const layerWsRpc = (
             return yield* issueAssetUrl({
               resource: input.resource,
               workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
+              ...(teamAccess !== undefined ? { teamAccess } : {}),
             });
           }),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
@@ -3517,11 +3609,23 @@ export const layerWsRpc = (
         [WS_METHODS.vcsRefreshBranch]: (input) =>
           vcsStatusBroadcaster.refreshBranchStatus(input).pipe(Effect.asVoid),
         [WS_METHODS.subscribeVcsStatus]: (input) => vcsStatusBroadcaster.streamStatus(input),
-        [WS_METHODS.subscribeWorktreeSetup]: (input) => worktreeSetupTracker.stream(input.threadId),
+        [WS_METHODS.subscribeWorktreeSetup]: (input) =>
+          guardThreadScopedStreamForSession(
+            teamService,
+            currentSessionId,
+            input.threadId,
+            worktreeSetupTracker.stream(input.threadId),
+          ),
         [WS_METHODS.worktreeSetupCancel]: (input) =>
-          worktreeSetupTracker
-            .cancel(input.threadId)
-            .pipe(Effect.map((cancelled) => ({ cancelled }))),
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(
+              Effect.andThen(
+                worktreeSetupTracker
+                  .cancel(input.threadId)
+                  .pipe(Effect.map((cancelled) => ({ cancelled }))),
+              ),
+            ),
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           vcsStatusBroadcaster.refreshStatus(input.cwd, { localOnly: input.localOnly ?? false }),
         [WS_METHODS.vcsPull]: (input) =>
@@ -3533,51 +3637,71 @@ export const layerWsRpc = (
             }),
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
-          Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-            gitWorkflow
-              .runStackedAction(input, {
-                actionId: input.actionId,
-                progressReporter: {
-                  publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
-                },
-              })
-              .pipe(
-                Effect.matchCauseEffect({
-                  // Earlier steps (branch, commit) may have landed before the failing one.
-                  onFailure: (cause) =>
-                    refreshGitStatus(input.cwd).pipe(Effect.andThen(Queue.failCause(queue, cause))),
-                  onSuccess: (result) =>
-                    (input.threadId === undefined
-                      ? Effect.void
-                      : linkCreatedPullRequest({
-                          threadId: input.threadId,
-                          cwd: input.cwd,
-                          result,
-                          commandId: serverCommandId("pr-created-link"),
-                        }).pipe(
-                          Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
-                          Effect.provideService(ProjectService.ProjectService, projectService),
-                          Effect.provideService(
-                            RepositoryIdentityResolver.RepositoryIdentityResolver,
-                            repositoryIdentityResolver,
+          Stream.unwrap(
+            (input.threadId === undefined
+              ? Effect.void
+              : teamService.assertCanPostInThread(currentSessionId, input.threadId)
+            ).pipe(
+              Effect.as(
+                Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
+                  gitWorkflow
+                    .runStackedAction(input, {
+                      actionId: input.actionId,
+                      progressReporter: {
+                        publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                      },
+                    })
+                    .pipe(
+                      Effect.matchCauseEffect({
+                        // Earlier steps (branch, commit) may have landed before the failing one.
+                        onFailure: (cause) =>
+                          refreshGitStatus(input.cwd).pipe(
+                            Effect.andThen(Queue.failCause(queue, cause)),
                           ),
-                        )
-                    ).pipe(
-                      Effect.andThen(
-                        refreshPushedPullRequests(input, result).pipe(
-                          Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
-                          Effect.provideService(ProjectStore.ProjectStoreV2, projectStore),
-                          Effect.provideService(
-                            PullRequestService.PullRequestService,
-                            pullRequests,
+                        onSuccess: (result) =>
+                          (input.threadId === undefined
+                            ? Effect.void
+                            : linkCreatedPullRequest({
+                                threadId: input.threadId,
+                                cwd: input.cwd,
+                                result,
+                                commandId: serverCommandId("pr-created-link"),
+                              }).pipe(
+                                Effect.provideService(
+                                  Orchestrator.OrchestratorV2,
+                                  orchestrationEngine,
+                                ),
+                                Effect.provideService(
+                                  ProjectService.ProjectService,
+                                  projectService,
+                                ),
+                                Effect.provideService(
+                                  RepositoryIdentityResolver.RepositoryIdentityResolver,
+                                  repositoryIdentityResolver,
+                                ),
+                              )
+                          ).pipe(
+                            Effect.andThen(
+                              refreshPushedPullRequests(input, result).pipe(
+                                Effect.provideService(
+                                  Orchestrator.OrchestratorV2,
+                                  orchestrationEngine,
+                                ),
+                                Effect.provideService(ProjectStore.ProjectStoreV2, projectStore),
+                                Effect.provideService(
+                                  PullRequestService.PullRequestService,
+                                  pullRequests,
+                                ),
+                              ),
+                            ),
+                            Effect.andThen(refreshGitStatus(input.cwd)),
+                            Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
                           ),
-                        ),
-                      ),
-                      Effect.andThen(refreshGitStatus(input.cwd)),
-                      Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
+                      }),
                     ),
-                }),
+                ),
               ),
+            ),
           ),
         [WS_METHODS.gitResolvePullRequest]: (input) => gitWorkflow.resolvePullRequest(input),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
@@ -3656,35 +3780,68 @@ export const layerWsRpc = (
         [WS_METHODS.reviewGetDiffPreview]: (input) => review.getDiffPreview(input),
         [WS_METHODS.reviewGetDiffFileContents]: (input) => review.getDiffFileContents(input),
         [WS_METHODS.terminalOpen]: (input) =>
-          prepareTerminalLaunch(input).pipe(
-            Effect.flatMap((launch) =>
-              terminalManager
-                .open(launch.input)
-                .pipe(Effect.provideService(TerminalManager.TerminalCwdRecovery, launch.recover)),
-            ),
-          ),
-        [WS_METHODS.terminalAttach]: (input, metadata) =>
-          Stream.unwrap(
-            prepareTerminalLaunch(input).pipe(
-              Effect.map((launch) =>
-                terminalManager
-                  .attachOutputStream(launch.input, terminalViewerId(metadata))
-                  .pipe(Stream.provideService(TerminalManager.TerminalCwdRecovery, launch.recover)),
+          teamService
+            .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
+            .pipe(
+              Effect.andThen(
+                prepareTerminalLaunch(input).pipe(
+                  Effect.flatMap((launch) =>
+                    terminalManager
+                      .open(launch.input)
+                      .pipe(
+                        Effect.provideService(TerminalManager.TerminalCwdRecovery, launch.recover),
+                      ),
+                  ),
+                ),
               ),
+            ),
+        [WS_METHODS.terminalAttach]: (input, metadata) =>
+          guardThreadScopedStreamForSession(
+            teamService,
+            currentSessionId,
+            ThreadId.make(input.threadId),
+            Stream.unwrap(
+              teamService
+                .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
+                .pipe(
+                  Effect.andThen(prepareTerminalLaunch(input)),
+                  Effect.map((launch) =>
+                    terminalManager
+                      .attachOutputStream(launch.input, terminalViewerId(metadata))
+                      .pipe(
+                        Stream.provideService(TerminalManager.TerminalCwdRecovery, launch.recover),
+                      ),
+                  ),
+                ),
             ),
           ),
         [WS_METHODS.terminalWrite]: (input, metadata) =>
-          terminalManager.write(input, terminalViewerId(metadata)),
+          teamService
+            .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
+            .pipe(Effect.andThen(terminalManager.write(input, terminalViewerId(metadata)))),
         [WS_METHODS.terminalResize]: (input, metadata) =>
-          terminalManager.resize(input, terminalViewerId(metadata)),
-        [WS_METHODS.terminalClear]: (input) => terminalManager.clear(input),
-        [WS_METHODS.terminalClose]: (input) => terminalManager.close(input),
+          teamService
+            .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
+            .pipe(Effect.andThen(terminalManager.resize(input, terminalViewerId(metadata)))),
+        [WS_METHODS.terminalClear]: (input) =>
+          teamService
+            .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
+            .pipe(Effect.andThen(terminalManager.clear(input))),
+        [WS_METHODS.terminalClose]: (input) =>
+          teamService
+            .assertCanPostInThread(currentSessionId, ThreadId.make(input.threadId))
+            .pipe(Effect.andThen(terminalManager.close(input))),
         [WS_METHODS.terminalObserve]: (input) =>
-          terminalOutputStream(
-            (listener, registerCleanup) =>
-              terminalManager.observeStream(input, listener, registerCleanup),
-            (listener, registerCleanup) =>
-              terminalManager.resyncStream(input, listener, registerCleanup),
+          guardThreadScopedStreamForSession(
+            teamService,
+            currentSessionId,
+            ThreadId.make(input.threadId),
+            terminalOutputStream(
+              (listener, registerCleanup) =>
+                terminalManager.observeStream(input, listener, registerCleanup),
+              (listener, registerCleanup) =>
+                terminalManager.resyncStream(input, listener, registerCleanup),
+            ),
           ),
         [WS_METHODS.subscribeTerminalMetadata]: (_input) =>
           Stream.callback<TerminalMetadataStreamEvent>((queue) =>
@@ -3693,14 +3850,32 @@ export const layerWsRpc = (
               (unsubscribe) => Effect.sync(unsubscribe),
             ),
           ),
-        [WS_METHODS.previewOpen]: (input) => previewManager.open(input),
-        [WS_METHODS.previewResize]: (input) => previewManager.resize(input),
-        [WS_METHODS.previewAdjust]: (input) => previewManager.adjust(input),
-        [WS_METHODS.previewClose]: (input) => previewManager.close(input),
-        [WS_METHODS.previewList]: (input) => previewManager.list(input),
+        [WS_METHODS.previewOpen]: (input) =>
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(previewManager.open(input))),
+        [WS_METHODS.previewResize]: (input) =>
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(previewManager.resize(input))),
+        [WS_METHODS.previewAdjust]: (input) =>
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(previewManager.adjust(input))),
+        [WS_METHODS.previewClose]: (input) =>
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(previewManager.close(input))),
+        [WS_METHODS.previewList]: (input) =>
+          teamService
+            .assertCanReadThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(previewManager.list(input))),
         [WS_METHODS.previewClearProfile]: (input) => serverBrowser.clearProfile(input.profileId),
         [WS_METHODS.previewReportProfiles]: (input) => reportProfiles(input),
-        [WS_METHODS.previewReportStatus]: (input) => previewManager.reportStatus(input),
+        [WS_METHODS.previewReportStatus]: (input) =>
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(previewManager.reportStatus(input))),
         [WS_METHODS.subscribePreviewEvents]: (_input) => previewManager.events,
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
@@ -3718,10 +3893,19 @@ export const layerWsRpc = (
                     : deviceService.list,
               ),
         [WS_METHODS.deviceOpen]: (input) =>
-          threadWorkspaceRoot(input.threadId).pipe(
-            Effect.flatMap((workspaceRoot) => deviceService.open(input, { workspaceRoot })),
-          ),
-        [WS_METHODS.deviceClose]: (input) => deviceService.close(input),
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(
+              Effect.andThen(
+                threadWorkspaceRoot(input.threadId).pipe(
+                  Effect.flatMap((workspaceRoot) => deviceService.open(input, { workspaceRoot })),
+                ),
+              ),
+            ),
+        [WS_METHODS.deviceClose]: (input) =>
+          teamService
+            .assertCanPostInThread(currentSessionId, input.threadId)
+            .pipe(Effect.andThen(deviceService.close(input))),
         [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),

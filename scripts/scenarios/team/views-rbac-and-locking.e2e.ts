@@ -256,13 +256,16 @@ test("enforces team RBAC, server-side Views read/post rules, live revocation, an
   await charlie.page.getByTestId("team-thread-view-pill").click();
   await charlie.page.getByTestId("team-thread-view-option-Staff Only").click();
 
-  // Live revocation: thread disappears immediately from Bob's sidebar AND Bob's open view.
+  // Live revocation: thread disappears immediately from Bob's sidebar AND Bob's open transcript BEFORE reload.
   await expect
     .poll(
       async () =>
         (await bob.page.locator("aside, [data-sidebar='sidebar']").first().textContent()) ?? "",
       { timeout: 20_000 },
     )
+    .not.toContain("Secret roadmap");
+  await expect
+    .poll(async () => (await bob.page.locator("body").textContent()) ?? "", { timeout: 15_000 })
     .not.toContain("Secret roadmap");
 
   // Direct URL navigation by Bob cannot load the restricted thread (server rejects subscribeThread).
@@ -310,7 +313,7 @@ test("enforces team RBAC, server-side Views read/post rules, live revocation, an
       { timeout: 20_000 },
     )
     .toContain("alice: Quarterly release notes");
-  await waitForAssistantTurnSettled(alice.page, 1, "alice-secret-turn1");
+  await waitForAssistantTurnSettled(alice.page, 1, "alice-announcement-turn1");
 
   const bobAnnouncementRow = bob.page
     .locator("aside, [data-sidebar='sidebar']")
@@ -324,7 +327,7 @@ test("enforces team RBAC, server-side Views read/post rules, live revocation, an
     .toContain("alice: Quarterly release notes");
   await bobAnnouncementRow.focus();
   await bobAnnouncementRow.press("Enter");
-  await waitForAssistantTurnSettled(bob.page, 1, "bob-read-secret");
+  await waitForAssistantTurnSettled(bob.page, 1, "bob-read-announcement");
 
   const bobReadOnlyBanner = bob.page.getByTestId("team-composer-readonly-banner");
   await bobReadOnlyBanner.waitFor({ state: "visible", timeout: 15_000 });
@@ -351,7 +354,7 @@ test("enforces team RBAC, server-side Views read/post rules, live revocation, an
       { timeout: 20_000 },
     )
     .toContain("bob: Bob announcement proposal");
-  await waitForAssistantTurnSettled(bob.page, 1, "bob-read-secret");
+  await waitForAssistantTurnSettled(bob.page, 1, "bob-own-turn1");
   expect(await bob.page.getByTestId("team-composer-readonly-banner").count()).toBe(0);
   const assistantCountBeforeBobTurn2 = await bob.page
     .locator('[data-message-role="assistant"]')

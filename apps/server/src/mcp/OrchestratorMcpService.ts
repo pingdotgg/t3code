@@ -3397,6 +3397,22 @@ const make = Effect.gen(function* () {
                       text: request.prompt,
                       attachments: [],
                     };
+              const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
+              const preparedAttribution = Option.isSome(maybeTeam)
+                ? yield* maybeTeam.value
+                    .prepareThreadInheritedFromParent({
+                      parentThreadId: scope.thread.threadId,
+                      threadId,
+                    })
+                    .pipe(
+                      Effect.mapError((error) =>
+                        failure(
+                          "orchestration_error",
+                          `Unable to prepare team attribution for thread ${index + 1}: ${error.message}`,
+                        ),
+                      ),
+                    )
+                : false;
               const created = yield* threadManagement
                 .dispatch({
                   type: "thread.create",
@@ -3418,6 +3434,11 @@ const make = Effect.gen(function* () {
                   ...(initialMessage === undefined ? {} : { initialMessage }),
                 })
                 .pipe(
+                  Effect.onError(() =>
+                    preparedAttribution && Option.isSome(maybeTeam)
+                      ? maybeTeam.value.rollbackPreparedThreadAttribution(threadId)
+                      : Effect.void,
+                  ),
                   Effect.mapError((error) =>
                     failure(
                       "orchestration_error",
@@ -3425,7 +3446,6 @@ const make = Effect.gen(function* () {
                     ),
                   ),
                 );
-              const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
               if (Option.isSome(maybeTeam)) {
                 yield* maybeTeam.value.recordThreadInheritedFromParent({
                   parentThreadId: scope.thread.threadId,
