@@ -58,7 +58,8 @@ it.layer(NodeServices.layer)("Claude shell history", (it) => {
       );
       const now = Date.parse("2026-08-24T12:00:00.000Z");
       yield* TestClock.setTime(now);
-      yield* fs.utimes(file, new Date(now - 60_000), new Date(now - 60_000));
+      const modifiedAtSeconds = now / 1000 - 60;
+      yield* fs.utimes(file, modifiedAtSeconds, modifiedAtSeconds);
 
       const [result] = yield* AgentSessionScanner.AgentSessionScanner.use((scanner) =>
         scanner.recentThreads(workspace).pipe(Stream.runCollect),
