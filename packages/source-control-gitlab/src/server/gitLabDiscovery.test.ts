@@ -30,6 +30,24 @@ Logged in to gitlab.com as gitlab-user
   assert.deepStrictEqual(auth.account, Option.some("gitlab-user"));
 });
 
+it("lists every signed-in glab host, not only the first", () => {
+  const auth = GitLabSourceControlProvider.discovery.parseAuth(
+    processOutput(`gitlab.com
+  ✓ Logged in to gitlab.com as gitlab-user (/home/user/.config/glab-cli/config.yml)
+gitlab.example.com
+  ✓ Logged in to gitlab.example.com as self-hosted-user (/home/user/.config/glab-cli/config.yml)
+`),
+  );
+  assert.strictEqual(auth.status, "authenticated");
+  assert.deepStrictEqual(
+    auth.accounts?.map(({ host, account, authenticated }) => ({ host, account, authenticated })),
+    [
+      { host: "gitlab.com", account: "gitlab-user", authenticated: true },
+      { host: "gitlab.example.com", account: "self-hosted-user", authenticated: true },
+    ],
+  );
+});
+
 // Without `--all`, glab 1.79+ checks only the current host unless that is gitlab.com.
 it.effect("reports a signed-in host when glab's default host is signed out", () =>
   Effect.gen(function* () {
