@@ -6,6 +6,7 @@ import type {
   PermissionRuleset,
   QuestionRequest,
   Session as OpenCodeSession,
+  SessionStatus,
   Todo as OpenCodeTodo,
   ToolPart,
 } from "@opencode-ai/sdk/v2";
@@ -22,6 +23,7 @@ import {
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
+  type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderRef,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -72,7 +74,11 @@ import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "./providerErrorMessage.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import {
+  makeProviderFailure,
+  makeProviderRetryTurnItem,
+  PROVIDER_RETRY_BUDGET_MS,
+} from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -92,6 +98,10 @@ export const OPENCODE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(OPENCODE_
 export const OPENCODE_SDK_PROTOCOL = "opencode-sdk.sse" as const;
 const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({});
 const OPENCODE_STOP_CONFIRM_TIMEOUT_MS = 10_000;
+
+const isOpenCodeUsageLimitRetry = (status: Extract<SessionStatus, { readonly type: "retry" }>) =>
+  status.action?.reason === "free_tier_limit" ||
+  /\b(usage|rate) limit\b|\b429\b|quota/i.test(status.message);
 
 const makeOpenCodeMessageId = Effect.fnUntraced(function* (
   clock: Ref.Ref<{ readonly epochMillis: number; readonly counter: number }>,
@@ -316,6 +326,12 @@ interface ActiveOpenCodeTurn {
   interrupted: boolean;
   finalized: boolean;
   contextOverflow: OrchestrationV2ProviderFailure | null;
+  retry: {
+    readonly startedAt: DateTime.Utc;
+    readonly failure: OrchestrationV2ProviderFailure;
+    readonly retry: OrchestrationV2ProviderRetry;
+  } | null;
+  retryBudgetFailure: OrchestrationV2ProviderFailure | null;
   planId: PlanId | null;
   admissionGeneration: number;
   admissionReconciliationGeneration: number | null;
@@ -2260,6 +2276,33 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           );
         });
 
+        const emitRetry = Effect.fnUntraced(function* (
+          turn: ActiveOpenCodeTurn,
+          status: "running" | TerminalTurnStatus,
+          failure?: OrchestrationV2ProviderFailure,
+        ) {
+          const retry = turn.retry;
+          if (retry === null) return;
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: OPENCODE_PROVIDER,
+            turnItem: makeProviderRetryTurnItem({
+              driver: OPENCODE_PROVIDER,
+              threadId: turn.threadId,
+              runId: turn.runId,
+              nodeId: turn.rootNodeId,
+              providerThreadId: turn.providerThreadId,
+              providerTurnId: turn.providerTurnId,
+              itemOrdinal: itemOrdinal(turn, `terminal-failure:${turn.providerTurnId}`),
+              failure: failure ?? retry.failure,
+              retry: retry.retry,
+              status,
+              startedAt: retry.startedAt,
+              updatedAt: yield* DateTime.now,
+            }),
+          });
+        });
+
         const finalizeTurn = Effect.fnUntraced(function* (
           state: OpenCodeThreadState,
           turn: ActiveOpenCodeTurn,
@@ -2278,6 +2321,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 terminal = { failure: nativeStreamFailure, threadDisposition: "broken" };
               }
               let lastError = sessionEntity.lastError;
+              if (nativeStreamFailure === null && turn.retryBudgetFailure !== null) {
+                status = "failed";
+                terminal = { failure: turn.retryBudgetFailure };
+                lastError = turn.retryBudgetFailure.message;
+              }
               if (status === "completed" && turn.contextOverflow !== null) {
                 status = "failed";
                 terminal = { failure: turn.contextOverflow };
@@ -2312,6 +2360,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   ),
                 ).pipe(Effect.exit);
               }
+              yield* emitRetry(turn, status, status === "failed" ? terminal?.failure : undefined);
               yield* emitProviderTurn(state, turn, status, completedAt);
               const threadDisposition = terminal?.threadDisposition ?? "reusable";
               yield* updateProviderThread(state, {
@@ -2534,6 +2583,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             interrupted: false,
             finalized: false,
             contextOverflow: null,
+            retry: null,
+            retryBudgetFailure: null,
             planId: null,
             admissionGeneration: 0,
             admissionReconciliationGeneration: null,
@@ -2839,6 +2890,67 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           if (descendants._tag === "Failure") return yield* descendants.failure;
         });
 
+        // OpenCode waits out a provider's retry-after with no cap, which can hold a turn open for hours.
+        const failExpiredRetry = Effect.fn("OpencodeAdapter.failExpiredRetry")(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+          startedAt: DateTime.Utc,
+        ) {
+          const claimed = yield* eventPermit.withPermit(
+            Effect.sync(() => {
+              const retry = turn.retry;
+              if (!turnIsLive(state, turn) || retry === null || retry.startedAt !== startedAt)
+                return false;
+              turn.retryBudgetFailure = { ...retry.failure, retryable: false };
+              return true;
+            }),
+          );
+          if (!claimed) return;
+          yield* cleanupSessionWork(state, abortRootSession(state)).pipe(
+            Effect.ignore({ log: true }),
+          );
+          yield* eventPermit.withPermit(finalizeTurn(state, turn, "failed"));
+        });
+
+        const updateRetry = Effect.fnUntraced(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+          status: Extract<SessionStatus, { readonly type: "retry" }>,
+        ) {
+          const now = yield* DateTime.now;
+          const firstRetry = turn.retry === null;
+          const startedAt = turn.retry?.startedAt ?? now;
+          turn.retry = {
+            retry: {
+              // OpenCode counts the first request as attempt 1, so its first retry is attempt 2.
+              attempt: Math.max(1, status.attempt - 1),
+              maxAttempts: null,
+              retryDelayMs: Math.max(0, Math.trunc(status.next - DateTime.toEpochMillis(now))),
+            },
+            failure: makeProviderFailure({
+              message: status.message,
+              code: status.action?.reason ?? null,
+              class: isOpenCodeUsageLimitRetry(status) ? "usage_limit" : "provider_error",
+              retryable: true,
+            }),
+            startedAt,
+          };
+          yield* emitRetry(turn, "running");
+          if (firstRetry) {
+            yield* failExpiredRetry(state, turn, startedAt).pipe(
+              Effect.delay(PROVIDER_RETRY_BUDGET_MS),
+              Effect.forkIn(scope),
+            );
+          }
+        });
+
+        const completeRetry = Effect.fnUntraced(function* (sessionId: string) {
+          const turn = threads.get(sessionId)?.activeTurn;
+          if (turn === undefined || turn === null || turn.retry === null) return;
+          yield* emitRetry(turn, "completed");
+          turn.retry = null;
+        });
+
         const cancelWake = Effect.fn("OpencodeAdapter.cancelWake")(
           function* (state: OpenCodeThreadState, wake: OpenCodeWake) {
             if (closing || nativeStreamFailure !== null || state.wake !== wake) return;
@@ -3052,6 +3164,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               yield* handlePartUpdated(event);
               return;
             case "message.part.delta":
+              yield* completeRetry(event.properties.sessionID);
               yield* handlePartDelta(event);
               return;
             case "todo.updated": {
@@ -3123,6 +3236,12 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               }
               if (event.properties.status.type === "busy") {
                 yield* updateProviderThread(state, { status: "active" });
+                return;
+              }
+              if (event.properties.status.type === "retry") {
+                if (state.activeTurn !== null && !state.activeTurn.finalized) {
+                  yield* updateRetry(state, state.activeTurn, event.properties.status);
+                }
                 return;
               }
               if (event.properties.status.type === "idle" && state.activeTurn !== null) {
@@ -3810,6 +3929,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 interrupted: false,
                 finalized: false,
                 contextOverflow: null,
+                retry: null,
+                retryBudgetFailure: null,
                 planId: null,
                 admissionGeneration: state.nextAdmissionGeneration++,
                 admissionReconciliationGeneration: null,

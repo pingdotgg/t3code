@@ -43,6 +43,7 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { PROVIDER_RETRY_BUDGET_MS } from "@t3tools/provider-core/server/failure";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 
@@ -708,6 +709,174 @@ describe("OpenCodeAdapterV2", () => {
       assert.equal(terminal?.status, "failed");
       assert.equal(terminal?.failure?.class, "usage_limit");
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  // OpenCode retries a free-tier limit until its retry-after instead of reporting session.error.
+  it.effect("shows a usage-limit retry and fails the turn once the retry budget runs out", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const aborted: Array<string> = [];
+      const harness = yield* makeOpenCodeRuntimeHarness("free-tier-retry", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async () => ({ data: true }),
+          abort: async (input: { sessionID: string }) => {
+            aborted.push(input.sessionID);
+            return { data: true };
+          },
+          children: async () => ({ data: [] }),
+        },
+      });
+      yield* harness.startTurn();
+      const received = yield* harness.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      const retryStatus = (attempt: number) =>
+        Effect.promise(() =>
+          nativeEvents.push({
+            type: "session.status",
+            properties: {
+              sessionID: "root",
+              status: {
+                type: "retry",
+                attempt,
+                message: "Free usage limit reached",
+                next: Date.UTC(2099, 0, 1),
+                action: {
+                  reason: "free_tier_limit",
+                  provider: "opencode",
+                  title: "Free limit reached",
+                  message: "Subscribe to keep going.",
+                  label: "subscribe",
+                },
+              },
+            },
+          }),
+        );
+      yield* retryStatus(2);
+      yield* TestClock.adjust(PROVIDER_RETRY_BUDGET_MS / 2);
+      yield* retryStatus(3);
+      yield* TestClock.adjust(PROVIDER_RETRY_BUDGET_MS / 2);
+      const events = yield* Fiber.join(received);
+      const retryItems = events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "error"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.equal(retryItems[0]?.status, "running");
+      assert.equal(retryItems[0]?.failure.class, "usage_limit");
+      assert.equal(retryItems[0]?.failure.message, "Free usage limit reached");
+      assert.equal(retryItems.at(-1)?.retry?.attempt, 2);
+      const terminal = events.find((event) => event.type === "turn.terminal");
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.failure?.class, "usage_limit");
+      assert.equal(terminal?.failure?.retryable, false);
+      assert.deepEqual(aborted, ["root"]);
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect(
+    "completes a recovered retry without failing the turn when the budget would run out",
+    () =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const aborted: Array<string> = [];
+        let promptId = "";
+        const harness = yield* makeOpenCodeRuntimeHarness("free-tier-retry", "root", {
+          event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+          session: {
+            create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+            promptAsync: async (input: { messageID: string }) => {
+              promptId = input.messageID;
+              return { data: true };
+            },
+            abort: async (input: { sessionID: string }) => {
+              aborted.push(input.sessionID);
+              return { data: true };
+            },
+            children: async () => ({ data: [] }),
+          },
+        });
+        yield* harness.startTurn();
+        const received = yield* harness.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.forkScoped,
+        );
+        const retryStatus = (attempt: number) =>
+          Effect.promise(() =>
+            nativeEvents.push({
+              type: "session.status",
+              properties: {
+                sessionID: "root",
+                status: {
+                  type: "retry",
+                  attempt,
+                  message: "Free usage limit reached",
+                  next: Date.UTC(2099, 0, 1),
+                  action: {
+                    reason: "free_tier_limit",
+                    provider: "opencode",
+                    title: "Free limit reached",
+                    message: "Subscribe to keep going.",
+                    label: "subscribe",
+                  },
+                },
+              },
+            }),
+          );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.updated",
+            properties: {
+              sessionID: "root",
+              info: { id: promptId, role: "user", time: { created: 1 } },
+            },
+          }),
+        );
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "session.status",
+            properties: { sessionID: "root", status: { type: "busy" } },
+          }),
+        );
+        yield* retryStatus(2);
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "message.part.delta",
+            properties: {
+              sessionID: "root",
+              messageID: "assistant",
+              partID: "text",
+              field: "text",
+              delta: "Recovered",
+            },
+          }),
+        );
+        yield* TestClock.adjust(PROVIDER_RETRY_BUDGET_MS);
+        yield* Effect.promise(() =>
+          nativeEvents.push({
+            type: "session.status",
+            properties: { sessionID: "root", status: { type: "idle" } },
+          }),
+        );
+        const events = yield* Fiber.join(received);
+        const retryItems = events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "error"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          retryItems.map((item) => item.status),
+          ["running", "completed"],
+        );
+        const terminal = events.find((event) => event.type === "turn.terminal");
+        assert.equal(terminal?.status, "completed");
+        assert.deepEqual(aborted, []);
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
   it.effect("applies a changed runtime policy to the session on resume and turn start", () =>
