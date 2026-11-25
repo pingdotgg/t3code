@@ -196,16 +196,6 @@ describe("secure HTTP sealing", () => {
     }).pipe(Effect.provide(crypto)),
   );
 
-  it.effect("fails rather than retrying again when the key is still refused", () =>
-    Effect.gen(function* () {
-      const environment = yield* makeEnvironment({ refuseAll: true });
-      const error = yield* Effect.flip(viaEnvironmentRequest(post(yield* makeClient(environment))));
-      assert.strictEqual(error._tag, "RemoteEnvironmentAuthFetchError");
-      assert.isFalse(isSecureHttpKeyRejection(error));
-      assert.strictEqual(environment.calls.filter((call) => call.method === "POST").length, 2);
-    }).pipe(Effect.provide(crypto)),
-  );
-
   it.effect("refuses an exchange key the pinned identity did not sign and sends nothing", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment();

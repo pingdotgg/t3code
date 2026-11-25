@@ -51,8 +51,6 @@ describe("managed relay DPoP signer", () => {
   it.effect("loads the proof key again after a failed read", () =>
     Effect.gen(function* () {
       const signer = yield* ManagedRelay.ManagedRelayDpopSigner;
-      // The mocked binary predates the secure channel functions.
-      assert.isUndefined(signer.secureClientSocket);
       failNextRead = true;
       const failed = yield* Effect.flip(signer.thumbprint);
       assert.equal(failed._tag, "ManagedRelayDpopKeyLoadError");

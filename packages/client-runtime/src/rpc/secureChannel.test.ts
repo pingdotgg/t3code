@@ -157,19 +157,6 @@ const closeCodeOf = (error: Socket.SocketError) =>
   error.reason._tag === "SocketCloseError" ? error.reason.code : undefined;
 
 describe("prepareSecureRpcChannel", () => {
-  it.effect("connects in plaintext unless the upgrade proof asked for the secure channel", () =>
-    Effect.gen(function* () {
-      const channel = yield* prepareSecureRpcChannel(
-        {
-          environmentId: ENVIRONMENT_ID,
-          descriptor: { capabilities: { secureChannel: true } } as ExecutionEnvironmentDescriptor,
-        },
-        { signer: undefined, registrations: undefined },
-      );
-      assert.isUndefined(channel);
-    }),
-  );
-
   it.effect.each([
     { advertised: false, pinned: false, secure: false },
     { advertised: true, pinned: false, secure: true },

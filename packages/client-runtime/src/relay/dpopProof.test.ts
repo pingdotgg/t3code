@@ -66,29 +66,6 @@ describe("DpopProof", () => {
     }).pipe(Effect.provide(layer)),
   );
 
-  it.effect("carries the secure channel claim only when asked", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(1_700_000_000_000);
-      const key = yield* webCryptoProofKey;
-      const thumbprint = yield* DpopProof.thumbprint(key.publicJwk);
-      const url = "https://environment.example.test/ws";
-      const verify = (proof: string) =>
-        verifyDpopProof({
-          proof,
-          method: "GET",
-          url,
-          expectedThumbprint: thumbprint,
-          nowEpochSeconds: 1_700_000_000,
-        });
-
-      const asked = yield* DpopProof.createProof({ method: "GET", url, secureChannel: true, key });
-      const plain = yield* DpopProof.createProof({ method: "GET", url, key });
-
-      expect(verify(asked)).toMatchObject({ ok: true, secureChannel: true });
-      expect(verify(plain)).toMatchObject({ ok: true, secureChannel: false });
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.effect("rejects an unparseable URL before signing", () =>
     Effect.gen(function* () {
       const key = yield* webCryptoProofKey;

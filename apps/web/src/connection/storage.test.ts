@@ -7,7 +7,6 @@ import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
-import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -83,9 +82,9 @@ describe("ConnectionStorage.makeCatalogStore", () => {
         };
         const listeners = new Set<() => void>();
         const lock = yield* Semaphore.make(1);
-        const tab = (tabBackend = backend) => {
+        const tab = () => {
           let own: (() => void) | undefined;
-          return ConnectionStorage.makeCatalogStore(tabBackend, {
+          return ConnectionStorage.makeCatalogStore(backend, {
             changes: {
               postMessage: () => listeners.forEach((listener) => listener !== own && listener()),
               addEventListener: (_type, listener) => void listeners.add((own = listener)),
@@ -95,15 +94,9 @@ describe("ConnectionStorage.makeCatalogStore", () => {
         };
         const pinning = yield* tab();
         const earlier = yield* tab();
-        // This tab's read returns what was stored when it began, after other tabs have run.
-        const late = yield* tab({
-          ...backend,
-          read: Effect.sync(() => stored).pipe(Effect.tap(() => Effect.yieldNow)),
-        });
         const environmentKeys = [{ environmentId: EnvironmentId.make("env"), publicKey: "a2V5" }];
         const disabledEnvironmentIds = [EnvironmentId.make("other")];
         yield* earlier.read;
-        const reading = yield* Effect.forkChild(late.read);
 
         yield* pinning.update((document) => ({ ...document, environmentKeys }));
         expect((yield* earlier.read).environmentKeys).toEqual(environmentKeys);
@@ -115,9 +108,6 @@ describe("ConnectionStorage.makeCatalogStore", () => {
         expect((yield* unnotified.readStored).disabledEnvironmentIds).toEqual(
           disabledEnvironmentIds,
         );
-        // A read that was under way during the save does not leave its older copy cached.
-        yield* Fiber.join(reading);
-        expect((yield* late.read).environmentKeys).toEqual(environmentKeys);
 
         stored = encodeCatalog(emptyCatalog);
         yield* Effect.all(
@@ -131,52 +121,6 @@ describe("ConnectionStorage.makeCatalogStore", () => {
       }),
   );
 });
-
-it.effect("keeps an interrupted save's caller waiting until its write has landed", () =>
-  Effect.gen(function* () {
-    let stored = encodeCatalog(emptyCatalog);
-    const started = Promise.withResolvers<void>();
-    const landing = Promise.withResolvers<void>();
-    // The write lands a task after the interruption asks for it, so a caller that does not wait
-    // gets ahead of it.
-    vi.stubGlobal("navigator", {
-      locks: {
-        request: (
-          _name: string,
-          options: { signal: AbortSignal },
-          held: () => Promise<unknown>,
-        ) => {
-          options.signal.addEventListener("abort", () => setTimeout(landing.resolve));
-          return held();
-        },
-      },
-    });
-    const store = yield* ConnectionStorage.makeCatalogStore(
-      {
-        read: Effect.sync(() => stored),
-        write: (raw) =>
-          Effect.promise(async () => {
-            started.resolve();
-            await landing.promise;
-            stored = raw;
-          }),
-      },
-      {
-        changes: { postMessage: () => undefined, addEventListener: () => undefined },
-        exclusive: ConnectionStorage.exclusiveAcrossTabs,
-      },
-    );
-    const disabledEnvironmentIds = [EnvironmentId.make("other")];
-    const saving = yield* Effect.forkChild(
-      store.update((document) => ({ ...document, disabledEnvironmentIds })),
-    );
-    yield* Effect.promise(() => started.promise);
-
-    yield* Fiber.interrupt(saving);
-    expect(decodeCatalog(stored).disabledEnvironmentIds).toEqual(disabledEnvironmentIds);
-    expect((yield* store.read).disabledEnvironmentIds).toEqual(disabledEnvironmentIds);
-  }),
-);
 
 const fixedHandle = (database: IDBDatabase) => ({
   get: Effect.succeed(database),

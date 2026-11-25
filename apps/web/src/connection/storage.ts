@@ -588,7 +588,7 @@ const CATALOG_TABS_NAME = "t3code:connection-catalog";
  * pinned key to lose. An interrupted caller waits for the callback to end: a write that has
  * started finishes under the lock, and the caller's own lock must not be released before it.
  */
-export const exclusiveAcrossTabs: CatalogTabs["exclusive"] = (update) =>
+const exclusiveAcrossTabs: CatalogTabs["exclusive"] = (update) =>
   typeof navigator === "undefined" || navigator.locks === undefined
     ? update
     : Effect.context<never>().pipe(

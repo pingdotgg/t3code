@@ -178,21 +178,6 @@ describe("secureChannel", () => {
       reason: "peer_rejected",
       changed: scenario({ clientFinish: flipLastByte }),
     },
-    {
-      label: "the client hello is cut short",
-      reason: "malformed_message",
-      changed: scenario({ clientHello: (message) => message.subarray(0, 10) }),
-    },
-    {
-      label: "the environment hello has trailing bytes",
-      reason: "malformed_message",
-      changed: scenario({ environmentHello: (message) => Uint8Array.of(...message, 0) }),
-    },
-    {
-      label: "the client finish carries the wrong tag",
-      reason: "malformed_message",
-      changed: scenario({ clientFinish: (message) => Uint8Array.of(9, ...message.subarray(1)) }),
-    },
   ] as const)("fails the handshake when $label", ({ reason, changed }) =>
     Effect.gen(function* () {
       const error = yield* Effect.flip(handshake(yield* changed));

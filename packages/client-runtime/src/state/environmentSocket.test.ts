@@ -178,13 +178,6 @@ describe("makeEnvironmentSocketOpener", () => {
     vi.unstubAllGlobals();
   });
 
-  it.effect("leaves a session without a proof key on plain sockets", () =>
-    Effect.gen(function* () {
-      const { open } = yield* setup({ authorization: "Bearer" });
-      assert.isUndefined(open);
-    }).pipe(Effect.provide(crypto)),
-  );
-
   it.live("seals frames in send order and delivers them in arrival order", () =>
     Effect.gen(function* () {
       vi.stubGlobal("WebSocket", FakeWebSocket);

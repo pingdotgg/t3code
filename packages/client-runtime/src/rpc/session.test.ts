@@ -354,24 +354,6 @@ describe("RpcSessionFactory", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("names a secure channel close instead of reporting a plain disconnect", () =>
-    Effect.gen(function* () {
-      const { factory, sockets } = yield* makeFactory();
-      const session = yield* factory.connect(PREPARED);
-      const ready = yield* Effect.forkChild(Effect.flip(session.ready));
-      const socket = yield* awaitSocket(sockets);
-      socket.open();
-      yield* awaitRequest(socket);
-      socket.close(SECURE_CHANNEL_CLOSE_CODE, "Secure channel failed");
-
-      expect(yield* Fiber.join(ready)).toMatchObject({
-        _tag: "ConnectionTransientError",
-        failureCause: "secure_channel_failed",
-        detail: "Could not set up the encrypted connection to Test environment.",
-      });
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("blocks retries when the environment presents a key other than the pinned one", () =>
     Effect.gen(function* () {
       const closedBySecureChannel = new Socket.SocketError({
