@@ -22,8 +22,8 @@ import {
   groupManifests,
   manifestRelativePath,
   pickAgentManifest,
-} from "./manifestAgents";
-import { tildePath } from "./manifestFolders";
+} from "@t3tools/client-runtime/sandboxes/manifest-agents";
+import { tildePath } from "@t3tools/client-runtime/sandboxes/manifest-folders";
 
 /**
  * Picks a manifest in two steps: the agent, a folder found in one of the user's repositories,

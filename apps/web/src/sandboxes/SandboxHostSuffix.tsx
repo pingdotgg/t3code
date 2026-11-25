@@ -4,13 +4,12 @@ import { Atom } from "effect/reactivity";
 
 import { environmentPresentations } from "../state/presentation";
 import { sandboxEnvironment } from "../state/sandboxes";
-import { sandboxesOnSeveralHostsAtom } from "./useSandboxes";
 
 // The host of a Sandbox environment, once the client has Sandboxes on more than one host, since
 // each can have a Sandbox of the same name. One small atom per row keeps the sidebar cheap.
 const sandboxHostLabelAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get): string | null => {
-    if (!get(sandboxesOnSeveralHostsAtom)) return null;
+    if (!get(sandboxEnvironment.severalHostsAtom)) return null;
     const sandbox = get(sandboxEnvironment.sandboxesAtom).find(
       (candidate) => candidate.environmentId === environmentId,
     );

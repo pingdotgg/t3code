@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { sandboxBannerState } from "@t3tools/client-runtime/sandboxes/presentation";
 import { WifiOffIcon } from "lucide-react";
 import { Atom } from "effect/reactivity";
 
@@ -15,11 +16,8 @@ const bannerStateAtom = Atom.family((environmentId: string) =>
       (candidate) => candidate.environmentId === environmentId,
     );
     if (sandbox === undefined) return null;
-    if (sandbox.action === null && sandbox.phase === "stopped") return `stopped:${sandbox.name}`;
-    if (sandbox.action === "starting" || sandbox.phase === "starting") {
-      return `starting:${sandbox.name}`;
-    }
-    return null;
+    const state = sandboxBannerState(sandbox);
+    return state === null ? null : `${state}:${sandbox.name}`;
   }).pipe(Atom.withLabel(`sandboxes:banner:${environmentId}`)),
 );
 const NO_BANNER = Atom.make(null).pipe(Atom.withLabel("sandboxes:banner:none"));

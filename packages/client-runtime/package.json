@@ -658,6 +658,22 @@
     "./sandboxes/settings-seed": {
       "types": "./src/sandboxes/settingsSeed.ts",
       "default": "./src/sandboxes/settingsSeed.ts"
+    },
+    "./sandboxes/presentation": {
+      "types": "./src/sandboxes/presentation.ts",
+      "default": "./src/sandboxes/presentation.ts"
+    },
+    "./sandboxes/actions": {
+      "types": "./src/sandboxes/actions.ts",
+      "default": "./src/sandboxes/actions.ts"
+    },
+    "./sandboxes/manifest-agents": {
+      "types": "./src/sandboxes/manifestAgents.ts",
+      "default": "./src/sandboxes/manifestAgents.ts"
+    },
+    "./sandboxes/manifest-folders": {
+      "types": "./src/sandboxes/manifestFolders.ts",
+      "default": "./src/sandboxes/manifestFolders.ts"
     }
   },
   "scripts": {

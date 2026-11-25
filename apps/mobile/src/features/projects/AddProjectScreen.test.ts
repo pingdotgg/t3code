@@ -59,6 +59,7 @@ vi.mock("../layout/workspace/useSelectWorkspaceDetail", async () => {
       state.dispatch(selectWorkspaceDetail(detail)),
   };
 });
+vi.mock("../sandboxes/useSandboxes", () => ({ useOffersSandboxes: () => false }));
 vi.mock("../../native/StackHeader", () => ({
   nativeHeaderScrollEdgeEffects: () => undefined,
 }));

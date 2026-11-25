@@ -1,4 +1,5 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { sandboxStatus, sandboxStatusDetail } from "@t3tools/client-runtime/sandboxes/presentation";
 import type { HostedSandbox } from "@t3tools/client-runtime/state/sandboxes";
 import type { AgentctlSandbox } from "@t3tools/contracts";
 import { BoxIcon, XIcon } from "lucide-react";
@@ -8,7 +9,7 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useProjects, useThreadShells } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 import { createdSandboxKey, forgetCreatedSandbox, useCreatedSandboxes } from "./createdSandboxes";
-import { deleteSandbox, sandboxStatus, sandboxStatusDetail } from "./sandboxActions";
+import { deleteSandbox } from "./sandboxActions";
 import { useSandboxes, useSandboxesOnSeveralHosts, useSandboxHostOptions } from "./useSandboxes";
 
 const SETTING_UP = new Set<AgentctlSandbox["phase"]>([

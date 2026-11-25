@@ -1,7 +1,7 @@
 import type { AgentctlRepositoryStatus } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pullToast, repositoryBadges, tildePath } from "./manifestFolders";
+import { pullToast, repositoryBadges, tildePath } from "./manifestFolders.ts";
 
 const status = (overrides: Partial<AgentctlRepositoryStatus>): AgentctlRepositoryStatus => ({
   path: "/home/me/code/app",

@@ -1,13 +1,17 @@
 import {
+  AuthProvidersManageScope,
   DEFAULT_SERVER_SETTINGS,
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   ProviderDriverKind,
   defaultInstanceIdForDriver,
   isManagedDriverAllowed,
   isManagedSettingPath,
+  requiredScopesForServerSettingsPatch,
+  type AuthEnvironmentScope,
   type ManagedPolicySummary,
   type ProjectScopedServerSettingKey,
   type ProviderInstanceMutation,
+  type ServerConfig,
   type ServerSettings,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -85,4 +89,44 @@ export function sandboxSettingsSeed(input: {
         }
       : {}),
   };
+}
+
+/**
+ * Gives a new Sandbox the preferences changed on its host, once, then tells the host it is done,
+ * so a later deliberate choice in the Sandbox is never undone. Run once both configs are loaded
+ * and the Sandbox reports its providers; skipped while this client lacks a scope it needs.
+ */
+export async function seedSandboxSettings(input: {
+  readonly hostConfig: ServerConfig;
+  readonly sandboxConfig: ServerConfig;
+  readonly harnesses: ReadonlyArray<string>;
+  readonly hasScope: (scope: AuthEnvironmentScope) => boolean;
+  /** Resolves false when the Sandbox refused the update, which leaves it to try again. */
+  readonly updateSettings: (seed: SandboxSettingsSeed) => Promise<boolean>;
+  readonly markSeeded: () => Promise<unknown>;
+}): Promise<void> {
+  const { sandboxConfig } = input;
+  const seed = sandboxSettingsSeed({
+    local: input.hostConfig.settings,
+    sandbox: sandboxConfig.settings,
+    sandboxProviderInstanceIds: new Set(
+      sandboxConfig.providers
+        .filter((provider) => provider.enabled)
+        .map((provider) => provider.instanceId),
+    ),
+    harnesses: input.harnesses,
+    ...(sandboxConfig.managedPolicy === undefined
+      ? {}
+      : { sandboxPolicy: sandboxConfig.managedPolicy }),
+  });
+  const changesSettings = Object.keys(seed.patch).length > 0;
+  if (changesSettings || seed.providerInstanceMutation !== undefined) {
+    const scopes = [
+      ...(changesSettings ? requiredScopesForServerSettingsPatch(seed.patch) : []),
+      ...(seed.providerInstanceMutation !== undefined ? [AuthProvidersManageScope] : []),
+    ];
+    if (!scopes.every(input.hasScope)) return;
+    if (!(await input.updateSettings(seed))) return;
+  }
+  await input.markSeeded();
 }

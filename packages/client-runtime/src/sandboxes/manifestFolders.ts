@@ -1,6 +1,6 @@
 import type { AgentctlPullResult, AgentctlRepositoryStatus } from "@t3tools/contracts";
 
-import type { SandboxTone } from "./sandboxActions";
+import type { SandboxTone } from "./presentation.ts";
 
 /** `/home/me/code/app` as `~/code/app`, so rows lead with what tells folders apart. */
 export function tildePath(path: string, homeDirectory: string): string {

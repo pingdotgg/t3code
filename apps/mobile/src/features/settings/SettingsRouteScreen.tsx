@@ -34,6 +34,7 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
 import { usePaneRole } from "../../components/ui/Pane";
 import { useGT, useMessages } from "gt-react-native";
+import { useOffersSandboxes } from "../sandboxes/useSandboxes";
 
 export function SettingsRouteScreen() {
   const list = useSettingsListPlacement();
@@ -112,6 +113,7 @@ interface SettingsListSection {
 function ConfiguredSettingsRouteScreen() {
   const gt = useGT();
   const navigation = useNavigation();
+  const sandboxes = useSandboxesRow();
   const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const { user } = useUser();
   const { savedConnectionsById } = useSavedRemoteConnections();
@@ -133,6 +135,7 @@ function ConfiguredSettingsRouteScreen() {
           onPress: () => navigation.navigate("SettingsAuth"),
         },
         environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length),
+        ...sandboxes,
         {
           id: "SettingsNotifications",
           icon: "bell.badge",
@@ -147,11 +150,29 @@ function ConfiguredSettingsRouteScreen() {
 function LocalSettingsRouteScreen() {
   const gt = useGT();
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const sandboxes = useSandboxesRow();
   return (
     <SettingsList
-      connections={[environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length)]}
+      connections={[
+        environmentsRow(gt("Environments"), Object.keys(savedConnectionsById).length),
+        ...sandboxes,
+      ]}
     />
   );
+}
+
+/** Sandboxes, while a connected host can reach agentctl. */
+function useSandboxesRow(): SettingsListRow[] {
+  if (!useOffersSandboxes()) return [];
+  return [
+    {
+      id: "SettingsSandboxes",
+      icon: "cube",
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's Sandboxes UI is English
+      label: "Sandboxes",
+      target: "SettingsSandboxes",
+    },
+  ];
 }
 
 function environmentsRow(label: string, count: number): SettingsListRow {

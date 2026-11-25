@@ -95,6 +95,7 @@ import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { uuidv4 } from "../../lib/uuid";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { suggestAppAccessForRemote } from "./suggestAppAccess";
+import { useOffersSandboxes } from "../sandboxes/useSandboxes";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import {
   useRemoteConnectionStatus,
@@ -619,6 +620,7 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
   const messages = useMessages();
   const readiness = buildAddProjectRemoteSourceReadiness(discoveryState.data, messages);
   const gt = useGT();
+  const offersSandboxes = useOffersSandboxes();
 
   return (
     <AddProjectShell title={gt("Add project")}>
@@ -740,6 +742,28 @@ export function AddProjectSourceScreen(props: { readonly environmentId?: string 
             <AppActivityIndicator colorClassName="accent-icon-muted" />
           ) : null}
         </>
+      ) : null}
+
+      {offersSandboxes ? (
+        // A Sandbox is a project with its own machine.
+        <ListSection>
+          <ListRow
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's Sandboxes UI is English
+            title="New Sandbox"
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's Sandboxes UI is English
+            subtitle="Run agents in an agentctl Sandbox"
+            icon={
+              <SymbolView
+                name="cube"
+                size={Platform.OS === "android" ? 24 : 17}
+                tintColorClassName="accent-icon"
+                type="monochrome"
+              />
+            }
+            isFirst
+            onPress={() => navigation.dispatch(StackActions.push("SettingsSandboxNew"))}
+          />
+        </ListSection>
       ) : null}
     </AddProjectShell>
   );

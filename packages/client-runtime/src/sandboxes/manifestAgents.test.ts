@@ -1,7 +1,7 @@
 import type { AgentctlSandboxManifest } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { filterManifestRepositories, groupManifests, pickAgentManifest } from "./manifestAgents";
+import { filterManifestRepositories, groupManifests, pickAgentManifest } from "./manifestAgents.ts";
 
 function manifest(
   repository: string,

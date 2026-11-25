@@ -86,7 +86,8 @@ export function FloatingWorkingControl(props: {
   const actions: ReadonlyArray<FloatingStatusAction> =
     props.status?.kind === "goal"
       ? props.status.actions
-      : props.status?.kind === "stop" && props.status.action !== null
+      : (props.status?.kind === "stop" || props.status?.kind === "connection") &&
+          props.status.action
         ? [props.status.action]
         : [];
   const [agentsWidth, setAgentsWidth] = useState(0);

@@ -35,6 +35,8 @@ export type FloatingWorkingStatus =
       readonly kind: "connection";
       readonly label: string;
       readonly onPress: () => void;
+      /** The way out, such as starting a stopped Sandbox. */
+      readonly action?: FloatingStatusAction;
     };
 
 /** A connection still retrying on its own; short enough for the thread header subtitle. */

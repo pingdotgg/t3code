@@ -1,3 +1,4 @@
+import { suggestSandboxName } from "@t3tools/client-runtime/sandboxes/presentation";
 import type {
   AgentctlSandboxManifest,
   AgentctlSandboxSettings,
@@ -21,7 +22,7 @@ import { sandboxEnvironment } from "../state/sandboxes";
 import { rememberCreatedSandbox } from "./createdSandboxes";
 import { ManifestFolderInput } from "./ManifestFolderInput";
 import { ManifestPicker } from "./ManifestPicker";
-import { runOnHost, suggestSandboxName } from "./sandboxActions";
+import { runOnHost } from "./sandboxActions";
 import { SandboxHostMenu } from "./SandboxHostMenu";
 import {
   readDefaultSandboxHost,

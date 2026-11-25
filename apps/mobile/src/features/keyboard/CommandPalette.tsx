@@ -78,6 +78,7 @@ import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceTab } from "../layout/workspace/useSelectWorkspaceTab";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { useOffersSandboxes } from "../sandboxes/useSandboxes";
 
 const PALETTE_COMMANDS: ReadonlyArray<HardwareKeyboardCommand> = [
   "commandPalette",
@@ -277,6 +278,7 @@ export function CommandPalette(props: {
   );
   const serverConfigs = useServerConfigs();
   const startTriage = useStartTriage();
+  const offersSandboxes = useOffersSandboxes();
   const newTaskFlow = useNewTaskFlow();
   const draftEnvironmentId =
     useActiveNewTask() === null ? null : (newTaskFlow.selectedProject?.environmentId ?? null);
@@ -356,6 +358,34 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    if (offersSandboxes) {
+      actions.push(
+        {
+          key: "sandboxes",
+          kind: "action",
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's Sandboxes UI is English
+          title: "Open Sandboxes",
+          searchTerms: [
+            "sandboxes",
+            "agentctl",
+            "start",
+            "stop",
+            "delete",
+            "manifest folders",
+            "vm",
+          ],
+          run: () => openSettings(navigation, "SettingsSandboxes"),
+        },
+        {
+          key: "newSandbox",
+          kind: "action",
+          // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's Sandboxes UI is English
+          title: "New Sandbox…",
+          searchTerms: ["new sandbox", "create sandbox", "agentctl", "apply", "manifest", "vm"],
+          run: () => openSettings(navigation, "SettingsSandboxNew"),
+        },
+      );
+    }
     if (canTriage) {
       const triageEnvironmentLabel = savedConnectionsById[triageEnvironmentId]?.environmentLabel;
       actions.push({
@@ -501,6 +531,7 @@ export function CommandPalette(props: {
     canTriage,
     canShareWithGuest,
     navigation,
+    offersSandboxes,
     projects,
     runCommand,
     savedConnectionsById,

@@ -4,9 +4,12 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   canDeleteSandbox,
   canStopSandbox,
+  deleteSandboxConfirmation,
+  sandboxBannerState,
   sandboxStatus,
+  stopSandboxConfirmation,
   suggestSandboxName,
-} from "./sandboxActions";
+} from "./presentation.ts";
 
 function sandbox(overrides: Partial<AgentctlSandbox> = {}): AgentctlSandbox {
   return {
@@ -74,5 +77,39 @@ describe("Sandbox actions", () => {
     expect(canDeleteSandbox(creating)).toBe(true);
     expect(canDeleteSandbox(sandbox({ action: "deleting" }))).toBe(false);
     expect(canStopSandbox(sandbox({ phase: "stopped" }))).toBe(false);
+  });
+});
+
+describe("Sandbox confirmations", () => {
+  it.each([
+    [0, false, ""],
+    [1, true, " 1 thread is still working there."],
+    [3, true, " 3 threads are still working there."],
+  ])("Stop with %i working threads", (working, destructive, warning) => {
+    const confirmation = stopSandboxConfirmation("worker", working);
+    expect(confirmation.destructive).toBe(destructive);
+    expect(confirmation.message.endsWith(`with it.${warning}`)).toBe(true);
+  });
+
+  it("always treats Delete as destructive, naming working threads", () => {
+    expect(deleteSandboxConfirmation("worker on desktop", 0)).toMatchObject({
+      title: "Delete worker on desktop?",
+      destructive: true,
+    });
+    expect(deleteSandboxConfirmation("worker", 2).message).toMatch(
+      / 2 threads are still working there\.$/,
+    );
+  });
+});
+
+describe("sandboxBannerState", () => {
+  it.each([
+    [{ phase: "stopped" }, "stopped"],
+    [{ phase: "stopped", action: "starting" }, "starting"],
+    [{ phase: "starting" }, "starting"],
+    [{ phase: "stopped", action: "deleting" }, null],
+    [{ phase: "ready" }, null],
+  ] as const)("%o is %s", (overrides, expected) => {
+    expect(sandboxBannerState(sandbox(overrides))).toBe(expected);
   });
 });

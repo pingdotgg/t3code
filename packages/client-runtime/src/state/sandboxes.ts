@@ -53,6 +53,14 @@ export function createSandboxAtoms<R, E>(
       })),
     ),
   ).pipe(Atom.withLabel("sandboxes:all"));
+  /** Whether a connected host can reach agentctl, so Sandbox actions are worth offering. */
+  const offersSandboxesAtom = Atom.make((get) =>
+    get(hostsValueAtom).some((host) => host.snapshot.status === "available"),
+  ).pipe(Atom.withLabel("sandboxes:offered"));
+  /** Whether Sandboxes come from more than one host, so a Sandbox's name alone may be ambiguous. */
+  const severalHostsAtom = Atom.make(
+    (get) => get(hostsValueAtom).filter((host) => host.snapshot.sandboxes.length > 0).length > 1,
+  ).pipe(Atom.withLabel("sandboxes:several-hosts"));
 
   const command = <TTag extends Parameters<typeof createEnvironmentRpcCommand>[1]["tag"]>(
     name: string,
@@ -62,6 +70,8 @@ export function createSandboxAtoms<R, E>(
   return {
     hostsValueAtom,
     sandboxesAtom,
+    offersSandboxesAtom,
+    severalHostsAtom,
     start: command("start", WS_METHODS.agentctlStartSandbox),
     stop: command("stop", WS_METHODS.agentctlStopSandbox),
     remove: command("delete", WS_METHODS.agentctlDeleteSandbox),

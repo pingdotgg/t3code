@@ -62,9 +62,11 @@ host too, `name (host)`, since two hosts can each have a Sandbox of that name; a
 replaces the registration, so renaming a host reconnects its Sandboxes. A connection id per
 host, Sandbox and environment id makes a recreated Sandbox pair again.
 
-Giving a new Sandbox its project and its host's preferences still runs in the web client
-([coordinator](../../apps/web/src/sandboxes/SandboxConnectionCoordinator.tsx)), so a Sandbox that
-only the mobile app has connected to gets neither until it moves into client-runtime.
+Each client gives a Sandbox it connects to its project and, once, its host's preferences
+([web](../../apps/web/src/sandboxes/SandboxConnectionCoordinator.tsx),
+[mobile](../../apps/mobile/src/features/sandboxes/SandboxCoordinator.tsx)), so a Sandbox only the
+mobile app has reached gets them too. Two clients may race; the server allows one project per
+folder, and the seed only fills settings the Sandbox still has at their defaults.
 
 In development, Vite's proxy must forward `/sandbox/` with its sockets, and must not take the
 `/sandboxes` page ([dev proxy](../../packages/shared/src/devProxy.ts)).

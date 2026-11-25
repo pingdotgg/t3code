@@ -39,6 +39,9 @@ the provider credentials agentctl gives it.
   in pickers and wherever T3 Code names an environment. Once Sandboxes come from more than one
   computer, the sidebar and a new thread's project picker also show the computer beside each
   Sandbox project, since two computers can each have a `worker-1`.
+- **On the mobile app.** **Sandboxes** is under Settings → Connections, and **New Sandbox** is also
+  in **Add project**. The Sandboxes page follows a new Sandbox while agentctl sets it up, then offers
+  **New thread**. Manifest folders are added there as a path on the computer.
 - **Let agents do it.** Agents in a thread on that computer can list, create, start, stop and delete
   its Sandboxes too.
 

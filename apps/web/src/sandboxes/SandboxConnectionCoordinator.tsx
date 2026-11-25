@@ -1,11 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { isSandboxBeingDeleted } from "@t3tools/client-runtime/sandboxes";
-import { sandboxSettingsSeed } from "@t3tools/client-runtime/sandboxes/settings-seed";
-import {
-  AuthProvidersManageScope,
-  EnvironmentId,
-  requiredScopesForServerSettingsPatch,
-} from "@t3tools/contracts";
+import { seedSandboxSettings } from "@t3tools/client-runtime/sandboxes/settings-seed";
+import { EnvironmentId } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 
@@ -112,40 +108,23 @@ function SandboxEnvironmentCoordinator(props: {
       return;
     }
     seeding.current = true;
-    const run = async () => {
-      const seed = sandboxSettingsSeed({
-        local: localConfig.settings,
-        sandbox: sandboxConfig.settings,
-        sandboxProviderInstanceIds: new Set(
-          sandboxConfig.providers
-            .filter((provider) => provider.enabled)
-            .map((provider) => provider.instanceId),
-        ),
-        harnesses: props.harnesses,
-        ...(sandboxConfig.managedPolicy === undefined
-          ? {}
-          : { sandboxPolicy: sandboxConfig.managedPolicy }),
-      });
-      const changesSettings = Object.keys(seed.patch).length > 0;
-      if (changesSettings || seed.providerInstanceMutation !== undefined) {
-        const scopes = [
-          ...(changesSettings ? requiredScopesForServerSettingsPatch(seed.patch) : []),
-          ...(seed.providerInstanceMutation !== undefined ? [AuthProvidersManageScope] : []),
-        ];
-        if (!scopes.every((scope) => readEnvironmentScope(props.environmentId, scope))) return;
-        const result = await updateSettings({ environmentId: props.environmentId, input: seed });
-        if (result._tag === "Failure") {
-          console.warn("Could not seed the Sandbox settings.");
-          return;
-        }
-      }
-      await markSettingsSeeded({
-        environmentId: props.hostEnvironmentId,
-        input: { name: props.name, environmentId: props.environmentId },
-      });
-    };
     // `.finally` rather than try/finally, which the React Compiler cannot compile.
-    await run().finally(() => {
+    await seedSandboxSettings({
+      hostConfig: localConfig,
+      sandboxConfig,
+      harnesses: props.harnesses,
+      hasScope: (scope) => readEnvironmentScope(props.environmentId, scope),
+      updateSettings: async (seed) => {
+        const result = await updateSettings({ environmentId: props.environmentId, input: seed });
+        if (result._tag === "Failure") console.warn("Could not seed the Sandbox settings.");
+        return result._tag !== "Failure";
+      },
+      markSeeded: () =>
+        markSettingsSeeded({
+          environmentId: props.hostEnvironmentId,
+          input: { name: props.name, environmentId: props.environmentId },
+        }),
+    }).finally(() => {
       seeding.current = false;
     });
   });

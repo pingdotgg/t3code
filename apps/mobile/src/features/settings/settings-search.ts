@@ -22,6 +22,7 @@ const SETTINGS_SEARCH_TERMS = {
     msg("remote", { $context: "settings search keyword" }),
     "tailscale",
   ],
+  SettingsSandboxes: ["agentctl", "sandbox", "vm", "manifest folders", "start", "stop"],
   SettingsNotifications: [
     msg("push", { $context: "settings search keyword" }),
     msg("alerts", { $context: "settings search keyword" }),

@@ -199,6 +199,7 @@ import {
   type FloatingWorkingStatus,
 } from "./floating-working-status";
 import type { ThreadStatusLineModel } from "./thread-context-divider";
+import { useSandboxConnectionStatus } from "../sandboxes/sandboxBanner";
 import {
   derivePendingUserInputMaxHeight,
   ESTIMATED_KEYBOARD_HEIGHT,
@@ -811,16 +812,23 @@ function ThreadDetailBody(
     };
   })();
   const statusLines = [backgroundLine, lifecycleLine].filter((line) => line !== null);
+  const sandboxStatus = useSandboxConnectionStatus(
+    props.environmentId,
+    props.onReconnectEnvironment,
+  );
   const floatingStatus = ((): FloatingWorkingStatus | null => {
-    const connectionStatus = connectionFloatingStatus(
-      {
-        connectionError: props.connectionError,
-        connectionState: props.connectionStateLabel,
-        environmentLabel: props.environmentLabel,
-        onReconnect: props.onReconnectEnvironment,
-      },
-      messages,
-    );
+    const connectionStatus =
+      sandboxStatus !== null && props.connectionStateLabel !== "connected"
+        ? sandboxStatus
+        : connectionFloatingStatus(
+            {
+              connectionError: props.connectionError,
+              connectionState: props.connectionStateLabel,
+              environmentLabel: props.environmentLabel,
+              onReconnect: props.onReconnectEnvironment,
+            },
+            messages,
+          );
     if (connectionStatus !== null && !props.draftMode) {
       return connectionStatus;
     }

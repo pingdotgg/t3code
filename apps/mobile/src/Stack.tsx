@@ -140,6 +140,9 @@ import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
+import { SettingsSandboxesRouteScreen } from "./features/sandboxes/SandboxesRouteScreen";
+import { SettingsSandboxNewRouteScreen } from "./features/sandboxes/NewSandboxRouteScreen";
+import { SandboxCoordinator } from "./features/sandboxes/SandboxCoordinator";
 import { SettingsLabsRouteScreen } from "./features/settings/ThreadSettingsSections";
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
 import { openSettings, settingsOpenIn } from "./features/settings/settings-navigation";
@@ -164,6 +167,9 @@ const { title: _compactBrandTitle, ...compactBrandHeaderOptions } = getCompactBr
 const ROUTE_TITLES: Readonly<Record<string, string>> = {
   Settings: msg("Settings"),
   SettingsEnvironments: msg("Environments"),
+  // The fork's Sandboxes UI is English in every locale.
+  SettingsSandboxes: "Sandboxes",
+  SettingsSandboxNew: "New Sandbox",
   SettingsEnvironmentDetail: msg("Environment"),
   SettingsEnvironmentNewThreads: msg("Threads"),
   SettingsEnvironmentSourceControl: msg("Source control & issues"),
@@ -238,6 +244,16 @@ const SETTINGS_SCREENS = {
   SettingsEnvironments: createNativeStackScreen({
     screen: SettingsEnvironmentsRouteScreen,
     linking: "settings/environments",
+    options: settingsPage(),
+  }),
+  SettingsSandboxes: createNativeStackScreen({
+    screen: SettingsSandboxesRouteScreen,
+    linking: "settings/sandboxes",
+    options: settingsPage(),
+  }),
+  SettingsSandboxNew: createNativeStackScreen({
+    screen: SettingsSandboxNewRouteScreen,
+    linking: "settings/sandboxes/new",
     options: settingsPage(),
   }),
   SettingsEnvironmentDetail: createNativeStackScreen({
@@ -500,6 +516,7 @@ function RootStackLayout(props: {
               >
                 {props.children}
                 <HardwareKeyboardCommandOverlay />
+                <SandboxCoordinator />
               </AdaptiveWorkspaceLayout>
             </AndroidWorkspaceTabsProvider>
           </WorkspaceConnectionStatusProvider>

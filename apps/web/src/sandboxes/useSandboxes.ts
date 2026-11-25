@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { sandboxHostSummary } from "@t3tools/client-runtime/sandboxes/presentation";
 import type { HostedSandbox, SandboxHost } from "@t3tools/client-runtime/state/sandboxes";
 import {
   resolveEnvironmentMachineKind,
@@ -12,10 +13,6 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironments } from "../state/environments";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { sandboxEnvironment } from "../state/sandboxes";
-
-const offersSandboxesAtom = Atom.make((get) =>
-  get(sandboxEnvironment.hostsValueAtom).some((host) => host.snapshot.status === "available"),
-).pipe(Atom.withLabel("sandboxes:offered"));
 
 /**
  * Where New Sandbox and the Sandboxes page go when nothing names a host: this client's own server
@@ -32,15 +29,8 @@ const defaultHostAtom = Atom.make((get) => {
   );
 }).pipe(Atom.withLabel("sandboxes:default-host"));
 
-/** Whether Sandboxes come from more than one host, so a Sandbox's name alone may be ambiguous. */
-export const sandboxesOnSeveralHostsAtom = Atom.make(
-  (get) =>
-    get(sandboxEnvironment.hostsValueAtom).filter((host) => host.snapshot.sandboxes.length > 0)
-      .length > 1,
-).pipe(Atom.withLabel("sandboxes:several-hosts"));
-
 export function useSandboxesOnSeveralHosts(): boolean {
-  return useAtomValue(sandboxesOnSeveralHostsAtom);
+  return useAtomValue(sandboxEnvironment.severalHostsAtom);
 }
 
 export function useSandboxHosts(): ReadonlyArray<SandboxHost> {
@@ -66,7 +56,7 @@ export function readDefaultSandboxHost(): EnvironmentId | null {
 
 /** Whether a connected host can reach agentctl, so Sandbox actions are worth offering. */
 export function useOffersSandboxes(): boolean {
-  return useAtomValue(offersSandboxesAtom);
+  return useAtomValue(sandboxEnvironment.offersSandboxesAtom);
 }
 
 /** The host a view shows when nothing names one: the first that can reach agentctl, or any. */
@@ -93,7 +83,6 @@ export function useSandboxHostOptions(): ReadonlyArray<SandboxHostOption> {
     const environment = environments.find(
       (candidate) => candidate.environmentId === host.hostEnvironmentId,
     );
-    const count = host.snapshot.sandboxes.length;
     return {
       hostEnvironmentId: host.hostEnvironmentId,
       // Two machines can share a name, so a shared one gets its address, as in Settings.
@@ -103,12 +92,7 @@ export function useSandboxHostOptions(): ReadonlyArray<SandboxHostOption> {
           : settingsScopeEnvironmentLabel(environment, environments),
       machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
       offline: environment?.connection.phase !== "connected",
-      summary:
-        host.snapshot.status === "unavailable"
-          ? "agentctl is not available"
-          : host.snapshot.status === "loading"
-            ? "Looking for Sandboxes…"
-            : `${count} ${count === 1 ? "Sandbox" : "Sandboxes"}`,
+      summary: sandboxHostSummary(host.snapshot),
     };
   });
 }

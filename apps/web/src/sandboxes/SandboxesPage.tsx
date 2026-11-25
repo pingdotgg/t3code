@@ -2,7 +2,7 @@ import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import type { HostedSandbox, SandboxHost } from "@t3tools/client-runtime/state/sandboxes";
-import { EnvironmentId, type AgentctlSandbox, type AgentctlManifestRoot } from "@t3tools/contracts";
+import { EnvironmentId, type AgentctlManifestRoot } from "@t3tools/contracts";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import {
   DownloadIcon,
@@ -38,19 +38,23 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { ManifestFolderInput } from "./ManifestFolderInput";
 import { openNewSandboxDialog } from "./NewSandboxDialog";
+import { deleteSandbox, runOnHost, startSandbox, stopSandbox } from "./sandboxActions";
+import {
+  folderName,
+  pullToast,
+  repositoryBadges,
+  tildePath,
+} from "@t3tools/client-runtime/sandboxes/manifest-folders";
 import {
   canDeleteSandbox,
   canStartSandbox,
   canStopSandbox,
-  deleteSandbox,
-  runOnHost,
+  sandboxSpecLine,
   sandboxStatus,
   sandboxStatusDetail,
-  startSandbox,
-  stopSandbox,
+  sandboxThreadSummary,
   type SandboxTone,
-} from "./sandboxActions";
-import { folderName, pullToast, repositoryBadges, tildePath } from "./manifestFolders";
+} from "@t3tools/client-runtime/sandboxes/presentation";
 import { SandboxHostMenu } from "./SandboxHostMenu";
 import { useDefaultSandboxHost, useSandboxHostOptions, useSandboxHosts } from "./useSandboxes";
 
@@ -207,17 +211,6 @@ function HostSandboxes({ host }: { readonly host: SandboxHost }) {
   );
 }
 
-/** "4 CPUs · 6Gi memory · 32Gi disk · mediated network", from the manifest. */
-function specLine(sandbox: AgentctlSandbox): string | null {
-  const parts = [
-    sandbox.cpu === null ? null : `${sandbox.cpu} ${sandbox.cpu === "1" ? "CPU" : "CPUs"}`,
-    sandbox.memory === null ? null : `${sandbox.memory} memory`,
-    sandbox.disk === null ? null : `${sandbox.disk} disk`,
-    sandbox.network === null ? null : `${sandbox.network} network`,
-  ].filter((part) => part !== null);
-  return parts.length === 0 ? null : parts.join(" · ");
-}
-
 function SandboxRow({
   sandbox,
   homeDirectory,
@@ -254,10 +247,8 @@ function SandboxRow({
   // agentctl reports a restarted Sandbox ready before its relay answers; a thread waits for both.
   const connected = presentation?.connection.phase === "connected";
   const since = sandbox.since === null ? null : formatRelativeTimeLabel(sandbox.since);
-  const threadSummary =
-    threads.length === 0
-      ? "No threads"
-      : `${threads.length} ${threads.length === 1 ? "thread" : "threads"}${running > 0 ? `, ${running} running` : ""}`;
+  const threadSummary = sandboxThreadSummary(threads.length, running);
+  const spec = sandboxSpecLine(sandbox);
 
   return (
     <SettingsRow
@@ -277,7 +268,7 @@ function SandboxRow({
           {[detail, connection, since ? `Changed ${since}` : null]
             .filter((part) => part !== null && part !== "")
             .join(" · ") || null}
-          {specLine(sandbox) ? <span>{specLine(sandbox)}</span> : null}
+          {spec ? <span>{spec}</span> : null}
           {sandbox.manifestPath ? (
             <span className="truncate font-mono text-xs">
               {tildePath(sandbox.manifestPath, homeDirectory)}
