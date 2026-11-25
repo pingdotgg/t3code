@@ -202,6 +202,7 @@ import * as RelayTracing from "./cloud/relayTracing.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ManagedProviders from "./policy/managedProviders.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
@@ -3976,4 +3977,7 @@ export const layer = Layer.unwrap(
       ),
     );
   }),
-).pipe(Layer.provide(NpmRelease.layer));
+).pipe(
+  // Layers memoize by reference, so this is the same policy the server's settings layer reads.
+  Layer.provide(NpmRelease.layer.pipe(Layer.provide(ManagedPolicy.layer))),
+);
