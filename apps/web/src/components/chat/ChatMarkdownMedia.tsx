@@ -194,6 +194,8 @@ export function ChatMarkdownImage(props: {
   readonly standalone: boolean;
   readonly className?: string | undefined;
   readonly style?: CSSProperties | undefined;
+  /** The loading or unavailable frame's size, when it differs from the image's. */
+  readonly frameStyle?: CSSProperties | undefined;
   readonly imageProps?:
     | Omit<ComponentProps<"img">, "src" | "alt" | "className" | "style">
     | undefined;
@@ -282,7 +284,7 @@ export function ChatMarkdownImage(props: {
           CHAT_MARKDOWN_IMAGE_FRAME_CLASS_NAME,
           "relative",
         )}
-        style={props.style}
+        style={props.frameStyle ?? props.style}
         {...(failed
           ? { role: "alert" as const }
           : { role: "status" as const, "aria-label": gt("Loading image") })}
@@ -455,11 +457,11 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     props.style ??
     (knownSize
       ? authoredImageSizeStyle(knownSize.width, knownSize.height, maxHeightRem)
-      : src === null
-        ? unsizedImageFrameStyle(maxHeightRem)
-        : maxHeightRem !== 30
-          ? { maxHeight: `${maxHeightRem}rem` }
-          : undefined);
+      : maxHeightRem !== 30
+        ? { maxHeight: `${maxHeightRem}rem` }
+        : undefined);
+  // Kept until the image decodes: an SVG's URL arrives without dimensions.
+  const frameStyle = props.style ?? (knownSize ? style : unsizedImageFrameStyle(maxHeightRem));
   const actionsSource = assetMediaActionsSource({
     environmentId: props.environmentId,
     resource,
@@ -468,7 +470,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     src,
     workspaceRoot: props.workspaceRoot,
     originalUrl: props.originalUrl,
-    downloadable: fallbackSrc === undefined,
+    downloadable: fallbackSrc === undefined && !props.pending,
   });
 
   if (props.kind === "video") {
@@ -503,6 +505,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         props.className,
       )}
       style={style}
+      frameStyle={frameStyle}
       imageProps={props.imageProps}
       actionsSource={actionsSource}
       originalUrl={props.originalUrl}

@@ -13,15 +13,19 @@ const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAUAAAAC0CAIAAABqhmJGAAABk0lEQVR42u3TAQkAAAzDsGm53fu8jusYBKKg0MweUCoSgIEBAwMGBgMDBgYMDBgYDAwYGDAwGBgwMGBgwMBgYMDAgIEBA4OBAQMDBgYDAwYGDAwYGAwMGBgwMGBgMDBgYMDAYGDAwICBAQODgQEDAwYGA6sABgYMDBgYDAwYGDAwYGAwMGBgwMBgYMDAgIEBA4OBAQMDBgYMDAYGDAwYGAwMGBgwMGBgMDBgYMDAgIHBwICBAQODgQEDAwYGDAwGBgwMGBgMDBgYMDBgYDAwYGDAwICBwcCAgQEDg4EBAwMGBgwMBgYMDBgYMDAYGDAwYGAwMGBgwMCAgcHAgIEBAwMGBgMDBgYMDAYGDAwYGDAwGBgwMGBgMDBgYMDAgIHBwICBAQMDBgYDAwYGDAwGBgwMGBgwMBgYMDBgYMDAYGDAwICBwcCAgQEDAwYGAwMGBgwMBlYBDAwYGDAwGBgwMGBgwMBgYMDAgIHBwICBAQMDBgYDAwYGDAwYGAwMGBgwMBgYMDBgYMDAYGDAwICBAQNDtwcYFke/eepCNQAAAABJRU5ErkJggg==";
 
 // Like an agent that takes a screenshot and reads it in one message: the Read starts before
-// the file exists, and the file appears while the Read is still running. The file is written
-// once the release file exists, so the test can look at the running Read for as long as it needs.
-const acp = (path: string, release: string) => `
+// the file exists, and the file appears while the Read is still running. The agent waits for
+// the test's go-ahead before writing the file and again before ending the turn, which folds the
+// strip away.
+const acp = (path: string, signals: string) => `
 import { existsSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const sessionId = "pending-read-image";
 const path = ${JSON.stringify(path)};
-const release = ${JSON.stringify(release)};
+const signals = ${JSON.stringify(signals)};
+const waitFor = async (signal) => {
+  while (!existsSync(signals + "/" + signal)) await new Promise((resolve) => setTimeout(resolve, 100));
+};
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
 const update = (value) => send({ method: "session/update", params: { sessionId, update: value } });
 for await (const line of createInterface({ input: process.stdin })) {
@@ -33,7 +37,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     send({ id, result: { sessionId } });
   } else if (method === "session/prompt") {
     update({ sessionUpdate: "tool_call", toolCallId: "read", kind: "read", title: "Read", status: "in_progress", rawInput: { path } });
-    while (!existsSync(release)) await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitFor("write-image");
     writeFileSync(path, Buffer.from(${JSON.stringify(PNG)}, "base64"));
     update({
       sessionUpdate: "tool_call_update",
@@ -41,7 +45,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       status: "completed",
       content: [{ type: "content", content: { type: "text", text: "Read image" } }],
     });
-    await new Promise((resolve) => setTimeout(resolve, 10_000));
+    await waitFor("reply");
     update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: ${JSON.stringify(REPLY)} } });
     send({ id, result: { stopReason: "end_turn" } });
   } else {
@@ -59,8 +63,8 @@ test(
     const settingsPath = NodePath.join(T3_HOME, "userdata/settings.json");
     const originalSettings = await NodeFSP.readFile(settingsPath, "utf8");
     const settings = JSON.parse(originalSettings);
-    const release = NodePath.join(project, "release-read");
-    await NodeFSP.writeFile(script, acp(NodePath.join(project, "later.png"), release));
+    const signals = await NodeFSP.mkdtemp(NodePath.join(T3_HOME, "pending-read-"));
+    await NodeFSP.writeFile(script, acp(NodePath.join(project, "later.png"), signals));
     settings.providerInstances["pending-read-agent"] = {
       driver: "acpRegistry",
       displayName: "Pending read agent",
@@ -97,13 +101,11 @@ test(
       if (threadId === undefined) throw new Error("Could not start the pending read turn.");
 
       await t3.open({ threadId });
-      await screen
-        .getByText("Take a screenshot and look at it", { exact: true })
-        .waitFor({ timeout: 60_000 });
-      // The Read starts with the turn. Asking for the missing file fails within a second or two.
+      await screen.getByText("Read demo/later.png", { exact: true }).waitFor({ timeout: 60_000 });
+      // Asking for the missing file fails within a second or two of the Read row showing.
       const unavailable = await screen
         .getByText("Image unavailable", { exact: false })
-        .waitFor({ timeout: 6_000 })
+        .waitFor({ timeout: 8_000 })
         .then(
           () => true,
           () => false,
@@ -112,10 +114,11 @@ test(
       expect(unavailable).toBe(false);
       await screen.getByRole("status", "Loading image").waitFor({ timeout: 5_000 });
 
-      await NodeFSP.writeFile(release, "");
-      // The turn keeps running a while after the Read, so its strip stays open.
+      await NodeFSP.writeFile(NodePath.join(signals, "write-image"), "");
       await screen.getByRole("button", "Preview later.png").waitFor({ timeout: 30_000 });
       await app.screenshot("after-read");
+      await NodeFSP.writeFile(NodePath.join(signals, "reply"), "");
+      await screen.getByText(REPLY, { exact: true }).waitFor({ timeout: 30_000 });
     } finally {
       await NodeFSP.writeFile(settingsPath, originalSettings);
     }

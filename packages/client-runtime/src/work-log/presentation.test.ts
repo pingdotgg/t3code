@@ -10,6 +10,7 @@ import {
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
+  workEntriesViewedImagePaths,
   workEntriesViewedImages,
   workEntryViewedImagePath,
 } from "./presentation.js";
@@ -279,5 +280,15 @@ describe("workEntriesViewedImages", () => {
         read("done", "/repo/b.png", "completed"),
       ]),
     ).toEqual([{ path: "/repo/b.png", pending: false }]);
+  });
+
+  it("orders the finished images like the strip shows them", () => {
+    expect(
+      workEntriesViewedImagePaths([
+        read("first", "/repo/a.png", "inProgress"),
+        read("other", "/repo/b.png", "completed"),
+        read("again", "/repo/a.png", "completed"),
+      ]),
+    ).toEqual(["/repo/a.png", "/repo/b.png"]);
   });
 });

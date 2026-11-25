@@ -495,7 +495,7 @@ function viewedImagePathOf(entry: WorkLogPresentationEntry): string | null {
 export function workEntriesViewedImagePaths(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): string[] {
-  return [...new Set(entries.flatMap((entry) => workEntryViewedImagePath(entry) ?? []))];
+  return workEntriesViewedImages(entries).flatMap(({ path, pending }) => (pending ? [] : path));
 }
 
 export interface ViewedImage {
