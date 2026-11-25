@@ -508,8 +508,7 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
           wrapper.dataset.sidebarDragState = restorePending ? "expanded" : "collapsed";
         }
         const width = clampSidebarWidth(nextWidth, options);
-        container.style.left = "0px";
-        container.style.translate = restorePending ? "0px" : "-100%";
+        container.style.left = restorePending ? "0px" : `${-width}px`;
         for (const element of [container, gap]) {
           element.style.width = `${restorePending || element === container ? width : 0}px`;
           element.style.transitionDuration = "0ms";
@@ -526,7 +525,6 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
       cleanup() {
         delete wrapper.dataset.sidebarDragState;
         container.style.removeProperty("left");
-        container.style.removeProperty("translate");
         for (const element of [container, gap]) {
           element.style.removeProperty("width");
           element.style.removeProperty("transition-duration");
@@ -619,7 +617,8 @@ function SidebarRail({
           `${collapsePending && element !== sidebarContainer ? 0 : value}px`,
         );
       });
-      if (canCollapse) sidebarContainer.style.translate = collapsePending ? "-100%" : "0px";
+      // Match the offcanvas left offset so releasing a drag cannot restart the slide.
+      if (canCollapse) sidebarContainer.style.left = collapsePending ? `${-value}px` : "0px";
     };
     widthTargets.forEach((element) => {
       element.style.setProperty("transition-duration", "0ms");
@@ -661,7 +660,7 @@ function SidebarRail({
       cleanup() {
         if (canCollapse) {
           delete wrapper.dataset.sidebarDragState;
-          sidebarContainer.style.removeProperty("translate");
+          sidebarContainer.style.removeProperty("left");
         }
         widthTargets.forEach((element) => {
           element.style.removeProperty("width");

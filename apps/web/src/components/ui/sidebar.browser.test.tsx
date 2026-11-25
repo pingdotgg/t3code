@@ -81,6 +81,10 @@ describe("Sidebar", () => {
       router: false /* no routes involved */,
     });
     const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
+    const wrapper = sidebar.closest<HTMLElement>('[data-slot="sidebar-wrapper"]')!;
+    wrapper.dataset.panelAnimations = "true";
+    wrapper.style.setProperty("--panel-animation-duration", "1s");
+    const container = sidebar.querySelector<HTMLElement>('[data-slot="sidebar-container"]')!;
     const rail = sidebar.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
     const pointer = {
       bubbles: true,
@@ -119,8 +123,11 @@ describe("Sidebar", () => {
     expect(onResize).toHaveBeenLastCalledWith(281);
     expect(sidebar.dataset.state).toBe("expanded");
     dispatch(rail, "pointerdown", 280);
+    dispatch(rail, "pointermove", 0);
+    await vi.waitFor(() => expect(container.getBoundingClientRect().right).toBe(0));
     dispatch(rail, "pointerup", 0);
     await vi.waitFor(() => expect(sidebar.dataset.state).toBe("collapsed"));
+    expect(container.getBoundingClientRect().right).toBe(0);
     expect(onResize).toHaveBeenLastCalledWith(200);
     expect(sidebar.inert).toBe(true);
     const handle = screen.container.querySelector<HTMLElement>(
@@ -166,6 +173,7 @@ describe("Sidebar", () => {
     );
     dispatch(handle, "pointerup", endX);
     await vi.waitFor(() => expect(sidebar.dataset.state).toBe("expanded"));
+    expect(container.getBoundingClientRect().left).toBe(0);
     expect(onResize).toHaveBeenLastCalledWith(258);
     expect(sidebar.inert).toBe(false);
   });
