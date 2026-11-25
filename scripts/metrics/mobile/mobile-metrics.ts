@@ -20,24 +20,16 @@ import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/cli";
 import { ChildProcessSpawner } from "effect/process";
 
-import { compareSeries, Floors, noiseOfSeries } from "./client-metrics-report.ts";
-import { DIFF_FILES, pullRequestDetail, sourceFile } from "./client-metrics-fixture.ts";
 import {
   leaseAndInstall,
   openPool,
   releaseOnCrash,
   renewWhileRunning,
   type PoolAccess,
-} from "./mobile-behavior/pool.ts";
-import { reachableHost, startSession, type Build } from "./mobile-behavior/session.ts";
-import type { Device as PoolDevice } from "./mobile-e2e/device.ts";
-import {
-  CASE_NAMES,
-  CASES,
-  type CaseContext,
-  type CaseName,
-  type Fixtures,
-} from "./mobile-metrics/cases.ts";
+} from "../../mobile-behavior/pool.ts";
+import { reachableHost, startSession, type Build } from "../../mobile-behavior/session.ts";
+import type { Device as PoolDevice } from "../../mobile-e2e/device.ts";
+import { CASE_NAMES, CASES, type CaseContext, type CaseName, type Fixtures } from "./cases.ts";
 import {
   flatten,
   MobileMetrics,
@@ -49,12 +41,14 @@ import {
   type Run,
   type SoakSample,
   type Step,
-} from "./mobile-metrics/report.ts";
-import { run } from "./scenarios/shell.ts";
-import { serveFakeGitHub, type FakeGitHub } from "./server-metrics-forge.ts";
-import { machineLoad, MetricsError, output, runAbRounds } from "./server-metrics.ts";
+} from "./report.ts";
+import { run } from "../../scenarios/shell.ts";
+import { DIFF_FILES, pullRequestDetail, sourceFile } from "../core/fixture.ts";
+import { serveFakeGitHub, type FakeGitHub } from "../core/forge.ts";
+import { compareSeries, Floors, noiseOfSeries } from "../core/report.ts";
+import { machineLoad, MetricsError, output, runAbRounds } from "../core/run.ts";
 
-const REPO_ROOT = NodePath.resolve(import.meta.dirname, "..");
+const REPO_ROOT = NodePath.resolve(import.meta.dirname, "../../..");
 const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const decodeMetrics = Schema.decodeUnknownEffect(Schema.fromJsonString(MobileMetrics));
 const encodeMetrics = Schema.encodeEffect(fromJsonStringPretty(MobileMetrics));
