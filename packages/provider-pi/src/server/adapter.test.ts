@@ -3259,6 +3259,9 @@ describe("PiAdapterV2", () => {
     "running legacy boundary with a colliding entry ID",
     "rollback across a handoff",
     "conflicting retained branches",
+    "adopted wake in the same session",
+    "missing timing in the same session",
+    "assistant continuation after the selected turn",
   ] as const)("recovers Pi history across a handoff for %s", (scenario) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -3277,20 +3280,43 @@ describe("PiAdapterV2", () => {
       const legacyBoundary = scenario === "running legacy boundary with a colliding entry ID";
       const trailingPrompt = scenario === "equivalent copies with a discarded prompt";
       const ambiguous = scenario === "conflicting retained branches";
-      const newerEntries = legacyBoundary
+      const adoptedWake = scenario === "adopted wake in the same session";
+      const missingTiming = scenario === "missing timing in the same session";
+      const sameSession = adoptedWake || missingTiming;
+      const lateOutput = scenario === "assistant continuation after the selected turn";
+      const newerEntries = sameSession
         ? [
-            sessionMessage("u1", null, "user", 90),
-            { ...sessionMessage("u2", "u1", "user", 110), timestamp: undefined },
+            ...TURN_ONE_ENTRIES.map((entry) =>
+              missingTiming && entry.id === "u1" ? { ...entry, timestamp: undefined } : entry,
+            ),
+            sessionMessage("u2", "a1b", "user", 110),
           ]
-        : [sessionMessage("u2", null, "user", 110)];
+        : legacyBoundary
+          ? [
+              sessionMessage("u1", null, "user", 90),
+              { ...sessionMessage("u2", "u1", "user", 110), timestamp: undefined },
+            ]
+          : [sessionMessage("u2", null, "user", 110)];
       yield* writeSession(currentFile, newerEntries);
       yield* writeSession(
         oldFile,
-        trailingPrompt
-          ? [...TURN_ONE_ENTRIES, sessionMessage("discarded", "a1b", "user", 60)]
-          : TURN_ONE_ENTRIES,
+        lateOutput
+          ? [...TURN_ONE_ENTRIES, sessionMessage("late-reply", "a1b", "assistant", 60)]
+          : trailingPrompt
+            ? [...TURN_ONE_ENTRIES, sessionMessage("discarded", "a1b", "user", 60)]
+            : TURN_ONE_ENTRIES,
       );
-      if (trailingPrompt) yield* writeSession(copyFile, TURN_ONE_ENTRIES);
+      if (trailingPrompt)
+        yield* writeSession(copyFile, [
+          ...TURN_ONE_ENTRIES,
+          {
+            type: "model_change",
+            id: "changed-model",
+            parentId: "a1b",
+            timestamp: DateTime.formatIso(at(55)),
+          },
+          sessionMessage("copy-prompt", "changed-model", "user", 60),
+        ]);
       if (ambiguous)
         yield* writeSession(copyFile, [
           ...TURN_ONE_ENTRIES,
@@ -3306,8 +3332,16 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
-      const [target, boundary] = uncapturedTurns(source.id, { startedAt: 100, completedAt: 150 });
-      if (target === undefined || boundary === undefined) throw new Error("missing turns");
+      const [firstTurn, boundary] = uncapturedTurns(source.id, {
+        startedAt: 100,
+        completedAt: 150,
+      });
+      if (firstTurn === undefined || boundary === undefined) throw new Error("missing turns");
+      const target = {
+        ...firstTurn,
+        startedAt: adoptedWake ? at(15) : firstTurn.startedAt,
+        completedAt: missingTiming ? null : firstTurn.completedAt,
+      };
       const turns = [
         target,
         {
@@ -3342,6 +3376,14 @@ describe("PiAdapterV2", () => {
         });
         assert.equal(result.providerThread.nativeThreadRef?.nativeId, oldFile);
         assert.equal(result.providerThread.nativeConversationHeadRef?.nativeId, "a1b");
+        assert.deepEqual(
+          fake
+            .allRequests()
+            .filter((request) => request.type === "switch_session")
+            .map((request) => request.sessionPath),
+          [oldFile],
+        );
+        assert.isFalse(fake.allRequests().some((request) => request.type === "fork"));
         return;
       }
 
@@ -3355,20 +3397,20 @@ describe("PiAdapterV2", () => {
           targetThreadId: ThreadId.make("fork-target"),
         })
         .pipe(Effect.result);
-      if (ambiguous) {
+      if (ambiguous || lateOutput) {
         assert.equal(result._tag, "Failure");
         assert.isFalse(forkFake.allRequests().some((request) => request.type === "fork"));
         return;
       }
       if (result._tag === "Failure") return yield* result.failure;
       const args = forkFake.lastSpawn().args;
-      assert.equal(args[args.indexOf("--fork") + 1], oldFile);
+      assert.equal(args[args.indexOf("--fork") + 1], sameSession ? currentFile : oldFile);
       assert.deepEqual(
         forkFake
           .allRequests()
           .filter((request) => request.type === "fork")
           .map((request) => request.entryId),
-        trailingPrompt ? ["discarded"] : [],
+        sameSession ? ["u2"] : trailingPrompt ? ["discarded"] : [],
       );
       assert.equal(result.success.nativeThreadRef?.nativeId, forkFile);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),

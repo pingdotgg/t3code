@@ -3103,15 +3103,19 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return undefined;
 
         const unresolved = () => protocolError("Pi fork target was not found in a session");
-        if (startedAt == null || completedAt == null) return yield* unresolved();
-        const from = DateTime.toEpochMillis(startedAt);
-        const to = DateTime.toEpochMillis(completedAt);
+        const sourcePrompt = source.entries.get(targetId);
         if (
-          piUserEntryInWindow(source.entries.get(targetId), from, to) &&
+          sourcePrompt?.isUserMessage === true &&
+          (completedAt == null ||
+            sourcePrompt.timestamp === null ||
+            sourcePrompt.timestamp <= DateTime.toEpochMillis(completedAt)) &&
           walkPiBranch(source.entries, boundary.entryId, targetId)?.reachedStop === true
         )
           return undefined;
 
+        if (startedAt == null || completedAt == null) return yield* unresolved();
+        const from = DateTime.toEpochMillis(startedAt);
+        const to = DateTime.toEpochMillis(completedAt);
         // Pi accepts a fork before the first prompt in a new session even when the
         // selected turn is absent. Find its retained branch before asking Pi to fork.
         let recovered:
@@ -3121,24 +3125,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const listing = yield* readSessionFile(file);
           if (listing === null || !piUserEntryInWindow(listing.entries.get(targetId), from, to))
             continue;
-          const afterTarget = walkPiBranch(listing.entries, listing.leafId, targetId);
-          if (afterTarget?.reachedStop !== true) continue;
-          let entryId: string | undefined;
-          for (const id of [...afterTarget.userEntryIds].reverse()) {
-            const timestamp = listing.entries.get(id)?.timestamp;
-            if (timestamp == null) return yield* unresolved();
-            if (timestamp >= to) {
-              entryId = id;
-              break;
-            }
-          }
-          const retainedLeaf =
-            entryId === undefined
-              ? listing.leafId
-              : (listing.entries.get(entryId)?.parentId ?? null);
-          const retained = walkPiBranch(listing.entries, retainedLeaf, null);
-          if (retained?.reachedStop !== true) continue;
-          const history = [...retained.entryIds];
+          const retained = piLegacyRetainedBranch(listing, targetId, to);
+          if (retained === undefined) continue;
+          const { history, entryId } = retained;
           if (
             recovered !== undefined &&
             (history.length !== recovered.history.length ||
@@ -4393,6 +4382,7 @@ const decodeSessionLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schem
 interface PiSessionEntry {
   readonly parentId: string | null;
   readonly isUserMessage: boolean;
+  readonly isSessionMetadata: boolean;
   /** Pi's `timestamp` as epoch milliseconds; null when missing or unparsable. */
   readonly timestamp: number | null;
 }
@@ -4426,13 +4416,18 @@ function readPiSessionEntry(entry: unknown): [string, PiSessionEntry] | null {
   const parentId = recordField(entry, "parentId");
   if (id === undefined || (parentId !== null && typeof parentId !== "string")) return null;
   const timestamp = recordString(entry, "timestamp");
+  const type = recordString(entry, "type");
   return [
     id,
     {
       parentId,
       isUserMessage:
-        recordField(entry, "type") === "message" &&
-        recordString(recordField(entry, "message"), "role") === "user",
+        type === "message" && recordString(recordField(entry, "message"), "role") === "user",
+      isSessionMetadata:
+        type === "model_change" ||
+        type === "thinking_level_change" ||
+        type === "label" ||
+        type === "session_info",
       timestamp:
         timestamp === undefined
           ? null
@@ -4482,6 +4477,27 @@ function walkPiBranch(
     userEntryIds,
     reachedStop: current === stopAt,
   };
+}
+
+function piLegacyRetainedBranch(listing: PiSessionListing, targetId: string, completedAt: number) {
+  const afterTarget = walkPiBranch(listing.entries, listing.leafId, targetId);
+  if (afterTarget?.reachedStop !== true) return undefined;
+  const throughTarget = walkPiBranch(listing.entries, targetId, null);
+  if (throughTarget?.reachedStop !== true) return undefined;
+  const history = [...throughTarget.entryIds].reverse();
+  for (const id of [...afterTarget.entryIds].reverse()) {
+    const entry = listing.entries.get(id);
+    if (entry?.timestamp == null) return undefined;
+    if (entry.isUserMessage && entry.timestamp >= completedAt) return { history, entryId: id };
+    if (entry.timestamp > completedAt) {
+      // Pi only forks before user messages. Later settings can stay in the file,
+      // but later conversation entries make this branch unsafe to recover.
+      if (!entry.isSessionMetadata) return undefined;
+    } else {
+      history.push(id);
+    }
+  }
+  return { history, entryId: undefined };
 }
 
 type PiForkBoundary =
