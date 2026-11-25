@@ -384,7 +384,7 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
         if (windows.length === 0) {
           return yield* new UsageLimitSourceError({ detail: "No Antigravity quota reported." });
         }
-        // Local Antigravity reports no e-mail, so the Google account fingerprint is what pools the two.
+        // Google account fingerprints pool hub readings with local Antigravity across server versions.
         const fingerprint = yield* call("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
           Effect.flatMap(decodeJson),
           Effect.flatMap(antigravityAccountFingerprint),

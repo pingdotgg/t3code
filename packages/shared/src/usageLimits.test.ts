@@ -439,6 +439,80 @@ describe("pools", () => {
     );
     expect(accounts).toHaveLength(1);
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(30);
+
+    // Local Antigravity reporting its signed-in email must still pool with a hub entry that only has a fingerprint.
+    const withEmail = {
+      ...local,
+      auth: { status: "authenticated" as const, email: "g@example.com" },
+    };
+    const pooledWithEmail = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [withEmail],
+              usageLimitSources: [{ ...source, accounts: [hubAccount] }],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(pooledWithEmail).toHaveLength(1);
+    expect(pooledWithEmail[0]?.email).toBe("g@example.com");
+    expect(pooledWithEmail[0]?.limits.windows[0]?.usedPercent).toBe(30);
+
+    // Merging an older environment without email ahead of a newer one with email still pools and keeps the email.
+    const acrossEnvs = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-old"),
+          {
+            ...laptop,
+            serverConfig: { providers: [local] },
+          },
+        ],
+        [
+          EnvironmentId.make("env-new"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: { providers: [withEmail] },
+          },
+        ],
+      ]),
+    );
+    expect(acrossEnvs).toHaveLength(1);
+    expect(acrossEnvs[0]?.email).toBe("g@example.com");
+
+    const report = collectProviderUsageLimits(
+      withEmail.instanceId,
+      [withEmail],
+      [{ ...source, accounts: [hubAccount] }],
+      now,
+    );
+    expect(report?.accounts).toHaveLength(1);
+    expect(report?.accounts[0]?.email).toBe("g@example.com");
+
+    // Two bridged instances: a fresher credential-only report keeps the older instance's email.
+    const fresherWithoutEmail = {
+      ...local,
+      instanceId: ProviderInstanceId.make("antigravity-2"),
+      usageLimits: {
+        checkedAt: "2026-09-03T12:15:00.000Z",
+        credentialFingerprint: "google-key",
+        windows: [{ ...window, id: "gemini-weekly", usedPercent: 45 }],
+      },
+    };
+    const bridgedReport = collectProviderUsageLimits(
+      withEmail.instanceId,
+      [withEmail, fresherWithoutEmail],
+      [],
+      now,
+    );
+    expect(bridgedReport?.accounts).toHaveLength(1);
+    expect(bridgedReport?.accounts[0]?.email).toBe("g@example.com");
+    expect(bridgedReport?.accounts[0]?.limits.windows[0]?.usedPercent).toBe(45);
   });
 
   it("takes windows from a fresher hub read but credits and redeem from the native instance", () => {

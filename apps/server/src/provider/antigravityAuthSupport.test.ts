@@ -33,6 +33,7 @@ import {
   antigravityLoginResponse,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
+  readAntigravityStoredEmail,
   resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
@@ -901,6 +902,34 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         }).pipe(Effect.result);
         expect(Result.isFailure(result)).toBe(true);
         expect(yield* fs.exists(profileDirectory)).toBe(false);
+      }
+    }),
+  );
+
+  it.effect("reads and trims the stored Google email from antigravity-oauth-token", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped();
+      const acpDirectory = path.join(profileDirectory, "antigravity-acp");
+      const tokenPath = path.join(acpDirectory, "antigravity-oauth-token");
+
+      expect(yield* readAntigravityStoredEmail(profileDirectory)).toBeUndefined();
+
+      yield* fs.makeDirectory(acpDirectory, { recursive: true });
+      yield* fs.writeFileString(
+        tokenPath,
+        JSON.stringify({ id_token_email: "  user@example.com  " }),
+      );
+      expect(yield* readAntigravityStoredEmail(profileDirectory)).toBe("user@example.com");
+
+      for (const contents of [
+        JSON.stringify({ id_token_email: "   " }),
+        JSON.stringify({ token: { access_token: "abc" } }),
+        "not-json",
+      ]) {
+        yield* fs.writeFileString(tokenPath, contents);
+        expect(yield* readAntigravityStoredEmail(profileDirectory)).toBeUndefined();
       }
     }),
   );
