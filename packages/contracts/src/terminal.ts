@@ -283,6 +283,8 @@ export const TerminalWriteInput = Schema.Struct({
   // A renderer's answer to a terminal query (DA, DSR, DECRQM). Every attached renderer
   // answers, so the server passes on one viewer's replies; older servers ignore it.
   reply: Schema.optionalKey(Schema.Boolean),
+  // Reject the write if the process that owns the paste has gone.
+  expectedPid: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
 });
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 
@@ -329,6 +331,7 @@ export const TerminalSessionSnapshot = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyStringSchema),
   status: TerminalSessionStatus,
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  supportsConditionalWrites: Schema.optional(Schema.Boolean),
   history: Schema.String,
   // Parser state of an unfinished prefix omitted after the replayable history.
   historySequenceState: Schema.optional(
@@ -605,6 +608,11 @@ export class TerminalResizeError extends Schema.TaggedError<TerminalResizeError>
   }
 }
 
+export class TerminalProcessChangedError extends Schema.TaggedError<TerminalProcessChangedError>()(
+  "TerminalProcessChangedError",
+  {},
+) {}
+
 export const TerminalError = Schema.Union([
   TerminalCwdError,
   TerminalHistoryError,
@@ -612,6 +620,7 @@ export const TerminalError = Schema.Union([
   TerminalProviderInstanceNotFoundError,
   TerminalProviderEnvironmentError,
   TerminalNotRunningError,
+  TerminalProcessChangedError,
   TerminalWriteError,
   TerminalResizeError,
 ]);
