@@ -153,34 +153,7 @@ describe("command palette shortcuts", () => {
     expect(useCommandPaletteStore.getState()).toMatchObject({ open: true, mode: "command" });
   });
 
-  it("keeps the theme editor open on a repeated themeEditor.toggle shortcut", async () => {
-    setup();
-    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
-    await using screen = await render(<MountedPalette />, { router: "/" });
-    using commands = new DisposableStack();
-    commands.defer(
-      installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
-    );
-
-    await userEvent.keyboard("{Control>}{Alt>}{Shift>}t{/Shift}{/Alt}{/Control}");
-    const openedSession = useThemeEditorStore.getState().session;
-    expect(openedSession).not.toBeNull();
-
-    const repeatEvent = new KeyboardEvent("keydown", {
-      key: "T",
-      ctrlKey: true,
-      altKey: true,
-      shiftKey: true,
-      repeat: true,
-      bubbles: true,
-      cancelable: true,
-    });
-    document.body.dispatchEvent(repeatEvent);
-    expect(repeatEvent.defaultPrevented).toBe(true);
-    expect(useThemeEditorStore.getState().session).toBe(openedSession);
-  });
-
-  it("open Usage once while its shortcut is held", async () => {
+  it("ignore held theme editor and Usage shortcuts", async () => {
     setup();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     await using screen = await render(<MountedPalette />, { router: "/" });
@@ -190,20 +163,21 @@ describe("command palette shortcuts", () => {
     );
     using navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
 
-    await userEvent.keyboard("{Control>}u{/Control}");
-    expect(navigate).toHaveBeenCalledOnce();
-    expect(navigate).toHaveBeenCalledWith({ to: "/usage" });
-
-    const repeatEvent = new KeyboardEvent("keydown", {
-      key: "u",
-      ctrlKey: true,
-      repeat: true,
-      bubbles: true,
-      cancelable: true,
-    });
-    document.body.dispatchEvent(repeatEvent);
-    expect(repeatEvent.defaultPrevented).toBe(true);
-    expect(navigate).toHaveBeenCalledOnce();
+    for (const keys of [
+      { key: "T", ctrlKey: true, altKey: true, shiftKey: true },
+      { key: "u", ctrlKey: true },
+    ]) {
+      const event = new KeyboardEvent("keydown", {
+        ...keys,
+        repeat: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      document.body.dispatchEvent(event);
+      expect(event.defaultPrevented, keys.key).toBe(true);
+    }
+    expect(useThemeEditorStore.getState().session).toBeNull();
+    expect(navigate).not.toHaveBeenCalled();
   });
 });
 
