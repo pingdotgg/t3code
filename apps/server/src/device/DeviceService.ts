@@ -1023,14 +1023,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     // Physical devices and cloud hosts stream their display as it is, or have no ADB here.
     if (device.platform !== "android" || device.physical || ready.upstream) return null;
     const stream = ready.devices.androidStream
-      ? yield* ready.devices
-          .androidStream(device.id)
-          .pipe(Effect.orElseSucceed(() => FRAMEBUFFER_STREAM))
+      ? yield* ready.devices.androidStream(device.id)
       : FRAMEBUFFER_STREAM;
     if (!stream.framebuffer) return null;
-    return yield* readAndroidDisplayViewport(ready.run, device.id, stream.touchSpace).pipe(
-      Effect.orElseSucceed(() => null),
-    );
+    return yield* readAndroidDisplayViewport(ready.run, device.id, stream.touchSpace);
   });
 
   const resolveDevice = Effect.fn("DeviceService.resolveDevice")(function* (

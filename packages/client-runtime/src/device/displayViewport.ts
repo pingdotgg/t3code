@@ -107,11 +107,21 @@ export function watchDisplayViewport(options: {
   readonly url: string;
   readonly credentials: boolean;
   readonly onChange: (viewport: DeviceDisplayViewport | null) => void;
+  /** A stream that had connected was refused on reconnect, as when its media ticket expired. */
+  readonly onRefused: () => void;
 }) {
   // Undefined until the first event, which always applies: a watch started for a reconnect
   // must clear a viewport left from before.
   let current: DeviceDisplayViewport | null | undefined;
   const source = new EventSource(options.url, { withCredentials: options.credentials });
+  let opened = false;
+  source.onopen = () => {
+    opened = true;
+  };
+  // A server without the route refuses the first connection; that leaves the frame uncropped.
+  source.onerror = () => {
+    if (opened && source.readyState === EventSource.CLOSED) options.onRefused();
+  };
   source.onmessage = (event: MessageEvent<string>) => {
     let payload: unknown;
     try {

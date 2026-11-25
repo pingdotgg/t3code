@@ -36,6 +36,24 @@ const encodeViewportEvent = Schema.encodeEffect(
   Schema.fromJsonString(Schema.Struct({ viewport: Schema.NullOr(DeviceDisplayViewport) })),
 );
 
+/**
+ * A `wm size` change leaves the stream's size alone, so the viewport is read on a schedule. A
+ * failed read is skipped: it says nothing about the display, and null would drop a valid crop.
+ */
+export const displayViewportUpdates = <E, R>(
+  read: Effect.Effect<DeviceDisplayViewport | null, E, R>,
+) =>
+  Stream.fromEffectSchedule(
+    read.pipe(
+      Effect.map((viewport) => [viewport]),
+      Effect.orElseSucceed(() => []),
+    ),
+    Schedule.spaced(VIEWPORT_READ_INTERVAL),
+  ).pipe(
+    Stream.flattenIterable,
+    Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
+  );
+
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/api\/devices$/,
   /^\/vendor\/serve-sim\/api$/,
@@ -261,17 +279,10 @@ const handler = Effect.gen(function* () {
   }
   if (hubPath === "/t3/display-viewport") {
     if (!requestedDevice) return HttpServerResponse.text("Bad Request", { status: 400 });
-    // A `wm size` change leaves the stream's size alone, so the viewport is read on a schedule.
-    // Pushing it keeps working after the media ticket expires, like the video socket.
-    const viewports = Stream.fromEffectSchedule(
-      devices
-        .displayViewport({ hostId: ready.hostId, deviceId: requestedDevice })
-        .pipe(Effect.orElseSucceed(() => null)),
-      Schedule.spaced(VIEWPORT_READ_INTERVAL),
-    ).pipe(
-      Stream.changesWith((a, b) => JSON.stringify(a) === JSON.stringify(b)),
-      Stream.interruptWhen(invalidated),
-    );
+    // Pushing the viewport keeps working after the media ticket expires, like the video socket.
+    const viewports = displayViewportUpdates(
+      devices.displayViewport({ hostId: ready.hostId, deviceId: requestedDevice }),
+    ).pipe(Stream.interruptWhen(invalidated));
     return eventStreamResponse(viewports, (viewport) => encodeViewportEvent({ viewport }));
   }
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.

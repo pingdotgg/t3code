@@ -366,7 +366,11 @@ describe("device hub proxy", () => {
     expect(response.headers.get("content-type")).toContain("text/event-stream");
     const reader = response.body!.getReader();
     let text = "";
-    while (!text.includes("data: ")) text += new TextDecoder().decode((await reader.read()).value);
+    while (!text.includes("data: ")) {
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error("The stream ended before its first viewport.");
+      text += new TextDecoder().decode(chunk.value);
+    }
     await reader.cancel();
     expect(JSON.parse(/data: (.*)\n/.exec(text)![1]!)).toEqual({
       viewport: {

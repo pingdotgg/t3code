@@ -667,6 +667,10 @@ describe("Android WebRTC device streams", () => {
     vi.stubGlobal("document", { createElement: () => new Video(), body: { append: vi.fn() } });
     const viewportSources: ViewportSource[] = [];
     class ViewportSource {
+      static CLOSED = 2;
+      readyState = 1;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
       onmessage: ((event: { data: string }) => void) | null = null;
       close = vi.fn();
       readonly url: string;
@@ -820,6 +824,19 @@ describe("Android WebRTC device streams", () => {
     video.callback?.();
     expect(present).toHaveBeenLastCalledWith(video, 540, 1200);
     client.stop();
+  });
+
+  it("renews access when a viewport stream that had connected is refused", async () => {
+    const fixture = setup();
+    const { events, viewportSources } = fixture;
+    await streamFrame(fixture, 540, 1200);
+    const source = viewportSources[0]!;
+    source.readyState = 2;
+    source.onerror?.();
+    expect(events.onUnauthorized).not.toHaveBeenCalled();
+    source.onopen?.();
+    source.onerror?.();
+    expect(events.onUnauthorized).toHaveBeenCalledOnce();
   });
 
   it("follows a touch area change that keeps the same geometry", async () => {

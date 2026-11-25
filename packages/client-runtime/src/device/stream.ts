@@ -1373,6 +1373,7 @@ export function createDeviceStreamClient(
               onChange: (next) => {
                 displayViewport = next;
               },
+              onRefused: handleUnauthorized,
             });
       void startAndroid();
     }
