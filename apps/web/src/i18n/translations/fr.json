@@ -1308,6 +1308,8 @@
   "23eed587f1bef1a6": "Grok, Composer et Auto utilisent ce quota.",
   "d2becdc27390c92c": "Autres modèles",
   "3abbefc7732635ff": "Quota d’utilisation des modèles tiers comme Claude, GPT et Gemini.",
+  "c7566c908e14be09": "Dépenses",
+  "ae693772acb75c75": "Dépenses de ce cycle de facturation par rapport à votre limite de dépenses {provider}.",
   "7d72af75b2812d60": "{provider} sur {environment}",
   "bb34eaf6ddc55a72": "Ce compte n’a pas de limites d’abonnement.",
   "42a2622893a6bced": "Impossible de lire les limites.",

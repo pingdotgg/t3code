@@ -1308,6 +1308,8 @@
   "23eed587f1bef1a6": "Grok、Composer、Auto はこの使用枠を使います。",
   "d2becdc27390c92c": "その他のモデル",
   "3abbefc7732635ff": "Claude、GPT、Gemini などのサードパーティモデル用の使用枠です。",
+  "c7566c908e14be09": "支出",
+  "ae693772acb75c75": "今回の請求期間の支出と {provider} の支出上限の比較です。",
   "7d72af75b2812d60": "{environment} の {provider}",
   "bb34eaf6ddc55a72": "このアカウントにはサブスクリプションの上限がありません。",
   "42a2622893a6bced": "上限を読み取れませんでした。",

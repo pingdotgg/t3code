@@ -1308,6 +1308,8 @@
   "23eed587f1bef1a6": "Grok, Composer, Auto가 이 사용량을 사용합니다.",
   "d2becdc27390c92c": "기타 모델",
   "3abbefc7732635ff": "Claude, GPT, Gemini 등 타사 모델의 사용 한도입니다.",
+  "c7566c908e14be09": "지출",
+  "ae693772acb75c75": "이번 결제 주기의 지출을 {provider} 지출 한도와 비교합니다.",
   "7d72af75b2812d60": "{environment}의 {provider}",
   "bb34eaf6ddc55a72": "이 계정에는 구독 한도가 없습니다.",
   "42a2622893a6bced": "한도를 읽을 수 없습니다.",

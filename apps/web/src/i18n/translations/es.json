@@ -1308,6 +1308,8 @@
   "23eed587f1bef1a6": "Grok, Composer y Auto usan esta asignación.",
   "d2becdc27390c92c": "Otros modelos",
   "3abbefc7732635ff": "Asignación de uso para modelos de terceros como Claude, GPT y Gemini.",
+  "c7566c908e14be09": "Gasto",
+  "ae693772acb75c75": "Gasto en este ciclo de facturación frente a tu límite de gasto de {provider}.",
   "7d72af75b2812d60": "{provider} en {environment}",
   "bb34eaf6ddc55a72": "Esta cuenta no tiene límites de suscripción.",
   "42a2622893a6bced": "No se pudieron leer los límites.",

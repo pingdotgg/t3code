@@ -1308,6 +1308,8 @@
   "23eed587f1bef1a6": "Grok、Composer 和 Auto 使用此额度。",
   "d2becdc27390c92c": "其他模型",
   "3abbefc7732635ff": "Claude、GPT 和 Gemini 等第三方模型的用量额度。",
+  "c7566c908e14be09": "支出",
+  "ae693772acb75c75": "本计费周期内的支出与你的 {provider} 支出上限对比。",
   "7d72af75b2812d60": "{environment} 上的 {provider}",
   "bb34eaf6ddc55a72": "此账户没有订阅限制。",
   "42a2622893a6bced": "无法读取限额。",

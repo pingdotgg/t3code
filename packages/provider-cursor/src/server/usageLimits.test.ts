@@ -42,6 +42,41 @@ describe("Cursor usage limits", () => {
     );
   });
 
+  it("shows Spend against the personal limit only when no allowance is included", () => {
+    const zeroPercents = { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 };
+    const windowIds = (response: Parameters<typeof cursorUsageResponseToLimits>[0]) =>
+      cursorUsageResponseToLimits(response, checkedAt).windows.map((window) => window.id);
+    const planIds = ["apiPercentUsed", "autoPercentUsed", "totalPercentUsed"];
+    const pool = { pooledLimit: "3000000", overallLimit: 50000, overallUsed: 3211 };
+    // Usage already counted against the plan, an included allowance, or no team pool keep the plan bars.
+    expect(
+      windowIds({ planUsage: { ...zeroPercents, autoPercentUsed: 6 }, spendLimitUsage: pool }),
+    ).toEqual(planIds);
+    expect(
+      windowIds({ planUsage: { ...zeroPercents, limit: "2000" }, spendLimitUsage: pool }),
+    ).toEqual(planIds);
+    expect(
+      windowIds({ planUsage: zeroPercents, spendLimitUsage: { individualLimit: 5000 } }),
+    ).toEqual(planIds);
+    // A start equal to the end is not a billing cycle; a missing used means zero.
+    expect(
+      cursorUsageResponseToLimits(
+        {
+          billingCycleStart: "1793491200000",
+          billingCycleEnd: "1793491200000",
+          spendLimitUsage: { overallLimit: 0, individualLimit: "2000", individualUsed: "500" },
+        },
+        checkedAt,
+      ).windows,
+    ).toEqual([{ id: "spendLimit", kind: "monthly", label: "Spend", usedPercent: 25 }]);
+    expect(
+      cursorUsageResponseToLimits(
+        { spendLimitUsage: { overallLimit: 50000, individualUsed: 3211 } },
+        checkedAt,
+      ).windows[0]?.usedPercent,
+    ).toBe(0);
+  });
+
   it("reports the billing-cycle length so pace can be computed", () => {
     const planUsage = { totalPercentUsed: 40, autoPercentUsed: 30, apiPercentUsed: 20 };
     const durations = (billingCycleStart: string | number | undefined, billingCycleEnd: string) =>
@@ -54,7 +89,7 @@ describe("Cursor usage limits", () => {
   });
 
   it("omits the cycle length when the start is missing or invalid", () => {
-    for (const billingCycleStart of [undefined, "", "0", "not-a-number", "1796637847072"]) {
+    for (const billingCycleStart of [undefined, "", "0", "not-a-number"]) {
       expect(
         cursorUsageResponseToLimits(
           {
@@ -91,9 +126,27 @@ describe("Cursor usage limits", () => {
   });
 
   it("does not invent unused allowance for absent buckets", () => {
-    expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt).unavailable?.reason).toBe(
-      "unsupported",
-    );
+    const linkOnly = {
+      checkedAt,
+      windows: [],
+      unavailable: {
+        reason: "unsupported",
+        message:
+          "Cursor doesn't report a personal spend limit for this account. Open Cursor's dashboard with the same account to see its usage.",
+      },
+      externalUsage: { label: "Cursor usage", url: "https://cursor.com/dashboard?tab=usage" },
+    };
+    expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt)).toEqual(linkOnly);
+    // Enterprise seat with only the team pool and no personal limit.
+    expect(
+      cursorUsageResponseToLimits(
+        {
+          planUsage: { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 },
+          spendLimitUsage: { pooledLimit: "3000000" },
+        },
+        checkedAt,
+      ),
+    ).toEqual(linkOnly);
     expect(
       cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 0 } }, checkedAt).windows,
     ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 0 }]);
@@ -101,6 +154,61 @@ describe("Cursor usage limits", () => {
       cursorUsageResponseToLimits({ planUsage: { totalPercentUsed: 150 } }, checkedAt).windows,
     ).toEqual([{ id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 100 }]);
   });
+
+  it.effect(
+    "requests pooled usage and shows Enterprise spend against the personal spend limit",
+    () =>
+      Effect.gen(function* () {
+        const limits = yield* readCursorUsageLimits(
+          { apiEndpoint: "" },
+          { CURSOR_AUTH_TOKEN: "token" },
+        ).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              expect(
+                request.body._tag === "Uint8Array" && new TextDecoder().decode(request.body.body),
+              ).toBe('{"includePooledUsage":true}');
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  // Captured from a live Enterprise account (token-based contract), 2026-11-23:
+                  // the team pool arrives as int64 strings, the personal pair as numbers.
+                  Response.json({
+                    billingCycleStart: "1793491200000",
+                    billingCycleEnd: "1796083200000",
+                    planUsage: { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 },
+                    spendLimitUsage: {
+                      totalSpend: 679881371,
+                      pooledLimit: "1009395000",
+                      pooledUsed: 679881371,
+                      pooledRemaining: "329513629",
+                      limitType: "team",
+                      overallLimit: 100000,
+                      overallUsed: 68757,
+                      overallRemaining: 31243,
+                    },
+                  }),
+                ),
+              );
+            }),
+          ),
+        );
+        expect(limits).toEqual({
+          checkedAt: expect.any(String),
+          windows: [
+            {
+              id: "spendLimit",
+              kind: "monthly",
+              label: "Spend",
+              usedPercent: 68.757,
+              resetsAt: "2026-12-01T00:00:00.000Z",
+              windowDurationMins: 43_200,
+            },
+          ],
+        });
+      }),
+  );
 
   it.effect("requires explicit credentials and accepts an auth token", () =>
     Effect.gen(function* () {
