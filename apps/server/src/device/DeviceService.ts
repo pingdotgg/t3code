@@ -1019,7 +1019,13 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const displayViewport: DeviceService["Service"]["displayViewport"] = Effect.fn(
     "DeviceService.displayViewport",
   )(function* (input) {
-    const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
+    // Read on a schedule, so a device missing from the listing fails instead of relisting.
+    const host = yield* resolveHost(input.hostId);
+    const { state } = yield* SynchronizedRef.get(stateRef);
+    const device = findDevice(state, host.id, input.deviceId);
+    if (!device)
+      return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
+    const ready = yield* readiness(host.id);
     // Physical devices and cloud hosts stream their display as it is, or have no ADB here.
     if (device.platform !== "android" || device.physical || ready.upstream) return null;
     const stream = ready.devices.androidStream

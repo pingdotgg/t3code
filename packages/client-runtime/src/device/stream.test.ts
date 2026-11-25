@@ -826,6 +826,25 @@ describe("Android WebRTC device streams", () => {
     client.stop();
   });
 
+  it("retries a refused first viewport connection a few times, then shows the frame whole", async () => {
+    const fixture = setup();
+    const { events, viewportSources } = fixture;
+    await streamFrame(fixture, 540, 1200);
+    const refuse = (source: (typeof viewportSources)[number]) => {
+      source.readyState = 2;
+      source.onerror?.();
+    };
+    for (const delay of [1_000, 2_000, 4_000]) {
+      refuse(viewportSources.at(-1)!);
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    refuse(viewportSources.at(-1)!);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(viewportSources).toHaveLength(4);
+    expect(events.onUnauthorized).not.toHaveBeenCalled();
+    fixture.client.stop();
+  });
+
   it("renews access only when a viewport stream that had connected is refused twice", async () => {
     const fixture = setup();
     const { events, viewportSources } = fixture;
@@ -834,25 +853,18 @@ describe("Android WebRTC device streams", () => {
       source.readyState = 2;
       source.onerror?.();
     };
-    // A server without the route refuses the first connection; video stays up.
-    refuse(viewportSources[0]!);
-    expect(events.onUnauthorized).not.toHaveBeenCalled();
-    expect(viewportSources).toHaveLength(1);
-
-    fixture.client.stop();
-    await streamFrame(fixture, 540, 1200);
-    viewportSources[1]!.onopen?.();
+    viewportSources[0]!.onopen?.();
     // A one-off refusal after the stream worked reconnects the viewport alone.
-    refuse(viewportSources[1]!);
+    refuse(viewportSources[0]!);
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(viewportSources).toHaveLength(3);
-    viewportSources[2]!.onopen?.();
-    refuse(viewportSources[2]!);
+    expect(viewportSources).toHaveLength(2);
+    viewportSources[1]!.onopen?.();
+    refuse(viewportSources[1]!);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(events.onUnauthorized).not.toHaveBeenCalled();
 
     // Refused again before connecting: the media ticket has expired.
-    refuse(viewportSources[3]!);
+    refuse(viewportSources[2]!);
     expect(events.onUnauthorized).toHaveBeenCalledOnce();
   });
 

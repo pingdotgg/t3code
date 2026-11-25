@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
@@ -90,6 +91,20 @@ const fixture = (
               helpers: { serveSimAxSettings: null, serveSimCli: null },
               ...(upstream ? { upstream } : {}),
             }),
+          locateDevice: (input) =>
+            Effect.succeed(
+              input.deviceId === "missing"
+                ? Option.none()
+                : Option.some({
+                    hostId: input.hostId ?? LOCAL_DEVICE_HOST_ID,
+                    id: input.deviceId,
+                    platform: "android" as const,
+                    name: "Pixel",
+                    version: "Android 14.0",
+                    booted: true,
+                    physical: false,
+                  }),
+            ),
           displayViewport: (input) =>
             Effect.sync(() => {
               viewports.push(input);
@@ -354,6 +369,16 @@ describe("device hub proxy", () => {
       expect(screenshots).toEqual([{ hostId: "pool", deviceId: "udid-1" }]);
     },
   );
+
+  it("refuses the viewport stream for a device that is not listed", async () => {
+    const { handler, requests, viewports } = fixture([AuthOrchestrationReadScope]);
+    const response = await handler(
+      new Request("http://t3.test/api/device-hub/t3/display-viewport?device=missing"),
+    );
+    expect(response.status).toBe(404);
+    expect(viewports).toEqual([]);
+    expect(requests).toEqual([]);
+  });
 
   it("streams the Android display viewport itself instead of asking the hub", async () => {
     const { handler, requests, viewports } = fixture([AuthOrchestrationReadScope]);

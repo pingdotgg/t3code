@@ -560,7 +560,7 @@ const parseAndroidDisplayViewport = (
       right > width ||
       bottom > height
     )
-      return null;
+      continue;
     const content = { x: left, y: top, width: right - left, height: bottom - top };
     // A touch the hub scales by the framebuffer size lands in display pixels, so it must be
     // scaled down to reach the display's far edge; one larger than the panel cannot be reached.

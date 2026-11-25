@@ -103,6 +103,9 @@ const sameViewport = (a: DeviceDisplayViewport | null, b: DeviceDisplayViewport 
 // EventSource reports no status code, so a refusal is only treated as lost access when a fresh
 // connection is refused too: a one-off proxy error must not tear down healthy video.
 const RECONNECT_DELAY_MS = 1_000;
+// A first connection can meet a hub that is still starting; a server without the route refuses
+// every attempt, and the frame stays uncropped.
+const FIRST_CONNECTION_ATTEMPTS = 4;
 
 /**
  * Follows where an Android emulator draws its display inside the streamed framebuffer. The
@@ -120,24 +123,30 @@ export function watchDisplayViewport(options: {
   let current: DeviceDisplayViewport | null | undefined;
   let source: EventSource | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
-  const connect = (retrying: boolean) => {
+  let connected = false;
+  let failedAttempts = 0;
+  const reconnect = (delay: number) => {
+    retry = setTimeout(() => {
+      retry = null;
+      connect();
+    }, delay);
+  };
+  const connect = () => {
     const next = new EventSource(options.url, { withCredentials: options.credentials });
     source = next;
     let opened = false;
     next.onopen = () => {
       opened = true;
+      connected = true;
+      failedAttempts = 0;
     };
     next.onerror = () => {
       if (source !== next || next.readyState !== EventSource.CLOSED) return;
-      if (opened) {
-        retry = setTimeout(() => {
-          retry = null;
-          connect(true);
-        }, RECONNECT_DELAY_MS);
-      } else if (retrying) {
-        options.onRefused();
-      }
-      // A first connection refused (a server without the route) leaves the frame uncropped.
+      if (opened) return reconnect(RECONNECT_DELAY_MS);
+      if (connected) return options.onRefused();
+      failedAttempts += 1;
+      if (failedAttempts < FIRST_CONNECTION_ATTEMPTS)
+        reconnect(RECONNECT_DELAY_MS * 2 ** (failedAttempts - 1));
     };
     next.onmessage = (event: MessageEvent<string>) => {
       let payload: unknown;
@@ -154,7 +163,7 @@ export function watchDisplayViewport(options: {
       options.onChange(viewport);
     };
   };
-  connect(false);
+  connect();
   return {
     stop: () => {
       if (retry !== null) clearTimeout(retry);

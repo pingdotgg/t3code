@@ -283,6 +283,19 @@ describe("readAndroidDisplayViewport", () => {
     ],
     ["a frame outside the panel", viewport("72, 0 - 1200, 2400"), "framebuffer", null],
     [
+      "a valid viewport after an invalid one",
+      viewport(
+        "72, 0 - 1200, 2400",
+        ", " +
+          viewport("72, 0 - 1008, 2400")
+            .trim()
+            .replace(/^mViewports=\[/, "")
+            .replace(/\]$/, ""),
+      ),
+      "framebuffer",
+      { ...letterboxed, touch: onPanel },
+    ],
+    [
       "an internal display that is not active",
       viewport("72, 0 - 1008, 2400").replace("isActive=true", "isActive=false"),
       "framebuffer",
