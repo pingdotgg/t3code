@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   EnvironmentId,
+  retainTerminalSnapshotHistory,
   retainedTerminalHistory,
+  terminalSequenceStateAfter,
   TerminalSessionSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
@@ -39,6 +41,88 @@ const BASE_SNAPSHOT: TerminalSessionSnapshot = {
 };
 
 describe("terminal session reducers", () => {
+  it.each([
+    {
+      title: "zero-byte attach budget",
+      history: "\u001b]0;Build ",
+      budget: 0,
+      chunks: ["progress", "\u0007"],
+      attach: true,
+    },
+    {
+      title: "title cut during observe",
+      history: "\u001b]0;Build ",
+      budget: 2,
+      chunks: ["progress", "\u0007"],
+      attach: false,
+    },
+    {
+      title: "split surrogate in a cut DCS",
+      history: "\u001bP" + "中".repeat(2_000) + "\ud83d",
+      budget: 4_096,
+      chunks: ["\ude00"],
+      attach: true,
+    },
+    {
+      title: "CSI omitted after replayable history",
+      history: "before\n",
+      budget: 8_192,
+      chunks: ["C"],
+      attach: false,
+      historySequenceState: terminalSequenceStateAfter(0, "\u001b[20"),
+    },
+    {
+      title: "SGR replacing an omitted OSC",
+      history: "before\n",
+      budget: 8_192,
+      chunks: ["progress", "\u001b[31m"],
+      attach: false,
+      historySequenceState: terminalSequenceStateAfter(0, "\u001b]0;title"),
+      escapeReplay: "\u001b[31m",
+    },
+    {
+      title: "split string terminator after an omitted OSC",
+      history: "before\n",
+      budget: 8_192,
+      chunks: ["progress", "\u001b", "\\"],
+      attach: false,
+      historySequenceState: terminalSequenceStateAfter(0, "\u001b]0;title"),
+    },
+  ])(
+    "skips a continuation after $title",
+    ({ history, budget, chunks, attach, historySequenceState, escapeReplay }) => {
+      const snapshot = {
+        ...BASE_SNAPSHOT,
+        ...(attach
+          ? retainTerminalSnapshotHistory(history, budget)
+          : { history, historySequenceState }),
+      };
+      const clientBudget = attach ? 8_192 : budget;
+      let state = applyTerminalAttachStreamEvent(
+        EMPTY_TERMINAL_BUFFER_STATE,
+        { type: "snapshot", snapshot },
+        clientBudget,
+      );
+      const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
+      const replayed = historySequenceState === undefined ? "" : history;
+      expect(initial).toMatchObject({ type: "reset", data: replayed });
+      let cursor = initial.cursor;
+      for (const data of [...chunks, "ok"]) {
+        state = applyTerminalAttachStreamEvent(
+          state,
+          { type: "output", threadId: TARGET.threadId, terminalId: TARGET.terminalId, data },
+          clientBudget,
+        );
+        const update = readTerminalOutputUpdate(state.output, cursor);
+        expect("data" in update ? update.data : "").toBe(
+          data === "ok" || data === escapeReplay ? data : "",
+        );
+        cursor = update.cursor;
+      }
+      expect(terminalOutputText(state.output)).toBe(replayed + (escapeReplay ?? "") + "ok");
+    },
+  );
+
   it("prefers live attach status over stale metadata after the attach stream starts", () => {
     const summary = applyTerminalMetadataStreamEvent([], {
       type: "snapshot",
