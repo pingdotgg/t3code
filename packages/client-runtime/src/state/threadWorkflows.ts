@@ -110,6 +110,23 @@ function supportsSteering(turns: OrchestrationV2ProviderCapabilities["turns"]): 
   );
 }
 
+// Stop leaves the run reading as running until its provider stops. A steer sent in
+// that window never reaches the agent, so the composer queues it instead. Mirrors
+// presentRunStop: a Stop the provider confirmed with a result no longer counts.
+export function runStopIsPending(
+  projection: Pick<Projection, "turnItems"> | null | undefined,
+  runId: Run["id"] | null | undefined,
+): boolean {
+  if (projection == null || runId == null) return false;
+  let requested = false;
+  for (const item of projection.turnItems) {
+    if (item.runId !== runId) continue;
+    if (item.type === "run_interrupt_result") return false;
+    if (item.type === "run_interrupt_request") requested = true;
+  }
+  return requested;
+}
+
 export function threadCanSteer(
   projection: Projection | null,
   input: {
@@ -121,6 +138,7 @@ export function threadCanSteer(
   const turns = projection && resolveThreadProviderSession(projection)?.capabilities.turns;
   // A steer submitted before the session attaches can wait for its provider turn.
   if (turns && !supportsSteering(turns)) return false;
+  if (runStopIsPending(projection, input.activeRunId)) return false;
   return !compactionBlocksSteering({
     compactCommandIsActive: input.compactCommandIsActive,
     compactionRunning: input.compactionRunning,

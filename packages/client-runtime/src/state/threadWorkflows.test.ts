@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import { RunId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import {
   canForkProjectedAssistantItem,
@@ -53,6 +53,7 @@ describe("thread workflows", () => {
         { id: "other", status: "ready", capabilities: capabilities({ steer: true }) },
       ],
       messages: [],
+      turnItems: [],
     } as unknown as OrchestrationV2ThreadProjection;
     expect(
       threadCanSteer(projection, {
@@ -61,6 +62,52 @@ describe("thread workflows", () => {
         activeRunId: projection.runs[0]!.id,
       }),
     ).toBe(expected);
+  });
+
+  it.each([
+    ["a Stop the provider has not confirmed", "run_interrupt_request", false],
+    ["a Stop the provider confirmed", "run_interrupt_result", true],
+  ] as const)(
+    "queues instead of steering while the run has %s",
+    (_, interruptItemType, expected) => {
+      const projection = {
+        thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+        runs: [{ id: "active", status: "running", providerThreadId: "provider-thread" }],
+        providerThreads: [{ id: "provider-thread", providerSessionId: "session" }],
+        providerSessions: [
+          { id: "session", status: "running", capabilities: capabilities({ steer: true }) },
+        ],
+        messages: [],
+        turnItems: [{ runId: "active", type: interruptItemType }],
+      } as unknown as OrchestrationV2ThreadProjection;
+      expect(
+        threadCanSteer(projection, {
+          compactCommandIsActive: false,
+          compactionRunning: false,
+          activeRunId: RunId.make("active"),
+        }),
+      ).toBe(expected);
+    },
+  );
+
+  it("allows steering a run whose Stop belongs to a different run", () => {
+    const projection = {
+      thread: { id: "thread", activeProviderThreadId: "provider-thread" },
+      runs: [{ id: "active", status: "running", providerThreadId: "provider-thread" }],
+      providerThreads: [{ id: "provider-thread", providerSessionId: "session" }],
+      providerSessions: [
+        { id: "session", status: "running", capabilities: capabilities({ steer: true }) },
+      ],
+      messages: [],
+      turnItems: [{ runId: "older", type: "run_interrupt_request" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    expect(
+      threadCanSteer(projection, {
+        compactCommandIsActive: false,
+        compactionRunning: false,
+        activeRunId: RunId.make("active"),
+      }),
+    ).toBe(true);
   });
 
   it("skips message history classification when no runs are queued", () => {
