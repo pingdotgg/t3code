@@ -28,6 +28,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
+import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import { flushCompileCache } from "./compileCache.ts";
@@ -579,6 +580,7 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
     // remote, and awaiting it here held command readiness for that long.
     const projectStore = yield* ProjectStore.ProjectStoreV2;
     const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
+    const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
     const autoPullEnabledProjects = Effect.gen(function* () {
       const projects = yield* projectStore.listShells();
       const settings = yield* serverSettings.getSettings;
@@ -594,7 +596,9 @@ const make = Effect.fn("serverRuntimeStartup.make")(function* (options?: Startup
       yield* Effect.sleep(
         Duration.isZero(interval) ? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL : interval,
       );
-      if (!Duration.isZero(interval)) yield* autoPullEnabledProjects;
+      if (!Duration.isZero(interval) && (yield* backgroundPolicy.shouldRunHostWork)) {
+        yield* autoPullEnabledProjects;
+      }
     }).pipe(Effect.forever);
     yield* runStartupPhase("projects.auto-pull", autoPullEnabledProjects).pipe(
       Effect.andThen(autoPullOnFetchInterval),
