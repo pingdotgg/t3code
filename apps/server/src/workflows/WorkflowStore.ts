@@ -80,6 +80,8 @@ export interface StepRow {
   readonly said: string | null;
   readonly started_at: string;
   readonly ended_at: string | null;
+  /** For a step queued for a place, how many asked for one in its pool before it. */
+  readonly ahead: number | bigint | null;
 }
 export interface WaitRow {
   readonly run_id: string;
@@ -408,6 +410,8 @@ export class WorkflowStore extends Context.Service<
     /** The hook's token: the one kept for it, or `fresh` from now on. */
     readonly hookToken: (hookId: string, fresh: string) => Effect.Effect<string>;
     readonly steps: (runId: string) => Effect.Effect<ReadonlyArray<StepRow>>;
+    /** Whether the run's step of that name waits for a place in a pool. */
+    readonly queuesForPlace: (runId: string, name: string) => Effect.Effect<boolean>;
     /**
      * Keep that the run touched something: from a step, or with no step from what started it. A
      * later touch of the same thing keeps what it knows that is new and adds its step.
@@ -419,8 +423,40 @@ export class WorkflowStore extends Context.Service<
     ) => Effect.Effect<void>;
     /** What the run touched, in the order it first did. */
     readonly references: (runId: string) => Effect.Effect<ReadonlyArray<WorkflowRunReference>>;
+    /**
+     * Queues the step `name` for a place in `pool`, once, and gives out the places that are free.
+     * Says whether this one holds its place now, and which others were given.
+     */
+    readonly placeAsked: (place: {
+      readonly runId: string;
+      readonly name: string;
+      readonly pool: string;
+      readonly size: number;
+    }) => Effect.Effect<{ readonly held: boolean; readonly given: ReadonlyArray<PlaceRow> }>;
+    /** The step is done with its place. */
+    readonly placeLeft: (runId: string, name: string) => Effect.Effect<void>;
+    /**
+     * A resumed run asks again for the places its pause gave up, ahead of the queue. True when it
+     * has to wait for one: it is then marked waiting, and whoever gives it the last goes on with it.
+     */
+    readonly placesBack: (runId: string) => Effect.Effect<boolean>;
+    /** Whether the run waits for places it gave up when it paused. */
+    readonly placesReturning: (runId: string) => Effect.Effect<boolean>;
+    /** Gives out the places that are free, in every pool, and returns the places given. */
+    readonly placesGiven: Effect.Effect<ReadonlyArray<PlaceRow>>;
+    /** Places given to a queued step whose wait is still not woken: a crash lost the wake. */
+    readonly placesUnwoken: Effect.Effect<ReadonlyArray<PlaceRow>>;
   }
 >()("t3/workflows/WorkflowStore") {}
+
+/** A place in a pool as it was given: `state` is what it was before, `queued` or `returning`. */
+export interface PlaceRow {
+  readonly seq: number | bigint;
+  readonly pool: string;
+  readonly run_id: string;
+  readonly name: string;
+  readonly state: "queued" | "returning";
+}
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -496,7 +532,161 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  // A request goes in while the pool holds fewer than its limit and than the smallest limit of
+  // those inside; queued ones in the order they asked, the first to wait holding back the rest.
+  // A resumed run goes ahead of them and takes back all its places, in every pool, or none: a run
+  // that is not going holds nothing. A paused run is passed over. Run inside a transaction.
+  const give = Effect.gen(function* () {
+    const places = yield* sql<
+      Omit<PlaceRow, "state"> & {
+        readonly state: PlaceRow["state"] | "held";
+        readonly size: number | bigint;
+        readonly paused: number | bigint;
+      }
+    >`
+      SELECT p.seq, p.pool, p.size, p.run_id, p.name, p.state, r.status = 'paused' AS paused
+      FROM workflow_pool_places p JOIN workflow_runs r ON r.run_id = p.run_id
+      WHERE p.state != 'away' ORDER BY p.seq
+    `;
+    /** Per pool, how many places are held and the smallest limit among them. */
+    const inside = new Map<string, { n: number; limit: number }>();
+    const room = (pool: string, n: number, limit: number) => {
+      const now = inside.get(pool);
+      return (now?.n ?? 0) + n <= Math.min(now?.limit ?? Infinity, limit);
+    };
+    const enter = (pool: string, n: number, limit: number) => {
+      const now = inside.get(pool);
+      inside.set(pool, { n: (now?.n ?? 0) + n, limit: Math.min(now?.limit ?? Infinity, limit) });
+    };
+    /** The places each resumed run waits to take back, runs in the order they first asked. */
+    const returning = new Map<string, Array<(typeof places)[number]>>();
+    for (const place of places) {
+      if (place.state === "held") enter(place.pool, 1, Number(place.size));
+      if (place.state !== "returning" || Number(place.paused) === 1) continue;
+      returning.set(place.run_id, [...(returning.get(place.run_id) ?? []), place]);
+    }
+    const given: Array<PlaceRow> = [];
+    const take = (place: (typeof places)[number], state: PlaceRow["state"]) =>
+      given.push({
+        seq: place.seq,
+        pool: place.pool,
+        run_id: place.run_id,
+        name: place.name,
+        state,
+      });
+    /** Pools without room for a resumed run or a queued request, which let nobody behind in. */
+    const closed = new Set<string>();
+    for (const [runId, back] of returning) {
+      const wants = new Map<string, { n: number; limit: number }>();
+      for (const place of back) {
+        const want = wants.get(place.pool);
+        wants.set(place.pool, {
+          n: (want?.n ?? 0) + 1,
+          limit: Math.min(want?.limit ?? Infinity, Number(place.size)),
+        });
+      }
+      const short = [...wants].filter(([pool, want]) => !room(pool, want.n, want.limit));
+      if (short.length === 0 && [...wants.keys()].every((pool) => !closed.has(pool))) {
+        for (const [pool, want] of wants) enter(pool, want.n, want.limit);
+        for (const place of back) take(place, "returning");
+        returning.delete(runId);
+        continue;
+      }
+      for (const [pool] of short) closed.add(pool);
+    }
+    for (const place of places) {
+      if (place.state !== "queued" || Number(place.paused) === 1) continue;
+      // Its run waits to come back, and would hold this place without going on.
+      if (returning.has(place.run_id) || closed.has(place.pool)) continue;
+      if (!room(place.pool, 1, Number(place.size))) {
+        closed.add(place.pool);
+        continue;
+      }
+      enter(place.pool, 1, Number(place.size));
+      take(place, "queued");
+    }
+    for (const place of given) {
+      yield* sql`UPDATE workflow_pool_places SET state = 'held' WHERE seq = ${place.seq}`;
+    }
+    return given;
+  });
+
   return WorkflowStore.of({
+    placeAsked: Effect.fn("WorkflowStore.placeAsked")(function* (place) {
+      const asked = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              INSERT INTO workflow_pool_places (pool, size, run_id, name, state)
+              SELECT ${place.pool}, ${place.size}, ${place.runId}, ${place.name}, 'queued'
+              FROM workflow_runs WHERE run_id = ${place.runId} AND ended_at IS NULL
+              ON CONFLICT (run_id, name) DO NOTHING
+            `;
+            const given = yield* give;
+            // Read back, so asking again after a crash knows a place it was already given.
+            const [own] = yield* sql<{ readonly state: string }>`
+              SELECT state FROM workflow_pool_places
+              WHERE run_id = ${place.runId} AND name = ${place.name}
+            `;
+            return {
+              held: own?.state === "held",
+              given: given.filter(
+                (other) => other.run_id !== place.runId || other.name !== place.name,
+              ),
+            };
+          }),
+        )
+        .pipe(Effect.orDie);
+      yield* PubSub.publish(changes, place.runId);
+      return asked;
+    }),
+    placeLeft: Effect.fn("WorkflowStore.placeLeft")(function* (runId, name) {
+      yield* write(
+        runId,
+        sql`DELETE FROM workflow_pool_places WHERE run_id = ${runId} AND name = ${name}`,
+      );
+    }),
+    placesBack: Effect.fn("WorkflowStore.placesBack")(function* (runId) {
+      const at = yield* now;
+      const back = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const rows = yield* sql<{ readonly pool: string }>`
+              UPDATE workflow_pool_places SET state = 'returning'
+              WHERE run_id = ${runId} AND state = 'away'
+              RETURNING pool
+            `;
+            const first = rows[0];
+            if (first === undefined) return false;
+            yield* sql`
+              UPDATE workflow_runs
+              SET status = 'waiting', detail = ${`queue ${first.pool}`}, updated_at = ${at}
+              WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
+            `;
+            return true;
+          }),
+        )
+        .pipe(Effect.orDie);
+      yield* PubSub.publish(changes, runId);
+      return back;
+    }),
+    placesReturning: Effect.fn("WorkflowStore.placesReturning")(function* (runId) {
+      const rows = yield* sql`
+        SELECT 1 FROM workflow_pool_places WHERE run_id = ${runId} AND state = 'returning' LIMIT 1
+      `.pipe(Effect.orDie);
+      return rows.length > 0;
+    }),
+    placesGiven: Effect.gen(function* () {
+      const given = yield* sql.withTransaction(give).pipe(Effect.orDie);
+      for (const place of given) yield* PubSub.publish(changes, place.run_id);
+      return given;
+    }),
+    placesUnwoken: sql<PlaceRow>`
+      SELECT p.seq, p.pool, p.run_id, p.name, 'queued' AS state
+      FROM workflow_pool_places p
+      JOIN workflow_waits w ON w.run_id = p.run_id AND w.name = p.name
+      WHERE p.state = 'held' AND w.signalled_at IS NULL
+    `.pipe(Effect.orDie),
     changes,
     runStarted: Effect.fn("WorkflowStore.runStarted")(function* (run) {
       const at = yield* now;
@@ -536,11 +726,14 @@ export const make = Effect.gen(function* () {
         runId,
         sql`
           WITH out AS (
-            SELECT CASE WHEN kind IN ('agent', 'sleep') THEN kind || ' ' || name ELSE name END
-              AS detail
+            SELECT CASE
+                WHEN kind IN ('agent', 'sleep') THEN kind || ' ' || name
+                WHEN kind = 'queue' THEN 'queue ' || COALESCE(detail, name)
+                ELSE name
+              END AS detail
             FROM workflow_steps
             WHERE run_id = ${runId} AND status = 'running'
-              AND kind IN ('wait', 'ask', 'agent', 'sleep')
+              AND kind IN ('wait', 'ask', 'agent', 'sleep', 'queue')
             ORDER BY started_at, rowid LIMIT 1
           )
           UPDATE workflow_runs
@@ -553,13 +746,27 @@ export const make = Effect.gen(function* () {
     runPaused: Effect.fn("WorkflowStore.runPaused")(function* (runId, detail, held) {
       const at = yield* now;
       const reason = detailCut(detail);
-      const paused = yield* sql`
-        UPDATE workflow_runs
-        SET status = 'paused', detail = ${reason}, pauses = pauses + 1,
-          held = ${held === undefined ? sql`held` : held ? 1 : 0}, updated_at = ${at}
-        WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
-        RETURNING run_id
-      `.pipe(Effect.orDie);
+      const paused = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const rows = yield* sql`
+              UPDATE workflow_runs
+              SET status = 'paused', detail = ${reason}, pauses = pauses + 1,
+                held = ${held === undefined ? sql`held` : held ? 1 : 0}, updated_at = ${at}
+              WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
+              RETURNING run_id
+            `;
+            // Nothing of a paused run goes on, so the places it holds go to the next in line.
+            if (rows.length > 0) {
+              yield* sql`
+                UPDATE workflow_pool_places SET state = 'away'
+                WHERE run_id = ${runId} AND state = 'held'
+              `;
+            }
+            return rows;
+          }),
+        )
+        .pipe(Effect.orDie);
       yield* PubSub.publish(changes, runId);
       if (paused.length > 0) {
         yield* tell(runId, `${runId}:${at}`, at, { type: "workflow.run_paused", reason });
@@ -609,6 +816,9 @@ export const make = Effect.gen(function* () {
               DELETE FROM workflow_waits WHERE run_id = ${runId}
               RETURNING name, request_json, opened_at
             `;
+            if (rows.length > 0) {
+              yield* sql`DELETE FROM workflow_pool_places WHERE run_id = ${runId}`;
+            }
             return { ended: rows.length > 0, closed };
           }),
         )
@@ -1219,11 +1429,34 @@ export const make = Effect.gen(function* () {
       `;
       return rows[0]?.token ?? fresh;
     }, Effect.orDie),
+    queuesForPlace: Effect.fn("WorkflowStore.queuesForPlace")(function* (runId, name) {
+      const rows = yield* sql`
+        SELECT 1 FROM workflow_steps WHERE run_id = ${runId} AND name = ${name} AND kind = 'queue'
+      `.pipe(Effect.orDie);
+      return rows.length > 0;
+    }),
     steps: Effect.fn("WorkflowStore.steps")(function* (runId) {
+      // A resumed run waiting to take back a place it held is queued at that step again. Ahead of
+      // it are the resumed runs that asked before it; ahead of a queued one, those and every
+      // resumed run.
       return yield* sql<StepRow>`
-        SELECT name, kind, status, attempts, detail, thread_id, environment_id, result_json,
-               said, started_at, ended_at
-        FROM workflow_steps WHERE run_id = ${runId} ORDER BY started_at, rowid
+        SELECT s.name, s.kind,
+               CASE WHEN back.seq IS NULL THEN s.status ELSE 'running' END AS status,
+               s.attempts, s.detail, s.thread_id, s.environment_id, s.result_json, s.said,
+               s.started_at, CASE WHEN back.seq IS NULL THEN s.ended_at END AS ended_at,
+               CASE WHEN s.kind = 'queue' AND (s.status = 'running' OR back.seq IS NOT NULL) THEN (
+                 SELECT COUNT(*) FROM workflow_pool_places me
+                 JOIN workflow_pool_places other
+                   ON other.pool = me.pool AND other.run_id != me.run_id
+                   AND ((other.state = 'returning' AND (me.state = 'queued' OR other.seq < me.seq))
+                     OR (other.state = 'queued' AND me.state = 'queued' AND other.seq < me.seq))
+                 WHERE me.run_id = s.run_id AND me.name = s.name
+               ) END AS ahead
+        FROM workflow_steps s
+        LEFT JOIN workflow_pool_places back
+          ON s.kind = 'queue' AND back.run_id = s.run_id AND back.name = s.name
+          AND back.state = 'returning'
+        WHERE s.run_id = ${runId} ORDER BY s.started_at, s.rowid
       `.pipe(Effect.orDie);
     }),
     referenceNoted: Effect.fn("WorkflowStore.referenceNoted")(function* (runId, step, reference) {

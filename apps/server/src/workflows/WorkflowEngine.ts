@@ -215,6 +215,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   // claim keeps the value, and the resume sends it.
   const wake = Effect.fnUntraced(function* (wait: WorkflowStore.WaitRow, value: typeof Woke.Type) {
     if (resuming.has(wait.run_id) || (yield* store.run(wait.run_id))?.status === "paused") return;
+    // Resumed, but held back until it has its places again: the resume sends the wake.
+    if (yield* store.placesReturning(wait.run_id)) return;
     yield* send(wait, value);
   });
 
@@ -615,6 +617,31 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     },
   );
 
+  // A place given to a queued step wakes its wait. A place given back to a resumed run, once it
+  // has all it gave up, resumes it, apart from whatever handed the place out.
+  const placeWake = (runId: string, name: string) =>
+    Effect.ignore(signalWait({ runId, wait: name }, null, { id: `place:${runId}/${name}` }, true));
+  // Typed, as it and the resume it starts refer to each other.
+  const placesTaken: (given: ReadonlyArray<WorkflowStore.PlaceRow>) => Effect.Effect<void> =
+    Effect.fnUntraced(function* (given) {
+      // Several of one run's places can come back at once; the run is resumed once.
+      const resumed = new Set<string>();
+      for (const place of given) {
+        if (place.state === "queued") {
+          yield* placeWake(place.run_id, place.name);
+          continue;
+        }
+        if (resumed.has(place.run_id)) continue;
+        if (yield* store.placesReturning(place.run_id)) continue;
+        resumed.add(place.run_id);
+        yield* store.runResumed(place.run_id);
+        yield* Effect.forkIn(Effect.ignore(resumeRun(place.run_id)), scope);
+      }
+    });
+  const placesFreed: Effect.Effect<void> = Effect.flatMap(store.placesGiven, (given) =>
+    placesTaken(given),
+  );
+
   /** With `pause`, the sweep's own resume, which only resumes that pause and not a later one. */
   const resumeRun = Effect.fn("WorkflowEngine.resumeRun")(function* (
     runId: string,
@@ -639,6 +666,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         );
         if (!unpaused && pause !== undefined) return false;
       }
+      // The places its pause gave up come back first, in its old turn.
+      if (yield* store.placesBack(runId)) return "queued" as const;
+      if (yield* store.placesReturning(runId)) return "queued" as const;
       // The step marks its run paused from inside the engine, a moment before the engine records
       // the failure. Resuming in that moment would do nothing, so the record is waited for.
       yield* withEngine(engine.poll(runId)).pipe(
@@ -652,6 +682,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       yield* store.runUnheld(runId);
       return true;
     }).pipe(Effect.ensuring(Effect.sync(() => resuming.delete(runId))));
+    if (resumed === "queued") return yield* placesFreed;
     // Read once `resuming` is clear, so a wake held back meanwhile is among them.
     if (!resumed) return;
     for (const wait of yield* store.waitsClaimed(runId)) {
@@ -665,6 +696,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     if (resuming.has(row.run_id)) return;
     const engine = byTag.get(row.engine_tag);
     if (engine === undefined) return;
+    // Resumed already, and held back until it has its places again.
+    if (yield* store.placesReturning(row.run_id)) return;
     const result = yield* withEngine(engine.poll(row.run_id));
     if (Option.isNone(result) || result.value._tag !== "Suspended") return;
     if (result.value.failed !== true) return;
@@ -674,6 +707,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       row.run_id,
       cause === undefined ? "A step failed." : text(Cause.squash(cause)),
     );
+    yield* placesFreed;
   });
 
   // A cancelled run's body is gone, so its `onEnd` runs here, outside the engine. The sweep asks
@@ -760,6 +794,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       if (wait.woke_json === null) continue;
       yield* wake(wait, WorkflowStore.jsonValue(wait.woke_json) as typeof Woke.Type);
     }
+    // Places a pause or an end gave back, and places whose wake a crash swallowed.
+    yield* placesFreed;
+    yield* placesTaken(yield* store.placesUnwoken);
     // A cancel that was cut short before it reached what the run had invoked.
     for (const child of yield* store.orphans) {
       yield* Effect.ignore(cancel(child.run_id, "the run that invoked it was cancelled"));
@@ -962,70 +999,98 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     );
     return answer === undefined ? undefined : { expired: false, value: answer };
   };
+  const notForQueue = (name: string) =>
+    new WorkflowInputError({
+      problem: `${name} waits for a place in a pool, and only the pool lets it in.`,
+    });
+  /** With `grant`, the pool letting a queued step in; nothing else wakes one. */
+  const signalWait = Effect.fn("WorkflowEngine.signalWait")(function* (
+    address: Parameters<Workflows["Service"]["signal"]>[0],
+    value: Parameters<Workflows["Service"]["signal"]>[1],
+    options: Parameters<Workflows["Service"]["signal"]>[2],
+    grant = false,
+  ): Effect.fn.Return<"delivered" | "buffered", WorkflowInputError> {
+    // A sender's retry of a signal that already woke a wait is not a second signal.
+    if (yield* store.signalSeen(options.id)) return "delivered" as const;
+    const valueJson = WorkflowStore.jsonText(value);
+    const woke = { expired: false, value };
+    // Who sent it and when it came, said once here and by no one else, however it is delivered.
+    // A retry of a signal that is still kept is that signal: its first arrival says both.
+    const arrived: WorkflowStore.SignalSender = {
+      answeredBy: options.answeredBy,
+      answeredBySession: options.answeredBySession,
+      answeredAt: DateTime.formatIso(yield* DateTime.now),
+    };
+    let sender = (yield* store.mailSender(options.id)) ?? arrived;
+    // One signal per wait: a wait another signal took first sends this one to the next.
+    while (true) {
+      const wait = yield* store.waitAt(address);
+      if (wait === undefined) break;
+      // Looked at on the wait itself: a queue step is written before its wait opens, so one
+      // that opened since the sender was checked is still seen here.
+      if (!grant && (yield* store.queuesForPlace(wait.run_id, wait.name))) {
+        return yield* notForQueue(wait.name);
+      }
+      const answered = yield* answerOf(wait, value, sender);
+      const schema = WorkflowStore.jsonValue(wait.schema_json) as Record<string, Schema.Json>;
+      const checked = yield* checkOutput(
+        schema,
+        answered === undefined ? valueJson : WorkflowStore.jsonText(answered.value),
+      );
+      if (Result.isFailure(checked)) {
+        return yield* new WorkflowInputError({
+          problem: `The value does not fit what ${wait.name} waits for. ${rejectionText(checked.failure)}`,
+        });
+      }
+      if (yield* store.waitSignalled(wait.run_id, wait.name, answered ?? woke, options.id)) {
+        yield* wake(wait, answered ?? woke);
+        return "delivered" as const;
+      }
+      // Refused for its id: the same signal, sent again at once, woke a wait.
+      if (yield* store.signalSeen(options.id)) return "delivered" as const;
+    }
+    const expiresAt = DateTime.formatIso(
+      DateTime.addDuration(
+        yield* DateTime.now,
+        Duration.fromInputUnsafe(options.ttl ?? DEFAULT_SIGNAL_TTL),
+      ),
+    );
+    if (yield* store.signalSeen(options.id)) return "delivered" as const;
+    yield* store.mailPut({ signalId: options.id, address, valueJson, expiresAt, sender });
+    // A copy the same signal kept first, while this one looked for a wait, is the one that stays.
+    sender = (yield* store.mailSender(options.id)) ?? sender;
+    // The wait may have opened and looked for mail between the look above and this write.
+    while (true) {
+      const late = yield* store.waitAt(address);
+      if (late === undefined) return "buffered" as const;
+      // A queue that opened while this was being kept: the signal is dropped, not left for it.
+      if (yield* store.queuesForPlace(late.run_id, late.name)) {
+        yield* store.mailDelete(options.id);
+        return yield* notForQueue(late.name);
+      }
+      const schema = WorkflowStore.jsonValue(late.schema_json) as Record<string, Schema.Json>;
+      // Kept for a wait it fits; this one, the oldest on the channel, is not it.
+      const answered = stamped(late, value, sender) ?? woke;
+      if (Result.isFailure(yield* checkOutput(schema, WorkflowStore.jsonText(answered.value)))) {
+        return "buffered" as const;
+      }
+      const outcome = yield* store.mailDeliver(options.id, late.run_id, late.name, answered);
+      if (outcome === "delivered") {
+        yield* wake(late, answered);
+        return "delivered" as const;
+      }
+      // The kept copy went to a wait that opened, or was dropped as already delivered.
+      if (outcome === "gone") return "delivered" as const;
+    }
+  });
   const signal: Workflows["Service"]["signal"] = Effect.fn("Workflows.signal")(
     function* (address, value, options) {
-      // A sender's retry of a signal that already woke a wait is not a second signal.
-      if (yield* store.signalSeen(options.id)) return "delivered" as const;
-      const valueJson = WorkflowStore.jsonText(value);
-      const woke = { expired: false, value };
-      // Who sent it and when it came, said once here and by no one else, however it is delivered.
-      // A retry of a signal that is still kept is that signal: its first arrival says both.
-      const arrived: WorkflowStore.SignalSender = {
-        answeredBy: options.answeredBy,
-        answeredBySession: options.answeredBySession,
-        answeredAt: DateTime.formatIso(yield* DateTime.now),
-      };
-      let sender = (yield* store.mailSender(options.id)) ?? arrived;
-      // One signal per wait: a wait another signal took first sends this one to the next.
-      while (true) {
-        const wait = yield* store.waitAt(address);
-        if (wait === undefined) break;
-        const answered = yield* answerOf(wait, value, sender);
-        const schema = WorkflowStore.jsonValue(wait.schema_json) as Record<string, Schema.Json>;
-        const checked = yield* checkOutput(
-          schema,
-          answered === undefined ? valueJson : WorkflowStore.jsonText(answered.value),
-        );
-        if (Result.isFailure(checked)) {
-          return yield* new WorkflowInputError({
-            problem: `The value does not fit what ${wait.name} waits for. ${rejectionText(checked.failure)}`,
-          });
-        }
-        if (yield* store.waitSignalled(wait.run_id, wait.name, answered ?? woke, options.id)) {
-          yield* wake(wait, answered ?? woke);
-          return "delivered" as const;
-        }
-        // Refused for its id: the same signal, sent again at once, woke a wait.
-        if (yield* store.signalSeen(options.id)) return "delivered" as const;
+      // A step queued for a place goes in when the pool gives it one, never on a signal. Refused
+      // here too, so a signal to a queue step that is done is not kept for nothing.
+      if ("wait" in address && (yield* store.queuesForPlace(address.runId, address.wait))) {
+        return yield* notForQueue(address.wait);
       }
-      const expiresAt = DateTime.formatIso(
-        DateTime.addDuration(
-          yield* DateTime.now,
-          Duration.fromInputUnsafe(options.ttl ?? DEFAULT_SIGNAL_TTL),
-        ),
-      );
-      if (yield* store.signalSeen(options.id)) return "delivered" as const;
-      yield* store.mailPut({ signalId: options.id, address, valueJson, expiresAt, sender });
-      // A copy the same signal kept first, while this one looked for a wait, is the one that stays.
-      sender = (yield* store.mailSender(options.id)) ?? sender;
-      // The wait may have opened and looked for mail between the look above and this write.
-      while (true) {
-        const late = yield* store.waitAt(address);
-        if (late === undefined) return "buffered" as const;
-        const schema = WorkflowStore.jsonValue(late.schema_json) as Record<string, Schema.Json>;
-        // Kept for a wait it fits; this one, the oldest on the channel, is not it.
-        const answered = stamped(late, value, sender) ?? woke;
-        if (Result.isFailure(yield* checkOutput(schema, WorkflowStore.jsonText(answered.value)))) {
-          return "buffered" as const;
-        }
-        const outcome = yield* store.mailDeliver(options.id, late.run_id, late.name, answered);
-        if (outcome === "delivered") {
-          yield* wake(late, answered);
-          return "delivered" as const;
-        }
-        // The kept copy went to a wait that opened, or was dropped as already delivered.
-        if (outcome === "gone") return "delivered" as const;
-      }
+      return yield* signalWait(address, value, options);
     },
   );
   const answer: Workflows["Service"]["answer"] = Effect.fn("Workflows.answer")(
@@ -1120,6 +1185,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             if (!(yield* store.runEnded(runId, "cancelled", reason ?? null, null))) return false;
             if (engine !== undefined) yield* withEngine(engine.interrupt(runId));
             yield* ended(runId);
+            yield* placesFreed;
             return true;
           }),
         );
@@ -1149,6 +1215,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     start,
     ended,
     watchTurn,
+    placeAsked: Effect.fn("WorkflowEngine.placeAsked")(function* (place) {
+      const asked = yield* store.placeAsked(place);
+      yield* placesTaken(asked.given);
+      if (asked.held) yield* placeWake(place.runId, place.name);
+      return asked.held;
+    }),
+    placeLeft: Effect.fn("WorkflowEngine.placeLeft")(function* (runId, name) {
+      yield* store.placeLeft(runId, name);
+      yield* placesFreed;
+    }),
+    placesFreed,
     cancel: (runId, reason) => cancel(runId, reason),
     withdraw,
     list: Effect.fn("WorkflowEngine.list")(function* (filter) {
@@ -1201,6 +1278,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           environmentId: step.environment_id,
           result: step.result_json === null ? null : WorkflowStore.jsonValue(step.result_json),
           said: step.said,
+          ...(step.ahead === null ? {} : { ahead: Number(step.ahead) }),
           startedAt: step.started_at,
           endedAt: step.ended_at,
         })),

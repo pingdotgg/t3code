@@ -375,6 +375,11 @@ describe("question answer paths", () => {
       "{\\rtf1\\ansi\\ansicpg936 \\'c4\n\\'e3\\'ba\\'c3}",
       "你好",
     ],
+    [
+      "GB18030 code page",
+      String.raw`{\rtf1\ansi\ansicpg54936 \'d6\'d0\'ce\'c4 \'95\'32\'82\'36}`,
+      "中文 𠀀",
+    ],
     ["Big5 code page", String.raw`{\rtf1\ansi\ansicpg950 \'a7A\'a6n}`, "你好"],
     [
       "multibyte font charsets and font code pages",
@@ -431,6 +436,27 @@ describe("question answer paths", () => {
       expect(yield* Effect.promise(() => extractDocumentText(path, ".rtf"))).toBe(expected);
       expect(yield* (yield* DocumentText.DocumentText).ensure(path)).toBe(path + ".txt");
       expect(NodeFS.readFileSync(path + ".txt", "utf8")).toBe(expected);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps long GB18030 four-byte RTF runs intact up to the output limit", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const path = NodePath.join(config.attachmentsDir, "gb18030-long.rtf");
+      NodeFS.writeFileSync(
+        path,
+        Buffer.concat([
+          Buffer.from(String.raw`{\rtf1\ansi\ansicpg54936 `, "latin1"),
+          Buffer.from([0xd6, 0xd0]),
+          Buffer.alloc(1_050_000 * 4, Buffer.from([0x81, 0x39, 0xee, 0x39])),
+          Buffer.from("}", "latin1"),
+        ]),
+      );
+      const text = yield* Effect.promise(() => extractDocumentText(path, ".rtf"));
+      expect(text.search(/[^中㐀]/u)).toBe(1_000_000);
+      expect(text.slice(1_000_000)).toBe(
+        "\n\n[Extracted text truncated at document extraction limits.]",
+      );
     }).pipe(Effect.provide(layer)),
   );
 
@@ -1165,8 +1191,10 @@ describe("question answer paths", () => {
             </p:presentation>`,
             "ppt/_rels/presentation.xml.rels":
               '<Relationships><Relationship Id="a" Target="slides/slide1.xml"/><Relationship Id="b" Target="slides/slide2.xml"/></Relationships>',
-            "ppt/slides/slide1.xml": "<p:sld><a:p><a:r><a:t>Departure</a:t></a:r></a:p></p:sld>",
-            "ppt/slides/slide2.xml": "<p:sld><a:p><a:r><a:t>Juniper Pier</a:t></a:r></a:p></p:sld>",
+            "ppt/slides/slide1.xml":
+              '<p:sld><a:p><a:r><a:t>Departure</a:t></a:r></a:p><p:timing><p:tnLst><p:par><p:cTn id="1"><p:childTnLst><p:set><p:cBhvr><p:cTn id="2"/><p:tgtEl><p:spTgt spid="2"/></p:tgtEl><p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="visible"/></p:to></p:set></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing></p:sld>',
+            "ppt/slides/slide2.xml":
+              '<p:sld><a:p><x:timing><a:r><a:t>Juniper Pier</a:t></a:r></x:timing></a:p><mc:AlternateContent><mc:Choice Requires="p14"><p:timing><p:attrName>ppt_x</p:attrName></p:timing></mc:Choice></mc:AlternateContent></p:sld>',
             "ppt/slides/_rels/slide2.xml.rels":
               '<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../notesSlides/ignored.xml"/><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" TargetMode="External" Target="https://example.com/notes.xml"/><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notes7.xml"/></Relationships>',
             "ppt/slides/_rels/slide1.xml.rels":
@@ -1190,6 +1218,8 @@ describe("question answer paths", () => {
             "11/21/2026",
             "Crew only",
             "57",
+            "style.visibility",
+            "ppt_x",
             "[Skipped document part",
             "[Extracted text truncated",
           ],
@@ -1467,7 +1497,7 @@ describe("question answer paths", () => {
             "OEBPS/a.xhtml":
               '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><body><p>Last chapter</p><p>Price <s>10</s> 8 <del>old</del></p></body></html>',
             "OEBPS/b.xhtml":
-              '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table></body></html>',
+              '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table><dl><dt>Port</dt><dd>443</dd><dt>Timeout</dt><dd>30 seconds</dd></dl></body></html>',
           },
           expected: [
             "## Chapter 1",
@@ -1480,6 +1510,7 @@ describe("question answer paths", () => {
             "Heading\tTotal",
             "Important value\t731",
             "Before Inner After\tNeighbor",
+            "Port\n443\nTimeout\n30 seconds",
             "## Chapter 2",
             "Last chapter",
             "Price 10 8 old",

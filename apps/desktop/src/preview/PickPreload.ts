@@ -494,10 +494,14 @@ async function captureElement(element: Element): Promise<PickedElementPayload> {
       };
     }
   } catch {}
+  const html = element.outerHTML;
+  const before = html.charCodeAt(HTML_PREVIEW_MAX_CHARS - 1);
+  const after = html.charCodeAt(HTML_PREVIEW_MAX_CHARS);
+  const splitPair = before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff;
   return {
     ...base,
     selector: null,
-    htmlPreview: element.outerHTML.slice(0, HTML_PREVIEW_MAX_CHARS),
+    htmlPreview: html.slice(0, splitPair ? HTML_PREVIEW_MAX_CHARS - 1 : HTML_PREVIEW_MAX_CHARS),
     componentName: null,
     source: null,
     stack: [],

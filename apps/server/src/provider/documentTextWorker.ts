@@ -124,6 +124,11 @@ function xml(source: string, extension: string): XmlNode {
             (prop) => prop.name === "vanish" && ["true", "1", "on"].includes(prop.attrs.val ?? "1"),
           )) ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (extension === ".pptx" &&
+        node.name === "timing" &&
+        stack.every((ancestor) =>
+          ["root", "sld", "AlternateContent", "Choice", "Fallback"].includes(ancestor.name),
+        )) ||
       (extension === ".odp" &&
         node.name === "page-thumbnail" &&
         stack.some((ancestor) => ancestor.name === "notes"))
@@ -249,7 +254,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield "\n";
     } else {
       yield* paragraphs(child);
-      if (["li", "div", "section"].includes(child.name)) yield "\n";
+      if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
     }
   }
 }
@@ -501,6 +506,7 @@ const RTF_CODE_PAGES = new Map([
   [949, "euc-kr"],
   [950, "big5"],
   [10000, "macintosh"],
+  [54936, "gb18030"],
   [65001, "utf-8"],
 ]);
 
@@ -541,7 +547,8 @@ function* rtf(source: string): Generator<string, void> {
       yield String.fromCharCode(byte);
       return;
     }
-    encoded ??= new Uint8Array(Math.min(source.length, MAX_OUTPUT * 3 + 4));
+    // GB18030 spends up to 4 bytes per UTF-16 unit, so a full buffer decodes past MAX_OUTPUT.
+    encoded ??= new Uint8Array(Math.min(source.length, MAX_OUTPUT * 4 + 4));
     if (encodedLength === encoded.length) yield* flushBytes();
     encoded[encodedLength++] = byte;
   }

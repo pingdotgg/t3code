@@ -22,6 +22,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import {
   planNextReopen,
+  issuesSearchForRestore,
   pullRequestsSearchForRestore,
   reopenClosedView,
 } from "../reopenClosedView";
@@ -154,17 +155,20 @@ export function ReopenClosedViewShortcut() {
     if (router.history.location !== request.location) return;
 
     let destination;
-    if (globalPullRequests) {
+    if (globalPullRequests || globalIssues) {
       const selected = selectSelectedRightPanelSurface(
         useRightPanelStore.getState().byThreadKey,
         ref,
       );
-      destination = linkOptions({
-        to: "/pull-requests",
-        search: (previous) => pullRequestsSearchForRestore(previous, selected),
-      });
-    } else if (globalIssues) {
-      destination = linkOptions({ to: "/issues", search: readIssueListPreferences() });
+      destination = globalPullRequests
+        ? linkOptions({
+            to: "/pull-requests",
+            search: (previous) => pullRequestsSearchForRestore(previous, selected),
+          })
+        : linkOptions({
+            to: "/issues",
+            search: issuesSearchForRestore(readIssueListPreferences(), selected),
+          });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
       destination =

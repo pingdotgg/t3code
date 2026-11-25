@@ -108,6 +108,24 @@ The app asks for the reason before it sends a choice that requires one, and `t3 
 
 `tags([...])` labels a run for `t3 workflow list --tag backlog`, whether or not it waits on anyone.
 
+## Limit how much runs at once
+
+Wrap part of a run in a named pool to cap how many runs are inside it at once, across the whole server:
+
+```ts
+const { within, agent } = T3;
+
+yield* within("builders", { limit: 4 }, agent("fix", { ... }));
+```
+
+When all places are taken, later runs queue in the order they asked and show as **Queued** with their place in line; they count as running, not as needing you. A place is given back when the wrapped part ends, or when its run ends, is cancelled, or pauses. The place is handed on at once, so a step of a paused or cancelled run that is still finishing can overlap with the next run in. A resumed run goes ahead of the queue and takes back every place it held, in every pool, all at once; until they are all free it holds none of them and shows as **Queued**.
+
+`limit: 1` makes it a lock. When calls on the same pool name ask for different limits, a call goes in only while the pool holds fewer runs than its own limit and fewer than the smallest limit of those already inside, and nobody who asked after it goes in first. So a `limit: 1` call always runs alone, but it waits for whoever is inside to finish, two `limit: 2` calls included.
+
+A run can hold several places in one pool by calling `within` side by side, as in `Effect.all`. Calling `within` for a pool from inside that same pool pauses the run with an error, because it could end up waiting for itself; so does `within` on the workflow's own name when it has a `concurrency`. A run that `invoke`s another while holding a place the other needs can still wait forever, so keep `invoke` out of a lock the invoked workflow takes. Step names starting with `@pool:` are kept for the steps that queue; a step or wait of your own named that way pauses its run with an error.
+
+To cap whole runs, give the workflow `concurrency: 4` in its options: its runs share a pool named after the workflow, and each keeps its place until it ends, `onEnd` included.
+
 ## Triggers
 
 - **Schedules:** `every` runs on an interval, starting one interval after the workflow loads; `daily` runs at a local time of day (a time missed by more than 10 minutes while the server is down is skipped).
