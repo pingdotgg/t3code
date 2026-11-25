@@ -35,6 +35,8 @@ const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/vendor\/serve-emu\/api$/,
   /^\/vendor\/serve-emu\/api\/(devices|screenshot|stream-mode|stream-settings|accessibility|fold)$/,
   /^\/vendor\/serve-emu\/health$/,
+  // Answered by T3: serve-emu streams the framebuffer but does not report where the display sits.
+  /^\/t3\/display-viewport$/,
 ];
 
 // Paths that take methods besides GET; one missing from ALLOWED_PATHS takes no GET.
@@ -233,16 +235,27 @@ const handler = Effect.gen(function* () {
   upstreamSearch.delete("wsTicket");
   upstreamSearch.delete("hostId");
   const search = upstreamSearch.size > 0 ? `?${upstreamSearch.toString()}` : "";
-  const screenshotDevice = upstreamSearch.get("device");
+  const requestedDevice = upstreamSearch.get("device");
   if (
-    screenshotDevice &&
+    requestedDevice &&
     ["/vendor/serve-sim/api/screenshot", "/vendor/serve-emu/api/screenshot"].includes(hubPath)
   ) {
-    const { png } = yield* devices.screenshot({ hostId: ready.hostId, deviceId: screenshotDevice });
+    const { png } = yield* devices.screenshot({ hostId: ready.hostId, deviceId: requestedDevice });
     return HttpServerResponse.uint8Array(png, {
       contentType: "image/png",
       headers: { "cache-control": "no-store, no-transform" },
     });
+  }
+  if (hubPath === "/t3/display-viewport") {
+    if (!requestedDevice) return HttpServerResponse.text("Bad Request", { status: 400 });
+    const viewport = yield* devices.displayViewport({
+      hostId: ready.hostId,
+      deviceId: requestedDevice,
+    });
+    return HttpServerResponse.jsonUnsafe(
+      { viewport },
+      { headers: { "cache-control": "no-store, no-transform" } },
+    );
   }
   // Hosts with several upstreams (one per cloud session) route and authenticate requests themselves.
   const routed = ready.upstream ? yield* ready.upstream(hubPath, upstreamSearch) : undefined;

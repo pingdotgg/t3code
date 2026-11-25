@@ -105,6 +105,13 @@ export interface HubUpstream {
 }
 
 /** Discovery and lifecycle for the devices a ready host can run. */
+/**
+ * Where Android puts a touch normalized over the streamed framebuffer. "framebuffer": on the
+ * panel, mapped into the display like a real touchscreen. "display": the hub scales it by the
+ * framebuffer size, and Android reads the result as display pixels.
+ */
+export type AndroidTouchSpace = "framebuffer" | "display";
+
 export interface DeviceOperations {
   readonly list: Effect.Effect<
     {
@@ -140,6 +147,10 @@ export interface DeviceOperations {
   readonly agentEndpoint?: (
     deviceId: string,
   ) => Effect.Effect<AgentDeviceBinding, DeviceHostUnavailableError>;
+  /** Hubs that stream Android emulators report how their input socket places a touch. */
+  readonly androidTouchSpace?: (
+    serial: string,
+  ) => Effect.Effect<AndroidTouchSpace, DeviceOperationError>;
   /**
    * Set by hosts that end devices on their own (Expo stops sessions at their
    * limits), so a session on a device the host stops listing is dropped.

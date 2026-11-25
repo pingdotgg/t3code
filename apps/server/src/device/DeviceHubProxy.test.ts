@@ -32,6 +32,8 @@ const fixture = (
   const requests: string[] = [];
   const screenshots: Array<Parameters<DeviceService.DeviceService["Service"]["screenshot"]>[0]> =
     [];
+  const viewports: Array<Parameters<DeviceService.DeviceService["Service"]["displayViewport"]>[0]> =
+    [];
   const headers: Array<Readonly<Record<string, string>>> = [];
   const unexpectedOperation = Effect.die("Unexpected device operation");
   const client = HttpClient.make((request, _url, signal) =>
@@ -88,6 +90,16 @@ const fixture = (
               helpers: { serveSimAxSettings: null, serveSimCli: null },
               ...(upstream ? { upstream } : {}),
             }),
+          displayViewport: (input) =>
+            Effect.sync(() => {
+              viewports.push(input);
+              return {
+                width: 1080,
+                height: 2400,
+                content: { x: 72, y: 0, width: 936, height: 2400 },
+                touch: { x: 0, y: 0, width: 0.8, height: 0.9 },
+              };
+            }),
           screenshot: (input) =>
             Effect.sync(() => {
               screenshots.push(input);
@@ -118,7 +130,7 @@ const fixture = (
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler, requests, screenshots, headers, finalized: () => finalized };
+  return { handler, requests, screenshots, viewports, headers, finalized: () => finalized };
 };
 
 describe("device hub proxy", () => {
@@ -342,6 +354,27 @@ describe("device hub proxy", () => {
       expect(screenshots).toEqual([{ hostId: "pool", deviceId: "udid-1" }]);
     },
   );
+
+  it("answers the Android display viewport itself instead of asking the hub", async () => {
+    const { handler, requests, viewports } = fixture([AuthOrchestrationReadScope]);
+    const response = await handler(
+      new Request(
+        "http://t3.test/api/device-hub/t3/display-viewport?device=emulator-5554&hostId=lab&wsTicket=secret",
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store, no-transform");
+    expect(await response.json()).toEqual({
+      viewport: {
+        width: 1080,
+        height: 2400,
+        content: { x: 72, y: 0, width: 936, height: 2400 },
+        touch: { x: 0, y: 0, width: 0.8, height: 0.9 },
+      },
+    });
+    expect(requests).toEqual([]);
+    expect(viewports).toEqual([{ hostId: "lab", deviceId: "emulator-5554" }]);
+  });
 });
 
 it.each([

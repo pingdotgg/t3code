@@ -44,7 +44,7 @@ import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 import * as DeviceService from "./DeviceService.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
-import { ensureDeviceHub } from "./DeviceToolchain.ts";
+import { DEVICE_HUB_VERSION, ensureDeviceHub } from "./DeviceToolchain.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeBootError = Schema.decodeUnknownSync(Schema.fromJsonString(DeviceBootError));
@@ -101,6 +101,34 @@ it.effect.each([400, 500])(
       expect(yield* screenshot("iOS 26.3")).toMatchObject({
         success: new Uint8Array([137, 80, 78, 71]),
       });
+    }),
+);
+
+it.effect.each([
+  ["grpc-screenshot", "scrcpy", "display"],
+  ["grpc-screenshot", "grpc", "framebuffer"],
+  ["scrcpy", "scrcpy", "framebuffer"],
+] as const)(
+  "reads where a %s stream with %s input puts touches",
+  ([streamMode, inputSource, expected]) =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      const operations = makeDeviceHubOperations({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        origin: "http://device.test",
+        http: HttpClient.make((request) =>
+          Effect.sync(() => {
+            requests.push(request.url);
+            return HttpClientResponse.fromWeb(request, Response.json({ streamMode, inputSource }));
+          }),
+        ),
+        run: () => Effect.die("unexpected command"),
+        platformAvailable: () => Effect.succeed(true),
+      });
+      // Pinned to the hub whose scrcpy scaling this compensates; recheck it when the hub changes.
+      expect(DEVICE_HUB_VERSION).toBe("0.26.1");
+      expect(yield* operations.androidTouchSpace!("emulator-5554")).toBe(expected);
+      expect(requests).toEqual(["http://device.test/vendor/serve-emu/api?device=emulator-5554"]);
     }),
 );
 

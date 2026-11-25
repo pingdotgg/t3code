@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost.ts";
+import { DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
@@ -46,6 +47,13 @@ const HubDeviceList = Schema.Struct({
     Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
   ),
 });
+const HubStreamApi = Schema.Struct({
+  streamMode: Schema.optional(Schema.String),
+  inputSource: Schema.optional(Schema.String),
+});
+// expo-device-hub 0.26.1 scales scrcpy touches beside gRPC screenshots by the native framebuffer
+// size, and Android reads them as display pixels. It shows only under a `wm size` override.
+const SCRCPY_DISPLAY_TOUCH_HUBS: ReadonlySet<string> = new Set(["0.26.1"]);
 const HubActionResult = Schema.Struct({
   ok: Schema.Boolean,
   id: Schema.optional(Schema.String),
@@ -419,5 +427,23 @@ export const makeDeviceHubOperations = (options: {
         Effect.withSpan("DeviceHubOperations.screenshot"),
       );
 
-  return { list, boot, attach, shutdown, screenshot };
+  const androidTouchSpace: NonNullable<DeviceOperations["androidTouchSpace"]> = (serial) =>
+    hubJson(
+      HttpClientRequest.get(
+        `${origin}${vendorPrefix("android")}/api?device=${encodeURIComponent(serial)}`,
+      ),
+      HubStreamApi,
+      "input mode",
+      Duration.seconds(5),
+    ).pipe(
+      Effect.map((api) =>
+        api.streamMode === "grpc-screenshot" &&
+        api.inputSource === "scrcpy" &&
+        SCRCPY_DISPLAY_TOUCH_HUBS.has(DEVICE_HUB_VERSION)
+          ? "display"
+          : "framebuffer",
+      ),
+    );
+
+  return { list, boot, attach, shutdown, screenshot, androidTouchSpace };
 };

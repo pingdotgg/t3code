@@ -4,6 +4,7 @@ import {
   type DeviceConfigureInput,
   type DeviceDetail,
   type DeviceDetailInput,
+  type DeviceDisplayViewport,
   type DeviceError,
   DeviceHostId,
   DeviceId,
@@ -71,7 +72,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as ServerSettings from "../serverSettings.ts";
 import { isLocalSshDeviceHost, remoteSshDeviceHosts } from "./localSshDeviceHost.ts";
 
-import { readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
+import { readAndroidDisplayViewport, readDeviceDetail, runDeviceAction } from "./DeviceActions.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
@@ -220,6 +221,11 @@ export class DeviceService extends Context.Service<
       readonly hostId?: DeviceHostId | undefined;
       readonly deviceId: DeviceId;
     }) => Effect.Effect<DeviceScreenshot, DeviceError>;
+    /** Null when the device streams its display edge to edge, or no ADB can read it. */
+    readonly displayViewport: (input: {
+      readonly hostId?: DeviceHostId | undefined;
+      readonly deviceId: DeviceId;
+    }) => Effect.Effect<DeviceDisplayViewport | null, DeviceError>;
     /**
      * The device an id names in the last listing. Ids are unique per host, not across hosts (an
      * Android AVD name can exist on two), so a hostId decides, and without one the id has to be
@@ -1008,6 +1014,22 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     },
   );
 
+  const displayViewport: DeviceService["Service"]["displayViewport"] = Effect.fn(
+    "DeviceService.displayViewport",
+  )(function* (input) {
+    const { ready, device } = yield* resolveDevice(input.hostId, input.deviceId);
+    // Physical devices and cloud hosts stream their display as it is, or have no ADB here.
+    if (device.platform !== "android" || device.physical || ready.upstream) return null;
+    const touchSpace = ready.devices.androidTouchSpace
+      ? yield* ready.devices
+          .androidTouchSpace(device.id)
+          .pipe(Effect.orElseSucceed(() => "framebuffer" as const))
+      : "framebuffer";
+    return yield* readAndroidDisplayViewport(ready.run, device.id, touchSpace).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+  });
+
   const resolveDevice = Effect.fn("DeviceService.resolveDevice")(function* (
     hostId: DeviceHostId | undefined,
     deviceId: DeviceId,
@@ -1237,6 +1259,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       detail,
       action,
       screenshot,
+      displayViewport,
       locateDevice,
       locateSession,
       readiness,
