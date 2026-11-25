@@ -9,7 +9,12 @@ const fitsWrite = (data: string) => isWriteInput({ threadId: "t", terminalId: "d
 
 /** A `send` whose calls stay pending until the test settles them. */
 function heldSend() {
-  const sent: Array<{ readonly chunk: string; readonly settle: (ok: boolean) => void }> = [];
+  type Framing = Pick<TerminalWriteInput, "bracketedPaste" | "plainWrite">;
+  const sent: Array<{
+    readonly chunk: string;
+    readonly framing: Framing | undefined;
+    readonly settle: (ok: boolean) => void;
+  }> = [];
   const waiters: Array<{ readonly count: number; readonly resolve: () => void }> = [];
   return {
     sent,
@@ -20,9 +25,9 @@ function heldSend() {
         if (sent.length >= count) resolve();
         else waiters.push({ count, resolve });
       }),
-    send: (chunk: string) =>
+    send: (chunk: string, framing?: Framing) =>
       new Promise<boolean>((settle) => {
-        sent.push({ chunk, settle });
+        sent.push({ chunk, framing, settle });
         for (const waiter of waiters) if (sent.length >= waiter.count) waiter.resolve();
       }),
   };
@@ -168,5 +173,10 @@ describe("createTerminalInputWriter", () => {
     await sends(3);
 
     expect(chunks()).toEqual(["q".repeat(65_536), "", "next"]);
+    expect(sent.map(({ framing }) => framing)).toEqual([
+      { plainWrite: "start" },
+      { plainWrite: "abort" },
+      undefined,
+    ]);
   });
 });

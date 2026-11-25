@@ -91,4 +91,30 @@ describe("terminal paste session", () => {
     expect(phases).toEqual(["start", "abort", undefined]);
     expect(maximumActiveWrites).toBe(1);
   });
+  it("keeps a keystroke behind a queued split write", async () => {
+    const session = createTerminalPasteSession();
+    session.reset(true);
+    const firstChunk = deferred<boolean>();
+    const started = deferred<void>();
+    const writes: string[] = [];
+    const send = async (data: string) => {
+      writes.push(data);
+      if (writes.length === 1) {
+        started.resolve();
+        return firstChunk.promise;
+      }
+      return true;
+    };
+    const a = "a".repeat(TERMINAL_WRITE_MAX_LENGTH);
+    const b = "b".repeat(TERMINAL_WRITE_MAX_LENGTH);
+    const first = session.write(a + "1", send);
+    await started.promise;
+    const second = session.write(b + "2", send);
+    const key = session.write("k", send);
+    expect(writes).toEqual([a]);
+
+    firstChunk.resolve(true);
+    await Promise.all([first, second, key]);
+    expect(writes).toEqual([a, "1", b, "2", "k"]);
+  });
 });

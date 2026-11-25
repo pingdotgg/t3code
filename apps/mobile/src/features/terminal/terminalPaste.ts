@@ -25,7 +25,7 @@ export interface TerminalPasteSession {
 export function createTerminalPasteSession(): TerminalPasteSession {
   let liveTarget: object | null = null;
   let latestRequest = 0;
-  let writeTail: Promise<void> = Promise.resolve();
+  let writeTail: Promise<void> | null = null;
 
   const writeChunks = (
     data: string,
@@ -48,12 +48,13 @@ export function createTerminalPasteSession(): TerminalPasteSession {
         if (started) await send("", "abort");
       }
     };
-    if (!queueSingle && chunks.length <= 1) return run();
-    const pending = writeTail.then(run, run);
-    writeTail = pending.then(
-      () => undefined,
-      () => undefined,
-    );
+    if (writeTail === null && !queueSingle && chunks.length <= 1) return run();
+    const pending = (writeTail ?? Promise.resolve()).then(run, run);
+    writeTail = pending;
+    const clear = () => {
+      if (writeTail === pending) writeTail = null;
+    };
+    void pending.then(clear, clear);
     return pending;
   };
 
