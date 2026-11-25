@@ -1497,7 +1497,7 @@ describe("question answer paths", () => {
             "OEBPS/a.xhtml":
               '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><body><p>Last chapter</p><p>Price <s>10</s> 8 <del>old</del></p><p><ruby>山路<rt>やまみち</rt></ruby>を歩く。<ruby>東京<rp>（</rp><script type="application/json">{}</script><rt>とうきょう</rt><script type="application/json">{}</script><rp>）</rp></ruby>に着く。<ruby>川<rt/></ruby>を見る。<ruby>海<rp/><rt>うみ</rt><rp> </rp></ruby>まで。</p></body></html>',
             "OEBPS/b.xhtml":
-              '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table><dl><dt>Port</dt><dd>443</dd><dt>Timeout</dt><dd>30 seconds</dd></dl><p hidden="">Draft note</p><div hidden="hidden">Hidden block<p>Hidden nested</p></div><p hidden="UNTIL-FOUND">Findable note</p><p aria-hidden="true">Decorative note</p><p x:hidden="true">Prefixed note</p><ol><li>Before boarding<ul><li>Check passports<ol><li>Compare names</li></ol></li><li>Confirm gate</li></ul></li><li>Board promptly</li><li><p>Before landing</p><ul><li>Collect bags</li></ul></li></ol>' +
+              '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><p>Map: <img src="map.png" alt="North &amp; south piers"/> open<img src="blank.png" alt=""/><img src="missing.png"/>.</p><div><img src="cover.png" alt="Cover art"/></div><img hidden="" src="draft.png" alt="Hidden image text"/><img src="none.png" alt="Display none image" style="width: 1em; DISPLAY: none"/><img src="invisible.png" alt="Invisible image" style="visibility:hidden !important"/><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table><dl><dt>Port</dt><dd>443</dd><dt>Timeout</dt><dd>30 seconds</dd></dl><p hidden="">Draft note</p><div hidden="hidden">Hidden block<p>Hidden nested</p></div><p hidden="UNTIL-FOUND">Findable note</p><p aria-hidden="true">Decorative note</p><p x:hidden="true">Prefixed note</p><ol><li>Before boarding<ul><li>Check passports<ol><li>Compare names</li></ol></li><li>Confirm gate</li></ul></li><li>Board promptly</li><li><p>Before landing</p><ul><li>Collect bags</li></ul></li></ol>' +
               "<ol><li>Indented\n  <ul><li>Alpha</li></ul></li></ol></body></html>",
             "OEBPS/c.xhtml": '<html hidden=""><body><p>Root hidden</p></body></html>',
           },
@@ -1505,6 +1505,8 @@ describe("question answer paths", () => {
             "## Chapter 1",
             "\n# First chapter",
             "Larkspur",
+            "Map: North & south piers open.",
+            "Cover art",
             "Direct div",
             "Direct section",
             "Direct item emphasis trailing",
@@ -1529,6 +1531,9 @@ describe("question answer paths", () => {
             "Draft note",
             "Hidden block",
             "Hidden nested",
+            "Hidden image text",
+            "Display none image",
+            "Invisible image",
             "Root hidden",
           ],
         },

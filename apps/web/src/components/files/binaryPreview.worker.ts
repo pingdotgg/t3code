@@ -180,7 +180,7 @@ async function handle(input: BinaryWorkerRequest) {
         .slice(0, 50) ?? [];
     const fields = columns.map((name) => {
       const field = quote(name);
-      return `CASE WHEN typeof(${field}) = 'blob' THEN '[blob: ' || length(${field}) || ' bytes]' ELSE substr(CAST(${field} AS TEXT), 1, 1024) END`;
+      return `CASE WHEN typeof(${field}) = 'blob' THEN '[blob: ' || length(${field}) || CASE length(${field}) WHEN 1 THEN ' byte]' ELSE ' bytes]' END ELSE substr(CAST(${field} AS TEXT), 1, 1024) END`;
     });
     const result = database.exec(
       `SELECT ${fields.join(",")} FROM ${quote(input.table)} LIMIT ${SQLITE_PAGE_SIZE} OFFSET ${input.page * SQLITE_PAGE_SIZE}`,
