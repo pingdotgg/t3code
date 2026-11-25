@@ -48,6 +48,26 @@ heap, and first-request latency against a fake Anthropic API and the real `claud
 - Test macOS, Windows, and Linux with `--no-agent-scope`: Linux systemd agent scopes mask
   per-process polling paths that other platforms run.
 
+## Client switch metrics
+
+[`scripts/client-metrics.ts`](../../scripts/client-metrics.ts) (`vp run report:client`) builds
+the web app for production, seeds a server with replayed threads (no paid model), and switches
+threads in headless Chromium by real sidebar clicks:
+
+- `run` measures one checkout; `ab <checkoutA> <checkoutB>` alternates them (A B, then B A) and
+  `compare` gates the result. Isolated runs on a loaded machine say nothing; trust only `ab`.
+- Each case is a thread switched to from a small hub thread. `short`/`long` cost the timeline,
+  `working` and `approval` are live threads, and `medium` is the panel-closed baseline for
+  `diff`, `pull-request` (fake GitHub with body, files and activity), `browser` (a local page)
+  and `device` (empty state only, so it is light). First visits and revisits are reported apart.
+- Per switch: click to next paint (Event Timing), whether the first painted frame already had
+  timeline rows, and long-animation-frame time in the 1.5 s after the click. `--trace` adds an
+  extra traced round with forced style/layout per click and its top call sites, mapped through
+  the build's sourcemaps.
+- Per run: heap and DOM nodes after GC on load, after first visits and after every switch (a
+  leak shows as growth between the last two), and renderer CPU over 10 s while a thread streams,
+  on that thread and elsewhere.
+
 ## Persistence and background work invariants
 
 - Event-store sequence cursors and startup recovery candidate selection must seek indexes rather
