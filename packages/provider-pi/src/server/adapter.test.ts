@@ -3270,7 +3270,9 @@ describe("PiAdapterV2", () => {
       const writeSession = (file: string, entries: ReadonlyArray<unknown>) =>
         fs.writeFileString(
           file,
-          [{ type: "session", version: 3 }, ...entries].map(encodeJsonLine).join("\n") + "\n",
+          [{ type: "session", version: 3 }, ...entries]
+            .map((entry) => encodeJsonLine(entry))
+            .join("\n") + "\n",
         );
       const legacyBoundary = scenario === "running legacy boundary with a colliding entry ID";
       const trailingPrompt = scenario === "equivalent copies with a discarded prompt";
@@ -3358,7 +3360,7 @@ describe("PiAdapterV2", () => {
         assert.isFalse(forkFake.allRequests().some((request) => request.type === "fork"));
         return;
       }
-      if (result._tag === "Failure") return yield* Effect.fail(result.failure);
+      if (result._tag === "Failure") return yield* result.failure;
       const args = forkFake.lastSpawn().args;
       assert.equal(args[args.indexOf("--fork") + 1], oldFile);
       assert.deepEqual(

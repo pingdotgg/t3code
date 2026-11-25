@@ -3114,7 +3114,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
         // Pi accepts a fork before the first prompt in a new session even when the
         // selected turn is absent. Find its retained branch before asking Pi to fork.
-        let recovered: { file: string; boundary: PiForkBoundary; history: string } | undefined;
+        let recovered:
+          | { file: string; boundary: PiForkBoundary; history: ReadonlyArray<string> }
+          | undefined;
         for (const file of yield* siblingSessionFiles(sourceFile)) {
           const listing = yield* readSessionFile(file);
           if (listing === null || !piUserEntryInWindow(listing.entries.get(targetId), from, to))
@@ -3136,8 +3138,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               : (listing.entries.get(entryId)?.parentId ?? null);
           const retained = walkPiBranch(listing.entries, retainedLeaf, null);
           if (retained?.reachedStop !== true) continue;
-          const history = JSON.stringify([...retained.entryIds]);
-          if (recovered !== undefined && history !== recovered.history) return yield* unresolved();
+          const history = [...retained.entryIds];
+          if (
+            recovered !== undefined &&
+            (history.length !== recovered.history.length ||
+              recovered.history.some((id, index) => id !== history[index]))
+          )
+            return yield* unresolved();
           recovered ??= {
             file,
             boundary: entryId === undefined ? { type: "nothing" } : { ...boundary, entryId },
