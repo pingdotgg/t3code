@@ -7,6 +7,7 @@ import { ConnectionCatalogDocument, Persistence } from "@t3tools/client-runtime/
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -77,9 +78,9 @@ describe("ConnectionStorage.makeCatalogStore", () => {
         };
         const listeners = new Set<() => void>();
         const lock = yield* Semaphore.make(1);
-        const tab = () => {
+        const tab = (tabBackend = backend) => {
           let own: (() => void) | undefined;
-          return ConnectionStorage.makeCatalogStore(backend, {
+          return ConnectionStorage.makeCatalogStore(tabBackend, {
             changes: {
               postMessage: () => listeners.forEach((listener) => listener !== own && listener()),
               addEventListener: (_type, listener) => void listeners.add((own = listener)),
@@ -89,12 +90,21 @@ describe("ConnectionStorage.makeCatalogStore", () => {
         };
         const pinning = yield* tab();
         const earlier = yield* tab();
+        // This tab's read returns what was stored when it began, after other tabs have run.
+        const late = yield* tab({
+          ...backend,
+          read: Effect.sync(() => stored).pipe(Effect.tap(() => Effect.yieldNow)),
+        });
         const environmentKeys = [{ environmentId: EnvironmentId.make("env"), publicKey: "a2V5" }];
         const disabledEnvironmentIds = [EnvironmentId.make("other")];
         yield* earlier.read;
+        const reading = yield* Effect.forkChild(late.read);
 
         yield* pinning.update((document) => ({ ...document, environmentKeys }));
         expect((yield* earlier.read).environmentKeys).toEqual(environmentKeys);
+        // A read that was under way during the save does not leave its older copy cached.
+        yield* Fiber.join(reading);
+        expect((yield* late.read).environmentKeys).toEqual(environmentKeys);
 
         stored = encodeCatalog(emptyCatalog);
         yield* Effect.all(

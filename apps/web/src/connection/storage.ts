@@ -607,11 +607,15 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   let cached = Option.none<ConnectionCatalogDocumentType>();
   const lock = yield* Semaphore.make(1);
   const exclusive = tabs?.exclusive ?? ((update) => update);
+  // Counts other tabs' saves, so a read that was already under way does not cache what it saw.
+  let saves = 0;
   tabs?.changes.addEventListener("message", () => {
+    saves++;
     cached = Option.none();
   });
 
   const loadStored = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
+    const savesBefore = saves;
     const raw = yield* backend.read;
     let catalog = EMPTY_CONNECTION_CATALOG_DOCUMENT;
     if (raw !== null && raw.trim() !== "") {
@@ -643,7 +647,7 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
         ),
       );
     }
-    cached = Option.some(catalog);
+    if (saves === savesBefore) cached = Option.some(catalog);
     return catalog;
   });
 
