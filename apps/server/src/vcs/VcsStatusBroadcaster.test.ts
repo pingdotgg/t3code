@@ -2486,6 +2486,67 @@ describe("VcsStatusBroadcaster", () => {
     }),
   );
 
+  it.effect("a HEAD watch closes before an in-flight branch refresh finishes", () =>
+    Effect.gen(function* () {
+      const gitDir = "/repo/.git/worktrees/feature";
+      const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const closed = yield* Deferred.make<void>();
+      const refreshStarted = yield* Deferred.make<void>();
+      const allowRefresh = yield* Deferred.make<void>();
+      let gitDirExists = true;
+      let branchCalls = 0;
+
+      const layerTest = VcsStatusBroadcaster.layer.pipe(
+        Layer.provide(
+          Layer.succeed(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              realPath: (target) => Effect.succeed(target),
+              exists: (target) => Effect.succeed(target !== gitDir || gitDirExists),
+              watch: (_target, options) =>
+                Stream.fromQueue(events).pipe(
+                  Stream.onStart(Effect.sync(() => options?.onReady?.())),
+                  Stream.ensuring(Deferred.succeed(closed, undefined)),
+                ),
+            }),
+          ),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(layerBackgroundPolicy(() => true)),
+        Layer.provide(
+          Layer.mock(GitWorkflowService.GitWorkflowService)({
+            headPath: () => Effect.succeed(`${gitDir}/HEAD`),
+            currentBranch: () =>
+              Effect.gen(function* () {
+                branchCalls++;
+                if (branchCalls === 1) return "main";
+                yield* Deferred.succeed(refreshStarted, undefined);
+                yield* Deferred.await(allowRefresh);
+                return null;
+              }),
+            repositoryRoot: () => Effect.succeed(null),
+            invalidateLocalStatus: () => Effect.void,
+          }),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const branches = yield* Stream.toPull(broadcaster.streamBranchStatus({ cwd: "/repo" }));
+        assert.deepEqual(yield* branches, [{ refName: "main", isRepo: true }]);
+
+        // Removing HEAD while the directory is also gone starts a refresh; the watch must close
+        // immediately rather than staying open until the refresh finishes.
+        gitDirExists = false;
+        yield* Queue.offer(events, { _tag: "Remove", path: "HEAD" });
+        yield* Deferred.await(refreshStarted);
+        yield* Deferred.await(closed);
+        yield* Deferred.succeed(allowRefresh, undefined);
+        assert.deepEqual(yield* branches, [{ refName: null, isRepo: false }]);
+      }).pipe(Effect.provide(layerTest), Effect.scoped);
+    }),
+  );
+
   it.effect("releases remote demand while passive observers remain", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

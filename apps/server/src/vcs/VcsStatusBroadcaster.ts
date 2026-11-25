@@ -11,7 +11,9 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
@@ -1136,37 +1138,49 @@ export const make = Effect.gen(function* () {
     const headPath = yield* workflow.headPath(cwd);
     if (headPath === null) return;
     const headDirectory = path.dirname(headPath);
-    // Git replaces HEAD by renaming HEAD.lock, which a watch on the file itself would lose.
-    yield* fs
-      .watch(headDirectory, {
-        onReady: () => Deferred.doneUnsafe(ready, Exit.void),
-      })
-      .pipe(
-        // On Windows a watch outlives its deleted directory and reports it ~150k times a second.
-        Stream.takeUntilEffect((event) =>
-          event._tag === "Remove"
-            ? fs.exists(headDirectory).pipe(Effect.map((exists) => !exists))
-            : Effect.succeed(false),
-        ),
-        // A terminal commit moves the branch ref but not HEAD; it always rewrites the index beside it.
-        Stream.filter((event) => {
-          const name = path.basename(event.path);
-          return name === "HEAD" || name === "index";
-        }),
-        // On arrival: the cache keeps the old branch until reads below land, and they can retry.
-        Stream.tap(() =>
-          Effect.sync(() => {
-            branchConfirmedUnder.delete(cwd);
-            headGenerations.set(cwd, (headGenerations.get(cwd) ?? 0) + 1);
-          }),
-        ),
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        // Own the watcher scope separately so takeUntilEffect closes it before slow refreshes run.
+        const updates = yield* Queue.sliding<void, PlatformError.PlatformError | Cause.Done>(1);
+        // Git replaces HEAD by renaming HEAD.lock, which a watch on the file itself would lose.
+        yield* fs
+          .watch(headDirectory, {
+            onReady: () => Deferred.doneUnsafe(ready, Exit.void),
+          })
+          .pipe(
+            // On Windows a watch outlives its deleted directory and reports it ~150k times a second.
+            Stream.takeUntilEffect((event) =>
+              event._tag === "Remove"
+                ? fs.exists(headDirectory).pipe(Effect.map((exists) => !exists))
+                : Effect.succeed(false),
+            ),
+            // A terminal commit moves the branch ref but not HEAD; it always rewrites the index beside it.
+            Stream.filter((event) => {
+              const name = path.basename(event.path);
+              return name === "HEAD" || name === "index";
+            }),
+            // On arrival: the cache keeps the old branch until reads below land, and they can retry.
+            Stream.tap(() =>
+              Effect.sync(() => {
+                branchConfirmedUnder.delete(cwd);
+                headGenerations.set(cwd, (headGenerations.get(cwd) ?? 0) + 1);
+              }),
+            ),
+            Stream.runForEach(() => Queue.offer(updates, undefined)),
+            Effect.onExit((exit) =>
+              Exit.isFailure(exit) ? Queue.failCause(updates, exit.cause) : Queue.end(updates),
+            ),
+            Effect.forkScoped,
+          );
         // A rebase moves HEAD many times; refresh once for whatever arrived during a refresh.
-        Stream.buffer({ capacity: 1, strategy: "sliding" }),
-        Stream.mapEffect(() => retryCheckedOutRef(cwd, publishCheckedOutRef(cwd))),
-        // Detailed status waits behind its own reads; the branch keeps up on the stage above.
-        Stream.buffer({ capacity: 1, strategy: "sliding" }),
-        Stream.runForEach(() => retryCheckedOutRef(cwd, reconcileCheckedOutRef(cwd))),
-      );
+        yield* Stream.fromQueue(updates).pipe(
+          Stream.mapEffect(() => retryCheckedOutRef(cwd, publishCheckedOutRef(cwd))),
+          // Detailed status waits behind its own reads; the branch keeps up on the stage above.
+          Stream.buffer({ capacity: 1, strategy: "sliding" }),
+          Stream.runForEach(() => retryCheckedOutRef(cwd, reconcileCheckedOutRef(cwd))),
+        );
+      }),
+    );
   });
 
   const retainHeadWatcher = Effect.fn("VcsStatusBroadcaster.retainHeadWatcher")(function* (

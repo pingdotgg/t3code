@@ -67,6 +67,7 @@ import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts
 import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+import * as WindowsWatchBackend from "./windowsWatchBackend.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderUsageAnalytics from "./telemetry/ProviderUsageAnalytics.ts";
@@ -410,7 +411,7 @@ const layerHttpServer = Layer.unwrap(
         // `threshold` when context takeover is disabled).
         websocket: { perMessageDeflate: true },
       },
-    ).pipe(Layer.merge(layerSpawner));
+    ).pipe(Layer.merge(layerSpawner), Layer.merge(WindowsWatchBackend.layer));
   }),
 ).pipe(
   Layer.provide(ManagedPolicy.layer),
@@ -420,7 +421,13 @@ const layerHttpServer = Layer.unwrap(
 
 const layerPlatformServices = DocumentText.layer.pipe(
   Layer.provideMerge(ProcessLauncher.layerServer),
-  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerSpawner)),
+  Layer.provideMerge(
+    Layer.mergeAll(
+      NodeServices.layer.pipe(Layer.provideMerge(WindowsWatchBackend.layer)),
+      NodeCrypto.layer,
+      layerSpawner,
+    ),
+  ),
 );
 
 const layerPersistence = Layer.empty.pipe(Layer.provideMerge(SqlitePersistence.layerConfig));
