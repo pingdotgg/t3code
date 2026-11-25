@@ -1013,10 +1013,12 @@ describe("ClaudeAdapterV2 system prompt", () => {
       }).systemPrompt as { readonly append?: string }
     ).append ?? "";
 
-  it("is the same with or without T3's MCP server, with no T3 tool guidance", () => {
-    assert.equal(append(true), append(false));
+  it("identifies T3's MCP server without adding tool-specific instructions", () => {
+    const prompt = append(true);
+    assert.equal(prompt, append(false));
+    assert.include(prompt, "T3 Code's MCP server, t3-code");
     for (const tool of ["delegate_task", "t3_background_wait", "send_to_user", "device_open"]) {
-      assert.notInclude(append(true), tool);
+      assert.notInclude(prompt, tool);
     }
   });
 });

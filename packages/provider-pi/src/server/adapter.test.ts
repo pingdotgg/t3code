@@ -4571,7 +4571,7 @@ describe("PiAdapterV2", () => {
       const fake = yield* makeFakePi;
       fake.queueState({
         sessionFile: FAKE_SESSION_FILE,
-        model: { provider: "anthropic", id: "large", contextWindow: 1_000_000 },
+        model: { provider: "acme", id: "large", contextWindow: 1_000_000 },
       });
       const { runtime, takeEvent } = yield* openRuntime(fake);
       const providerThread = yield* runtime.ensureThread({
