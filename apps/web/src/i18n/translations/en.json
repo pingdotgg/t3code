@@ -66,7 +66,7 @@
   "2f6e4f7cd364da73": "Expected",
   "9d11c93d4035de3e": "Happened",
   "c87d0595693704f9": "Did instead",
-  "d7a4ea6ce5af44e0": "{speaker} · {count} characters",
+  "ed5c85bb4aecb472": "{count, plural, one {{speaker} · {count} character} other {{speaker} · {count} characters}}",
   "f5114fb9c40fd929": "You",
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Turn {turn} · {what}",

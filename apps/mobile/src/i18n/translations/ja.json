@@ -66,7 +66,7 @@
   "2f6e4f7cd364da73": "期待した動作",
   "9d11c93d4035de3e": "実際の動作",
   "c87d0595693704f9": "代わりに行ったこと",
-  "d7a4ea6ce5af44e0": "{speaker} · {count} 文字",
+  "ed5c85bb4aecb472": "{count, plural, other {{speaker} · {count} 文字}}",
   "f5114fb9c40fd929": "あなた",
   "cd03eb1b84271c02": "エージェント",
   "bfe1a60f3f9c60fb": "ターン {turn} · {what}",

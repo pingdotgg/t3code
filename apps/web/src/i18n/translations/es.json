@@ -66,7 +66,7 @@
   "2f6e4f7cd364da73": "Resultado esperado",
   "9d11c93d4035de3e": "Lo que ocurrió",
   "c87d0595693704f9": "Alternativa utilizada",
-  "d7a4ea6ce5af44e0": "{speaker} · {count} caracteres",
+  "ed5c85bb4aecb472": "{count, plural, one {{speaker} · {count} carácter} other {{speaker} · {count} caracteres}}",
   "f5114fb9c40fd929": "Tú",
   "cd03eb1b84271c02": "Agente",
   "bfe1a60f3f9c60fb": "Turno {turn} · {what}",
