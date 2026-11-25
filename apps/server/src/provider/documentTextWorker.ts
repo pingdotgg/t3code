@@ -186,10 +186,14 @@ function hasInlineTab(node: XmlNode, names: readonly string[]): boolean {
     (names.includes(node.name) || children(node).some((child) => hasInlineTab(child, names)))
   );
 }
-function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNode, void> {
+function* all(
+  node: XmlNode,
+  name: string | readonly string[],
+  skip: readonly string[] = [],
+): Generator<XmlNode, void> {
   for (const child of children(node)) {
     if (typeof name === "string" ? child.name === name : name.includes(child.name)) yield child;
-    else yield* all(child, name);
+    else if (!skip.includes(child.name)) yield* all(child, name, skip);
   }
 }
 function* text(node: XmlNode): Generator<TextPart, void> {
@@ -232,7 +236,8 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
     else if (["br", "line-break", "cr"].includes(child.name)) yield "\n";
     else if (["tbl", "table"].includes(child.name)) yield* table(child);
     else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
-      const style = all(child, "pStyle").next().value?.attrs.val ?? "";
+      const style =
+        all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
       const level =
         child.name === "h"
           ? Number(child.attrs["outline-level"]) || 1
