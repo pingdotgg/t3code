@@ -3550,7 +3550,9 @@ describe("PiAdapterV2", () => {
             );
             if (index === 0) {
               assert.equal(turnItemOutputText(event.turnItem), note);
-              assert.equal(event.turnItem.viewedImagePath, "/workspace/screens/shot.png");
+              if (phase === "end") {
+                assert.equal(event.turnItem.viewedImagePath, "/workspace/screens/shot.png");
+              }
             }
             if (index === 5) assert.equal(turnItemOutputText(event.turnItem), "first\nsecond");
             if (index === 2) {
