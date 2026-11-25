@@ -6,8 +6,6 @@
 
 <p align="center">The open-source control plane for coding agents.</p>
 
-**tix is an unofficial fork of T3 Code. It is not affiliated with, endorsed by, or maintained by T3 Tools, Inc.**
-
 <p align="center">
   <a href="./docs/README.md">Docs</a> ·
   <a href="./docs/operations/00_development.md">Development</a> ·
@@ -74,4 +72,6 @@ Open the pairing URL printed by the dev runner. Other dev entrypoints:
 
 The source code in this repository is licensed under the [MIT License](./LICENSE).
 
-tix is an unofficial fork based on the MIT-licensed source code of T3 Code. The MIT license applies only to the source code and does not grant rights to T3 Tools, Inc.'s trademarks or branding. See [TRADEMARK.md](./TRADEMARK.md) for branding details and the upstream trademark policy.
+The MIT license applies only to the source code and does not grant rights to T3 Tools, Inc.'s trademarks or branding. See [TRADEMARK.md](./TRADEMARK.md) for branding details and the upstream trademark policy.
+
+**tix is an unofficial fork of T3 Code. It is not affiliated with, endorsed by, or maintained by T3 Tools, Inc.**
