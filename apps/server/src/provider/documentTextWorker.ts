@@ -323,7 +323,10 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else {
-      if (node.name === "li" && ["ol", "ul"].includes(child.name)) yield LINE_START;
+      if (["ol", "ul", "dl"].includes(child.name)) {
+        if (!child.hasText) continue;
+        yield LINE_START;
+      }
       yield* paragraphs(child);
       if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
     }
@@ -1120,7 +1123,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
         continue;
       }
       if (part === LINE_START) {
-        // A nested list starts its own line unless its parent item's text already ended one.
+        // A list starts its own line unless the text before it already ended one.
         if (!midLine) continue;
         part = "\n";
       }
