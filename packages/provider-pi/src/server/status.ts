@@ -340,7 +340,7 @@ export const discoverPiWorkspaceInventory = Effect.fn("discoverPiWorkspaceInvent
         parseDiscoveredModels(data, Option.getOrUndefined(state)),
       );
       if (Result.isFailure(catalog) && Result.isFailure(commands)) {
-        return yield* Effect.fail(models._tag === "Failure" ? models.failure : commands.failure);
+        return yield* Result.isFailure(models) ? models.failure : commands.failure;
       }
       return {
         models: Result.map(catalog, (discovered) =>
