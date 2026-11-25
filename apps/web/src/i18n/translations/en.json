@@ -11113,7 +11113,7 @@
   "4889f7885396c26b": "Worktrees",
   "2d96fe39105aae8f": "Rotated logs",
   "1214c77f4bf1ee81": "Browser artifacts",
-  "9831e9c703b3bdd0": "{omitted, plural, one {{environment}: {count} more results.} other {{environment}: {count} more results.}}",
+  "d9e33a2a8d404a96": "{omitted, plural, one {{environment}: {count} more result.} other {{environment}: {count} more results.}}",
   "c8192b219451a0d0": "{removed} removed, {kept} kept, {failed} failed",
   "cbd8bf91a856906a": "{removed} removed, {kept} kept",
   "754564dc0b82aff7": "{count, plural, one {Last run {when}. {bytes} recovered. {count} item couldn't be removed.} other {Last run {when}. {bytes} recovered. {count} items couldn't be removed.}}",
