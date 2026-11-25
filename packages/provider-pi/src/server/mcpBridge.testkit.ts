@@ -63,7 +63,7 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
-    readonly startupRetry?: { readonly deleteResult: 204 | 404 | "offline" };
+    readonly startupRetry?: { readonly deleteResult: 204 | "offline" };
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
