@@ -11,6 +11,7 @@ import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contrac
 import { useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { fnv1a32, resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
 import {
   buildDiffReviewComment,
@@ -198,7 +199,8 @@ export function AnnotatableCodeView({
     },
   );
 
-  const removeEntry = (entryId: string) => {
+  // Stable: the annotation renderer closes over these, and a new renderer re-renders every file.
+  const removeEntry = useStableCallback((entryId: string) => {
     setSelectedLines(null);
     if (draft?.annotation.metadata.entries.some((entry) => entry.id === entryId)) {
       setDraft(null);
@@ -206,9 +208,9 @@ export function AnnotatableCodeView({
     } else {
       removeReviewComment(composerDraftTarget, entryId);
     }
-  };
+  });
 
-  const submitEntry = (entryId: string, text: string) => {
+  const submitEntry = useStableCallback((entryId: string, text: string) => {
     const entry = draft?.annotation.metadata.entries.find((candidate) => candidate.id === entryId);
     const file = draft ? filesByKey.get(draft.fileKey) : undefined;
     if (!entry || !file) return;
@@ -225,7 +227,7 @@ export function AnnotatableCodeView({
     setSelectedLines(null);
     setDraft(null);
     setDraftText("");
-  };
+  });
 
   const beginComment = (range: SelectedLineRange | null, context: DiffSelectionContext) => {
     if (!range) return;

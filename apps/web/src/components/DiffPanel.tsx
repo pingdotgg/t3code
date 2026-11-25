@@ -10,6 +10,7 @@ import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   CHECKPOINT_DIFF_TRUNCATED_MARKER,
   type ReviewBranchCommitsResult,
+  type ReviewDiffPreviewSource,
   type ScopedThreadRef,
   type RunId,
 } from "@t3tools/contracts";
@@ -221,6 +222,11 @@ function DiffFileHeaderSuffix({
       ) : null}
     </>
   );
+}
+
+// A module function: built inline, the map gets no compiler cache, nor does anything reading it.
+function reviewFileStats(source: ReviewDiffPreviewSource | null) {
+  return new Map(source?.files?.map((file) => [file.path, file]));
 }
 
 interface DiffPanelProps {
@@ -626,7 +632,6 @@ export default function DiffPanel({
     renderablePatch?.kind === "files"
       ? Math.max(0, recordedToolCallFileCount - renderablePatch.files.length)
       : 0;
-  const fileStats = new Map(lazySource?.files?.map((file) => [file.path, file]));
   const sourceLineStat =
     isGitSelection && selectedGitSource?.files
       ? selectedGitSource.files.reduce(
@@ -902,6 +907,11 @@ export default function DiffPanel({
       return next;
     });
   });
+  // Reads the collapsed set when a placeholder scrolls into view: with diffs collapsed by default
+  // that set is new every render, and the header renderer must not be.
+  const loadPendingFile = useStableCallback((fileKey: string, filePath: string) => {
+    if (!collapsedDiffFileKeys.has(fileKey)) requestFile(filePath);
+  });
   const setDiffFileCollapsed = useStableCallback((fileKey: string, collapsed: boolean) => {
     updateCollapsedDiffFiles((current) => {
       if (current.has(fileKey) === collapsed) return current;
@@ -916,6 +926,38 @@ export default function DiffPanel({
     codeViewScroll.discard();
     updateCollapsedDiffFiles((current) => toggleAllDiffFiles(shownFileKeys, current));
   };
+  // Named, not inline in the viewer's JSX, so the compiler caches them: every file's header
+  // re-renders when one of them changes.
+  const fileStats = reviewFileStats(lazySource);
+  const renderHeaderFilenameSuffix = (fileDiff: FileDiffMetadata) => {
+    const path = resolveFileDiffPath(fileDiff);
+    const state = fileStates.get(path);
+    return (
+      <DiffFileHeaderSuffix
+        filePath={path}
+        workspaceRoot={activeCwd}
+        hasStat={fileStats.has(path)}
+        error={state?.error ?? false}
+        truncated={state?.truncated ?? false}
+        onRetry={retry}
+      />
+    );
+  };
+  const renderHeaderMetadata = (fileDiff: FileDiffMetadata) => {
+    const stat = fileStats.get(resolveFileDiffPath(fileDiff));
+    return stat ? <DiffStatLabel additions={stat.additions} deletions={stat.deletions} /> : null;
+  };
+  const renderHeaderPrefix = (fileDiff: FileDiffMetadata, fileKey: string, collapsed: boolean) => (
+    <DiffFileCollapseToggle
+      filePath={resolveFileDiffPath(fileDiff)}
+      fileKey={fileKey}
+      collapsed={collapsed}
+      onToggle={toggleDiffFileCollapsed}
+      {...(fileDiff.cacheKey?.endsWith(":pending")
+        ? { load: () => loadPendingFile(fileKey, resolveFileDiffPath(fileDiff)) }
+        : {})}
+    />
+  );
 
   const selectTurn = (runId: RunId) => {
     if (!routeThreadRef) return;
@@ -1707,52 +1749,16 @@ export default function DiffPanel({
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}
                     composerDraftTarget={composerDraftTarget}
-                    renderHeaderFilenameSuffix={(fileDiff) => {
-                      const path = resolveFileDiffPath(fileDiff);
-                      const state = fileStates.get(path);
-                      return (
-                        <DiffFileHeaderSuffix
-                          filePath={path}
-                          workspaceRoot={activeCwd}
-                          hasStat={fileStats.has(path)}
-                          error={state?.error ?? false}
-                          truncated={state?.truncated ?? false}
-                          onRetry={retry}
-                        />
-                      );
-                    }}
+                    renderHeaderFilenameSuffix={renderHeaderFilenameSuffix}
                     {...(lazySource
                       ? {
                           unsafeCSSExtra:
                             "[data-additions-count], [data-deletions-count] { display: none; }",
-                          renderHeaderMetadata: (fileDiff: FileDiffMetadata) => {
-                            const stat = fileStats.get(resolveFileDiffPath(fileDiff));
-                            return stat ? (
-                              <DiffStatLabel
-                                additions={stat.additions}
-                                deletions={stat.deletions}
-                              />
-                            ) : null;
-                          },
+                          renderHeaderMetadata,
                         }
                       : {})}
                     onFileCollapsedChange={setDiffFileCollapsed}
-                    renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
-                      return (
-                        <DiffFileCollapseToggle
-                          filePath={resolveFileDiffPath(fileDiff)}
-                          fileKey={fileKey}
-                          collapsed={collapsed}
-                          onToggle={toggleDiffFileCollapsed}
-                          {...(fileDiff.cacheKey?.endsWith(":pending") &&
-                          !collapsedDiffFileKeys.has(fileKey)
-                            ? {
-                                load: () => requestFile(resolveFileDiffPath(fileDiff)),
-                              }
-                            : {})}
-                        />
-                      );
-                    }}
+                    renderHeaderPrefix={renderHeaderPrefix}
                     options={{
                       diffStyle: diffLayout === "split" ? "split" : "unified",
                       lineDiffType: "none",

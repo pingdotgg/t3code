@@ -70,7 +70,7 @@ import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { useProjects, useServerConfigs } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
-import { useEnvironmentQuery } from "~/state/query";
+import { useEnvironmentQuery, useEnvironmentQueryMount } from "~/state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { pullRequestEnvironment, usePullRequestTurnRefresh } from "~/state/pullRequests";
@@ -436,7 +436,7 @@ export function PullRequestDetailPanel({
   const linkedReference = sourceControlClients.parseChangeRequestUrl(
     matchingListEntry?.url ?? unavailableHostUrl ?? "",
   )?.link;
-  useEnvironmentQuery(
+  useEnvironmentQueryMount(
     context === "page" &&
       supportsThreadPullRequests &&
       linkedReference &&
@@ -448,7 +448,9 @@ export function PullRequestDetailPanel({
         })
       : null,
   );
-  useEnvironmentQuery(pullRequestEnvironment.changeBreakdown({ environmentId, input: reference }));
+  useEnvironmentQueryMount(
+    pullRequestEnvironment.changeBreakdown({ environmentId, input: reference }),
+  );
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
   const [openReviewRequest, setOpenReviewRequest] = useState(0);
   const {
@@ -550,7 +552,7 @@ export function PullRequestDetailPanel({
   }
   // A pointer on the Code tab reads the page it opens on; only intent costs the host a read.
   const [codeIntentKey, setCodeIntentKey] = useState<string | null>(null);
-  useEnvironmentQuery(
+  useEnvironmentQueryMount(
     codeIntentKey === pullRequestKey && !mountedTabs.has("code")
       ? pullRequestEnvironment.diff({ environmentId, input: { ...reference } })
       : null,
@@ -1572,6 +1574,13 @@ export function PullRequestDetailPanel({
   const startFixFindingStable = useStableCallback(startFixFinding);
   const addCommentToChatStable = useStableCallback(addCommentToChat);
   const refreshFromHostStable = useStableCallback(refreshFromHost);
+  // The tab bar's segmented control re-renders every tab for a new handler.
+  const selectTabStable = useStableCallback(selectTab);
+  const intendTabStable = useStableCallback((item: PullRequestDetailTab) => {
+    if (item !== "code") return;
+    void loadCodeTab();
+    setCodeIntentKey(pullRequestKey);
+  });
 
   if (detailQuery.isPending && !detail) {
     return (
@@ -1991,12 +2000,8 @@ export function PullRequestDetailPanel({
           <PullRequestDetailTabBar
             tabs={visibleTabs}
             value={tab}
-            onValueChange={selectTab}
-            onTabIntent={(item) => {
-              if (item !== "code") return;
-              void loadCodeTab();
-              setCodeIntentKey(pullRequestKey);
-            }}
+            onValueChange={selectTabStable}
+            onTabIntent={intendTabStable}
           >
             {tab === "summary" ? (
               showsApproveWorkflows ? (

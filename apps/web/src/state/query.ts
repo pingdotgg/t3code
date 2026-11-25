@@ -1,5 +1,5 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
-import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomMount, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -58,6 +58,16 @@ export function useEnvironmentQuery<A, E>(
     isSuccess: result._tag === "Success",
     refresh,
   };
+}
+
+/**
+ * Keeps a query loaded, as reading it would, for a caller that never reads it: every read starting
+ * or settling would otherwise re-render the caller.
+ */
+export function useEnvironmentQueryMount(
+  atom: Atom.Atom<AsyncResult.AsyncResult<unknown, unknown>> | null,
+): void {
+  useAtomMount(atom ?? EMPTY_ASYNC_RESULT_ATOM);
 }
 
 /** Keep select outside the component; a new function rebuilds the derived atom on every render. */

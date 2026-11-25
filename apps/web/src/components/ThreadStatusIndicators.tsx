@@ -43,7 +43,7 @@ import {
 import { cn } from "../lib/utils";
 import { revealThreadTerminal } from "../lib/revealThreadTerminal";
 
-import { useEnvironmentQuery } from "../state/query";
+import { useEnvironmentQuery, useEnvironmentQueryMount } from "../state/query";
 import { linkedPullRequestDetailAtom, useSharedPullRequestSummary } from "../state/pullRequests";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { vcsEnvironment } from "../state/vcs";
@@ -105,7 +105,7 @@ export function useLinkedThreadPullRequest(
   // Preserve reference identity so sidebar renders do not touch the summary cache.
   const reference = fallback == null ? null : linkedPullRequestReference(fallback);
   // Mounted for its answers, which land in the shared summary read below.
-  useEnvironmentQuery(
+  useEnvironmentQueryMount(
     !enabled || environmentId === null || reference === null
       ? null
       : linkedPullRequestDetailAtom({ environmentId, input: reference }),

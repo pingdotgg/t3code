@@ -101,8 +101,10 @@ export function useReviewFilePatches({
     if (queries.some(({ index }) => index === settledFileCount)) return;
     requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index));
   };
-  const requestFile = (path: string) =>
-    requestFiles([files.findIndex((file) => file.path === path)]);
+  // Stable: every file header's render prop closes over it.
+  const requestFile = useStableCallback((path: string) =>
+    requestFiles([files.findIndex((file) => file.path === path)]),
+  );
   const renderableFiles = source
     ? files.flatMap((file, index): FileDiffMetadata[] => {
         const result = patches.get(index);
@@ -133,7 +135,7 @@ export function useReviewFilePatches({
     : (preview?.kind === "files" ? preview.files : []).toSorted((a, b) =>
         filePathCollator.compare(resolveFileDiffPath(a), resolveFileDiffPath(b)),
       );
-  const fileStates = new Map(
+  const nextFileStates = new Map(
     files.map((file, index) => {
       const patch = patches.get(index);
       return [
@@ -151,6 +153,12 @@ export function useReviewFilePatches({
       ] as const;
     }),
   );
+  // Patches settle one at a time; a map whose flags did not change keeps every file header still.
+  const [shownFileStates, setShownFileStates] = useState(nextFileStates);
+  const fileStates = sameReviewFileStates(shownFileStates, nextFileStates)
+    ? shownFileStates
+    : nextFileStates;
+  if (fileStates !== shownFileStates) setShownFileStates(fileStates);
   return {
     fileStates,
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
@@ -215,6 +223,20 @@ function reviewFileQueries({
             return { index, target, query: reviewEnvironment.diffFilePatch(target) };
           });
   return queries;
+}
+
+type ReviewFileStates = ReadonlyMap<
+  string,
+  { readonly error: boolean; readonly truncated: boolean }
+>;
+
+function sameReviewFileStates(left: ReviewFileStates, right: ReviewFileStates) {
+  if (left.size !== right.size) return false;
+  for (const [path, state] of right) {
+    const previous = left.get(path);
+    if (previous?.error !== state.error || previous.truncated !== state.truncated) return false;
+  }
+  return true;
 }
 
 function sortedReviewFiles(source: ReviewDiffPreviewSource | null) {
