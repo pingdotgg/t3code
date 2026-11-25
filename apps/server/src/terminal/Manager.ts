@@ -2897,6 +2897,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     session: TerminalSessionState,
     input: TerminalStartInput,
     eventType: "started" | "restarted",
+    newSessionKey?: string,
   ) {
     yield* stopProcess(session);
     yield* Effect.annotateCurrentSpan({
@@ -2906,26 +2907,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       "terminal.cwd": input.cwd,
     });
 
-    const startingAt = yield* nowIso;
-    yield* modifyManagerState((state) => {
-      session.status = "starting";
-      session.startupError = null;
-      session.shell = null;
-      session.cwd = input.cwd;
-      session.worktreePath = input.worktreePath ?? null;
-      session.cols = input.cols;
-      session.rows = input.rows;
-      session.exitCode = null;
-      session.exitSignal = null;
-      session.hasRunningSubprocess = false;
-      session.childCommandLabel = null;
-      session.pendingProcessEvents = [];
-      session.pendingProcessEventIndex = 0;
-      session.processEventDrainRunning = false;
-      session.updatedAt = startingAt;
-      return [undefined, state] as const;
-    });
-
+    let startupPending = false;
     let ptyProcess: PtyAdapter.PtyProcess | null = null;
     let startedShell: string | null = null;
 
@@ -2933,6 +2915,32 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
         Effect.andThen(
           Effect.gen(function* () {
+            const startingAt = yield* nowIso;
+            yield* modifyManagerState((state) => {
+              session.status = "starting";
+              session.startupError = null;
+              session.shell = null;
+              session.cwd = input.cwd;
+              session.worktreePath = input.worktreePath ?? null;
+              session.cols = input.cols;
+              session.rows = input.rows;
+              session.exitCode = null;
+              session.exitSignal = null;
+              session.hasRunningSubprocess = false;
+              session.childCommandLabel = null;
+              session.pendingProcessEvents = [];
+              session.pendingProcessEventIndex = 0;
+              session.processEventDrainRunning = false;
+              session.updatedAt = startingAt;
+              startupPending = true;
+              if (newSessionKey === undefined) return [undefined, state] as const;
+
+              const sessions = new Map(state.sessions);
+              sessions.set(newSessionKey, session);
+              closedSessionKeys.delete(newSessionKey);
+              return [undefined, { ...state, sessions }] as const;
+            });
+            if (newSessionKey !== undefined) yield* evictInactiveSessionsIfNeeded();
             const shellCandidates = yield* resolveShellCandidates(
               shellResolver,
               platform,
@@ -2978,51 +2986,70 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
                 }
               }
             }
-            const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
-            ptyProcess = spawnResult.process;
-            startedShell = spawnResult.shellLabel;
+            // Keep ownership of the PTY from the moment spawn returns through the handoff.
+            yield* Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                const spawnResult = yield* restore(trySpawn(shellCandidates, terminalEnv, session));
+                ptyProcess = spawnResult.process;
+                startedShell = spawnResult.shellLabel;
 
-            const processPid = ptyProcess.pid;
-            let eventsActivated = false;
+                const processPid = ptyProcess.pid;
+                let eventsActivated = false;
 
-            let eventStamp: ReturnType<typeof advanceEventSequence> = {
-              updatedAt: session.updatedAt,
-              sequence: session.eventSequence,
-            };
-            yield* modifyManagerState((state) => {
-              session.process = ptyProcess;
-              session.shell = spawnResult.shell;
-              session.pid = processPid;
-              session.status = "running";
-              // onExit may replay an exit immediately; accept it before subscribing.
-              session.unsubscribeData = spawnResult.process.onData((data) => {
-                if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
-                  return;
-                }
-                if (eventsActivated) runFork(drainProcessEvents(session, processPid));
-              });
-              session.unsubscribeExit = spawnResult.process.onExit((event) => {
-                if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
-                  return;
-                }
-                if (eventsActivated) runFork(drainProcessEvents(session, processPid));
-              });
-              eventStamp = advanceEventSequence(session);
-              return [undefined, state] as const;
-            });
+                let eventStamp: ReturnType<typeof advanceEventSequence> = {
+                  updatedAt: session.updatedAt,
+                  sequence: session.eventSequence,
+                };
+                yield* modifyManagerState((state) => {
+                  session.process = ptyProcess;
+                  session.shell = spawnResult.shell;
+                  session.pid = processPid;
+                  session.status = "running";
+                  // onExit may replay an exit immediately; accept it before subscribing.
+                  session.unsubscribeData = spawnResult.process.onData((data) => {
+                    if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
+                      return;
+                    }
+                    if (eventsActivated) runFork(drainProcessEvents(session, processPid));
+                  });
+                  session.unsubscribeExit = spawnResult.process.onExit((event) => {
+                    if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
+                      return;
+                    }
+                    if (eventsActivated) runFork(drainProcessEvents(session, processPid));
+                  });
+                  eventStamp = advanceEventSequence(session);
+                  return [undefined, state] as const;
+                });
 
-            yield* publishEvent({
-              type: eventType,
-              threadId: session.threadId,
-              terminalId: session.terminalId,
-              sequence: eventStamp.sequence,
-              snapshot: snapshot(session),
-            });
-            // Publish startup before draining any events replayed during subscription.
-            eventsActivated = true;
-            if (session.processEventDrainRunning) runFork(drainProcessEvents(session, processPid));
+                yield* restore(
+                  publishEvent({
+                    type: eventType,
+                    threadId: session.threadId,
+                    terminalId: session.terminalId,
+                    sequence: eventStamp.sequence,
+                    snapshot: snapshot(session),
+                  }),
+                );
+                // Publish startup before draining any events replayed during subscription.
+                startupPending = false;
+                eventsActivated = true;
+                if (session.processEventDrainRunning)
+                  runFork(drainProcessEvents(session, processPid));
+              }),
+            );
           }),
         ),
+      ),
+    ).pipe(
+      Effect.onInterrupt(() =>
+        Effect.gen(function* () {
+          if (!startupPending) return;
+          if (ptyProcess !== null) {
+            yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
+          }
+          yield* failStartup(session, "Terminal startup was interrupted.");
+        }),
       ),
     );
 
@@ -3368,15 +3395,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         startupError: null,
       };
 
-      const createdSession = session;
-      yield* modifyManagerState((state) => {
-        const sessions = new Map(state.sessions);
-        sessions.set(sessionKey, createdSession);
-        closedSessionKeys.delete(sessionKey);
-        return [undefined, { ...state, sessions }] as const;
-      });
-
-      yield* evictInactiveSessionsIfNeeded();
       yield* startSession(
         session,
         {
@@ -3386,6 +3404,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           rows,
         },
         "started",
+        sessionKey,
       );
       return snapshot(session);
     }
@@ -3450,16 +3469,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const openLocked = (input: TerminalOpenInput) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
-      openWithWorkspaceLease(input).pipe(
-        Effect.onInterrupt(() =>
-          Effect.gen(function* () {
-            const session = yield* getSession(input.threadId, input.terminalId);
-            if (Option.isSome(session) && session.value.status === "starting") {
-              yield* failStartup(session.value, "Terminal startup was interrupted.");
-            }
-          }),
-        ),
-      ),
+      openWithWorkspaceLease(input),
     );
 
   const open: TerminalManager["Service"]["open"] = (input) =>
