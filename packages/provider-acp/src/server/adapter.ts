@@ -10368,6 +10368,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 hasPendingBackgroundWork: Effect.gen(function* () {
                   if (!postSettleContinuationEnabled && !followsAgentWorkState) return false;
                   const rootSessionId = yield* Ref.get(activeSessionId);
+                  if (heldPromptSessionId !== null && heldPromptSessionId === rootSessionId)
+                    return true;
                   if (
                     followsAgentWorkState &&
                     rootSessionId !== null &&

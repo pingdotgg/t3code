@@ -2507,6 +2507,10 @@ describe("AntigravityAdapterV2 a prompt the agent still holds", () => {
         thread.providerThread.pendingBackgroundTasks?.map((task) => task.kind) ?? [],
         held ? ["background_task"] : [],
       );
+      const pendingWork = opened.session.hasPendingBackgroundWork;
+      if (pendingWork === undefined) return assert.fail("agy reports background work");
+      // Idle release must not close the agent while the held prompt keeps Stop on screen.
+      assert.equal(yield* pendingWork, held);
 
       const stop = opened.session.interruptTurn({
         providerThread: thread.providerThread,
@@ -2522,6 +2526,7 @@ describe("AntigravityAdapterV2 a prompt the agent still holds", () => {
         if (released?.type !== "provider_thread.updated") return assert.fail("Stop must publish");
         assert.deepEqual(released.providerThread.pendingBackgroundTasks, []);
       }
+      assert.equal(yield* pendingWork, false);
       yield* stop;
       assert.equal(opened.cancels(), held ? 1 : 0, "a second Stop has nothing left to cancel");
     }).pipe(Effect.provide(layerSession)),
@@ -2545,8 +2550,12 @@ describe("AntigravityAdapterV2 a prompt the agent still holds", () => {
         requestRuntimeRestart: true,
       });
 
+      const pendingWork = opened.session.hasPendingBackgroundWork;
+      if (pendingWork === undefined) return assert.fail("agy reports background work");
+
       const failed = yield* Effect.flip(stop);
       assert.equal(failed._tag, "ProviderAdapterInterruptError");
+      assert.equal(yield* pendingWork, true, "the agent still holds the prompt");
       yield* stop;
       assert.equal(opened.cancels(), 2, "the retry cancels again");
       const released = (yield* opened.until(
@@ -2554,6 +2563,7 @@ describe("AntigravityAdapterV2 a prompt the agent still holds", () => {
       )).at(-1);
       if (released?.type !== "provider_thread.updated") return assert.fail("Stop must publish");
       assert.deepEqual(released.providerThread.pendingBackgroundTasks, []);
+      assert.equal(yield* pendingWork, false);
     }).pipe(Effect.provide(layerSession)),
   );
 });
