@@ -11,6 +11,7 @@ import {
   type ProjectCloneSnapshot,
   type ProjectCloneStage,
   type RuntimeMode,
+  type WorktreeSetupStage,
   type WorktreeSetupStageId,
   worktreeSetupStageLabel as contractsWorktreeSetupStageLabel,
 } from "@t3tools/contracts";
@@ -34,6 +35,22 @@ export function worktreeSetupStageLabel(
 ): string {
   const english = contractsWorktreeSetupStageLabel(id);
   return resolve(WORKTREE_SETUP_STAGE_LABELS[english] ?? english);
+}
+
+/** @public */
+export function worktreeSetupRepositoryProgress(stage: WorktreeSetupStage, resolve: MFunctionType) {
+  const progress = stage.repositoryProgress;
+  if (progress === undefined) return null;
+  const active = stage.status === "running" ? progress.active : null;
+  return {
+    label:
+      active === null
+        ? null
+        : active.operation === "fetch"
+          ? resolve(msg("{repository} · Fetch base branch", { repository: active.name }))
+          : resolve(msg("{repository} · Check out files", { repository: active.name })),
+    detail: `${progress.done}/${progress.total}`,
+  };
 }
 
 const PROJECT_CLONE_STAGE_LABELS: Record<ProjectCloneStage, string> = {

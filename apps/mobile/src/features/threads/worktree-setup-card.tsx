@@ -9,6 +9,7 @@ import {
   type WorktreeSetupStage,
 } from "@t3tools/contracts";
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import { worktreeSetupRepositoryProgress } from "@t3tools/client-runtime/contract-labels";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -375,18 +376,19 @@ function StageRow({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const repositoryProgress = worktreeSetupRepositoryProgress(stage, m);
   const label =
     stage.id === "setup-script"
       ? (scriptName ?? m(stageLabels[stage.id]))
-      : m(stageLabels[stage.id]);
+      : (repositoryProgress?.label ?? m(stageLabels[stage.id]));
   const detail =
     stage.status === "pending"
       ? null
       : stage.status === "skipped"
-        ? (stage.detail ?? m(statusLabels.skipped))
+        ? (repositoryProgress?.detail ?? stage.detail ?? m(statusLabels.skipped))
         : stage.id === "checkout" && stage.status === "running" && stage.percent !== null
           ? `${stage.percent}%`
-          : stage.detail;
+          : (repositoryProgress?.detail ?? stage.detail);
   return (
     <View
       accessibilityLabel={gt("{label}, {status}", { label, status: m(statusLabels[stage.status]) })}

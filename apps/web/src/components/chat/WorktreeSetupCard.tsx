@@ -1,7 +1,10 @@
 import { T, msg, useGT, useMessages } from "gt-react";
 import { type MessageResolver } from "~/i18n/messages";
 import { type WorktreeSetupSnapshot, type WorktreeSetupStage } from "@t3tools/contracts";
-import { worktreeSetupStageLabel } from "@t3tools/client-runtime/contract-labels";
+import {
+  worktreeSetupRepositoryProgress,
+  worktreeSetupStageLabel,
+} from "@t3tools/client-runtime/contract-labels";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import {
   CheckIcon,
@@ -173,17 +176,22 @@ function StageRow({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const repositoryProgress = worktreeSetupRepositoryProgress(stage, m);
   const label =
-    stage.id === "setup-script" && scriptName ? scriptName : worktreeSetupStageLabel(stage.id, m);
+    stage.id === "setup-script" && scriptName
+      ? scriptName
+      : (repositoryProgress?.label ?? worktreeSetupStageLabel(stage.id, m));
   const running = stage.status === "running";
   const trailing =
     stage.status === "pending"
       ? null
       : stage.status === "skipped"
-        ? (stage.detail ?? gt("skipped", { $context: "worktree setup stage status" }))
+        ? (repositoryProgress?.detail ??
+          stage.detail ??
+          gt("skipped", { $context: "worktree setup stage status" }))
         : stage.id === "checkout" && running && stage.percent !== null
           ? `${stage.percent}%`
-          : stage.detail;
+          : (repositoryProgress?.detail ?? stage.detail);
   return (
     <WorkLogRow
       data-worktree-setup-stage={stage.id}

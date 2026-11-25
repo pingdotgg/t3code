@@ -36,6 +36,10 @@ export interface TaskFoldersTestState {
   onBranchListing?: Effect.Effect<void>;
   /** Runs before each fetch of a repository's base from origin. */
   onFetchBase?: (cwd: string) => Effect.Effect<void>;
+  /** Runs before resolving the remote base for a repository. */
+  onResolveBaseRemote?: (cwd: string) => Effect.Effect<void>;
+  /** Runs before creating a repository's worktree. */
+  onCheckout?: (cwd: string) => Effect.Effect<void>;
   /** Runs before each layout command starts, while it holds the project's turn. */
   onLayoutCommand?: Effect.Effect<void>;
   /** Runs in place of forgetting a task folder's record. */
@@ -58,7 +62,10 @@ export const layerTaskFoldersWithGit = (
           .execute({ operation: "task-folders-test", cwd, args, allowNonZeroExit: true })
           .pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : null)));
       return Layer.mock(GitWorkflowService.GitWorkflowService)({
-        createWorktree: git.createWorktree,
+        createWorktree: (input, options) =>
+          Effect.suspend(() => state.onCheckout?.(input.cwd) ?? Effect.void).pipe(
+            Effect.andThen(git.createWorktree(input, options)),
+          ),
         removeWorktree: git.removeWorktree,
         deleteLocalBranch: git.deleteLocalBranch,
         listLocalBranchNames: (cwd) =>
@@ -67,6 +74,10 @@ export const layerTaskFoldersWithGit = (
             .pipe(Effect.tap(() => Effect.suspend(() => state.onBranchListing ?? Effect.void))),
         pruneWorktrees: git.pruneWorktrees,
         renameBranch: git.renameBranch,
+        resolveWorktreeBaseRemote: (input) =>
+          Effect.suspend(() => state.onResolveBaseRemote?.(input.cwd) ?? Effect.void).pipe(
+            Effect.andThen(git.resolveWorktreeBaseRemote(input)),
+          ),
         fetchWorktreeBaseCommit: (input) =>
           Effect.suspend(() => state.onFetchBase?.(input.cwd) ?? Effect.void).pipe(
             Effect.andThen(git.fetchWorktreeBaseCommit(input)),

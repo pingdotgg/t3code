@@ -719,12 +719,13 @@ const make = Effect.gen(function* () {
       else if (yield* git.hasCommit({ cwd, refName: `refs/remotes/origin/${defaultBranch}` }))
         baseRef = `origin/${defaultBranch}`;
     }
-    const remoteBase =
+    const remote =
       startFromOrigin && baseRef !== "HEAD"
-        ? yield* (onFetch ?? Effect.void).pipe(
-            Effect.andThen(git.fetchWorktreeBaseCommit({ cwd, refName: baseRef })),
-          )
+        ? yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef })
         : null;
+    if (remote === null) return { refName: baseRef, baseRefName: baseRef };
+    if (onFetch !== undefined) yield* onFetch;
+    const remoteBase = yield* git.fetchWorktreeBaseCommit({ cwd, refName: baseRef, remote });
     return remoteBase === null
       ? { refName: baseRef, baseRefName: baseRef }
       : { refName: remoteBase.commitSha, baseRefName: `refs/remotes/${remoteBase.remoteRefName}` };

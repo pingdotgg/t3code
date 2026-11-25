@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import {
+  ForwardCompatibleOptional,
   GitRefName,
   IsoDateTime,
   NonNegativeInt,
@@ -39,6 +40,18 @@ export const WorktreeSetupStage = Schema.Struct({
   endedAt: Schema.NullOr(IsoDateTime),
   percent: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
   detail: Schema.NullOr(Schema.String.check(Schema.isMaxLength(WORKTREE_SETUP_DETAIL_MAX_LENGTH))),
+  repositoryProgress: ForwardCompatibleOptional(
+    Schema.Struct({
+      active: Schema.NullOr(
+        Schema.Struct({
+          name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+          operation: Schema.Literals(["fetch", "checkout"]),
+        }),
+      ),
+      done: NonNegativeInt,
+      total: NonNegativeInt,
+    }),
+  ),
   tail: Schema.Array(Schema.String.check(Schema.isMaxLength(WORKTREE_SETUP_TAIL_LINE_MAX_LENGTH))),
 });
 export type WorktreeSetupStage = typeof WorktreeSetupStage.Type;

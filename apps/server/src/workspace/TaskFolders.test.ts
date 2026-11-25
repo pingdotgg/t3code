@@ -876,10 +876,34 @@ it.live("removes what it created when one repository fails", () =>
       state.workspaceRoot = path.join(tmp, "shop");
       state.trackedFolders = tracked(api, broken);
       const config = yield* ServerConfig.ServerConfig;
+      const taskFolders = yield* TaskFolders.TaskFolders;
+      const plan = yield* taskFolders.plan({ projectId });
+      assert.isNotNull(plan);
+      const reports: Array<{ active: string[]; done: number }> = [];
 
-      const error = yield* create("feature").pipe(Effect.flip);
+      const error = yield* taskFolders
+        .create({
+          plan: plan!,
+          branch: "feature",
+          projectStart: { refName: "main", baseRefName: "main" },
+          startFromOrigin: true,
+          projectCommands: "permitted",
+          onRepository: ({ active, done }) =>
+            Effect.sync(() => {
+              reports.push({
+                active: active.map(({ name, operation }) => `${name}:${operation}`),
+                done,
+              });
+            }),
+        })
+        .pipe(Effect.flip);
 
       assert.include(String((error as { readonly detail?: string }).detail), "broken worktree");
+      assert.sameMembers(
+        [...new Set(reports.flatMap(({ active }) => active))],
+        ["api:checkout", "broken:checkout"],
+      );
+      assert.deepEqual(reports.at(-1), { active: [], done: 1 });
       assert.equal(yield* worktreeCount(api), 1);
       assert.equal(yield* run(api, "branch", "--format=%(refname:short)"), "main");
       assert.deepEqual(yield* fileSystem.readDirectory(path.join(config.worktreesDir, "shop")), []);

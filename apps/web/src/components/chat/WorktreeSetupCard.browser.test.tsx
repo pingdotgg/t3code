@@ -46,6 +46,30 @@ const card = (value: WorktreeSetupSnapshot) => (
   <WorktreeSetupCard snapshot={value} onCancel={null} onWorkLocally={null} onOpenTerminal={null} />
 );
 
+it("keeps the compact count and drops the active repository when setup is cancelled", async () => {
+  const value = snapshot({});
+  const endedAt = "2026-10-26T12:00:04.000Z";
+  const checkout = {
+    ...value.stages[1]!,
+    status: "skipped" as const,
+    endedAt,
+    detail: "assets · 2/3",
+    repositoryProgress: {
+      active: { name: "assets", operation: "fetch" as const },
+      done: 2,
+      total: 3,
+    },
+  };
+  await using screen = await render(
+    card({ ...value, phase: "cancelled", endedAt, stages: [checkout] }),
+  );
+
+  await expect.element(screen.getByText("2/3", { exact: true })).toBeVisible();
+  expect(
+    screen.getByRole("region", { name: "Worktree setup" }).element().textContent,
+  ).not.toContain("assets");
+});
+
 it("ticks the running stage while finished stages keep their duration", async () => {
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);
