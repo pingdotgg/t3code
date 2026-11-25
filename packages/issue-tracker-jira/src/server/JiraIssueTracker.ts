@@ -1,7 +1,8 @@
 /**
- * Jira Cloud as an issue tracker. A scope is a project key (`ENG`) and an issue key its own
- * (`ENG-123`). A status is closed when its category is Done. An issue moves only along the
- * transitions its workflow offers from where it stands, so those are the states a detail lists.
+ * Jira as an issue tracker, on Jira Cloud or a Data Center server. A scope is a project key
+ * (`ENG`) and an issue key its own (`ENG-123`). A status is closed when its category is Done. An
+ * issue moves only along the transitions its workflow offers from where it stands, so those are
+ * the states a detail lists.
  */
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -24,19 +25,26 @@ import type {
 
 import { adfToMarkdown, hasUnwritableContent, markdownToAdf } from "./adf.ts";
 import * as JiraApi from "./JiraApi.ts";
+import { markdownToWiki, wikiToMarkdown } from "./wikiMarkup.ts";
 
 const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
   tracker: JiraApi.KIND,
   displayName: "Jira",
-  // Every Jira Cloud site; the one this server reads is part of the saved credential.
+  // What Jira issues are filed under; the site or server this server reads is part of the saved
+  // credential, and the account email in it is what tells Jira Cloud from Data Center.
   host: "atlassian.net",
   scopeNoun: "project",
   credential: {
-    label: "API token",
+    label: "API token or access token",
     helpUrl: "https://id.atlassian.com/manage-profile/security/api-tokens",
     fields: [
-      { key: "site", label: "Site", placeholder: "yourteam.atlassian.net" },
-      { key: "email", label: "Account email", placeholder: "you@example.com" },
+      { key: "site", label: "Site or Data Center URL", placeholder: "yourteam.atlassian.net" },
+      {
+        key: "email",
+        label: "Account email (Cloud only)",
+        placeholder: "you@example.com",
+        optional: true,
+      },
     ],
   },
 };
@@ -51,7 +59,7 @@ export function parseJiraIssueUrl(url: URL) {
   return scope === undefined ? null : { host: DESCRIPTOR.host, workspace: site, scope, key };
 }
 
-/** No reactions or development panel: Jira Cloud's public API serves neither. */
+/** No reactions or development panel: neither Jira Cloud's nor Data Center's API serves them. */
 const CAPABILITIES: IssueCapabilities = {
   create: true,
   edit: true,
@@ -71,6 +79,32 @@ const EVERYTHING: IssueViewerPermissions = {
   edit: true,
   labels: true,
   assignees: true,
+};
+
+/** How a deployment writes rich text and names an assignee. */
+interface Dialect {
+  readonly deployment: JiraApi.Deployment;
+  readonly toMarkdown: (raw: unknown) => string;
+  readonly fromMarkdown: (markdown: string) => unknown;
+  /** Whether writing a description from markdown would drop part of what is there. */
+  readonly loses: (raw: unknown) => boolean;
+  readonly assignee: (id: string | null) => unknown;
+}
+
+const CLOUD: Dialect = {
+  deployment: "cloud",
+  toMarkdown: adfToMarkdown,
+  fromMarkdown: markdownToAdf,
+  loses: hasUnwritableContent,
+  assignee: (id) => (id === null ? null : { accountId: id }),
+};
+
+const DATA_CENTER: Dialect = {
+  deployment: "datacenter",
+  toMarkdown: (raw) => (typeof raw === "string" ? wikiToMarkdown(raw) : ""),
+  fromMarkdown: markdownToWiki,
+  loses: () => false,
+  assignee: (id) => ({ name: id }),
 };
 
 const COMMENTS_PAGE = 50;
@@ -148,11 +182,11 @@ function toStates(issue: JiraApi.JiraIssue): IssueState[] {
   return [...byName.values()].toSorted((a, b) => rank(a) - rank(b)).map(toState);
 }
 
-function toComment(comment: JiraApi.JiraComment, issueUrl: string): IssueComment {
+function toComment(comment: JiraApi.JiraComment, issueUrl: string, dialect: Dialect): IssueComment {
   return {
     id: comment.id,
     author: actorOf(comment.author),
-    body: adfToMarkdown(comment.body),
+    body: dialect.toMarkdown(comment.body),
     createdAt: iso(comment.created),
     url: `${issueUrl}?focusedCommentId=${comment.id}`,
   };
@@ -239,6 +273,9 @@ const matchesUser = (user: JiraApi.JiraUser, named: string) =>
 export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraApi> = Effect.gen(
   function* () {
     const jira = yield* JiraApi.JiraApi;
+    const dialect = jira.deployment.pipe(
+      Effect.map((deployment) => (deployment === "cloud" ? CLOUD : DATA_CENTER)),
+    );
 
     const notFound = (operation: string) =>
       JiraApi.fail(
@@ -320,8 +357,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
         }).pipe(
           Effect.map(([me, projects]) => ({
             account: me.displayName?.trim() || me.emailAddress?.trim() || me.accountId,
-            workspace: URL.parse(JiraApi.siteOrigin(credential.fields["site"] ?? "") ?? "")
-              ?.hostname,
+            workspace: URL.parse(JiraApi.credentialOrigin(credential) ?? "")?.hostname,
             scopes: projects.flatMap((project) =>
               project.key.trim() && project.name.trim()
                 ? [{ key: project.key, name: project.name }]
@@ -381,19 +417,23 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
 
       getIssue: Effect.fn("JiraIssueTracker.getIssue")(function* (input) {
         const key = yield* requireKey("getIssue", input.key);
+        const text = yield* dialect;
         const [origin, issue, page, allowed, me] = yield* Effect.all(
           [
             jira.origin,
             jira.getIssue(key),
             jira.getComments({ key, startAt: 0, limit: COMMENTS_PAGE }),
-            jira
-              .permissions(key, [
-                "TRANSITION_ISSUES",
-                "ADD_COMMENTS",
-                "EDIT_ISSUES",
-                "ASSIGN_ISSUES",
-              ])
-              .pipe(Effect.orElseSucceed(() => null)),
+            // Data Center names its permissions otherwise; a refused write says what is missing.
+            text.deployment === "cloud"
+              ? jira
+                  .permissions(key, [
+                    "TRANSITION_ISSUES",
+                    "ADD_COMMENTS",
+                    "EDIT_ISSUES",
+                    "ASSIGN_ISSUES",
+                  ])
+                  .pipe(Effect.orElseSucceed(() => null))
+              : Effect.succeed(null),
             jira.myself().pipe(Effect.orElseSucceed(() => null)),
           ],
           { concurrency: 5 },
@@ -401,7 +441,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
         const summary = toSummary(issue, origin, page.total);
         return {
           ...summary,
-          body: adfToMarkdown(issue.fields.description),
+          body: text.toMarkdown(issue.fields.description),
           viewer: me === null ? null : toActor(me).login,
           viewerPermissions:
             allowed === null
@@ -414,7 +454,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
                   assignees: allowed["ASSIGN_ISSUES"] === true,
                 },
           states: toStates(issue),
-          comments: page.comments.map((comment) => toComment(comment, summary.url)),
+          comments: page.comments.map((comment) => toComment(comment, summary.url, text)),
           commentsCursor: page.total > page.comments.length ? String(page.comments.length) : null,
           events: toEvents(issue.changelog?.histories ?? []),
           linkedPullRequests: [],
@@ -424,24 +464,28 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
       getComments: Effect.fn("JiraIssueTracker.getComments")(function* (input) {
         const key = yield* requireKey("getComments", input.key);
         const startAt = /^\d+$/u.test(input.cursor) ? Number(input.cursor) : 0;
-        const [origin, page] = yield* Effect.all([
+        const [origin, page, text] = yield* Effect.all([
           jira.origin,
           jira.getComments({ key, startAt, limit: COMMENTS_PAGE }),
+          dialect,
         ]);
         const read = startAt + page.comments.length;
         return {
-          comments: page.comments.map((comment) => toComment(comment, `${origin}/browse/${key}`)),
+          comments: page.comments.map((comment) =>
+            toComment(comment, `${origin}/browse/${key}`, text),
+          ),
           nextCursor: page.comments.length > 0 && read < page.total ? String(read) : null,
         };
       }),
 
       create: Effect.fn("JiraIssueTracker.create")(function* (input) {
         const project = projectKey(input.scope);
-        const [origin, types, labels, assignee] = yield* Effect.all([
+        const [origin, types, labels, assignee, text] = yield* Effect.all([
           jira.origin,
           jira.issueTypes(project),
           labelNames("create", input.labels),
           accountId("create", input.scope, input.assignees),
+          dialect,
         ]);
         // Jira files nothing without a type; a Task is the one nearly every project has.
         const type =
@@ -458,9 +502,9 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
           project: { key: project },
           issuetype: { id: type.id },
           summary: input.title,
-          ...(input.body.trim().length === 0 ? {} : { description: markdownToAdf(input.body) }),
+          ...(input.body.trim().length === 0 ? {} : { description: text.fromMarkdown(input.body) }),
           ...(labels.length === 0 ? {} : { labels }),
-          ...(assignee === null ? {} : { assignee: { accountId: assignee } }),
+          ...(assignee === null ? {} : { assignee: text.assignee(assignee) }),
         });
         return {
           key: created.key,
@@ -471,14 +515,16 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
 
       comment: Effect.fn("JiraIssueTracker.comment")(function* (input) {
         const key = yield* requireProjectKey("comment", input);
-        yield* jira.addComment(key, markdownToAdf(input.body));
+        const text = yield* dialect;
+        yield* jira.addComment(key, text.fromMarkdown(input.body));
       }),
 
       update: Effect.fn("JiraIssueTracker.update")(function* (input) {
         const key = yield* requireProjectKey("update", input);
+        const text = yield* dialect;
         if (input.body !== undefined) {
           const current = yield* jira.getIssue(key);
-          if (hasUnwritableContent(current.fields.description)) {
+          if (text.loses(current.fields.description)) {
             return yield* JiraApi.fail(
               "update",
               "failed",
@@ -488,14 +534,14 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
         }
         yield* jira.updateIssue(key, {
           ...(input.title === undefined ? {} : { summary: input.title }),
-          ...(input.body === undefined ? {} : { description: markdownToAdf(input.body) }),
+          ...(input.body === undefined ? {} : { description: text.fromMarkdown(input.body) }),
           ...(input.labels === undefined
             ? {}
             : { labels: yield* labelNames("update", input.labels) }),
           ...(input.assignees === undefined
             ? {}
             : yield* accountId("update", input.scope, input.assignees).pipe(
-                Effect.map((id) => ({ assignee: id === null ? null : { accountId: id } })),
+                Effect.map((id) => ({ assignee: text.assignee(id) })),
               )),
         });
       }),
@@ -504,7 +550,15 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
         const key = yield* requireProjectKey("setState", input);
         const issue = yield* jira.getIssue(key);
         if (issue.fields.status.name === input.state) return;
-        const transitions = issue.transitions ?? [];
+        // Data Center moves often ask for a resolution, which only the transitions route lists.
+        const transitions =
+          (yield* dialect).deployment === "cloud"
+            ? (issue.transitions ?? [])
+            : yield* jira.transitions(key);
+        const required = (transition: JiraApi.JiraTransition) =>
+          Object.entries(transition.fields ?? {}).filter(
+            ([, field]) => field.required === true && field.hasDefaultValue !== true,
+          );
         // A move's own name picks one of several that reach the same status (Resolve, Cancel).
         const named = transitions.find((transition) => transition.name === input.state);
         const reaching = transitions.filter((transition) => transition.to.name === input.state);
@@ -523,7 +577,24 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
             `This issue's workflow has no move to "${input.state}" from "${issue.fields.status.name}".`,
           );
         }
-        yield* jira.transition(key, wanted.id);
+        // shortcut: a required resolution is filled with the workflow's first, upgrade to ask for it
+        const missing = required(wanted);
+        const resolutionField = missing.find(([id]) => id === "resolution")?.[1];
+        const resolution =
+          resolutionField === undefined ? undefined : JiraApi.allowedNames(resolutionField)[0];
+        const others = missing.filter(([id]) => id !== "resolution" || resolution === undefined);
+        if (others.length > 0) {
+          return yield* JiraApi.fail(
+            "setState",
+            "failed",
+            `Moving to "${input.state}" asks for ${others.map(([id, field]) => field.name ?? id).join(", ")}, which Jira only collects in its own screen.`,
+          );
+        }
+        yield* jira.transition(
+          key,
+          wanted.id,
+          resolution === undefined ? undefined : { resolution: { name: resolution } },
+        );
       }),
 
       listCandidates: (input) =>
