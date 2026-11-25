@@ -1,5 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto digest is effectful; a sync hash keeps historyPath a plain function.
 import * as NodeCrypto from "node:crypto";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- an aborted executable probe must not wait for the child to exit a stalled mount.
+import * as NodeChildProcess from "node:child_process";
 
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
@@ -672,6 +674,25 @@ const withShellPreparationTimeout = <A, E, R>(
       duration,
       orElse: () => Effect.fail(new Cause.TimeoutError("Terminal shell preparation timed out.")),
     }),
+  );
+
+const probeShellExecutable = (paths: ReadonlyArray<string>) =>
+  Effect.promise(
+    (signal) =>
+      new Promise<string | undefined>((resolve) => {
+        // Keep filesystem checks off the server's libuv pool. Pass paths as data to the probe.
+        NodeChildProcess.execFile(
+          "/bin/sh",
+          [
+            "-c",
+            'for file do if [ -f "$file" ] && [ -x "$file" ]; then printf "%s" "$file"; exit 0; fi; done; exit 1',
+            "terminal-shell-probe",
+            ...paths.filter((path) => !path.includes("\0")),
+          ],
+          { env: {}, signal, killSignal: "SIGKILL" },
+          (error, stdout) => resolve(error ? undefined : stdout),
+        ).unref();
+      }),
   );
 
 const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(function* (
@@ -2845,26 +2866,31 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     // PATH lookup must use the child's working directory, not the server's.
-    const lookupEnv =
-      platform === "win32"
-        ? spawnEnv
-        : {
-            ...spawnEnv,
-            PATH: (spawnEnv.PATH ?? spawnEnv.Path ?? spawnEnv.path ?? "")
-              .split(":")
-              // An empty entry means the working directory, which resolve("") yields.
-              .map((entry) => path.resolve(session.cwd, entry.replace(/^"+|"+$/g, "")))
-              .join(":"),
-          };
+    const searchDirectories = (spawnEnv.PATH ?? spawnEnv.Path ?? spawnEnv.path ?? "")
+      .split(":")
+      // An empty entry means the working directory, which resolve("") yields.
+      .map((entry) => path.resolve(session.cwd, entry.replace(/^"+|"+$/g, "")));
     // POSIX node-pty can return a PTY before exec fails, so validate before accepting a candidate.
     const shellCommand = candidate.shell.includes("/")
       ? path.resolve(session.cwd, candidate.shell)
       : candidate.shell;
+    const explicitPath = shellCommand.includes("/") || shellCommand.includes("\\");
     const lookup =
       platform === "win32"
         ? Result.succeed(candidate.shell)
         : yield* withShellPreparationTimeout(
-            Effect.promise(async () => resolveExecutable(shellCommand, platform, lookupEnv)),
+            resolveExecutable === SpawnExecutableResolution.defaultValue()
+              ? probeShellExecutable(
+                  explicitPath
+                    ? [shellCommand]
+                    : searchDirectories.map((directory) => path.join(directory, shellCommand)),
+                )
+              : Effect.promise(async () =>
+                  resolveExecutable(shellCommand, platform, {
+                    ...spawnEnv,
+                    PATH: searchDirectories.join(":"),
+                  }),
+                ),
             SHELL_LOOKUP_TIMEOUT,
           ).pipe(Effect.result);
     if (Result.isFailure(lookup) || lookup.success === undefined) {
