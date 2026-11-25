@@ -72,6 +72,8 @@ class CodexStateReadError extends Schema.TaggedError<CodexStateReadError>()("Cod
 }
 const METADATA_READ_BYTES = 8 * 1024;
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
+// Allow for inline images ahead of cwd without increasing the retained metadata limit.
+const MAX_CLAUDE_TRANSCRIPT_SCAN_BYTES = 8 * 1024 * 1024;
 const MAX_CODEX_SESSION_INDEX_BYTES = 1024 * 1024;
 const MAX_CODEX_PROJECT_ROOT_ROWS = 100_000;
 
@@ -1247,7 +1249,7 @@ export const make = Effect.gen(function* () {
                 });
               }
             };
-            // Claude writes cwd before message, so a record with a large image need not be read to its end.
+            // When cwd precedes a large message, skip reading the rest of the record.
             let topLevelCwd: string | null = null;
             const createReader = () =>
               createTranscriptJsonReader(reserveSelected, selectCwdPath, {
@@ -1306,7 +1308,12 @@ export const make = Effect.gen(function* () {
             const readLastRecord = () =>
               !recordStarted || !reserveRecord() ? null : finishRecord();
 
-            const maxBytes = Math.min(MAX_TRANSCRIPT_SCAN_BYTES, size);
+            const maxBytes = Math.min(
+              source === "claudeAgent"
+                ? MAX_CLAUDE_TRANSCRIPT_SCAN_BYTES
+                : MAX_TRANSCRIPT_SCAN_BYTES,
+              size,
+            );
             while (bytesRead < maxBytes) {
               if (budget.bytesRemaining === 0 || budget.operationsRemaining === 0) {
                 budget.truncated = true;
