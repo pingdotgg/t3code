@@ -349,7 +349,6 @@ html.embed #stage { width: 1280px; }
   background: var(--popover); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-float); overflow: hidden;
   animation: panel-in 160ms var(--ease-drawer) 1;
 }
-.peek-panel.float { position: absolute; left: 0; top: 0; bottom: 0; z-index: 5; }
 .peek-panel[hidden] { display: none; }
 @keyframes panel-in { from { opacity: 0; transform: translateX(-12px); } }
 
@@ -779,7 +778,7 @@ function spawnThread() {
 }
 
 /* ================= settings ================= */
-const DEFAULTS = { theme: "system", peekLayout: "push" };
+const DEFAULTS = { theme: "system" };
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("thread-board-proto-v4") || "{}") }; } catch { return { ...DEFAULTS }; }
 }
@@ -1198,7 +1197,12 @@ function swimHtml() {
     return out.sort((a, b) => (lane === "needs" ? a.lastAt - b.lastAt : b.lastAt - a.lastAt));
   };
   const cols = `<div class="swim-cols swim-grid">${LANES.map((l) => `<div class="col-head"><span class="lane-dot ${l.tone}"></span>${l.name}<span class="count">${threads.filter((t) => laneOf(t) === l.id).length}</span></div>`).join("")}</div>`;
-  const rows = PROJECT_ORDER.map((pid) => {
+  // Projects with something waiting on you come first; otherwise sidebar order.
+  const needsFirst = [...PROJECT_ORDER].sort((a, b) => {
+    const waits = (pid) => threads.some((t) => t.project === pid && laneOf(t) === "needs");
+    return waits(b) - waits(a);
+  });
+  const rows = needsFirst.map((pid) => {
     const list = threads.filter((t) => t.project === pid);
     if (!list.length) return "";
     const p = PROJECTS[pid];
@@ -1350,7 +1354,6 @@ function composeHtml() {
 function renderPeek() {
   const panel = document.getElementById("peek-panel");
   if (!panel) return;
-  panel.classList.toggle("float", S.set.peekLayout === "float");
   if (S.composeProject && S.view === "board") {
     panel.hidden = false;
     ensure(panel, "compose", composeHtml);
@@ -1442,7 +1445,6 @@ function renderProto() {
   root.innerHTML = `<div class="proto"><div class="proto-head">${icon("sliders", "i-sm")}<b>Prototype</b><span class="spacer"></span><button class="btn btn-ghost btn-icon btn-sm" data-action="toggle-proto" title="Collapse">${icon("chevronDown", "i-sm")}</button></div>
     <div class="proto-body">
       <div class="proto-row"><label>Live simulation</label><div class="proto-sim">${sim}<button class="btn btn-sm" data-action="reset" title="Reset data">${icon("reset", "i-xs")}</button></div></div>
-      <div class="proto-row"><label>Peek panel</label>${seg("peekLayout", [["push", "Pushes lanes"], ["float", "Floats over lanes"]])}</div>
       <div class="proto-row"><label>Theme</label>${seg("theme", [["system", "System"], ["light", "Light"], ["dark", "Dark"]])}</div>
       <div class="proto-note">Click a card to peek. ${MOD}-click opens the thread. Arrow keys move between cards, Enter peeks, ${MOD}+Enter opens, Esc closes the peek. ${MOD}⇧B toggles the board. Start a thread from the board's New thread button (top left).</div>
     </div></div>`;

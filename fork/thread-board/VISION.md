@@ -61,8 +61,8 @@ browser; fake data, no build). Its "Prototype" panel toggles the variants that a
   the sidebar keeps them on the main page, sit Back (to the last thread), **New thread** and
   search, lined up with the left panel. New thread opens in that panel with a project picker;
   the new card arrives under *Working* and you stay on the board.
-- **Layout:** one **swimlane per project** (rows, in sidebar order, collapsible, hidden when
-  empty), crossed with three **lanes** (columns): *Needs you* → *Working* → *Done*.
+- **Layout:** one **swimlane per project** (rows; projects with Needs-you cards first, then
+  sidebar order; collapsible; hidden when empty), crossed with three **lanes** (columns): *Needs you* → *Working* → *Done*.
   A project filter and a text filter sit in the header.
 - **Lanes:** *Needs you* holds approvals, questions, failed turns, usage limits and PRs with
   failing checks, oldest wait first. *Working* holds setting up, working and waiting on
@@ -88,13 +88,14 @@ browser; fake data, no build). Its "Prototype" panel toggles the variants that a
 
 ## Open questions
 
-1. Should the peek push the lanes aside (current) or float over them? Undecided; push for now.
+1. Snoozed threads. Snooze is not settle: it hides a thread until a wake time
+   (`snoozedUntil`), then the thread comes back marked "Woke". Settle marks it finished until
+   reopened. Proposal: hide snoozed threads like settled ones, and bring them back into their
+   lane with a "Woke" marker when they wake. Awaiting a decision.
 2. Is a state-built grey line enough, or will finished threads need an LLM summary later?
-3. Swimlane order: sidebar order (current), or projects with Needs-you cards first?
-4. Where snoozed threads go (hidden, or a lane state of their own).
-5. Later, the board could move into upstream's pane system (#28839–#28845, #28845 "tabs in
+3. Later, the board could move into upstream's pane system (#28839–#28845, #28845 "tabs in
    split panes") once that lands.
-6. Mobile: later, or never?
+4. Mobile: later, or never?
 
 ## Data the board needs (learned from the prototype, feeds phase 2)
 
@@ -114,6 +115,8 @@ Short list; rewrite entries as phase 2 answers them.
 - **The grey line, from thread state.** Running: the current command or tool call. Finished:
   an excerpt of the last assistant message. Waiting cards show the request instead.
 - **Diff stats of the settled turn** (+/−, file list for the peek).
+- **Snooze and settle:** `snoozedUntil` (off the board until it wakes, then "Woke") and
+  `settledOverride` (off the board until reopened).
 - **Timestamps:** last activity (sorting, "11m"), turn start (working duration), and when the
   thread entered its lane (Needs you is a queue, oldest first).
 - **Origin and relations:** started by a scheduled task, waiting on N subagents, queued
@@ -153,6 +156,8 @@ Add new entries at the bottom: date, decision, reason.
   beside-the-sidebar page. Reason: start threads without leaving the board.
 - **2026-11-25** Keep the full-screen board. New thread and search move to the top left, where
   the main page has them; the per-swimlane New thread buttons go (not useful).
+- **2026-11-25** The peek keeps pushing the lanes aside (no floating variant).
+- **2026-11-25** Swimlanes with Needs-you cards move to the top; the rest keep sidebar order.
 
 ## Prior art (upstream, all closed)
 
