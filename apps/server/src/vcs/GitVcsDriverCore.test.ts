@@ -3759,6 +3759,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("cuts long commit subjects without splitting an emoji", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/emoji-subject"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", `${"a".repeat(299)}😀 tail`]);
+        const sha = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        const branch = yield* driver.getReviewBranchCommits({ cwd, baseRef: initialBranch });
+        const preview = yield* driver.getReviewDiffPreview({ cwd, commitSha: sha });
+        const commitSubject = preview.sources.find(
+          (candidate) => candidate.kind === "commit",
+        )?.commitSubject;
+        assert.deepStrictEqual(
+          [branch.commits[0]?.subject, commitSubject],
+          ["a".repeat(299), "a".repeat(299)],
+        );
+      }),
+    );
+
     it.effect("previews one selected commit, a merge against its first parent", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
