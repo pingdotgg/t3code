@@ -67,7 +67,8 @@ and the environment's identity key.
 - **A media socket's handshake covers its query.** The upgrade proof covers the path, and the
   query names the tab or device the socket reaches, so the query is part of the handshake context
   (`mediaSocketContext`). A hop that rewrites it gets a failed handshake, not the client's input
-  on another target.
+  on another target. The handshake is the only thing that authenticates the query, so a route
+  attaches to a tab or dials a device only after `upgradeMediaSocket` has returned.
 - **Advertised or pinned.** The capability in the environment descriptor is an unauthenticated
   hint: it lets a new client keep working with an old server. Once a client has pinned an
   environment's identity key it uses the channel regardless, so hiding the capability cannot

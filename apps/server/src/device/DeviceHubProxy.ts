@@ -108,14 +108,16 @@ const proxyWebSocket = Effect.fn("DeviceHubProxy.proxyWebSocket")(function* (
   headers: Readonly<Record<string, string>> = {},
 ) {
   const transport = NodeHttpServerRequest.toIncomingMessage(request).socket;
-  const client = yield* upgradeMediaSocket(request, session);
-  const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
-    openTimeout: "10 seconds",
-    ...(protocols.length > 0 ? { protocols: [...protocols] } : {}),
-    ...(Object.keys(headers).length > 0 ? { headers: { ...headers } } : {}),
-  }).pipe(Effect.provide(upstreamWebSocketConstructor));
   yield* Effect.scoped(
     Effect.gen(function* () {
+      // The hub is dialled only once the client's socket is up, which for a secure socket means
+      // its handshake has authenticated the query that names the device.
+      const client = yield* upgradeMediaSocket(request, session);
+      const upstream = yield* Socket.makeWebSocket(upstreamUrl, {
+        openTimeout: "10 seconds",
+        ...(protocols.length > 0 ? { protocols: [...protocols] } : {}),
+        ...(Object.keys(headers).length > 0 ? { headers: { ...headers } } : {}),
+      }).pipe(Effect.provide(upstreamWebSocketConstructor));
       const writeToClient = yield* client.writer;
       const writeToUpstream = yield* upstream.writer;
       return yield* Effect.raceFirst(

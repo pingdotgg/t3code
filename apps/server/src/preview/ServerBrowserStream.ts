@@ -84,7 +84,7 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
   const sessions = yield* SessionStore.SessionStore;
   const stream = Effect.scoped(
     Effect.gen(function* () {
-      const attached = yield* browser
+      const attach = browser
         .attachViewer({
           threadId,
           tabId,
@@ -110,7 +110,12 @@ const makeHandler = Effect.fnUntraced(function* (browser: ServerBrowser.ServerBr
       // pending writes in the socket buffer we bound below, not a zlib queue.
       delete incoming.headers["sec-websocket-extensions"];
       const transport = incoming.socket;
-      const socket = yield* upgradeMediaSocket(request, session);
+      const upgrade = upgradeMediaSocket(request, session);
+      // A secure socket's handshake authenticates the query that names the tab, so it runs before
+      // the tab is touched. A plain socket attaches first, so a failed attach refuses the upgrade.
+      const secured = session.secureChannel === true ? yield* upgrade : undefined;
+      const attached = yield* attach;
+      const socket = secured ?? (yield* upgrade);
       const reader = yield* socket.reader;
       const writer = yield* socket.writer;
       // A refused upgrade reads as an auth failure to ticket clients, so a

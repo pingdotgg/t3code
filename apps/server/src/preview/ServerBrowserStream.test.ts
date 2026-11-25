@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -11,6 +12,7 @@ import {
   PreviewStreamHostSetup,
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
+import { SECURE_CHANNEL_CLOSE_CODE } from "@t3tools/shared/secureChannelSocket";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -23,7 +25,7 @@ import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
-import { layerMediaSocketTest } from "../auth/secureSocket.testkit.ts";
+import { layerMediaSocketTest, makeSecureSocketKeys } from "../auth/secureSocket.testkit.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import { routeLayer } from "./ServerBrowserStream.ts";
@@ -169,6 +171,55 @@ it.effect.each([
     ]);
     expect(auth.requests).toEqual([resource]);
   }),
+);
+
+it.live("does not touch a tab for a secure socket whose query was changed on the way", () =>
+  Effect.gen(function* () {
+    const keys = yield* makeSecureSocketKeys;
+    let attached = 0;
+    const browser = ServerBrowser.ServerBrowser.of({
+      clearProfile: () => Effect.void,
+      profileReporter: Effect.succeed(() => Effect.void),
+      openDownload: () => Effect.succeedNone,
+      answerFileChooser: () => Effect.succeed(false),
+      attachViewer: () => Effect.sync(() => void attached++).pipe(Effect.andThen(Effect.never)),
+    });
+    const services = yield* Layer.build(
+      HttpRouter.serve(
+        routeLayer.pipe(
+          Layer.provide(Layer.succeed(ServerBrowser.ServerBrowser, browser)),
+          Layer.provide(platformLayer),
+        ),
+        { disableListenLog: true },
+      ).pipe(
+        Layer.provideMerge(NodeHttpServer.layerTest),
+        Layer.provide(layerMediaSocketTest(Effect.succeed(keys.environment))),
+        Layer.provide(
+          Layer.mock(EnvironmentAuth.EnvironmentAuth, {
+            authenticateWebSocketUpgrade: () =>
+              Effect.succeed(keys.session([AuthOrchestrationReadScope, AuthPreviewOperateScope])),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(SessionStore.SessionStore, {
+            cookieName: "test",
+            legacyCookieName: undefined,
+            awaitInvalidation: () => Effect.never,
+          }),
+        ),
+      ),
+    );
+    const origin = HttpServer.formatAddress(
+      Context.get(services, HttpServer.HttpServer).address,
+    ).replace(/^http/, "ws");
+    const url = `${origin}/api/preview-stream/ws?threadId=thread&tabId=tab&wsTicket=ticket`;
+    const socket = yield* keys.connect(url, url.replace("tabId=tab", "tabId=other"));
+    const error = yield* Effect.flip(Effect.flatMap(socket.reader, ({ pull }) => pull));
+    expect(error.reason._tag === "SocketCloseError" ? error.reason.code : undefined).toBe(
+      SECURE_CHANNEL_CLOSE_CODE,
+    );
+    expect(attached).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect("sends replies ahead of stale frames and only the newest frame after an ack", () =>
