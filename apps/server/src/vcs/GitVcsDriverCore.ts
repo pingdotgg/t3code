@@ -509,6 +509,12 @@ function gitCommandContext(
 const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFailureReason]> = [
   [/would clobber existing tag/i, "tag_would_be_clobbered"],
   [/is already (?:used by worktree at|checked out at)/i, "branch_checked_out_in_worktree"],
+  [
+    /^error: cannot delete branch '[^\n]+' (?:used by worktree|checked out) at /im,
+    "branch_checked_out_in_worktree",
+  ],
+  [/^error: the branch '[^\n]+' is not fully merged\.?$/im, "branch_not_fully_merged"],
+  [/^error: branch '[^\n]+' not found\.?$/im, "ref_not_found"],
   [/a branch named .+ already exists/i, "branch_already_exists"],
   // A ref cannot nest under an existing ref, nor contain one.
   [/'refs\/[^'\n]+' exists; cannot create 'refs\//i, "ref_name_conflict"],
@@ -544,6 +550,8 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
 
 // Reasons the user can act on get a sentence in place of the generic detail.
 const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string>> = {
+  branch_checked_out_in_worktree: "The branch is checked out in a worktree.",
+  branch_not_fully_merged: "The branch is not fully merged.",
   push_rejected_by_remote:
     "The remote rejected the push. Push this branch from a terminal to see the server's message.",
   push_rejected_non_fast_forward:
@@ -6840,13 +6848,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const deleteLocalBranch: GitVcsDriver.GitVcsDriver["Service"]["deleteLocalBranch"] = Effect.fn(
     "deleteLocalBranch",
   )(function* (input) {
-    yield* executeGit(
+    yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.deleteLocalBranch",
       input.cwd,
       ["branch", input.force === true ? "-D" : "-d", "--", input.refName],
       {
         timeoutMs: 10_000,
-        fallbackErrorDetail: "git branch delete failed",
         // Under contention Git deletes the ref but keeps its config section.
         writesSharedConfig: true,
       },

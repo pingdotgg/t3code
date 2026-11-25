@@ -3,7 +3,9 @@ import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { T, useGT } from "gt-react";
+import { Trash2Icon } from "lucide-react";
 
+import { Button } from "./ui/button";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { cn } from "../lib/utils";
 import { RefreshIcon } from "./ui/refresh-icon";
@@ -207,6 +209,7 @@ export function BranchPickerRefItem({
   disabled,
   onClick,
   onContextMenu,
+  onDelete,
 }: {
   branch: VcsRef;
   projectCwd: string | null;
@@ -215,6 +218,7 @@ export function BranchPickerRefItem({
   disabled?: boolean;
   onClick: ComponentProps<typeof ComboboxItem>["onClick"];
   onContextMenu?: ComponentProps<typeof ComboboxItem>["onContextMenu"];
+  onDelete?: (() => void) | undefined;
 }) {
   const gt = useGT();
   const itemValue = refName.name;
@@ -230,19 +234,44 @@ export function BranchPickerRefItem({
           ? gt("default", { $context: "git ref badge, the default branch" })
           : null;
   return (
-    <ComboboxItem
-      disabled={disabled}
-      hideIndicator
-      key={itemValue}
-      index={index}
-      value={value ?? itemValue}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-    >
-      <div className="flex w-full min-w-0 items-center justify-between gap-2">
-        <MiddleTruncate value={itemValue} className="flex-1" />
-        {badge && <span className="shrink-0 text-3xs text-muted-foreground/45">{badge}</span>}
-      </div>
-    </ComboboxItem>
+    <div className="group relative">
+      <ComboboxItem
+        disabled={disabled}
+        hideIndicator
+        key={itemValue}
+        index={index}
+        value={value ?? itemValue}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+      >
+        <div
+          className={cn(
+            "flex w-full min-w-0 items-center justify-between gap-2",
+            onDelete && "pe-6",
+          )}
+        >
+          <MiddleTruncate value={itemValue} className="flex-1" />
+          {badge && <span className="shrink-0 text-3xs text-muted-foreground/45">{badge}</span>}
+        </div>
+      </ComboboxItem>
+      {onDelete ? (
+        <div className="absolute inset-y-0 end-1 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100">
+          <Button
+            variant="ghost-destructive"
+            size="icon-micro"
+            aria-label={gt("Delete local branch {branch}", { branch: itemValue })}
+            aria-haspopup="dialog"
+            // Base UI redirects list focus to the search input and handles activation as selection.
+            onFocus={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+            }}
+            onClick={onDelete}
+          >
+            <Trash2Icon aria-hidden="true" />
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }

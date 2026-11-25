@@ -1672,6 +1672,7 @@
   "ee684530d91a5a5e": "worktree",
   "b0663b33a4d3331b": "remoto",
   "708bd52b423651cb": "padrão",
+  "c82e7a5463d6744f": "Excluir o branch local {branch}",
   "4a293e5eccd4847d": "Nenhuma ref encontrada.",
   "24f207ab3dee1a15": "Iniciar a partir do remoto",
   "4cc01e8063a057e9": "Usa o commit mais recente do branch remoto rastreado pelo branch base, mesmo que o nome seja diferente. Caso contrário, usa o branch de mesmo nome no origin. Usa seu branch local se esse branch remoto não existir.",
@@ -1712,6 +1713,8 @@
   "9e485e5ba6a96faa": "Esta conexão não pode mudar o branch da thread.",
   "f5729e3a9c756694": "Falha ao trocar de ref.",
   "7ea8def86795f863": "Falha ao criar e trocar de ref.",
+  "fda1b2412b12c0b0": "Excluir o branch local {branch}?",
+  "9d3a73ac6fdf66cc": "Não foi possível excluir o branch",
   "282c2a1c64ead62d": "Fazer checkout {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}",
   "bc81dfd7ade60791": "Branch: {branch}",
   "459e639b9a89964f": [

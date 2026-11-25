@@ -402,6 +402,13 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
+    deleteLocalBranch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:delete-local-branch",
+      tag: WS_METHODS.vcsDeleteLocalBranch,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
     init: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:init",
       tag: WS_METHODS.vcsInit,

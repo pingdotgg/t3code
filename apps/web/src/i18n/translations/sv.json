@@ -1672,6 +1672,7 @@
   "ee684530d91a5a5e": "worktree",
   "b0663b33a4d3331b": "fjärr",
   "708bd52b423651cb": "standard",
+  "c82e7a5463d6744f": "Ta bort den lokala grenen {branch}",
   "4a293e5eccd4847d": "Inga refs hittades.",
   "24f207ab3dee1a15": "Starta från fjärrgrenen",
   "4cc01e8063a057e9": "Använder den senaste commiten i basgrenens spårade fjärrgren, även om namnet skiljer sig. Annars används grenen med samma namn på origin. Använder din lokala gren om fjärrgrenen saknas.",
@@ -1712,6 +1713,8 @@
   "9e485e5ba6a96faa": "Den här anslutningen kan inte ändra trådens gren.",
   "f5729e3a9c756694": "Det gick inte att byta ref.",
   "7ea8def86795f863": "Det gick inte att skapa och byta ref.",
+  "fda1b2412b12c0b0": "Ta bort den lokala grenen {branch}?",
+  "9d3a73ac6fdf66cc": "Det gick inte att ta bort grenen",
   "282c2a1c64ead62d": "Checka ut {term, select, mr {merge request} cr {ändringsbegäran} other {pull request}}",
   "bc81dfd7ade60791": "Gren: {branch}",
   "459e639b9a89964f": [

@@ -3,6 +3,12 @@
 T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, and Cursor
 Origin to clone and publish repositories, create pull requests, and review changes.
 
+## Delete a local branch
+
+In the thread branch picker, hover over a local branch or Tab to its delete button, then confirm.
+Git only deletes branches that are fully merged into their upstream branch or, if there is no
+upstream, into the current checkout. Branches checked out in any worktree are protected.
+
 ## Review turn changes
 
 A turn's changed files and diff show only the turn's own work. When a turn pulls, merges, or

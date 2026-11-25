@@ -150,6 +150,10 @@ export function BranchToolbarBranchSelector({
   const createRefMutation = useAtomCommand(vcsEnvironment.createRef, {
     reportFailure: false,
   });
+  const deleteLocalBranch = useAtomCommand(vcsEnvironment.deleteLocalBranch, {
+    reportFailure: false,
+  });
+  const deletingBranchRef = useRef(false);
   const threadRef = scopeThreadRef(environmentId, threadId);
   const serverThread = useQuietThreadShell(threadRef);
   const serverSession = serverThread?.runtime ?? null;
@@ -740,6 +744,31 @@ export function BranchToolbarBranchSelector({
   const openPrLink = useOpenPrLink(threadRef);
   const linkedIssues = serverThread?.issues ?? [];
 
+  async function confirmDeleteLocalBranch(branch: VcsRef) {
+    if (!branchCwd || deletingBranchRef.current) return;
+    deletingBranchRef.current = true;
+    setIsBranchMenuOpen(false);
+    const confirmed = await readLocalApi()?.dialogs.confirm(
+      gt("Delete local branch {branch}?", { branch: branch.name }),
+      { variant: "destructive" },
+    );
+    if (confirmed) {
+      const result = await deleteLocalBranch({
+        environmentId,
+        input: { cwd: branchCwd, refName: branch.name },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        toastManager.add({
+          type: "error",
+          title: gt("Could not delete branch"),
+          description: toBranchActionErrorMessage(squashAtomCommandFailure(result)),
+        });
+      }
+    }
+    deletingBranchRef.current = false;
+    setIsBranchMenuOpen(true);
+  }
+
   function selectPickerItem(itemValue: string) {
     if (itemValue === checkoutPullRequestItemValue && prReference && onCheckoutPullRequestRequest) {
       latestSelectionIdRef.current++;
@@ -821,6 +850,15 @@ export function BranchToolbarBranchSelector({
         }
         onClick={() => selectPickerItem(itemValue)}
         onContextMenu={(event) => handleBranchContextMenu(event, itemValue)}
+        onDelete={
+          canWriteSourceControl &&
+          refName.name !== currentGitBranch &&
+          !refName.isRemote &&
+          !refName.current &&
+          refName.worktreePath === null
+            ? () => void confirmDeleteLocalBranch(refName)
+            : undefined
+        }
       />
     );
   }

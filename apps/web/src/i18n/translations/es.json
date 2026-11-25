@@ -1672,6 +1672,7 @@
   "ee684530d91a5a5e": "worktree",
   "b0663b33a4d3331b": "remota",
   "708bd52b423651cb": "predeterminada",
+  "c82e7a5463d6744f": "Eliminar la rama local {branch}",
   "4a293e5eccd4847d": "No se encontraron refs.",
   "24f207ab3dee1a15": "Iniciar desde el remoto",
   "4cc01e8063a057e9": "Usa el último commit de la rama remota a la que sigue la rama base, aunque su nombre sea distinto. Si no, usa la rama con el mismo nombre en origin. Usa tu rama local si falta esa rama remota.",
@@ -1712,6 +1713,8 @@
   "9e485e5ba6a96faa": "Esta conexión no puede cambiar la rama del hilo.",
   "f5729e3a9c756694": "No se pudo cambiar de ref.",
   "7ea8def86795f863": "No se pudo crear la ref y cambiar a ella.",
+  "fda1b2412b12c0b0": "¿Eliminar la rama local {branch}?",
+  "9d3a73ac6fdf66cc": "No se pudo eliminar la rama",
   "282c2a1c64ead62d": "{term, select, mr {Hacer checkout de la merge request} cr {Hacer checkout de la solicitud de cambios} other {Hacer checkout de la pull request}}",
   "bc81dfd7ade60791": "Rama: {branch}",
   "459e639b9a89964f": [
