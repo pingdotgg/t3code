@@ -2,7 +2,7 @@
 // writes, its tables, and the series `compare` and `noise` share with client-metrics.
 import * as Schema from "effect/Schema";
 
-import { median, percentile, topCounts } from "../client-metrics-report.ts";
+import { median, percentile, slope, topCounts } from "../client-metrics-report.ts";
 import { frameStats } from "../mobile-behavior/grade.ts";
 import { MachineState, round } from "../server-metrics-report.ts";
 
@@ -69,9 +69,20 @@ const Memory = Schema.Struct({
 });
 export type Memory = typeof Memory.Type;
 
+/** Memory after each repeat of the switch cases (`--soak`). */
+const SoakSample = Schema.Struct({
+  iteration: Schema.Number,
+  /** The case that just ran; iteration 0 is the sample before the first. */
+  case: Schema.String,
+  heapMB: Schema.NullOr(Schema.Number),
+  processMB: Schema.NullOr(Schema.Number),
+});
+export type SoakSample = typeof SoakSample.Type;
+
 const Run = Schema.Struct({
   steps: Schema.Array(Step),
   memory: Schema.Array(Memory),
+  soak: Schema.optional(Schema.Array(SoakSample)),
   skipped: Schema.optional(
     Schema.Array(Schema.Struct({ case: Schema.String, reason: Schema.String })),
   ),
@@ -93,9 +104,14 @@ export const WORKLOAD_KEYS = ["cases", "rounds", "longTurns", "device"] as const
 /** Settings that change timing without changing the workload. */
 export const PROBE_KEYS = ["renders"] as const;
 
-/** The first touch's end, else its start: where a tap's latency counts from. */
+/**
+ * Where a tap's latency counts from: the first touch's end, or a native menu item's JS handler
+ * (a tap inside a native menu never reaches JS as a touch), else the touch's start.
+ */
 export function inputAt(window: Pick<PerfWindow, "inputs">) {
-  const end = window.inputs.find((input) => input.kind === "touch-end");
+  const end = window.inputs.find(
+    (input) => input.kind === "touch-end" || input.kind === "menu-action",
+  );
   return (end ?? window.inputs.find((input) => input.kind === "touch-start"))?.at ?? null;
 }
 
@@ -197,10 +213,53 @@ export function flatten(metrics: MobileMetrics): Map<string, number[]> {
       add(`memory.${entry.label}.heapMB`, entry.heapMB);
       add(`memory.${entry.label}.processMB`, entry.processMB);
     }
+    if (run.soak && run.soak.length > 2) {
+      const growth = soakGrowth(run.soak);
+      add("soak.heapMBPerIteration", growth.heapMB);
+      add("soak.processMBPerIteration", growth.processMB);
+    }
     for (const [key, samples] of inRun)
       values.set(key, [...(values.get(key) ?? []), median(samples)!]);
   }
   return values;
+}
+
+/** Growth per soak iteration past the first (warm-up) sample, and over the last half alone. */
+export function soakGrowth(samples: ReadonlyArray<SoakSample>) {
+  const fit = (rows: ReadonlyArray<SoakSample>, pick: (sample: SoakSample) => number | null) =>
+    slope(
+      rows.flatMap((sample) => {
+        const value = pick(sample);
+        return value === null ? [] : [[sample.iteration, value] as const];
+      }),
+    );
+  // One point per iteration: the sample after its last case.
+  const perIteration = [...new Map(samples.map((sample) => [sample.iteration, sample])).values()];
+  const settled = perIteration.slice(1);
+  const late = perIteration.slice(Math.floor(perIteration.length / 2));
+  return {
+    heapMB: fit(settled, (sample) => sample.heapMB),
+    processMB: fit(settled, (sample) => sample.processMB),
+    lateHeapMB: fit(late, (sample) => sample.heapMB),
+    perIteration,
+  };
+}
+
+/** Mean Hermes heap change across each case's runs in a soak: which steps grow it. */
+export function soakCaseDeltas(samples: ReadonlyArray<SoakSample>) {
+  const deltas = new Map<string, number[]>();
+  for (let index = 1; index < samples.length; index++) {
+    const before = samples[index - 1]!.heapMB;
+    const after = samples[index]!.heapMB;
+    if (before === null || after === null) continue;
+    const name = samples[index]!.case;
+    deltas.set(name, [...(deltas.get(name) ?? []), after - before]);
+  }
+  return [...deltas].map(([name, values]) => ({
+    case: name,
+    meanMB: values.reduce((sum, value) => sum + value, 0) / values.length,
+    medianMB: median(values)!,
+  }));
 }
 
 /** Settings two files disagree on, and those one of them did not record. */
@@ -287,6 +346,27 @@ export function summaryTable(metrics: MobileMetrics) {
       );
     }
   }
+  metrics.runs.forEach((run, index) => {
+    if (!run.soak || run.soak.length < 3) return;
+    const growth = soakGrowth(run.soak);
+    lines.push(
+      "",
+      `| soak, run ${index + 1}: iteration | Hermes heap MB | process MB |`,
+      "| --: | --: | --: |",
+      ...growth.perIteration.map(
+        (sample) =>
+          `| ${sample.iteration} | ${cell(sample.heapMB, 1)} | ${cell(sample.processMB, 1)} |`,
+      ),
+      `| growth per iteration (after warm-up) | ${cell(growth.heapMB, 2)} | ${cell(growth.processMB, 2)} |`,
+      `| growth per iteration (last half) | ${cell(growth.lateHeapMB, 2)} | |`,
+      "",
+      "| soak case | heap change per run, mean MB | median MB |",
+      "| :-- | --: | --: |",
+      ...soakCaseDeltas(run.soak).map(
+        (entry) => `| ${entry.case} | ${cell(entry.meanMB, 2)} | ${cell(entry.medianMB, 2)} |`,
+      ),
+    );
+  });
   for (const entry of metrics.runs.flatMap((run) => run.skipped ?? []))
     lines.push("", `Skipped ${entry.case}: ${entry.reason}`);
   return lines.join("\n");

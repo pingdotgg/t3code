@@ -1,3 +1,4 @@
+import { perfProbe } from "../../features/development/perf-probe-hooks";
 import { Toolbar } from "./Toolbar";
 
 import type { AppBarMenu, AppBarMenuItem } from "./AppBar.types";
@@ -16,7 +17,14 @@ function renderMenuItems(items: ReadonlyArray<AppBarMenuItem>) {
         disabled={item.disabled}
         destructive={item.destructive}
         isOn={item.selected}
-        onPress={item.onPress}
+        onPress={
+          perfProbe
+            ? () => {
+                perfProbe.menuAction();
+                item.onPress();
+              }
+            : item.onPress
+        }
       >
         {item.title}
       </Toolbar.MenuAction>

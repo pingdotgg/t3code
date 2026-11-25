@@ -164,14 +164,28 @@ export const startSession = Effect.fn("session.start")(function* (options: Sessi
     device
       .evaluate(`__t3Behavior.forgetEnvironments(${JSON.stringify(ids)})`)
       .pipe(Effect.andThen(Effect.sleep("3 seconds")));
-  const pairing = yield* env.pairingUrl();
-  yield* device.openUrl(
-    `${SCHEME}://connections/new?pairingUrl=${encodeURIComponent(pairing)}&autoConnect=1`,
-  );
+  const pair = Effect.gen(function* () {
+    const pairing = yield* env.pairingUrl();
+    yield* device.openUrl(
+      `${SCHEME}://connections/new?pairingUrl=${encodeURIComponent(pairing)}&autoConnect=1`,
+    );
+  });
+  yield* pair;
   // Registered once pairing starts, so a stopped run never leaves its environment in the app.
   yield* Effect.addFinalizer(() => forget([env.environmentId]).pipe(Effect.ignore));
   const seeded = (state: ProbeState) => state.homeList !== null && longThread in state.threads;
-  yield* device.waitFor("the paired environment's threads on Home", seeded, 60_000);
+  // A busy pool simulator sometimes drops the first pairing link; a fresh credential retries it.
+  yield* device
+    .waitFor("the paired environment's threads on Home", seeded, 60_000)
+    .pipe(
+      Effect.catch(() =>
+        pair.pipe(
+          Effect.andThen(
+            device.waitFor("the paired environment's threads on Home", seeded, 60_000),
+          ),
+        ),
+      ),
+    );
   // Other saved environments keep cached threads (some stuck working) that skew status cases.
   const others = (yield* device.state).environments.filter((id) => id !== env.environmentId);
   if (others.length > 0 && !options.forgetOtherEnvironments)

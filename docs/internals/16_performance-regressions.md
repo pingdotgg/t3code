@@ -112,8 +112,14 @@ thread's rows, composer keys, and JS and UI frames. `mobile-metrics --help` list
   each app launch's median is one sample, so gate only with `--ab-rounds 2` or more, on one
   simulator model. `noise` calibrates floors from A/A runs.
 - Latency counts from the touch's end as JS sees it, so a JS thread too busy to take the touch
-  hides part of the delay. A native menu item (the Git controls' Review changes, the list
-  switcher's Issues) never reaches JS as a touch, so those steps report commits and frames only.
+  hides part of the delay. A tap on a native menu item (the Git controls' Review changes, the
+  list switcher's Issues) never reaches JS as a touch, so it counts from the item's JS handler,
+  which the shared `Menu` and native header menu report to the probe: later than the finger.
+- A side chat is seeded with one exchange, since an empty one shows a placeholder rather than a
+  timeline and would never count as content.
+- `--soak <n>` repeats the switch cases and samples the Hermes heap after each one, with growth
+  per iteration after warm-up and per case. Development Hermes exposes no `gc`, so heap samples
+  include garbage; trust a slope over many iterations, not one sample.
 - `settled` is the last commit before a second of quiet. Any streaming thread keeps Home
   committing, so only `switch-working` streams, and it stops its thread when done.
 

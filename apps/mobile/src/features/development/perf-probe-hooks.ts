@@ -2,6 +2,8 @@
 export interface PerfProbe {
   readonly touchStart: () => void;
   readonly touchEnd: () => void;
+  /** A native menu item's JS handler ran: the first point JS sees of a tap inside a native menu. */
+  readonly menuAction: () => void;
   /** The composer's text changed: one key. */
   readonly key: () => void;
   /** A thread's timeline rows became visible. */

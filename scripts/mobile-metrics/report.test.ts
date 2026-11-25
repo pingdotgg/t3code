@@ -1,6 +1,13 @@
 import { expect, it } from "@effect/vitest";
 
-import { flatten, stepOf, type MobileMetrics, type PerfWindow } from "./report.ts";
+import {
+  flatten,
+  soakCaseDeltas,
+  soakGrowth,
+  stepOf,
+  type MobileMetrics,
+  type PerfWindow,
+} from "./report.ts";
 
 const frames = (from: number, count: number, gap = 1000 / 60) =>
   Array.from({ length: count }, (_, index) => from + index * gap);
@@ -80,4 +87,34 @@ it("takes each run's median as one sample, so steps of one launch never pass for
   expect(flat.get("switch-short.open.revisit.contentMs")).toEqual([200, 400]);
   expect(flat.get("memory.launch.heapMB")).toEqual([80]);
   expect(flat.has("memory.launch.processMB")).toBe(false);
+});
+
+it("times a native menu item from its JS handler, since the tap never reaches JS as a touch", () => {
+  const step = stepOf(
+    window({
+      inputs: [{ kind: "menu-action", at: 500 }],
+      commits: [
+        { at: 520, ms: 10 },
+        { at: 700, ms: 40 },
+      ],
+    }),
+    { case: "diff", step: "review", visit: "step", round: 1 },
+    null,
+  );
+  expect(step).toMatchObject({ settledMs: 200, commits: 2 });
+});
+
+it("fits soak growth past warm-up per iteration, and names the case that grew the heap", () => {
+  const samples = [
+    { iteration: 0, case: "start", heapMB: 90, processMB: null },
+    // Warm-up: the first iteration loads code and caches.
+    { iteration: 1, case: "a", heapMB: 140, processMB: null },
+    { iteration: 1, case: "b", heapMB: 150, processMB: null },
+    { iteration: 2, case: "a", heapMB: 150, processMB: null },
+    { iteration: 2, case: "b", heapMB: 152, processMB: null },
+    { iteration: 3, case: "a", heapMB: 152, processMB: null },
+    { iteration: 3, case: "b", heapMB: 154, processMB: null },
+  ];
+  expect(soakGrowth(samples)).toMatchObject({ heapMB: 2 });
+  expect(soakCaseDeltas(samples).find((entry) => entry.case === "b")?.medianMB).toBe(2);
 });

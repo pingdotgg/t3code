@@ -15,6 +15,7 @@ import { type Device, run } from "./mobile-e2e/device.ts";
 import {
   leaseAndInstall,
   openPool,
+  releaseOnCrash,
   renewWhileRunning,
   type PoolAccess,
 } from "./mobile-behavior/pool.ts";
@@ -61,6 +62,7 @@ async function runTarget(
     return { target, directory, error: error instanceof Error ? error.message : String(error) };
   }
   const stopRenewing = renewWhileRunning(access, device.session);
+  const stopCrashGuard = releaseOnCrash(device, access);
   try {
     log(target.id, "running the behavior cases");
     const child = NodeChildProcess.spawn(
@@ -102,6 +104,7 @@ async function runTarget(
       : { target, directory, error: `the cases stopped (exit ${code}); see ${directory}/run.log` };
   } finally {
     stopRenewing();
+    stopCrashGuard();
     await device.release();
   }
 }

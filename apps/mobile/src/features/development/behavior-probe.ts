@@ -72,6 +72,7 @@ Object.assign(globalThis, {
   __t3PerfProbe: {
     touchStart: () => perfInput("touch-start"),
     touchEnd: () => perfInput("touch-end"),
+    menuAction: () => perfInput("menu-action"),
     key: () => {
       const window = perf;
       if (!window) return;
@@ -408,14 +409,17 @@ Object.assign(globalThis, {
         heapBytes: hermes?.js_heapSize ?? null,
       });
     },
-    /** The Hermes heap after a full collection. */
+    /** The Hermes heap, after a full collection when this runtime exposes `gc`. */
     heap() {
       const internal = globalThis as {
         gc?: () => void;
         HermesInternal?: { getInstrumentedStats?: () => Record<string, number> };
       };
       internal.gc?.();
-      return internal.HermesInternal?.getInstrumentedStats?.().js_heapSize ?? null;
+      return JSON.stringify({
+        bytes: internal.HermesInternal?.getInstrumentedStats?.().js_heapSize ?? null,
+        collected: typeof internal.gc === "function",
+      });
     },
   },
 });

@@ -93,3 +93,24 @@ export function renewWhileRunning(access: PoolAccess, session: string) {
   }, 90_000);
   return () => clearInterval(timer);
 }
+
+/**
+ * Releases the lease if the process dies on an uncaught error, which skips every finalizer; a
+ * leaked lease holds the device until the pool's TTL. Returns the function that unregisters it.
+ */
+export function releaseOnCrash(device: Device, access: PoolAccess) {
+  const crash = (error: unknown) => {
+    NodeProcess.stderr.write(`Crashed (${String(error)}); releasing ${device.session}.\n`);
+    void device
+      .release()
+      .catch(() => undefined)
+      .then(() => access.close())
+      .finally(() => NodeProcess.exit(1));
+  };
+  process.on("uncaughtException", crash);
+  process.on("unhandledRejection", crash);
+  return () => {
+    process.off("uncaughtException", crash);
+    process.off("unhandledRejection", crash);
+  };
+}

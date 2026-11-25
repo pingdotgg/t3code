@@ -25,6 +25,7 @@ import { DIFF_FILES, pullRequestDetail, sourceFile } from "./client-metrics-fixt
 import {
   leaseAndInstall,
   openPool,
+  releaseOnCrash,
   renewWhileRunning,
   type PoolAccess,
 } from "./mobile-behavior/pool.ts";
@@ -46,6 +47,7 @@ import {
   workloadDifferences,
   type Memory,
   type Run,
+  type SoakSample,
   type Step,
 } from "./mobile-metrics/report.ts";
 import { run } from "./scenarios/shell.ts";
@@ -109,7 +111,15 @@ const memorySample = Effect.fn("mobileMetrics.memory")(function* (
   label: string,
   out: string,
 ) {
-  const heap = yield* device.evaluate("__t3Behavior.heap()").pipe(Effect.orElseSucceed(() => null));
+  const heap = yield* device.evaluate("__t3Behavior.heap()").pipe(
+    Effect.map((value) => {
+      // Older probes return the byte count itself.
+      if (typeof value === "number") return value;
+      const parsed = JSON.parse(String(value)) as { bytes: number | null };
+      return parsed.bytes;
+    }),
+    Effect.orElseSucceed(() => null),
+  );
   const sample: Memory = {
     label,
     heapMB: typeof heap === "number" ? Math.round((heap / 1_048_576) * 10) / 10 : null,
@@ -128,7 +138,11 @@ interface MeasureOptions {
   readonly longTurns: number;
   readonly renders: boolean;
   readonly host: string;
+  readonly soak: number;
 }
+
+/** The cases `--soak` repeats: thread switches, the flow whose memory matters most. */
+const SOAK_CASES = ["switch-short", "switch-long"] as const satisfies ReadonlyArray<CaseName>;
 
 /** One app launch on a checkout's Metro: seed, pair, run every case `rounds` times. */
 const measureOnce = Effect.fn("mobileMetrics.measureOnce")(function* (options: MeasureOptions) {
@@ -161,7 +175,10 @@ const measureOnce = Effect.fn("mobileMetrics.measureOnce")(function* (options: M
   const { env, device } = session;
   const short = yield* env.launch("Bench short", "Hi. [[eval:reply]]");
   yield* env.settled(short);
+  // A side chat people open holds a message; an empty one shows a placeholder, not a timeline.
   const sideChat = yield* env.forkSideChat(short, "Bench side chat");
+  yield* env.send(sideChat, "Hi from the side. [[eval:reply]]");
+  yield* env.settled(sideChat);
   const fixtures: Fixtures = {
     sideChat: { id: sideChat, title: "Bench side chat" },
     short: { id: short, title: "Bench short" },
@@ -221,7 +238,38 @@ const measureOnce = Effect.fn("mobileMetrics.measureOnce")(function* (options: M
     }
   }
   memory.push(yield* memorySample(device, "after-cases", options.out));
-  return { steps, memory, ...(skipped.length ? { skipped } : {}) } satisfies Run;
+  const soak: SoakSample[] = [];
+  const sample = Effect.fn("mobileMetrics.soakSample")(function* (iteration: number, name: string) {
+    const at = yield* memorySample(device, `soak-${iteration}-${name}`, options.out);
+    soak.push({ iteration, case: name, heapMB: at.heapMB, processMB: at.processMB });
+    yield* log(`soak ${iteration} ${name}: heap ${at.heapMB} MB, process ${at.processMB} MB`);
+  });
+  if (options.soak > 0) yield* sample(0, "start");
+  for (let iteration = 1; iteration <= options.soak; iteration++) {
+    for (const name of SOAK_CASES) {
+      const ctx: CaseContext = {
+        session,
+        device,
+        fixtures,
+        round: options.rounds + iteration,
+        visited,
+      };
+      const ran = yield* CASES[name](ctx).pipe(
+        Effect.as(true),
+        Effect.catch((error) =>
+          log(`soak ${iteration} ${name}: ${error.message}`).pipe(Effect.as(false)),
+        ),
+      );
+      if (!ran) yield* device.reload(session.seeded).pipe(Effect.ignore);
+      yield* sample(iteration, name);
+    }
+  }
+  return {
+    steps,
+    memory,
+    ...(soak.length ? { soak } : {}),
+    ...(skipped.length ? { skipped } : {}),
+  } satisfies Run;
 }, Effect.scoped);
 
 /** Leases the device for a command, keeps the lease alive, and releases it at the end. */
@@ -235,8 +283,9 @@ const withLease = Effect.fn("mobileMetrics.withLease")(function* <A, E, R>(
     Effect.promise(async () => {
       await NodeFSP.mkdir(out, { recursive: true });
       const access = await openPool(REPO_ROOT, out);
+      let device: PoolDevice | null = null;
       try {
-        const device = await leaseAndInstall(
+        device = await leaseAndInstall(
           {
             id: "metrics",
             platform: "ios",
@@ -248,8 +297,18 @@ const withLease = Effect.fn("mobileMetrics.withLease")(function* <A, E, R>(
           `metrics-${runId}`,
           (message) => process.stderr.write(`[mobile-metrics] ${message}\n`),
         );
-        return { access, device, stop: renewWhileRunning(access, device.session) };
+        const renewing = renewWhileRunning(access, device.session);
+        const crashing = releaseOnCrash(device, access);
+        return {
+          access,
+          device,
+          stop: () => {
+            renewing();
+            crashing();
+          },
+        };
       } catch (error) {
+        await device?.release();
         await access.close();
         throw error;
       }
@@ -396,6 +455,13 @@ const measureFlags = {
     ),
     Flag.withDefault(false),
   ),
+  soak: Flag.Int("soak").pipe(
+    Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    Flag.withDescription(
+      "After the rounds, repeat the switch cases this many times, sampling the Hermes heap and process memory after each, with growth per iteration.",
+    ),
+    Flag.withDefault(0),
+  ),
   host: Flag.String("host").pipe(
     Flag.withDescription(
       "Address the simulator reaches this machine on; defaults to the tailnet IP.",
@@ -443,6 +509,7 @@ const runCommand = Command.make(
           rounds: input.rounds,
           longTurns: input.longTurns,
           renders: input.renders,
+          soak: input.soak,
           host: Option.getOrElse(input.host, reachableHost),
         });
       }),
@@ -507,6 +574,7 @@ const abCommand = Command.make(
             rounds: input.rounds,
             longTurns: input.longTurns,
             renders: input.renders,
+            soak: input.soak,
             host,
           });
         }),

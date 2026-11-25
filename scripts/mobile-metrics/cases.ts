@@ -252,27 +252,18 @@ export const CASES = {
   issues: Effect.fn("metrics.issues")(function* (ctx: CaseContext) {
     yield* toHome(ctx);
     yield* ctx.device.press('role=button label="PRs"');
-    const switcher = yield* findNode(
-      ctx,
-      "list switcher",
-      (label) => label === "Pull requests, switch list",
-    );
-    yield* ctx.device.press(switcher);
-    const target = yield* findNode(ctx, "Issues item", (label) => /^Issues\b/.test(label));
+    // The header title is the switcher's button (SharedSlotTitle); its label names the open list.
+    yield* ctx.device.press('role=button label="Pull requests, switch list"');
+    const target = yield* findNode(ctx, "Issues menu item", (label) => label === "Issues");
     const step = yield* measure(
       ctx,
       { case: "issues", step: "list", visit: "step" },
       ctx.device.press(target),
     );
     // Hand the slot back, so the pull request case finds its tab.
-    const back = yield* findNode(ctx, "list switcher", (label) => label.endsWith(", switch list"));
-    yield* ctx.device.press(back);
+    yield* ctx.device.press('role=button label="Issues, switch list"');
     yield* ctx.device.press(
-      yield* findNode(
-        ctx,
-        "Pull requests item",
-        (label) => /^Pull requests\b/.test(label) && !label.endsWith("switch list"),
-      ),
+      yield* findNode(ctx, "Pull requests menu item", (label) => label === "Pull requests"),
     );
     return [step];
   }),
@@ -280,9 +271,7 @@ export const CASES = {
   /** The thread on the 40-file branch: its git menu, then Review changes. */
   diff: Effect.fn("metrics.diff")(function* (ctx: CaseContext) {
     yield* openThread(ctx, ctx.fixtures.short);
-    const git = yield* findNode(ctx, "git control", (label) =>
-      /bench\/feature|branch|git/i.test(label),
-    );
+    const git = yield* findNode(ctx, "Git controls menu", (label) => label === "Git controls");
     yield* ctx.device.press(git);
     const review = yield* findNode(ctx, "Review changes item", (label) =>
       label.startsWith("Review changes"),
