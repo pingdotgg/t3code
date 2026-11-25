@@ -1,9 +1,9 @@
-// What a Chromium trace of scripts/client-metrics.ts says about each measured step: the input's
+// What a Chromium trace of client-metrics.ts says about each measured step: the input's
 // task, the style and layout scripts forced inside it, where its JS time went by original source,
 // and the long tasks that followed. Pure, so it is tested on synthetic events.
 import * as Schema from "effect/Schema";
 
-import { round } from "./server-metrics-report.ts";
+import { round } from "../core/report.ts";
 
 const StackFrame = Schema.Struct({
   url: Schema.String,
