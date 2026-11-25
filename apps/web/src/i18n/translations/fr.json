@@ -1552,6 +1552,7 @@
   "6848f5bbb2bd9eec": "Document PDF",
   "7873a79df0cf6d0e": "Page du navigateur",
   "0b55696e27387e4e": "Appuyez sur Shift+Escape pour quitter la page du navigateur.",
+  "90dfebe26eb86b2d": "Options de sélection de la page",
   "737d3c6bec93f9e6": "Choisir des fichiers pour la page",
   "e6a3fa7cfc14f86a": "Boîte de dialogue du navigateur",
   "61a552a67e9e3eac": "Réponse à la boîte de dialogue",
@@ -12280,10 +12281,26 @@
   "a16b48709357a5a7": "Gérer l’utilisation",
   "a00e74aaa421c524": "restant",
   "0e34c3076c08feb2": [
-    { "t": "span", "i": 1, "c": ["↻ +", { "i": 2, "k": "_gt_value_2", "v": "v" }, "%"] },
+    {
+      "t": "span",
+      "i": 1,
+      "c": [
+        "↻ +",
+        {
+          "i": 2,
+          "k": "_gt_value_2",
+          "v": "v"
+        },
+        "%"
+      ]
+    },
     " ",
     "dans ",
-    { "i": 3, "k": "_gt_value_3", "v": "v" }
+    {
+      "i": 3,
+      "k": "_gt_value_3",
+      "v": "v"
+    }
   ],
   "8bd6f07136317c8f": "Aucun fournisseur des environnements sélectionnés ne signale de limites d’abonnement.",
   "87f5d0c61b335f38": "Consultez l’utilisation dans ChatGPT avec votre compte connecté.",
@@ -12953,5 +12970,6 @@
       "v": "v"
     },
     " nécessite une raison."
-  ]
+  ],
+  "91aadfc843c600de": "Vérifier le compte Google"
 }
