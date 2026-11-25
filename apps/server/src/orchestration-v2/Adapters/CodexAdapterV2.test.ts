@@ -10006,6 +10006,113 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("does not resume an unloaded T3 thread for an MCP app without T3's MCP servers", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "mcp-tools-thread-recovery-without-t3-session";
+        const nativeThreadId = `native-${scenario}`;
+        const preamble = codexReplayPreamble({
+          nativeThreadId,
+          nativeTurnId: "unused-turn",
+          prompt: "unused-prompt",
+        }).slice(0, 5);
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...preamble,
+            {
+              type: "expect_outbound",
+              label: "MCP app inspects tools",
+              frame: {
+                id: 3,
+                method: "mcpServerStatus/list",
+                params: {
+                  threadId: nativeThreadId,
+                  serverName: "weather",
+                  detail: "toolsAndAuthOnly",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "native thread is unloaded",
+              frame: {
+                id: 3,
+                error: { code: -32600, message: `thread not found: ${nativeThreadId}` },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "resume unloaded native thread",
+              frame: { id: 4, method: "thread/resume", params: { threadId: nativeThreadId } },
+            },
+            {
+              type: "emit_inbound",
+              label: "native thread resumed",
+              frame: { id: 4, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+            },
+            {
+              type: "expect_outbound",
+              label: "retry tool inspection",
+              frame: {
+                id: 5,
+                method: "mcpServerStatus/list",
+                params: {
+                  threadId: nativeThreadId,
+                  serverName: "weather",
+                  detail: "toolsAndAuthOnly",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "tool inspection succeeds",
+              frame: { id: 5, result: { data: [] } },
+            },
+          ],
+        });
+
+        const resumeParams: Array<unknown> = [];
+        const harness = yield* makeCodexReplayHarness(transcript, undefined, (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/resume") resumeParams.push(params);
+          }),
+        );
+        const mcpApps = harness.runtime.mcpApps;
+        assert.ok(mcpApps, "Codex runtime should expose MCP apps");
+
+        // No T3 MCP session is in memory, as after a server restart before the next turn.
+        assert.equal(
+          yield* (yield* McpProviderSessions.McpProviderSessions).read(harness.threadId),
+          undefined,
+        );
+        yield* Effect.exit(
+          mcpApps.listTools({ providerThread: harness.providerThread, server: "weather" }),
+        );
+
+        // Codex keeps the first load's MCP config, so a later turn's resume cannot restore
+        // the T3 tools: this load must carry them or not happen.
+        for (const params of resumeParams) {
+          const config = Predicate.hasProperty(params, "config") ? params.config : undefined;
+          assert.ok(
+            Predicate.hasProperty(config, "mcp_servers.t3-code") &&
+              Predicate.hasProperty(config, "mcp_servers.t3-code-direct"),
+            "thread/resume of a T3 thread must include both T3 MCP servers",
+          );
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("captures an MCP app's resource and holds the turn open until it lands", () =>
     Effect.gen(function* () {
       const appCaptured = yield* Deferred.make<OrchestrationV2TurnItem>();
