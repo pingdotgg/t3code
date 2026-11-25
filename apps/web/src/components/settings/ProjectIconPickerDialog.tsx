@@ -191,9 +191,8 @@ function ProjectIconPickerBody({
                 setQuery("");
               }}
             />
-            {/* A fixed height keeps the vertically centered dialog, and the search field
-                above it, still while the result count changes. The wrapper is what sizes
-                the scroll area, since ScrollArea's own `h-full` wins over a height class. */}
+            {/* A fixed height keeps the centered dialog still as results change; the wrapper
+                sizes it because ScrollArea's own `size-full` beats a height class. */}
             <div className="h-64">
               <ScrollArea scrollFade>
                 {icons.length === 0 ? (
