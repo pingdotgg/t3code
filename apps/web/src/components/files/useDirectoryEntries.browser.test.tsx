@@ -275,3 +275,36 @@ it("reloads a removed folder when it reappears under the same name", async () =>
   expect(state.view.entries).toEqual([folder, { path: "src/new.ts", kind: "file" }]);
   expect(state.view.isPending).toBe(false);
 });
+
+it("refreshes only open folders and re-reads a skipped folder when it is next loaded", async () => {
+  const state = setup();
+  // The hook probe does not navigate.
+  await using _screen = await render(<state.Probe />, { router: false });
+  const open = { path: "open", kind: "directory" } as const;
+  const closed = { path: "closed", kind: "directory" } as const;
+  await state.settle(0, [open, closed]);
+  await act(async () => {
+    void state.view.load("open");
+    void state.view.load("closed");
+  });
+  await state.settle(1);
+  await state.settle(2);
+
+  await act(async () => state.view.refresh(new Set(["open"])));
+  expect(state.calls.slice(3).map((call) => call.path)).toEqual(["", "open"]);
+  await state.settle(3, [open, closed]);
+  await state.settle(4);
+
+  await act(async () => {
+    void state.view.load("closed");
+  });
+  expect(state.calls.slice(5).map((call) => call.path)).toEqual(["closed"]);
+  const added = { path: "closed/new.ts", kind: "file" } as const;
+  await state.settle(5, [added]);
+  expect(state.view.entries).toContainEqual(added);
+  await act(async () => {
+    void state.view.load("closed");
+  });
+  expect(state.calls).toHaveLength(6);
+  expect(state.view.isPending).toBe(false);
+});

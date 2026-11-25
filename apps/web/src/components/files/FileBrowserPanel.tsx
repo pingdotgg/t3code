@@ -452,15 +452,18 @@ export default function FileBrowserPanel({
     }
     search.setValue(value);
   };
+  // Collapsed folders are re-read when they are next expanded.
+  const refreshOpenDirectories = () =>
+    refresh(new Set([...expandedPathsRef.current].map((path) => path.replace(/\/$/, ""))));
   const handleRefresh = () => {
-    refresh();
+    refreshOpenDirectories();
     if (query.trim()) pathSearch.refresh();
     onRefreshSelectedFile?.();
   };
   useWorkspaceMutationRefresh({
     mutationId: workspaceMutationId,
     refresh: () => {
-      refresh();
+      refreshOpenDirectories();
       if (query.trim()) pathSearch.refresh();
     },
     resourceKey: `files:${environmentId}:${cwd}`,

@@ -25,6 +25,8 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const followUpRefreshes = useRef(new Map<string, Promise<void>>());
   const loaded = useRef(new Set<string>());
   const requested = useRef(new Set<string>());
+  // Loaded folders a refresh skipped because they were hidden; their next load reads them again.
+  const stale = useRef(new Set<string>());
   const active = useRef(true);
   const running = useRef(0);
   const waiting = useRef<Array<() => void>>([]);
@@ -32,6 +34,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const startRequest = (directoryPath: string, refresh: boolean): Promise<void> => {
     loaded.current.add(directoryPath);
     requested.current.add(directoryPath);
+    stale.current.delete(directoryPath);
     const atom = projectEnvironment.listEntries({ environmentId, input: { cwd, directoryPath } });
     const detached = detachedRequests.current.get(directoryPath);
     const request = (async () => {
@@ -73,6 +76,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
             next.delete(path);
             loaded.current.delete(path);
             requested.current.delete(path);
+            stale.current.delete(path);
             const detachedRequest = requests.current.get(path);
             if (detachedRequest) detachedRequests.current.set(path, detachedRequest);
             requests.current.delete(path);
@@ -121,6 +125,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   };
 
   const load = function loadDirectory(directoryPath: string, refresh = false): Promise<void> {
+    if (stale.current.delete(directoryPath)) refresh = true;
     const existing = requests.current.get(directoryPath);
     if (existing) {
       if (!refresh) return existing;
@@ -174,11 +179,14 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     ...entries.filter((entry) => entry.kind === "directory").map((entry) => entry.path),
   ]);
 
-  const refresh = () => {
+  /** Re-reads the root and the `open` folders (all loaded folders when omitted). */
+  const refresh = (open?: ReadonlySet<string>) => {
     const paths = [...requested.current].filter((path) => reachableDirectories.has(path));
     for (const path of paths) {
       if (!active.current) break;
-      void load(path, true);
+      if (open && path !== "" && !open.has(path)) {
+        if (loaded.current.has(path)) stale.current.add(path);
+      } else void load(path, true);
     }
   };
 
