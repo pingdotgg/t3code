@@ -1,6 +1,56 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { readKnownFailures, skipPattern } from "./fork-tests.ts";
+import {
+  aggregateExitCode,
+  fullProcessPlan,
+  readKnownFailures,
+  skipPattern,
+} from "./fork-tests.ts";
+
+describe("fullProcessPlan", () => {
+  it("runs four distinct server shards and one process per other project", () => {
+    const projects = ["root", "t3", "@t3tools/web (browser) (chromium)"];
+    const filter = ["-t", "pattern"];
+    const plan = fullProcessPlan(projects, filter, 9);
+    assert.deepEqual(
+      plan.map(({ args }) => args),
+      [
+        ["--project=t3", "--shard=1/4", "--no-cache", ...filter],
+        ["--project=t3", "--shard=2/4", "--no-cache", ...filter],
+        ["--project=t3", "--shard=3/4", "--no-cache", ...filter],
+        ["--project=t3", "--shard=4/4", "--no-cache", ...filter],
+        ["--project=root", "--maxWorkers=3", ...filter],
+        ["--project=@t3tools/web (browser) (chromium)", "--maxWorkers=2", ...filter],
+      ],
+    );
+    assert.equal(new Set(plan.map(({ name }) => name)).size, plan.length);
+  });
+
+  it("uses the default shard count and respects machines with fewer cores", () => {
+    assert.lengthOf(fullProcessPlan(["t3"], []), 4);
+    assert.deepEqual(
+      fullProcessPlan(["t3", "root"], [], 1).map(({ args }) => args),
+      [
+        ["--project=t3", "--shard=1/1", "--no-cache"],
+        ["--project=root", "--maxWorkers=1"],
+      ],
+    );
+  });
+
+  it("fails instead of silently omitting the server suite", () => {
+    assert.throws(() => fullProcessPlan(["root"], []), "server project");
+  });
+});
+
+describe("aggregateExitCode", () => {
+  it("succeeds when all processes exit cleanly", () => {
+    assert.equal(aggregateExitCode([0, 0]), 0);
+  });
+
+  it("keeps the first nonzero process status in plan order", () => {
+    assert.equal(aggregateExitCode([0, 9, 0, 1]), 9);
+  });
+});
 
 describe("skipPattern", () => {
   it("matches every test name except the known failures", () => {
