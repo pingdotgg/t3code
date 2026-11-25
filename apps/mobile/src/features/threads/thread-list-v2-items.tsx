@@ -1578,12 +1578,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // A failed run's error takes the line under the title, as it always has, even when that line
   // would fold. It replaces the line's text items and keeps its badges.
   const errorLine = showsError ? (titleLine === "bottom" ? "middle" : "bottom") : null;
-  const lines = resolveSidebarRowLines({
+  const resolvedLines = resolveSidebarRowLines({
     lines: rowLayout,
     titleLine,
     keepLines: errorLine ? [...rowLayout.keepLines, errorLine] : rowLayout.keepLines,
     hasContent: (token) => itemNode(token) !== null,
   });
+  // A line with no items still folds, so the error gets an empty one.
+  const lines =
+    errorLine && resolvedLines[errorLine] === null
+      ? { ...resolvedLines, [errorLine]: [] }
+      : resolvedLines;
   // Lines under the title start where the title text does.
   const titleTextInset = rowLayout[titleLine]
     .slice(
