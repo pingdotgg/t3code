@@ -1245,6 +1245,7 @@ export type Wire112 = {
   readonly code: string | null;
   readonly retryable: boolean | null;
   readonly resetAt?: string | null | undefined;
+  readonly verificationUrl?: string;
 };
 
 export type Wire111 = {
