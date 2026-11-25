@@ -308,6 +308,8 @@ describe("ConnectionCatalogDocument", () => {
     expect(pinEnvironmentKeyInCatalog(EMPTY_CONNECTION_CATALOG_DOCUMENT, ENVIRONMENT_ID, key)).toBe(
       EMPTY_CONNECTION_CATALOG_DOCUMENT,
     );
+    // A connection that began before the pin existed cannot replace it with the key it was shown.
+    expect(pinEnvironmentKeyInCatalog(stored, ENVIRONMENT_ID, new Uint8Array(32))).toBe(stored);
   });
 
   it("forgets a pinned identity key but keeps the environment registered", () => {

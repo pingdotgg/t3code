@@ -564,24 +564,50 @@ interface CatalogStore {
   ) => Effect.Effect<void, ConnectionTransientError>;
 }
 
-/** Tells this origin's other tabs that the stored catalog changed. */
-export interface CatalogChanges {
-  readonly postMessage: (message: null) => void;
-  readonly addEventListener: (type: "message", listener: () => void) => void;
+/** How this origin's tabs share the one stored catalog. */
+export interface CatalogTabs {
+  /** Tells the other tabs that the stored catalog changed. */
+  readonly changes: {
+    readonly postMessage: (message: null) => void;
+    readonly addEventListener: (type: "message", listener: () => void) => void;
+  };
+  /** Runs an update while no other tab runs one. */
+  readonly exclusive: <A, E>(update: Effect.Effect<A, E>) => Effect.Effect<A, E>;
 }
+
+const CATALOG_TABS_NAME = "t3code:connection-catalog";
+
+/**
+ * Web Locks need a secure context, as the proof key does, so a context without them has no
+ * pinned key to lose.
+ */
+const exclusiveAcrossTabs: CatalogTabs["exclusive"] = (update) =>
+  typeof navigator === "undefined" || navigator.locks === undefined
+    ? update
+    : Effect.context<never>().pipe(
+        Effect.flatMap((context) =>
+          Effect.promise((signal) =>
+            navigator.locks.request(CATALOG_TABS_NAME, { signal }, () =>
+              Effect.runPromiseExitWith(context)(update, { signal }),
+            ),
+          ),
+        ),
+        Effect.flatten,
+      );
 
 /**
  * The catalog holds each environment's pinned identity key, so a tab must not save over another
- * tab's copy from memory or keep answering from its own: every update starts from what is stored,
- * and a save in one tab drops the others' cached copy.
+ * tab's copy or keep answering from its own: an update reads what is stored and saves while no
+ * other tab does, and a save in one tab drops the others' cached copy.
  */
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
   backend: CatalogBackend,
-  changes?: CatalogChanges,
+  tabs?: CatalogTabs,
 ) {
   let cached = Option.none<ConnectionCatalogDocumentType>();
   const lock = yield* Semaphore.make(1);
-  changes?.addEventListener("message", () => {
+  const exclusive = tabs?.exclusive ?? ((update) => update);
+  tabs?.changes.addEventListener("message", () => {
     cached = Option.none();
   });
 
@@ -627,13 +653,15 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
       yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          const next = transform(yield* loadStored());
-          yield* backend.write(yield* encodeCatalog(next));
-          cached = Option.some(next);
-          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel is scoped to the origin
-          changes?.postMessage(null);
-        }),
+        exclusive(
+          Effect.gen(function* () {
+            const next = transform(yield* loadStored());
+            yield* backend.write(yield* encodeCatalog(next));
+            cached = Option.some(next);
+            // oxlint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel is scoped to the origin
+            tabs?.changes.postMessage(null);
+          }),
+        ),
       );
     },
   );
@@ -769,10 +797,13 @@ export const layer = Layer.effectContext(
       (owned) => owned.close,
     );
     const catalogChanges = yield* Effect.acquireRelease(
-      Effect.sync(() => new BroadcastChannel("t3code:connection-catalog")),
+      Effect.sync(() => new BroadcastChannel(CATALOG_TABS_NAME)),
       (channel) => Effect.sync(() => channel.close()),
     );
-    const catalog = yield* makeCatalogStore(makeCatalogBackend(database), catalogChanges);
+    const catalog = yield* makeCatalogStore(makeCatalogBackend(database), {
+      changes: catalogChanges,
+      exclusive: exclusiveAcrossTabs,
+    });
     const pullRequestRoutingPermissions = makeBrowserPullRequestRoutingPermissions();
     // Remembers each thread row's encoding, so a save only encodes rows that changed.
     const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder({

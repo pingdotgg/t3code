@@ -87,7 +87,7 @@ export class ConnectionRegistrationStore extends Context.Service<
     readonly environmentKey: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<Option.Option<Uint8Array>, ConnectionPersistenceError>;
-    /** Kept only while the environment is registered; `remove` drops it. */
+    /** Kept only while the environment is registered; `remove` drops it. Never replaces a pin. */
     readonly pinEnvironmentKey: (
       environmentId: EnvironmentId,
       publicKey: Uint8Array,

@@ -262,13 +262,20 @@ export function forgetEnvironmentKeyInCatalog(
       };
 }
 
-/** A key for an environment that is no longer registered is dropped, as removal would drop it. */
+/**
+ * A key for an environment that is no longer registered is dropped, as removal would drop it.
+ * An existing pin stays: a connection that started before the pin was written must not replace
+ * it with whatever key it was shown. Only `forgetEnvironmentKeyInCatalog` makes room for another.
+ */
 export function pinEnvironmentKeyInCatalog(
   document: ConnectionCatalogDocument,
   environmentId: EnvironmentId,
   publicKey: Uint8Array,
 ): ConnectionCatalogDocument {
-  if (!document.targets.some((target) => target.environmentId === environmentId)) {
+  if (
+    !document.targets.some((target) => target.environmentId === environmentId) ||
+    document.environmentKeys?.some((value) => value.environmentId === environmentId)
+  ) {
     return document;
   }
   return {

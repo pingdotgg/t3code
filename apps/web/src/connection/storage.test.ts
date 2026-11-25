@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { afterEach, vi } from "vite-plus/test";
 
@@ -63,35 +64,48 @@ describe("ConnectionStorage.makeCatalogStore", () => {
     }),
   );
 
-  it.effect("keeps another tab's save when a tab that loaded earlier saves or reads", () =>
-    Effect.gen(function* () {
-      let stored = encodeCatalog(emptyCatalog);
-      const backend = {
-        read: Effect.sync(() => stored),
-        write: (raw: string) => Effect.sync(() => void (stored = raw)),
-      };
-      const tabs = new Set<() => void>();
-      const tab = () => {
-        let own: (() => void) | undefined;
-        return ConnectionStorage.makeCatalogStore(backend, {
-          postMessage: () => tabs.forEach((listener) => listener !== own && listener()),
-          addEventListener: (_type, listener) => void tabs.add((own = listener)),
-        });
-      };
-      const pinning = yield* tab();
-      const earlier = yield* tab();
-      const quiet = yield* ConnectionStorage.makeCatalogStore(backend);
-      const environmentKeys = [{ environmentId: EnvironmentId.make("env"), publicKey: "a2V5" }];
-      yield* earlier.read;
-      yield* quiet.read;
+  it.effect(
+    "keeps every tab's save, whenever the tabs loaded and however their saves overlap",
+    () =>
+      Effect.gen(function* () {
+        let stored = encodeCatalog(emptyCatalog);
+        // A save lands after other tabs have run, as an IndexedDB transaction does.
+        const backend = {
+          read: Effect.sync(() => stored),
+          write: (raw: string) =>
+            Effect.yieldNow.pipe(Effect.andThen(Effect.sync(() => void (stored = raw)))),
+        };
+        const listeners = new Set<() => void>();
+        const lock = yield* Semaphore.make(1);
+        const tab = () => {
+          let own: (() => void) | undefined;
+          return ConnectionStorage.makeCatalogStore(backend, {
+            changes: {
+              postMessage: () => listeners.forEach((listener) => listener !== own && listener()),
+              addEventListener: (_type, listener) => void listeners.add((own = listener)),
+            },
+            exclusive: lock.withPermits(1),
+          });
+        };
+        const pinning = yield* tab();
+        const earlier = yield* tab();
+        const environmentKeys = [{ environmentId: EnvironmentId.make("env"), publicKey: "a2V5" }];
+        const disabledEnvironmentIds = [EnvironmentId.make("other")];
+        yield* earlier.read;
 
-      yield* pinning.update((document) => ({ ...document, environmentKeys }));
-      expect((yield* earlier.read).environmentKeys).toEqual(environmentKeys);
+        yield* pinning.update((document) => ({ ...document, environmentKeys }));
+        expect((yield* earlier.read).environmentKeys).toEqual(environmentKeys);
 
-      const disabledEnvironmentIds = [EnvironmentId.make("other")];
-      yield* quiet.update((document) => ({ ...document, disabledEnvironmentIds }));
-      expect(decodeCatalog(stored)).toMatchObject({ disabledEnvironmentIds, environmentKeys });
-    }),
+        stored = encodeCatalog(emptyCatalog);
+        yield* Effect.all(
+          [
+            earlier.update((document) => ({ ...document, disabledEnvironmentIds })),
+            pinning.update((document) => ({ ...document, environmentKeys })),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(decodeCatalog(stored)).toMatchObject({ disabledEnvironmentIds, environmentKeys });
+      }),
   );
 });
 
