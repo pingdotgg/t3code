@@ -2770,6 +2770,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     shellCandidates: ReadonlyArray<ShellCandidate>,
     spawnEnv: NodeJS.ProcessEnv,
     session: TerminalSessionState,
+    takeOwnership: (process: PtyAdapter.PtyProcess) => void,
     index = 0,
     lastError: PtyAdapter.PtySpawnError | null = null,
   ): Effect.fn.Return<
@@ -2820,6 +2821,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         shellCandidates,
         spawnEnv,
         session,
+        takeOwnership,
         index + 1,
         new PtyAdapter.PtySpawnError({ adapter: "terminal-manager", shell: candidate.shell }),
       );
@@ -2833,14 +2835,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       survivesRestart: true,
     });
     const attempt = yield* Effect.result(
-      options.ptyAdapter.spawn({
-        shell: launch.command,
-        ...(launch.args.length > 0 ? { args: [...launch.args] } : {}),
-        cwd: session.cwd,
-        cols: session.cols,
-        rows: session.rows,
-        env: spawnEnv,
-      }),
+      options.ptyAdapter.spawn(
+        {
+          shell: launch.command,
+          ...(launch.args.length > 0 ? { args: [...launch.args] } : {}),
+          cwd: session.cwd,
+          cols: session.cols,
+          rows: session.rows,
+          env: spawnEnv,
+        },
+        takeOwnership,
+      ),
     );
 
     if (attempt._tag === "Success") {
@@ -2856,13 +2861,56 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return yield* spawnError;
     }
 
-    return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError);
+    return yield* trySpawn(
+      shellCandidates,
+      spawnEnv,
+      session,
+      takeOwnership,
+      index + 1,
+      spawnError,
+    );
+  });
+
+  const failStartup = Effect.fn("terminal.failStartup")(function* (
+    session: TerminalSessionState,
+    message: string,
+  ) {
+    yield* modifyManagerState((state) => {
+      cleanupProcessHandles(session);
+      session.status = "error";
+      session.startupError = message;
+      session.shell = null;
+      session.pid = null;
+      session.process = null;
+      session.hasRunningSubprocess = false;
+      session.childCommandLabel = null;
+      session.pendingProcessEvents = [];
+      session.pendingProcessEventIndex = 0;
+      session.processEventDrainRunning = false;
+      advanceEventSequence(session);
+      return [undefined, state] as const;
+    });
+    yield* unregisterTerminal({
+      threadId: session.threadId,
+      terminalId: session.terminalId,
+    });
+
+    yield* evictInactiveSessionsIfNeeded();
+
+    yield* publishEvent({
+      type: "error",
+      threadId: session.threadId,
+      terminalId: session.terminalId,
+      sequence: session.eventSequence,
+      message,
+    });
   });
 
   const startSession = Effect.fn("terminal.startSession")(function* (
     session: TerminalSessionState,
     input: TerminalStartInput,
     eventType: "started" | "restarted",
+    newSessionKey?: string,
   ) {
     yield* stopProcess(session);
     yield* Effect.annotateCurrentSpan({
@@ -2872,172 +2920,169 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       "terminal.cwd": input.cwd,
     });
 
-    const startingAt = yield* nowIso;
-    yield* modifyManagerState((state) => {
-      session.status = "starting";
-      session.startupError = null;
-      session.shell = null;
-      session.cwd = input.cwd;
-      session.worktreePath = input.worktreePath ?? null;
-      session.cols = input.cols;
-      session.rows = input.rows;
-      session.exitCode = null;
-      session.exitSignal = null;
-      session.hasRunningSubprocess = false;
-      session.childCommandLabel = null;
-      session.pendingProcessEvents = [];
-      session.pendingProcessEventIndex = 0;
-      session.processEventDrainRunning = false;
-      session.updatedAt = startingAt;
-      return [undefined, state] as const;
-    });
-
+    let startupPending = false;
     let ptyProcess: PtyAdapter.PtyProcess | null = null;
     let startedShell: string | null = null;
-
-    const startResult = yield* Effect.result(
-      increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
-        Effect.andThen(
-          Effect.gen(function* () {
-            const shellCandidates = yield* resolveShellCandidates(
-              shellResolver,
-              platform,
-              baseEnv,
-              session.runtimeEnv?.T3CODE_TERMINAL_SHELL ?? baseEnv.T3CODE_TERMINAL_SHELL,
-            ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
-            const terminalEnv = createTerminalSpawnEnv(
-              baseEnv,
-              session.runtimeEnv,
-              platform,
-              yield* HostProcess.HomeDirectory,
-              session.threadId,
-            );
-            // Append managed install directories so agent commands resolve without shadowing user/system tools.
-            if (
-              options.managedBinaryCacheDir !== undefined &&
-              options.managedBinaryToolsDir !== undefined
-            ) {
-              const managedDirectories = yield* acpRegistryManagedBinaryDirectories({
-                cacheDir: options.managedBinaryCacheDir,
-                toolsDir: options.managedBinaryToolsDir,
-                platform,
-                architecture,
-              }).pipe(
-                Effect.provideService(FileSystem.FileSystem, fileSystem),
-                Effect.provideService(Path.Path, path),
-              );
-              if (managedDirectories.length > 0) {
-                const delimiter = platform === "win32" ? ";" : ":";
-                const pathKey =
-                  platform === "win32"
-                    ? (Object.keys(terminalEnv).find(
-                        (candidate) => candidate.toLowerCase() === "path",
-                      ) ?? "PATH")
-                    : "PATH";
-                const merged = mergePathEntries(
-                  terminalEnv[pathKey],
-                  managedDirectories.join(delimiter),
-                  platform,
-                );
-                if (merged !== undefined) {
-                  terminalEnv[pathKey] = merged;
-                }
-              }
-            }
-            const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
-            ptyProcess = spawnResult.process;
-            startedShell = spawnResult.shellLabel;
-
-            const processPid = ptyProcess.pid;
-            let eventsActivated = false;
-
-            let eventStamp: ReturnType<typeof advanceEventSequence> = {
-              updatedAt: session.updatedAt,
-              sequence: session.eventSequence,
-            };
-            yield* modifyManagerState((state) => {
-              session.process = ptyProcess;
-              session.shell = spawnResult.shell;
-              session.pid = processPid;
-              session.status = "running";
-              // onExit may replay an exit immediately; accept it before subscribing.
-              session.unsubscribeData = spawnResult.process.onData((data) => {
-                if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
-                  return;
-                }
-                if (eventsActivated) runFork(drainProcessEvents(session, processPid));
-              });
-              session.unsubscribeExit = spawnResult.process.onExit((event) => {
-                if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
-                  return;
-                }
-                if (eventsActivated) runFork(drainProcessEvents(session, processPid));
-              });
-              eventStamp = advanceEventSequence(session);
-              return [undefined, state] as const;
-            });
-
-            yield* publishEvent({
-              type: eventType,
-              threadId: session.threadId,
-              terminalId: session.terminalId,
-              sequence: eventStamp.sequence,
-              snapshot: snapshot(session),
-            });
-            // Publish startup before draining any events replayed during subscription.
-            eventsActivated = true;
-            if (session.processEventDrainRunning) runFork(drainProcessEvents(session, processPid));
-          }),
-        ),
-      ),
+    const cancelStartup = Effect.suspend(() =>
+      ptyProcess === null
+        ? Effect.void
+        : (ptyProcess.cancelStartup?.() ??
+          startKillEscalation(ptyProcess, session.threadId, session.terminalId)),
     );
 
-    if (startResult._tag === "Success") {
-      return;
-    }
+    yield* increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
+      Effect.andThen(
+        Effect.gen(function* () {
+          const startingAt = yield* nowIso;
+          yield* modifyManagerState((state) => {
+            session.status = "starting";
+            session.startupError = null;
+            session.shell = null;
+            session.cwd = input.cwd;
+            session.worktreePath = input.worktreePath ?? null;
+            session.cols = input.cols;
+            session.rows = input.rows;
+            session.exitCode = null;
+            session.exitSignal = null;
+            session.hasRunningSubprocess = false;
+            session.childCommandLabel = null;
+            session.pendingProcessEvents = [];
+            session.pendingProcessEventIndex = 0;
+            session.processEventDrainRunning = false;
+            session.updatedAt = startingAt;
+            startupPending = true;
+            if (newSessionKey === undefined) return [undefined, state] as const;
 
-    {
-      const error = startResult.failure;
-      const message = error.message;
-      if (ptyProcess) {
-        yield* startKillEscalation(ptyProcess, session.threadId, session.terminalId);
-      }
+            const sessions = new Map(state.sessions);
+            sessions.set(newSessionKey, session);
+            closedSessionKeys.delete(newSessionKey);
+            return [undefined, { ...state, sessions }] as const;
+          });
+          if (newSessionKey !== undefined) yield* evictInactiveSessionsIfNeeded();
+          const shellCandidates = yield* resolveShellCandidates(
+            shellResolver,
+            platform,
+            baseEnv,
+            session.runtimeEnv?.T3CODE_TERMINAL_SHELL ?? baseEnv.T3CODE_TERMINAL_SHELL,
+          ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+          const terminalEnv = createTerminalSpawnEnv(
+            baseEnv,
+            session.runtimeEnv,
+            platform,
+            yield* HostProcess.HomeDirectory,
+            session.threadId,
+          );
+          // Append managed install directories so agent commands resolve without shadowing user/system tools.
+          if (
+            options.managedBinaryCacheDir !== undefined &&
+            options.managedBinaryToolsDir !== undefined
+          ) {
+            const managedDirectories = yield* acpRegistryManagedBinaryDirectories({
+              cacheDir: options.managedBinaryCacheDir,
+              toolsDir: options.managedBinaryToolsDir,
+              platform,
+              architecture,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            );
+            if (managedDirectories.length > 0) {
+              const delimiter = platform === "win32" ? ";" : ":";
+              const pathKey =
+                platform === "win32"
+                  ? (Object.keys(terminalEnv).find(
+                      (candidate) => candidate.toLowerCase() === "path",
+                    ) ?? "PATH")
+                  : "PATH";
+              const merged = mergePathEntries(
+                terminalEnv[pathKey],
+                managedDirectories.join(delimiter),
+                platform,
+              );
+              if (merged !== undefined) {
+                terminalEnv[pathKey] = merged;
+              }
+            }
+          }
+          // Keep ownership of the PTY from the moment spawn returns through the handoff.
+          yield* Effect.uninterruptibleMask((restore) =>
+            Effect.gen(function* () {
+              const spawnResult = yield* restore(
+                trySpawn(shellCandidates, terminalEnv, session, (process) => {
+                  ptyProcess = process;
+                }),
+              );
+              ptyProcess = spawnResult.process;
+              startedShell = spawnResult.shellLabel;
 
-      yield* modifyManagerState((state) => {
-        cleanupProcessHandles(session);
-        session.status = "error";
-        session.startupError = message;
-        session.pid = null;
-        session.process = null;
-        session.hasRunningSubprocess = false;
-        session.childCommandLabel = null;
-        session.pendingProcessEvents = [];
-        session.pendingProcessEventIndex = 0;
-        session.processEventDrainRunning = false;
-        advanceEventSequence(session);
-        return [undefined, state] as const;
-      });
-      yield* unregisterTerminal({
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-      });
+              const processPid = ptyProcess.pid;
+              let eventsActivated = false;
 
-      yield* evictInactiveSessionsIfNeeded();
+              let eventStamp: ReturnType<typeof advanceEventSequence> = {
+                updatedAt: session.updatedAt,
+                sequence: session.eventSequence,
+              };
+              yield* modifyManagerState((state) => {
+                session.process = ptyProcess;
+                session.shell = spawnResult.shell;
+                session.pid = processPid;
+                session.status = "running";
+                // onExit may replay an exit immediately; accept it before subscribing.
+                session.unsubscribeData = spawnResult.process.onData((data) => {
+                  if (!enqueueProcessEvent(session, processPid, { type: "output", data })) {
+                    return;
+                  }
+                  if (eventsActivated) runFork(drainProcessEvents(session, processPid));
+                });
+                session.unsubscribeExit = spawnResult.process.onExit((event) => {
+                  if (!enqueueProcessEvent(session, processPid, { type: "exit", event })) {
+                    return;
+                  }
+                  if (eventsActivated) runFork(drainProcessEvents(session, processPid));
+                });
+                eventStamp = advanceEventSequence(session);
+                return [undefined, state] as const;
+              });
 
-      yield* publishEvent({
-        type: "error",
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-        sequence: session.eventSequence,
-        message,
-      });
-      yield* Effect.logError("failed to start terminal", {
-        threadId: session.threadId,
-        terminalId: session.terminalId,
-        cause: error,
-        ...(startedShell ? { shell: startedShell } : {}),
-      });
-    }
+              yield* restore(
+                publishEvent({
+                  type: eventType,
+                  threadId: session.threadId,
+                  terminalId: session.terminalId,
+                  sequence: eventStamp.sequence,
+                  snapshot: snapshot(session),
+                }),
+              );
+              // Publish startup before draining any events replayed during subscription.
+              startupPending = false;
+              eventsActivated = true;
+              if (session.processEventDrainRunning)
+                runFork(drainProcessEvents(session, processPid));
+            }),
+          );
+        }),
+      ),
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          yield* cancelStartup;
+          yield* failStartup(session, error.message);
+          startupPending = false;
+          yield* Effect.logError("failed to start terminal", {
+            threadId: session.threadId,
+            terminalId: session.terminalId,
+            cause: error,
+            ...(startedShell ? { shell: startedShell } : {}),
+          });
+        }).pipe(Effect.uninterruptible),
+      ),
+      Effect.onInterrupt(() =>
+        Effect.gen(function* () {
+          if (!startupPending) return;
+          yield* cancelStartup;
+          yield* failStartup(session, "Terminal startup was interrupted.");
+        }),
+      ),
+    );
   });
 
   const closeSession = Effect.fn("terminal.closeSession")(function* (
@@ -3361,15 +3406,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         startupError: null,
       };
 
-      const createdSession = session;
-      yield* modifyManagerState((state) => {
-        const sessions = new Map(state.sessions);
-        sessions.set(sessionKey, createdSession);
-        closedSessionKeys.delete(sessionKey);
-        return [undefined, { ...state, sessions }] as const;
-      });
-
-      yield* evictInactiveSessionsIfNeeded();
       yield* startSession(
         session,
         {
@@ -3379,6 +3415,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           rows,
         },
         "started",
+        sessionKey,
       );
       return snapshot(session);
     }

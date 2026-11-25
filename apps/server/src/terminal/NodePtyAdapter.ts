@@ -142,10 +142,11 @@ const waitForWindowsPid = (
   });
 
 // The private agent cancels pending connections before a child exists; public kill waits for first output.
-const killStartingWindowsPty = (process: import("node-pty").IPty) =>
+const killStartingPty = (process: import("node-pty").IPty, platform: NodeJS.Platform) =>
   Effect.try({
     try: () => {
       if (
+        platform === "win32" &&
         "_agent" in process &&
         typeof process._agent === "object" &&
         process._agent !== null &&
@@ -154,16 +155,18 @@ const killStartingWindowsPty = (process: import("node-pty").IPty) =>
       ) {
         process._agent.kill();
       } else {
-        process.kill();
+        process.kill(platform === "win32" ? undefined : "SIGKILL");
       }
     },
     catch: (cause) => new NodePtyCancelError({ terminalPid: process.pid, cause }),
   }).pipe(
     Effect.catch((error) =>
-      Effect.logWarning("failed to cancel Windows terminal startup", {
-        terminalPid: process.pid,
-        cause: error,
-      }),
+      Effect.logWarning(
+        platform === "win32"
+          ? "failed to cancel Windows terminal startup"
+          : "failed to cancel terminal startup",
+        { terminalPid: process.pid, cause: error },
+      ),
     ),
   );
 
@@ -201,6 +204,12 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   kill(signal?: string): void {
     // node-pty terminates the Windows process tree without a POSIX signal.
     this.process.kill(this.platform === "win32" ? undefined : signal);
+  }
+
+  cancelStartup(): Effect.Effect<void> {
+    return Effect.sync(() => this.disposeExitSubscription()).pipe(
+      Effect.ensuring(killStartingPty(this.process, this.platform)),
+    );
   }
 
   onData(callback: (data: string) => void): () => void {
@@ -255,41 +264,55 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
   );
 
   return PtyAdapter.PtyAdapter.of({
-    spawn: Effect.fn("NodePtyAdapter.spawn")(function* (input) {
+    spawn: Effect.fn("NodePtyAdapter.spawn")(function* (input, takeOwnership) {
       yield* ensureNodePtySpawnHelperExecutableCached;
       // ConPTY ignores node-pty's name option for TERM; set it explicitly to avoid missing/16-color values.
       const env =
         platform === "win32" && input.env["TERM"] === undefined
           ? { ...input.env, TERM: "xterm-256color" }
           : input.env;
-      const ptyProcess = yield* Effect.try({
-        try: () => {
-          const nativeProcess = nodePty.spawn(input.shell, input.args ?? [], {
-            cwd: input.cwd,
-            cols: input.cols,
-            rows: input.rows,
-            env,
-            name: "xterm-256color",
+      let nativeProcess: import("node-pty").IPty | undefined;
+      let trackedProcess: NodePtyProcess | undefined;
+
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const { native, process } = yield* Effect.try({
+            try: () => {
+              const native = nodePty.spawn(input.shell, input.args ?? [], {
+                cwd: input.cwd,
+                cols: input.cols,
+                rows: input.rows,
+                env,
+                name: "xterm-256color",
+              });
+              nativeProcess = native;
+              const process = new NodePtyProcess(native, platform);
+              trackedProcess = process;
+              return { native, process };
+            },
+            catch: (cause) =>
+              new PtyAdapter.PtySpawnError({
+                adapter: "node-pty",
+                shell: input.shell,
+                cause,
+              }),
           });
-          return { nativeProcess, process: new NodePtyProcess(nativeProcess, platform) };
-        },
-        catch: (cause) =>
-          new PtyAdapter.PtySpawnError({
-            adapter: "node-pty",
-            shell: input.shell,
-            cause,
-          }),
-      });
-      if (platform === "win32") {
-        yield* waitForWindowsPid(ptyProcess.nativeProcess, ptyProcess.process, input.shell).pipe(
-          Effect.onError(() =>
-            Effect.sync(() => ptyProcess.process.disposeExitSubscription()).pipe(
-              Effect.andThen(killStartingWindowsPty(ptyProcess.nativeProcess)),
-            ),
-          ),
-        );
-      }
-      return ptyProcess.process;
+          if (platform === "win32") {
+            yield* restore(waitForWindowsPid(native, process, input.shell));
+          }
+          if (takeOwnership !== undefined) {
+            takeOwnership(process);
+            // An interrupt can run the adapter finalizer as the mask exits. The caller now owns cleanup.
+            nativeProcess = undefined;
+          }
+          return process;
+        }),
+      ).pipe(
+        Effect.onError(() => {
+          if (nativeProcess === undefined) return Effect.void;
+          return trackedProcess?.cancelStartup() ?? killStartingPty(nativeProcess, platform);
+        }),
+      );
     }),
   });
 });

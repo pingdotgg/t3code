@@ -1,15 +1,21 @@
 import * as NodeEvents from "node:events";
 import * as NodeNet from "node:net";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { DEFAULT_TERMINAL_ID, ThreadId, type TerminalAttachStreamEvent } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Scheduler from "effect/Scheduler";
 import { vi } from "vite-plus/test";
 
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
+import * as ProcessRunner from "../processRunner.ts";
+import * as TerminalManager from "./Manager.ts";
 import * as NodePtyAdapter from "./NodePtyAdapter.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
@@ -141,6 +147,92 @@ it.effect("cancels the Windows connection without waiting for output", () =>
     assert.equal(nativeProcess._socket.listenerCount("ready_datapipe"), 0);
     assert.equal(nativeProcess.events.listenerCount("exit"), 0);
   }).pipe(Effect.provide(layerTest)),
+);
+
+const managerTestLayer = Layer.mergeAll(NodeServices.layer, NodeCrypto.layer);
+
+it.live.each(["linux", "win32"] as const)(
+  "cancels a newly acquired %s PTY before publishing startup",
+  (platform) =>
+    Effect.gen(function* () {
+      const pending = platform === "win32" ? preparePendingProcess() : undefined;
+      const nativeProcess = pending?.nativeProcess ?? makeNativeProcess();
+      if (pending) {
+        const onData = nativeProcess.onData.getMockImplementation()!;
+        nativeProcess.onData.mockImplementationOnce((callback) => {
+          Fiber.getCurrent()?.interruptUnsafe();
+          return onData(callback);
+        });
+        nativeProcess.kill.mockImplementation(() => {
+          nativeProcess.events.once("data", nativeProcess._agent.kill);
+        });
+      } else {
+        spawn.mockReturnValueOnce(nativeProcess);
+      }
+
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* fs.makeTempDirectoryScoped();
+      const adapter = yield* PtyAdapter.PtyAdapter;
+      const manager = yield* TerminalManager.makeWithOptions({
+        logsDir: cwd,
+        ptyAdapter: pending
+          ? adapter
+          : {
+              spawn: (input, takeOwnership) =>
+                adapter
+                  .spawn(input, takeOwnership)
+                  .pipe(Effect.tap(() => Effect.sync(() => Fiber.getCurrent()?.interruptUnsafe()))),
+            },
+        shellResolver: () => spawnInput.shell,
+        processKillGraceMs: 1,
+      });
+      const input = { cwd, threadId: ThreadId.make("thread"), terminalId: DEFAULT_TERMINAL_ID };
+      const events: string[] = [];
+      const unsubscribe = yield* manager.subscribe((event) =>
+        Effect.sync(() => {
+          events.push(event.type);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+      const opening = yield* manager.open(input).pipe(Effect.forkChild);
+      if (pending) {
+        yield* pending.subscribed;
+        nativeProcess.pid = 12345;
+        nativeProcess._socket.emit("ready_datapipe");
+      }
+      yield* Fiber.await(opening);
+
+      const snapshots: TerminalAttachStreamEvent[] = [];
+      const stop = yield* manager.attachStream(input, (event) =>
+        Effect.sync(() => {
+          snapshots.push(event);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stop));
+      assert.deepEqual(events, ["error"]);
+      assert.equal(snapshots[0]?.type, "snapshot");
+      if (snapshots[0]?.type === "snapshot") {
+        assert.equal(snapshots[0].snapshot.status, "error");
+        assert.equal(snapshots[0].snapshot.error, "Terminal startup was interrupted.");
+      }
+      if (pending) {
+        assert.equal(nativeProcess._agent.kill.mock.calls.length, 1);
+        assert.equal(nativeProcess.kill.mock.calls.length, 0);
+      } else {
+        assert.deepEqual(nativeProcess.kill.mock.calls, [["SIGKILL"]]);
+      }
+    }).pipe(
+      Effect.provideService(SpawnExecutableResolution, (command) => command),
+      Effect.provideService(HostProcess.Platform, platform),
+      Effect.provide(
+        Layer.mergeAll(
+          managerTestLayer,
+          ProcessRunner.layer.pipe(Layer.provide(managerTestLayer)),
+          layerTestFor(platform),
+        ),
+      ),
+    ),
 );
 
 it.effect("reports an incompatible Windows readiness API instead of hanging", () =>

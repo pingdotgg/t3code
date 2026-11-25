@@ -33,6 +33,8 @@ export interface PtyProcess {
   write(data: string | Buffer): void;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
+  // Abort an incomplete startup even when normal kill depends on shell readiness.
+  cancelStartup?(): Effect.Effect<void>;
   onData(callback: (data: string) => void): () => void;
   onExit(callback: (event: PtyExitEvent) => void): () => void;
 }
@@ -49,6 +51,10 @@ export interface PtySpawnInput {
 export class PtyAdapter extends Context.Service<
   PtyAdapter,
   {
-    readonly spawn: (input: PtySpawnInput) => Effect.Effect<PtyProcess, PtySpawnError>;
+    // When supplied, ownership transfers synchronously before startup can be interrupted.
+    readonly spawn: (
+      input: PtySpawnInput,
+      takeOwnership?: (process: PtyProcess) => void,
+    ) => Effect.Effect<PtyProcess, PtySpawnError>;
   }
 >()("@t3tools/shared/PtyAdapter") {}
