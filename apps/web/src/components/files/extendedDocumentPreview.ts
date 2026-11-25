@@ -430,7 +430,7 @@ export async function openDocument(
           name: table.attrs["table:name"] || undefined,
           rows,
           rowCount: rows.length,
-          columns: rows.reduce((columns, row) => Math.max(columns, row.length), 1),
+          columns: rows.length && rows.reduce((columns, row) => Math.max(columns, row.length), 1),
           truncated,
         };
       }),

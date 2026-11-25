@@ -4,6 +4,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   AntigravitySettings,
+  isProviderWorkspaceSnapshotPending,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
@@ -956,6 +957,65 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         )?.skills,
       ).toEqual(rescanned);
     }),
+  );
+
+  it.effect("a session in an unscanned folder does not publish its skills as scanned", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      const unscanned = () =>
+        Effect.map(harness.provider.snapshot.getSnapshot, (snapshot) => {
+          const entry = snapshot.workspaceSnapshots?.find((item) => item.cwd === "/workspace");
+          // ProviderRegistry skips the skill scan for a current entry that is not pending.
+          return entry === undefined || isProviderWorkspaceSnapshotPending(entry);
+        });
+
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      expect(yield* unscanned()).toBe(true);
+      yield* harness.provider.onAvailableCommands(commands, "/workspace");
+      expect(yield* unscanned()).toBe(true);
+    }),
+  );
+
+  it.effect("a skill scan leaves the folder entry it scanned from unchanged", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      const published = yield* harness.provider.snapshot.getSnapshot;
+      const entryOf = (provider: ServerProvider) =>
+        provider.workspaceSnapshots?.find((entry) => entry.cwd === "/workspace");
+      const skills = [{ name: "deploy", path: "/workspace/.agent/skills/deploy", enabled: true }];
+
+      yield* harness.provider.snapshotForCwd("/workspace", skills);
+      // ProviderRegistry saves the scan only if the entry it scanned from is still published.
+      const republished = mergeProviderSnapshot(
+        published,
+        yield* harness.provider.snapshot.getSnapshot,
+      );
+      expect(entryOf(republished)).toEqual(entryOf(published));
+    }),
+  );
+
+  it.effect(
+    "keeps a scanned folder's own commands when another folder reports different ones",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onAvailableCommands(commands, "/a");
+        yield* harness.provider.snapshotForCwd("/a", []);
+        yield* harness.provider.onAvailableCommands(commands.slice(1), "/b");
+        expect((yield* harness.provider.snapshotForCwd("/a", [])).slashCommands).toEqual(
+          expectedCommands,
+        );
+        yield* harness.provider.onSessionStarted(started, "/a");
+        expect(
+          (yield* harness.provider.snapshot.getSnapshot).workspaceSnapshots?.find(
+            (entry) => entry.cwd === "/a",
+          )?.slashCommands,
+        ).toEqual(expectedCommands);
+      }),
   );
 
   it.effect("bounds workspace metadata without starting sessions for workspace lookup", () =>
