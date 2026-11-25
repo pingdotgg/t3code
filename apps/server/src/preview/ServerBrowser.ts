@@ -51,6 +51,7 @@ import {
 import { AgentScope, agentScopeLauncherScript } from "@t3tools/shared/AgentScope";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { appLinkUrl } from "@t3tools/shared/appLinks";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
@@ -126,6 +127,12 @@ const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
 /** A desktop page that keeps its size draws nothing on a resize, so the wait gives up. */
 const DESKTOP_RESIZE_WAIT_MS = 1000;
+/** Answered only once the guest paints a frame; one pixel keeps it cheap. */
+const DESKTOP_PAINT_CAPTURE = {
+  format: "jpeg",
+  quality: 1,
+  clip: { x: 0, y: 0, width: 1, height: 1, scale: 1 },
+} as const;
 // A revealed tab's client opens the panel and attaches its stream a few round trips later, remote ones included.
 const REVEAL_VIEWER_WAIT_MS = 1000;
 // A desktop panel's shown report waits on the renderer's layout, which a busy machine can push past a second.
@@ -161,6 +168,96 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
   if (element.tagName !== "INPUT") return false;
   const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
   return !nonText.includes(element.type) && !element.disabled && !element.readOnly;
+}`;
+// Larger selects keep the real press: their options would not fit the 8 MB viewer socket bound.
+const SELECT_MENU_OPTION_LIMIT = 10_000;
+const SELECT_MENU_LABEL_LIMIT = 150;
+/**
+ * Guards the dropdown select at a viewport point so the trusted press that follows runs page
+ * handlers, then is cancelled after them; `pressed` records whether the page cancelled it first.
+ * Returns null where the native popup should open, including selects in frames.
+ */
+const GUARD_SELECT_AT_POINT_SCRIPT = `(x, y, optionLimit) => {
+  let element = document.elementFromPoint(x, y);
+  while (element && element.shadowRoot) {
+    const inner = element.shadowRoot.elementFromPoint(x, y);
+    if (!inner || inner === element) break;
+    element = inner;
+  }
+  if (element && element.tagName === "OPTION") element = element.closest("select");
+  if (!element || element.tagName !== "SELECT") return null;
+  if (element.multiple || element.size > 1 || element.matches(":disabled")) return null;
+  // A customizable select draws its picker in the page, where the stream already shows it.
+  if (
+    getComputedStyle(element).appearance === "base-select" &&
+    getComputedStyle(element, "::picker(select)").appearance === "base-select"
+  )
+    return null;
+  if (element.options.length > optionLimit) return null;
+  const state = { select: element, pressed: false, cancelled: false };
+  let settled = false;
+  const settle = (event) => {
+    if (settled || !event.composedPath().includes(element)) return;
+    settled = true;
+    state.pressed = !event.defaultPrevented;
+    Event.prototype.preventDefault.call(event);
+    if (state.pressed) element.focus({ preventScroll: true });
+  };
+  // A page that stops the press keeps it from the bubbling guard, so stopping it settles it;
+  // the page may still cancel it afterwards, which cancelled records.
+  const watch = (event) => {
+    event.preventDefault = function () {
+      if (this.composedPath().includes(element)) state.cancelled = true;
+      return Event.prototype.preventDefault.call(this);
+    };
+    for (const name of ["stopPropagation", "stopImmediatePropagation"]) {
+      const stop = event[name];
+      event[name] = function () {
+        settle(this);
+        return stop.call(this);
+      };
+    }
+  };
+  addEventListener("mousedown", watch, true);
+  addEventListener("mousedown", settle);
+  state.stop = () => {
+    removeEventListener("mousedown", watch, true);
+    removeEventListener("mousedown", settle);
+  };
+  return state;
+}`;
+/** Describes a pressed select in viewport CSS px and keeps the offered options. */
+const OFFER_SELECT_MENU_SCRIPT = `function (labelLimit, optionLimit) {
+  const select = this.select;
+  // Page handlers ran in between: they may have added options or removed the select.
+  if (!this.pressed || this.cancelled || !select.isConnected || !select.ownerDocument.defaultView) return null;
+  if (select.options.length > optionLimit) return null;
+  const { left, top, width, height } = select.getBoundingClientRect();
+  const view = select.ownerDocument.defaultView;
+  const shown = (element) => !element.hidden && view.getComputedStyle(element).display !== "none";
+  this.offered = Array.from(select.options).filter(
+    (option) => shown(option) && (option.parentElement.tagName !== "OPTGROUP" || shown(option.parentElement)),
+  );
+  return {
+    options: this.offered.map((option) => ({
+      label: option.label.slice(0, labelLimit),
+      disabled: option.matches(":disabled"),
+    })),
+    selectedIndex: this.offered.indexOf(select.options[select.selectedIndex]),
+    x: left,
+    y: top,
+    width,
+    height,
+  };
+}`;
+const CHOOSE_SELECT_OPTION_SCRIPT = `function (index) {
+  const { select, offered } = this;
+  const option = offered && offered[index];
+  if (!option || !option.isConnected || !select.ownerDocument.defaultView || option.closest("select") !== select) return;
+  if (option.matches(":disabled") || select.matches(":disabled") || option.selected) return;
+  option.selected = true;
+  select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+  select.dispatchEvent(new Event("change", { bubbles: true }));
 }`;
 const UNATTACHED_FILL_VIEWPORT = { width: 1280, height: 800 } as const;
 const NAVIGATION_TIMEOUT_MS = 15_000;
@@ -244,6 +341,17 @@ export type ServerBrowserViewerOutput =
       readonly accept: string;
     }
   | { readonly _tag: "fileChooserClosed"; readonly id: string }
+  | {
+      readonly _tag: "selectMenu";
+      readonly id: string;
+      readonly options: ReadonlyArray<{ readonly label: string; readonly disabled: boolean }>;
+      readonly selectedIndex: number;
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    }
+  | { readonly _tag: "selectMenuClosed"; readonly id: string }
   | { readonly _tag: "popup"; readonly tabId: string }
   | {
       readonly _tag: "download";
@@ -304,6 +412,14 @@ interface ViewerState {
   readonly canOperate: boolean;
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
+  /** Handle for the guarded select under a held left press; its release offers the menu. */
+  selectPress: string | null;
+  /** Handle for the select and options this viewer was last offered; only that offer answers. */
+  selectMenu: {
+    readonly id: string;
+    readonly objectId: string;
+    readonly session: CDPSession;
+  } | null;
   readonly push: (output: ServerBrowserViewerOutput) => void;
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
@@ -379,6 +495,8 @@ interface ServerTab {
   desktopViewportChanges: number;
   /** Settles at the desktop page's next main-frame resize. */
   desktopResize: PromiseWithResolvers<void>;
+  /** The last resize failed undrawn, so the tab's setting is a size the page never took. */
+  desktopResizeUndrawn: boolean;
   loading: boolean;
   loadError: PreviewAutomationLoadError | undefined;
   /** The renderer crash this page died of, or the one the page it replaced died of. */
@@ -1183,6 +1301,7 @@ const make = Effect.gen(function* () {
       desktopViewportStale: true,
       desktopViewportChanges: 0,
       desktopResize: Promise.withResolvers<void>(),
+      desktopResizeUndrawn: false,
       loading: false,
       loadError: undefined,
       // The page a crash left behind is blank; the session still names what crashed.
@@ -1236,15 +1355,31 @@ const make = Effect.gen(function* () {
     }
     // Playwright's `request.frame()` throws for a request issued before its frame exists, and a
     // throw from a page listener is uncaught, so such a request is not a main-frame navigation.
-    const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) => {
+    const isMainFrameNavigation = (request: {
+      isNavigationRequest(): boolean;
+      frame(): unknown;
+    }) => {
       try {
         return request.isNavigationRequest() && request.frame() === page.mainFrame();
       } catch {
         return false;
       }
     };
+    // Chromium aborts an app link's request and keeps the page, so it is no navigation.
+    const isMainNavigation = (request: {
+      isNavigationRequest(): boolean;
+      url(): string;
+      frame(): unknown;
+    }) => appLinkUrl(request.url()) === null && isMainFrameNavigation(request);
     const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
+      if (appLinkUrl(request.url()) !== null && isMainFrameNavigation(request)) {
+        // A redirect into an app link ends the navigation that led there.
+        const redirectedFrom = request.redirectedFrom();
+        const generation = redirectedFrom && navigationGenerations.get(redirectedFrom);
+        if (generation) settleAbortedNavigation(tab, generation, request.url(), undefined);
+        return;
+      }
       if (!isMainNavigation(request)) return;
       // Playwright can deliver the first request after Stop has already settled its navigation.
       const stoppedInitialRequest =
@@ -1272,6 +1407,10 @@ const make = Effect.gen(function* () {
       tab.pendingInitialRequestUrl = null;
       tab.loading = false;
       void reportLoaded(tab);
+    });
+    // frameNavigated is cross-document only; a select's handle dies with its document.
+    cdp.on("Page.frameNavigated", ({ frame }) => {
+      if (!frame.parentId) for (const viewer of tab.viewers) withdrawSelectMenu(viewer);
     });
     page.on("framenavigated", (frame) => {
       const open = tab.fileChooser;
@@ -2815,7 +2954,8 @@ const make = Effect.gen(function* () {
             viewport: tab.page.viewportSize() ?? UNATTACHED_FILL_VIEWPORT,
           };
         }
-        const changed = from?.width !== to?.width || from?.height !== to?.height;
+        const changed =
+          tab.desktopResizeUndrawn || from?.width !== to?.width || from?.height !== to?.height;
         const remainingMs = () => Math.max(0, deadlineMs - performance.now());
         const within = <A>(promise: Promise<A>, ms: number) =>
           runPromise(
@@ -2827,9 +2967,40 @@ const make = Effect.gen(function* () {
         // The desktop draws the new size after the session update; its page resize says it has.
         // Half the time left keeps room for the read, which runs even if nothing was drawn,
         // because a page can keep another size than the one asked for.
-        if (changed) await within(drawn, Math.min(DESKTOP_RESIZE_WAIT_MS, remainingMs() / 2));
+        let undrawn = false;
+        if (changed) {
+          // Electron resizes no hidden guest it does not paint; a pending capture makes the desktop paint it.
+          let waiting = true;
+          void (async () => {
+            while (waiting && !tab.closing) {
+              await tab.cdp.send("Page.captureScreenshot", DESKTOP_PAINT_CAPTURE);
+            }
+          })().catch(constVoid);
+          try {
+            undrawn =
+              (await within(
+                drawn.then(() => true),
+                Math.min(DESKTOP_RESIZE_WAIT_MS, remainingMs() / 2),
+              )) === null;
+          } finally {
+            waiting = false;
+          }
+        }
         const changes = tab.desktopViewportChanges;
         const measured = await within(measureDesktopViewport(tab), remainingMs());
+        // A window that does not paint, such as a minimized one, never draws the new size.
+        // Fill asks for no size, so only a fixed one can be missed.
+        tab.desktopResizeUndrawn =
+          undrawn &&
+          to !== null &&
+          (measured?.width !== to.width || measured?.height !== to.height);
+        if (tab.desktopResizeUndrawn) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message:
+              "The desktop did not draw the page at the new size. Show or restore the T3 Code window and try again.",
+          });
+        }
         // Only a read after the draw, with no page resize or load during it, measures this resize.
         return {
           tabId: tab.tabId,
@@ -2887,10 +3058,14 @@ const make = Effect.gen(function* () {
         return recordAction(tab, "upload", () =>
           uploadFiles(tab, input as PreviewAutomationUploadInput),
         );
-      case "type":
-        return recordAction(tab, "type", () =>
-          ServerBrowserPage.type(tab.page, input as PreviewAutomationTypeInput),
-        );
+      case "type": {
+        // As for click: typing stops at the broker's deadline instead of running on after the reply.
+        const typeInput = {
+          ...(input as PreviewAutomationTypeInput),
+          timeoutMs: Math.max(1, Math.floor(deadlineMs - performance.now())),
+        };
+        return recordAction(tab, "type", () => ServerBrowserPage.type(tab.page, typeInput));
+      }
       case "press":
         return recordAction(tab, "press", () =>
           ServerBrowserPage.press(tab.page, input as PreviewAutomationPressInput),
@@ -3005,7 +3180,54 @@ const make = Effect.gen(function* () {
         .catch(constVoid);
     }
     viewer.pressedButtons.clear();
+    const press = viewer.selectPress;
+    viewer.selectPress = null;
+    if (press) releaseSelectHandle(viewer, session, press);
+    withdrawSelectMenu(viewer);
     viewer.requestedSize = null;
+  };
+
+  const releaseSelectHandle = (viewer: ViewerState, session: CDPSession, objectId: string) => {
+    if (objectId === viewer.selectPress || objectId === viewer.selectMenu?.objectId) return;
+    void session.send("Runtime.releaseObject", { objectId }).catch(constVoid);
+  };
+
+  const withdrawSelectMenu = (viewer: ViewerState) => {
+    const offer = viewer.selectMenu;
+    if (!offer) return;
+    viewer.selectMenu = null;
+    viewer.push({ _tag: "selectMenuClosed", id: offer.id });
+    releaseSelectHandle(viewer, offer.session, offer.objectId);
+  };
+
+  // Chromium draws a select's popup outside the page, where the screencast never sees it, and on
+  // a desktop host it is a native menu CDP cannot dismiss, so the press must not open it.
+  const guardSelectPress = async (session: CDPSession, x: number, y: number) => {
+    const { result } = await session.send("Runtime.evaluate", {
+      expression: `(${GUARD_SELECT_AT_POINT_SCRIPT})(${x}, ${y}, ${SELECT_MENU_OPTION_LIMIT})`,
+    });
+    return result.objectId ?? null;
+  };
+
+  // Offered after the release, so options a page adds or replaces on mousedown or click count.
+  const offerSelectMenu = async (session: CDPSession, viewer: ViewerState, objectId: string) => {
+    const described = await session
+      .send("Runtime.callFunctionOn", {
+        objectId,
+        functionDeclaration: OFFER_SELECT_MENU_SCRIPT,
+        arguments: [{ value: SELECT_MENU_LABEL_LIMIT }, { value: SELECT_MENU_OPTION_LIMIT }],
+        returnByValue: true,
+      })
+      .catch(() => null);
+    const menu = described?.result.value as Omit<
+      Extract<ServerBrowserViewerOutput, { _tag: "selectMenu" }>,
+      "_tag" | "id"
+    > | null;
+    if (!menu) return;
+    const previous = viewer.selectMenu;
+    viewer.selectMenu = { id: NodeCrypto.randomUUID(), objectId, session };
+    if (previous) releaseSelectHandle(viewer, previous.session, previous.objectId);
+    viewer.push({ _tag: "selectMenu", id: viewer.selectMenu.id, ...menu });
   };
 
   const dispatchViewerInput = async (
@@ -3020,24 +3242,55 @@ const make = Effect.gen(function* () {
     switch (message.type) {
       case "mouse": {
         const action = message.action;
+        const left = message.button === "left";
+        if (left && action === "down") {
+          const stale = viewer.selectPress;
+          viewer.selectPress = null;
+          if (stale) releaseSelectHandle(viewer, session, stale);
+          if (!tab.dialog) {
+            viewer.selectPress = await guardSelectPress(
+              session,
+              num(message.x),
+              num(message.y),
+            ).catch(() => null);
+          }
+        }
+        const guarded = left && action === "down" ? viewer.selectPress : null;
         const type =
           action === "down" ? "mousePressed" : action === "up" ? "mouseReleased" : "mouseMoved";
         const button = ["none", "left", "middle", "right"].includes(String(message.button))
           ? (message.button as "none" | "left" | "middle" | "right")
           : "none";
-        await session.send("Input.dispatchMouseEvent", {
-          type,
-          x: num(message.x),
-          y: num(message.y),
-          button,
-          buttons: num(message.buttons),
-          clickCount: num(message.clickCount, type === "mouseMoved" ? 0 : 1),
-          modifiers,
-        });
+        try {
+          await session.send("Input.dispatchMouseEvent", {
+            type,
+            x: num(message.x),
+            y: num(message.y),
+            button,
+            buttons: num(message.buttons),
+            clickCount: num(message.clickCount, type === "mouseMoved" ? 0 : 1),
+            modifiers,
+          });
+        } finally {
+          if (guarded) {
+            await session
+              .send("Runtime.callFunctionOn", {
+                objectId: guarded,
+                functionDeclaration: "function () { this.stop(); }",
+              })
+              .catch(constVoid);
+          }
+        }
         if (button !== "none") {
           if (action === "down")
             viewer.pressedButtons.set(button, { x: num(message.x), y: num(message.y) });
           else if (action === "up") viewer.pressedButtons.delete(button);
+        }
+        const press = left && action === "up" ? viewer.selectPress : null;
+        if (press) {
+          viewer.selectPress = null;
+          await offerSelectMenu(session, viewer, press);
+          releaseSelectHandle(viewer, session, press);
         }
         return;
       }
@@ -3161,6 +3414,21 @@ const make = Effect.gen(function* () {
         }
         tab.control.trackUntilHandoff(tab.page.reload(VIEWER_NAVIGATION_OPTIONS));
         return;
+      case "selectMenu": {
+        const offer = viewer.selectMenu;
+        if (!offer || message.id !== offer.id || typeof message.index !== "number") return;
+        viewer.selectMenu = null;
+        await session
+          .send("Runtime.callFunctionOn", {
+            objectId: offer.objectId,
+            functionDeclaration: CHOOSE_SELECT_OPTION_SCRIPT,
+            arguments: [{ value: message.index }],
+            userGesture: true,
+          })
+          .catch(constVoid);
+        releaseSelectHandle(viewer, session, offer.objectId);
+        return;
+      }
       case "probe": {
         const x = num(message.x);
         const y = num(message.y);
@@ -3225,13 +3493,25 @@ const make = Effect.gen(function* () {
       canOperate: input.canOperate,
       pressedKeys: new Map(),
       pressedButtons: new Map(),
+      selectPress: null,
+      selectMenu: null,
       push: (next) => {
         // Dropped frames must still release Chromium.
         if (Queue.offerUnsafe(output, next)) return;
         if (next._tag === "frame") runFork(next.ack);
         // State a stalled viewer cannot miss compacts its backlog. It runs
         // synchronously so an older compaction can never land after a newer one.
-        else if (["gone", "reconnect", "control", "viewport", "fileChooser"].includes(next._tag)) {
+        else if (
+          [
+            "gone",
+            "reconnect",
+            "control",
+            "viewport",
+            "fileChooser",
+            "selectMenu",
+            "selectMenuClosed",
+          ].includes(next._tag)
+        ) {
           const dropped = runSyncExit(Queue.clear(output));
           if (dropped._tag === "Failure") return;
           const items = [...dropped.value, next];

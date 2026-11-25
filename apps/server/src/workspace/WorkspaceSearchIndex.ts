@@ -285,6 +285,28 @@ function buildContentSearchQuery(input: Omit<ProjectSearchContentsInput, "cwd">)
     : { searchQuery: input.query.toLowerCase(), regexMode: false };
 }
 
+const ASCII_WORD = /^\w+$/;
+
+// A whole-word search for an ASCII word asks fff for the word itself, so substring hits are dropped
+// natively instead of filling pages with lines the JS check then discards. `-u` keeps `\b` and `i`
+// to ASCII: plain search does not fold `ſ` or `K`, and any non-ASCII neighbour stays a candidate.
+function buildWholeWordPattern(query: string, caseSensitive: boolean): string {
+  return `(?${caseSensitive ? "" : "i"}-u)\\b${query}\\b`;
+}
+
+// fff's ranges for that pattern are not used: the JS word check decides, on every hit in the line.
+function findWordRanges(
+  line: string,
+  word: string,
+  caseSensitive: boolean,
+): Array<{ readonly start: number; readonly end: number }> {
+  // No `u` flag: with it, `i` would fold `ſ` and `K` onto ASCII letters.
+  return Array.from(line.matchAll(new RegExp(word, caseSensitive ? "g" : "gi")), (match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+}
+
 function mapContentMatchRanges(
   line: string,
   byteRanges: ReadonlyArray<readonly [number, number]>,
@@ -727,6 +749,12 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           "core.quotePath=false",
           "-c",
           "core.fsmonitor=false",
+          "-c",
+          "grep.column=false",
+          "-c",
+          "grep.fullName=false",
+          "-c",
+          "submodule.recurse=false",
           "grep",
           "--untracked",
           "--no-color",
@@ -934,8 +962,8 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     repository: string,
     entries: ReadonlyArray<ProjectEntry>,
   ) {
-    const relativePaths = entries.map((entry) =>
-      repository ? entry.path.slice(repository.length + 1) : entry.path,
+    const relativePaths = entries.map(
+      (entry) => `./${repository ? entry.path.slice(repository.length + 1) : entry.path}`,
     );
     const repositoryCwd = path.join(cwd, repository);
     const result = yield* vcsProcess
@@ -943,6 +971,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         operation: "WorkspaceSearchIndex.listGitIgnored",
         command: "git",
         // fff applies ignore rules to tracked paths too, so the index is not consulted.
+        // ./ avoids leading : pathspec magic; check-ignore rejects --literal-pathspecs.
         args: ["-c", "core.fsmonitor=false", "check-ignore", "--no-index", "-z", "--stdin"],
         cwd: repositoryCwd,
         stdin: `${relativePaths.join("\0")}\0`,
@@ -973,7 +1002,10 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     return result.stdout
       .split("\0")
       .filter(Boolean)
-      .map((relativePath) => (repository ? `${repository}/${relativePath}` : relativePath));
+      .map((ignoredPath) => {
+        const relativePath = ignoredPath.replace(/^\.\//, "");
+        return repository ? `${repository}/${relativePath}` : relativePath;
+      });
   });
 
   const scanSymlinkEntries = Effect.fn("WorkspaceSearchIndex.scanSymlinkEntries")(function* () {
@@ -1318,7 +1350,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
       );
       contentIndexPending = false;
     }
-    let { searchQuery, regexMode } = buildContentSearchQuery(input);
+    // fff reads glob and path syntax out of a query even in regex mode, so only a bare word qualifies.
+    const wholeWordPrefilter = input.wholeWord && !input.useRegex && ASCII_WORD.test(input.query);
+    let { searchQuery, regexMode } = wholeWordPrefilter
+      ? { searchQuery: buildWholeWordPattern(input.query, input.caseSensitive), regexMode: true }
+      : buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.
     const rawPageSize = input.wholeWord
@@ -1351,9 +1387,11 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
 
       for (const match of result.items) {
         if (isIgnoredPath(ignoredPaths, match.relativePath, hostIsWindows)) continue;
-        const matchRanges = mapContentMatchRanges(match.lineContent, match.matchRanges).filter(
-          (range) => !input.wholeWord || isWholeWordRange(match.lineContent, range),
-        );
+        const matchRanges = (
+          wholeWordPrefilter
+            ? findWordRanges(match.lineContent, input.query, input.caseSensitive)
+            : mapContentMatchRanges(match.lineContent, match.matchRanges)
+        ).filter((range) => !input.wholeWord || isWholeWordRange(match.lineContent, range));
         // fff reports hits past its 512-char lineContent cap with no ranges, so whole words can't be verified there.
         if (input.wholeWord && matchRanges.length === 0) continue;
         matches.push({

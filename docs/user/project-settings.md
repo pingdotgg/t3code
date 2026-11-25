@@ -48,6 +48,11 @@ Settings that are environment-wide stay read-only while a project is selected. W
 targets disagree, a control shows **Mixed** until you choose one value. Appearance, keyboard,
 and other phone-only settings ignore the filter.
 
+## Projects with several repositories
+
+A project covers every repository inside its folder, and any folder you add under **Settings →
+Projects → Repositories**; see [Projects with several repositories](multi-repo-projects.md).
+
 ## Pin and archive projects
 
 Pinned projects come first in the project pickers: the project picker on a new thread, the
@@ -98,6 +103,9 @@ project starts a new thread there on its next run.
 
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
+An archived thread refuses messages, so a task that posts into one stays on and fails
+each run until you unarchive the thread or pick another destination. To set a task's thread
+aside without breaking it, settle the thread; see [Settle or archive](thread-sidebar.md#settle-or-archive).
 
 You can edit, pause, resume, run immediately, or delete a task from the list.
 Webhook tasks only run when their URL is called, so they can't be run
@@ -283,7 +291,8 @@ Choose **Monogram** in the icon picker to set one or two letters or numbers and 
 
 When no image is found, web and desktop show a two-character monogram with a color
 from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
-`Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
+`Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`. A name that starts with a Chinese,
+Japanese, or Korean character uses only that character, so `健康顾问` becomes `健`.
 
 ## Keep the default branch current
 

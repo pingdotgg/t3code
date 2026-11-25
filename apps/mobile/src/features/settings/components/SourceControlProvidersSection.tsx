@@ -18,7 +18,8 @@ import * as Schema from "effect/Schema";
 import { useNavigation } from "@react-navigation/native";
 import { msg, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
-import { Linking, Platform, View } from "react-native";
+import { Platform, View } from "react-native";
+import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 
 import { AppText as Text } from "../../../components/ui/AppText";
 import { Button } from "../../../components/ui/Button";
@@ -300,8 +301,9 @@ export function SourceControlTokenForm(props: {
             tone="text"
             size="compact"
             onPress={() =>
-              void Linking.openURL(credentials.newTokenUrl(target || defaultHost)).catch(
-                () => undefined,
+              void tryOpenExternalUrl(
+                credentials.newTokenUrl(target || defaultHost),
+                "provider-auth",
               )
             }
           />

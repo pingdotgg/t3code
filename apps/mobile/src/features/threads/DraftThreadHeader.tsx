@@ -59,6 +59,7 @@ export function DraftThreadHeader(props: {
         environmentId,
         threadId: props.thread.id,
         hasThread: false,
+        tracksRepositories: (props.project.trackedFolders?.length ?? 0) > 0,
         currentBranch: props.thread.branch,
         gitStatus: status.data,
         gitOperationLabel: vcsActionLabelText(progress, messages),

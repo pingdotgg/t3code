@@ -1,7 +1,8 @@
 import { threadIssueKeyOf, type ScopedThreadRef, type ThreadIssueLink } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useGT } from "gt-react";
 import { MessageSquareIcon } from "lucide-react";
-import type { MouseEvent } from "react";
+import { useState, type MouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -19,7 +20,7 @@ import {
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
 import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
-import { ThreadDetailsControl } from "./ThreadDetailsControl";
+import { ThreadDetailsControl, ThreadDetailsMoreButton } from "./ThreadDetailsControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 function LinkedIssueRow({
@@ -123,7 +124,9 @@ function LinkedIssueRow({
         </TooltipPopup>
       </Tooltip>
       <div className="flex h-5 min-w-0 items-center gap-1.5 ps-9 pe-2.5 text-xs text-muted-foreground">
-        <span className="shrink-0 tabular-nums">{link.displayKey}</span>
+        <span aria-hidden className="shrink-0 tabular-nums">
+          {link.displayKey}
+        </span>
         {trackerIcon}
         {comments}
       </div>
@@ -154,7 +157,10 @@ export function ThreadDetailsIssueRows({
   mountScope?: "thread-details" | "linked-items" | "sidebar-tooltip";
   onOpen?: () => void;
 }) {
-  return links.map((link) => (
+  const [expandedThread, setExpandedThread] = useState<string | null>(null);
+  const threadKey = scopedThreadKey(threadRef);
+  const expanded = expandedThread === threadKey;
+  const row = (link: ThreadIssueLink) => (
     <LinkedIssueRow
       key={threadIssueKeyOf(link)}
       link={link}
@@ -163,5 +169,22 @@ export function ThreadDetailsIssueRows({
       mountScope={mountScope}
       onOpen={onOpen}
     />
-  ));
+  );
+  const [first, ...rest] = links;
+  if (first === undefined || !compact || rest.length === 0) return <>{links.map(row)}</>;
+  return (
+    <>
+      {row(first)}
+      {expanded ? (
+        <div data-thread-details-issue-list className="flex flex-col">
+          {rest.map(row)}
+        </div>
+      ) : null}
+      <ThreadDetailsMoreButton
+        expanded={expanded}
+        remaining={rest.length}
+        onToggle={() => setExpandedThread(expanded ? null : threadKey)}
+      />
+    </>
+  );
 }

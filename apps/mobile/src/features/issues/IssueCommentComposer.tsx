@@ -73,6 +73,7 @@ export function IssueCommentComposer(props: {
     readDraftMessage: () => latestDraft.current,
     selection,
     disabled: props.blocked !== null,
+    hidden: props.blocked !== null,
     onChangeDraftMessage: changeDraft,
     onChangeSelection: setSelection,
   });
@@ -134,10 +135,6 @@ export function IssueCommentComposer(props: {
             paddingVertical: chrome.paddingVertical,
           }}
         >
-          <ComposerDictationError
-            error={voiceInput.state.phase === "error" ? voiceInput.state.error : null}
-            onDismiss={voiceInput.cancel}
-          />
           {props.blocked !== null ? (
             <View className="h-[44px] flex-row items-center">
               <Text
@@ -152,6 +149,10 @@ export function IssueCommentComposer(props: {
             </View>
           ) : (
             <>
+              <ComposerDictationError
+                error={voiceInput.state.phase === "error" ? voiceInput.state.error : null}
+                onDismiss={voiceInput.cancel}
+              />
               <View onLayout={compactEditor.onRowLayout}>
                 <ComposerDictationDraftContent
                   className="flex-row items-end"
@@ -170,7 +171,11 @@ export function IssueCommentComposer(props: {
                   />
                   {/* TalkBack orders siblings by position; outside this row the editor reads after Send. */}
                   <Animated.View
-                    style={[compactEditor.editorStyle, dictating ? { display: "none" } : undefined]}
+                    style={[
+                      compactEditor.editorStyle,
+                      // iOS destroys a view under display: none; the editor would lose its focus and caret.
+                      Platform.OS === "android" && dictating ? { display: "none" } : undefined,
+                    ]}
                   >
                     <ComposerEditor
                       ref={editorRef}

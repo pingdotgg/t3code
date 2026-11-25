@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 
 import {
   BUILT_IN_SOURCE_CONTROL_DRIVER_LIST,
+  changeRequestsClosedBy,
   sourceControlDefinitions,
 } from "./sourceControlDefinitions.ts";
 
@@ -32,6 +33,7 @@ it.each([
     "group/sub/web",
     "7",
   ],
+  ["https://gitlab.com/acme/web/-/issues/incident/12", "gitlab", "gitlab.com", "acme/web", "12"],
   ["https://codeberg.org/acme/web/issues/3", "forgejo", "codeberg.org", "acme/web", "3"],
   [
     "https://dev.azure.com/acme/Web%20App/_workitems/edit/9",
@@ -52,4 +54,27 @@ it.each([
   "https://github.com/acme/web/issues/0",
 ])("does not read %s as an issue", (url) => {
   expect(sourceControlDefinitions.parseIssueUrl(url)).toBeNull();
+});
+
+it.each([
+  ["gh pr merge 19 --squash", [19]],
+  ['gh pr merge "19" --squash', [19]],
+  ['/bin/zsh -lc "gh pr merge 19"', [19]],
+  ['gh pr merge 19 --squash --subject "Release 20"', [19]],
+  [`/bin/zsh -lc "gh pr merge 19 --subject 'Release 20'"`, [19]],
+  ["gh pr merge 19 --body 'see https://github.com/o/r/pull/20'", [19]],
+  ["gh pr merge 19 --body https://github.com/o/r/pull/20", [19]],
+  ["gh pr merge 19 # then 20", [19]],
+  ["gh pr merge --squash --match-head-commit 3b2f958 #19", [19]],
+  ["gh pr close https://github.com/o/r/pull/19 && gh pr merge 20", [19, 20]],
+  ["glab mr merge https://gitlab.com/o/r/-/merge_requests/7", [7]],
+  ["sleep 30; cafe pr merge 26271", [26271]],
+  ["az repos pr update --id 19 --status completed", [19]],
+  ["az repos pr update --id=19 --status=abandoned", [19]],
+  ["gh pr merge --squash", "any"],
+  ["gh stack merge", "any"],
+  ["gh pr merge 19 && gh pr merge --auto", "any"],
+] as const)("%s closes %j", (command, expected) => {
+  const closed = changeRequestsClosedBy(command);
+  expect(closed === "any" ? closed : [...closed]).toEqual(expected);
 });

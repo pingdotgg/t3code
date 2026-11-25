@@ -24,6 +24,7 @@ import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
+import { FileSearchResults } from "./FileSearchResults";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -246,7 +247,9 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   // Command rows stream their output, including the final output, from the server.
   const environmentStreamsOutput = useCommandOutputStreaming(props.environmentId);
   const streamsOutput =
-    (props.source !== undefined || environmentStreamsOutput) &&
+    (props.source === undefined
+      ? environmentStreamsOutput
+      : props.source.commandOutput !== undefined) &&
     props.projectedItem.item.type === "command_execution";
   const fetched = useFetchedTurnItem(
     props.projectedItem,
@@ -340,7 +343,11 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </div>
       ) : null}
 
-      {item.type === "file_search" && item.pattern?.trim() ? (
+      {/* The row label already shows the pattern unless the provider titled the search itself. */}
+      {item.type === "file_search" &&
+      item.pattern?.trim() &&
+      item.title &&
+      !item.title.includes(item.pattern.trim()) ? (
         <div className={cn("text-foreground/85", monoClassName)}>{item.pattern}</div>
       ) : null}
 
@@ -349,20 +356,11 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "file_search" && item.results?.length ? (
-        <ul className="space-y-1">
-          {item.results.map((result) => (
-            <li key={JSON.stringify(result)}>
-              <span className="font-mono text-foreground/80">
-                {formatWorkspaceRelativePath(result.fileName, props.workspaceRoot)}
-                {result.line === undefined ? "" : `:${result.line}`}
-                {result.column === undefined ? "" : `:${result.column}`}
-              </span>
-              {result.preview ? (
-                <p className="mt-0.5 whitespace-pre-wrap text-muted-foreground">{result.preview}</p>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+        <FileSearchResults
+          pattern={item.pattern}
+          results={item.results}
+          workspaceRoot={props.workspaceRoot}
+        />
       ) : null}
 
       {item.type === "web_search" && item.results?.length ? (
