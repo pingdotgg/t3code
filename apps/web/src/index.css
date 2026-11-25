@@ -2723,3 +2723,230 @@ code {
 .messages-timeline-scroll:focus-visible {
   outline: none;
 }
+
+/* Fork: Kaluwa folder tree. Values come from the sidebar mockup the owner tuned; kept as
+   plain, unlayered CSS so they win over the rows' own utilities and stay easy to retune. */
+:root {
+  --kaluwa-row-pad: var(--sidebar-row-content-inset);
+  --kaluwa-proj-icon: 26px;
+  --kaluwa-proj-font: 13px;
+  --kaluwa-proj-weight: 650;
+  --kaluwa-thread-font: 11.5px;
+  --kaluwa-thread-weight: 450;
+  --kaluwa-thread-row-h: 32px;
+  --kaluwa-avatar: 12px;
+  --kaluwa-badge-font: 6.5px;
+  --kaluwa-indent: 18px;
+  --kaluwa-tree-line: color-mix(in srgb, var(--sidebar-foreground) 22%, transparent);
+  --kaluwa-tree-w: 1.5px;
+  --kaluwa-tree-radius: 8px;
+  --kaluwa-ring-w: 2px;
+  --kaluwa-ring-gap: 2px;
+  --kaluwa-spin: 0.9s;
+  --kaluwa-st-working: #60a5fa;
+  --kaluwa-st-waiting: #9ca3af;
+  --kaluwa-st-approval: #fbbf24;
+  --kaluwa-st-input: #a5b4fc;
+  --kaluwa-st-failed: #f87171;
+  --kaluwa-st-done: #34d399;
+  --kaluwa-trunk-x: calc(var(--kaluwa-row-pad) + var(--kaluwa-proj-icon) / 2 - 1px);
+  --kaluwa-ring-out: calc(var(--kaluwa-ring-gap) + var(--kaluwa-ring-w));
+}
+
+.kaluwa-folder-icon {
+  width: var(--kaluwa-proj-icon);
+  height: var(--kaluwa-proj-icon);
+}
+.kaluwa-folder-name {
+  font-size: var(--kaluwa-proj-font);
+  font-weight: var(--kaluwa-proj-weight);
+  letter-spacing: -0.005em;
+}
+.kaluwa-folder-head-trunk {
+  display: none;
+  position: absolute;
+  left: var(--kaluwa-trunk-x);
+  top: calc(var(--spacing) * 9 / 2 + var(--kaluwa-proj-icon) / 2 + 3px);
+  bottom: 0;
+  border-left: var(--kaluwa-tree-w) solid var(--kaluwa-tree-line);
+  pointer-events: none;
+}
+li:has(+ .kaluwa-folder-thread) > .kaluwa-folder-head-trunk {
+  display: block;
+}
+
+.kaluwa-folder-thread {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: var(--kaluwa-thread-row-h);
+  contain-intrinsic-size: auto var(--kaluwa-thread-row-h);
+}
+.kaluwa-folder-pill {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  height: calc(var(--kaluwa-thread-row-h) - 2px);
+  margin-left: calc(var(--kaluwa-trunk-x) + var(--kaluwa-indent));
+  padding: 0 6px 0 calc(4px + var(--kaluwa-ring-out));
+  gap: calc(8px + var(--kaluwa-ring-out));
+  border-radius: 7px;
+}
+.kaluwa-folder-pill.flex-col {
+  height: auto;
+  padding-block: 4px;
+}
+.kaluwa-folder-title {
+  font-size: var(--kaluwa-thread-font);
+  font-weight: var(--kaluwa-thread-weight);
+}
+.kaluwa-tree-elbow,
+.kaluwa-tree-trunk {
+  position: absolute;
+  left: var(--kaluwa-trunk-x);
+  border: 0 solid var(--kaluwa-tree-line);
+  pointer-events: none;
+}
+.kaluwa-tree-elbow {
+  top: 0;
+  height: 50%;
+  width: calc(var(--kaluwa-indent) - 3px);
+  border-left-width: var(--kaluwa-tree-w);
+  border-bottom-width: var(--kaluwa-tree-w);
+  border-bottom-left-radius: var(--kaluwa-tree-radius);
+}
+.kaluwa-tree-trunk {
+  top: calc(50% - var(--kaluwa-tree-radius));
+  bottom: 0;
+  border-left-width: var(--kaluwa-tree-w);
+}
+.kaluwa-folder-thread:not(:has(+ .kaluwa-folder-thread)) > .kaluwa-tree-trunk {
+  display: none;
+}
+
+[data-kaluwa-status="working"] {
+  --kaluwa-st: var(--kaluwa-st-working);
+}
+[data-kaluwa-status="waiting"] {
+  --kaluwa-st: var(--kaluwa-st-waiting);
+}
+[data-kaluwa-status="approval"],
+[data-kaluwa-status="woke"] {
+  --kaluwa-st: var(--kaluwa-st-approval);
+}
+[data-kaluwa-status="input"],
+[data-kaluwa-status="request"] {
+  --kaluwa-st: var(--kaluwa-st-input);
+}
+[data-kaluwa-status="failed"] {
+  --kaluwa-st: var(--kaluwa-st-failed);
+}
+[data-kaluwa-status="done"] {
+  --kaluwa-st: var(--kaluwa-st-done);
+}
+.kaluwa-folder-status {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--kaluwa-st);
+}
+
+.kaluwa-av {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--kaluwa-avatar);
+  height: var(--kaluwa-avatar);
+}
+.kaluwa-av-logo {
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+}
+.kaluwa-av-icon {
+  width: 100%;
+  height: 100%;
+  transition: opacity 0.15s;
+}
+.kaluwa-av[data-kaluwa-status="idle"][data-recede] .kaluwa-av-icon {
+  opacity: 0.6;
+}
+.kaluwa-av .kaluwa-av-badge {
+  right: calc(var(--kaluwa-avatar) * -0.5);
+  bottom: calc(var(--kaluwa-avatar) * -0.3);
+  height: calc(var(--kaluwa-badge-font) + 3px);
+  min-width: calc(var(--kaluwa-badge-font) + 3px);
+  padding: 0 1.5px;
+  border-width: 0;
+  border-radius: 3px;
+  font-size: var(--kaluwa-badge-font);
+  line-height: calc(var(--kaluwa-badge-font) + 3px);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: 0 0 0 1.5px var(--sidebar);
+}
+.kaluwa-av-ring,
+.kaluwa-av-spin,
+.kaluwa-av-pip {
+  position: absolute;
+  pointer-events: none;
+}
+.kaluwa-av-ring,
+.kaluwa-av-spin {
+  inset: calc(var(--kaluwa-ring-out) * -1);
+  border-radius: 50%;
+}
+.kaluwa-av-ring {
+  border: var(--kaluwa-ring-w) solid var(--kaluwa-st);
+}
+[data-kaluwa-status="working"] > .kaluwa-av-ring {
+  border-color: color-mix(in srgb, var(--kaluwa-st) 20%, transparent);
+}
+[data-kaluwa-status="waiting"] > .kaluwa-av-ring {
+  border-style: dotted;
+  border-color: color-mix(in srgb, var(--kaluwa-st) 80%, transparent);
+}
+[data-kaluwa-status="done"] > .kaluwa-av-ring {
+  border-color: color-mix(in srgb, var(--kaluwa-st) 45%, transparent);
+}
+/* A comet tail painted once and only rotated, so it never repaints. */
+.kaluwa-av-spin {
+  background: conic-gradient(from 0deg, transparent 0 25%, var(--kaluwa-st-working) 100%);
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - var(--kaluwa-ring-w) - 0.5px),
+    #000 calc(100% - var(--kaluwa-ring-w))
+  );
+  animation: kaluwa-spin var(--kaluwa-spin) linear infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kaluwa-av-spin {
+    animation: none;
+  }
+}
+@keyframes kaluwa-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.kaluwa-av-pip {
+  z-index: 2;
+  top: calc(var(--kaluwa-ring-out) * -1 - 1px);
+  right: calc(var(--kaluwa-ring-out) * -1 - 1px);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--kaluwa-st);
+  box-shadow: 0 0 0 1.5px var(--sidebar);
+}
+[data-kaluwa-status="approval"] > .kaluwa-av-pip,
+[data-kaluwa-status="woke"] > .kaluwa-av-pip {
+  border-radius: 1.5px;
+  transform: rotate(45deg) scale(0.9);
+}
+[data-kaluwa-status="failed"] > .kaluwa-av-pip {
+  width: 7px;
+  height: 7px;
+  background: var(--kaluwa-st) linear-gradient(#fff, #fff) center / 1.2px 3.6px no-repeat;
+}
