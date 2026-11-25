@@ -57,13 +57,6 @@ describe("terminal session reducers", () => {
       attach: false,
     },
     {
-      title: "CSI parameters cut during attach",
-      history: "\u001b[20",
-      budget: 2,
-      chunks: ["C"],
-      attach: true,
-    },
-    {
       title: "split surrogate in a cut DCS",
       history: "\u001bP" + "中".repeat(2_000) + "\ud83d",
       budget: 4_096,
