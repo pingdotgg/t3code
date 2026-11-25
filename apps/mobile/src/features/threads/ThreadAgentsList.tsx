@@ -22,11 +22,17 @@ import { Keyboard, Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { environmentThreadDetails } from "../../state/threads";
-import { SubagentRow } from "./SubagentRow";
+import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { SubagentStopButton } from "./SubagentStopButton";
 import { ThreadWorkflowGroup } from "./ThreadWorkflowGroup";
-import { subagentThreadTarget, type SubagentThreadTarget } from "./threadAgentsPresentation";
+import {
+  resolveSubagentRowPresentation,
+  subagentThreadTarget,
+  type SubagentThreadTarget,
+} from "./threadAgentsPresentation";
+import { subagentCardDetail } from "@t3tools/client-runtime/state/subagent-display";
+import { cn } from "../../lib/cn";
 import { useLinkedThreadReach } from "../../state/linkedThread";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
@@ -147,14 +153,26 @@ function AgentRow(props: {
     reach.isLinked,
   );
 
+  const messages = useMessages();
+  const presentation = resolveSubagentRowPresentation(subagent, target !== null, messages);
+  const detail = subagentCardDetail(presentation.detail);
   const row = (
-    <View className="py-3">
-      <SubagentRow
-        environmentId={props.environmentId}
-        subagent={subagent}
-        canOpenRemote={target !== null}
-        elapsed={<AgentElapsed subagent={subagent} tickSeconds={props.tickSeconds} />}
-      />
+    <View className="min-h-14 flex-row items-center gap-3 py-2.5">
+      <SubagentStatusDot tone={presentation.tone} placement="sheet" />
+      <View className="min-w-0 flex-1 gap-0.5">
+        <View className="flex-row items-baseline gap-2">
+          <Text numberOfLines={1} className="min-w-0 shrink font-t3-medium text-sm text-foreground">
+            {presentation.title}
+          </Text>
+          <AgentElapsed subagent={subagent} tickSeconds={props.tickSeconds} />
+        </View>
+        <Text numberOfLines={1} className="text-xs text-foreground-muted">
+          <Text className={cn("font-t3-medium", SUBAGENT_TONE_TEXT_CLASS[presentation.tone])}>
+            {presentation.statusLabel}
+          </Text>
+          {detail ? ` · ${detail}` : ""}
+        </Text>
+      </View>
     </View>
   );
 
@@ -185,9 +203,9 @@ function AgentRow(props: {
     );
 
   return (
-    <View className="flex-row items-center">
+    <View className="flex-row items-center gap-2">
       {content}
-      <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />
+      <SubagentStopButton environmentId={props.environmentId} subagent={subagent} compact />
     </View>
   );
 }

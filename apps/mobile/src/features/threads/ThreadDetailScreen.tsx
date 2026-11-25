@@ -1509,6 +1509,7 @@ function ThreadDetailBody(
         <ThreadStatusPill
           colorScheme={isDarkMode ? "dark" : "light"}
           top={navigationHeaderHeight + 8}
+          bottomInset={liveKeyboardHeight + estimatedOverlayHeight}
           maxWidth={contentMaxWidth}
           status={floatingStatus}
           extensionStatus={floatingStatus?.kind === "goal" ? extensionStatus : null}

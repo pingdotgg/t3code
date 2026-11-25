@@ -3,7 +3,7 @@ import { GlassView } from "expo-glass-effect";
 import * as Haptics from "expo-haptics";
 import { useGT } from "gt-react-native";
 import { type ReactNode, useState } from "react";
-import { Keyboard, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import Animated, {
   Easing,
   FadeIn,
@@ -33,6 +33,8 @@ const COMPOSER_CAPSULE_INSET = 6;
 const PILL_HEIGHT = 44;
 const CARD_SIDE_MARGIN = 12;
 const CARD_MAX_HEIGHT_RATIO = 0.55;
+const CARD_MIN_HEIGHT = 120;
+const CARD_BOTTOM_GAP = 12;
 const MORPH = LinearTransition.duration(320)
   .easing(Easing.bezier(0.2, 0.9, 0.25, 1))
   .reduceMotion(ReduceMotion.System);
@@ -43,7 +45,15 @@ const PILL_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
 
 const UniwindGlassView = withUniwind(GlassView, {
   style: { fromClassName: "className" },
+  tintColor: { fromClassName: "tintColorClassName", styleProperty: "accentColor" },
 });
+// Lifts the open card off the feed, as other floating glass surfaces do.
+const CARD_SHADOW = {
+  shadowColor: "#000000",
+  shadowOpacity: 0.22,
+  shadowRadius: 28,
+  shadowOffset: { width: 0, height: 14 },
+} as const;
 const AnimatedGlassView = Animated.createAnimatedComponent(UniwindGlassView);
 
 const CONTROL_OVERLAY_OFFSET = CONTROL_HEIGHT + CONTROL_GAP - COMPOSER_CAPSULE_INSET;
@@ -57,6 +67,8 @@ export const THREAD_STATUS_PILL_OFFSET = PILL_HEIGHT + 8;
 export interface ThreadStatusPillProps {
   readonly colorScheme: "light" | "dark";
   readonly top: number;
+  /** Room the composer and keyboard take at the bottom; the open card stays above it. */
+  readonly bottomInset: number;
   readonly maxWidth: number | undefined;
   readonly status: FloatingWorkingStatus | null;
   /** Pi's status beside a goal, shown in full once the card opens. */
@@ -98,7 +110,6 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
   const close = () => setExpanded(false);
   const toggle = () => {
     void Haptics.selectionAsync();
-    if (!expanded) Keyboard.dismiss();
     setExpanded(!expanded);
   };
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
@@ -163,29 +174,31 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
       style={{ width: cardWidth }}
     >
       <ScrollView
-        style={{ maxHeight: windowHeight * CARD_MAX_HEIGHT_RATIO }}
-        contentContainerClassName="gap-3 px-4 pb-4 pt-3"
+        style={{
+          maxHeight: Math.max(
+            CARD_MIN_HEIGHT,
+            Math.min(
+              windowHeight * CARD_MAX_HEIGHT_RATIO,
+              windowHeight - props.top - props.bottomInset - CARD_BOTTOM_GAP,
+            ),
+          ),
+        }}
+        contentContainerClassName={status !== null ? "gap-2 px-4 pb-1 pt-3.5" : "px-4 py-1"}
         nestedScrollEnabled
         showsVerticalScrollIndicator={false}
       >
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={gt("Close status")}
-          accessibilityState={{ expanded: true }}
-          onPress={toggle}
-          className="flex-row items-start gap-2 active:opacity-70"
-        >
-          <View className="min-w-0 flex-1">
-            {status !== null ? (
-              <StatusDetail status={status} />
-            ) : (
-              <Text className="font-t3-semibold text-base text-foreground">
-                {gt("Agents", { $context: "title of the thread's subagent list" })}
-              </Text>
-            )}
-          </View>
-          <SymbolView name="chevron.up" size={12} tintColorClassName="accent-foreground-muted" />
-        </Pressable>
+        {/* The status heads the card; with only agents the list starts at the top. */}
+        {status !== null ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: true }}
+            accessibilityHint={gt("Close status")}
+            onPress={toggle}
+            className="active:opacity-70"
+          >
+            <StatusDetail status={status} />
+          </Pressable>
+        ) : null}
         <StatusActions status={status} onAct={close} />
         {extensionStatus !== null ? (
           <View className="gap-1">
@@ -198,12 +211,7 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
           </View>
         ) : null}
         {agents !== null ? (
-          <View className="gap-1">
-            {status !== null ? (
-              <Text className="font-t3-medium text-2xs uppercase tracking-wide text-foreground-muted">
-                {gt("Agents", { $context: "title of the thread's subagent list" })}
-              </Text>
-            ) : null}
+          <View className={status !== null ? "border-t border-border" : undefined}>
             {props.renderAgents(close)}
           </View>
         ) : null}
@@ -240,9 +248,12 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
             colorScheme={props.colorScheme}
             glassEffectStyle="regular"
             isInteractive
+            tintColorClassName="accent-glass-tint"
             layout={layout}
             accessibilityViewIsModal={expanded}
+            onAccessibilityEscape={expanded ? close : undefined}
             className={shapeClassName}
+            style={expanded ? CARD_SHADOW : undefined}
           >
             {content}
           </AnimatedGlassView>
@@ -250,6 +261,7 @@ export function ThreadStatusPill(props: ThreadStatusPillProps) {
           <Animated.View
             layout={layout}
             accessibilityViewIsModal={expanded}
+            onAccessibilityEscape={expanded ? close : undefined}
             className={`${shapeClassName} border border-border bg-glass-fallback shadow-md shadow-black/10`}
           >
             {content}
