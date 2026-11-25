@@ -185,6 +185,41 @@ it("names how the provider process exited and the stage it failed in, without it
   assert.notInclude(denied, "/Users/private");
 });
 
+it("says the disk is full when turn startup fails with ENOSPC", () => {
+  const enospc = Object.assign(new Error("ENOSPC: no space left on device, write"), {
+    code: "ENOSPC",
+    errno: -28,
+    syscall: "write",
+  });
+  const message = makeProviderFailure({
+    cause: Cause.fail({
+      _tag: "ProviderAdapterTurnStartError",
+      cause: { _tag: "ClaudeAgentSdkQueryRunnerError", cause: enospc },
+    }),
+  }).message;
+  assert.match(message, /disk is full|no space left/i);
+});
+
+it("says the disk is full when a provider process exits because its disk is full", () => {
+  const message = makeProviderFailure({
+    cause: Cause.fail({
+      _tag: "ProviderSessionOpenError",
+      cause: new ProviderAdapter.ProviderAdapterOpenSessionError({
+        driver: ProviderDriverKind.make("codex"),
+        providerSessionId: ProviderSessionId.make("provider-session:private-id"),
+        cause: {
+          _tag: "CodexAppServerProcessExitedError",
+          code: 1,
+          stderr:
+            "Error: failed to open state DB at /home/private/.codex/state_5.sqlite: (code: 13) database or disk is full",
+        },
+      }),
+    }),
+  }).message;
+  assert.match(message, /disk is full|no space left/i);
+  assert.notInclude(message, "/home/private");
+});
+
 it("tells the user to sign in only when an ACP agent answers auth_required", () => {
   const providerSessionId = ProviderSessionId.make("provider-session:private-id");
   const sessionOpenFailure = (code: number) => ({
