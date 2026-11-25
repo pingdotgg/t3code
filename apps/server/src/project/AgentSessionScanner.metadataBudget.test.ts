@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -62,12 +62,20 @@ it.layer(NodeServices.layer)("Claude session metadata budget", (it) => {
                 ServerConfig.layerTest(root, { prefix: "t3code-claude-metadata-config-" }),
                 ServerSettings.layerTest({
                   providerInstances: {
-                    claudeAgent: {
+                    [ProviderInstanceId.make("claudeAgent")]: {
                       driver: ProviderDriverKind.make("claudeAgent"),
                       config: { homePath: claudeHome },
                     },
-                    codex: { driver: ProviderDriverKind.make("codex"), enabled: false, config: {} },
-                    pi: { driver: ProviderDriverKind.make("pi"), enabled: false, config: {} },
+                    [ProviderInstanceId.make("codex")]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      enabled: false,
+                      config: {},
+                    },
+                    [ProviderInstanceId.make("pi")]: {
+                      driver: ProviderDriverKind.make("pi"),
+                      enabled: false,
+                      config: {},
+                    },
                   },
                 }),
                 Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
