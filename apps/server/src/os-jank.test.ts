@@ -215,7 +215,9 @@ const fnmLoginShell = (dir: string) => {
       "#!/bin/sh",
       `n=$(cat "${dir}/count" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "${dir}/count"`,
       `multishell="/run/user/1000/fnm_multishells/$((1000 + n))_17956/bin"`,
-      'printf "__T3CODE_ENV_PATH_START__\\n%s\\n__T3CODE_ENV_PATH_END__\\n" "$multishell:/home/me/.local/share/fnm:/usr/bin"',
+      // `fnm env` prepends to the server's PATH the shell inherited (handed over in `path`).
+      `path="$multishell:/home/me/.local/share/fnm:$(cat "${dir}/path")"`,
+      'printf "__T3CODE_ENV_PATH_START__\\n%s\\n__T3CODE_ENV_PATH_END__\\n" "$path"',
       'printf "__T3CODE_ENV_FNM_MULTISHELL_PATH_START__\\n%s\\n__T3CODE_ENV_FNM_MULTISHELL_PATH_END__\\n" "${multishell%/bin}"',
     ].join("\n"),
     { mode: 0o755 },
@@ -229,6 +231,7 @@ effectIt.effect("re-reading an fnm login shell does not pile up its multishell f
     const env: NodeJS.ProcessEnv = { SHELL: fnmLoginShell(dir), PATH: "/usr/bin" };
 
     for (let read = 0; read < 3; read++) {
+      NodeFS.writeFileSync(NodePath.join(dir, "path"), env.PATH ?? "");
       yield* refreshPathFromLoginShell().pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HostProcess.Environment, env),

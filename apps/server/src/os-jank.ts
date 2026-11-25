@@ -61,13 +61,19 @@ function applyLoginShellEnvironment(
   // fnm gives every probe shell its own multishell folder; drop the last probe's on a re-read.
   const multishell = shellPath ? shellEnvironment.FNM_MULTISHELL_PATH : undefined;
   const staleMultishell = multishell ? env.FNM_MULTISHELL_PATH : undefined;
-  const inheritedPath =
+  // The probe inherits our PATH, so the stale folder is in the shell's PATH too.
+  const withoutStale = (path: string | undefined) =>
     staleMultishell && staleMultishell !== multishell
-      ? env.PATH?.split(":")
+      ? path
+          ?.split(":")
           .filter((entry) => entry !== staleMultishell && !entry.startsWith(`${staleMultishell}/`))
           .join(":")
-      : env.PATH;
-  const mergedPath = mergePathEntries(shellPath ?? fallbackPath, inheritedPath, platform);
+      : path;
+  const mergedPath = mergePathEntries(
+    withoutStale(shellPath ?? fallbackPath),
+    withoutStale(env.PATH),
+    platform,
+  );
   if (mergedPath) {
     env.PATH = mergedPath;
   }
