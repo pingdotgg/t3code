@@ -2770,6 +2770,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     shellCandidates: ReadonlyArray<ShellCandidate>,
     spawnEnv: NodeJS.ProcessEnv,
     session: TerminalSessionState,
+    takeOwnership: (process: PtyAdapter.PtyProcess) => void,
     index = 0,
     lastError: PtyAdapter.PtySpawnError | null = null,
   ): Effect.fn.Return<
@@ -2820,6 +2821,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         shellCandidates,
         spawnEnv,
         session,
+        takeOwnership,
         index + 1,
         new PtyAdapter.PtySpawnError({ adapter: "terminal-manager", shell: candidate.shell }),
       );
@@ -2833,14 +2835,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       survivesRestart: true,
     });
     const attempt = yield* Effect.result(
-      options.ptyAdapter.spawn({
-        shell: launch.command,
-        ...(launch.args.length > 0 ? { args: [...launch.args] } : {}),
-        cwd: session.cwd,
-        cols: session.cols,
-        rows: session.rows,
-        env: spawnEnv,
-      }),
+      options.ptyAdapter.spawn(
+        {
+          shell: launch.command,
+          ...(launch.args.length > 0 ? { args: [...launch.args] } : {}),
+          cwd: session.cwd,
+          cols: session.cols,
+          rows: session.rows,
+          env: spawnEnv,
+        },
+        takeOwnership,
+      ),
     );
 
     if (attempt._tag === "Success") {
@@ -2856,7 +2861,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return yield* spawnError;
     }
 
-    return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError);
+    return yield* trySpawn(
+      shellCandidates,
+      spawnEnv,
+      session,
+      takeOwnership,
+      index + 1,
+      spawnError,
+    );
   });
 
   const failStartup = Effect.fn("terminal.failStartup")(function* (
@@ -2989,7 +3001,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           // Keep ownership of the PTY from the moment spawn returns through the handoff.
           yield* Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
-              const spawnResult = yield* restore(trySpawn(shellCandidates, terminalEnv, session));
+              const spawnResult = yield* restore(
+                trySpawn(shellCandidates, terminalEnv, session, (process) => {
+                  ptyProcess = process;
+                }),
+              );
               ptyProcess = spawnResult.process;
               startedShell = spawnResult.shellLabel;
 

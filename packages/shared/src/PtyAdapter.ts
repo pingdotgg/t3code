@@ -49,6 +49,10 @@ export interface PtySpawnInput {
 export class PtyAdapter extends Context.Service<
   PtyAdapter,
   {
-    readonly spawn: (input: PtySpawnInput) => Effect.Effect<PtyProcess, PtySpawnError>;
+    // When supplied, ownership transfers synchronously before startup can be interrupted.
+    readonly spawn: (
+      input: PtySpawnInput,
+      takeOwnership?: (process: PtyProcess) => void,
+    ) => Effect.Effect<PtyProcess, PtySpawnError>;
   }
 >()("@t3tools/shared/PtyAdapter") {}
