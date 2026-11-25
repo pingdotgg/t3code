@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -38,6 +39,7 @@ it.effect("falls back to the hostname when hostnamectl never answers", () =>
       Effect.provideService(HostProcess.Hostname, "devbox"),
       Effect.provide(
         Layer.mergeAll(
+          Path.layer,
           FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
           ProcessRunner.layer.pipe(
             Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, neverExits)),
@@ -91,13 +93,44 @@ it.effect("qualifies the inherited Windows hostname only inside WSL", () =>
         Effect.provideService(HostProcess.Environment, { WSL_DISTRO_NAME: "Ubuntu" }),
         Effect.provideService(ProcessRunner.ProcessRunner, exitsWithFailure),
         Effect.provide(
-          FileSystem.layerNoop({
-            exists: (path) => Effect.succeed(files[path] != null),
-            readFileString: (path) => Effect.succeed(files[path] ?? ""),
-          }),
+          Layer.mergeAll(
+            Path.layer,
+            FileSystem.layerNoop({
+              exists: (path) => Effect.succeed(files[path] != null),
+              readFileString: (path) => Effect.succeed(files[path] ?? ""),
+            }),
+          ),
         ),
       );
       assert.equal(label, expected, kernel);
+    }
+  }),
+);
+
+it.effect("names the user when other people have accounts on the machine", () =>
+  Effect.gen(function* () {
+    const cases = [
+      { profiles: ["alice", "bob", "Public"], expected: "DESKTOP-PC (alice)" },
+      { profiles: ["alice", "Public", "Default", ".hidden"], expected: "DESKTOP-PC" },
+    ];
+    for (const { profiles, expected } of cases) {
+      const label = yield* resolveServerEnvironmentLabel({ cwdBaseName: "project" }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Hostname, "DESKTOP-PC"),
+        Effect.provideService(HostProcess.HomeDirectory, "/Users/alice"),
+        Effect.provideService(HostProcess.Username, "alice"),
+        Effect.provideService(ProcessRunner.ProcessRunner, exitsWithFailure),
+        Effect.provide(
+          Layer.mergeAll(
+            Path.layer,
+            FileSystem.layerNoop({
+              readDirectory: (path) => Effect.succeed(path === "/Users" ? profiles : []),
+              stat: () => Effect.succeed({ type: "Directory" } as FileSystem.File.Info),
+            }),
+          ),
+        ),
+      );
+      assert.equal(label, expected, profiles.join(","));
     }
   }),
 );

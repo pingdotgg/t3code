@@ -3,6 +3,7 @@ import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -193,6 +194,53 @@ const isWsl = Effect.fn("isWsl")(function* () {
   return kernelRelease.toLowerCase().includes("microsoft");
 });
 
+const NON_USER_PROFILE_DIRECTORIES = new Set([
+  "all users",
+  "default",
+  "default user",
+  "defaultuser0",
+  "guest",
+  "linuxbrew",
+  "lost+found",
+  "public",
+  "shared",
+]);
+
+// Each OS user runs its own environment, so a machine-wide name cannot tell them apart.
+const hasOtherUserProfiles = Effect.fn("hasOtherUserProfiles")(function* () {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
+  const profilesRoot = path.dirname(home);
+  if (profilesRoot === path.dirname(profilesRoot)) {
+    return false;
+  }
+  const ownProfile = path.basename(home).toLowerCase();
+  const entries = yield* fileSystem
+    .readDirectory(profilesRoot)
+    .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  for (const entry of entries) {
+    const name = entry.toLowerCase();
+    if (name === ownProfile || name.startsWith(".") || NON_USER_PROFILE_DIRECTORIES.has(name)) {
+      continue;
+    }
+    const info = yield* fileSystem
+      .stat(path.join(profilesRoot, entry))
+      .pipe(Effect.orElseSucceed(() => null));
+    if (info?.type === "Directory") {
+      return true;
+    }
+  }
+  return false;
+});
+
+const qualifyMachineLabel = Effect.fn("qualifyMachineLabel")(function* (machineLabel: string) {
+  const username = normalizeLabel(yield* HostProcess.Username);
+  return username && (yield* hasOtherUserProfiles())
+    ? `${machineLabel} (${username})`
+    : machineLabel;
+});
+
 // Names this environment instead of the machine, e.g. for staged demos and scenario captures.
 const labelOverride = Config.String("T3CODE_ENVIRONMENT_LABEL").pipe(
   Config.option,
@@ -209,7 +257,7 @@ export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironment
 
   const friendlyHostLabel = yield* resolveFriendlyHostLabel();
   if (friendlyHostLabel) {
-    return friendlyHostLabel;
+    return yield* qualifyMachineLabel(friendlyHostLabel);
   }
 
   const hostname = normalizeLabel(yield* HostProcess.Hostname);
@@ -219,7 +267,7 @@ export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironment
       const distro = normalizeLabel((yield* HostProcess.Environment).WSL_DISTRO_NAME);
       return distro ? `${hostname} WSL (${distro})` : `${hostname} WSL`;
     }
-    return hostname;
+    return yield* qualifyMachineLabel(hostname);
   }
 
   return normalizeLabel(input.cwdBaseName) ?? "T3 environment";
