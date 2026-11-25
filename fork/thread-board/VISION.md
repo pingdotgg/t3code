@@ -97,13 +97,13 @@ None right now.
 
 ## Phases
 
-| #   | Phase               | Output                                                                                  | Status |
-| --- | ------------------- | --------------------------------------------------------------------------------------- | ------ |
-| 0   | Vision and setup    | This doc, the fork, the T3 project                                                      | done   |
-| 1   | UX prototype        | Clickable mock with fake threads: lanes, card anatomy, click and Ctrl-click flow        | done   |
-| 2   | Data spike          | Map lanes, cards and the peek to real thread state in client-runtime                    | done   |
-| 3   | Build               | Board behind a Labs toggle, in small steps (shell → lanes → cards → peek → live polish) | -      |
-| 4   | Upstream (optional) | Ideas discussion upstream with a demo                                                   | -      |
+| #   | Phase               | Output                                                                                  | Status                   |
+| --- | ------------------- | --------------------------------------------------------------------------------------- | ------------------------ |
+| 0   | Vision and setup    | This doc, the fork, the T3 project                                                      | done                     |
+| 1   | UX prototype        | Clickable mock with fake threads: lanes, card anatomy, click and Ctrl-click flow        | done                     |
+| 2   | Data spike          | Map lanes, cards and the peek to real thread state in client-runtime                    | done                     |
+| 3   | Build               | Board behind a Labs toggle, in small steps (shell → lanes → cards → peek → live polish) | in progress: step 1 done |
+| 4   | Upstream (optional) | Ideas discussion upstream with a demo                                                   | -                        |
 
 ## Data map (phase 2)
 
