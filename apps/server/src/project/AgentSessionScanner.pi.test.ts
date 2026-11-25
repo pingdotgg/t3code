@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -22,11 +23,14 @@ it.layer(NodeServices.layer)("Pi session attribution", (it) => {
       const workspace = path.join(root, "workspace");
       const otherWorkspace = path.join(root, "other");
       const sessions = path.join(root, "pi", "sessions");
+      const transcript = path.join(sessions, "session.jsonl");
+      const now = Date.parse("2026-01-01T00:00:00.000Z");
+      yield* TestClock.setTime(now);
       yield* fs.makeDirectory(workspace);
       yield* fs.makeDirectory(otherWorkspace);
       yield* fs.makeDirectory(sessions, { recursive: true });
       yield* fs.writeFileString(
-        path.join(sessions, "session.jsonl"),
+        transcript,
         [
           {
             type: "message",
@@ -40,6 +44,7 @@ it.layer(NodeServices.layer)("Pi session attribution", (it) => {
           .map((record) => JSON.stringify(record))
           .join("\n"),
       );
+      yield* fs.utimes(transcript, now / 1000, now / 1000);
 
       const scanner = yield* Effect.gen(function* () {
         const service = yield* AgentSessionScanner.AgentSessionScanner;
