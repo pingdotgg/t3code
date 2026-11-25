@@ -1663,9 +1663,6 @@ export const layerWithOptions = (
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
                   Effect.catchCause(() => Effect.succeed(false)),
                 );
-          // A quiet subagent can still be running, and closing its process would kill it.
-          const keepProcessForPendingWork =
-            providerHasPendingWork && probedRuntime.backgroundTasksEndWithProcess === true;
           const hasPendingWork =
             providerHasPendingWork ||
             // Closing now would skip the archive of a child whose parent has not taken its result.
@@ -1678,8 +1675,42 @@ export const layerWithOptions = (
             );
           if (hasPendingWork) {
             const now = yield* Clock.currentTimeMillis;
-            const pinnedSinceMs = keepProcessForPendingWork ? null : (entry.pinnedSinceMs ?? now);
-            if (pinnedSinceMs === null || now - pinnedSinceMs < maxIdlePinMs) {
+            const pinnedSinceMs = entry.pinnedSinceMs ?? now;
+            const pinnedForMs = now - pinnedSinceMs;
+            // Give quiet native subagents a longer window, but still reap stale provider state.
+            const extendSubagentPin =
+              pinnedForMs >= maxIdlePinMs &&
+              pinnedForMs < maxIdlePinMs * 2 &&
+              providerHasPendingWork &&
+              probedRuntime.backgroundTasksEndWithProcess === true &&
+              Option.isSome(
+                yield* Effect.findFirst(entry.attachedThreadIds, (threadId) =>
+                  projectionStore
+                    .getThreadRecords(threadId, ["subagents", "providerThreads"], {
+                      omitSettledSubagents: true,
+                    })
+                    .pipe(
+                      Effect.map(({ subagents, providerThreads }) =>
+                        subagents.some(
+                          (subagent) =>
+                            subagent.origin === "provider_native" &&
+                            subagent.status === "running" &&
+                            subagent.driver === probedRuntime.driver &&
+                            subagent.providerInstanceId === probedRuntime.instanceId &&
+                            (subagent.providerThreadId === null
+                              ? !entry.supportsMultipleProviderThreads
+                              : providerThreads.some(
+                                  (thread) =>
+                                    thread.id === subagent.providerThreadId &&
+                                    thread.providerSessionId === input.providerSessionId,
+                                )),
+                        ),
+                      ),
+                      Effect.orElseSucceed(() => false),
+                    ),
+                ),
+              );
+            if (pinnedForMs < maxIdlePinMs || extendSubagentPin) {
               const shouldContinuePin = yield* Ref.modify(sessions, (latest) => {
                 const latestEntry = latest.get(key);
                 if (
@@ -1699,7 +1730,7 @@ export const layerWithOptions = (
               }
               yield* Effect.logInfo("orchestration-v2.driver-session.idle-release-deferred", {
                 providerSessionId: input.providerSessionId,
-                pinnedForMs: now - (pinnedSinceMs ?? now),
+                pinnedForMs,
               });
               // Recheck on this fiber; scheduleIdleReleaseInternal would interrupt it and self-deadlock.
               yield* Effect.sleep(Duration.millis(idleTimeoutFor(probedRuntime)));
@@ -1707,7 +1738,7 @@ export const layerWithOptions = (
             }
             yield* Effect.logWarning("orchestration-v2.driver-session.idle-release-pin-expired", {
               providerSessionId: input.providerSessionId,
-              pinnedForMs: now - pinnedSinceMs,
+              pinnedForMs,
             });
           }
           // Closing skips the threads' own idle unloads, so archive delivered children first.

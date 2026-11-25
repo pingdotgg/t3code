@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
@@ -19,6 +20,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -44,6 +46,7 @@ const stopEarlierBackgroundWork = ({
   backgroundWorkAfterStop,
   stalledRun,
   workflowMember = false,
+  idlePin,
 }: {
   readonly wakeAfterStop?: boolean;
   readonly failedStart?: boolean;
@@ -51,6 +54,7 @@ const stopEarlierBackgroundWork = ({
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
   readonly workflowMember?: boolean;
+  readonly idlePin?: "command" | "finished subagent" | "stale subagent";
   readonly stalledRun?: "missing-session-terminal" | "returned-interrupt" | "superseded-attempt";
 }) =>
   Effect.gen(function* () {
@@ -59,10 +63,21 @@ const stopEarlierBackgroundWork = ({
     const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
     const interrupts: ProviderAdapter.ProviderAdapterV2InterruptInput[] = [];
     const interruptCalls = yield* Queue.unbounded<void>();
+    let pendingWork = true;
+    const capabilities =
+      idlePin === undefined
+        ? CodexProviderCapabilitiesV2
+        : {
+            ...CodexProviderCapabilitiesV2,
+            sessions: {
+              ...CodexProviderCapabilitiesV2.sessions,
+              supportsMultipleProviderThreadsPerSession: false,
+            },
+          };
     const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
       instanceId,
       driver,
-      getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+      getCapabilities: () => Effect.succeed(capabilities),
       planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
       openSession: (input) =>
         Effect.gen(function* () {
@@ -78,12 +93,18 @@ const stopEarlierBackgroundWork = ({
               status: "ready",
               cwd,
               model: modelSelection.model,
-              capabilities: CodexProviderCapabilitiesV2,
+              capabilities,
               createdAt: now,
               updatedAt: now,
               lastError: null,
             },
             events: Stream.fromQueue(events),
+            ...(idlePin === undefined
+              ? {}
+              : {
+                  backgroundTasksEndWithProcess: true as const,
+                  hasPendingBackgroundWork: Effect.sync(() => pendingWork),
+                }),
             ...(failedStart
               ? {
                   hasPendingBackgroundWorkForThread: (providerThread) =>
@@ -187,6 +208,63 @@ const stopEarlierBackgroundWork = ({
         createdBy: "user",
         creationSource: "web",
       });
+      if (idlePin !== undefined) {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const providerSessionId = ProviderSessionId.make("session:idle-pin");
+        if (idlePin !== "command") {
+          const now = yield* DateTime.now;
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make("idle-subagent"),
+                type: "subagent.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: NodeId.make("node:idle-subagent"),
+                  threadId,
+                  runId: RunId.make("run:idle-subagent"),
+                  parentNodeId: NodeId.make("node:idle-subagent-parent"),
+                  origin: "provider_native",
+                  createdBy: "agent",
+                  driver,
+                  providerInstanceId: instanceId,
+                  providerThreadId: null,
+                  childThreadId: null,
+                  nativeTaskRef: { driver, nativeId: "idle-subagent", strength: "strong" },
+                  prompt: "Run a background task",
+                  title: "Background task",
+                  model: null,
+                  status: "running",
+                  result: null,
+                  startedAt: now,
+                  completedAt: null,
+                  updatedAt: now,
+                },
+              },
+            ],
+          });
+        }
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd },
+        });
+        const isOpen = manager.get(providerSessionId).pipe(Effect.map(Option.isSome));
+        yield* TestClock.adjust("2 minutes");
+        assert.isTrue(yield* isOpen);
+        yield* TestClock.adjust("4 hours");
+        assert.equal(yield* isOpen, idlePin !== "command");
+        if (idlePin === "finished subagent") {
+          pendingWork = false;
+          yield* TestClock.adjust("2 minutes");
+        } else if (idlePin === "stale subagent") {
+          yield* TestClock.adjust("4 hours");
+        }
+        assert.isFalse(yield* isOpen);
+        return;
+      }
       const running = yield* watch(
         (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
       );
@@ -1112,6 +1190,11 @@ const stopEarlierBackgroundWork = ({
 
 it.effect("Stop reaches background work an earlier provider thread still runs", () =>
   stopEarlierBackgroundWork({}),
+);
+
+it.effect.each(["command", "finished subagent", "stale subagent"] as const)(
+  "idle cleanup releases a session with a %s",
+  (idlePin) => stopEarlierBackgroundWork({ idlePin }),
 );
 
 it.effect("Stop settles workflow members without subagent turn items", () =>
