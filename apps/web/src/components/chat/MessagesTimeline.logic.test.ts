@@ -34,23 +34,25 @@ import {
   deriveMessagesTimelineRowsWithState,
   isTimelineMinimapTurnVisible,
   resolveAssistantMessageCopyState,
-  resolveTimelineMinimapHitStripWidth,
+  resolveTimelineMinimapHitStrip,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
   workEntryReadOutput,
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 
-describe("resolveTimelineMinimapHitStripWidth", () => {
+describe("resolveTimelineMinimapHitStrip", () => {
   it.each([
-    { viewport: 1280, content: 768, expected: 40 },
-    { viewport: 768, content: 672, expected: 16 },
-    { viewport: 768, content: 704, expected: 0 },
-    { viewport: 768, content: 720, expected: 0 },
+    { viewport: 1280, content: 768, left: 32, width: 40 },
+    { viewport: 768, content: 672, left: 32, width: 16 },
+    { viewport: 768, content: 704, left: 0, width: 8 },
+    { viewport: 768, content: 720, left: 0, width: 8 },
+    { viewport: 768, content: 756, left: 0, width: 6 },
+    { viewport: 768, content: 768, left: 0, width: 0 },
   ])(
     "keeps the minimap inside the gutter at $viewport/$content",
-    ({ viewport, content, expected }) => {
-      expect(resolveTimelineMinimapHitStripWidth(viewport, content)).toBe(expected);
+    ({ viewport, content, left, width }) => {
+      expect(resolveTimelineMinimapHitStrip(viewport, content)).toEqual({ left, width });
     },
   );
 });

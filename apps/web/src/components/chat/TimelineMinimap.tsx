@@ -32,7 +32,7 @@ function onMouseButtonsReleased(onRelease: () => void): () => void {
 
 export function TimelineMinimap({
   hasPersistentGutter,
-  hitStripWidth,
+  hitStrip: { left: hitStripLeft, width: hitStripWidth },
   currentIndex,
   atEnd,
   items,
@@ -41,7 +41,7 @@ export function TimelineMinimap({
   onSelect,
 }: {
   hasPersistentGutter: boolean;
-  hitStripWidth: number;
+  hitStrip: { left: number; width: number };
   currentIndex: number | null;
   atEnd: boolean;
   items: ReadonlyArray<TimelineMinimapItem>;
@@ -119,7 +119,7 @@ export function TimelineMinimap({
       <div className="relative h-full w-full select-none">
         <div
           className={cn(
-            "absolute top-1/2 left-8 -translate-y-1/2",
+            "absolute top-1/2 -translate-y-1/2",
             hitStripWidth > 0 && !passThrough ? "pointer-events-auto" : "pointer-events-none",
           )}
           onMouseDown={() => {
@@ -136,6 +136,7 @@ export function TimelineMinimap({
           }}
           style={{
             height: resolveTimelineMinimapHeightStyle(items.length),
+            left: hitStripLeft,
             width: hitStripWidth,
           }}
         >
