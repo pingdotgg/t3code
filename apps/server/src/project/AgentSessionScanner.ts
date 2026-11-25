@@ -443,17 +443,15 @@ function claudeUiOutputEnd(text: string): number {
 const CLAUDE_SHELL_OUTPUT =
   /^(?:<bash-stdout>[\s\S]*<\/bash-stdout>(?:\s*<bash-stderr>[\s\S]*<\/bash-stderr>)?|<bash-stderr>[\s\S]*<\/bash-stderr>)$/;
 
+const CLAUDE_COMMAND_BLOCK = /<command-(name|message|args)>[\s\S]*?<\/command-\1>\s*/y;
+
 /**
  * A slash command as typed. Its arguments may name the thread; a bare command
  * leaves that to a later prompt. Null for any other text.
  */
 function claudeCommand(text: string): { readonly text: string; readonly titleText: string } | null {
   if (!/^<command-(?:name|message)>/.test(text)) return null;
-  if (
-    leadingBlocksEnd(text, /<command-(name|message|args)>[\s\S]*?<\/command-\1>\s*/y) !==
-    text.length
-  )
-    return null;
+  if (leadingBlocksEnd(text, CLAUDE_COMMAND_BLOCK) !== text.length) return null;
   const name =
     /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim() ||
     `/${/<command-message>([^<]*)<\/command-message>/.exec(text)?.[1]?.trim() ?? ""}`;
@@ -473,7 +471,12 @@ function claudeUserText(text: string): { readonly text: string; readonly titleTe
   }
   const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
   if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
-  return claudeCommand(text) ?? { text, titleText: text.slice(outputEnd) };
+  return (
+    claudeCommand(text) ?? {
+      text,
+      titleText: text.slice(outputEnd || leadingBlocksEnd(text, CLAUDE_COMMAND_BLOCK)),
+    }
+  );
 }
 
 function claudeVisibleText(record: DecodedTranscriptRecord) {

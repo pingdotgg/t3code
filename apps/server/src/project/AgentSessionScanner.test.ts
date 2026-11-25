@@ -3687,19 +3687,13 @@ describe("parseAgentSessionTranscript", () => {
     });
   });
 
-  it("preserves a Claude question after quoted command output", () => {
-    const question = "Why did this change?";
-    const prompt = `<local-command-stdout>Enabled plan mode</local-command-stdout>\n${question}`;
-    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+  const parseClaudeUserTurns = (userTurns: ReadonlyArray<string>) =>
+    AgentSessionScanner.parseAgentSessionTranscript({
       contents: [
-        ["user", "Help me understand plan mode"],
-        ["assistant", "What did the command print?"],
-        ["user", prompt],
-        ["assistant", "The command enabled plan mode."],
+        ...userTurns.map((content) => ({ type: "user", message: { role: "user", content } })),
+        { type: "assistant", message: { role: "assistant", content: "Here is what happened." } },
       ]
-        .map(([role, content]) =>
-          encodeTranscriptRecord({ type: role, message: { role, content } }),
-        )
+        .map((record) => encodeTranscriptRecord(record))
         .join("\n"),
       source: "claudeAgent",
       providerInstanceId: ProviderInstanceId.make("claudeAgent"),
@@ -3707,12 +3701,27 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
+  it.each([
+    "<local-command-stdout>Enabled plan mode</local-command-stdout>",
+    "<command-name>/review</command-name>\n<command-message>review</command-message>",
+  ])("keeps a Claude question after quoted %s and names the thread after it", (quote) => {
+    const prompt = `${quote}\nWhy did this change?`;
+
+    expect(parseClaudeUserTurns([prompt])).toMatchObject({
+      title: "Why did this change?",
+      messages: [{ role: "user", text: prompt }, { role: "assistant" }],
+    });
+  });
+
+  it.each([
+    "<bash-stdout></bash-stdout>\nfinished\n</bash-stdout><bash-stderr></bash-stderr>",
+    "<bash-stderr></bash-stderr>\nfinished\n</bash-stderr>",
+  ])("hides Claude shell output that prints its own closing tag (%s)", (output) => {
     expect(
-      thread?.messages
-        .filter((message) => message.role === "user")
-        .map((message) => message.text)
-        .join("\n"),
-    ).toContain(question);
+      parseClaudeUserTurns([output, "What happened?"])
+        ?.messages.filter((message) => message.role === "user")
+        .map((message) => message.text),
+    ).toEqual(["What happened?"]);
   });
 
   it.each([
