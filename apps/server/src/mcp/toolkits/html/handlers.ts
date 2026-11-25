@@ -18,7 +18,12 @@ const INVALID_PAGE_ERRORS = new Set([
 
 const toFailure = (error: { readonly _tag: string; readonly message: string }) =>
   new OrchestratorMcpFailure({
-    code: INVALID_PAGE_ERRORS.has(error._tag) ? "invalid_request" : "orchestration_error",
+    code:
+      error._tag === "HtmlRenderLocalImagesDisallowedError"
+        ? "capability_denied"
+        : INVALID_PAGE_ERRORS.has(error._tag)
+          ? "invalid_request"
+          : "orchestration_error",
     message: error.message,
   });
 

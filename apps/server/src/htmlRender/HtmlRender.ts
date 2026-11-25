@@ -73,6 +73,15 @@ export class HtmlRenderImagesNotFoundError extends Schema.TaggedError<HtmlRender
   }
 }
 
+export class HtmlRenderLocalImagesDisallowedError extends Schema.TaggedError<HtmlRenderLocalImagesDisallowedError>()(
+  "HtmlRenderLocalImagesDisallowedError",
+  { paths: Schema.Array(Schema.String) },
+) {
+  override get message(): string {
+    return `Local image paths cannot be read in this thread mode: ${this.paths.join(", ")}. Only full-access threads may inline local images; embed them as data URIs or inline SVG, or remove them.`;
+  }
+}
+
 export class HtmlRenderImageTooLargeError extends Schema.TaggedError<HtmlRenderImageTooLargeError>()(
   "HtmlRenderImageTooLargeError",
   { path: Schema.String, sizeBytes: Schema.Number },
@@ -127,6 +136,7 @@ export class HtmlRenderStoreError extends Schema.TaggedError<HtmlRenderStoreErro
 
 export type HtmlRenderPrepareError =
   | HtmlRenderImagesNotFoundError
+  | HtmlRenderLocalImagesDisallowedError
   | HtmlRenderImageTooLargeError
   | HtmlRenderPageTooLargeError
   | HtmlRenderViewportHeightError;
@@ -173,7 +183,10 @@ export class HtmlRender extends Context.Service<
       HtmlPreview,
       | HtmlRenderFileError
       | HtmlRenderFileTooLargeError
-      | Exclude<HtmlRenderPrepareError, HtmlRenderImagesNotFoundError>
+      | Exclude<
+          HtmlRenderPrepareError,
+          HtmlRenderImagesNotFoundError | HtmlRenderLocalImagesDisallowedError
+        >
       | PreviewBrowser.PreviewBrowserInstallError
       | PreviewBrowser.PreviewBrowserInstallingError
       | PreviewBrowser.PreviewBrowserUnsupportedError
@@ -277,8 +290,12 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const references = findLocalImages(html);
-  const uniquePaths = [...new Set(references.map((reference) => reference.path))];
-  let readBytes = 0;
+  const referenceCounts = new Map<string, number>();
+  for (const reference of references) {
+    referenceCounts.set(reference.path, (referenceCounts.get(reference.path) ?? 0) + 1);
+  }
+  const uniquePaths = [...referenceCounts.keys()];
+  let pageBytes = Buffer.byteLength(html);
   const images = yield* Effect.forEach(
     uniquePaths,
     (referencePath) =>
@@ -312,20 +329,18 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
             }
             const bytes = yield* Effect.tryPromise({
               try: async () => {
-                const limit = Math.min(Number(opened.info.size), MAX_IMAGE_BYTES + 1);
-                const buffer = Buffer.alloc(limit);
-                let filled = 0;
-                while (filled < buffer.length) {
-                  const { bytesRead } = await opened.handle.read(
-                    buffer,
-                    filled,
-                    buffer.length - filled,
-                    filled,
-                  );
+                const chunks: Array<Buffer> = [head.value];
+                let total = head.value.byteLength;
+                const chunkSize = 64 * 1024;
+                while (total <= MAX_IMAGE_BYTES) {
+                  const toRead = Math.min(chunkSize, MAX_IMAGE_BYTES + 1 - total);
+                  const chunk = Buffer.alloc(toRead);
+                  const { bytesRead } = await opened.handle.read(chunk, 0, toRead, total);
                   if (bytesRead === 0) break;
-                  filled += bytesRead;
+                  chunks.push(chunk.subarray(0, bytesRead));
+                  total += bytesRead;
                 }
-                return buffer.subarray(0, filled);
+                return chunks.length === 1 ? head.value : Buffer.concat(chunks, total);
               },
               catch: (cause) => new HtmlRenderFileError({ path: referencePath, cause }),
             }).pipe(Effect.option);
@@ -340,9 +355,14 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
           }),
         );
         if (read === null) return [];
-        readBytes += Math.ceil(read.byteLength / 3) * 4;
-        if (readBytes > MAX_PAGE_BYTES) {
-          return yield* new HtmlRenderPageTooLargeError({ sizeBytes: readBytes });
+        const occurrences = referenceCounts.get(referencePath) ?? 1;
+        pageBytes +=
+          occurrences *
+          (dataUriPrefix(referencePath).length +
+            Math.ceil(read.byteLength / 3) * 4 -
+            Buffer.byteLength(referencePath));
+        if (pageBytes > MAX_PAGE_BYTES) {
+          return yield* new HtmlRenderPageTooLargeError({ sizeBytes: pageBytes });
         }
         return [{ path: referencePath, bytes: read }];
       }),
@@ -510,7 +530,9 @@ const make = Effect.gen(function* () {
   const inline = (html: string, allowLocalImages = true) => {
     const bootstrapped = injectHtmlRenderBootstrap(html);
     if (!allowLocalImages) {
-      return Effect.succeed({ html: bootstrapped, missing: [] as Array<string> });
+      const references = findLocalImages(bootstrapped);
+      const missing = [...new Set(references.map((reference) => reference.path))];
+      return Effect.succeed({ html: bootstrapped, missing });
     }
     return inlineLocalImages(bootstrapped, isServerInternalPath).pipe(
       Effect.provideContext(services),
@@ -522,9 +544,12 @@ const make = Effect.gen(function* () {
     options?: { readonly allowLocalImages?: boolean | undefined },
   ) {
     yield* rejectViewportHeight(html);
-    const inlined = yield* inline(html, options?.allowLocalImages);
+    const allowLocalImages = options?.allowLocalImages ?? true;
+    const inlined = yield* inline(html, allowLocalImages);
     if (inlined.missing.length > 0) {
-      return yield* new HtmlRenderImagesNotFoundError({ paths: inlined.missing });
+      return yield* allowLocalImages
+        ? new HtmlRenderImagesNotFoundError({ paths: inlined.missing })
+        : new HtmlRenderLocalImagesDisallowedError({ paths: inlined.missing });
     }
     return inlined.html;
   });
