@@ -173,6 +173,28 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   }
 
   @Test
+  fun olderThreadAlertDoesNotReplaceNewerOne() {
+    val now = System.currentTimeMillis()
+    AgentNotifications.receive(
+      context,
+      update("newer", false) + mapOf(
+        "updated_at" to (now + 2000).toString(),
+        "alert_body" to "Failed: Test project",
+      )
+    )
+    AgentNotifications.receive(
+      context,
+      update("older", false) + mapOf(
+        "updated_at" to (now + 1000).toString(),
+        "alert_body" to "Done: Test project",
+      )
+    )
+
+    val alert = manager.activeNotifications.single { it.tag == "t3-agent-alert" }.notification
+    assertEquals("Failed: Test project", alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+  }
+
+  @Test
   fun differentThreadsKeepTheirOwnAlerts() {
     AgentNotifications.receive(context, update("first", false) + ("alert_group" to "environment/a"))
     AgentNotifications.receive(context, update("second", false) + ("alert_group" to "environment/b"))

@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
@@ -48,6 +49,7 @@ object AgentNotifications {
   private const val ALERT_CHANNEL = "agent-alerts"
   private const val ACTIVITY_TAG = "t3-agent-activity"
   private const val ALERT_TAG = "t3-agent-alert"
+  private const val ALERT_UPDATED_AT = "t3_alert_updated_at"
   private const val ACTIVITY_ID = 73001
   private const val MAX_MESSAGE_AGE_MS = 10 * 60 * 1000L
   private const val RUNNING_LIFETIME_MS = 2 * 60 * 60 * 1000L
@@ -189,9 +191,17 @@ object AgentNotifications {
     // alert_id is unique per turn; keying on the thread makes its next alert replace this one.
     val id = (threadGroup ?: alertId).hashCode()
     val group = threadGroup ?: ALERT_TAG
+    val updatedAt = data["updated_at"]?.toLongOrNull() ?: 0L
+    // FCM can deliver an earlier turn's push late; it must not overwrite the thread's newer alert.
+    val newer = threadGroup != null && manager(context).activeNotifications.any {
+      it.tag == ALERT_TAG && it.id == id &&
+        it.notification.extras.getLong(ALERT_UPDATED_AT, 0L) > updatedAt
+    }
+    if (newer) return
     val notification = base(context, ALERT_CHANNEL)
       .setContentTitle(title).setContentText(body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+      .addExtras(Bundle().apply { putLong(ALERT_UPDATED_AT, updatedAt) })
       .setAutoCancel(true)
       .setGroup(group)
       .setContentIntent(contentIntent(context, scheme, data["alert_path"], id))
