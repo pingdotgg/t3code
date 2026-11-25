@@ -1,7 +1,10 @@
 // Fork: Kaluwa's navigation strip. A narrow column left of the thread sidebar that
 // stays put when the sidebar hides, with a usage ring group per subscription account.
 import { useAtomValue } from "@effect/atom-react";
-import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  normalizeProviderAccentColor,
+  providerInstanceInitials,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 import { collectLimitAccounts, type LimitAccount } from "@t3tools/shared/usageLimits";
 import { formatResetsIn } from "@t3tools/shared/usageLimitsCopy";
@@ -27,7 +30,9 @@ import { IssueGlyph } from "../issue/issuePresentation";
 import { readIssueListPreferences } from "../issue/issueListPreferences";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
+import { useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { barColor } from "../usage/UsageLimits";
 import { useWorkflowEnvironmentIds } from "../workflows/useWorkflowEnvironmentIds";
@@ -82,9 +87,10 @@ function accountTitle(account: LimitAccount): string {
   );
 }
 
-const RING_BOX = 32;
-const RING_STROKE = 3;
-const RING_GAP = 1.5;
+// Sized so three rings still leave room for the provider's logo in the middle.
+const RING_BOX = 36;
+const RING_STROKE = 2.5;
+const RING_GAP = 1;
 
 function UsageRings({
   rings,
@@ -98,7 +104,7 @@ function UsageRings({
     <svg
       aria-hidden
       viewBox={`0 0 ${RING_BOX} ${RING_BOX}`}
-      className="size-8 -rotate-90"
+      className="size-9 -rotate-90"
       style={{ color }}
     >
       {rings.map((window, index) => {
@@ -200,9 +206,18 @@ function UsageRingButton({
           />
         }
       >
-        <UsageRings rings={group.rings} color={accountColor(account)} />
+        <span className="relative flex size-9 items-center justify-center">
+          <UsageRings rings={group.rings} color={accountColor(account)} />
+          <ProviderInstanceIcon
+            driverKind={account.driver}
+            displayName={accountTitle(account)}
+            accentColor={account.accentColor}
+            className="absolute inset-0 m-auto size-3"
+            iconClassName="size-3"
+          />
+        </span>
         <span className="w-full truncate text-center text-3xs leading-tight font-medium text-sidebar-muted-foreground">
-          {accountTitle(account)}
+          {providerInstanceInitials(accountTitle(account))}
         </span>
         {showInitials && account.email ? (
           <span className="text-3xs leading-none text-sidebar-muted-foreground/70">
@@ -247,18 +262,34 @@ export const KaluwaNavRail = memo(function KaluwaNavRail() {
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
   const workflowsReachable = useWorkflowEnvironmentIds().length > 0;
+  const { open: threadSidebarOpen } = useSidebar();
   const openUsage = () => void navigate({ to: "/usage" });
   return (
     <nav
       aria-label={gt("App navigation")}
       data-kaluwa-rail=""
       className={cn(
-        "relative z-20 hidden h-full w-(--kaluwa-rail-width) shrink-0 flex-col items-center gap-1 border-r border-sidebar-border bg-sidebar pb-3 text-sidebar-foreground md:flex",
+        "relative z-20 hidden h-full w-(--kaluwa-rail-width) shrink-0 flex-col items-center gap-1 pb-3 text-sidebar-foreground md:flex",
         // The window's own controls sit in the titlebar row above the strip.
         "pt-(--workspace-topbar-height)",
         isElectron && "[-webkit-app-region:drag]",
       )}
     >
+      {/* The strip starts below the titlebar row, so its edge never cuts through the window
+          controls; while the thread sidebar shows, its header runs across that row instead. */}
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute inset-x-0 bottom-0 -z-10 bg-sidebar",
+          threadSidebarOpen
+            ? "top-(--workspace-topbar-height) [mask-image:linear-gradient(to_bottom,transparent,black_1.75rem)]"
+            : "top-0",
+        )}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute right-0 bottom-0 top-(--workspace-topbar-height) w-px bg-sidebar-border"
+      />
       <RailButton
         label={gt("Home")}
         active={pathname === "/"}

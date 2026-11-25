@@ -44,6 +44,8 @@ export function KaluwaStageBackdrop() {
     <div
       aria-hidden
       className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden"
+      // Runs across Kaluwa's navigation strip too, so the titlebar row reads as one band.
+      style={{ left: "calc(var(--kaluwa-rail-width, 0px) * -1)" }}
     >
       <svg
         className="h-full w-full"
