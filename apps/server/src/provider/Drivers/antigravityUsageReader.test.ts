@@ -405,6 +405,14 @@ describe("readAntigravityUsage", () => {
             20,
             new Uint8Array(protoBytes(9, [...protoNumber(1, 1537), ...protoNumber(2, 30)])),
           ]);
+          for (const [offset, id] of [1525, 1527].entries()) {
+            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
+              21 + offset,
+              new Uint8Array(
+                protoBytes(9, [...protoNumber(1, id), ...protoNumber(2, 31 + offset)]),
+              ),
+            ]);
+          }
         }),
       );
       const result = yield* readAntigravityUsage(dir, 0);
@@ -425,6 +433,8 @@ describe("readAntigravityUsage", () => {
           ["gemini-4-argon-r", "gemini-4-argon"],
           ["gemini-4-argon-trial", "gemini-4-argon"],
           ["gemini-pro-orchestrator-neon", "gemini-4-neon"],
+          ["gemini-4-hydrogen", undefined],
+          ["gemini-4-hydrogen", undefined],
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer)),
