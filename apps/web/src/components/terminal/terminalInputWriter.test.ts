@@ -153,9 +153,7 @@ describe("createTerminalInputWriter", () => {
       return true;
     });
 
-    expect(JSON.stringify(received.join("").slice(open.length + payload.length))).toBe(
-      JSON.stringify(close),
-    );
+    expect(received.join("").slice(open.length + payload.length)).toBe(close);
   });
 
   it("reports each input blocked by failed framing recovery without retrying payload", async () => {
