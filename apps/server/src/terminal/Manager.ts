@@ -3904,6 +3904,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             ).pendingControlSequence;
           }
         }
+        // Controls embedded in an unfinished CSI have already run before the clear.
+        if (session.pendingHistoryControlSequence.startsWith("\u001b[")) {
+          session.pendingHistoryControlSequence = session.pendingHistoryControlSequence.replace(
+            /[\x00-\x0f]/g,
+            "",
+          );
+        }
         session.history.clear();
         session.pendingProcessEvents = queuedExit ? [queuedExit] : [];
         session.pendingProcessEventIndex = 0;

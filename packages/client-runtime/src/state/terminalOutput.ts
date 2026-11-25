@@ -306,9 +306,10 @@ export function terminalOutputReplay(output: TerminalOutputState): string {
 export function terminalOutputText(output: TerminalOutputState): string {
   const text = output.chunks.map((chunk) => chunk.data).join("");
   const firstOffset = output.chunks[0]?.startOffset ?? output.nextOffset;
-  return text.slice(
-    Math.max(terminalSequenceEnd(output.sequenceState, text), output.textStartOffset - firstOffset),
-  );
+  const start = Math.max(0, output.textStartOffset - firstOffset);
+  const sequenceState = terminalSequenceStateAfter(output.sequenceState, text, 0, start);
+  const visible = text.slice(start);
+  return visible.slice(terminalSequenceEnd(sequenceState, visible));
 }
 
 export function readTerminalOutputUpdate(
