@@ -12,6 +12,7 @@ import * as DateTime from "effect/DateTime";
 import {
   backgroundWorkHoldsCompletion,
   monitorHoldsWakeCompletion,
+  onlyPullRequestWatchHolds,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
 export type AgentAwarenessPhase =
@@ -175,6 +176,9 @@ function resolveThreadAwarenessPhaseV2(
     case "waiting":
       return "running";
     case "completed":
+      // A pull request watch quietly waits for news rather than working, so the
+      // widget stays idle until the watch wakes the agent or ends its hold.
+      if (onlyPullRequestWatchHolds(thread.pendingBackgroundTasks)) return null;
       return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []) ||
         monitorHoldsWakeCompletion(thread)
         ? "running"

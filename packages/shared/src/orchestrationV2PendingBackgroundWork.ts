@@ -140,6 +140,21 @@ export function monitorHoldsWakeCompletion(
   );
 }
 
+/**
+ * A pull request watch is a quiet wait for news, not agent work: while only it holds a
+ * finished run, awareness stays idle and the phone's widget surfaces the thread again
+ * only when the watch wakes the agent or ends.
+ */
+export function onlyPullRequestWatchHolds(
+  tasks: ReadonlyArray<PendingBackgroundWorkTask> | undefined,
+): boolean {
+  const pending = tasks ?? [];
+  return (
+    pending.some(isPullRequestWatchTask) &&
+    !backgroundWorkHoldsCompletion(pending.filter((task) => !isPullRequestWatchTask(task)))
+  );
+}
+
 type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "status">;
 
 type PendingBackgroundWorkPullRequest = Pick<

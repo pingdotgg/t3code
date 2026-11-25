@@ -13,6 +13,8 @@ import { projectThreadAwarenessV2 } from "./agentAwareness.ts";
 
 const NOW = "2026-05-22T12:00:00.000Z";
 
+const PR_WATCH_TASK_ID = "pull-request-watch:github.com/pingdotgg/t3code#7";
+
 const project = {
   title: "t3code",
 } satisfies Pick<Project, "title">;
@@ -229,6 +231,49 @@ describe("projectThreadAwarenessV2", () => {
         thread: v2Thread({ status: "completed", pendingBackgroundTasks: tasks }),
       }),
     ).toMatchObject({ phase });
+  });
+
+  it("stays quiet while only a pull request watch holds a finished run", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "completed",
+          pendingBackgroundTasks: [{ taskId: PR_WATCH_TASK_ID, kind: "monitor", awaited: true }],
+        }),
+      }),
+    ).toBeNull();
+  });
+
+  it("reports running when agent work accompanies a pull request watch", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "completed",
+          pendingBackgroundTasks: [
+            { taskId: PR_WATCH_TASK_ID, kind: "monitor", awaited: true },
+            { taskId: "review", kind: "subagent" },
+          ],
+        }),
+      }),
+    ).toMatchObject({ phase: "running" });
+  });
+
+  it("stays quiet after a wake run ends while the pull request watch continues", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "completed",
+          latestRunBackgroundWake: true,
+          pendingBackgroundTasks: [{ taskId: PR_WATCH_TASK_ID, kind: "monitor", awaited: true }],
+        }),
+      }),
+    ).toBeNull();
   });
 
   it("reports an async question as input while the run keeps working", () => {

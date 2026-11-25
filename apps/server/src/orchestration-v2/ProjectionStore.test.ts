@@ -11952,7 +11952,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("a pull request watch keeps a finished thread working until it ends", () =>
+  it.effect("a pull request watch keeps a finished thread quiet until it ends", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
       const threadId = ThreadId.make("thread:watched-pull-request");
@@ -12041,7 +12041,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
         assert.deepEqual(listed?.pendingBackgroundTasks, shell?.pendingBackgroundTasks);
         yield* assertShellIndexCoversShells();
-        return shell && projectThreadAwarenessV2({ environmentId, project, thread: shell })?.phase;
+        return (
+          shell &&
+          (projectThreadAwarenessV2({ environmentId, project, thread: shell })?.phase ?? null)
+        );
       });
 
       yield* syncPullRequests("watched", [
@@ -12068,7 +12071,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           awaited: true,
         },
       ]);
-      assert.equal(yield* phase, "running");
+      // A watch quietly waits for news, so the widget stays idle while it holds.
+      assert.equal(yield* phase, null);
 
       yield* syncPullRequests("unwatched", [link]);
       assert.deepEqual((yield* store.getThreadShell(threadId))?.pendingBackgroundTasks, []);

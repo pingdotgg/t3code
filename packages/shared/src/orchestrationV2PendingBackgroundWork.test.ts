@@ -4,6 +4,7 @@ import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
   monitorHoldsWakeCompletion,
+  onlyPullRequestWatchHolds,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
 describe("backgroundWorkHoldsCompletion", () => {
@@ -14,6 +15,39 @@ describe("backgroundWorkHoldsCompletion", () => {
     ["a subagent", true, [{ taskId: "review", kind: "subagent" }]],
   ] as const)("with %s pending, holds completion: %s", (_case, holds, tasks) => {
     expect(backgroundWorkHoldsCompletion(tasks)).toBe(holds);
+  });
+});
+
+describe("onlyPullRequestWatchHolds", () => {
+  const prWatch = { taskId: "pull-request-watch:github.com/acme/app#1", kind: "monitor" as const };
+
+  it("holds while only an awaited pull request watch is pending", () => {
+    expect(onlyPullRequestWatchHolds([{ ...prWatch, awaited: true }])).toBe(true);
+  });
+
+  it("does not hold without a pull request watch", () => {
+    expect(onlyPullRequestWatchHolds([{ taskId: "watch", kind: "monitor", awaited: true }])).toBe(
+      false,
+    );
+    expect(onlyPullRequestWatchHolds(undefined)).toBe(false);
+  });
+
+  it("does not hold when other awaited work accompanies the watch", () => {
+    expect(
+      onlyPullRequestWatchHolds([
+        { ...prWatch, awaited: true },
+        { taskId: "review", kind: "subagent" },
+      ]),
+    ).toBe(false);
+  });
+
+  it("still holds when an unawaited dev server accompanies the watch", () => {
+    expect(
+      onlyPullRequestWatchHolds([
+        { ...prWatch, awaited: true },
+        { taskId: "dev", kind: "command" },
+      ]),
+    ).toBe(true);
   });
 });
 
