@@ -27,4 +27,17 @@ describe("databaseMigrationProgress", () => {
   ])("reads the current complete progress from %s", (output, expected) => {
     expect(databaseMigrationProgress(output)).toEqual(expected);
   });
+
+  it("keeps the last step until the next step is complete", () => {
+    const previous = { current: 2, total: 7 };
+    expect(databaseMigrationProgress(`${STEP} (3 of`, previous)).toEqual(previous);
+    expect(databaseMigrationProgress(`${STEP}\nunrelated progress="5 of 7"`, previous)).toEqual(
+      previous,
+    );
+    expect(databaseMigrationProgress(`${STEP} (3 of 7)`, previous)).toEqual({
+      current: 3,
+      total: 7,
+    });
+    expect(databaseMigrationProgress(START, previous)).toBeNull();
+  });
 });

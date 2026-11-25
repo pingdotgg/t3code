@@ -23,13 +23,14 @@ export function databaseMigrationProgress(
     return output.includes(DATABASE_MIGRATIONS_FINISHED_MESSAGE) ? null : previous;
   }
   const start = output.lastIndexOf(DATABASE_MIGRATIONS_STARTED_MESSAGE);
-  const line = output.slice(
-    Math.max(start, output.lastIndexOf(DATABASE_MIGRATION_PROGRESS_MESSAGE)),
-  );
+  const step = output.lastIndexOf(DATABASE_MIGRATION_PROGRESS_MESSAGE);
+  if (step < start) return null;
+  const end = output.indexOf("\n", step);
+  const line = output.slice(step, end === -1 ? undefined : end);
   const match =
     /^Upgrading database \((\d+) of (\d+)\)/.exec(line) ??
     /(?:progress=|"progress"\s*:\s*)"(\d+) of (\d+)"/.exec(line);
-  if (!match) return null;
+  if (!match) return previous;
   const current = Number(match[1]);
   const total = Number(match[2]);
   return Number.isSafeInteger(current) &&
@@ -37,5 +38,5 @@ export function databaseMigrationProgress(
     current > 0 &&
     current <= total
     ? { current, total }
-    : null;
+    : previous;
 }

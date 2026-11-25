@@ -4,7 +4,7 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import {
   cancelEnvironmentSpeechModelDownload,
-  downloadEnvironmentSpeechModel,
+  installEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
 } from "@t3tools/client-runtime/voice-input";
 import {
@@ -98,11 +98,7 @@ export function useVoiceModels(environmentId: EnvironmentId, label: string) {
         onConfirm: () =>
           void run(
             gt("Could not download the model"),
-            async () => {
-              await runSpeech(downloadEnvironmentSpeechModel(connection, model.id));
-              if (model.id !== status.modelId)
-                await runSpeech(selectEnvironmentSpeechModel(connection, model.id));
-            },
+            () => runSpeech(installEnvironmentSpeechModel(connection, model.id)),
             model.id,
           ),
       });

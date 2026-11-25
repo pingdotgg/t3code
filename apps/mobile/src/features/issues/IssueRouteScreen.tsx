@@ -3,9 +3,11 @@ import { StackActions, useNavigation, type StaticScreenProps } from "@react-navi
 import { issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
+import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import type {
   IssueComment,
   IssueEvent,
+  IssueEventReference,
   IssueLinkedPullRequest,
   IssueReaction,
   IssueState,
@@ -14,7 +16,8 @@ import type {
 import { AsyncResult } from "effect/reactivity";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { useContext, useState } from "react";
-import { Linking, Platform, Pressable, Share, View } from "react-native";
+import { Platform, Pressable, Share, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { KeyboardStickyView } from "react-native-keyboard-controller";
 
 import { RelativeTime } from "../../components/RelativeTime";
@@ -37,8 +40,10 @@ import { NativeLayoutObserver } from "../../native/NativeLayoutObserver";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType, useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { useEnvironmentServerConfig } from "../../state/entities";
 import { issueEnvironment, refreshIssueLists } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
+import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -275,7 +280,7 @@ function LinkedPullRequests(props: {
                       ...(props.params.host ? { host: props.params.host } : {}),
                     }),
                   )
-                : void Linking.openURL(link.url)
+                : void tryOpenExternalUrl(link.url)
             }
             className="flex-row items-center gap-2 rounded-2xl bg-grouped-card p-3 active:opacity-70"
           >
@@ -299,6 +304,75 @@ function LinkedPullRequests(props: {
   );
 }
 
+/** The threads this issue is linked to, most recently active first; hidden while there are none. */
+function LinkedThreads(props: { readonly params: IssueParams; readonly host: string }) {
+  const gt = useGT();
+  const navigation = useNavigation();
+  const { environmentId, input } = issueTarget(props.params);
+  const listsThreads =
+    useEnvironmentServerConfig(environmentId)?.environment.capabilities.issueLinkedThreads === true;
+  const relations = useEnvironmentQuery(
+    listsThreads
+      ? issueEnvironment.linkedThreads({
+          environmentId,
+          input: { tracker: input.tracker, host: props.host, scope: input.scope, key: input.key },
+        })
+      : null,
+  );
+  const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  const hidingAnywhere = useAtomValue(environmentThreadShells.anyEnvironmentHidingAtom);
+  const loadedThreadRefs = useAtomValue(
+    environmentThreadShells.environmentThreadRefsAtom(environmentId),
+  );
+  const threads = visibleLinkedThreads(
+    relations.data?.threads ?? [],
+    environmentId,
+    loadedThreadRefs,
+    hiddenKeys,
+    hidingAnywhere,
+  );
+  if (threads.length === 0) return null;
+  return (
+    <View className="gap-2">
+      <PullRequestSectionHeading>
+        <T>Linked threads</T>
+      </PullRequestSectionHeading>
+      {threads.map((thread) => {
+        const title = thread.title || gt("Untitled thread");
+        return (
+          <Pressable
+            key={thread.id}
+            accessibilityRole="button"
+            accessibilityLabel={gt("Open thread {title}", { title })}
+            onPress={() =>
+              navigation.dispatch(
+                StackActions.push("Thread", {
+                  environmentId: props.params.environmentId,
+                  threadId: thread.id,
+                }),
+              )
+            }
+            className="flex-row items-center gap-2 rounded-2xl bg-grouped-card p-3 active:opacity-70"
+          >
+            <SymbolView name="bubble.left" size={15} tintColorClassName="accent-icon-muted" />
+            <View className="min-w-0 flex-1">
+              <Text className="text-sm" numberOfLines={2}>
+                {title}
+              </Text>
+              {thread.archivedAt !== null ? (
+                <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
+                  <T>Archived thread</T>
+                </Text>
+              ) : null}
+            </View>
+            <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 function IssueCommentCard(props: {
   readonly params: IssueParams;
   readonly comment: IssueComment;
@@ -309,7 +383,7 @@ function IssueCommentCard(props: {
   const { comment } = props;
   return (
     <View className="gap-3 rounded-2xl bg-grouped-card p-3">
-      <View className="flex-row items-center gap-2">
+      <View accessible accessibilityRole="header" className="flex-row items-center gap-2">
         <PullRequestAvatar actor={comment.author} size={22} />
         <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
           {comment.author?.login ?? gt("Unknown author")}
@@ -331,9 +405,48 @@ function IssueCommentCard(props: {
   );
 }
 
-function IssueEventRow({ event }: { readonly event: IssueEvent }) {
+function IssueEventRow({
+  params,
+  event,
+}: {
+  readonly params: IssueParams;
+  readonly event: IssueEvent;
+}) {
   const gt = useGT();
   const messages = useMessages();
+  const navigation = useNavigation();
+  const sentence = issueEventSentence(event, messages);
+  const source = event.reference;
+  const at = event.detail === null ? -1 : sentence.indexOf(event.detail);
+  // Only a git host's tracker shares its host with the change request it links.
+  const sameHost = sourceControlClients.find(params.tracker) !== undefined;
+  const openSource = (target: IssueEventReference) => {
+    const host = params.host ? { host: params.host } : {};
+    if (target.kind === "issue") {
+      navigation.dispatch(
+        StackActions.push("Issue", {
+          environmentId: params.environmentId,
+          projectId: params.projectId,
+          tracker: params.tracker,
+          ...host,
+          scope: target.repository,
+          issueKey: String(target.number),
+        }),
+      );
+    } else if (sameHost) {
+      navigation.dispatch(
+        StackActions.push("PullRequest", {
+          environmentId: params.environmentId,
+          projectId: params.projectId,
+          repository: target.repository,
+          number: target.number,
+          ...host,
+        }),
+      );
+    } else {
+      void tryOpenExternalUrl(target.url);
+    }
+  };
   return (
     <View className="flex-row items-center gap-2 px-1">
       <PullRequestAvatar actor={event.actor} size={18} />
@@ -341,7 +454,21 @@ function IssueEventRow({ event }: { readonly event: IssueEvent }) {
         <Text className="text-xs font-t3-medium">
           {event.actor?.login ?? gt("Someone", { $context: "an unknown person" })}
         </Text>{" "}
-        {issueEventSentence(event, messages)}
+        {source === undefined || event.detail === null || at < 0 ? (
+          sentence
+        ) : (
+          <>
+            {sentence.slice(0, at)}
+            <Text
+              accessibilityRole="link"
+              className="text-xs font-t3-medium text-primary-text"
+              onPress={() => openSource(source)}
+            >
+              {event.detail}
+            </Text>
+            {sentence.slice(at + event.detail.length)}
+          </>
+        )}
       </Text>
       <Text className="text-2xs text-foreground-tertiary">
         {relativeTime(event.createdAt, undefined, messages)}
@@ -416,7 +543,8 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const postComment = useAtomCommand(issueEnvironment.comment, { reportFailure: false });
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
   const [busy, setBusy] = useState<"comment" | "state" | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [olderCommentsError, setOlderCommentsError] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(0);
 
   const timeline = detail
@@ -431,7 +559,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
         ...detail.events.map((event) => ({
           key: `e:${event.id}`,
           at: event.createdAt,
-          content: <IssueEventRow event={event} />,
+          content: <IssueEventRow params={params} event={event} />,
         })),
       ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at))
     : [];
@@ -440,12 +568,12 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
     kind: NonNullable<typeof busy>,
     command: () => Promise<AsyncResult.AsyncResult<unknown, unknown>>,
   ) => {
-    if (busy !== null || registry.get(pager.view).loadingOlder) return false;
+    if (busy !== null) return false;
     setBusy(kind);
-    setError(null);
+    setMutationError(null);
     const failure = issueCommandError(await command());
     setBusy(null);
-    setError(failure);
+    setMutationError(failure);
     // The list beside this issue shows its state and comment count, and reads only when asked.
     if (failure === null) refreshIssueLists(target.environmentId);
     return failure === null;
@@ -453,10 +581,10 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const loadOlder = async () => {
     if (busy !== null) return;
     const failure = await pager.loadOlder(registry, (cursor) => {
-      setError(null);
+      setOlderCommentsError(null);
       return loadComments({ ...target, input: { ...target.input, cursor } });
     });
-    if (failure) setError(gt("Older comments could not be read."));
+    if (failure) setOlderCommentsError(gt("Older comments could not be read."));
   };
   const submitComment = (body: string) =>
     access?.comment === true
@@ -519,7 +647,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                         id: "open-on-host",
                         title: gt("Open on the tracker"),
                         icon: "arrow.up.right",
-                        onPress: () => void Linking.openURL(url),
+                        onPress: () => void tryOpenExternalUrl(url),
                       },
                       {
                         id: "copy-link",
@@ -585,9 +713,9 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                   onEditLabels={() => navigation.navigate("IssueLabels", identity)}
                   onEditAssignees={() => navigation.navigate("IssueAssignees", identity)}
                 />
-                {error || (detail && detailQuery.error) ? (
+                {mutationError || olderCommentsError || (detail && detailQuery.error) ? (
                   <Text selectable className="text-sm text-danger-foreground">
-                    {error ?? detailQuery.error}
+                    {mutationError ?? olderCommentsError ?? detailQuery.error}
                   </Text>
                 ) : null}
                 {!detail ? (
@@ -617,6 +745,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                     {detail.linkedPullRequests.length > 0 ? (
                       <LinkedPullRequests params={params} links={detail.linkedPullRequests} />
                     ) : null}
+                    <LinkedThreads params={params} host={detail.host} />
                     <View className="gap-3">
                       <PullRequestSectionHeading>
                         {detail.commentCount > 0

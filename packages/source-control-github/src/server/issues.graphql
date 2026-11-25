@@ -231,6 +231,7 @@ query IssueDetail($owner: String!, $name: String!, $number: Int!) {
               }
               ... on Issue {
                 number
+                url
                 repository {
                   nameWithOwner
                 }
@@ -266,6 +267,16 @@ query IssueComments($owner: String!, $name: String!, $number: Int!, $cursor: Str
           ...Reactions
         }
       }
+    }
+  }
+}
+
+query IssueLinkMetadata($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      number
+      title
+      url
     }
   }
 }
@@ -416,5 +427,72 @@ query IssueCollections(
         }
       }
     }
+  }
+}
+
+# Issue statuses are a github.com preview. They live in their own documents because a server
+# without them rejects any document that names them, whatever `@include` says.
+fragment PlanningStatusFields on PlanningStatus {
+  id
+  name
+  category {
+    key
+    state
+    stateReason
+  }
+}
+
+query IssueSearchWithStatus($q: String!, $cursor: String, $rows: Int!) {
+  search(query: $q, type: ISSUE, first: $rows, after: $cursor) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+    nodes {
+      ... on Issue {
+        ...IssueRow
+        status {
+          ...PlanningStatusFields
+        }
+        assignees(first: 20) {
+          nodes {
+            login
+            name
+            avatarUrl
+          }
+        }
+        labels(first: 20) {
+          nodes {
+            name
+            color
+          }
+        }
+        comments {
+          totalCount
+        }
+      }
+    }
+  }
+}
+
+query IssueStatuses($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    planningStatuses(first: 50) {
+      nodes {
+        ...PlanningStatusFields
+      }
+    }
+    issue(number: $number) {
+      viewerCanSetStatus
+      status {
+        ...PlanningStatusFields
+      }
+    }
+  }
+}
+
+mutation SetIssueStatus($issueId: ID!, $statusId: ID!) {
+  setIssueStatus(input: { issueId: $issueId, statusId: $statusId }) {
+    clientMutationId
   }
 }
