@@ -9419,11 +9419,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
           if (!restartRequired) return false;
-          // The session stays ready after its agent process exits, so clients learn of the relaunch
-          // here; the session activation that follows a restart replaces the phase.
+          // The session stays ready after its agent process exits, so clients learn of the relaunch here.
           yield* reportStartupPhase("launch");
           yield* restartAcpRuntime(threadId).pipe(
-            Effect.onError(() => reportStartupPhase(undefined)),
+            Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
           );
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
