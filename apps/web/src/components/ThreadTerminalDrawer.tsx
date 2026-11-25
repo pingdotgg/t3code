@@ -456,6 +456,8 @@ function terminalContextMenuItems(options: {
  * A writable session's output generation. A new one is a fresh PTY (or a
  * reconnect) that has not seen the surface's grid yet.
  */
+const isTerminalProcessChanged = Schema.is(TerminalProcessChangedError);
+
 function writableSessionGeneration(
   session: TerminalSessionState,
   canOperate: boolean,
@@ -1012,7 +1014,7 @@ function TerminalSessionViewport({
             const result = await writeInputChunk(chunk, kind, expectedPid);
             if (result._tag === "Success") return true;
             const error = squashAtomCommandFailure(result);
-            if (Schema.is(TerminalProcessChangedError)(error)) return "not-dispatched";
+            if (isTerminalProcessChanged(error)) return "not-dispatched";
             if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
               report(thrownErrorMessage(error, m) ?? fallbackError);
             }
@@ -1043,7 +1045,7 @@ function TerminalSessionViewport({
             );
             if (result._tag === "Success") return true;
             const error = squashAtomCommandFailure(result);
-            if (Schema.is(TerminalProcessChangedError)(error)) return true;
+            if (isTerminalProcessChanged(error)) return true;
             if (!isAtomCommandInterrupted(result)) {
               report(thrownErrorMessage(error, m) ?? m(msg("Failed to close interrupted paste")));
             }
