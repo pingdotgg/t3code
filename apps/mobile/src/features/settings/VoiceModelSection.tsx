@@ -238,6 +238,31 @@ function ModelStats(props: { readonly model: VoiceModel; readonly language: stri
   );
 }
 
+function InstalledModelGlyph(props: { readonly linked: boolean }) {
+  return (
+    <View className="size-6">
+      <SymbolView
+        name={props.linked ? "link" : "tray.and.arrow.down"}
+        size={Platform.OS === "android" ? 24 : 22}
+        tintColorClassName="accent-icon"
+        type="monochrome"
+        weight="regular"
+      />
+      {props.linked ? null : (
+        <View className="absolute -right-1.5 -bottom-1 size-3.5 items-center justify-center rounded-full bg-primary ring-2 ring-grouped-card">
+          <SymbolView
+            name="checkmark"
+            size={9}
+            tintColorClassName="accent-primary-foreground"
+            type="monochrome"
+            weight="bold"
+          />
+        </View>
+      )}
+    </View>
+  );
+}
+
 const FAIL_OFFSET_Y: [number, number] = [-10, 10];
 
 export function VoiceModelRow(props: {
@@ -278,15 +303,7 @@ export function VoiceModelRow(props: {
     };
     const choice = (
       <ListChoiceRow
-        leading={
-          <SymbolView
-            name={linked ? "link" : "internaldrive"}
-            size={Platform.OS === "android" ? 24 : 22}
-            tintColorClassName="accent-icon"
-            type="monochrome"
-            weight="regular"
-          />
-        }
+        leading={<InstalledModelGlyph linked={linked} />}
         label={model.name}
         description={model.description}
         meta={meta}
