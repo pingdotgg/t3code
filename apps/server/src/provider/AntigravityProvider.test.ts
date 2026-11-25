@@ -697,8 +697,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             ?.optionDescriptors?.[0],
         ).toMatchObject({ id: "thought_level", currentValue: "medium" });
 
-        // After a restart, resuming a session at xhigh leaves unobserved models empty so the
-        // registry retains the cached defaults instead of overwriting them with the resumed level.
+        // After a restart, resuming a session on another model at xhigh leaves unobserved
+        // models and default identity unset so the registry retains the cached defaults.
         const restarted = yield* makeHarness();
         yield* restarted.initialize;
         yield* restarted.provider.onSessionStarted(
@@ -706,7 +706,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             ...started,
             sessionSetupResult: {
               sessionId: "session-resumed",
-              configOptions: [catalogModels, thinking("xhigh")],
+              configOptions: [switchedToCarbon, thinking("xhigh")],
             },
           },
           "/workspace",
@@ -716,14 +716,45 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           probed,
           yield* restarted.provider.snapshot.getSnapshot,
         );
+        const mergedNeon = merged.models.find((model) => model.slug === "neon");
+        const mergedCarbon = merged.models.find((model) => model.slug === "carbon");
+        expect(mergedNeon?.isDefault).toBe(true);
+        expect(mergedNeon?.aliases).toContain(ANTIGRAVITY_DEFAULT_MODEL);
+        expect(mergedNeon?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+          id: "thought_level",
+          currentValue: "medium",
+        });
+        expect(mergedCarbon?.isDefault).toBeUndefined();
+        expect(mergedCarbon?.aliases).toBeUndefined();
+        expect(mergedCarbon?.capabilities?.optionDescriptors?.[0]).toMatchObject({
+          id: "thought_level",
+          currentValue: "medium",
+        });
+
+        // A later authoritative session start replaces the cached default model.
+        yield* restarted.provider.onSessionStarted(
+          {
+            ...started,
+            sessionSetupResult: {
+              sessionId: "session-fresh-after-restart",
+              configOptions: [switchedToCarbon, thinking("low", ["low", "medium", "high"])],
+            },
+          },
+          "/workspace",
+        );
+        const updatedAfterFresh = mergeProviderSnapshot(
+          merged,
+          yield* restarted.provider.snapshot.getSnapshot,
+        );
+        expect(updatedAfterFresh.models.find((model) => model.slug === "neon")?.isDefault).toBe(
+          undefined,
+        );
+        expect(updatedAfterFresh.models.find((model) => model.slug === "carbon")?.isDefault).toBe(
+          true,
+        );
         expect(
-          merged.models.find((model) => model.slug === "neon")?.capabilities
-            ?.optionDescriptors?.[0],
-        ).toMatchObject({ id: "thought_level", currentValue: "medium" });
-        expect(
-          merged.models.find((model) => model.slug === "carbon")?.capabilities
-            ?.optionDescriptors?.[0],
-        ).toMatchObject({ id: "thought_level", currentValue: "medium" });
+          updatedAfterFresh.models.find((model) => model.slug === "carbon")?.aliases,
+        ).toContain(ANTIGRAVITY_DEFAULT_MODEL);
       }),
   );
 
