@@ -3539,7 +3539,14 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
           Stream.runHead,
         );
         assert.equal(Option.getOrThrow(progress)?.detail, "Fetching assets · 2 of 3 ready");
-      }).pipe(Effect.ensuring(Deferred.succeed(releaseFetch, undefined)));
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: "30 seconds",
+          orElse: () =>
+            Effect.die(new Error("Timed out waiting for tracked repository fetch progress")),
+        }),
+        Effect.ensuring(Deferred.succeed(releaseFetch, undefined)),
+      );
       yield* Deferred.await(entered);
 
       const { thread } = yield* threads.getThreadProjection(launched.threadId);
