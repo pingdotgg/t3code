@@ -3889,11 +3889,27 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.gen(function* () {
         const terminalId = input.terminalId;
         const session = yield* requireSession(input.threadId, terminalId);
-        // The PTY can finish an in-flight control sequence after scrollback is cleared.
+        // Discard pre-clear output while keeping the parser in sync with the PTY.
+        for (
+          let index = session.pendingProcessEventIndex;
+          index < session.pendingProcessEvents.length;
+          index++
+        ) {
+          const event = session.pendingProcessEvents[index];
+          if (event?.type === "exit") {
+            session.pendingHistoryControlSequence = "";
+            break;
+          }
+          if (event?.type === "output") {
+            session.pendingHistoryControlSequence = sanitizeTerminalHistoryChunk(
+              session.pendingHistoryControlSequence,
+              event.data,
+            ).pendingControlSequence;
+          }
+        }
         session.history.clear();
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
-        session.processEventDrainRunning = false;
         const eventStamp = advanceEventSequence(session);
         // A drain waits for the key to go idle, which never happens while the shell keeps
         // printing; every reader of the file flushes it first.
