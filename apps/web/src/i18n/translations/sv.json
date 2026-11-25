@@ -12837,5 +12837,22 @@
     },
     "."
   ],
-  "30e5685f395a35b8": "Öppna pull request"
+  "30e5685f395a35b8": "Öppna pull request",
+  "e654396f19a21def": "Tråddetaljer för {title}",
+  "b4013dbb802089b2": "Stäng detaljer",
+  "89a073988bdb4b92": "Markerar tråden som klar och tar bort den från tavlan",
+  "149c9b92febb3d73": "Tar bort tråden från tavlan tills den vaknar",
+  "084cdbd230901fd6": "Det gick inte att skicka ditt meddelande.",
+  "f20fcc56c1195909": "Köa en uppföljning…",
+  "31edc03e0a69bc68": "Skicka en uppföljning…",
+  "04a8e01a4e2ffa8b": "Agentens senaste meddelande",
+  "cb290ed8899e0ba7": [
+    "Öppna pull request #",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "39b4070d872d2028": "Snooza"
 }

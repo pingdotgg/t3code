@@ -12830,5 +12830,23 @@
     },
     "."
   ],
-  "30e5685f395a35b8": "Pull Request öffnen"
+  "30e5685f395a35b8": "Pull Request öffnen",
+  "e654396f19a21def": "Thread-Details für {title}",
+  "b4013dbb802089b2": "Details schließen",
+  "89a073988bdb4b92": "Markiert den Thread als erledigt und nimmt ihn vom Board",
+  "149c9b92febb3d73": "Nimmt den Thread vom Board, bis er wieder aufwacht",
+  "084cdbd230901fd6": "Deine Nachricht konnte nicht gesendet werden.",
+  "f20fcc56c1195909": "Folgenachricht einreihen…",
+  "31edc03e0a69bc68": "Folgenachricht senden…",
+  "04a8e01a4e2ffa8b": "Letzte Nachricht des Agenten",
+  "cb290ed8899e0ba7": [
+    "Pull Request #",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " öffnen"
+  ],
+  "39b4070d872d2028": "Schlummern"
 }

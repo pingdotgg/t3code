@@ -102,15 +102,36 @@ const CHECKS_FAILING_PRESENTATION = {
   className: "text-error-foreground",
 };
 
-export function ThreadBoardCard(props: { card: BoardCard; onOpen: () => void }) {
+/** Status icon and label, with the working time while the thread runs. */
+export function BoardStatusLabel(props: { card: BoardCard }) {
+  const m = useMessages();
+  const { card } = props;
+  const checksFailing = card.lane === "needs" && card.status === "ready";
+  const status = checksFailing ? CHECKS_FAILING_PRESENTATION : STATUS_PRESENTATION[card.status];
+  const StatusIcon = status.icon;
+  const workingStartedAt = card.lane === "working" ? resolveWorkingStartedAt(card.thread) : null;
+  return (
+    <span className={cn("flex min-w-0 items-center gap-1.5 text-xs font-medium", status.className)}>
+      <StatusIcon aria-hidden className="size-3.5 shrink-0" />
+      <span className="truncate">{m(status.label)}</span>
+      {workingStartedAt === null ? null : (
+        <span className="font-normal text-muted-foreground tabular-nums">
+          <WorkingDuration environmentId={card.thread.environmentId} startedAt={workingStartedAt} />
+        </span>
+      )}
+    </span>
+  );
+}
+
+export function ThreadBoardCard(props: {
+  card: BoardCard;
+  selected: boolean;
+  onOpen: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
   const gt = useGT();
   const m = useMessages();
   const { card } = props;
   const { thread } = card;
-  const checksFailing = card.lane === "needs" && card.status === "ready";
-  const status = checksFailing ? CHECKS_FAILING_PRESENTATION : STATUS_PRESENTATION[card.status];
-  const StatusIcon = status.icon;
-  const workingStartedAt = card.lane === "working" ? resolveWorkingStartedAt(thread) : null;
   const pullRequest = resolveThreadCurrentPullRequestLink(thread.pullRequests);
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const pullRequestState =
@@ -123,26 +144,22 @@ export function ThreadBoardCard(props: { card: BoardCard; onOpen: () => void }) 
   const PullRequestIcon = pullRequestState?.Icon ?? PullRequestGlyph.pullRequest;
 
   return (
-    <article className="relative flex flex-col gap-1.5 rounded-lg border bg-card px-3 py-2.5 shadow-xs/5 transition-colors has-[>button:hover]:border-foreground/20">
+    <article
+      className={cn(
+        "relative flex flex-col gap-1.5 rounded-lg border bg-card px-3 py-2.5 shadow-xs/5 transition-colors has-[>button:hover]:border-foreground/20",
+        props.selected && "border-primary ring-1 ring-primary ring-inset",
+      )}
+    >
       {/* The whole card opens the thread; controls inside it sit above this button. */}
       <button
         type="button"
         onClick={props.onOpen}
         aria-label={gt("Open {title}", { title: thread.title })}
+        aria-pressed={props.selected}
         className="absolute inset-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       />
       <div className="pointer-events-none flex min-w-0 items-center gap-1.5">
-        <span
-          className={cn("flex min-w-0 items-center gap-1.5 text-xs font-medium", status.className)}
-        >
-          <StatusIcon aria-hidden className="size-3.5 shrink-0" />
-          <span className="truncate">{m(status.label)}</span>
-          {workingStartedAt === null ? null : (
-            <span className="font-normal text-muted-foreground tabular-nums">
-              <WorkingDuration environmentId={thread.environmentId} startedAt={workingStartedAt} />
-            </span>
-          )}
-        </span>
+        <BoardStatusLabel card={card} />
         <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
           <BoardRelativeTime timestamp={card.activityAt} />
         </span>
@@ -199,7 +216,7 @@ export function ThreadBoardCard(props: { card: BoardCard; onOpen: () => void }) 
 }
 
 /** What the thread is waiting on, with the actions that answer it from the board. */
-function BoardCardRequest(props: {
+export function BoardCardRequest(props: {
   card: BoardCard;
   threadRef: ScopedThreadRef;
   pullRequestUrl: string | null;

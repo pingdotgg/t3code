@@ -12825,5 +12825,22 @@
     },
     "."
   ],
-  "30e5685f395a35b8": "Abrir pull request"
+  "30e5685f395a35b8": "Abrir pull request",
+  "e654396f19a21def": "Detalles del hilo {title}",
+  "b4013dbb802089b2": "Cerrar detalles",
+  "89a073988bdb4b92": "Marca el hilo como terminado y lo quita del tablero",
+  "149c9b92febb3d73": "Quita el hilo del tablero hasta que despierte",
+  "084cdbd230901fd6": "No se pudo enviar tu mensaje.",
+  "f20fcc56c1195909": "Poner en cola un seguimiento…",
+  "31edc03e0a69bc68": "Enviar un seguimiento…",
+  "04a8e01a4e2ffa8b": "Último mensaje del agente",
+  "cb290ed8899e0ba7": [
+    "Abrir pull request #",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "39b4070d872d2028": "Posponer"
 }

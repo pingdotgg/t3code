@@ -12830,5 +12830,22 @@
     },
     "."
   ],
-  "30e5685f395a35b8": "Abrir pull request"
+  "30e5685f395a35b8": "Abrir pull request",
+  "e654396f19a21def": "Detalhes da thread {title}",
+  "b4013dbb802089b2": "Fechar detalhes",
+  "89a073988bdb4b92": "Marca a thread como concluída e a tira do quadro",
+  "149c9b92febb3d73": "Tira a thread do quadro até ela despertar",
+  "084cdbd230901fd6": "Não foi possível enviar sua mensagem.",
+  "f20fcc56c1195909": "Enfileirar um acompanhamento…",
+  "31edc03e0a69bc68": "Enviar um acompanhamento…",
+  "04a8e01a4e2ffa8b": "Última mensagem do agente",
+  "cb290ed8899e0ba7": [
+    "Abrir pull request #",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "39b4070d872d2028": "Adiar"
 }

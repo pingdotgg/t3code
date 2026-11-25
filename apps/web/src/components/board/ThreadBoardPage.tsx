@@ -2,7 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { ArrowLeftIcon, ChevronDownIcon, SearchIcon, SquareKanbanIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 
 import { isElectron } from "~/env";
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
@@ -16,6 +16,7 @@ import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { SidebarInset } from "../ui/sidebar";
 import { ThreadBoardCard } from "./ThreadBoardCard";
+import { ThreadBoardPeek } from "./ThreadBoardPeek";
 import {
   BOARD_LANES,
   buildBoardSwimlanes,
@@ -42,6 +43,16 @@ export function ThreadBoardPage() {
   const clockMs = useSnoozeWakeClock(threads);
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const [peekKey, setPeekKey] = useState<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener: Escape closes the peek wherever focus is
+  useEffect(() => {
+    if (peekKey === null) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) setPeekKey(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [peekKey]);
 
   const now = new Date(clockMs).toISOString();
   const needle = query.trim().toLowerCase();
@@ -52,12 +63,27 @@ export function ThreadBoardPage() {
     if (card !== null) cards.push(card);
   }
   const swimlanes = buildBoardSwimlanes(groups, cards);
+  // A thread that leaves the board (settled, snoozed, filtered out) closes its peek.
+  const peekCard = cards.find((card) => cardKey(card) === peekKey) ?? null;
+  const peekGroup =
+    peekCard === null
+      ? null
+      : (swimlanes.find(({ lanes }) => BOARD_LANES.some((lane) => lanes[lane].includes(peekCard)))
+          ?.group ?? null);
 
   const openThread = (card: BoardCard) => {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(card.thread.environmentId, card.thread.id)),
     });
+  };
+  // Click peeks; Ctrl-click (Cmd-click on macOS) opens the full thread.
+  const onCardOpen = (card: BoardCard, event: MouseEvent<HTMLButtonElement>) => {
+    if (event.metaKey || event.ctrlKey) {
+      openThread(card);
+      return;
+    }
+    setPeekKey(peekKey === cardKey(card) ? null : cardKey(card));
   };
   const toggleCollapsed = (projectKey: string) => {
     const next = new Set(collapsed);
@@ -73,7 +99,7 @@ export function ThreadBoardPage() {
           isElectron && "drag-region wco:pr-(--workspace-native-controls-inset)",
         )}
       >
-        <div className="flex w-[25rem] shrink-0 items-center gap-1.5">
+        <div className="flex w-100 shrink-0 items-center gap-1.5">
           <Button
             variant="ghost"
             size="icon-sm"
@@ -101,97 +127,111 @@ export function ThreadBoardPage() {
         </h1>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto px-4 pb-6 scrollbar-gutter-both">
-        {swimlanes.length === 0 ? (
-          <p className="mx-auto mt-16 max-w-sm text-center text-sm text-muted-foreground">
-            {needle ? (
-              <T>No threads match.</T>
-            ) : (
-              <T>
-                Nothing on the board. Threads that are running, waiting on you, or done show up
-                here.
-              </T>
-            )}
-          </p>
-        ) : (
-          <div className="min-w-[46rem]">
-            <div className="sticky top-0 z-10 grid grid-cols-3 gap-2.5 bg-background surface-grain pt-3 pb-1.5">
-              {BOARD_LANES.map((lane) => (
-                <div key={lane} className="flex items-center gap-2 px-1 text-sm font-semibold">
-                  <span
-                    aria-hidden
-                    className={cn("size-2 rounded-full", LANE_PRESENTATION[lane].dotClassName)}
-                  />
-                  {m(LANE_PRESENTATION[lane].label)}
-                  <span className="font-medium text-muted-foreground">
-                    {cards.filter((card) => card.lane === lane).length}
-                  </span>
-                </div>
-              ))}
-            </div>
-            {swimlanes.map(({ group, lanes }) => {
-              const isCollapsed = collapsed.has(group.projectKey);
-              return (
-                <section key={group.projectKey} className="mt-2.5" aria-label={group.displayName}>
-                  <button
-                    type="button"
-                    aria-expanded={!isCollapsed}
-                    onClick={() => toggleCollapsed(group.projectKey)}
-                    className="flex h-8 w-full items-center gap-2 rounded-lg px-1.5 text-left text-sm font-semibold outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                  >
-                    <ChevronDownIcon
+      <div className="flex min-h-0 flex-1">
+        {peekCard !== null && peekGroup !== null ? (
+          <ThreadBoardPeek
+            key={cardKey(peekCard)}
+            card={peekCard}
+            project={peekGroup}
+            onClose={() => setPeekKey(null)}
+            onOpenThread={() => openThread(peekCard)}
+          />
+        ) : null}
+        <div className="min-h-0 flex-1 overflow-auto px-4 pb-6 scrollbar-gutter-both">
+          {swimlanes.length === 0 ? (
+            <p className="mx-auto mt-16 max-w-sm text-center text-sm text-muted-foreground">
+              {needle ? (
+                <T>No threads match.</T>
+              ) : (
+                <T>
+                  Nothing on the board. Threads that are running, waiting on you, or done show up
+                  here.
+                </T>
+              )}
+            </p>
+          ) : (
+            <div className="min-w-[46rem]">
+              <div className="sticky top-0 z-10 grid grid-cols-3 gap-2.5 bg-background surface-grain pt-3 pb-1.5">
+                {BOARD_LANES.map((lane) => (
+                  <div key={lane} className="flex items-center gap-2 px-1 text-sm font-semibold">
+                    <span
                       aria-hidden
-                      className={cn(
-                        "size-4 text-muted-foreground transition-transform",
-                        isCollapsed && "-rotate-90",
-                      )}
+                      className={cn("size-2 rounded-full", LANE_PRESENTATION[lane].dotClassName)}
                     />
-                    <ProjectFavicon project={group} className="size-4" />
-                    <span className="truncate">{group.displayName}</span>
-                    <span className="ml-1 flex items-center gap-2.5 text-xs font-normal text-muted-foreground">
-                      {BOARD_LANES.map((lane) =>
-                        lanes[lane].length === 0 ? null : (
-                          <span key={lane} className="flex items-center gap-1.5">
-                            <span
-                              aria-hidden
-                              className={cn(
-                                "size-2 rounded-full",
-                                LANE_PRESENTATION[lane].dotClassName,
-                              )}
-                            />
-                            {lanes[lane].length}
-                          </span>
-                        ),
-                      )}
+                    {m(LANE_PRESENTATION[lane].label)}
+                    <span className="font-medium text-muted-foreground">
+                      {cards.filter((card) => card.lane === lane).length}
                     </span>
-                  </button>
-                  {isCollapsed ? null : (
-                    <div className="mt-1 grid grid-cols-3 gap-2.5">
-                      {BOARD_LANES.map((lane) => (
-                        <div
-                          key={lane}
-                          className={cn(
-                            "flex min-h-13 flex-col gap-1.5 rounded-xl border p-1.5",
-                            lanes[lane].length === 0 ? "border-dashed" : "bg-muted/60",
-                          )}
-                        >
-                          {lanes[lane].map((card) => (
-                            <ThreadBoardCard
-                              key={card.thread.id}
-                              card={card}
-                              onOpen={() => openThread(card)}
-                            />
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              );
-            })}
-          </div>
-        )}
+                  </div>
+                ))}
+              </div>
+              {swimlanes.map(({ group, lanes }) => {
+                const isCollapsed = collapsed.has(group.projectKey);
+                return (
+                  <section key={group.projectKey} className="mt-2.5" aria-label={group.displayName}>
+                    <button
+                      type="button"
+                      aria-expanded={!isCollapsed}
+                      onClick={() => toggleCollapsed(group.projectKey)}
+                      className="flex h-8 w-full items-center gap-2 rounded-lg px-1.5 text-left text-sm font-semibold outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                    >
+                      <ChevronDownIcon
+                        aria-hidden
+                        className={cn(
+                          "size-4 text-muted-foreground transition-transform",
+                          isCollapsed && "-rotate-90",
+                        )}
+                      />
+                      <ProjectFavicon project={group} className="size-4" />
+                      <span className="truncate">{group.displayName}</span>
+                      <span className="ml-1 flex items-center gap-2.5 text-xs font-normal text-muted-foreground">
+                        {BOARD_LANES.map((lane) =>
+                          lanes[lane].length === 0 ? null : (
+                            <span key={lane} className="flex items-center gap-1.5">
+                              <span
+                                aria-hidden
+                                className={cn(
+                                  "size-2 rounded-full",
+                                  LANE_PRESENTATION[lane].dotClassName,
+                                )}
+                              />
+                              {lanes[lane].length}
+                            </span>
+                          ),
+                        )}
+                      </span>
+                    </button>
+                    {isCollapsed ? null : (
+                      <div className="mt-1 grid grid-cols-3 gap-2.5">
+                        {BOARD_LANES.map((lane) => (
+                          <div
+                            key={lane}
+                            className={cn(
+                              "flex min-h-13 flex-col gap-1.5 rounded-xl border p-1.5",
+                              lanes[lane].length === 0 ? "border-dashed" : "bg-muted/60",
+                            )}
+                          >
+                            {lanes[lane].map((card) => (
+                              <ThreadBoardCard
+                                key={card.thread.id}
+                                card={card}
+                                selected={peekCard === card}
+                                onOpen={(event) => onCardOpen(card, event)}
+                              />
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
     </SidebarInset>
   );
 }
+
+const cardKey = (card: BoardCard) => `${card.thread.environmentId}:${card.thread.id}`;

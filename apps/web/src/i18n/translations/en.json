@@ -12839,5 +12839,22 @@
     },
     "."
   ],
-  "30e5685f395a35b8": "Open pull request"
+  "30e5685f395a35b8": "Open pull request",
+  "e654396f19a21def": "Thread details for {title}",
+  "b4013dbb802089b2": "Close details",
+  "89a073988bdb4b92": "Marks the thread done and takes it off the board",
+  "149c9b92febb3d73": "Takes the thread off the board until it wakes",
+  "084cdbd230901fd6": "Could not send your message.",
+  "f20fcc56c1195909": "Queue a follow-up…",
+  "31edc03e0a69bc68": "Send a follow-up…",
+  "04a8e01a4e2ffa8b": "Latest message from the agent",
+  "cb290ed8899e0ba7": [
+    "Open pull request #",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "39b4070d872d2028": "Snooze"
 }
