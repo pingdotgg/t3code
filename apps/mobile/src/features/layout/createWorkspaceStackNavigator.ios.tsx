@@ -346,15 +346,20 @@ function WorkspaceColumns(
     );
     collapsedColumn.current = transition.column;
     setNativelyPoppingWorkspaceRoute(transition.column.leaving);
+    // A pop re-renders and the effect below follows it; without one, nothing would re-render.
     if (transition.pop) props.navigation.dispatch(transition.pop);
+    else showCompactColumn();
   };
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the native split host which column to show while collapsed
-  useEffect(() => {
+  const showCompactColumn = () => {
     if (layout.usesSplitView || collapsedColumn.current.visible === compactColumn) return;
     collapsedColumn.current = { ...collapsedColumn.current, visible: compactColumn };
     hostRef.current?.show(compactColumn);
-  }, [compactColumn, layout.usesSplitView]);
+  };
+
+  // Every commit, not only when compactColumn changes: a thread picked while folded Back reveals
+  // the list survives Back's pop, so the router keeps a detail while UIKit shows the list.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the native split host which column to show while collapsed
+  useEffect(showCompactColumn);
 
   const primary = props.descriptors[props.primary.key];
   if (!primary) return null;
