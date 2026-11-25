@@ -3687,6 +3687,34 @@ describe("parseAgentSessionTranscript", () => {
     });
   });
 
+  it("preserves a Claude question after quoted command output", () => {
+    const question = "Why did this change?";
+    const prompt = `<local-command-stdout>Enabled plan mode</local-command-stdout>\n${question}`;
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        ["user", "Help me understand plan mode"],
+        ["assistant", "What did the command print?"],
+        ["user", prompt],
+        ["assistant", "The command enabled plan mode."],
+      ]
+        .map(([role, content]) =>
+          encodeTranscriptRecord({ type: role, message: { role, content } }),
+        )
+        .join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "62c057bb-b316-4b29-be2c-140090d71254",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(
+      thread?.messages
+        .filter((message) => message.role === "user")
+        .map((message) => message.text)
+        .join("\n"),
+    ).toContain(question);
+  });
+
   it.each([
     { customTitles: ["Refactor auth module"], expected: "Refactor auth module" },
     // Claude writes an empty customTitle when the user clears a rename.
