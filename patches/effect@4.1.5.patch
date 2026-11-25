@@ -4138,38 +4138,39 @@ diff --git a/src/sql/SqlClient.ts b/src/sql/SqlClient.ts
                          services.pipe(
                            Context.add(options.transactionService, level),
                            Context.add(CurrentTransactionService, options.transactionService),
-diff --git a/dist/workflow/Workflow.js b/dist/workflow/Workflow.js
---- a/dist/workflow/Workflow.js
-+++ b/dist/workflow/Workflow.js
-@@ -327,6 +327,11 @@ export const wrapActivityResult = (effect, isSuspend) => Effect.contextWith(cont
-     if (Exit.isSuccess(exit) && isResult(exit.value) && exit.value._tag === "Suspended" && exit.value.cause) {
-       instance.cause = instance.cause ? Cause.combine(instance.cause, exit.value.cause) : exit.value.cause;
-     }
-+    // Recorded before waiting on sibling activities: a deferred wake can interrupt that wait, and
-+    // a run suspended without `failed` is reset by the next automatic wake.
-+    if (Exit.isSuccess(exit) && isResult(exit.value) && exit.value._tag === "Suspended" && exit.value.failed) {
-+      instance.failed = true;
-+    }
-     return isSuspended && instance.activityState.count > 0 ? waitForZero(instance) : Effect.void;
+diff --git a/dist/workflow/Activity.js b/dist/workflow/Activity.js
+--- a/dist/workflow/Activity.js
++++ b/dist/workflow/Activity.js
+@@ -142,7 +142,12 @@ const makeExecute = /*#__PURE__*/Effect.fnUntraced(function* (activity) {
+   yield* Effect.annotateCurrentSpan({
+     executionId: instance.executionId
    });
- });
-diff --git a/src/workflow/Workflow.ts b/src/workflow/Workflow.ts
---- a/src/workflow/Workflow.ts
-+++ b/src/workflow/Workflow.ts
-@@ -809,6 +809,16 @@ export const wrapActivityResult = <A, E, R>(
-             ? Cause.combine(instance.cause, exit.value.cause)
-             : exit.value.cause
-         }
-+        // Recorded before waiting on sibling activities: a deferred wake can interrupt that wait, and
-+        // a run suspended without `failed` is reset by the next automatic wake.
-+        if (
-+          Exit.isSuccess(exit) &&
-+          isResult(exit.value) &&
-+          exit.value._tag === "Suspended" &&
-+          exit.value.failed
-+        ) {
+-  const result = yield* Workflow.wrapActivityResult(engine.activityExecute(activity, attempt), _ => _._tag === "Suspended");
++  const result = yield* Workflow.wrapActivityResult(
++  // Recorded as the activity ends: suspension then waits on sibling activities, and a deferred
++  // wake can interrupt that wait before the result below is read.
++  Effect.onExit(engine.activityExecute(activity, attempt), exit => Effect.sync(() => {
++    if (exit._tag === "Success" && exit.value._tag === "Suspended" && exit.value.failed) instance.failed = true;
++  })), _ => _._tag === "Suspended");
+   if (result._tag === "Suspended") {
+     if (result.failed) instance.failed = true;
+     return yield* Workflow.suspend(instance);
+diff --git a/src/workflow/Activity.ts b/src/workflow/Activity.ts
+--- a/src/workflow/Activity.ts
++++ b/src/workflow/Activity.ts
+@@ -343,7 +343,14 @@ const makeExecute = Effect.fnUntraced(function*<
+   const attempt = yield* CurrentAttempt
+   yield* Effect.annotateCurrentSpan({ executionId: instance.executionId })
+   const result = yield* Workflow.wrapActivityResult(
+-    engine.activityExecute(activity, attempt),
++    // Recorded as the activity ends: suspension then waits on sibling activities, and a deferred
++    // wake can interrupt that wait before the result below is read.
++    Effect.onExit(engine.activityExecute(activity, attempt), (exit) =>
++      Effect.sync(() => {
++        if (exit._tag === "Success" && exit.value._tag === "Suspended" && exit.value.failed) {
 +          instance.failed = true
 +        }
-         return isSuspended && instance.activityState.count > 0
-           ? waitForZero(instance)
-           : Effect.void
++      })),
+     (_) => _._tag === "Suspended"
+   )
+   if (result._tag === "Suspended") {

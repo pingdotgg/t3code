@@ -62,3 +62,39 @@ it.effect("a failed activity keeps its run failed when a wake preempts it mid-cl
     }).pipe(Effect.provide(DoubtingLayer.pipe(Layer.provideMerge(WorkflowEngine.layerMemory))));
   }),
 );
+
+it.effect("a child's own failure does not mark the parent that awaits it failed", () =>
+  Effect.gen(function* () {
+    let attempts = 0;
+    const childFailed = yield* Latch.make();
+    const parentDone = yield* Latch.make();
+    const Parent = Workflow.make("Parent", { payload: {}, idempotencyKey: () => "parent" });
+    const Child = Workflow.make("Child", {
+      payload: {},
+      idempotencyKey: () => "child",
+    }).annotate(Workflow.SuspendOnFailure, true);
+    const ParentLayer = Parent.toLayer(() => Effect.andThen(Child.execute({}), parentDone.open));
+    const ChildLayer = Child.toLayer(() =>
+      Activity.make({
+        name: "flaky",
+        execute: Effect.suspend(() =>
+          ++attempts === 1 ? Effect.andThen(childFailed.open, Effect.die("boom")) : Effect.void,
+        ),
+      }),
+    );
+    yield* Effect.gen(function* () {
+      yield* Parent.execute({}, { discard: true });
+      yield* childFailed.await;
+      // Queued behind the failing run. The child's completion then wakes the parent on its own.
+      yield* Child.resume(yield* Child.executionId({}));
+      yield* parentDone.await;
+      assert.strictEqual(attempts, 2);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(ParentLayer, ChildLayer).pipe(
+          Layer.provideMerge(WorkflowEngine.layerMemory),
+        ),
+      ),
+    );
+  }),
+);
