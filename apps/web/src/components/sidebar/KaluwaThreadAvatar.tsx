@@ -35,13 +35,13 @@ export function KaluwaThreadAvatar(props: {
   return (
     <span
       aria-hidden
-      className="relative flex size-4 shrink-0 items-center justify-center"
+      className="relative flex size-3.5 shrink-0 items-center justify-center"
       data-thread-status={status ?? undefined}
     >
       {status ? (
         <span
           className={cn(
-            "pointer-events-none absolute -inset-1 rounded-full border-2",
+            "pointer-events-none absolute -inset-0.75 rounded-full border-2",
             RING_CLASS_NAME[status],
           )}
         />
@@ -57,13 +57,40 @@ export function KaluwaThreadAvatar(props: {
           size="compact"
           className="z-0"
           iconClassName={cn(
-            "size-3.5 transition-opacity",
+            "size-3 transition-opacity",
             props.recede && status === null && "opacity-60",
           )}
-          badgeClassName="right-[-0.3125rem] bottom-[-0.3125rem] h-2.5 min-w-2.5 px-px text-5xs tracking-tight"
+          badgeClassName="-right-1.5 -bottom-1 h-2.5 min-w-2.5 px-px text-5xs tracking-tight"
           indicatorBackground="var(--sidebar)"
         />
       ) : null}
     </span>
+  );
+}
+
+const TREE_LINE_CLASS_NAME = "pointer-events-none absolute border-sidebar-foreground/15";
+
+/**
+ * A folder thread's branch: an elbow from its folder's trunk into the row, and the trunk
+ * running on below unless this is the folder's last thread.
+ */
+export function KaluwaFolderTreeLines() {
+  return (
+    <>
+      <span
+        aria-hidden
+        className={cn(
+          TREE_LINE_CLASS_NAME,
+          "top-0 left-5 h-1/2 w-2 rounded-bl-md border-b border-l",
+        )}
+      />
+      <span
+        aria-hidden
+        className={cn(
+          TREE_LINE_CLASS_NAME,
+          "top-1/2 bottom-0 left-5 border-l [li:not(:has(+[data-folder-thread]))>&]:hidden",
+        )}
+      />
+    </>
   );
 }

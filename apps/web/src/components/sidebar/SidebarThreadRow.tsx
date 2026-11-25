@@ -140,7 +140,7 @@ import { useThreadHasUnsentDraft } from "../../composerDraftStore";
 import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
 import { IssueGlyph, issueStatePresentation } from "../issue/issuePresentation";
 import { useThreadIntentPrefetch } from "./useThreadIntentPrefetch";
-import { KaluwaThreadAvatar } from "./KaluwaThreadAvatar";
+import { KaluwaFolderTreeLines, KaluwaThreadAvatar } from "./KaluwaThreadAvatar";
 
 // The fields thread rows show. Provider status pushes refresh `checkedAt`,
 // status and auth on every provider; leaving those out keeps each
@@ -1113,6 +1113,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       ref={isRegeneratingTitle ? observeVisibleAnimation : undefined}
       className={cn(
         "min-w-0 flex-1 text-start text-sm transition-opacity motion-reduce:transition-none",
+        // Fork: folder threads read smaller than their folder's name.
+        (variant === "folder" || variant === "folder-multiline") && "text-xs",
         shouldRecede ? "font-normal" : "font-medium",
         isRegeneratingTitle
           ? "relative truncate text-muted-foreground"
@@ -1336,12 +1338,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         data-thread-item={threadKey}
         {...sortableRootProps}
         {...(fileDropHandlers ?? {})}
+        data-folder-thread={inFolder ? "" : undefined}
         className={cn(
           "list-none [content-visibility:auto] [contain-intrinsic-size:auto_--spacing(9)]",
           metaLine !== null && multiline && "[contain-intrinsic-size:auto_--spacing(13.5)]",
+          // Fork: room for the folder's tree lines left of the row.
+          inFolder && "relative ps-7 [contain-intrinsic-size:auto_--spacing(8)]",
           sortable?.isDragging && "relative z-20",
         )}
       >
+        {inFolder ? <KaluwaFolderTreeLines /> : null}
         <Tooltip disabled={isRenaming || sortable?.isDragging}>
           <TooltipTrigger
             render={
@@ -1360,6 +1366,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   multiline
                     ? "flex flex-col justify-center px-2.5 py-1.5"
                     : "flex h-9 items-center gap-2.5 px-2.5",
+                  inFolder && (multiline ? "px-2 py-1" : "h-8 gap-2 px-2"),
                   // Fork: folder rows lead with the provider avatar, under the folder's icon,
                   // so titles still line up with the folder name.
                 )}
@@ -1374,7 +1381,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             }
           >
             {/* `contents` keeps one-line rows a single flex row. */}
-            <div className={multiline ? "flex h-6 min-w-0 items-center gap-2.5" : "contents"}>
+            <div className={multiline ? "flex h-6 min-w-0 items-center gap-2" : "contents"}>
               {inFolder ? (
                 <KaluwaThreadAvatar
                   providerEntry={providerEntry}
@@ -1541,7 +1548,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {props.sweepAction !== null ? dragDestination : null}
             </div>
             {/* Fork: the meta line starts under the title, past the avatar column. */}
-            {multiline ? <div className="ps-6.5">{metaLine}</div> : null}
+            {multiline ? <div className="ps-5.5">{metaLine}</div> : null}
           </TooltipTrigger>
           {detailsTooltip}
         </Tooltip>
