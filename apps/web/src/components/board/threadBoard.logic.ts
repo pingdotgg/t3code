@@ -11,8 +11,6 @@ export const BOARD_LANES: ReadonlyArray<BoardLane> = ["needs", "working", "done"
 
 export interface BoardLaneInput {
   readonly status: SidebarThreadStatus;
-  /** A run is active; a "waiting" thread is then blocked on a child thread, not idle. */
-  readonly runActive: boolean;
   readonly pullRequestChecksFailing: boolean;
 }
 
@@ -27,9 +25,10 @@ export function resolveBoardLane(input: BoardLaneInput): BoardLane {
       return "needs";
     case "preparing":
     case "working":
-      return "working";
+    // Waiting on a subagent, or on background work the agent started (a monitor, a running
+    // command); either way the agent resumes on its own, so the thread is not done.
     case "waiting":
-      return input.runActive ? "working" : "done";
+      return "working";
     case "ready":
       return input.pullRequestChecksFailing ? "needs" : "done";
   }
@@ -52,7 +51,6 @@ export function resolveBoardCard(thread: SidebarThreadSummary, now: string): Boa
     status,
     lane: resolveBoardLane({
       status,
-      runActive: thread.runtime?.status === "running",
       pullRequestChecksFailing:
         pullRequest?.state === "open" && pullRequest.checksState === "failing",
     }),

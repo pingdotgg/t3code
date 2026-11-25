@@ -19,26 +19,14 @@ describe("resolveBoardLane", () => {
     ["failed", "needs"],
     ["preparing", "working"],
     ["working", "working"],
+    ["waiting", "working"],
     ["ready", "done"],
   ])("puts a %s thread in %s", (status, lane) => {
-    expect(resolveBoardLane({ status, runActive: false, pullRequestChecksFailing: false })).toBe(
-      lane,
-    );
-  });
-
-  it("keeps a thread waiting on a child thread in Working, and an idle one in Done", () => {
-    expect(
-      resolveBoardLane({ status: "waiting", runActive: true, pullRequestChecksFailing: false }),
-    ).toBe("working");
-    expect(
-      resolveBoardLane({ status: "waiting", runActive: false, pullRequestChecksFailing: false }),
-    ).toBe("done");
+    expect(resolveBoardLane({ status, pullRequestChecksFailing: false })).toBe(lane);
   });
 
   it("moves a finished thread whose pull request checks fail to Needs you", () => {
-    expect(
-      resolveBoardLane({ status: "ready", runActive: false, pullRequestChecksFailing: true }),
-    ).toBe("needs");
+    expect(resolveBoardLane({ status: "ready", pullRequestChecksFailing: true })).toBe("needs");
   });
 });
 
