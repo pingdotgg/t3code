@@ -4554,7 +4554,9 @@ describe("PiAdapterV2", () => {
       const write = (file: string, entries: ReadonlyArray<unknown>) =>
         fs.writeFileString(
           file,
-          [{ type: "session", version: 3 }, ...entries].map(encodeJsonLine).join("\n") + "\n",
+          [{ type: "session", version: 3 }, ...entries]
+            .map((entry) => encodeJsonLine(entry))
+            .join("\n") + "\n",
         );
       const equivalent = scenario === "equivalent prior rollback fork";
       const conflicting = scenario === "conflicting prior fork";
