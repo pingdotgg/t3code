@@ -56,10 +56,8 @@ import {
   type PiDiscoveredCommands,
 } from "./commands.ts";
 
-export const PI_DISPLAY_NAME = "Pi";
-
 const PI_PRESENTATION = {
-  displayName: PI_DISPLAY_NAME,
+  displayName: "Pi",
   showInteractionModeToggle: false,
   supportedRuntimeModes: ["approval-required", "auto-accept-edits", "full-access"],
   reportsContextWindow: true,
