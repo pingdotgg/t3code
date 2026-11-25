@@ -3009,7 +3009,22 @@ const make = Effect.gen(function* () {
               ),
             );
         }
-        workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
+        // Other repositories in the project can only match a branch name, so name the
+        // parent's branch when it still points at the parent's commit.
+        const branch = parent.thread.branch;
+        const branchAtBase =
+          branch !== null &&
+          (yield* gitDriver
+            .resolveCommit({ cwd: project.workspaceRoot, revision: `refs/heads/${branch}` })
+            .pipe(
+              Effect.map((resolved) => resolved.commitSha === base.commitSha),
+              Effect.orElseSucceed(() => false),
+            ));
+        workspaceStrategy = {
+          type: "worktree",
+          baseRef: branchAtBase ? branch : base.commitSha,
+          startFromOrigin: false,
+        };
       }
       const parentNodeId = parentRun.rootNodeId;
       // The command commits the child's preparing run, which only this call

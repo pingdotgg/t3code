@@ -53,10 +53,11 @@ export type Trigger<Fires> = (ScheduleTrigger | WebhookTrigger | OpenedTrigger) 
 
 /** A run every so often, counted from when the last one was started. At least a minute. */
 export const every = (interval: Duration.Input): Trigger<Tick> => {
-  const everyMs = Duration.toMillis(durationOf(`every(${JSON.stringify(interval)})`, interval));
+  const label = `every(${typeof interval === "bigint" ? `${interval}n` : JSON.stringify(interval)})`;
+  const everyMs = Duration.toMillis(durationOf(label, interval));
   // The sweep would quietly stretch a shorter one to a minute.
   if (everyMs < 60_000) {
-    throw new Error(`every(${JSON.stringify(interval)}) is shorter than the shortest, one minute.`);
+    throw new Error(`${label} is shorter than the shortest, one minute.`);
   }
   return { kind: "schedule", id: `every:${everyMs}`, schedule: { type: "interval", everyMs } };
 };

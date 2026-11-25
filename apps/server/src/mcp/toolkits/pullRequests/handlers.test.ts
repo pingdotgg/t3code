@@ -1366,6 +1366,25 @@ describe("source control tools", () => {
         .pipe(Effect.flip);
       expect(error.message).toContain("a.ts line 40 (new side) is not in this PR's diff");
       expect(reviews).toHaveLength(1);
+
+      // A range whose start the diff shows names its end, the line that is missing.
+      const rangeError = yield* harness
+        .call("pull_request_review", {
+          verdict: "comment",
+          comments: [{ path: "b.ts", line: 40, startLine: 9, body: "Here?" }],
+        })
+        .pipe(Effect.flip);
+      expect(rangeError.message).toContain("b.ts line 40 (new side) is not in this PR's diff");
+
+      // A range whose end the diff shows still names its start.
+      const startError = yield* harness
+        .call("pull_request_review", {
+          verdict: "comment",
+          comments: [{ path: "b.ts", line: 10, startLine: 2, body: "Here?" }],
+        })
+        .pipe(Effect.flip);
+      expect(startError.message).toContain("b.ts line 2 (new side) is not in this PR's diff");
+      expect(reviews).toHaveLength(1);
     }),
   );
 

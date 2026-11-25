@@ -124,7 +124,7 @@ function AvatarImage(props: {
       style={{ width: size, height: size }}
     >
       <Text className="font-t3-medium text-foreground-muted" style={{ fontSize: size * 0.45 }}>
-        {props.actor?.login.slice(0, 1).toUpperCase() ?? "?"}
+        {props.actor ? [...props.actor.login][0]?.toUpperCase() : "?"}
       </Text>
     </View>
   );

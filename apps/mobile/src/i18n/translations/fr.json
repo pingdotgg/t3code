@@ -1916,6 +1916,7 @@
   "69c659d8b6e271cc": "La page demande un fichier.",
   "a6efeb99b479990a": "Choisir des fichiers",
   "59c87648d44b958c": "Choisir un fichier",
+  "6f321f153b8711bb": "Choisir une option",
   "61a552a67e9e3eac": "Réponse à la boîte de dialogue",
   "1d9bd868fafea18a": "Refuser",
   "1d0a7acef4a95536": "Accepter",
@@ -4334,6 +4335,21 @@
     },
     " a quitté sa page et a été arrêtée"
   ],
+  "796b81c4875c4feb": [
+    "L’app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a besoin d’un serveur ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " plus récent sur cet environnement. Mettez à jour le serveur pour l’utiliser."
+  ],
   "5ef18e4d39b398bf": [
     "Impossible de charger l’app ",
     {
@@ -4895,6 +4911,7 @@
   "306a6f95ad9d52f7": "Non envoyées",
   "11276ab6c58b7a25": "Ouvre le brouillon dans la zone de saisie de nouvelle tâche. Balayez vers la gauche pour le supprimer.",
   "99950f3a28d425fa": "Envoyée dès que l’environnement se reconnecte. Ouvre la tâche pour la modifier. Balayez vers la gauche pour la supprimer.",
+  "d71048f4fb9cf44a": "En attente de synchronisation",
   "0a260c7744afd0be": "En attente",
   "ad78fae7d373cf21": "En cours",
   "be451f475c514b37": "Ignorer la notification Réveillé",
@@ -5323,6 +5340,9 @@
   "744127f8dfad7d22": "Connectez un environnement pour voir ses exécutions de workflow.",
   "b9aae2f7cdb1a379": "Aucune exécution de workflow pour l’instant",
   "ace8fc1c643cf9f6": "Un workflow réunit agents, code, planifications et questions qui vous sont posées en une seule exécution qui survit aux redémarrages. Écrivez-en un sur votre ordinateur, dans Workflows, puis Définitions.",
+  "fc9c3a00cfc18b55": "Tous les types",
+  "e4d1316c85ed7066": "Aucune question de ce type ne vous attend.",
+  "45a94c724845ec1d": "Autres",
   "86798f07ba2d7f4d": "Rechercher des tickets",
   "484cd83bb303bab8": "Rechercher des pull requests",
   "75ed31fcea4f741a": "Filtrer les tickets",
@@ -5610,5 +5630,66 @@
   "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
   "99d51127f573296b": "Autre compte",
   "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
-  "892f08d21b8e48a9": "Fusionner {layers} dans {base} avec {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} dès que leurs conditions sont remplies. Cela peut se produire immédiatement."
+  "892f08d21b8e48a9": "Fusionner {layers} dans {base} avec {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} dès que leurs conditions sont remplies. Cela peut se produire immédiatement.",
+  "89bf40eb2503b6c5": "Nouvel appareil connecté à {environment}",
+  "c94b5fe9ef372bc0": "{device} s’est connecté via {product}. Si ce n’était pas vous, supprimez-le dans Paramètres → Accès de T3 Code sur cet ordinateur.",
+  "bec67d0ed485f885": "{count, plural, one {{count} appareil s’est connecté} other {{count} appareils se sont connectés}} via {product}. Si ce n’était pas vous, supprimez-les dans Paramètres → Accès de T3 Code sur cet ordinateur.",
+  "18c30aa94d0a807f": "Diagnostic de connexion",
+  "eb287395a09cd288": "Envoyer les traces de connexion",
+  "6787f93bbf6ce0b6": "Aide l’équipe T3 Code à résoudre les problèmes de connexion. Les traces contiennent des durées, des types d’erreur, un identifiant de cette session de l’app et la version de l’app, jamais vos fils, prompts ni votre code. Modifiable dans Réglages > À propos de T3 Code > Diagnostic.",
+  "0b1e4aecbd38e0cf": "Quand l’app se connecte à un ordinateur via {product}, elle envoie à l’équipe T3 Code la durée de chaque étape, le type d’erreur, un identifiant de cette session de l’app et la version de l’app. Les traces n’incluent jamais vos fils, prompts ni votre code.",
+  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets.",
+  "7150557773b3818b": "En file d’attente",
+  "efbeb3993ee2c3f5": "En attente de {pool}",
+  "0398ca6c1d24b92d": "en attente, le prochain",
+  "0af6d5ffd5166214": "{count, plural, one {en attente, {count} devant} other {en attente, {count} devant}}",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " nécessite une raison."
+  ],
+  "7e1fd2eb570a372b": "{who} a répondu {choice}",
+  "a3c43735e1a81498": "Raison pour {title}",
+  "bfad234f016cfa3f": "Pourquoi, en une phrase. Elle accompagne la réponse que vous choisissez.",
+  "3759768c5d342c22": [
+    "répondue",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "par ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "0f93532dd76391fc": "Vous avez répondu {choice}",
+  "235902a19e95833b": [
+    "par vous,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1a1beecff68a6e61": "Vérifier le compte Google",
+  "99451a5d2d40440f": "Retirée par {by}.",
+  "3ee30a50b70fffab": "Retirée par {by} : {reason}",
+  "201490988858b511": "retirée par {by}"
 }

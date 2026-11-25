@@ -1916,6 +1916,7 @@
   "69c659d8b6e271cc": "La página pide un archivo.",
   "a6efeb99b479990a": "Elegir archivos",
   "59c87648d44b958c": "Elegir archivo",
+  "6f321f153b8711bb": "Elige una opción",
   "61a552a67e9e3eac": "Respuesta al cuadro de diálogo",
   "1d9bd868fafea18a": "Descartar",
   "1d0a7acef4a95536": "Aceptar",
@@ -4333,6 +4334,21 @@
     },
     " salió de su página y se detuvo"
   ],
+  "796b81c4875c4feb": [
+    "La app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " necesita un servidor de ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " más reciente en este entorno. Actualiza el servidor para usarla."
+  ],
   "5ef18e4d39b398bf": [
     "No se puede cargar la app ",
     {
@@ -4894,6 +4910,7 @@
   "306a6f95ad9d52f7": "Sin enviar",
   "11276ab6c58b7a25": "Abre el borrador en el cuadro de mensaje de la tarea nueva. Desliza a la izquierda para descartarlo.",
   "99950f3a28d425fa": "Se envía cuando el entorno se vuelve a conectar. Abre la tarea para editarla. Desliza a la izquierda para eliminarla.",
+  "d71048f4fb9cf44a": "Esperando sincronización",
   "0a260c7744afd0be": "Esperando",
   "ad78fae7d373cf21": "Trabajando",
   "be451f475c514b37": "Descartar notificación de reactivación",
@@ -5323,6 +5340,9 @@
   "744127f8dfad7d22": "Conecta un entorno para ver sus ejecuciones de flujos de trabajo.",
   "b9aae2f7cdb1a379": "Aún no hay ejecuciones de flujos de trabajo",
   "ace8fc1c643cf9f6": "Un flujo de trabajo une agentes, código, programaciones y preguntas para ti en una sola ejecución que sobrevive a los reinicios. Escribe uno en tu ordenador, en Flujos de trabajo y luego Definiciones.",
+  "fc9c3a00cfc18b55": "Todos los tipos",
+  "e4d1316c85ed7066": "No hay preguntas de este tipo esperándote.",
+  "45a94c724845ec1d": "Otras",
   "86798f07ba2d7f4d": "Buscar issues",
   "484cd83bb303bab8": "Buscar pull requests",
   "75ed31fcea4f741a": "Filtrar issues",
@@ -5610,5 +5630,66 @@
   "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
   "99d51127f573296b": "Otra cuenta",
   "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
-  "892f08d21b8e48a9": "Fusionar {layers} en {base} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} cuando se cumplan sus requisitos. Puede ocurrir de inmediato."
+  "892f08d21b8e48a9": "Fusionar {layers} en {base} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} cuando se cumplan sus requisitos. Puede ocurrir de inmediato.",
+  "89bf40eb2503b6c5": "Nuevo dispositivo conectado a {environment}",
+  "c94b5fe9ef372bc0": "{device} se conectó a través de {product}. Si no fuiste tú, quítalo en Ajustes → Acceso en T3 Code en ese ordenador.",
+  "bec67d0ed485f885": "{count, plural, one {{count} dispositivo se conectó} other {{count} dispositivos se conectaron}} a través de {product}. Si no fuiste tú, quítalos en Ajustes → Acceso en T3 Code en ese ordenador.",
+  "18c30aa94d0a807f": "Diagnóstico de conexión",
+  "eb287395a09cd288": "Enviar trazas de conexión",
+  "6787f93bbf6ce0b6": "Ayuda al equipo de T3 Code a solucionar problemas de conexión. Las trazas incluyen tiempos, tipos de error, un ID de esta sesión de la app y la versión de la app, nunca tus hilos, prompts ni código. Puedes cambiarlo en Ajustes > Acerca de T3 Code > Diagnóstico.",
+  "0b1e4aecbd38e0cf": "Cuando la app se conecta a un ordenador mediante {product}, envía al equipo de T3 Code cuánto tardó cada paso, el tipo de error, un ID de esta sesión de la app y la versión de la app. Las trazas nunca incluyen tus hilos, prompts ni código.",
+  "e0856d6a402ad821": "La política de {organization} no permite comandos de diseño de worktrees de proyectos.",
+  "7150557773b3818b": "En cola",
+  "efbeb3993ee2c3f5": "En cola para {pool}",
+  "0398ca6c1d24b92d": "en cola, el siguiente",
+  "0af6d5ffd5166214": "{count, plural, one {en cola, {count} delante} other {en cola, {count} delante}}",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " necesita un motivo."
+  ],
+  "7e1fd2eb570a372b": "{who} respondió {choice}",
+  "a3c43735e1a81498": "Motivo de {title}",
+  "bfad234f016cfa3f": "El porqué, en una frase. Acompaña a la respuesta que elijas.",
+  "3759768c5d342c22": [
+    "respondida",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "por ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "0f93532dd76391fc": "Respondiste {choice}",
+  "235902a19e95833b": [
+    "por ti,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1a1beecff68a6e61": "Verificar cuenta de Google",
+  "99451a5d2d40440f": "Retirada por {by}.",
+  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
+  "201490988858b511": "retirada por {by}"
 }
