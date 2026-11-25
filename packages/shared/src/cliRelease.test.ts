@@ -6,14 +6,14 @@ describe("cliRelease", () => {
   it("parses sha256sum output including binary-mode markers", () => {
     const checksums = parseChecksums(
       [
-        `${"a".repeat(64)}  t3-1.2.3-linux-x64.tar.gz`,
-        `${"B".repeat(64)} *t3-1.2.3-win32-x64.zip`,
+        `${"a".repeat(64)}  tix-1.2.3-linux-x64.tar.gz`,
+        `${"B".repeat(64)} *tix-1.2.3-win32-x64.zip`,
         "not a checksum line",
         "",
       ].join("\n"),
     );
-    expect(checksums.get("t3-1.2.3-linux-x64.tar.gz")).toBe("a".repeat(64));
-    expect(checksums.get("t3-1.2.3-win32-x64.zip")).toBe("b".repeat(64));
+    expect(checksums.get("tix-1.2.3-linux-x64.tar.gz")).toBe("a".repeat(64));
+    expect(checksums.get("tix-1.2.3-win32-x64.zip")).toBe("b".repeat(64));
     expect(checksums.size).toBe(2);
   });
 

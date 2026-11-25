@@ -144,7 +144,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     it("names the archive when it returns 404", async () => {
       const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-archive-"));
       const arch = HostProcess.Architecture.defaultValue() === "arm64" ? "arm64" : "x64";
-      const archive = `t3-1.2.3-linux-${arch}.tar.gz`;
+      const archive = `tix-1.2.3-linux-${arch}.tar.gz`;
       const server = NodeHttp.createServer((request, response) => {
         if (request.url === "/v1.2.3/SHA256SUMS")
           return response.end(`${"0".repeat(64)}  ${archive}\n`);
@@ -436,7 +436,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("installer chec
         const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-checksum-"));
         const home = NodePath.join(root, homeName);
         const version = "1.2.3";
-        const stem = `t3-${version}-linux-${HostProcess.Architecture.defaultValue()}`;
+        const stem = `tix-${version}-linux-${HostProcess.Architecture.defaultValue()}`;
         const archiveName = `${stem}.tar.gz`;
         const server = NodeHttp.createServer();
         try {
@@ -542,7 +542,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("concurrent ins
   it("publishes one runtime without nesting the other install's staging directory", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-install-concurrent-"));
     const version = "1.2.3";
-    const stem = `t3-${version}-linux-${HostProcess.Architecture.defaultValue()}`;
+    const stem = `tix-${version}-linux-${HostProcess.Architecture.defaultValue()}`;
     const archiveName = `${stem}.tar.gz`;
     const target = NodePath.join(root, "home/runtime/versions", version);
     const waiting = new Map<string, NodeHttp.ServerResponse>();

@@ -221,7 +221,7 @@ case "$version" in
     ;;
 esac
 
-stem="t3-${version}-${platform}-${arch}"
+stem="tix-${version}-${platform}-${arch}"
 archive="${stem}.tar.gz"
 versions_dir="${t3_home}/runtime/versions"
 target_dir="${versions_dir}/${version}"

@@ -176,7 +176,7 @@ if ($version -match '-preview\.') {
   }
 }
 
-$stem = "t3-$version-win32-$arch"
+$stem = "tix-$version-win32-$arch"
 $archive = "$stem.zip"
 $versionsDir = Join-Path $t3Home "runtime\versions"
 $targetDir = Join-Path $versionsDir $version

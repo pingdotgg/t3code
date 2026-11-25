@@ -49,7 +49,7 @@ const releaseHttpClient = (order: string[], urls: string[], beforeDownload?: Eff
         ).join("");
         return HttpClientResponse.fromWeb(
           request,
-          new Response(`${hex}  t3-1.1.0-linux-x64.tar.gz\n`),
+          new Response(`${hex}  tix-1.1.0-linux-x64.tar.gz\n`),
         );
       }
       if (beforeDownload) yield* beforeDownload;

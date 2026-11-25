@@ -33,7 +33,7 @@ import {
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 
 const version = "1.2.3";
-const archiveName = `t3-${version}-linux-x64.tar.gz`;
+const archiveName = `tix-${version}-linux-x64.tar.gz`;
 const archiveBytes = new TextEncoder().encode("not really a tarball");
 const archiveHex = (bytes: Uint8Array) =>
   Effect.promise(() => crypto.subtle.digest("SHA-256", bytes)).pipe(

@@ -1775,8 +1775,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("parses Windows bsdtar member listings with CRLF line endings", () => {
     assert.deepStrictEqual(
-      parseWslRuntimeArchiveMembers("./t3-1.2.3-linux-x64/t3\r\nt3-1.2.3-linux-x64/client/\r\n"),
-      ["t3-1.2.3-linux-x64/t3", "t3-1.2.3-linux-x64/client"],
+      parseWslRuntimeArchiveMembers("./tix-1.2.3-linux-x64/t3\r\ntix-1.2.3-linux-x64/client/\r\n"),
+      ["tix-1.2.3-linux-x64/t3", "tix-1.2.3-linux-x64/client"],
     );
   });
 
@@ -1788,7 +1788,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-runtime-stage-" });
         const sourceArchivePath = yield* makeLinuxCliArchiveFixture({
           root,
-          stem: "t3-1.2.3-linux-x64",
+          stem: "tix-1.2.3-linux-x64",
         });
         const stageAppDir = path.join(root, "app");
         const archivePath = path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from);

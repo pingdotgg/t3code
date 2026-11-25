@@ -401,7 +401,7 @@ describe("ssh tunnel scripts", () => {
       const bin = NodePath.join(root, "bin");
       const release = NodePath.join(root, "release");
       const home = NodePath.join(root, "home\ncache");
-      const archive = `t3-${ARCHIVE.archiveVersion}-linux-x64.tar.gz`;
+      const archive = `tix-${ARCHIVE.archiveVersion}-linux-x64.tar.gz`;
       NodeFS.mkdirSync(bin);
       NodeFS.mkdirSync(home);
       NodeFS.mkdirSync(NodePath.join(release, "t3"), { recursive: true });

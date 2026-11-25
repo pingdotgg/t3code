@@ -59,7 +59,7 @@ exit 7
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const key = `${yield* HostProcess.Platform}-${yield* HostProcess.Architecture}`;
-  const stem = `t3-${VERSION}-${key}`;
+  const stem = `tix-${VERSION}-${key}`;
   const archiveName = `${stem}.tar.gz`;
   yield* fs.makeDirectory(path.join(root, "release", stem, "node_modules/native"), {
     recursive: true,

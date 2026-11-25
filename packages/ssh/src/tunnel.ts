@@ -537,7 +537,7 @@ if ! t3_runtime_ready; then
     "Linux x86_64" | "Linux amd64") T3_PLATFORM_KEY="linux-x64" ;;
     *) printf 'Remote host %s has no t3 release archive.\\n' "$(uname -s) $(uname -m)" >&2; exit 1 ;;
   esac
-  T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.tar.gz"
+  T3_ARCHIVE="tix-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.tar.gz"
   if ! command -v tar >/dev/null 2>&1; then
     printf 'Remote host needs tar to unpack %s. Install tar on it and try again.\\n' "$T3_ARCHIVE" >&2
     exit 1

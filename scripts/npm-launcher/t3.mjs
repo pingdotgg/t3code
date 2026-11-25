@@ -76,7 +76,7 @@ async function download(url, file) {
 }
 
 async function install(dir, key) {
-  const archive = `t3-${version}-${key}.${process.platform === "win32" ? "zip" : "tar.gz"}`;
+  const archive = `tix-${version}-${key}.${process.platform === "win32" ? "zip" : "tar.gz"}`;
   const base = (
     process.env.T3CODE_RELEASE_BASE_URL || "https://github.com/pingdotgg/t3code/releases/download"
   ).replace(/\/+$/, "");

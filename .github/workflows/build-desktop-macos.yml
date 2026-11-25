@@ -1,7 +1,7 @@
 name: Build Desktop macOS (Unsigned)
 
 # Builds unsigned/ad-hoc macOS desktop installers (DMG + ZIP) on GitHub's
-# official macos-15 runner and optionally attaches them to a GitHub Release.
+# official macos-26 runner and optionally attaches them to a GitHub Release.
 on:
   push:
     tags:
@@ -83,7 +83,7 @@ jobs:
   build:
     name: Build macOS (${{ matrix.arch }})
     needs: [prepare]
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     permissions:
       contents: write
