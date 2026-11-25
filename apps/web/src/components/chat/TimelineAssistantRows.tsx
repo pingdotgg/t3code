@@ -1,4 +1,5 @@
-import { ReadAloudButton } from "./ReadAloudButton";
+import { ReadAloudButton, toastReadAloudError } from "./ReadAloudButton";
+import { jumpReadAloudOnClick, readAloudHighlightRoot } from "../../speech/readAloudHighlight";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/assistantInsights";
 import { MessageId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -35,6 +36,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
     row.projectedItem?.item.id,
   );
   const text = liveText ?? row.message.text;
+  const readAloudId = `${ctx.routeThreadKey}:${row.message.id}`;
   const messageText =
     text || (row.message.streaming || row.suppressEmptyResponse ? "" : gt("(empty response)"));
 
@@ -42,7 +44,15 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
     <>
       <div className="relative min-w-0 px-1 py-0.5">
         <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
-        <div data-thread-find-text="true">
+        <div
+          data-thread-find-text="true"
+          ref={readAloudHighlightRoot(readAloudId)}
+          onClick={(event) => {
+            const reading = jumpReadAloudOnClick(readAloudId, text, event.nativeEvent);
+            if (reading)
+              void reading.then(() => toastReadAloudError(readAloudId, gt("Could not read aloud")));
+          }}
+        >
           <AssistantCitationSource
             messageId={row.message.id}
             {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}

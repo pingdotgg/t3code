@@ -351,7 +351,7 @@ export const getSpeechSynthesisModels = (
     run: ({ client, headers }) => client.synthesisModels({ headers, params: { provider } }),
   });
 
-/** Starts synthesis and resolves, once audio exists, with the URL of its live MP3 stream. */
+/** Starts synthesis and resolves, once audio exists, with the URL of its live MP3 stream and its token. */
 export const startSpeechSynthesis = (
   prepared: PreparedConnection,
   provider: SpeechSynthesisProvider,
@@ -377,10 +377,24 @@ export const startSpeechSynthesis = (
     Effect.map(({ token }) => {
       const url = new URL(SPEECH_SYNTHESIS_AUDIO_PATH, endpoint);
       url.searchParams.set("token", token);
-      return url.toString();
+      return { url: url.toString(), token };
     }),
   );
 };
+
+/** Word timings of a started synthesis after the first `after`; the environment holds the request until there are some. */
+export const getSpeechSynthesisTimings = (
+  prepared: PreparedConnection,
+  token: string,
+  after: number,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.synthesisTimings(),
+    run: ({ client, headers }) => client.synthesisTimings({ headers, payload: { token, after } }),
+  });
 
 /** Loads the environment's local model ahead of playback; an empty model is its default. */
 export const prepareSpeechSynthesis = (prepared: PreparedConnection, model: string) =>

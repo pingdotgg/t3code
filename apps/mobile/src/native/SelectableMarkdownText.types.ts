@@ -95,6 +95,16 @@ export interface SelectableMarkdownTextProps {
     readonly checked: boolean;
     readonly text: string;
   }) => void;
+  /** A tap on plain text; links, images, checkboxes, and table cells keep their taps. */
+  readonly onTextPress?: (event: import("react-native-enriched-markdown").TextPressEvent) => void;
+  /** Ranges of the text the view shows, painted behind it; see `onRenderedTextChange`. */
+  readonly highlights?: ReadonlyArray<import("react-native-enriched-markdown").TextHighlight>;
+  readonly onRenderedTextChange?: (
+    event: import("react-native-enriched-markdown").RenderedTextChangeEvent,
+  ) => void;
+  readonly onHighlightLayout?: (
+    event: import("react-native-enriched-markdown").HighlightLayoutEvent,
+  ) => void;
   readonly marginTop?: number;
   readonly marginBottom?: number;
   readonly writingDirection?: "ltr" | "rtl";

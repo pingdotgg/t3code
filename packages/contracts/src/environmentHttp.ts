@@ -6,6 +6,8 @@ import {
   SpeechSynthesisModelRequest,
   SpeechSynthesisPrepareRequest,
   SpeechSynthesisStream,
+  SpeechSynthesisTimings,
+  SpeechSynthesisTimingsRequest,
 } from "./readAloud.ts";
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
@@ -880,6 +882,15 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
         EnvironmentRequestInvalidError,
         SpeechSynthesisError,
       ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    // A token that expired or never existed reads as finished with no words.
+    HttpApiEndpoint.post("synthesisTimings", "/api/voice/synthesis/timings", {
+      headers: OptionalBearerHeaders,
+      payload: SpeechSynthesisTimingsRequest,
+      success: SpeechSynthesisTimings,
+      error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(

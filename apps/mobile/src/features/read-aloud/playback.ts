@@ -2,13 +2,17 @@ import { m } from "../../i18n/messages";
 import {
   createReadAloudController,
   createReadAloudWarmup,
+  createTimedWords,
   type SpeechPlayback,
+  type SpokenWord,
 } from "@t3tools/client-runtime/read-aloud";
 import {
   getSpeechSynthesisModels,
+  getSpeechSynthesisTimings,
   prepareSpeechSynthesis,
   startSpeechSynthesis,
 } from "@t3tools/client-runtime/voice-input";
+import { spokenWordAt } from "@t3tools/shared/read-aloud";
 import { createAudioPlayer } from "expo-audio";
 import * as Speech from "expo-speech";
 import * as Option from "effect/Option";
@@ -46,6 +50,7 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
   let started = false;
   let offset = 0;
   let generation = 0;
+  const listeners = new Set<(word: SpokenWord | null) => void>();
   const player = {
     play() {
       if (pauseInBackground(settings)) return;
@@ -62,7 +67,10 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
         rate: settings.speed,
         useApplicationAudioSession: true,
         onBoundary: (event: { charIndex: number }) => {
-          if (current === generation) offset = start + event.charIndex;
+          if (current !== generation) return;
+          offset = start + event.charIndex;
+          const word = spokenWordAt(text, offset);
+          for (const listener of listeners) listener(word);
         },
         onDone: () => {
           if (current === generation) done();
@@ -103,6 +111,12 @@ function systemPlayback(text: string, settings: ReadAloudSettings): SpeechPlayba
       done();
     },
     finished,
+    words: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
   };
 }
 
@@ -143,7 +157,7 @@ export const readAloudController = createReadAloudController(async (text, settin
   signal.throwIfAborted();
   if (catalog.error) throw new Error(catalog.error);
   const model = settings.model || catalog.defaultModel;
-  const url = await runSpeech(
+  const { url, token } = await runSpeech(
     startSpeechSynthesis(prepared, settings.provider, {
       text,
       model,
@@ -175,10 +189,12 @@ export const readAloudController = createReadAloudController(async (text, settin
     // Native lock-screen Play bypasses JS, so a paused player must keep revocable ownership.
     settings.backgroundPlayback,
   );
+  let timed: ReturnType<typeof createTimedWords> | null = null;
   let done: () => void = () => {};
   const finished = new Promise<void>((resolve, reject) => {
     done = resolve;
     player.addListener("playbackStatusUpdate", (status) => {
+      timed?.refresh();
       if (status.didJustFinish) resolve();
       else if (status.error) reject(new Error("Could not play the generated speech."));
       else if (
@@ -209,11 +225,26 @@ export const readAloudController = createReadAloudController(async (text, settin
     },
     pause: () => session.pause(),
     stop: () => {
+      timed?.stop();
       stopWatching();
       session.stop();
       disposeAudioPlayer(player);
       done();
     },
     finished,
+    words: (listener) => {
+      timed ??= createTimedWords({
+        text,
+        wordTimings: catalog.wordTimings ?? "estimated",
+        load: (after, signal) =>
+          runSpeech(getSpeechSynthesisTimings(prepared, token, after), signal),
+        clock: () => ({
+          seconds: player.currentTime,
+          rate: player.playbackRate,
+          playing: player.playing,
+        }),
+      });
+      return timed.subscribe(listener);
+    },
   };
 }, m);

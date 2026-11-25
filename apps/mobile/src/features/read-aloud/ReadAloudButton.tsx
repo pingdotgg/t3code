@@ -7,7 +7,25 @@ import { Pressable } from "react-native";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import * as Dialog from "../../components/ui/Dialog";
+import type { ReadAloudHighlight } from "@t3tools/client-runtime/read-aloud";
 import { readAloudController, warmReadAloud } from "./playback";
+
+/**
+ * The block and word being read in message `id` (the button's id), as markdown ranges of the
+ * text that message renders plus text cues, or null while another message or none is read.
+ */
+export function useReadAloudHighlight(id: string): ReadAloudHighlight | null {
+  return useSyncExternalStore(readAloudController.subscribeHighlight, () => {
+    const highlight = readAloudController.getHighlight();
+    return highlight?.id === id ? highlight : null;
+  });
+}
+
+/** Shows `title` and the error when reading message `id` failed. */
+export function alertReadAloudError(id: string, title: string) {
+  const result = readAloudController.getSnapshot();
+  if (result.id === id && result.status === "error") Dialog.alert(title, result.error);
+}
 
 export function ReadAloudButton({
   id,
@@ -49,9 +67,7 @@ export function ReadAloudButton({
         if (stoppable) return readAloudController.stop();
         if (active && state.status === "paused") await readAloudController.resume();
         else await readAloudController.start(id, text, settings);
-        const result = readAloudController.getSnapshot();
-        if (result.id === id && result.status === "error")
-          Dialog.alert(gt("Could not read aloud"), result.error);
+        alertReadAloudError(id, gt("Could not read aloud"));
       }}
     >
       <SymbolView

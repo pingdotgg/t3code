@@ -47,6 +47,7 @@ export {
   cancelSpeechSynthesisModelDownload,
   downloadSpeechSynthesisModel,
   getSpeechSynthesisModels,
+  getSpeechSynthesisTimings,
   linkSpeechSynthesisModels,
   prepareSpeechSynthesis,
   removeSpeechSynthesisModel,

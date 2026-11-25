@@ -3,13 +3,17 @@ import { speechSpeedAppliedByProvider, type SpeechSynthesisCatalog } from "@t3to
 import {
   createReadAloudController,
   createReadAloudWarmup,
+  createTimedWords,
   type SpeechPlayback,
+  type SpokenWord,
 } from "@t3tools/client-runtime/read-aloud";
 import {
   getSpeechSynthesisModels,
+  getSpeechSynthesisTimings,
   prepareSpeechSynthesis,
   startSpeechSynthesis,
 } from "@t3tools/client-runtime/voice-input";
+import { spokenWordAt } from "@t3tools/shared/read-aloud";
 import { readPreparedConnection } from "../state/session";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 
@@ -33,6 +37,13 @@ function systemPlayback(
   });
   utterance.onend = done;
   utterance.onerror = () => reject(new Error("The system voice could not read this response."));
+  const listeners = new Set<(word: SpokenWord | null) => void>();
+  // Some voices, such as Chrome's network voices, send no boundaries; those read unhighlighted.
+  utterance.onboundary = (event) => {
+    if (event.name !== "word") return;
+    const word = spokenWordAt(text, event.charIndex);
+    for (const listener of listeners) listener(word);
+  };
   let started = false;
   return {
     play: async () => {
@@ -50,8 +61,17 @@ function systemPlayback(
       done();
     },
     finished,
+    words: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
   };
 }
+
+// Each one moves the media clock or starts or stops it.
+const CLOCK_EVENTS = ["play", "playing", "pause", "seeked", "ratechange", "waiting"] as const;
 
 const catalogs = new WeakMap<AbortSignal, Promise<SpeechSynthesisCatalog>>();
 
@@ -79,7 +99,7 @@ export const readAloudController = createReadAloudController(async (text, settin
   signal.throwIfAborted();
   if (catalog.error) throw new Error(catalog.error);
   const model = settings.model || catalog.defaultModel;
-  const url = await runEnvironmentSpeech(
+  const { url, token } = await runEnvironmentSpeech(
     startSpeechSynthesis(prepared, settings.provider, {
       text,
       model,
@@ -98,15 +118,35 @@ export const readAloudController = createReadAloudController(async (text, settin
     audio.onended = () => resolve();
     audio.onerror = () => reject(new Error("Could not play the generated speech."));
   });
+  let timed: ReturnType<typeof createTimedWords> | null = null;
   return {
     play: () => audio.play(),
     pause: () => audio.pause(),
     stop: () => {
+      if (timed) for (const type of CLOCK_EVENTS) audio.removeEventListener(type, timed.refresh);
+      timed?.stop();
       audio.pause();
       audio.removeAttribute("src");
       audio.load();
       done();
     },
     finished,
+    words: (listener) => {
+      if (!timed) {
+        timed = createTimedWords({
+          text,
+          wordTimings: catalog.wordTimings ?? "estimated",
+          load: (after, signal) =>
+            runEnvironmentSpeech(getSpeechSynthesisTimings(prepared, token, after), { signal }),
+          clock: () => ({
+            seconds: audio.currentTime,
+            rate: audio.playbackRate,
+            playing: !audio.paused,
+          }),
+        });
+        for (const type of CLOCK_EVENTS) audio.addEventListener(type, timed.refresh);
+      }
+      return timed.subscribe(listener);
+    },
   };
 }, m);

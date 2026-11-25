@@ -5,6 +5,7 @@ import type { ReactElement } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 
 import { wordsHast, type WordsHastOptions } from "../../markdown/wordsHast";
+import { rehypeSpeechOffsets } from "../../speech/rehypeSpeechOffsets";
 
 export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string;
 
@@ -25,6 +26,7 @@ interface Rendered {
 const rendered = new Map<string, Rendered>();
 let cachedChars = 0;
 let nextRendererId = 0;
+const addSpeechOffsets = rehypeSpeechOffsets();
 
 // A short block still holds a whole element tree.
 const ENTRY_OVERHEAD_CHARS = 200;
@@ -77,6 +79,7 @@ export function createMarkdownRenderer({
       return cached;
     }
     const tree = wordsHast(text, markdown);
+    addSpeechOffsets(tree);
     prepare(tree);
     return { tree };
   };

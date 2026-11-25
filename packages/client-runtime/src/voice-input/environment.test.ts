@@ -134,11 +134,12 @@ const start = (response: Response) =>
   }).pipe(Effect.provide(RpcHttp.layerRemoteHttpClient(() => Promise.resolve(response))));
 
 describe("startSpeechSynthesis", () => {
-  it.effect("returns the environment's stream URL for the started synthesis", () =>
+  it.effect("returns the environment's stream URL and token for the started synthesis", () =>
     Effect.gen(function* () {
-      expect(yield* start(Response.json({ token: "stream-token" }))).toBe(
-        "https://environment.example.test/api/voice/synthesis/audio?token=stream-token",
-      );
+      expect(yield* start(Response.json({ token: "stream-token" }))).toEqual({
+        url: "https://environment.example.test/api/voice/synthesis/audio?token=stream-token",
+        token: "stream-token",
+      });
     }),
   );
 

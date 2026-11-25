@@ -3,6 +3,7 @@ import {
   type SpeechSynthesisProvider,
   type SpeechSynthesisRequest,
   type SpeechSynthesisCatalog,
+  type SpeechSynthesisWord,
 } from "@t3tools/contracts";
 import {
   CloudSpeechApiKey,
@@ -19,7 +20,7 @@ import {
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
-import { splitReadAloudText } from "@t3tools/shared/read-aloud";
+import { splitReadAloudSpans } from "@t3tools/shared/read-aloud";
 import { cloudSpeechLanguages, effectiveSpeechLanguage } from "@t3tools/shared/speech";
 import * as Context from "effect/Context";
 import * as ByteSize from "effect/ByteSize";
@@ -37,6 +38,7 @@ import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import { applySpeechAliases, speechRecognitionWords } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
+import { alignedWords, mp3Duration, type CharacterAlignment } from "./synthesisTimings.ts";
 
 const isSynthesisError = Schema.is(SpeechSynthesisError);
 
@@ -98,6 +100,24 @@ const decodeElevenLabsModels = Schema.decodeUnknownEffect(
         can_do_text_to_speech: Schema.optionalKey(Schema.Boolean),
       }),
     ),
+  ),
+);
+
+// `alignment` follows the request text; `normalized_alignment` follows ElevenLabs' rewrite of it.
+const decodeElevenLabsTimedChunk = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      audio_base64: Schema.NullOr(Schema.String),
+      alignment: Schema.optionalKey(
+        Schema.NullOr(
+          Schema.Struct({
+            characters: Schema.Array(Schema.String),
+            character_start_times_seconds: Schema.Array(Schema.Finite),
+            character_end_times_seconds: Schema.Array(Schema.Finite),
+          }),
+        ),
+      ),
+    }),
   ),
 );
 
@@ -194,7 +214,19 @@ type SynthesisBackend = {
     input: SpeechSynthesisRequest,
   ) => { readonly rate: number; readonly channels: number } | undefined;
   errorReason: (status: number) => SpeechSynthesisError["reason"];
+  /** Responses that interleave audio with timings for each character of the request text. */
+  alignedAudio?: (
+    response: HttpClientResponse.HttpClientResponse,
+  ) => Stream.Stream<
+    { readonly audio: Uint8Array; readonly alignment: CharacterAlignment | null },
+    unknown
+  >;
 };
+
+/** Audio, or the words of the request text that the audio so far speaks. */
+export type SpeechSynthesisPart =
+  | Uint8Array
+  | { readonly words: ReadonlyArray<SpeechSynthesisWord> };
 
 // gpt-4o-mini-tts accepts 2,000 tokens, which Chinese or Japanese reaches near 2,000 characters,
 // and OpenRouter's Seed Audio accepts 3,000 characters. Pieces stream back to back, so small is cheap.
@@ -290,11 +322,11 @@ export class CloudSpeech extends Context.Service<
     readonly synthesisModels: (
       provider: CloudSpeechProvider,
     ) => Effect.Effect<SpeechSynthesisCatalog, SpeechSynthesisError | ServerSettingsError>;
-    /** MP3 that streams through as the provider produces it. */
+    /** MP3 that streams through as the provider produces it, with word timings where it has them. */
     readonly stream: (
       provider: CloudSpeechProvider,
       request: SpeechSynthesisRequest,
-    ) => Stream.Stream<Uint8Array, SpeechSynthesisError | ServerSettingsError>;
+    ) => Stream.Stream<SpeechSynthesisPart, SpeechSynthesisError | ServerSettingsError>;
     readonly configured: Effect.Effect<CloudSpeechKeys, ServerSettingsError>;
     /** OpenRouter's public transcription catalog, cached briefly on this server. */
     readonly models: Effect.Effect<ReadonlyArray<CloudSpeechModel>, CloudSpeechError>;
@@ -574,6 +606,7 @@ export const layer = Layer.effect(
           supportsVoiceSelection: true,
           // Eleven v4 has no speed setting, so players speed up every model alike.
           speedAppliedByProvider: false,
+          wordTimings: "provider",
         },
         models: loadSynthesisModels("elevenlabs"),
         request: (input) =>
@@ -581,7 +614,7 @@ export const layer = Layer.effect(
             HttpClientRequest.post(
               `${ELEVENLABS_API}/v1/text-to-speech/${encodeURIComponent(
                 input.voice || ELEVENLABS_DEFAULT_VOICE,
-              )}/stream?output_format=mp3_44100_64`,
+              )}/stream/with-timestamps?output_format=mp3_44100_64`,
             ).pipe(
               HttpClientRequest.bodyJsonUnsafe({
                 text: input.text,
@@ -590,6 +623,20 @@ export const layer = Layer.effect(
             ),
           ),
         errorReason: synthesisErrorReason,
+        // One JSON object per line; the alignment of a chunk arrives with or before its audio.
+        alignedAudio: (response) =>
+          response.stream.pipe(
+            Stream.decodeText(),
+            Stream.splitLines,
+            Stream.filter((line) => line.trim() !== ""),
+            Stream.mapEffect((line) => decodeElevenLabsTimedChunk(line)),
+            Stream.map((chunk) => ({
+              audio: chunk.audio_base64
+                ? Uint8Array.from(Buffer.from(chunk.audio_base64, "base64"))
+                : new Uint8Array(0),
+              alignment: chunk.alignment ?? null,
+            })),
+          ),
       },
     } satisfies Record<CloudSpeechProvider, SynthesisBackend>;
     const synthesisModels = Effect.fn("CloudSpeech.synthesisCatalog")(function* (
@@ -640,12 +687,31 @@ export const layer = Layer.effect(
           return encodeMp3(pcm, format.rate, format.channels).pipe(Stream.mapError(unavailable));
         }
         let size = 0;
-        return response.stream.pipe(
+        const words = alignedWords(input.text);
+        const parts: Stream.Stream<SpeechSynthesisPart, unknown> = backend.alignedAudio
+          ? backend.alignedAudio(response).pipe(
+              Stream.flatMap(({ audio, alignment }) => {
+                const spoken = alignment ? words.push(alignment) : [];
+                return Stream.fromIterable<SpeechSynthesisPart>(
+                  spoken.length ? [{ words: spoken }, audio] : [audio],
+                );
+              }),
+              Stream.concat(
+                Stream.suspend(() => {
+                  const last = words.end();
+                  return Stream.fromIterable<SpeechSynthesisPart>(
+                    last.length ? [{ words: last }] : [],
+                  );
+                }),
+              ),
+            )
+          : response.stream;
+        return parts.pipe(
           Stream.mapError(unavailable),
-          Stream.mapEffect((chunk) =>
-            (size += chunk.byteLength) > MAX_SYNTHESIS_BYTES
+          Stream.mapEffect((part) =>
+            part instanceof Uint8Array && (size += part.byteLength) > MAX_SYNTHESIS_BYTES
               ? Effect.fail(unavailable())
-              : Effect.succeed(chunk),
+              : Effect.succeed(part),
           ),
           // The request timeout ends at the headers; a body that stalls must fail too.
           Stream.timeoutOrElse({
@@ -663,12 +729,44 @@ export const layer = Layer.effect(
           }),
         ),
     );
-    // Pieces play back to back as one stream; each is requested once the last one ends.
+    // Pieces play back to back as one stream; each is requested once the last one ends. A piece's
+    // words move to its place in the request text and to where its audio starts.
     const stream = (provider: CloudSpeechProvider, request: SpeechSynthesisRequest) =>
-      Stream.fromIterable(splitReadAloudText(request.text, CLOUD_SYNTHESIS_TEXT_LIMIT)).pipe(
-        Stream.flatMap((text) => Stream.unwrap(synthesizePiece(provider, { ...request, text }))),
-        Stream.withSpan("CloudSpeech.stream"),
-      );
+      Stream.suspend(() => {
+        let elapsed = 0;
+        return Stream.fromIterable(
+          splitReadAloudSpans(request.text, CLOUD_SYNTHESIS_TEXT_LIMIT),
+        ).pipe(
+          Stream.flatMap((span) =>
+            Stream.suspend(() => {
+              const offset = elapsed;
+              const duration = mp3Duration();
+              return Stream.unwrap(synthesizePiece(provider, { ...request, text: span.text })).pipe(
+                Stream.map((part): SpeechSynthesisPart => {
+                  if (part instanceof Uint8Array) {
+                    duration.push(part);
+                    return part;
+                  }
+                  return {
+                    words: part.words.map((word) => ({
+                      start: word.start + span.start,
+                      end: word.end + span.start,
+                      startSeconds: word.startSeconds + offset,
+                      endSeconds: word.endSeconds + offset,
+                    })),
+                  };
+                }),
+                Stream.onEnd(
+                  Effect.sync(() => {
+                    elapsed = offset + duration.seconds;
+                  }),
+                ),
+              );
+            }),
+          ),
+          Stream.withSpan("CloudSpeech.stream"),
+        );
+      });
     const setKey = Effect.fn("CloudSpeech.setKey")(function* (
       provider: CloudSpeechProvider,
       key: Redacted.Redacted<string> | SecretReference | null,
