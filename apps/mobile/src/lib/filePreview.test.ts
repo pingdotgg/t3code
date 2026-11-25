@@ -70,7 +70,12 @@ vi.mock("../features/read-aloud/ReadAloudButton", () => ({
   useReadAloudHighlight: () => null,
 }));
 vi.mock("../features/read-aloud/playback", () => ({
-  readAloudController: { getSnapshot: () => ({ id: null }), stop: vi.fn() },
+  readAloudController: {
+    getSnapshot: () => ({ id: null }),
+    subscribe: () => () => {},
+    isReading: () => false,
+    stop: vi.fn(),
+  },
 }));
 vi.mock("expo-audio", () => ({
   AudioModule: { setAudioSessionOwner: audio.setSessionOwner },
