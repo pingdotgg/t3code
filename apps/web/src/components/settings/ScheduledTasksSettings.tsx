@@ -1501,6 +1501,9 @@ function ScheduledTaskEditorForm({
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
+  const removeTask = useAtomCommand(serverEnvironment.deleteScheduledTask, {
+    label: "scheduled task delete",
+  });
   const webhookDenial = managedCapabilityDenial(
     useManagedPolicy(environmentId),
     "webhookTasks",
@@ -1697,6 +1700,32 @@ function ScheduledTaskEditorForm({
       submissionPending.current = false;
       if (!isAtomCommandInterrupted(result)) {
         reportFailure(gt("Could not save scheduled task"), squashAtomCommandFailure(result));
+      }
+      return;
+    }
+    onClose();
+  };
+
+  const deleteTask = async () => {
+    if (
+      task === null ||
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      submissionPending.current ||
+      saving
+    )
+      return;
+    const message = `${gt('Delete "{title}"?', { title: task.title })}\n${gt("This cannot be undone.")}`;
+    const confirmed =
+      (await requestConfirmDialog(message, { variant: "destructive" })) ?? window.confirm(message);
+    if (!confirmed) return;
+    submissionPending.current = true;
+    setSaving(true);
+    const result = await removeTask({ environmentId, input: { id: task.id } });
+    setSaving(false);
+    if (result._tag === "Failure") {
+      submissionPending.current = false;
+      if (!isAtomCommandInterrupted(result)) {
+        reportFailure(gt("Could not delete scheduled task"), squashAtomCommandFailure(result));
       }
       return;
     }
@@ -2356,6 +2385,18 @@ function ScheduledTaskEditorForm({
       </DialogPanel>
 
       <DialogFooter>
+        {task !== null ? (
+          <Button
+            variant="destructive-outline"
+            size="sm"
+            className="sm:mr-auto"
+            disabled={!canOperate || saving || editingTaskMissing || !connected}
+            onClick={() => void deleteTask()}
+          >
+            <Trash2Icon />
+            <T context="verb, delete the scheduled task">Delete</T>
+          </Button>
+        ) : null}
         <DialogClose render={<Button variant="outline" size="sm" disabled={saving} />}>
           <T>Cancel</T>
         </DialogClose>

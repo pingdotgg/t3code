@@ -264,6 +264,42 @@ describe("ScheduledTasksSettings", () => {
     );
   });
 
+  it("deletes a linked task from its editor after confirmation, then closes the editor", async () => {
+    setup();
+    await using _screen = await render(
+      <>
+        <ScheduledTasksSettings taskId={task.id} />
+        <ConfirmDialogHost />
+      </>,
+    );
+    const editor = page.getByRole("dialog").filter({ hasText: "Edit task" });
+    await userEvent.click(editor.getByRole("button", { name: "Delete", exact: true }));
+    const confirm = page.getByRole("alertdialog");
+    await expect.element(confirm.getByText('Delete "Review issues"?')).toBeVisible();
+    await userEvent.click(confirm.getByRole("button", { name: "Cancel", exact: true }));
+    expect(state.remove).not.toHaveBeenCalled();
+    await expect.element(editor).toBeVisible();
+
+    await userEvent.click(editor.getByRole("button", { name: "Delete", exact: true }));
+    await userEvent.click(page.getByRole("button", { name: "Confirm", exact: true }));
+    await vi.waitFor(() =>
+      expect(state.remove).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+        environmentId,
+        input: { id: task.id },
+      }),
+    );
+    await expect.element(editor).not.toBeInTheDocument();
+  });
+
+  it("offers no delete for a task that does not exist yet", async () => {
+    setup();
+    await using _screen = await render(<ScheduledTasksSettings />);
+    await userEvent.click(page.getByRole("button", { name: "New task" }));
+    const dialog = page.getByRole("dialog");
+    await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeVisible();
+    expect(dialog.getByRole("button", { name: "Delete", exact: true }).query()).toBeNull();
+  });
+
   it.each([false, true])(
     "keeps model options when the same model is reselected (existing task: %s)",
     async (editing) => {
