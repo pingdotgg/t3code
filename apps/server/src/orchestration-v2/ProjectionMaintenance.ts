@@ -337,6 +337,14 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
             -- Title generation has its own lane and needs nothing the purge removes.
             AND effect.effect_type NOT IN ('thread-content.purge', 'thread-title.generate')
         )
+        -- A failed subtree stop retains ownership for retry, including across server restarts.
+        AND NOT EXISTS (
+          SELECT 1 FROM orchestration_v2_effect_outbox AS effect
+          WHERE effect.thread_id = thread.thread_id
+            AND effect.effect_type = 'delegated-tasks.stop'
+            AND json_extract(effect.payload_json, '$.deletion') = 1
+            AND effect.status <> 'succeeded'
+        )
         -- A live parent settles its delegated task from this child's runs.
         AND NOT EXISTS (
           SELECT 1 FROM orchestration_v2_projection_subagents AS task

@@ -182,6 +182,15 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     }
   }
 
+  if (projection.subagents.some((task) => task.origin === "app_owned")) {
+    effects.push({
+      id: `effect:${command.commandId}:delegated-tasks.stop`,
+      commandId: command.commandId,
+      threadId: command.threadId,
+      request: { type: "delegated-tasks.stop", deletion: true, reason: "Owning thread deleted." },
+    });
+  }
+
   for (const session of projection.providerSessions) {
     // An errored session can still own a reusable live runtime.
     if (session.status === "stopped") continue;

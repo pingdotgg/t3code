@@ -139,6 +139,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("delegated-tasks.stop"),
+    deletion: Schema.optional(Schema.Literal(true)),
     reason: Schema.optional(Schema.String),
   }),
 ]);
