@@ -443,6 +443,16 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
         data === undefined
           ? HttpServerResponse.jsonUnsafe({ message: "Not Found" }, { status: 404 })
           : HttpServerResponse.jsonUnsafe({ data });
+    } else if (
+      detail !== undefined &&
+      url.pathname === `/api/v3/repos/${OWNER}/${REPO}/pulls/1` &&
+      (request.headers.accept ?? "").includes("application/vnd.github.diff")
+    ) {
+      // GitHub refuses large diffs with 406, which sends the provider to the paged files list.
+      response = HttpServerResponse.jsonUnsafe(
+        { message: "Sorry, the diff exceeded the maximum number of files (300)." },
+        { status: 406 },
+      );
     } else {
       const body = url.pathname.startsWith("/api/v3/")
         ? restAnswer(

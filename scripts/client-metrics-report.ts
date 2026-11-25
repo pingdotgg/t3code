@@ -163,14 +163,18 @@ export function parseCases(list: string): { cases: ReadonlyArray<Case> } | { err
     interactions: INTERACTION_CASES,
   };
   const unknown = named.filter(
-    (entry) => !(CASES as ReadonlyArray<string>).includes(entry) && !(entry in groups),
+    (entry) => !(CASES as ReadonlyArray<string>).includes(entry) && !Object.hasOwn(groups, entry),
   );
   if (unknown.length > 0) {
     return {
       error: `unknown cases: ${unknown.join(", ")}; choose from switches, interactions, ${CASES.join(", ")}`,
     };
   }
-  const chosen = new Set(named.flatMap((entry): ReadonlyArray<string> => groups[entry] ?? [entry]));
+  const chosen = new Set(
+    named.flatMap((entry): ReadonlyArray<string> =>
+      Object.hasOwn(groups, entry) ? groups[entry]! : [entry],
+    ),
+  );
   return { cases: CASES.filter((entry) => chosen.has(entry)) };
 }
 
@@ -217,6 +221,10 @@ export function soakSlopes(samples: ReadonlyArray<SoakSample>) {
 /** Per-iteration growth that reads as a leak rather than noise. */
 export const SOAK_LEAK = { heapMB: 0.05, domNodes: 5, listeners: 1 } as const;
 
+/** Event Timing reports only paints of 16 ms or more; a null paint is under it, so counts as 16. */
+export const PAINT_THRESHOLD_MS = 16;
+const censoredPaint = (value: number | null) => value ?? PAINT_THRESHOLD_MS;
+
 /**
  * Every compared metric of a file, each with one value per sample: per switch or step for
  * latencies and renders, per run for shares, memory, panels, traces and idle CPU.
@@ -232,7 +240,7 @@ export function flatten(metrics: ClientMetrics): Map<string, number[]> {
     for (const entry of run.switches) {
       const key = `switch.${entry.case}.${entry.visit}`;
       groups.set(key, [...(groups.get(key) ?? []), entry]);
-      add(`${key}.paintMs`, entry.paintMs);
+      add(`${key}.paintMs`, censoredPaint(entry.paintMs));
       add(`${key}.contentMs`, entry.contentMs);
       add(`${key}.loafMs`, entry.loafMs);
       add(`${key}.renders`, entry.renders?.renders);
@@ -244,7 +252,7 @@ export function flatten(metrics: ClientMetrics): Map<string, number[]> {
     }
     for (const entry of run.steps ?? []) {
       const key = `step.${entry.case}.${entry.step}`;
-      add(`${key}.paintMs`, entry.paintMs);
+      add(`${key}.paintMs`, censoredPaint(entry.paintMs));
       add(`${key}.loafMs`, entry.loafMs);
       add(`${key}.droppedPct`, entry.droppedPct);
       add(`${key}.renders`, entry.renders?.renders);
@@ -268,6 +276,25 @@ export function flatten(metrics: ClientMetrics): Map<string, number[]> {
     }
   }
   return values;
+}
+
+/** Settings that change what shared metrics measure, recorded in each file's meta. */
+export const WORKLOAD_KEYS = ["cases", "switchRounds", "longTurns"] as const;
+
+/** Workload settings two files disagree on, and those one of them did not record. */
+export function workloadDifferences(before: ClientMetrics, after: ClientMetrics) {
+  const differ: string[] = [];
+  const unrecorded: string[] = [];
+  for (const key of WORKLOAD_KEYS) {
+    const a = before.meta[key];
+    const b = after.meta[key];
+    if (a === undefined || b === undefined) {
+      if (a !== b) unrecorded.push(key);
+    } else if (a !== b) {
+      differ.push(`${key} ${a} vs ${b}`);
+    }
+  }
+  return { differ, unrecorded };
 }
 
 /** The absolute change a metric must clear, past the relative threshold, to count. */

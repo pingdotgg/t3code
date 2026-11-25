@@ -45,6 +45,7 @@ import {
   noiseReport,
   parseCases,
   summaryTable,
+  workloadDifferences,
   type Case,
   type Idle,
   type InteractionCase,
@@ -87,6 +88,9 @@ const JsonObject = Schema.Record(Schema.String, Schema.Unknown);
 const decodeObject = Schema.decodeUnknownEffect(JsonObject);
 const decodeSettings = decodeJson(JsonObject);
 const decodeLaunched = decodeJson(Schema.Struct({ threadId: Schema.String }));
+const decodeThreadShown = decodeJson(
+  Schema.Struct({ thread: Schema.Struct({ status: Schema.String }) }),
+);
 const decodeTrace = decodeJson(Trace);
 const decodeMetrics = decodeJson(ClientMetrics);
 const decodeFloors = decodeJson(Floors);
@@ -222,6 +226,8 @@ interface Seeded {
   readonly pairingUrl: string;
   readonly threads: Readonly<Record<ThreadName, string>>;
   readonly fixtureUrl: string;
+  /** The working thread's status from the server, `running` while its replayed turn streams. */
+  readonly workingStatus: Effect.Effect<string, MetricsError>;
 }
 
 /**
@@ -352,11 +358,17 @@ const startSeededApp = Effect.fn("clientMetrics.startSeededApp")(function* (
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.timeout(Duration.seconds(1)),
     Effect.retry({ schedule: Schedule.spaced(Duration.millis(200)), times: 600 }),
-    Effect.catch(() =>
-      Effect.flatMap(
-        Ref.get(stderr),
-        (text) => new MetricsError({ message: `server never served the web app:\n${text}` }),
-      ),
+    Effect.catch((cause) =>
+      Effect.gen(function* () {
+        // Kept out of the message, which logs print; the file survives the run's temp home.
+        const log = path.join(root, "server-stderr.log");
+        const text = yield* Ref.get(stderr);
+        yield* fs.writeFileString(log, text).pipe(Effect.ignore);
+        return yield* new MetricsError({
+          message: `server never served the web app; its last ${text.length} characters of stderr are in ${log}`,
+          cause,
+        });
+      }),
     ),
   );
   yield* fs.exists(path.join(baseDir, "userdata/server-runtime.json")).pipe(
@@ -370,7 +382,18 @@ const startSeededApp = Effect.fn("clientMetrics.startSeededApp")(function* (
       cwd: serverDir,
       env,
       allowExit,
-    }).pipe(Effect.mapError((error) => new MetricsError({ message: error.message })));
+    }).pipe(Effect.mapError((error) => new MetricsError({ message: error.message, cause: error })));
+  const threadIdOf = (stdout: string) =>
+    decodeLaunched(stdout).pipe(
+      Effect.map(({ threadId }) => threadId),
+      Effect.mapError(
+        (cause) =>
+          new MetricsError({
+            message: `thread start printed no thread id (${stdout.length} characters of output)`,
+            cause,
+          }),
+      ),
+    );
   yield* cli(["project", "add", project]);
   const thread = Effect.fn("clientMetrics.seedThread")(function* (
     title: string,
@@ -395,11 +418,7 @@ const startSeededApp = Effect.fn("clientMetrics.startSeededApp")(function* (
       ],
       [0, 2],
     );
-    const { threadId } = yield* decodeLaunched(started.stdout).pipe(
-      Effect.mapError(
-        () => new MetricsError({ message: `thread start printed no id: ${started.stdout}` }),
-      ),
-    );
+    const threadId = yield* threadIdOf(started.stdout);
     for (let turn = 1; turn < turns; turn++) {
       yield* cli(["thread", "send", threadId, `Turn ${turn + 1}`, "--wait", "--json"], [0, 2]);
     }
@@ -437,15 +456,19 @@ const startSeededApp = Effect.fn("clientMetrics.startSeededApp")(function* (
     "--model",
     "bench-stream",
     "--json",
-  ]).pipe(Effect.flatMap(({ stdout }) => decodeLaunched(stdout)));
-  const threads = Object.fromEntries([...ids, ["working", working.threadId]]) as Record<
-    ThreadName,
-    string
-  >;
-  const pair = yield* cli(["pair", "--label", "client-metrics"]);
+  ]).pipe(Effect.flatMap(({ stdout }) => threadIdOf(stdout)));
+  const threads = Object.fromEntries([...ids, ["working", working]]) as Record<ThreadName, string>;
+  // Its output carries a pairing token, so errors name only its exit and length.
+  const pair = yield* cli(["pair", "--label", "client-metrics"]).pipe(
+    Effect.mapError(
+      (error) => new MetricsError({ message: "pair failed", cause: error.cause ?? error }),
+    ),
+  );
   const pairingUrl = /https?:\/\/\S+\/pair#token=\S+/.exec(pair.stdout)?.[0];
   if (!pairingUrl) {
-    return yield* new MetricsError({ message: `pair printed no pairing URL:\n${pair.stdout}` });
+    return yield* new MetricsError({
+      message: `pair exited ${pair.exitCode} without a pairing URL (${pair.stdout.length} characters of output)`,
+    });
   }
   const environmentId = yield* http.get(`${origin}/.well-known/t3/environment`).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
@@ -461,6 +484,14 @@ const startSeededApp = Effect.fn("clientMetrics.startSeededApp")(function* (
     pairingUrl,
     threads,
     fixtureUrl: yield* serveFixturePage,
+    workingStatus: cli(["thread", "show", working, "--messages", "0", "--json"]).pipe(
+      Effect.flatMap(({ stdout }) => decodeThreadShown(stdout)),
+      Effect.map(({ thread }) => thread.status),
+      Effect.mapError(
+        (cause) => new MetricsError({ message: "read the working thread's status", cause }),
+      ),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
   };
   return seeded;
 });
@@ -480,9 +511,13 @@ const INSTALL_PROBES = `(() => {
   new PerformanceObserver((list) => {
     for (const entry of list.getEntries()) bench.loaf.push({ start: entry.startTime, duration: entry.duration });
   }).observe({ type: "long-animation-frame", buffered: false });
+  // The click's own timestamp, so the press's hold does not count; Event Timing skips fast clicks.
+  addEventListener("click", (event) => {
+    if (bench.last && bench.last.clickAt === null) bench.last.clickAt = event.timeStamp;
+  }, true);
   bench.watch = (fromPath) => {
     const t0 = performance.now();
-    const watch = { t0, frames: [] };
+    const watch = { t0, clickAt: null, frames: [] };
     const tick = (ts) => {
       watch.frames.push({
         ts,
@@ -525,20 +560,33 @@ const INSTALL_PROBES = `(() => {
   })));
 })()`;
 
+/** How long after the click a switch's long animation frames count. */
+const LOAF_WINDOW_MS = 1_500;
+
 const READ_SWITCH = `(() => {
   const bench = window.__clientMetrics;
   const watch = bench.last;
-  const event = bench.events.find((entry) => entry.name === "click" && entry.start >= watch.t0 - 5);
+  const at = location.pathname;
+  if (watch.clickAt === null) return { clicked: false, at };
+  const clickAt = watch.clickAt;
+  const event = bench.events.find((entry) => entry.name === "click" && entry.start >= clickAt - 5);
   const moved = watch.frames.find((frame) => frame.moved);
   const content = watch.frames.find((frame) => frame.moved && frame.rows > 0 && !frame.loading);
-  const loaf = bench.loaf
-    .filter((entry) => entry.start >= watch.t0 - 5 && entry.start < watch.t0 + 1500)
-    .reduce((sum, entry) => sum + entry.duration, 0);
+  const from = clickAt - 5;
+  const to = clickAt + ${LOAF_WINDOW_MS};
+  const loaf = bench.loaf.reduce(
+    (sum, entry) => sum + Math.max(0, Math.min(entry.start + entry.duration, to) - Math.max(entry.start, from)),
+    0,
+  );
   return {
-    paintMs: event ? Math.round(event.duration) : null,
-    contentMs: content ? Math.round(content.ts - watch.t0) : null,
-    firstFrameContent: Boolean(moved && content && moved === content),
-    loafMs: Math.round(loaf),
+    clicked: true,
+    at,
+    reading: {
+      paintMs: event ? Math.round(event.duration) : null,
+      contentMs: content ? Math.max(0, Math.round(content.ts - clickAt)) : null,
+      firstFrameContent: Boolean(moved && content && moved === content),
+      loafMs: Math.round(loaf),
+    },
   };
 })()`;
 const SwitchReading = Schema.Struct({
@@ -547,6 +595,10 @@ const SwitchReading = Schema.Struct({
   firstFrameContent: Schema.Boolean,
   loafMs: Schema.Number,
 });
+const SwitchRead = Schema.Union([
+  Schema.Struct({ clicked: Schema.Literal(false), at: Schema.String }),
+  Schema.Struct({ clicked: Schema.Literal(true), at: Schema.String, reading: SwitchReading }),
+]);
 const StepReading = Schema.Struct({
   paintMs: Schema.NullOr(Schema.Number),
   loafMs: Schema.Number,
@@ -680,14 +732,29 @@ const clickRow = Effect.fn("clientMetrics.clickRow")(function* (
   yield* Effect.sleep(Duration.millis(SETTLE_MS));
   if (mode.kind === "trace") yield* mark(page, END_LABEL);
   if (mode.kind !== "measure") return undefined;
-  const reading = yield* evaluate(page, READ_SWITCH, SwitchReading);
+  const read = yield* evaluate(page, READ_SWITCH, SwitchRead);
+  // A switch that never happened fails the run rather than recording a sample under its name.
+  if (!read.clicked) {
+    return yield* new MetricsError({ message: `switch to ${name}: the page saw no click` });
+  }
+  if (!read.at.endsWith(`/${h.seeded.threads[name]}`)) {
+    return yield* new MetricsError({
+      message: `switch to ${name}: the click left the page at ${read.at}`,
+    });
+  }
   const renders = yield* stopRenders(h, `switch:${name}`, mode.round);
-  return { ...reading, ...(renders === undefined ? {} : { renders }) };
+  return { ...read.reading, ...(renders === undefined ? {} : { renders }) };
 });
 
 const onThread = Effect.fn("clientMetrics.onThread")(function* (h: Harness, name: ThreadName) {
-  const current = yield* evaluate(h.page, "location.pathname", Schema.String);
-  if (!current.endsWith(`/${h.seeded.threads[name]}`)) yield* clickRow(h, name, { kind: "plain" });
+  const at = evaluate(h.page, "location.pathname", Schema.String);
+  const opened = (path: string) => path.endsWith(`/${h.seeded.threads[name]}`);
+  if (opened(yield* at)) return;
+  yield* clickRow(h, name, { kind: "plain" });
+  const now = yield* at;
+  if (!opened(now)) {
+    return yield* new MetricsError({ message: `opening ${name} left the page at ${now}` });
+  }
 });
 
 /**
@@ -1195,8 +1262,14 @@ const measureOnce = Effect.fn("clientMetrics.measureOnce")(function* (options: M
         round: mode.round,
         ...reading,
       });
+      const content =
+        reading.contentMs === null
+          ? ", no timeline rows in the window"
+          : reading.firstFrameContent
+            ? ""
+            : ", content after the first frame";
       yield* Console.error(
-        `round ${mode.round + 1}/${options.switchRounds} ${name}: paint ${reading.paintMs ?? "<16"} ms, LoAF ${reading.loafMs} ms${reading.firstFrameContent ? "" : ", content after the first frame"}${reading.renders ? `, ${reading.renders.renders} renders` : ""}`,
+        `round ${mode.round + 1}/${options.switchRounds} ${name}: paint ${reading.paintMs ?? "<16"} ms, LoAF ${reading.loafMs} ms${content}${reading.renders ? `, ${reading.renders.renders} renders` : ""}`,
       );
       return;
     }
@@ -1277,10 +1350,23 @@ const measureOnce = Effect.fn("clientMetrics.measureOnce")(function* (options: M
 
   const idle: Idle[] = [];
   if (cases.includes("working")) {
-    yield* clickRow(h, "working", { kind: "plain" });
-    idle.push(yield* idleCpu(cdp, "on the working thread"));
-    yield* clickRow(h, "hub", { kind: "plain" });
-    idle.push(yield* idleCpu(cdp, "on an idle thread"));
+    // Its replayed turn is finite; a window it did not stream through all along is dropped.
+    for (const [thread, label] of [
+      ["working", "on the working thread"],
+      ["hub", "on an idle thread"],
+    ] as const) {
+      yield* onThread(h, thread);
+      const before = yield* seeded.workingStatus;
+      const sample = yield* idleCpu(cdp, label);
+      const after = yield* seeded.workingStatus;
+      if (before !== "running" || after !== "running") {
+        const reason = `renderer CPU ${label}: the working thread was ${before === "running" ? after : before}, not streaming`;
+        skipped.push({ case: "working", reason });
+        yield* Console.error(`skipping ${reason}`);
+        break;
+      }
+      idle.push(sample);
+    }
   }
 
   let soak: SoakSample[] | undefined;
@@ -1360,6 +1446,12 @@ const report = Effect.fn("clientMetrics.report")(function* (
   threshold: number,
   floors: Floors | undefined,
 ) {
+  const workload = workloadDifferences(before, after);
+  if (workload.differ.length > 0) {
+    return yield* new MetricsError({
+      message: `the files ran different workloads (${workload.differ.join("; ")}); rerun one side with the other's settings`,
+    });
+  }
   const { table, regressed, improved, noisy, compared } = compareClientMetrics(
     before,
     after,
@@ -1369,6 +1461,11 @@ const report = Effect.fn("clientMetrics.report")(function* (
   yield* Console.log(table);
   for (const warning of [...loadWarnings("before", before), ...loadWarnings("after", after)]) {
     yield* Console.error(`Warning: ${warning}`);
+  }
+  if (workload.unrecorded.length > 0) {
+    yield* Console.error(
+      `Warning: one file does not record ${workload.unrecorded.join(", ")}; check both ran the same workload`,
+    );
   }
   if (before.meta.renders !== after.meta.renders) {
     yield* Console.error(
@@ -1426,7 +1523,7 @@ const measureFlags = {
   trace: Flag.Boolean("trace").pipe(
     Flag.withDefault(false),
     Flag.withDescription(
-      "Trace one extra round with a CPU profile: per step, the input task's forced style and layout and its JS by source file and library, and the long tasks after it, mapped through the build's sourcemaps. Writes trace.json beside the output.",
+      "Trace one extra round with a CPU profile: per step, the input task's forced style and layout and its JS by source file and library, and the long tasks after it, mapped through the build's sourcemaps. Saves trace.json in the artifacts directory: `<out>-artifacts` for `run --out` (not saved without --out), a-artifacts and b-artifacts in `ab`'s out dir.",
     ),
   ),
   renders: Flag.Boolean("renders").pipe(
@@ -1483,10 +1580,23 @@ const slotNamesOf = (list: string) =>
 
 const measureMeta = Effect.fn("clientMetrics.measureMeta")(function* (
   checkout: string,
-  renders: boolean,
+  workload: {
+    readonly renders: boolean;
+    readonly cases: ReadonlyArray<Case>;
+    readonly switchRounds: number;
+    readonly longTurns: number;
+    readonly soak: number;
+  },
 ) {
   const minified = yield* isMinified(checkout).pipe(Effect.orElseSucceed(() => null));
-  return { minified, renders };
+  return {
+    minified,
+    renders: workload.renders,
+    cases: workload.cases.join(","),
+    switchRounds: workload.switchRounds,
+    longTurns: workload.longTurns,
+    soak: workload.soak,
+  };
 });
 
 const runCommand = Command.make(
@@ -1525,7 +1635,7 @@ const runCommand = Command.make(
     const metrics: ClientMetrics = {
       meta: {
         ...meta,
-        ...(yield* measureMeta(checkout, input.renders)),
+        ...(yield* measureMeta(checkout, { ...input, cases })),
         chromium: measured.chromium,
         loadAfter: yield* machineLoad,
       },
@@ -1574,8 +1684,8 @@ const abCommand = Command.make(
       if (checkouts[1] !== checkouts[0]) yield* buildWeb(checkouts[1], !input.unminified);
     }
     const builds = [
-      yield* measureMeta(checkouts[0], input.renders),
-      yield* measureMeta(checkouts[1], input.renders),
+      yield* measureMeta(checkouts[0], { ...input, cases }),
+      yield* measureMeta(checkouts[1], { ...input, cases }),
     ] as const;
     const root = yield* workRoot;
     let chromiumVersion: string | null = null;

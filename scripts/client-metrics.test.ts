@@ -14,6 +14,7 @@ import {
   slope,
   soakSlopes,
   summaryTable,
+  workloadDifferences,
   type Step,
   type Switch,
 } from "./client-metrics-report.ts";
@@ -116,7 +117,7 @@ describe("report math", () => {
     expect(percentile([], 90)).toBeNull();
   });
 
-  it("keeps a first-frame miss share per run, and drops paints under 16 ms", () => {
+  it("keeps a first-frame miss share per run, and counts paints under 16 ms as 16", () => {
     const metrics = decode({
       meta: { commit: "a" },
       runs: [
@@ -132,7 +133,7 @@ describe("report math", () => {
       ],
     });
     const flat = flatten(metrics);
-    expect(flat.get("switch.short.revisit.paintMs")).toEqual([100, 120]);
+    expect(flat.get("switch.short.revisit.paintMs")).toEqual([100, 120, 16]);
     expect(flat.get("switch.short.revisit.firstFrameMissPct")).toEqual([(1 / 3) * 100]);
   });
 
@@ -166,7 +167,7 @@ describe("report math", () => {
       }),
     );
     expect(flat.get("switch.long.revisit.renders")).toEqual([400]);
-    expect(flat.get("step.type-long.key.paintMs")).toBeUndefined();
+    expect(flat.get("step.type-long.key.paintMs")).toEqual([16]);
     expect(flat.get("step.type-long.key.droppedPct")).toEqual([12]);
     expect(flat.get("step.type-long.key.renders")).toEqual([9]);
     expect(flat.get("step.type-long.key.commits")).toEqual([3]);
@@ -200,6 +201,38 @@ describe("report math", () => {
     );
     expect(same.regressed).toEqual([]);
     expect(same.improved).toEqual([]);
+  });
+
+  it("calls paints that grew from under 16 ms worse", () => {
+    const paints = (commit: string, paint: number | null) =>
+      decode({
+        meta: { commit },
+        runs: [0, 1].map(() => ({
+          switches: [0, 1, 2].map(() => switchTo("diff", 0, { paintMs: paint })),
+          memory: [],
+          idle: [],
+        })),
+      });
+    const result = compareClientMetrics(paints("a", null), paints("b", 64));
+    expect(result.regressed).toContain("switch.diff.revisit.paintMs");
+  });
+
+  it("names workload settings two files disagree on", () => {
+    const withMeta = (meta: Record<string, string | number>) =>
+      decode({ meta: { commit: "a", ...meta }, runs: [] });
+    const full = { cases: "long", switchRounds: 4, longTurns: 12 };
+    expect(workloadDifferences(withMeta(full), withMeta(full))).toEqual({
+      differ: [],
+      unrecorded: [],
+    });
+    expect(workloadDifferences(withMeta(full), withMeta({ ...full, longTurns: 1 }))).toEqual({
+      differ: ["longTurns 12 vs 1"],
+      unrecorded: [],
+    });
+    expect(workloadDifferences(withMeta({}), withMeta(full))).toEqual({
+      differ: [],
+      unrecorded: ["cases", "switchRounds", "longTurns"],
+    });
   });
 
   it("gates on render counts, which barely move between runs", () => {

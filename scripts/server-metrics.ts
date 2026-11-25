@@ -155,6 +155,7 @@ const LoopStats = Schema.Struct({
 
 export class MetricsError extends Schema.TaggedError<MetricsError>()("MetricsError", {
   message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {}
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));

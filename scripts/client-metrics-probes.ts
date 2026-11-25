@@ -44,7 +44,11 @@ export const RENDER_PROBE = `(() => {
       return;
     }
     if (a instanceof Map && b instanceof Map) {
-      for (const [key, value] of b) diff(a.get(key), value, path + "<" + String(key).slice(0, 20) + ">", out, depth + 1);
+      for (const key of new Set([...a.keys(), ...b.keys()])) {
+        const at = path + "<" + String(key).slice(0, 20) + ">";
+        if (!b.has(key)) out.push(at + "(deleted)");
+        else diff(a.get(key), b.get(key), at, out, depth + 1);
+      }
       return;
     }
     let any = false;
@@ -58,7 +62,7 @@ export const RENDER_PROBE = `(() => {
   const visit = (first, parentName) => {
     for (let node = first; node; node = node.sibling) {
       const previous = node.alternate;
-      const name = COMPONENT_TAGS.has(node.tag) ? nameOf(node) : null;
+      const name = COMPONENT_TAGS.has(node.tag) ? (nameOf(node) ?? "(anonymous)") : null;
       const rendered = name !== null && (node.flags & 1) === 1;
       if (rendered) {
         bump(state.counts, name);

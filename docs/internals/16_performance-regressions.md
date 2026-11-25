@@ -51,26 +51,28 @@ heap, and first-request latency against a fake Anthropic API and the real `claud
 ## Client switch metrics
 
 [`scripts/client-metrics.ts`](../../scripts/client-metrics.ts) (`vp run report:client`) builds
-the web app for production, seeds a server with replayed threads (no paid model), a 40-file
-diff, a pull request on a fake GitHub and a local page, and drives headless Chromium like a
-person. `--cases` picks cases (or the groups `switches` and `interactions`).
+the web app for production, seeds a server with replayed threads (no paid model), a large diff, a
+pull request on a fake GitHub and a local page, and drives headless Chromium like a person.
+`client-metrics --help` lists the cases and groups `--cases` takes. It launches Playwright's
+Chromium headless shell, which installing dependencies does not download; install it once per
+machine for the pinned `playwright-core` with
+`node scripts/node_modules/playwright-core/cli.js install --only-shell chromium`.
 
 - `run` measures one checkout; `ab <checkoutA> <checkoutB>` alternates them (A B, then B A) and
   `compare` gates the result. Isolated runs on a loaded machine say nothing; trust only `ab`. The
   harness, seed and replay agent come from the script, so an older checkout works as A; a case it
-  cannot run is skipped and named.
-- **Switches** are sidebar clicks from a small hub thread: `short`/`long` cost the timeline,
-  `working` streams and `approval` waits, and `medium` is the panel-closed baseline for `diff`,
-  `pull-request`, `browser` and `device`. Each records click to next paint (Event Timing),
-  whether the first new frame already had timeline rows, and LoAF in the 1.5 s after.
-- **Interactions** are steps inside one thread, each recording its slowest input-to-paint, LoAF
-  and the share of 60 Hz frames missed: composer keys (`type-short`, `type-long`), a fixed wheel
-  distance up the long timeline (`scroll-long`, frames only: wheels have no Event Timing), the
-  command palette and a query, PR panel tabs, switching two panel surfaces, the terminal drawer,
-  and Settings and back.
-- Per run: the open panel's DOM size (deterministic; `*.census.json` in the artifacts says what
-  dominates it), heap and DOM after GC, and renderer CPU while a thread streams. `--soak <n>`
-  repeats every case n times and fits heap, DOM and listener growth per iteration past warm-up.
+  cannot run is skipped and named. `compare` refuses files whose workload (cases, rounds, long
+  thread length) differs.
+- **Switches** are sidebar clicks from a small hub thread. A case's first visit and its revisits
+  are separate metrics, since a first visit is the thread's first open in that page. Paints under
+  Event Timing's 16 ms threshold count as 16 ms.
+- The Device surface has no device stream in the harness, so its case measures the empty state, not
+  a streaming device. Panel cases also record the open surface's DOM size, which is deterministic;
+  `*.census.json` in the artifacts says what dominates it.
+- Memory (heap and DOM after GC) is sampled on load, after the first visits, and after every
+  measured round has run, not per switch. Renderer CPU is sampled while the working thread streams
+  its replayed turn; a window that turn outlasted is skipped and named. `--soak <n>` repeats every
+  case n times and fits heap, DOM and listener growth per iteration past warm-up.
 
 `--renders` counts React commits and component renders per step, the subtrees React bailed out
 of not counted, with the top components and a cause per render (`mount`, `state#<hook slot>`,
