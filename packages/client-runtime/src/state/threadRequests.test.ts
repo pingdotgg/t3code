@@ -22,6 +22,7 @@ import {
   createChildThreadApprovalsAtom,
   type PendingThreadRequests,
   derivePendingThreadRequests,
+  APPROVAL_TEXT_LIMIT,
   approvalTextParts,
   declinePendingApprovals,
   sendApprovalFeedback,
@@ -704,11 +705,11 @@ it("loads only child approvals and retains their destination across environments
 it("names the characters of an approval that a screen would not draw", () => {
   const named = (text: string) =>
     approvalTextParts(text)
-      .map((part) => (part.named ? `<${part.text}>` : part.text))
+      .parts.map((part) => (part.named ? `<${part.text}>` : part.text))
       .join("");
   expect(named("echo one\rtwo\r\n\tthree")).toBe("echo one<\\r>two<\\r>\n\tthree");
   expect(named("a\b\u001B[2K\u0000\u007F\u0085\u000B\u000C")).toBe(
-    "a<\\b><\\e>[2K<U+0000><U+007F><U+0085><U+000B><U+000C>",
+    "a<\\b\\e>[2K<U+0000U+007FU+0085U+000BU+000C>",
   );
   expect(named("a b c‮d⁧e​f‍g\u{E0072}")).toBe(
     "a<U+2028>b<U+2029>c<U+202E>d<U+2067>e<U+200B>f<U+200D>g<U+E0072>",
@@ -718,16 +719,16 @@ it("names the characters of an approval that a screen would not draw", () => {
   );
   // Every drawn character stays: plain text, accents, a line feed and a tab.
   const drawn = "git commit -m 'café é 漢字 نمی'\n\tgit push";
-  expect(approvalTextParts(drawn)).toEqual([{ text: drawn }]);
-  expect(approvalTextParts("")).toEqual([]);
+  expect(approvalTextParts(drawn).parts).toEqual([{ text: drawn }]);
+  expect(approvalTextParts("")).toEqual({ parts: [], shownLength: 0, length: 0 });
 });
 
 it("leaves a joiner or a presentation selector alone only inside an emoji", () => {
   const named = (text: string) =>
     approvalTextParts(text)
-      .map((part) => (part.named ? `<${part.text}>` : part.text))
+      .parts.map((part) => (part.named ? `<${part.text}>` : part.text))
       .join("");
-  const unchanged = (text: string) => expect(approvalTextParts(text)).toEqual([{ text }]);
+  const unchanged = (text: string) => expect(approvalTextParts(text).parts).toEqual([{ text }]);
 
   // A joiner directly between two emoji, after the first one's selector or skin tone too.
   unchanged("\u{1F469}‍\u{1F4BB} \u{1F9D1}\u{1F3FD}‍\u{1F4BB} \u{1F44B}\u{1F3FD}");
@@ -747,31 +748,81 @@ it("leaves a joiner or a presentation selector alone only inside an emoji", () =
   expect(named("\u{1F469}‍.txt x‍\u{1F4BB} \u{1F469}‌\u{1F4BB} \u{1F469}‍")).toBe(
     "\u{1F469}<U+200D>.txt x<U+200D>\u{1F4BB} \u{1F469}<U+200C>\u{1F4BB} \u{1F469}<U+200D>",
   );
-  expect(named("\u{1F469}‍‍\u{1F4BB} ❤️️")).toBe("\u{1F469}<U+200D><U+200D>\u{1F4BB} ❤️<U+FE0F>");
+  expect(named("\u{1F469}‍‍\u{1F4BB} ❤️️")).toBe("\u{1F469}<U+200DU+200D>\u{1F4BB} ❤️<U+FE0F>");
   // A skin tone is a drawn character, not an emoji to join or to select a presentation of.
   expect(named("a\u{1F3FD}‍\u{1F4BB} \u{1F469}‍\u{1F3FD} \u{1F44B}\u{1F3FD}️")).toBe(
     "a\u{1F3FD}<U+200D>\u{1F4BB} \u{1F469}<U+200D>\u{1F3FD} \u{1F44B}\u{1F3FD}<U+FE0F>",
   );
   // Tag characters are named, in a flag as well.
-  expect(named("\u{1F3F4}\u{E0067}\u{E0062}\u{E007F}")).toBe(
-    "\u{1F3F4}<U+E0067><U+E0062><U+E007F>",
-  );
+  expect(named("\u{1F3F4}\u{E0067}\u{E0062}\u{E007F}")).toBe("\u{1F3F4}<U+E0067U+E0062U+E007F>");
+});
+
+it("merges named characters that stand together into one part", () => {
+  expect(approvalTextParts("a\r\r\u200Db\u001B\nc\b").parts).toEqual([
+    { text: "a" },
+    { text: "\\r\\rU+200D", named: true },
+    { text: "b" },
+    { text: "\\e", named: true },
+    { text: "\nc" },
+    { text: "\\b", named: true },
+  ]);
+  // A joiner inside an emoji is not named and ends the run before it.
+  expect(approvalTextParts("\r\u{1F469}\u200D\u{1F4BB}\u200D\r").parts).toEqual([
+    { text: "\\r", named: true },
+    { text: "\u{1F469}\u200D\u{1F4BB}" },
+    { text: "U+200D\\r", named: true },
+  ]);
+});
+
+it("cuts approval text at its limit and says how much it covers", () => {
+  const limit = { length: 8, namedRuns: 2 };
+  const scan = (text: string) => {
+    const { parts, shownLength, length } = approvalTextParts(text, limit);
+    return [
+      parts.map((part) => (part.named ? `<${part.text}>` : part.text)).join(""),
+      shownLength,
+      length,
+    ];
+  };
+  // At the limit or under it, all of the text.
+  expect(scan("abcdefgh")).toEqual(["abcdefgh", 8, 8]);
+  expect(scan("a\r\rb\rc")).toEqual(["a<\\r\\r>b<\\r>c", 6, 6]);
+  // Past the length, and never inside a code point.
+  expect(scan("abcdefghi")).toEqual(["abcdefgh", 8, 9]);
+  expect(scan("abcdefg\u{1F469}")).toEqual(["abcdefg", 7, 9]);
+  expect(scan("abcdef\r\r\r")).toEqual(["abcdef<\\r\\r>", 8, 9]);
+  // Past the runs: the text up to the third run, which may be longer than the runs before it.
+  expect(scan("a\rb\rcd\re")).toEqual(["a<\\r>b<\\r>cd", 6, 8]);
+  expect(scan("\r\r\r\ra\r\rb\r")).toEqual(["<\\r\\r\\r\\r>a<\\r\\r>b", 8, 9]);
+
+  // The limit the cards use, on a megabyte.
+  const size = 1 << 20;
+  const cards = (text: string) => {
+    const { parts, shownLength } = approvalTextParts(text);
+    return [parts.length, parts.filter((part) => part.named).length, shownLength];
+  };
+  expect(cards("a".repeat(size))).toEqual([1, 0, APPROVAL_TEXT_LIMIT.length]);
+  expect(cards("\u200D".repeat(size))).toEqual([1, 1, APPROVAL_TEXT_LIMIT.length]);
+  const runs = APPROVAL_TEXT_LIMIT.namedRuns;
+  expect(cards("a\r".repeat(size / 2))).toEqual([2 * runs + 1, runs, 2 * runs + 1]);
 });
 
 it("splits a megabyte of approval text the same way as a short one", () => {
   const size = 1 << 20;
   const fill = (unit: string) => unit.repeat(size / unit.length);
   const count = (text: string) => {
-    const parts = approvalTextParts(text);
+    const { parts } = approvalTextParts(text, { length: 2 * size, namedRuns: size });
     return [parts.length, parts.filter((part) => part.named).length];
   };
   // A long run of marks before one joiner, and a long run of joined emoji with one left open.
   expect(count(`1${fill("\u094D")}\u200D`)).toEqual([2, 1]);
   expect(count(fill("\u{1F469}\u200D"))).toEqual([2, 1]);
   expect(count(fill("\u{1F469}\u{1F3FD}\u200D\u{1F4BB}"))).toEqual([1, 0]);
-  // Nothing but joiners, selectors or carriage returns: each one is named.
-  expect(count(fill("\u200D"))).toEqual([size, size]);
-  expect(count(fill("\uFE0F"))).toEqual([size, size]);
-  expect(count(fill("\r"))).toEqual([size, size]);
+  // Nothing but joiners, selectors or carriage returns: one run.
+  expect(count(fill("\u200D"))).toEqual([1, 1]);
+  expect(count(fill("\uFE0F"))).toEqual([1, 1]);
+  expect(count(fill("\r"))).toEqual([1, 1]);
+  // Every other character named: one run each.
+  expect(count(fill("a\r"))).toEqual([size, size / 2]);
   expect(count(fill("a"))).toEqual([1, 0]);
 });

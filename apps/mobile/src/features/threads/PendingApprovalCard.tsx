@@ -45,6 +45,8 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const [explanationOpen, setExplanationOpen] = useState(false);
   // T3 Code's own question reads as the app asking: a plain sentence, then what it names.
   const { pushHooks } = props.approval;
+  const detail =
+    !pushHooks && props.approval.detail ? approvalTextParts(props.approval.detail) : null;
   return (
     <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
@@ -68,19 +70,32 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
             </View>
           ))}
         </View>
-      ) : props.approval.detail ? (
-        <Text className="font-sans text-sm leading-normal text-foreground-secondary">
-          {approvalTextParts(props.approval.detail).map((part, index) =>
-            part.named ? (
-              // oxlint-disable-next-line react/no-array-index-key -- parts never reorder and two may read alike
-              <Text key={index} className="font-mono text-sm text-warning-foreground">
-                {part.text}
-              </Text>
-            ) : (
-              part.text
-            ),
-          )}
-        </Text>
+      ) : detail ? (
+        <>
+          <Text className="font-sans text-sm leading-normal text-foreground-secondary">
+            {detail.parts.map((part, index) =>
+              part.named ? (
+                // oxlint-disable-next-line react/no-array-index-key -- parts never reorder and two may read alike
+                <Text key={index} className="font-mono text-sm text-warning-foreground">
+                  {part.text}
+                </Text>
+              ) : (
+                part.text
+              ),
+            )}
+          </Text>
+          {detail.shownLength < detail.length ? (
+            <Text className="font-sans text-xs leading-normal text-warning-foreground">
+              {gt(
+                "This text is too long to show in full. Above are the first {shown} of its {total} characters.",
+                {
+                  shown: detail.shownLength.toLocaleString(),
+                  total: detail.length.toLocaleString(),
+                },
+              )}
+            </Text>
+          ) : null}
+        </>
       ) : null}
       {props.approval.reason ? (
         <Text className="font-sans text-xs leading-normal text-warning-foreground">

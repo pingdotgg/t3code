@@ -2603,7 +2603,7 @@ it("renders automatic compaction as one live divider that finishes with its reas
   expect(container.textContent).not.toContain("Compacting before");
 });
 
-it("shows an approval's characters that a screen would not draw, and says when it runs past the box", async () => {
+it("shows an approval's characters that a screen would not draw, and says when it runs past the box or is cut", async () => {
   setup();
   const fixture = makeStreamingTimelineFixture();
   const approval = (id: string, detail: string): PendingApproval => ({
@@ -2621,12 +2621,13 @@ it("shows an approval's characters that a screen would not draw, and says when i
         approval("named", "echo one\rtwo\r\nthree\u001b[2K\b ‮ruof‬ five​"),
         approval("long", `echo first${"\n".repeat(40)}echo last`),
         approval("plain", "git commit -m 'café 👩‍💻'\n\tgit push"),
+        approval("cut", `${"a\r\r".repeat(2_000)}echo last\r`),
       ]}
       canOperateThread
       onRespondToApproval={async () => {}}
     />,
   );
-  const [named, long, plain] = [
+  const [named, long, plain, cut] = [
     ...screen.container.querySelectorAll<HTMLElement>(
       '[role="group"][aria-label="Command approval"]',
     ),
@@ -2645,6 +2646,21 @@ it("shows an approval's characters that a screen would not draw, and says when i
 
   expect(detail(plain!).textContent).toBe("git commit -m 'café 👩‍💻'\n\tgit push");
   expect(detail(plain!).querySelector("span")).toBeNull();
+
+  // A run of named characters is one element, and text past the limit ends in a note of its length.
+  await expect
+    .element(
+      page
+        .elementLocator(cut!)
+        .getByText(
+          "This text is too long to show in full. Above are the first 6,009 of its 6,010 characters.",
+        ),
+    )
+    .toBeVisible();
+  const shown = cut!.querySelector('[data-approval-detail="cut"]')!;
+  expect(shown.querySelectorAll("span")).toHaveLength(2_000);
+  expect(shown.textContent).toBe(`${"a\\r\\r".repeat(2_000)}echo last`);
+  expect(cut!.textContent).not.toContain("Scroll to read");
 });
 
 it("shows T3 Code's push hooks approval as its own question and another server's as before", async () => {

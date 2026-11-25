@@ -132,27 +132,66 @@ function isInsideEmoji(text: string, index: number, codePoint: number): boolean 
   return isSkinTone(before) && base >= 0 && SKIN_TONE_BASE.test(String.fromCodePoint(base));
 }
 
+export interface ApprovalTextLimit {
+  /** UTF-16 units of the text a card shows at most. */
+  readonly length: number;
+  /** Runs of named characters, each one element in a card, shown at most. */
+  readonly namedRuns: number;
+}
+
+// A card draws one element per run of named characters and lays the whole text out at once, so
+// both are bounded. A command or a patch a person can read fits many times over: 100,000 units are
+// some 1,250 full lines. Measured in Chromium, the web card at either limit renders in well under
+// 100 ms, and past them the time grows in step with the text.
+export const APPROVAL_TEXT_LIMIT: ApprovalTextLimit = { length: 100_000, namedRuns: 2_000 };
+
+export interface ApprovalTextScan {
+  /** The shown beginning of the text. A run of named characters is one part. */
+  readonly parts: ReadonlyArray<ApprovalTextPart>;
+  /** UTF-16 units of the text that `parts` covers. Less than `length` when the text is cut. */
+  readonly shownLength: number;
+  /** UTF-16 units of the whole text. */
+  readonly length: number;
+}
+
 /**
- * Approval text in parts, each character a screen would not draw replaced by its name. One pass
- * over the text: the work per character does not depend on what surrounds it.
+ * Approval text in parts, each character a screen would not draw replaced by its name, cut where
+ * it passes `limit`. One pass over the shown text: the work per character does not depend on what
+ * surrounds it, and nothing after the cut is read.
  */
-export function approvalTextParts(text: string): ReadonlyArray<ApprovalTextPart> {
+export function approvalTextParts(
+  text: string,
+  limit: ApprovalTextLimit = APPROVAL_TEXT_LIMIT,
+): ApprovalTextScan {
   const parts: ApprovalTextPart[] = [];
+  let stop = Math.min(text.length, Math.max(0, limit.length));
+  // A cut never falls inside a code point.
+  if (stop > 0 && stop < text.length && codePointBefore(text, stop + 1) > 0xffff) stop -= 1;
   let end = 0;
+  let names = "";
+  let namedRuns = 0;
   for (const match of text.matchAll(UNDRAWN)) {
+    if (match.index >= stop) break;
     const [character] = match;
     const codePoint = character.codePointAt(0) ?? 0;
     if (isInsideEmoji(text, match.index, codePoint)) continue;
-    if (match.index > end) parts.push({ text: text.slice(end, match.index) });
-    parts.push({
-      text:
-        UNDRAWN_NAMES[character] ?? `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`,
-      named: true,
-    });
+    if (match.index > end || names === "") {
+      if (namedRuns === limit.namedRuns) {
+        stop = match.index;
+        break;
+      }
+      if (names !== "") parts.push({ text: names, named: true });
+      if (match.index > end) parts.push({ text: text.slice(end, match.index) });
+      names = "";
+      namedRuns += 1;
+    }
+    names +=
+      UNDRAWN_NAMES[character] ?? `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
     end = match.index + character.length;
   }
-  if (end < text.length) parts.push({ text: text.slice(end) });
-  return parts;
+  if (names !== "") parts.push({ text: names, named: true });
+  if (end < stop) parts.push({ text: text.slice(end, stop) });
+  return { parts, shownLength: stop, length: text.length };
 }
 
 export const PUSH_HOOKS_APPROVAL_LABEL = msg("Push hooks approval");
