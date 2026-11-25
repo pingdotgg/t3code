@@ -386,6 +386,19 @@ describe("OtelEnvironment", () => {
   });
 });
 
+describe("isCiEnvironment", () => {
+  it("treats a set CI variable as CI, except empty, false, and 0", () => {
+    assert.isFalse(OtelEnvironment.isCiEnvironment({}));
+    assert.isTrue(OtelEnvironment.isCiEnvironment({ CI: "1" }));
+    assert.isTrue(OtelEnvironment.isCiEnvironment({ TF_BUILD: "True" }));
+    assert.isTrue(OtelEnvironment.isCiEnvironment({ BITBUCKET_BUILD_NUMBER: "42" }));
+    for (const value of ["", " ", "false", "FALSE", "0"]) {
+      assert.isFalse(OtelEnvironment.isCiEnvironment({ CI: value }), `CI=${value}`);
+    }
+    assert.isTrue(OtelEnvironment.isCiEnvironment({ CI: "false", GITLAB_CI: "true" }));
+  });
+});
+
 describe("isRelayTracingEnabled", () => {
   it("defaults on and respects the T3CODE SDK override of the standard kill switch", () => {
     assert.isTrue(OtelEnvironment.isRelayTracingEnabled({}));
@@ -401,6 +414,17 @@ describe("isRelayTracingEnabled", () => {
         OTEL_SDK_DISABLED: "false",
         T3CODE_OTEL_SDK_DISABLED: "true",
       }),
+    );
+  });
+
+  it("is off on a CI runner unless T3CODE_TELEMETRY_ENABLED turns it on", () => {
+    assert.isFalse(OtelEnvironment.isRelayTracingEnabled({ CI: "true" }));
+    assert.isFalse(OtelEnvironment.isRelayTracingEnabled({ JENKINS_URL: "https://ci.example" }));
+    assert.isTrue(
+      OtelEnvironment.isRelayTracingEnabled({ CI: "true", T3CODE_TELEMETRY_ENABLED: "true" }),
+    );
+    assert.isFalse(
+      OtelEnvironment.isRelayTracingEnabled({ CI: "true", T3CODE_TELEMETRY_ENABLED: "false" }),
     );
   });
 
