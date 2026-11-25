@@ -5,7 +5,7 @@ import { test, WEB } from "./t3.ts";
 test(
   "Language changes update the same terminal input during and after setup",
   WEB,
-  async ({ t3, browser, screen }) => {
+  async ({ t3, app, browser, screen }) => {
     const project = await t3.project("demo");
     const thread = await t3.thread({ project, title: "Terminal work", messages: ["Start"] });
     await t3.open(thread);
@@ -39,6 +39,7 @@ test(
     const originalInput = browser.locator(
       ".t3-ghostty-input[data-original-terminal]:not([data-workspace-focus-default])",
     );
+    await app.screenshot("pending-terminal-input-after-language-change");
     await expect(originalInput).toHaveAttribute("aria-label", "ターミナルの入力");
     await browser.evaluate(() => window.dispatchEvent(new Event("release-terminal-font")));
 
