@@ -59,6 +59,19 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
   expect(style.backgroundImage).toBe("none");
   expect(style.backgroundColor).toBe("rgb(255, 0, 0)");
 
+  // Every function that names a file is refused, in a font face and behind `all` too.
+  applyThemeCss(`
+    @font-face { font-family: remote; src: url(https://example.com/o.woff2); }
+    [data-theme-css-probe] { background: var(--none, image-set("https://example.com/p" 1x)); background-color: red; }
+    [data-theme-css-probe] { mask: var(--none, -webkit-cross-fade(url(https://example.com/q), url(https://example.com/r), 50%)); mask-size: auto; }
+    [data-theme-css-probe] { all: var(--none, url(https://example.com/s)); font-size: 12px; }
+    body { [data-theme-css-probe] { list-style: if(style(--none: 1): none; else: url(https://example.com/t)); list-style-type: disc; } }
+  `);
+  expect(themeCssText()).not.toContain("example.com");
+  expect(style.backgroundImage).toBe("none");
+  expect(style.maskImage).toBe("none");
+  expect(style.listStyleImage).toBe("none");
+
   // The same shape without a fetch stays, whatever the rest of the sheet holds.
   applyThemeCss(`
     [data-theme-css-probe] {
