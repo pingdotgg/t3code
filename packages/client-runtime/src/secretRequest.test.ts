@@ -70,7 +70,9 @@ describe("secretRequestAnswerInput", () => {
 
 describe("secretRequestPrivacyNote", () => {
   it("does not promise to hide a value that the agent's commands can read", () => {
-    expect(secretRequestPrivacyNote({})).toBe("Stored securely, never shown to the agent");
+    expect(secretRequestPrivacyNote({})).toBe(
+      "Held in memory until used, never shown to the agent",
+    );
     expect(secretRequestPrivacyNote({ delivery: "file" })).not.toContain("never shown");
   });
 });

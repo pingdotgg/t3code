@@ -2534,23 +2534,6 @@ function splitClaudeSleepTimerSteps(tail: string): string[] | undefined {
   return steps;
 }
 
-// Claude Code defers MCP tools behind ToolSearch, so the agent only finds
-// t3_background_wait when the system prompt says when to reach for it.
-const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
-
-### Background work you wait on
-
-To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
-`;
-
-// Claude 5.1+ returns text written before a tool call as a progress update, which the API
-// returns only as a summary.
-const CLAUDE_SEND_TO_USER_INSTRUCTIONS = `
-### Text the user must read mid-turn
-
-Text you write before a tool call may reach the user only as a one-line summary. When the user must read something in full before your turn ends, such as a draft, a code block, or what a question you're about to ask refers to, send it with \`send_to_user\`. Put everything else in your final reply.
-`;
-
 interface ClaudeSkillDenyPolicy {
   readonly names: readonly string[];
   readonly readRules: readonly string[];
@@ -2759,9 +2742,6 @@ export function makeClaudeQueryOptions(input: {
           runtimePolicy: { cwd: input.cwd, workspace: input.workspace },
           agentFeedback: input.mcpServers === undefined ? "off" : (input.agentFeedback ?? "off"),
         }),
-        ...(input.mcpServers === undefined
-          ? []
-          : [CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS, CLAUDE_SEND_TO_USER_INSTRUCTIONS]),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
