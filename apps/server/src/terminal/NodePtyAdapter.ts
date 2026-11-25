@@ -294,7 +294,11 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
           if (platform === "win32") {
             yield* restore(waitForWindowsPid(native, process, input.shell));
           }
-          takeOwnership?.(process);
+          if (takeOwnership !== undefined) {
+            takeOwnership(process);
+            // An interrupt can run the adapter finalizer as the mask exits. The caller now owns cleanup.
+            nativeProcess = undefined;
+          }
           return process;
         }),
       ).pipe(
