@@ -170,12 +170,12 @@ export function useEnrichedLinkVariants(
         [...links].map(([url, link]) => {
           const chipForeground = chipForegrounds.get(url);
           const icon = icons.get(url);
-          const inline = link.label === undefined && icon?.iconUri;
+          const inlineIconUri = link.label === undefined && icon?.iconUri;
           return [
             enrichedLinkVariantPattern(url),
             {
-              ...(inline
-                ? { inlineIcon: { iconUri: inline, iconTintColor: icon.iconTintColor } }
+              ...(inlineIconUri
+                ? { inlineIcon: { iconUri: inlineIconUri, iconTintColor: icon.iconTintColor } }
                 : {
                     pill: {
                       borderColor: "transparent",
