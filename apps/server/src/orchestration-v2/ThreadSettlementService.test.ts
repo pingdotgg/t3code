@@ -50,6 +50,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadSettlementService from "./ThreadSettlementService.ts";
 
 const NOW_MS = Date.parse("2026-06-10T12:00:00.000Z");
@@ -689,6 +690,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   });
 
   const layerDependencies = Layer.mergeAll(
+    Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity)({
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-here")),
+    }),
     Layer.mock(ProjectStore.ProjectStoreV2)({
       listShells: () => Ref.get(snapshots).pipe(Effect.map((snapshot) => snapshot.projects)),
       getShell: (projectId) =>
@@ -1301,7 +1305,16 @@ describe("ThreadSettlementServiceV2 worker", () => {
           },
         };
         const ordinary = { ...appThread("ordinary", null), branch: "feature" };
-        for (const thread of [delegated, ordinary]) {
+        const launched = {
+          ...delegated,
+          id: ThreadId.make("launched-here"),
+          delegatedFrom: {
+            threadId: ThreadId.make("parent-here"),
+            title: "Parent",
+            environmentId: EnvironmentId.make("environment-here"),
+          },
+        };
+        for (const thread of [delegated, ordinary, launched]) {
           yield* store.apply({
             type: "thread.created",
             id: EventId.make(`created:${thread.id}`),

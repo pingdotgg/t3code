@@ -365,3 +365,10 @@
 - Review: an independent read-only review confirmed the candidate order and caught outdated hand-picked failover levels for Sol and Terra; aligned those with medium and low and extended the existing regression case. Added assertions for primary Claude and low-cost candidate precedence. Kept the existing generic continuation message for a separate copy change.
 - Validation: the hand-picked level regression failed before the fix (Sol chose high instead of medium). `vp run check:changed --concurrency 1` passes: format, lint, both knip checks, server GraphQL, typechecks across 37 affected packages and 35/35 tests in 3 files. Initial checks caught an overlong comment and tuple inference in the added test; both were corrected before the passing run.
 - Next: merge the PR after review; switching the running fork remains a separate action for Tomáš.
+
+## 2026-11-25: Local launches retain ordinary settlement settings
+
+- What: settlement distinguishes local launches from tasks delegated by a linked environment, using the server environment identity. Subagents and remote tasks keep upstream's immediate settlement policy; local launches use the ordinary thread settings.
+- Why: upstream #42210 treated the fork's local `delegatedFrom` lineage as a remote task and hid finished launches even with automatic settlement disabled.
+- Proof: extending the linked-task case with a local launch failed before the fix; `ThreadSettlementService.test.ts` passes 53/53 after it. The final sync checks pass all 1789 tests in 62 files and typecheck all 43 affected packages. Independent read-only review approved this fix.
+- Next: merge with the upstream sync; deploying remains Tomáš's decision.
