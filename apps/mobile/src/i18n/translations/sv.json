@@ -5209,7 +5209,7 @@
   "0b363b02a7e17bcb": "Rå tokenkostnad",
   "ea4beda46b22b8b0": "Bearbetade token",
   "212d974007cacf3f": "* om det debiterades till fullt API-pris",
-  "82bc7f1cc5a039fc": "{count, plural, one {Över {sessions} session} other {Över {sessions} sessioner}}",
+  "45340a7dc1f89d51": "{count, plural, one {Över {sessions} session} other {Över {sessions} sessioner}}",
   "2a57181a9d128463": "{share} av kostnaden · {tokens} token",
   "d8a6a99fbdda0d3e": "{share} av token · {cost}",
   "19a3f4f2ba09e787": "Totalt",

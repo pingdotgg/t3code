@@ -12341,7 +12341,6 @@
   "d2d071e45a2d6b89": "Выберите окружение, чтобы увидеть лимиты.",
   "c9180daea905a0a6": "Выберите окружение, чтобы увидеть использование.",
   "f0297ec79e896a13": "{environment}: {error}",
-  "6dcbf651d51d4023": "{count, plural, one {{formatted} сеанс} few {{formatted} сеанса} many {{formatted} сеансов} other {{formatted} сеанса}}",
   "b01bf98dd90ee819": "Оценка по API",
   "bab34b28e9ee8e88": "Подробности использования без цены",
   "61571f4542da9903": "{count, plural, one {{formatted} сеанс} few {{formatted} сеанса} many {{formatted} сеансов} other {{formatted} сеанса}}",

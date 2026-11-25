@@ -5203,7 +5203,7 @@
   "0b363b02a7e17bcb": "Coût brut des tokens",
   "ea4beda46b22b8b0": "Tokens traités",
   "212d974007cacf3f": "* si facturé au tarif API complet",
-  "82bc7f1cc5a039fc": "{count, plural, one {Sur {sessions} session} other {Sur {sessions} sessions}}",
+  "45340a7dc1f89d51": "{count, plural, one {Sur {sessions} session} other {Sur {sessions} sessions}}",
   "2a57181a9d128463": "{share} du coût · {tokens} tokens",
   "d8a6a99fbdda0d3e": "{share} des tokens · {cost}",
   "19a3f4f2ba09e787": "Totaux",

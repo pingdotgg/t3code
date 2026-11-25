@@ -12286,7 +12286,6 @@
   "d2d071e45a2d6b89": "한도를 보려면 환경을 선택하세요.",
   "c9180daea905a0a6": "사용량을 보려면 환경을 선택하세요.",
   "f0297ec79e896a13": "{environment}: {error}",
-  "6dcbf651d51d4023": "{count, plural, other {세션 {formatted}개}}",
   "b01bf98dd90ee819": "API 추정치",
   "bab34b28e9ee8e88": "가격 없는 사용량 세부 정보",
   "61571f4542da9903": "{count, plural, other {세션 {formatted}개}}",
