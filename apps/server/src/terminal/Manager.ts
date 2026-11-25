@@ -48,6 +48,7 @@ import { SpawnExecutableResolution, mergePathEntries } from "@t3tools/shared/she
 
 import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Context from "effect/Context";
@@ -105,6 +106,7 @@ const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 250;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const MAX_SUBPROCESS_POLL_INTERVAL_MS = 60_000;
+const SHELL_PREPARATION_TIMEOUT = "15 seconds";
 // `ps` and WMI can take seconds on a loaded host and their tables are still
 // valid then; the timeout only ends a query that is truly stuck.
 const PROCESS_TABLE_QUERY_TIMEOUT = "15 seconds";
@@ -656,6 +658,16 @@ function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellC
   }
   return ordered;
 }
+
+// Preparation can wait on a stalled filesystem while startup holds the terminal locks.
+const withShellPreparationTimeout = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.interruptible,
+    Effect.timeoutOrElse({
+      duration: SHELL_PREPARATION_TIMEOUT,
+      orElse: () => Effect.fail(new Cause.TimeoutError("Terminal shell preparation timed out.")),
+    }),
+  );
 
 const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(function* (
   shellResolver: () => string,
@@ -2815,7 +2827,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     lastError: PtyAdapter.PtySpawnError | null = null,
   ): Effect.fn.Return<
     { process: PtyAdapter.PtyProcess; shell: string; shellLabel: string },
-    PtyAdapter.PtySpawnError
+    PtyAdapter.PtySpawnError | Cause.TimeoutError
   > {
     if (index >= shellCandidates.length) {
       return yield* new PtyAdapter.PtySpawnError({
@@ -2852,11 +2864,26 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const shellCommand = candidate.shell.includes("/")
       ? path.resolve(session.cwd, candidate.shell)
       : candidate.shell;
-    const executable =
-      platform !== "win32"
-        ? yield* Effect.promise(async () => resolveExecutable(shellCommand, platform, lookupEnv))
-        : candidate.shell;
-    if (executable === undefined) {
+    const launch = yield* withShellPreparationTimeout(
+      Effect.gen(function* () {
+        const executable =
+          platform !== "win32"
+            ? yield* Effect.promise(async () =>
+                resolveExecutable(shellCommand, platform, lookupEnv),
+              )
+            : candidate.shell;
+        if (executable === undefined) return undefined;
+
+        return yield* agentScope.wrap({
+          command: executable,
+          args: candidate.args ?? [],
+          name: "terminal",
+          env: spawnEnv,
+          survivesRestart: true,
+        });
+      }),
+    );
+    if (launch === undefined) {
       return yield* trySpawn(
         shellCandidates,
         spawnEnv,
@@ -2866,13 +2893,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
-    const launch = yield* agentScope.wrap({
-      command: executable,
-      args: candidate.args ?? [],
-      name: "terminal",
-      env: spawnEnv,
-      survivesRestart: true,
-    });
     const attempt = yield* Effect.result(
       options.ptyAdapter.spawn({
         shell: launch.command,
@@ -2945,7 +2965,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               platform,
               baseEnv,
               session.runtimeEnv?.T3CODE_TERMINAL_SHELL ?? baseEnv.T3CODE_TERMINAL_SHELL,
-            ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+            ).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              withShellPreparationTimeout,
+            );
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
               session.runtimeEnv,
@@ -2966,6 +2989,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               }).pipe(
                 Effect.provideService(FileSystem.FileSystem, fileSystem),
                 Effect.provideService(Path.Path, path),
+                withShellPreparationTimeout,
               );
               if (managedDirectories.length > 0) {
                 const delimiter = platform === "win32" ? ";" : ":";
