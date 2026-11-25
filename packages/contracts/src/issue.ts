@@ -606,6 +606,8 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
           key: TrimmedNonEmptyString,
           label: TrimmedNonEmptyString,
           placeholder: Schema.NullOr(TrimmedNonEmptyString),
+          /** The tracker connects without it; a form may leave it blank. */
+          optional: Schema.optional(Schema.Boolean),
         }),
       ),
     ),

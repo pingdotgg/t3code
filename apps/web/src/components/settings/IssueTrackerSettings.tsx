@@ -144,7 +144,7 @@ function TrackerRow({
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>(tracker.fields ?? {});
 
   const submit = async (token: string | null, values = drafts, addAccount = false) => {
-    const missing = fields.find((field) => !values[field.key]?.trim());
+    const missing = fields.find((field) => field.optional !== true && !values[field.key]?.trim());
     if (token !== null && missing !== undefined) {
       setFailure({
         adding: addAccount,
@@ -164,7 +164,10 @@ function TrackerRow({
           ? {}
           : {
               fields: Object.fromEntries(
-                fields.map((field) => [field.key, values[field.key]!.trim()]),
+                fields.flatMap((field) => {
+                  const value = values[field.key]?.trim();
+                  return value ? [[field.key, value] as const] : [];
+                }),
               ),
             }),
       },
