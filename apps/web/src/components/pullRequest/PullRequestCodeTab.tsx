@@ -120,7 +120,7 @@ import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
@@ -1447,6 +1447,12 @@ function PullRequestCodeTab({
 
   const selectedCommit = orderedCommits.find((entry) => entry.oid === commit);
   const scopeLabel = selectedCommit ? selectedCommit.messageHeadline : gt("All commits");
+  const hiddenTestFilesLabel =
+    hiddenTestFileCount > 0
+      ? gt("{count, plural, one {{count} test file hidden} other {{count} test files hidden}}", {
+          count: hiddenTestFileCount,
+        })
+      : null;
   const changeIgnoreWhitespace = (next: boolean) => {
     setIgnoreWhitespace(next);
     setDraft(null);
@@ -1462,7 +1468,14 @@ function PullRequestCodeTab({
               className="min-w-0 max-w-64 shrink-[999]"
               aria-label={gt("Diff scope: {scope}", { scope: scopeLabel })}
             >
-              <span className="truncate">{scopeLabel}</span>
+              <span className={cn("truncate", selectedCommit && "hidden @xl:inline")}>
+                {scopeLabel}
+              </span>
+              {selectedCommit ? (
+                <span className="truncate font-mono @xl:hidden">
+                  {selectedCommit.oid.slice(0, 7)}
+                </span>
+              ) : null}
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="max-w-[min(28rem,calc(100vw-2rem))]">
@@ -1508,20 +1521,29 @@ function PullRequestCodeTab({
           </DropdownMenu>
         ) : null}
         <PullRequestMetaLine>
-          <span className="shrink-0 tabular-nums">
-            {gt("{count, plural, one {{count} file} other {{count} files}}", {
-              count: files.length,
-            })}
-            {nextCursor === null ? "" : "+"}
+          <span className="flex shrink-0 items-center gap-1.5">
+            <span className="tabular-nums">
+              {gt("{count, plural, one {{count} file} other {{count} files}}", {
+                count: files.length,
+              })}
+              {nextCursor === null ? "" : "+"}
+            </span>
+            {hiddenTestFilesLabel !== null && (files.length > 0 || nextCursor !== null) ? (
+              <span className="hidden items-center gap-1.5 @2xl:flex">
+                <span aria-hidden className="text-muted-foreground/50">
+                  ·
+                </span>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="link"
+                  onClick={() => setHideTestFiles(false)}
+                >
+                  {hiddenTestFilesLabel}
+                </Button>
+              </span>
+            ) : null}
           </span>
-          {hiddenTestFileCount > 0 ? (
-            <Button type="button" size="xs" variant="link" onClick={() => setHideTestFiles(false)}>
-              {gt(
-                "{count, plural, one {{count} test file hidden} other {{count} test files hidden}}",
-                { count: hiddenTestFileCount },
-              )}
-            </Button>
-          ) : null}
           {filesViewed.enabled && files.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
@@ -1909,6 +1931,16 @@ function PullRequestCodeTab({
   }
 
   if (items.length === 0 && nextCursor === null) {
+    if (hiddenTestFilesLabel !== null && files.length === 0) {
+      return withToolbar(
+        <div className="flex flex-wrap items-center gap-2 px-4 py-5 text-sm text-muted-foreground">
+          <p>{hiddenTestFilesLabel}</p>
+          <InlineButton onClick={() => setHideTestFiles(false)}>
+            {gt("Show test files")}
+          </InlineButton>
+        </div>,
+      );
+    }
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
         {commit === null

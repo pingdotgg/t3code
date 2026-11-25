@@ -94,12 +94,26 @@ export type StartRun = (
 ) => Effect.Effect<{ readonly runId: string }, WorkflowError>;
 
 export type CancelRun = (runId: string, reason: string) => Effect.Effect<void, WorkflowError>;
+export type WithdrawQuestion = (
+  runId: string,
+  name: string,
+  options: { readonly by: string; readonly reason?: string | undefined },
+) => Effect.Effect<"withdrawn" | "not_open", WorkflowError>;
 export type ListRuns = (filter: RunFilter) => Effect.Effect<ReadonlyArray<RunSummary>>;
 
 /** Other runs, from the step that is running: starting, finding and cancelling them. */
 export class Runs extends Context.Service<
   Runs,
-  { readonly start: StartRun; readonly cancel: CancelRun; readonly list: ListRuns }
+  {
+    readonly start: StartRun;
+    readonly cancel: CancelRun;
+    readonly withdraw: (
+      runId: string,
+      name: string,
+      reason: string | undefined,
+    ) => Effect.Effect<"withdrawn" | "not_open", WorkflowError>;
+    readonly list: ListRuns;
+  }
 >()("t3/workflows/stepServices/Runs") {}
 
 export type InStep = KeyValues | Signals | Runs | WorkflowForge | StepReferences;
@@ -117,11 +131,23 @@ export class EngineLink extends Context.Service<
           readonly signalAll: SendSignalToAll;
           readonly start: StartRun;
           readonly cancel: CancelRun;
+          readonly withdraw: WithdrawQuestion;
           readonly list: ListRuns;
           /** Tell the run that invoked `runId`, if one did, how it ended. */
           readonly ended: (runId: string) => Effect.Effect<void>;
           /** Watch the agent turn behind an open wait of `runId` until it ends. */
           readonly watchTurn: (runId: string, wait: string) => Effect.Effect<void>;
+          /** Queue the step `name` of `runId` for a place in `pool`; true when it has one now. */
+          readonly placeAsked: (place: {
+            readonly runId: string;
+            readonly name: string;
+            readonly pool: string;
+            readonly size: number;
+          }) => Effect.Effect<boolean>;
+          /** The step is done with its place, which goes to the next in line. */
+          readonly placeLeft: (runId: string, name: string) => Effect.Effect<void>;
+          /** Hands out the places a pause or an end gave back. */
+          readonly placesFreed: Effect.Effect<void>;
         }
       | undefined;
     /** The steps of each run that are running in this process right now. */
@@ -238,6 +264,10 @@ export const forStep = (
           }
           const engine = yield* engineOf(link);
           return yield* engine.cancel(target, reason);
+        }),
+        withdraw: Effect.fn("Runs.withdraw")(function* (target, wait, reason) {
+          const engine = yield* engineOf(link);
+          return yield* engine.withdraw(target, wait, { by: `run ${runId}`, reason });
         }),
         list: Effect.fn("Runs.list")(function* (filter) {
           const engine = yield* engineOf(link);
@@ -443,6 +473,21 @@ export const signalAll = (
  */
 export const cancel = (runId: string, reason: string) =>
   Effect.flatMap(Runs, (runs) => runs.cancel(runId, reason));
+
+/**
+ * End a run's open question unanswered: its `ask` returns `None`, as on a timeout, and the run
+ * goes on. The step records that this run withdrew it, and why. `not_open` when there was no
+ * open question by that name. Inside `step` or `onEnd` only.
+ */
+export const withdraw = (options: {
+  readonly run: string;
+  readonly name: string;
+  readonly reason?: string;
+}) =>
+  Effect.flatMap(Runs, (runs) => {
+    checkOptions("withdraw", options, ["run", "name", "reason"]);
+    return runs.withdraw(options.run, options.name, options.reason);
+  });
 
 /**
  * Find runs: of one workflow, in one status, started with a key that begins with `keyPrefix`,

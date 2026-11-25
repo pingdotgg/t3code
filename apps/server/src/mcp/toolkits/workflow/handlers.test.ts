@@ -1,11 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import { McpSchema, McpServer } from "effect/ai";
 
 import * as Workflows from "../../../workflows/Workflows.ts";
+import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -124,6 +126,7 @@ const changes = [
   { action: "signal", runId: "run-1", wait: "review", value: { choice: "yes" } },
   { action: "resume", runId: "run-1" },
   { action: "cancel", runId: "run-1" },
+  { action: "withdraw", runId: "run-1", wait: "review" },
   { action: "store_set", key: "switch", value: true },
   { action: "store_delete", key: "switch" },
 ];
@@ -143,6 +146,7 @@ it.effect("a caller below the broadest mode reads runs but does not start or cha
             signal: () => Effect.sync(() => (reached.push("signal"), "delivered" as const)),
             resume: reach("resume"),
             cancel: reach("cancel"),
+            withdraw: () => Effect.sync(() => (reached.push("withdraw"), "withdrawn" as const)),
             storeSet: reach("storeSet"),
             storeDelete: reach("storeDelete"),
             stored: () => Effect.succeed([]),
@@ -248,5 +252,130 @@ it.effect("questions are narrowed to a kind, and runs to a tag", () =>
       questions: [{ name: "wanted" }, { name: "meant" }, { name: "plain" }],
     });
     expect(filters).toEqual([{ tag: "backlog" }]);
+  }),
+);
+
+it.effect("an answer sent through the tool names the client that sent it", () =>
+  Effect.gen(function* () {
+    const named: Array<string | undefined> = [];
+    yield* call({
+      action: "signal",
+      runId: "run-1",
+      wait: "review",
+      value: { choice: "Yes" },
+    }).pipe(
+      Effect.provide(
+        handlersWith({
+          signal: (_address, _value, options) =>
+            Effect.sync(() => (named.push(options.answeredBy), "delivered" as const)),
+        }),
+      ),
+    );
+    expect(named).toEqual(["t3 CLI"]);
+  }),
+);
+
+it.effect(
+  "the server refuses a thread's call, so no answer sent through the tool lacks a client",
+  () =>
+    Effect.gen(function* () {
+      const named: Array<string | undefined> = [];
+      const scope: McpInvocationContext.McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:workflow"),
+        requestNamespace: "client:workflow",
+        thread: undefined,
+        client: fullAccess,
+        capabilities: new Set(["orchestration" as const]),
+        issuedAt: 0,
+      };
+      const thread = {
+        threadId: ThreadId.make("thread:triage"),
+        providerSessionId: "provider:triage",
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      };
+      const result = yield* Effect.gen(function* () {
+        const server = yield* McpServer.McpServer;
+        const answer = (invocation: McpInvocationContext.McpInvocationScope) =>
+          server
+            .callTool({
+              name: "t3_workflow",
+              arguments: {
+                action: "signal",
+                runId: "run-1",
+                wait: "review",
+                value: { choice: "Yes" },
+              },
+            })
+            .pipe(
+              Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+              Effect.provideService(
+                McpSchema.McpServerClient,
+                McpSchema.McpServerClient.of({
+                  clientId: 1,
+                  protocolVersion: "2025-06-18",
+                  clientCapabilities: {},
+                  clientInfo: { name: "workflow-test", version: "1" },
+                  initializePayload: {
+                    protocolVersion: "2025-06-18",
+                    capabilities: {},
+                    clientInfo: { name: "workflow-test", version: "1" },
+                  },
+                  getClient: Effect.die("unused"),
+                }),
+              ),
+            );
+        // A full-access thread with every capability, and with or without a client beside it.
+        const refusals = yield* Effect.forEach(
+          [
+            { ...scope, client: undefined, thread },
+            { ...scope, thread },
+          ],
+          (invocation) => answer(invocation).pipe(Effect.flip),
+        );
+        const sent = yield* answer(scope);
+        return { refusals: refusals.map((error) => error.message), sent: sent.isError };
+      }).pipe(
+        Effect.provide(
+          McpHttpServer.toolkitRegistration(WorkflowToolkit, WorkflowHandlers.layer).pipe(
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+            Layer.provide(NodeCrypto.layer),
+            Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+            Layer.provide(
+              Layer.mock(Workflows.Workflows)({
+                signal: (_address, _value, options) =>
+                  Effect.sync(() => (named.push(options.answeredBy), "delivered" as const)),
+              }),
+            ),
+          ),
+        ),
+      );
+      expect(result.refusals).toEqual([
+        "Tool 't3_workflow' not found",
+        "Tool 't3_workflow' not found",
+      ]);
+      expect(result.sent).toBe(false);
+      expect(named).toEqual(["t3 CLI"]);
+    }),
+);
+
+it.effect("withdraw names the caller who withdrew the question and says whether it was open", () =>
+  Effect.gen(function* () {
+    const calls: Array<unknown> = [];
+    const result = yield* call({
+      action: "withdraw",
+      runId: "run-1",
+      wait: "wanted",
+      reason: "settled elsewhere",
+    }).pipe(
+      Effect.provide(
+        handlersWith({
+          withdraw: (runId, name, options) =>
+            Effect.sync(() => (calls.push([runId, name, options]), "not_open" as const)),
+          get: () => Effect.succeed(emptyRun),
+        }),
+      ),
+    );
+    expect(calls).toEqual([["run-1", "wanted", { by: "t3 CLI", reason: "settled elsewhere" }]]);
+    expect(result).toEqual({ withdrawal: "not_open", steps: [], references: [] });
   }),
 );

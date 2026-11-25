@@ -1,7 +1,8 @@
 diff --git a/android/src/main/java/expo/modules/ui/RNHostView.kt b/android/src/main/java/expo/modules/ui/RNHostView.kt
+index d1fe94a23ebcbbde6ed629bb7e566d0b6a0f6714..39408ccc4c1f726dde655b17987ac80eb914ba80 100644
 --- a/android/src/main/java/expo/modules/ui/RNHostView.kt
 +++ b/android/src/main/java/expo/modules/ui/RNHostView.kt
-@@ -847,7 +847,19 @@
+@@ -847,7 +847,19 @@ private class TouchDispatchingRootViewGroup(
    override fun setNestedScrollingEnabled(enabled: Boolean) {
      childHelper.isNestedScrollingEnabled = enabled
    }

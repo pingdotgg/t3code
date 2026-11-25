@@ -401,7 +401,7 @@ index 0d63c9b949cfae7a101902fc3bb70fcf46094f68..a312b8fcdaf728220db3d6c04d92fd78
       * Replaces the current audio source with a new one.
       */
 diff --git a/ios/AudioModule.swift b/ios/AudioModule.swift
-index 42ce9e8f213ebc243db25ef836456757b0daeb09..1d46e81a30321c9432322ab6616ac382abb97208 100644
+index 6d26c72148005a36361168310dca6ebdeead8d85..040092bd069216bd7e55d923962e2c312111c71f 100644
 --- a/ios/AudioModule.swift
 +++ b/ios/AudioModule.swift
 @@ -6,6 +6,7 @@ public class AudioModule: Module {
@@ -457,7 +457,7 @@ index 42ce9e8f213ebc243db25ef836456757b0daeb09..1d46e81a30321c9432322ab6616ac382
            deactivateSessionOnFailure: deactivateSessionOnFailure
          )
          recordSessionActive(true)
-@@ -892,11 +904,15 @@ public class AudioModule: Module {
+@@ -895,11 +907,15 @@ public class AudioModule: Module {
          if !mode.shouldRouteThroughEarpiece {
            categoryOptions.insert(.defaultToSpeaker)
          }
@@ -475,7 +475,7 @@ index 42ce9e8f213ebc243db25ef836456757b0daeb09..1d46e81a30321c9432322ab6616ac382
        }
  #endif
  
-@@ -957,6 +973,7 @@ public class AudioModule: Module {
+@@ -960,6 +976,7 @@ public class AudioModule: Module {
      sessionQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
        guard let self,
          self.sessionIsActive,
