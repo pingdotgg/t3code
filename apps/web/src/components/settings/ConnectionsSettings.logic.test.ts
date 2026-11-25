@@ -1,12 +1,15 @@
-import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
+import { type AdvertisedEndpoint, type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  endpointShareHint,
   isServerNetworkAccessible,
   parseManualDesktopSshTarget,
   resolveAccessEnvironmentId,
+  resolveAdvertisedEndpointPairingUrl,
   resolveCurrentOriginPairingUrl,
   resolveTailscaleServeBaseUrl,
+  selectPairingEndpoint,
   selectQrEndpointOption,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
@@ -235,5 +238,63 @@ describe("isServerNetworkAccessible", () => {
     { authPolicy: null, directEndpoints: served, expected: false },
   ] as const)("$authPolicy with $directEndpoints.length endpoints", (row) => {
     expect(isServerNetworkAccessible(row)).toBe(row.expected);
+  });
+});
+
+describe("Tailscale-first endpoint selection and pairing URLs", () => {
+  const lanEndpoint: AdvertisedEndpoint = {
+    id: "desktop-lan:http://192.168.1.20:3773",
+    label: "Local network",
+    httpBaseUrl: "http://192.168.1.20:3773",
+    reachability: "lan",
+    status: "available",
+    isDefault: true,
+    provider: { id: "desktop-core", label: "Desktop", kind: "lan", isAddon: false },
+    source: "desktop-core",
+    compatibility: { hostedHttpsApp: "incompatible" },
+  };
+  const tailscaleIpEndpoint: AdvertisedEndpoint = {
+    id: "tailscale-ip:http://100.74.126.34:3773",
+    label: "Tailscale IP",
+    httpBaseUrl: "http://100.74.126.34:3773",
+    reachability: "private-network",
+    status: "available",
+    isDefault: false,
+    provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: true },
+    source: "desktop-addon",
+    compatibility: { hostedHttpsApp: "incompatible" },
+  };
+  const tailscaleHttpsEndpoint: AdvertisedEndpoint = {
+    id: "tailscale-magicdns:https://mac.tail1234.ts.net",
+    label: "Tailscale HTTPS",
+    httpBaseUrl: "https://mac.tail1234.ts.net",
+    reachability: "private-network",
+    status: "available",
+    isDefault: false,
+    provider: { id: "tailscale", label: "Tailscale", kind: "private-network", isAddon: true },
+    source: "desktop-addon",
+    compatibility: { hostedHttpsApp: "compatible" },
+  };
+
+  it("prefers Tailscale HTTPS, then Tailscale IP, then LAN", () => {
+    expect(
+      selectPairingEndpoint([lanEndpoint, tailscaleIpEndpoint, tailscaleHttpsEndpoint])?.id,
+    ).toBe(tailscaleHttpsEndpoint.id);
+    expect(selectPairingEndpoint([lanEndpoint, tailscaleIpEndpoint])?.id).toBe(
+      tailscaleIpEndpoint.id,
+    );
+    expect(selectPairingEndpoint([lanEndpoint])?.id).toBe(lanEndpoint.id);
+  });
+
+  it("uses direct Tailscale HTTPS pairing URLs when no hosted app URL is configured", () => {
+    const url = resolveAdvertisedEndpointPairingUrl(tailscaleHttpsEndpoint, "PAIRCODE");
+    expect(url).toBe("https://mac.tail1234.ts.net/pair#token=PAIRCODE");
+    expect(endpointShareHint(tailscaleHttpsEndpoint, url)).toContain("Tailscale HTTPS");
+    expect(
+      endpointShareHint(
+        tailscaleIpEndpoint,
+        resolveAdvertisedEndpointPairingUrl(tailscaleIpEndpoint, "PAIRCODE"),
+      ),
+    ).toContain("Tailscale IP");
   });
 });

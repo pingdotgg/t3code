@@ -628,7 +628,26 @@ export const make = Effect.gen(function* () {
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
-    return [...coreEndpoints, ...tailscaleEndpoints];
+    const preferredTailscaleEndpoint =
+      tailscaleEndpoints.find(
+        (endpoint) =>
+          endpoint.id.startsWith("tailscale-magicdns:") && endpoint.status === "available",
+      ) ??
+      tailscaleEndpoints.find(
+        (endpoint) => endpoint.id.startsWith("tailscale-ip:") && endpoint.status === "available",
+      ) ??
+      null;
+    if (preferredTailscaleEndpoint === null) {
+      return [...coreEndpoints, ...tailscaleEndpoints];
+    }
+    return [
+      ...coreEndpoints.map((endpoint) =>
+        endpoint.isDefault ? { ...endpoint, isDefault: false } : endpoint,
+      ),
+      ...tailscaleEndpoints.map((endpoint) =>
+        endpoint.id === preferredTailscaleEndpoint.id ? { ...endpoint, isDefault: true } : endpoint,
+      ),
+    ];
   }).pipe(Effect.withSpan("desktop.serverExposure.getAdvertisedEndpoints"));
 
   return DesktopServerExposure.of({

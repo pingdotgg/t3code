@@ -316,7 +316,7 @@ describe("t3 pair", () => {
           readonly scopes: ReadonlyArray<string>;
         }>;
         assert.equal(credentials.length, 1);
-        assert.equal(credentials[0]?.label, "t3 pair");
+        assert.equal(credentials[0]?.label, "tix pair");
         assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
       }),
     ).pipe(
@@ -424,10 +424,8 @@ describe("t3 pair", () => {
           typeof error === "object" && error !== null && "cause" in error ? error.cause : error,
         );
         assert.include(rendered, "No running T3 Code server found.");
-        for (const subcommand of ["serve", "connect"]) {
-          const { command } = yield* resolveHostCliCommand(subcommand, ["--base-dir", baseDir]);
-          assert.include(rendered, `\`${command}\``);
-        }
+        const { command } = yield* resolveHostCliCommand("serve", ["--base-dir", baseDir]);
+        assert.include(rendered, `\`${command}\``);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
@@ -895,7 +893,7 @@ describe("auth scope options", () => {
       if (!CliError.isCliError(error) || error._tag !== "ShowHelp") {
         assert.fail(`Expected ShowHelp, got ${String(error)}`);
       }
-      assert.deepEqual(error.commandPath, ["t3", ...command]);
+      assert.deepEqual(error.commandPath, ["tix", ...command]);
       const scopeError = error.errors[0];
       if (scopeError?._tag !== "InvalidValue") {
         assert.fail(`Expected InvalidValue, got ${String(scopeError?._tag)}`);

@@ -251,7 +251,7 @@ function PairingForm({
               <PairingInputRow
                 label={gt("Address")}
                 keyboardType="url"
-                placeholder="192.168.1.100:3773"
+                placeholder="host.tailnet.ts.net"
                 value={hostInput}
                 onChangeText={handleHostChange}
               />
@@ -277,11 +277,11 @@ function PairingForm({
               {pairingConnectionError ??
                 (linked
                   ? gt(
-                      "Create a pairing code on {environment}, in its Settings → Sharing & access or with `t3 auth pairing create`, and enter it here.",
+                      "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
                       { environment: linked.label },
                     )
                   : gt(
-                      "For machines on your local network or tailnet. The machine keeps its own provider credentials.",
+                      "Connect directly via Tailscale (https://host.tailnet.ts.net or http://100.x.y.z:3773) or your local network. You can also paste a full pairing URL.",
                     ))}
             </Text>
           </View>
@@ -380,7 +380,7 @@ function PairingScanCard(props: {
         </View>
         <Text className={cn("text-center text-sm", light ? "text-black/70" : "text-white/80")}>
           {gt("Scan the code from {command} or desktop Connections settings", {
-            command: "t3 pair",
+            command: "tix pair",
           })}
         </Text>
       </View>

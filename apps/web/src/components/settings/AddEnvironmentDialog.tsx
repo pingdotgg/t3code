@@ -430,7 +430,7 @@ export function AddEnvironmentDialog({
           <Input
             value={savedBackendHost}
             onChange={(event) => handleSavedBackendHostChange(event.target.value)}
-            placeholder="backend.example.com"
+            placeholder="host.tailnet.ts.net"
             disabled={isAddingSavedBackend}
             spellCheck={false}
           />
@@ -450,7 +450,10 @@ export function AddEnvironmentDialog({
       </div>
       <div>
         <span className="mt-1 block text-2xs text-muted-foreground">
-          <T>Paste a full pairing URL here to fill both fields automatically.</T>
+          <T>
+            Supports Tailscale (https://host.tailnet.ts.net or http://100.x.y.z:3773), LAN
+            addresses, or a full pairing URL.
+          </T>
         </span>
       </div>
     </div>
@@ -702,7 +705,7 @@ export function AddEnvironmentDialog({
                 )
               : prefill
                 ? gt(
-                    "Create a pairing code on {environment}, in its Settings → Sharing & access or with `t3 auth pairing create`, and enter it here.",
+                    "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
                     { environment: prefill.label },
                   )
                 : gt("Pair another environment to this client.")}
@@ -714,7 +717,7 @@ export function AddEnvironmentDialog({
               {renderConnectionModeCard({
                 mode: "remote",
                 title: gt("Remote link"),
-                description: gt("Enter a backend host and pairing code."),
+                description: gt("Connect via Tailscale, LAN, or pairing URL."),
                 icon: <ChevronsLeftRightEllipsisIcon aria-hidden className="size-4" />,
               })}
               {desktopBridge

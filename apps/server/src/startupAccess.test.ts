@@ -72,10 +72,17 @@ it("names the bound loopback address instead of localhost", () => {
   expect(resolveLocalOrigin("192.168.1.42", 3773)).toBe("http://192.168.1.42:3773");
 });
 
-it("prefers a LAN address over a tailnet one for a private-network pairing URL", () => {
+it("prefers a tailnet address over a LAN one for a private-network pairing URL", () => {
   expect(
     resolveHeadlessConnectionString("0.0.0.0", 3773, {
       interfaces: { tailscale0: [ipv4("100.101.102.103")], en0: [ipv4("192.168.1.42")] },
+      privateNetworkOnly: true,
+      platform: "linux",
+    }),
+  ).toBe("http://100.101.102.103:3773");
+  expect(
+    resolveHeadlessConnectionString("0.0.0.0", 3773, {
+      interfaces: { en0: [ipv4("192.168.1.42")] },
       privateNetworkOnly: true,
       platform: "linux",
     }),

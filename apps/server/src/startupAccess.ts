@@ -171,11 +171,10 @@ const resolveHeadlessConnectionHost = (
         (isPrivateNetworkAddress(entry.address) &&
           !(platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)))),
   );
-  // A tailnet or other CGNAT address reaches fewer devices than the LAN one.
-  const externalIpv4 = privateNetworkOnly
-    ? (externalIpv4Entries.find((entry) => !isSharedAddressSpaceHost(entry.address)) ??
-      externalIpv4Entries[0])
-    : externalIpv4Entries[0];
+  // Prefer Tailscale / CGNAT (100.64.0.0/10) for direct cross-network reachability, falling back to LAN.
+  const externalIpv4 =
+    externalIpv4Entries.find((entry) => isSharedAddressSpaceHost(entry.address)) ??
+    externalIpv4Entries[0];
   if (externalIpv4) {
     return externalIpv4.address;
   }
@@ -249,24 +248,29 @@ export const renderTerminalQrCode = (value: string, margin = 2): string => {
   return rows.join("\n");
 };
 
-export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
-  [
+export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string => {
+  const hostname = new URL(accessInfo.connectionString).hostname;
+  const isTailscaleAddress = isSharedAddressSpaceHost(hostname);
+  return [
     "T3 Code server is ready.",
     `Connection string: ${accessInfo.connectionString}`,
     `Token: ${accessInfo.token}`,
     `Pairing URL: ${accessInfo.pairingUrl}`,
     `App link: ${buildPairingAppLink(accessInfo.pairingUrl)}`,
-    ...(isLoopbackHost(new URL(accessInfo.connectionString).hostname)
+    ...(isLoopbackHost(hostname)
       ? []
-      : [
-          "",
-          "Warning: this address uses plain HTTP. Anyone on the same network can read the",
-          "token and control this machine. Use it over a VPN or tailnet you trust.",
-        ]),
+      : isTailscaleAddress
+        ? ["", "Reachable over Tailscale. For HTTPS via MagicDNS, run `tix pair --tailscale`."]
+        : [
+            "",
+            "Warning: this address uses plain HTTP. Anyone on the same network can read the",
+            "token and control this machine. Use it over a VPN or tailnet you trust.",
+          ]),
     "",
     renderTerminalQrCode(accessInfo.pairingUrl),
     "",
   ].join("\n");
+};
 
 export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessInfo")(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;

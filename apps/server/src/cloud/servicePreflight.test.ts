@@ -30,9 +30,9 @@ it.each([1])("blocks legacy launcher protocol %i with exact recovery steps", (la
   expect(reason).toContain(
     "curl -fsSL https://raw.githubusercontent.com/penouc/tix/main/scripts/install.sh | T3CODE_VERSION=9.8.7 sh",
   );
-  expect(reason).toContain("~/.local/bin/t3 service install");
-  expect(reason).toContain("t3 --version");
-  expect(reason).toContain("which -a t3");
+  expect(reason).toContain("~/.local/bin/tix service install");
+  expect(reason).toContain("tix --version");
+  expect(reason).toContain("which -a tix");
 });
 
 // regression: #34502 every installed launcher was protocol 3, so protocol 4 blocked every remote update

@@ -130,7 +130,7 @@ export const resolveServerInstallation = Effect.gen(function* () {
 /** The original package spec is unavailable at startup; infer its channel from the version. */
 function suggestedPackageSpec(version: string): string {
   const channel = /^[^-+]+-(nightly|preview)\./.exec(version)?.[1];
-  return channel === undefined ? "t3" : `t3@${channel}`;
+  return channel === undefined ? "tix" : `tix@${channel}`;
 }
 
 function formatCliCommand(input: {
@@ -140,7 +140,7 @@ function formatCliCommand(input: {
 }): string {
   const runner = detectCliRunner(input.entryPath);
   if (runner === null) {
-    return `t3 ${input.subcommand}`;
+    return `tix ${input.subcommand}`;
   }
   return `${runner} ${suggestedPackageSpec(input.version)} ${input.subcommand}`;
 }
@@ -188,8 +188,8 @@ export const resolveHostCliCommand = Effect.fn("invocation.resolveHostCliCommand
     // An empty subcommand names the root `t3` command.
     [prefix.trimEnd(), ...args.map((arg) => hostShellWord(platform, arg))].join(" ");
   const command = yield* resolveCliCommand(subcommand);
-  if (command !== `t3 ${subcommand}`) return { command: withArgs(command), launcher: false };
-  const onPath = yield* resolveCommandPath("t3");
+  if (command !== `tix ${subcommand}`) return { command: withArgs(command), launcher: false };
+  const onPath = yield* resolveCommandPath("tix");
   if (onPath !== null) {
     const shim = (yield* HostProcess.Environment).T3CODE_CLI_PATH?.trim();
     const fs = yield* FileSystem.FileSystem;

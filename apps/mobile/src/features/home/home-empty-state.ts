@@ -38,7 +38,7 @@ function deriveEmptyState(
   if (!catalogState.hasConnections) {
     return {
       title: resolve(msg("No environments connected")),
-      detail: resolve(msg("Add an environment to load projects and start coding sessions.")),
+      detail: resolve(msg("Scan a QR code or enter a Tailscale address to connect your computer.")),
       loading: false,
     };
   }

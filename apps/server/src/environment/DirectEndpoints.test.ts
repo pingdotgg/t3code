@@ -115,8 +115,8 @@ describe("resolveBoundEndpoints", () => {
         interfaces: INTERFACES,
       }),
     ).toEqual([
-      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
     ]);
   });
 
@@ -140,8 +140,8 @@ describe("resolveBoundEndpoints", () => {
         isolatedBridges: new Set(["fhciowner"]),
       }),
     ).toEqual([
-      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "lan", httpBaseUrl: "http://192.168.1.20:3773/" },
     ]);
   });
@@ -157,8 +157,8 @@ describe("resolveBoundEndpoints", () => {
     expect(
       resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
     ).toEqual([
-      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
     ]);
   });
 
@@ -170,8 +170,8 @@ describe("resolveBoundEndpoints", () => {
     expect(
       resolveBoundEndpoints({ platform: "win32", host: "0.0.0.0", port: 3773, interfaces }),
     ).toEqual([
-      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "lan", httpBaseUrl: "http://192.168.1.30:3773/" },
     ]);
   });
@@ -189,8 +189,8 @@ describe("resolveBoundEndpoints", () => {
     };
     const input = { host: "0.0.0.0", port: 3773, interfaces };
     const retained = [
-      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       ...[30, 31, 32, 33].map((last) => ({
         kind: "lan",
         httpBaseUrl: `http://192.168.1.${last}:3773/`,
@@ -217,8 +217,8 @@ describe("resolveBoundEndpoints", () => {
     expect(
       resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
     ).toEqual([
-      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.70.1.2:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "lan", httpBaseUrl: "http://100.96.0.1:3773/" },
       { kind: "lan", httpBaseUrl: "http://100.85.0.1:3773/" },
     ]);
@@ -439,8 +439,8 @@ describe("DirectEndpoints Tailscale Serve", () => {
         yield* Deferred.succeed(finishProbe, undefined);
         const validated = yield* Fiber.join(resolving);
         expect(validated).toEqual([
-          bound,
           { kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" },
+          bound,
         ]);
         expect(yield* service.resolveAvailable()).toEqual(validated);
         yield* Ref.set(status, 502);

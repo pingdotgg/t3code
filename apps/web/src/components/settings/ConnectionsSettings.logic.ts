@@ -394,6 +394,8 @@ export function selectPairingEndpoint(
     }
   }
   return (
+    availableEndpoints.find((endpoint) => isTailscaleHttpsEndpoint(endpoint)) ??
+    availableEndpoints.find((endpoint) => endpoint.id.startsWith("tailscale-ip:")) ??
     availableEndpoints.find((endpoint) => endpoint.isDefault) ??
     availableEndpoints.find((endpoint) => endpoint.reachability !== "loopback") ??
     availableEndpoints.find((endpoint) => endpoint.compatibility.hostedHttpsApp === "compatible") ??
@@ -477,6 +479,12 @@ export function endpointShareHint(
 ): string {
   if (isHostedAppPairingUrl(url)) {
     return resolve(msg("Opens the hosted app, no install needed"));
+  }
+  if (isTailscaleHttpsEndpoint(endpoint)) {
+    return resolve(msg("Tailscale HTTPS: reachable across your tailnet"));
+  }
+  if (endpoint.id.startsWith("tailscale-ip:")) {
+    return resolve(msg("Tailscale IP: reachable across your tailnet"));
   }
   switch (endpoint.reachability) {
     case "lan":

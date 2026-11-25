@@ -773,13 +773,13 @@ function ConfiguredCloudLinkRow({
         <SettingsRow
           title={setting("t3-connect").title}
           description={gt(
-            "This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again.",
+            "This environment was removed from T3 Connect. Run `tix connect link` on the host to link it again.",
           )}
         />
       ) : (
         <SettingsRow
           title={setting("t3-connect").title}
-          description={gt("Run `t3 connect link` on the host, then restart T3 Code there.")}
+          description={gt("Run `tix connect link` on the host, then restart T3 Code there.")}
         />
       )}
       {signedOut && showSwitch ? null : (

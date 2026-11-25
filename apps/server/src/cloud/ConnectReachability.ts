@@ -84,14 +84,14 @@ export function classifyReachability(
     fix: string,
     hint: string | null = null,
   ): Unreachable => ({ status: "unreachable", checkedAt, cause, reason, hint, fix });
-  const restart = "Restart T3 Code. If it stays, run `t3 connect` again.";
+  const restart = "Restart T3 Code. If it stays, run `tix connect` again.";
 
   if (!facts.managedTunnelConfigured) {
     // A running server reads the link `t3 connect` stores only at startup.
     return fail(
       "not_linked",
       "The server has not set up a T3 Connect tunnel.",
-      "Run `t3 connect`, then restart T3 Code so it applies the link.",
+      "Run `tix connect`, then restart T3 Code so it applies the link.",
     );
   }
   if (connector === null) {
@@ -155,7 +155,7 @@ export function classifyReachability(
     return fail(
       "dns_failed",
       "The T3 Connect address no longer points to this machine's tunnel (Cloudflare error 1016). T3 Connect may have removed this environment.",
-      "Link this environment again. Turn T3 Connect off and on in Settings > Sharing & access, or run `t3 connect link` and then restart T3 Code.",
+      "Link this environment again. Turn T3 Connect off and on in Settings > Sharing & access, or run `tix connect link` and then restart T3 Code.",
     );
   }
   if (status !== null) {

@@ -198,7 +198,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     const launcherProtocol = launcher.protocol;
     if (capability === null || launcherProtocol === undefined) {
       return yield* failWith(
-        "Remote updates require the T3 Code background service. Run `t3 service install` on the server machine.",
+        "Remote updates require the T3 Code background service. Run `tix service install` on the server machine.",
       );
     }
 
@@ -206,7 +206,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     if (unsafeCrossing !== null) return yield* failWith(unsafeCrossing);
     const targetVersion = input.targetVersion.trim();
     if (!isExactServiceVersion(targetVersion)) {
-      return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);
+      return yield* failWith(`'${targetVersion}' is not an exact tix version.`);
     }
     if (yield* Ref.getAndSet(inFlight, true)) {
       return yield* failWith("A server update is already in progress.");

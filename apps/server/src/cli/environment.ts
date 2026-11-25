@@ -218,7 +218,7 @@ const environmentLinkCommand = Command.make("link", {
     Flag.atLeast(0),
   ),
   pairingCode: Flag.String("pairing-code").pipe(
-    Flag.withDescription("A pairing code from the other environment (`t3 pair` there)."),
+    Flag.withDescription("A pairing code from the other environment (`tix pair` there)."),
     Flag.optional,
   ),
   from: Flag.String("from").pipe(
@@ -294,7 +294,7 @@ const environmentListCommand = Command.make("list", { ...authLocationFlags, json
 const environmentUnlinkCommand = Command.make("unlink", {
   ...authLocationFlags,
   environmentId: Argument.String("environment-id").pipe(
-    Argument.withDescription("The linked environment's id, from `t3 environment list`."),
+    Argument.withDescription("The linked environment's id, from `tix environment list`."),
   ),
 }).pipe(
   Command.withDescription(
