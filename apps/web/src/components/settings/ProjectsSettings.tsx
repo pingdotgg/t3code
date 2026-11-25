@@ -3,10 +3,11 @@ import { T, useGT } from "gt-react";
 import { LayersIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
+import { NewProjectsSettingsSection } from "./NewProjectsSettings";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
-import { SettingsPageContainer } from "./settingsLayout";
+import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAxis";
 
 export function ProjectsSettings() {
@@ -48,9 +49,14 @@ export function ProjectsSettings() {
       ) : unavailable ? (
         unavailable
       ) : (
-        <SettingsScopeNotice target="project">
-          {gt("Choose a project to manage its name, icon, checkouts and actions.")}
-        </SettingsScopeNotice>
+        <SettingsPageContainer>
+          <NewProjectsSettingsSection />
+          <SettingsSection id="projects" title={gt("Projects")} variant="plain">
+            <SettingsScopeNotice target="project" inline>
+              {gt("Choose a project to manage its name, icon, checkouts and actions.")}
+            </SettingsScopeNotice>
+          </SettingsSection>
+        </SettingsPageContainer>
       )}
     </div>
   );

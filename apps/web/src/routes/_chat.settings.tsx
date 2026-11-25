@@ -23,7 +23,7 @@ import {
 } from "../components/settings/settingsScopeNavigation";
 import {
   getSettingsSearchTargetScope,
-  getThreadAutoSettlementSearchAvailability,
+  getSettingsSearchTargetAvailability,
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
 } from "../components/settings/settingsSearch";
@@ -71,8 +71,8 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
     : null;
   const targetAvailability =
     agentFeedbackAvailability ??
-    (searchTarget?.requiresThreadAutoSettlement
-      ? getThreadAutoSettlementSearchAvailability(environments, scope)
+    (searchTarget?.requiresThreadAutoSettlement || searchTarget?.requiredCapability
+      ? getSettingsSearchTargetAvailability(environments, scope, searchTarget.requiredCapability)
       : null);
   if (
     scope.kind !== "unavailable" &&

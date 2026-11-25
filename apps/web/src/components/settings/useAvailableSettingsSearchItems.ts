@@ -15,7 +15,7 @@ import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import {
   filterAvailableSettingsSearchItems,
-  getThreadAutoSettlementSearchAvailability,
+  getSettingsSearchTargetAvailability,
 } from "./settingsSearch";
 
 /** Any environment whose server enables secret providers; gates the Secrets page, nav and search. */
@@ -57,9 +57,15 @@ export function useAvailableSettingsSearchItems() {
         environment.serverConfig !== null &&
         environment.serverConfig.managedPolicy?.limits?.providers?.allowedDrivers === undefined,
     ) === true;
+  const hasWorktreesDirectory =
+    getSettingsSearchTargetAvailability(environments, undefined, "worktreesDirectory")
+      .eligibleEnvironmentIds.length > 0;
+  const hasNewProjectsDirectory =
+    getSettingsSearchTargetAvailability(environments, undefined, "newProjectsDirectory")
+      .eligibleEnvironmentIds.length > 0;
   const hasSecretProvidersEnvironment = useHasSecretProvidersEnvironment();
   const hasThreadAutoSettlement =
-    getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0;
+    getSettingsSearchTargetAvailability(environments).eligibleEnvironmentIds.length > 0;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const hasPeerLinkHost = usePeerLinkHosts().length > 0;
@@ -88,6 +94,8 @@ export function useAvailableSettingsSearchItems() {
     hasThreadAutoSettlement,
     managedTunnelActive,
     hasPeerLinkHost,
+    hasWorktreesDirectory,
+    hasNewProjectsDirectory,
     hasFastWorktreeCheckoutEnvironment,
     hasAgentFeedbackEnvironment,
     hasTextGeneratorsEnvironment,
