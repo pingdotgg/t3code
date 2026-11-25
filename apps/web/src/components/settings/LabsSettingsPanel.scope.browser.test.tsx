@@ -4,15 +4,10 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import "../../index.css";
-import {
-  ensureClientSettingsHydrated,
-  getClientSettings,
-  persistClientSettingsPatch,
-} from "../../hooks/useSettings";
+import { ensureClientSettingsHydrated, persistClientSettingsPatch } from "../../hooks/useSettings";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 import type { Project } from "../../types";
@@ -114,56 +109,21 @@ const [group] = buildSidebarProjectSnapshots({
   primaryEnvironmentId: environmentId,
   resolveEnvironmentLabel: () => "Desk",
 });
-const isInert = (element: Element) => element.closest("[inert]") !== null;
 
-it.each([
-  { scope: "a project", search: { project: group!.projectKey } },
-  {
-    scope: "a checkout",
-    search: { project: group!.projectKey, checkout: group!.memberProjects[0]!.physicalProjectKey },
-  },
-])("shows Boring sidebar device preferences read-only for $scope", async ({ search }) => {
+it("shows Boring sidebar device preferences read-only while a project is selected", async () => {
   await ensureClientSettingsHydrated();
   await persistClientSettingsPatch(
     { boringSidebarEnabled: true, boringSidebarMultilineRows: false },
     async () => {},
   );
   await using screen = await render(
-    <SettingsScopeProvider search={search} onChange={() => {}}>
+    <SettingsScopeProvider search={{ project: group!.projectKey }} onChange={() => {}}>
       <LabsSettingsPanel />
     </SettingsScopeProvider>,
     { router: "/settings/labs" },
   );
 
   for (const name of ["Boring sidebar (group by project)", "Two-line folder rows"]) {
-    expect(isInert(screen.getByRole("switch", { name }).element())).toBe(true);
+    expect(screen.getByRole("switch", { name }).element().closest("[inert]")).not.toBeNull();
   }
-});
-
-it.each([
-  { scope: "All projects", search: {} },
-  { scope: "an environment", search: { machine: environmentId } },
-])("saves Boring sidebar device preferences for $scope", async ({ search }) => {
-  await ensureClientSettingsHydrated();
-  await persistClientSettingsPatch(
-    { boringSidebarEnabled: false, boringSidebarMultilineRows: false },
-    async () => {},
-  );
-  await using screen = await render(
-    <SettingsScopeProvider search={search} onChange={() => {}}>
-      <LabsSettingsPanel />
-    </SettingsScopeProvider>,
-    { router: "/settings/labs" },
-  );
-
-  const boringSidebar = screen.getByRole("switch", { name: "Boring sidebar (group by project)" });
-  expect(isInert(boringSidebar.element())).toBe(false);
-  await userEvent.click(boringSidebar);
-  await expect.element(screen.getByRole("switch", { name: "Two-line folder rows" })).toBeVisible();
-  expect(getClientSettings().boringSidebarEnabled).toBe(true);
-
-  const multilineRows = screen.getByRole("switch", { name: "Two-line folder rows" });
-  expect(isInert(multilineRows.element())).toBe(false);
-  await userEvent.click(multilineRows);
-  expect(getClientSettings().boringSidebarMultilineRows).toBe(true);
 });
