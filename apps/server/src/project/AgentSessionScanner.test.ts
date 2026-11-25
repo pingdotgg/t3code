@@ -3074,6 +3074,50 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("titles a long Claude import from the first request after a bare command", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const sessionId = "62c057bb-b316-4b29-be2c-140090d71254";
+        const record = (role: "user" | "assistant", content: string) =>
+          encodeTranscriptRecord({
+            type: role,
+            cwd: workspace,
+            sessionId,
+            message: { role, content },
+          });
+
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", `${sessionId}.jsonl`),
+          contents: [
+            record(
+              "user",
+              "<command-name>/effort</command-name><command-message>effort</command-message><command-args></command-args>",
+            ),
+            record("user", "Fix the login redirect"),
+            ...Array.from({ length: 100 }, (_, index) => [
+              record("assistant", `Update ${index + 1}`),
+              record("user", `Review deployment check ${index + 1}`),
+            ]).flat(),
+            record("assistant", "The deployment checks passed"),
+          ].join("\n"),
+          mtimeMs: nowMs - 60_000,
+        });
+
+        const [thread] = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(thread?.title).toBe("Fix the login redirect");
+      }),
+    );
+
     it.effect("imports long Claude history beyond the selected-history and record limits", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
