@@ -4184,12 +4184,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     return piThreadSnapshot(state.providerThread);
                   } else {
                     const listing = piSessionListing(yield* request({ type: "get_entries" }));
+                    const completedAt = target?.completedAt;
                     const retained =
-                      listing !== null && targetId !== undefined && target?.completedAt != null
+                      listing !== null && targetId !== undefined
                         ? piRetainedCheckpoint(
                             listing,
                             targetId,
-                            DateTime.toEpochMillis(target.completedAt),
+                            completedAt == null ? undefined : DateTime.toEpochMillis(completedAt),
                           )
                         : undefined;
                     if (retained === undefined)
@@ -4484,7 +4485,7 @@ interface PiRetainedCheckpoint {
 function piRetainedCheckpoint(
   listing: PiSessionListing,
   targetId: string,
-  completedAt: number,
+  completedAt: number | undefined,
 ): PiRetainedCheckpoint | undefined {
   const walk = walkPiBranch(listing.entries, listing.leafId, targetId);
   if (listing.leafId === null || walk?.reachedStop !== true || !listing.entries.has(targetId))
@@ -4492,7 +4493,7 @@ function piRetainedCheckpoint(
   // An extension can leave later prompts in the source. Keep steers within the retained turn.
   for (const id of [...walk.userEntryIds].reverse()) {
     const entry = listing.entries.get(id);
-    if (entry?.timestamp == null) return undefined;
+    if (entry?.timestamp == null || completedAt === undefined) return undefined;
     if (entry.timestamp >= completedAt)
       return entry.parentId === null ? undefined : { headId: entry.parentId, forkEntryId: id };
   }
