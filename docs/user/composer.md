@@ -419,12 +419,6 @@ If nothing on the device can show a format, save or share it to open it elsewher
 50 MB opens as a folder list on every surface; on mobile, select a file inside it to preview,
 save, or add it to chat.
 
-## Markdown code blocks in replies
-
-On web and desktop, use **Show rendered markdown** on a Markdown code block in an
-agent reply to see its formatted contents. **Show markdown source** switches back,
-and **Copy code** copies the Markdown source in either view.
-
 ## Images and videos in messages
 
 Select an image or video attachment or link to preview it. Playback support depends
