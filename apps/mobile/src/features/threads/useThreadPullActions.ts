@@ -20,7 +20,7 @@ export function useThreadPullActions(input: {
   readonly snoozePresets: ReadonlyArray<SnoozePresetSetting> | undefined;
 }): ReadonlyArray<PullAction> {
   const gt = useGT();
-  const { startNewTaskInCurrentProject } = useAdaptiveWorkspaceLayout();
+  const { startNewTaskInThreadProject } = useAdaptiveWorkspaceLayout();
   const { settleThread, snoozeThread } = useThreadListActions();
   const { environmentId, threadId, snoozePresets } = input;
   // Read when the pull lets go, so the actions don't change while a reply streams into the shell.
@@ -44,7 +44,7 @@ export function useThreadPullActions(input: {
       label: gt("New", { $context: "short label under a button that starts a new thread" }),
       tone: "primary",
       enabled: true,
-      run: startNewTaskInCurrentProject,
+      run: () => startNewTaskInThreadProject({ environmentId, threadId }),
     },
     {
       id: "snooze",
