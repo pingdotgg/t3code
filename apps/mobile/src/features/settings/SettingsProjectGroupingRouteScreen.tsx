@@ -5,6 +5,7 @@ import type { SidebarProjectGroupingMode } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { AppLockSettingsSection } from "../app-lock/AppLockSettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
 import {
   mobileProjectGroupingModePatch,
@@ -77,6 +78,7 @@ export function SettingsProjectGroupingRouteScreen() {
         </SettingsSection>
         <WorkingSectionSettings />
         <NewThreadSettingsSection />
+        <AppLockSettingsSection />
       </ScrollView>
     </SettingsScreen>
   );

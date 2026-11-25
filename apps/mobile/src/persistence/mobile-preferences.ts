@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { ToolCallVisibility } from "@t3tools/contracts/settings";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
+import { isAppLockGracePeriodMs, type AppLockGracePeriodMs } from "../lib/appLock";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
@@ -143,6 +144,9 @@ export interface Preferences {
   readonly pullRequestActivityVisibility?: PullRequestActivityVisibility;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
   readonly liveActivitiesEnabled?: boolean;
+  readonly appLockEnabled?: boolean;
+  /** How long T3 Code may stay in the background before it asks to unlock again. */
+  readonly appLockGracePeriodMs?: AppLockGracePeriodMs;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
@@ -242,6 +246,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestActivityVisibility?: PullRequestActivityVisibility;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
+    appLockEnabled?: boolean;
+    appLockGracePeriodMs?: AppLockGracePeriodMs;
     themeId?: MobileThemeId;
     lightThemeId?: MobileThemeId;
     darkThemeId?: MobileThemeId;
@@ -311,6 +317,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
 
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
+  }
+  if (typeof parsed.appLockEnabled === "boolean") {
+    preferences.appLockEnabled = parsed.appLockEnabled;
+  }
+  if (isAppLockGracePeriodMs(parsed.appLockGracePeriodMs)) {
+    preferences.appLockGracePeriodMs = parsed.appLockGracePeriodMs;
   }
   if (
     typeof parsed.themeId === "string" &&
