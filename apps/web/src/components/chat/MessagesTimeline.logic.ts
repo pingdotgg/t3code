@@ -480,24 +480,24 @@ export function resolveTimelineMinimapHasPersistentGutter(
   );
 }
 
-const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 12;
+const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 32;
 const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
-
-export function resolveTimelineMinimapHitStripWidth(
-  viewportWidth: number,
-  contentWidth: number,
-): number {
-  const sideGutter = resolveTimelineSideGutter(viewportWidth, contentWidth);
-  return Math.max(
-    0,
-    Math.min(
-      TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH,
-      Math.floor(sideGutter) - TIMELINE_MINIMAP_HIT_STRIP_LEFT,
-    ),
-  );
-}
-
 const TIMELINE_MINIMAP_NAVIGATION_REACH = 14;
+
+export function resolveTimelineMinimapHitStrip(viewportWidth: number, contentWidth: number) {
+  const sideGutter = Math.floor(resolveTimelineSideGutter(viewportWidth, contentWidth));
+  if (sideGutter < TIMELINE_MINIMAP_HIT_STRIP_LEFT + TIMELINE_MINIMAP_NAVIGATION_REACH) {
+    // Keep a hover target in the gutter, to the left of the sidebar restore handle.
+    return { left: 0, width: Math.min(8, sideGutter) };
+  }
+  return {
+    left: TIMELINE_MINIMAP_HIT_STRIP_LEFT,
+    width: Math.min(
+      TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH,
+      sideGutter - TIMELINE_MINIMAP_HIT_STRIP_LEFT,
+    ),
+  };
+}
 
 export function resolveTimelineMinimapNavigationInteractive(collapsedWidth: number): boolean {
   return collapsedWidth >= TIMELINE_MINIMAP_NAVIGATION_REACH;
