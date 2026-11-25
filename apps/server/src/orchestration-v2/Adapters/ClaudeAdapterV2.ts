@@ -4140,6 +4140,20 @@ function isClaudeNonSubagentTask(message: SDKMessage): boolean {
   return isClaudeOpaqueBackgroundTaskType(claudeTaskTypeFromSdkMessage(message));
 }
 
+// A `context: fork` skill's task_started names no tool call; its frames use this parent id instead.
+function claudeForkedSkillToolUseId(
+  message: Extract<SDKMessage, { readonly type: "system"; readonly subtype: "task_started" }>,
+): string | undefined {
+  const skill = message.description.trim();
+  return message.tool_use_id === undefined &&
+    message.task_type === "local_agent" &&
+    (message.spawn_depth ?? 1) <= 1 &&
+    skill.length > 1 &&
+    skill.startsWith("/")
+    ? `forked-command-${skill.slice(1)}`
+    : undefined;
+}
+
 function isClaudeBackgroundTasksChangedMessage(message: SDKMessage): boolean {
   return message.type === "system" && (message.subtype as string) === "background_tasks_changed";
 }
@@ -6414,6 +6428,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const workflowStopRequestedAt = new Map<string, number>();
         // Buffered idle outcomes must not settle a resumed child again.
         const appliedSubagentOutcomes = new WeakSet<SDKMessage>();
+        // A forked skill's frames arrive only after its task_notification; hold that until they are in.
+        const forkedSkillToolUseIdsByTaskId = new Map<string, string>();
+        const heldForkedSkillNotifications = new Map<string, SDKMessage>();
         // Subagent frames can precede the task_started that registers their owner.
         const pendingSubagentFramesByToolUseId = yield* Ref.make(
           new Map<string, ReadonlyArray<SDKMessage>>(),
@@ -12024,6 +12041,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 reopen: true,
                 ...(message.run_id === undefined ? {} : { nativeRunId: message.run_id }),
               });
+              const forkedSkillToolUseId = claudeForkedSkillToolUseId(message);
+              if (forkedSkillToolUseId !== undefined) {
+                forkedSkillToolUseIdsByTaskId.set(message.task_id, forkedSkillToolUseId);
+                yield* Ref.update(sessionSubagentTaskIdsByToolUseId, (current) =>
+                  new Map(current).set(forkedSkillToolUseId, message.task_id),
+                );
+              }
               yield* Ref.update(wakeBuffers, (current) => {
                 const entry = current.get(liveQuery.nativeThreadId);
                 if (entry === undefined) return current;
@@ -12173,13 +12197,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               !context.ignoredTaskIds.has(message.task_id) &&
               !appliedSubagentOutcomes.has(message)
             ) {
+              // A forked skill's summary is only its name; its last reply is the report.
+              const result = forkedSkillToolUseIdsByTaskId.delete(message.task_id)
+                ? ((yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id)
+                    ?.lastAssistantText ?? undefined)
+                : message.summary;
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 workflowFrame: message,
                 nativeOutcome: message,
-                result: message.summary,
+                ...(result === undefined ? {} : { result }),
                 status:
                   message.status === "completed"
                     ? "completed"
@@ -12696,7 +12725,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        const handleRoutedSdkMessage = Effect.fnUntraced(function* (input: {
+        const routeSdkMessage = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
         }) {
@@ -12709,6 +12738,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           for (const message of yield* takeReleasableSubagentFrames(input.message)) {
             yield* handleSdkMessageFrame({ query: input.query, message, replayed: true });
           }
+        });
+
+        const handleRoutedSdkMessage = Effect.fnUntraced(function* (input: {
+          readonly query: ClaudeAgentSdkQuerySession;
+          readonly message: SDKMessage;
+        }) {
+          const parentToolUseId = Reflect.get(input.message, "parent_tool_use_id");
+          for (const [toolUseId, notification] of heldForkedSkillNotifications) {
+            if (toolUseId === parentToolUseId) continue;
+            heldForkedSkillNotifications.delete(toolUseId);
+            yield* routeSdkMessage({ query: input.query, message: notification });
+          }
+          if (input.message.type === "system" && input.message.subtype === "task_notification") {
+            const forkedSkillToolUseId = forkedSkillToolUseIdsByTaskId.get(input.message.task_id);
+            if (
+              forkedSkillToolUseId !== undefined &&
+              !heldForkedSkillNotifications.has(forkedSkillToolUseId)
+            ) {
+              heldForkedSkillNotifications.set(forkedSkillToolUseId, input.message);
+              return;
+            }
+          }
+          yield* routeSdkMessage(input);
         });
 
         const heldToolUseIds = (context: ActiveClaudeTurnContext): ReadonlySet<string> =>
