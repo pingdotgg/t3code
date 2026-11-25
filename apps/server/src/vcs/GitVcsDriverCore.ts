@@ -5405,9 +5405,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { ...patch, files: stat.files };
     });
     const [dirtyTrackedResult, baseResult] = yield* Effect.gen(function* () {
-      const untracked = input.trackedOnly || indexed
-        ? { env: undefined, omitted: false, untrackedNestedRepos: [] as ReadonlyArray<string> }
-        : yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path, !input.file);
+      const untracked =
+        input.trackedOnly || indexed
+          ? { env: undefined, omitted: false, untrackedNestedRepos: [] as ReadonlyArray<string> }
+          : yield* prepareUntrackedReviewIndex(cwd, pathArgs, input.file?.path, !input.file);
       const nestedRepos = input.file
         ? []
         : Array.from(

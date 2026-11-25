@@ -709,7 +709,6 @@ const make = Effect.gen(function* () {
       // The agent waits for this LLM call; start it now so it overlaps fetch, checkout and setup.
       const branchName =
         reused === undefined &&
-        !input.recreateDelegateWorktree &&
         initialMessage !== undefined &&
         (input.workspaceStrategy.type === "worktree" || worktreePath !== null) &&
         branch !== null &&

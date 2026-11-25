@@ -10192,7 +10192,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {}
             : {
                 ...command.existingWorkspace,
-                delegatedWorktree: undefined,
                 matchProviderSessionCwd: true,
               }),
       };

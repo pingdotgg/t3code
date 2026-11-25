@@ -6434,7 +6434,6 @@ describe("OrchestratorMcpService live threads", () => {
             );
             assert.equal(thread.worktreePath, cwd);
             assert.equal(thread.branch, expectedBranch);
-            assert.isUndefined(thread.delegatedWorktree);
             assert.isUndefined(runs[0]?.workspacePreparation);
             assert.isNotEmpty(providerThreads);
             const sessionId = providerThreads[0]!.providerSessionId!;
