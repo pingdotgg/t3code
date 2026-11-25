@@ -177,6 +177,39 @@ export function describeMcpElicitation(
   };
 }
 
+// The Claude SDK drops the server's `_meta.persist`, so the schema is the only session signal it passes on.
+const NEGATED_CHOICE_WORDS = new Set([
+  "block",
+  "blocked",
+  "deny",
+  "denied",
+  "disallow",
+  "decline",
+  "never",
+  "no",
+  "not",
+  "refuse",
+  "reject",
+]);
+
+// Whole words only, camelCase split first, so "unblock" is not read as a denial.
+function isApprovingSessionChoice(value: string): boolean {
+  return (
+    mcpElicitationPersistenceDecision(value) === "acceptForSession" &&
+    !value
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/[^a-z]+/)
+      .some((word) => NEGATED_CHOICE_WORDS.has(word))
+  );
+}
+
+export function mcpElicitationOffersSessionApproval(payload: McpElicitationResponseInput): boolean {
+  return Object.values(mcpElicitationFormFields(payload)?.properties ?? {}).some((field) =>
+    mcpElicitationFieldOptions(field).some((option) => isApprovingSessionChoice(option.value)),
+  );
+}
+
 export function toMcpElicitationResponse(
   payload: McpElicitationResponseInput,
   decision: ProviderApprovalDecision,
