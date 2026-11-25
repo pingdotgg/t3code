@@ -6,7 +6,7 @@ import {
   scopedThreadKey,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { linkOptions, useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef } from "react";
@@ -154,17 +154,34 @@ export function ReopenClosedViewShortcut() {
     if (router.history.location !== request.location) return;
 
     let destination;
-    if (globalPullRequests) {
+    if (globalPullRequests || globalIssues) {
       const selected = selectSelectedRightPanelSurface(
         useRightPanelStore.getState().byThreadKey,
         ref,
       );
-      destination = linkOptions({
-        to: "/pull-requests",
-        search: (previous) => pullRequestsSearchForRestore(previous, selected),
-      });
-    } else if (globalIssues) {
-      destination = linkOptions({ to: "/issues", search: readIssueListPreferences() });
+      destination = globalPullRequests
+        ? linkOptions({
+            to: "/pull-requests",
+            search: (previous) => pullRequestsSearchForRestore(previous, selected),
+          })
+        : linkOptions({
+            to: "/issues",
+            search: {
+              ...readIssueListPreferences(),
+              ...(selected?.kind === "issue"
+                ? {
+                    ...(selected.environmentId === undefined
+                      ? {}
+                      : { selectedEnvironmentId: selected.environmentId as EnvironmentId }),
+                    selectedProjectId: selected.projectId as ProjectId,
+                    ...(selected.host === undefined ? {} : { selectedHost: selected.host }),
+                    tracker: selected.tracker,
+                    scope: selected.scope,
+                    key: selected.key,
+                  }
+                : {}),
+            },
+          });
     } else {
       const draftId = thread === null ? drafts.getDraftIdByRef(ref) : null;
       destination =
