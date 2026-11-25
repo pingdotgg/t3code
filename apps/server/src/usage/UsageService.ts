@@ -27,6 +27,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
+import { readDevinModelPrices } from "@t3tools/provider-acp-registry/server";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { formatMalformedUsageWarning } from "@t3tools/shared/usageFormat";
 import * as ServerConfig from "../config.ts";
@@ -49,6 +50,7 @@ import {
   createOverrideRateTable,
   isUnlistedModel,
   parseRateTable,
+  type ModelRate,
   type RateTable,
 } from "./usagePricing.ts";
 import {
@@ -999,6 +1001,33 @@ export const make = Effect.gen(function* () {
       cacheDirty = true;
     }
 
+    const devinPrices = yield* readDevinModelPrices(hostEnvironment).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.catchCause(() => Effect.succeed(new Map())),
+    );
+    const mergedRates = (base: RateTable): RateTable => {
+      if (devinPrices.size === 0) return base;
+      const combined = new Map<string, ModelRate>(base);
+      for (const [model, price] of devinPrices) {
+        const key = model.trim().toLowerCase();
+        if (combined.has(key)) continue;
+        const inputCostPerToken = price.inputPerMillion / 1_000_000;
+        const cacheCreationCostPerToken = (price.inputPerMillion * 1.25) / 1_000_000;
+        combined.set(key, {
+          inputCostPerToken,
+          outputCostPerToken: price.outputPerMillion / 1_000_000,
+          cacheReadCostPerToken: price.cacheReadPerMillion / 1_000_000,
+          cacheCreationCostPerToken,
+          cacheCreation1hCostPerToken: cacheCreationCostPerToken,
+          fast: null,
+          ultrafast: null,
+          contextTiers: [],
+        });
+      }
+      return combined;
+    };
+
     // The models priced below, as UsageAggregator resolves them: an alias replaces rateModel.
     const rateModels = new Set<string>();
     for (const files of filesByDir) {
@@ -1007,7 +1036,9 @@ export const make = Effect.gen(function* () {
           const alias = modelAliases.get(record.model);
           const model = alias ?? record.model;
           if (priceOverrides.has(model.trim())) continue;
-          rateModels.add(alias === undefined ? (record.rateModel ?? model) : model);
+          const candidate = alias === undefined ? (record.rateModel ?? model) : model;
+          if (devinPrices.has(candidate.trim())) continue;
+          rateModels.add(candidate);
         }
       }
     }
@@ -1022,7 +1053,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       resolution: input.resolution ?? "day",
       ...hourlyWindow,
-      rates,
+      rates: mergedRates(rates),
       priceOverrides,
       modelAliases,
       rateModel: (provider, model) => providerRateModels.get(provider)?.(model),

@@ -249,13 +249,17 @@ function UsageChartTooltip({
     >
       <div className="mb-1 text-muted-foreground">{label}</div>
       {providers.map((provider) => {
-        const { label: providerLabel, driverKind } = PROVIDER_PRESENTATION[provider];
+        const presentation = PROVIDER_PRESENTATION[provider];
+        const { label: providerLabel, driverKind } = presentation;
         return (
           <div key={provider} className="flex items-center justify-between gap-3">
             <span className="flex items-center gap-1.5 text-muted-foreground">
               <ProviderInstanceIcon
                 driverKind={driverKind}
                 displayName={providerLabel}
+                acpRegistryAgentId={
+                  "acpRegistryAgentId" in presentation ? presentation.acpRegistryAgentId : undefined
+                }
                 iconClassName="size-3"
               />
               {providerLabel}

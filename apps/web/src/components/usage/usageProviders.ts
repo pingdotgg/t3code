@@ -8,6 +8,7 @@ type UsageProviderPresentation = {
   readonly label: string;
   readonly color: string;
   readonly driverKind: ProviderDriverKind;
+  readonly acpRegistryAgentId?: string;
 };
 
 export const PROVIDER_PRESENTATION = {
@@ -46,6 +47,13 @@ export const PROVIDER_PRESENTATION = {
     label: "Muse Code",
     color: "#0866ff",
     driverKind: ProviderDriverKind.make("muse"),
+  },
+  devin: {
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- brand name
+    label: "Devin",
+    color: "#10b981",
+    driverKind: ProviderDriverKind.make("acpRegistry"),
+    acpRegistryAgentId: "devin",
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
