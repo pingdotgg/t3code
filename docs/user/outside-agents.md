@@ -78,7 +78,12 @@ policy. Approving without a code starts at **Read only**:
   the available providers and models. It cannot change anything.
 - **Supervised** through **Full access** also let it start, message and stop
   threads in every project. A thread it starts or steers cannot run with more
-  permissions than the mode you chose.
+  permissions than the mode you chose. [Workflow runs](workflows.md) choose
+  their own modes, so only **Full access** (or the highest mode your
+  organization's policy allows) can start, answer, resume or cancel them,
+  change what workflows store, or read webhook paths. Lower modes can still
+  read runs. Some agents have modes of their own that skip approvals; only an
+  agent with **Full access** can pick one.
 
 ## What outside agents can call
 

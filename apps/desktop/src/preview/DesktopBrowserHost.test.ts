@@ -1649,6 +1649,51 @@ describe("DesktopBrowserHost", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("relays no input that was still waiting when the annotation started", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const debuggee = makeDebuggee({ deferFocus: true });
+      let annotating = false;
+      host.attach(key, { ...debuggee.tab, annotating: () => annotating });
+      const refusals: Array<number> = [];
+      yield* host.events.pipe(
+        Stream.map((line) => decodeEvent(new TextDecoder().decode(line))),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            if (event.type !== "cdp") return;
+            const { id } = decodeCdpMessage(event.message);
+            const { error } = decodeCdpError(event.message);
+            if (id !== undefined && error?.message.includes("annotat")) refusals.push(id);
+          }),
+        ),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      // Waiting for the guest to take focus.
+      yield* command(host, 1, "Input.dispatchMouseEvent");
+      yield* settle;
+      expect(debuggee.methods).toEqual([]);
+      annotating = true;
+      debuggee.settleFocus();
+      yield* settle;
+      expect(debuggee.methods).toEqual([]);
+      expect(refusals).toEqual([1]);
+
+      // Waiting behind an earlier pointer event the guest has not answered.
+      annotating = false;
+      yield* command(host, 2, "Input.dispatchMouseEvent");
+      yield* command(host, 3, "Input.dispatchMouseEvent");
+      yield* settle;
+      expect(debuggee.sent).toEqual([2]);
+      annotating = true;
+      debuggee.release();
+      yield* settle;
+      expect(debuggee.sent).toEqual([2]);
+      expect(refusals).toEqual([1, 3]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("detaches only the tab whose CDP event is too large to relay", () =>
     Effect.gen(function* () {
       const host = yield* makeDrawnHost;

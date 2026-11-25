@@ -124,6 +124,7 @@ export function htmlRenderFileName(title: string) {
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 120)
+    .replace(/\p{Surrogate}$/u, "")
     .trim();
   return `${name || "Page"}.html`;
 }
