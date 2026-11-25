@@ -14,6 +14,7 @@ const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: n
 export function useVoiceInputController(input: {
   readonly ownerKey: string | null;
   readonly label: string;
+  readonly persistent?: boolean;
   readonly readDraftMessage: () => string | null;
   readonly selection: ComposerEditorSelection;
   readonly disabled?: boolean;
@@ -60,6 +61,7 @@ export function useVoiceInputController(input: {
         captured.selection,
       ),
       label: captured.label,
+      ...(captured.persistent ? { persistent: true } : {}),
     });
   }, [session]);
   const state = global.ownerKey === input.ownerKey ? global.state : IDLE_STATE;

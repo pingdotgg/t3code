@@ -453,6 +453,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
     label: props.selectedThread.title || gt("Untitled thread"),
+    persistent: queuedEdit === null,
     readDraftMessage: () => getComposerDraftSnapshot(composerDraftKey).text,
     selection: composerMenu.selection,
     hidden: props.hidden,

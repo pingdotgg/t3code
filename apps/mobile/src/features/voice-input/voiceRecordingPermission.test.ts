@@ -31,7 +31,8 @@ it("keeps dictation alive while Android's permission activity backgrounds the ap
   const permission = Promise.withResolvers<{ granted: boolean; canAskAgain: boolean }>();
   mocks.request.mockReturnValue(permission.promise);
   const interrupted = vi.fn();
-  const recording = createVoiceRecordingPermission(interrupted);
+  const resumed = vi.fn();
+  const recording = createVoiceRecordingPermission(interrupted, resumed);
   let settled = false;
   const result = recording.requestPermission().then((value) => {
     settled = true;
@@ -45,8 +46,11 @@ it("keeps dictation alive while Android's permission activity backgrounds the ap
   changeAppState("active");
   expect(await result).toMatchObject({ granted: true });
   expect(interrupted).not.toHaveBeenCalled();
+  expect(resumed).not.toHaveBeenCalled();
 
   changeAppState("background");
   expect(interrupted).toHaveBeenCalledOnce();
+  changeAppState("active");
+  expect(resumed).toHaveBeenCalledOnce();
   recording.dispose();
 });

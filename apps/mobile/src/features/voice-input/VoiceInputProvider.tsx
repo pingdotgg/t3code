@@ -4,7 +4,7 @@ import { AudioModule, RecordingPresets, type RecordingStatus } from "expo-audio"
 import { File } from "expo-file-system";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useSyncExternalStore } from "react";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import { Effect } from "effect";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { makeMutable } from "react-native-reanimated";
@@ -25,9 +25,28 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import { createLazyVoiceRecorder } from "./lazyVoiceRecorder";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
-import { VoiceInputSession } from "./voiceInputSession";
+import { createVoiceInputTarget, VoiceInputSession } from "./voiceInputSession";
 import { createVoiceRecordingPermission } from "./voiceRecordingPermission";
-import { voiceRouteAtom } from "./voiceDestination";
+import {
+  clearPendingVoiceRecording,
+  clearPendingVoiceRecordingForUri,
+  readPendingVoiceRecording,
+  writePendingVoiceRecording,
+} from "./pendingVoiceRecording";
+import {
+  hasExplicitVoiceGrantChoice,
+  voiceGrantAtom,
+  voiceRouteAtom,
+  waitForVoiceGrantLoaded,
+} from "./voiceDestination";
+import { isNewTaskDraftKey } from "../../state/new-task-draft-key";
+import {
+  getComposerDraftSnapshot,
+  rememberComposerDraftSelection,
+  setComposerDraftText,
+  updateComposerDraftSettings,
+  waitForComposerDraftsLoaded,
+} from "../../state/use-composer-drafts";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
 import {
   acquireAudioSession,
@@ -73,6 +92,57 @@ const voiceInputAvailableAtom = Atom.make((get) => {
   return transcriber !== null && transcriber !== "checking";
 });
 
+const TRANSCRIBER_RECONNECT_TIMEOUT_MS = 10_000;
+
+function readCurrentTranscriber(registry: AtomRegistry.AtomRegistry): VoiceTranscriber | null {
+  const route = registry.get(voiceRouteAtom);
+  if (route) return route.transcriber;
+  const transcriber = registry.get(localVoiceTranscriberAtom);
+  return transcriber === "checking" ? null : transcriber;
+}
+
+function waitForTranscriber(
+  registry: AtomRegistry.AtomRegistry,
+  signal: AbortSignal,
+): Promise<VoiceTranscriber | null> {
+  const immediate = readCurrentTranscriber(registry);
+  if (immediate || signal.aborted) return Promise.resolve(immediate);
+  const initialRoute = registry.get(voiceRouteAtom);
+  if (initialRoute === null && registry.get(localVoiceTranscriberAtom) !== "checking") {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: VoiceTranscriber | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
+      unsubscribeRoute();
+      unsubscribeLocal();
+      resolve(value);
+    };
+    const onAbort = () => finish(null);
+    const check = () => {
+      const route = registry.get(voiceRouteAtom);
+      if (route) {
+        if (route.transcriber) finish(route.transcriber);
+        return;
+      }
+      const local = registry.get(localVoiceTranscriberAtom);
+      if (local !== "checking") finish(local);
+    };
+    const unsubscribeRoute = registry.subscribe(voiceRouteAtom, check);
+    const unsubscribeLocal = registry.subscribe(localVoiceTranscriberAtom, check);
+    const timeout = setTimeout(
+      () => finish(readCurrentTranscriber(registry)),
+      TRANSCRIBER_RECONNECT_TIMEOUT_MS,
+    );
+    signal.addEventListener("abort", onAbort, { once: true });
+    check();
+  });
+}
+
 /**
  * The app has one microphone and one dictation at a time, so the session
  * lives for the registry's lifetime rather than any screen's.
@@ -87,9 +157,15 @@ export const voiceInputAtom = Atom.make((get) => {
   let keepAwakeSequence = 0;
   let audioToken: ReturnType<typeof acquireAudioSession> | null = null;
   let recordingMicrophoneOrder: ReadonlyArray<MicrophoneEntry> | null = null;
-  const permission = createVoiceRecordingPermission(() => {
-    void session.controller.appMovedToBackground();
-  });
+  const recoveryAbort = new AbortController();
+  const permission = createVoiceRecordingPermission(
+    () => {
+      void session.controller.appMovedToBackground();
+    },
+    () => {
+      session.controller.appReturnedToForeground();
+    },
+  );
   const recorder = createLazyVoiceRecorder({
     getDestination: () => (registry.get(voiceRouteAtom) === null ? "local" : "environment"),
     create: (destination) =>
@@ -120,11 +196,31 @@ export const voiceInputAtom = Atom.make((get) => {
   });
   const session: VoiceInputSession = new VoiceInputSession({
     recorder,
-    getTranscriber: () => {
-      const route = registry.get(voiceRouteAtom);
-      if (route) return route.transcriber;
-      const transcriber = registry.get(localVoiceTranscriberAtom);
-      return transcriber === "checking" ? null : transcriber;
+    retryFailedRecording: true,
+    canRetryRecording: (uri) => !uri.endsWith(".pcm"),
+    isInBackground: () => AppState.currentState === "background",
+    getTranscriber: () => readCurrentTranscriber(registry),
+    waitForTranscriber: (signal) => waitForTranscriber(registry, signal),
+    onPendingRecordingChange: (pending) => {
+      if (!pending) {
+        writePendingVoiceRecording(null);
+        return;
+      }
+      // Raw PCM captures on Android only run live in-process; encoded files survive restarts.
+      if (!session.persistent || pending.uri.endsWith(".pcm")) return;
+      const project = isNewTaskDraftKey(pending.draft.ownerKey)
+        ? getComposerDraftSnapshot(pending.draft.ownerKey).project
+        : undefined;
+      writePendingVoiceRecording({
+        uri: pending.uri,
+        ownerKey: pending.draft.ownerKey,
+        label: session.label,
+        startText: pending.draft.text,
+        selection: pending.draft.selection,
+        grantId: registry.get(voiceGrantAtom)?.id ?? null,
+        recordedAt: Date.now(),
+        ...(project ? { project } : {}),
+      });
     },
     requestPermission: permission.requestPermission,
     configureRecording: async () => {
@@ -164,8 +260,77 @@ export const voiceInputAtom = Atom.make((get) => {
     publishAudioLevels: (levels) => audioLevels.set(levels),
     keepAwake: () => keepScreenAwake(`voice-input:${++keepAwakeSequence}`),
   });
-  get.subscribe(voiceRouteAtom, () => session.controller.cancel());
+  let previousGrantId = registry.get(voiceGrantAtom)?.id ?? null;
+  get.subscribe(voiceGrantAtom, (grant) => {
+    const nextGrantId = grant?.id ?? null;
+    if (nextGrantId === previousGrantId) return;
+    previousGrantId = nextGrantId;
+    if (!hasExplicitVoiceGrantChoice(registry)) {
+      if (session.controller.currentState.phase !== "idle") session.controller.cancel();
+      return;
+    }
+    recoveryAbort.abort();
+    session.controller.cancel();
+    clearPendingVoiceRecording(true);
+  });
+  get.subscribe(voiceRouteAtom, (route) => {
+    if (route !== null && route.transcriber === null) {
+      const phase = session.controller.currentState.phase;
+      if (phase === "preparing") session.controller.cancel();
+      else if (phase === "recording") void session.controller.stop();
+    }
+  });
+  const pending = readPendingVoiceRecording();
+  if (pending) {
+    void (async () => {
+      const signal = recoveryAbort.signal;
+      const grant = await waitForVoiceGrantLoaded(registry);
+      if (signal.aborted) return;
+      if ((grant?.id ?? null) !== pending.grantId) {
+        clearPendingVoiceRecording(true);
+        return;
+      }
+      await waitForComposerDraftsLoaded();
+      if (signal.aborted) return;
+      const ownerKey = pending.ownerKey;
+      const currentDraft = getComposerDraftSnapshot(ownerKey);
+      const newTaskProject = isNewTaskDraftKey(ownerKey)
+        ? (currentDraft.project ?? pending.project)
+        : undefined;
+      if (
+        currentDraft.text !== pending.startText ||
+        (isNewTaskDraftKey(ownerKey) && !newTaskProject)
+      ) {
+        clearPendingVoiceRecordingForUri(pending.uri, true);
+        return;
+      }
+      if (session.controller.currentState.phase !== "idle") {
+        clearPendingVoiceRecordingForUri(pending.uri, true);
+        return;
+      }
+      await session.recover(
+        {
+          ...createVoiceInputTarget(
+            ownerKey,
+            () => getComposerDraftSnapshot(ownerKey).text,
+            (text, selection) => {
+              if (newTaskProject && !getComposerDraftSnapshot(ownerKey).project) {
+                updateComposerDraftSettings(ownerKey, { project: newTaskProject });
+              }
+              setComposerDraftText(ownerKey, text);
+              rememberComposerDraftSelection(ownerKey, text, selection);
+            },
+            pending.selection,
+          ),
+          ...(pending.label !== null ? { label: pending.label } : {}),
+          persistent: true,
+        },
+        pending.uri,
+      );
+    })().catch(() => {});
+  }
   get.addFinalizer(() => {
+    recoveryAbort.abort();
     permission.dispose();
     session.dispose();
     recorder.release();

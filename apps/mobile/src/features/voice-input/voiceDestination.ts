@@ -44,6 +44,20 @@ export const voiceGrantAtom = Atom.make((get) => {
   return AsyncResult.getOrElse(get(storedGrant), () => null);
 });
 
+export function hasExplicitVoiceGrantChoice(registry: AtomRegistry.AtomRegistry): boolean {
+  return registry.get(choice) !== undefined;
+}
+
+export async function waitForVoiceGrantLoaded(
+  registry: AtomRegistry.AtomRegistry,
+): Promise<VoiceGrant | null> {
+  if (registry.get(choice) !== undefined) return registry.get(choice) ?? null;
+  await Effect.runPromise(
+    AtomRegistry.getResult(registry, storedGrant).pipe(Effect.orElseSucceed(() => null)),
+  );
+  return registry.get(voiceGrantAtom);
+}
+
 let choiceRevision = 0;
 
 type CloudDestination = Extract<VoiceTranscriptionDestination, { kind: "cloud" }>;
