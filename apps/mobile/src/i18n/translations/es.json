@@ -4333,6 +4333,21 @@
     },
     " salió de su página y se detuvo"
   ],
+  "796b81c4875c4feb": [
+    "La app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " necesita un servidor de ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " más reciente en este entorno. Actualiza el servidor para usarla."
+  ],
   "5ef18e4d39b398bf": [
     "No se puede cargar la app ",
     {
@@ -4894,6 +4909,7 @@
   "306a6f95ad9d52f7": "Sin enviar",
   "11276ab6c58b7a25": "Abre el borrador en el cuadro de mensaje de la tarea nueva. Desliza a la izquierda para descartarlo.",
   "99950f3a28d425fa": "Se envía cuando el entorno se vuelve a conectar. Abre la tarea para editarla. Desliza a la izquierda para eliminarla.",
+  "d71048f4fb9cf44a": "Esperando sincronización",
   "0a260c7744afd0be": "Esperando",
   "ad78fae7d373cf21": "Trabajando",
   "be451f475c514b37": "Descartar notificación de reactivación",
@@ -5323,6 +5339,9 @@
   "744127f8dfad7d22": "Conecta un entorno para ver sus ejecuciones de flujos de trabajo.",
   "b9aae2f7cdb1a379": "Aún no hay ejecuciones de flujos de trabajo",
   "ace8fc1c643cf9f6": "Un flujo de trabajo une agentes, código, programaciones y preguntas para ti en una sola ejecución que sobrevive a los reinicios. Escribe uno en tu ordenador, en Flujos de trabajo y luego Definiciones.",
+  "fc9c3a00cfc18b55": "Todos los tipos",
+  "e4d1316c85ed7066": "No hay preguntas de este tipo esperándote.",
+  "45a94c724845ec1d": "Otras",
   "86798f07ba2d7f4d": "Buscar issues",
   "484cd83bb303bab8": "Buscar pull requests",
   "75ed31fcea4f741a": "Filtrar issues",

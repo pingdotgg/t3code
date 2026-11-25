@@ -26,7 +26,11 @@ import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { DurableDeferred, WorkflowEngine } from "effect/workflow";
-import { DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT } from "@t3tools/contracts";
+import {
+  DEFAULT_WORKFLOW_SKIPPED_RUNS_KEPT,
+  type WorkflowRunsUpdate,
+  workflowQuestionKey,
+} from "@t3tools/contracts";
 
 import { checkOutput, rejectionText } from "../orchestration-v2/runOutput.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -75,6 +79,11 @@ const DEFAULT_SIGNAL_TTL = Duration.days(7);
 const RESUME_LOOK_EVERY = Duration.millis(25);
 const RESUME_LOOKS = 80;
 const WATCH_SETTLE = Duration.millis(100);
+// What a watcher was last sent, as text to compare against, by run and by question.
+interface Sent {
+  readonly runs: Map<string, string>;
+  readonly questions: Map<string, { runId: string; name: string; text: string }>;
+}
 const END_TRIES = 5;
 // How long a cancelled run's cleanup rests after each failed try before the sweep tries again.
 const END_AFTER = ["5 minutes", "20 minutes", "80 minutes", "5 hours"] as const;
@@ -179,6 +188,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     resumesAt: resumes,
     parentRunId: row.parent_run_id,
     parentStep: row.parent_wait,
+    // Left out of a run with none: most have none, and every run is in each whole list sent.
+    ...(row.tags_json === "[]"
+      ? {}
+      : { tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string> }),
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
@@ -800,13 +813,21 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     Effect.forEach(
       waits.filter((wait) => wait.request_json !== null),
       (wait) =>
-        Effect.map(store.latestThread(wait.run_id), (thread) => ({
-          runId: wait.run_id,
-          name: wait.name,
-          request: WorkflowStore.jsonValue(wait.request_json ?? "null"),
-          askedAt: wait.opened_at,
-          thread,
-        })),
+        Effect.map(store.latestThread(wait.run_id), (thread) => {
+          const request = WorkflowStore.jsonValue(wait.request_json ?? "null");
+          const kind =
+            request !== null && typeof request === "object" && !Array.isArray(request)
+              ? (request as { readonly kind?: unknown }).kind
+              : undefined;
+          return {
+            runId: wait.run_id,
+            name: wait.name,
+            request,
+            ...(typeof kind === "string" ? { kind } : {}),
+            askedAt: wait.opened_at,
+            thread,
+          };
+        }),
     ),
   );
   const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -828,7 +849,18 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       const found = latest(name);
       return found === undefined
         ? []
-        : [{ name, version: found[0].version, triggers: found[0].triggers.map(triggerText) }];
+        : [
+            {
+              name,
+              version: found[0].version,
+              triggers: found[0].triggers.map(triggerText),
+              ...(Object.keys(found[0].asks).length === 0
+                ? {}
+                : {
+                    asks: Object.entries(found[0].asks).map(([kind, label]) => ({ kind, label })),
+                  }),
+            },
+          ];
     },
   );
   const snapshot = Effect.all({
@@ -846,6 +878,41 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         Stream.fromSubscription(changes).pipe(
           Stream.debounce(WATCH_SETTLE),
           Stream.mapEffect(() => snapshot),
+        ),
+      ).pipe(
+        // Each list is told as what differs from the one before, which this watcher already has.
+        // A list with no difference is still sent: a client reads an open run's steps again on it.
+        Stream.mapAccum(
+          () => undefined as Sent | undefined,
+          (sent, next) => {
+            const now: Sent = {
+              runs: new Map(next.runs.map((run) => [run.runId, JSON.stringify(run)])),
+              questions: new Map(
+                next.questions.map((question) => [
+                  workflowQuestionKey(question),
+                  { runId: question.runId, name: question.name, text: JSON.stringify(question) },
+                ]),
+              ),
+            };
+            const update: WorkflowRunsUpdate =
+              sent === undefined
+                ? next
+                : {
+                    _tag: "changed",
+                    runs: next.runs.filter(
+                      (run) => sent.runs.get(run.runId) !== now.runs.get(run.runId),
+                    ),
+                    removed: [...sent.runs.keys()].filter((runId) => !now.runs.has(runId)),
+                    questions: next.questions.filter((question) => {
+                      const key = workflowQuestionKey(question);
+                      return sent.questions.get(key)?.text !== now.questions.get(key)?.text;
+                    }),
+                    closed: [...sent.questions]
+                      .filter(([key]) => !now.questions.has(key))
+                      .map(([, { runId, name }]) => ({ runId, name })),
+                  };
+            return [now, [update]] as const;
+          },
         ),
       );
     }),
@@ -1023,6 +1090,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         title: row.title,
         status: row.status,
         detail: row.detail,
+        tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string>,
         startedAt: row.started_at,
         endedAt: row.ended_at,
       }));
@@ -1069,7 +1137,11 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       };
     }),
     list: Effect.fn("Workflows.list")(function* (filter) {
-      return (yield* store.runs(filter?.status)).map(toRun);
+      const rows =
+        filter?.tag === undefined
+          ? yield* store.runs(filter?.status)
+          : yield* store.runsWhere({ status: filter.status, tag: filter.tag });
+      return rows.map(toRun);
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (runId, done) {
       // Subscribed before the first look, so a change in between is not missed.

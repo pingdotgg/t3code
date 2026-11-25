@@ -15,6 +15,7 @@ import * as TestClock from "effect/testing/TestClock";
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import WorkflowSkippedRunsMigration from "../persistence/Migrations/113_WorkflowSkippedRuns.ts";
 import WorkflowRunIndexesMigration from "../persistence/Migrations/114_WorkflowRunIndexes.ts";
+import WorkflowRunTagsMigration from "../persistence/Migrations/115_WorkflowRunTags.ts";
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
@@ -33,6 +34,7 @@ const withStore = <A, E>(
     const migrated = Layer.effectDiscard(
       Effect.andThen(WorkflowsMigration, WorkflowSkippedRunsMigration).pipe(
         Effect.andThen(WorkflowRunIndexesMigration),
+        Effect.andThen(WorkflowRunTagsMigration),
       ),
     );
     return yield* Effect.provide(
@@ -767,6 +769,48 @@ it.effect("reads that run on every change or sweep do not read every run", () =>
         ),
         ["r1", "r0"],
       );
+    }),
+  ),
+);
+
+it.effect("a run waiting on a question is listed however many runs started after it", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const start = (runId: string) =>
+        store.runStarted({
+          runId,
+          workflow: "ask",
+          version: 1,
+          engineTag: "ask@1",
+          idempotencyKey: runId,
+          input: {},
+        });
+      yield* start("old");
+      yield* store.runStatus("old", "waiting", "waiting on you");
+      yield* store.waitOpened({
+        runId: "old",
+        name: "approve",
+        workflow: "ask",
+        key: undefined,
+        token: "t",
+        schemaJson: "{}",
+        requestJson: '{"title":"Ship it?"}',
+        watchJson: null,
+        deadline: null,
+      });
+      for (let index = 0; index < 500; index++) {
+        yield* TestClock.adjust("1 second");
+        yield* start(`new-${index}`);
+        yield* store.runEnded(`new-${index}`, "completed", null, null);
+      }
+      assert.deepStrictEqual(
+        (yield* store.requests).map((wait) => wait.run_id),
+        ["old"],
+      );
+      // Needs you lists the open questions of the runs it is sent; one it is not sent is lost.
+      const listed = new Set((yield* store.runs(undefined)).map((run) => run.run_id));
+      assert.isTrue(listed.has("old"));
     }),
   ),
 );

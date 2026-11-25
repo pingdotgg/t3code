@@ -4334,6 +4334,21 @@
     },
     " a quitté sa page et a été arrêtée"
   ],
+  "796b81c4875c4feb": [
+    "L’app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " a besoin d’un serveur ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " plus récent sur cet environnement. Mettez à jour le serveur pour l’utiliser."
+  ],
   "5ef18e4d39b398bf": [
     "Impossible de charger l’app ",
     {
@@ -4895,6 +4910,7 @@
   "306a6f95ad9d52f7": "Non envoyées",
   "11276ab6c58b7a25": "Ouvre le brouillon dans la zone de saisie de nouvelle tâche. Balayez vers la gauche pour le supprimer.",
   "99950f3a28d425fa": "Envoyée dès que l’environnement se reconnecte. Ouvre la tâche pour la modifier. Balayez vers la gauche pour la supprimer.",
+  "d71048f4fb9cf44a": "En attente de synchronisation",
   "0a260c7744afd0be": "En attente",
   "ad78fae7d373cf21": "En cours",
   "be451f475c514b37": "Ignorer la notification Réveillé",
@@ -5323,6 +5339,9 @@
   "744127f8dfad7d22": "Connectez un environnement pour voir ses exécutions de workflow.",
   "b9aae2f7cdb1a379": "Aucune exécution de workflow pour l’instant",
   "ace8fc1c643cf9f6": "Un workflow réunit agents, code, planifications et questions qui vous sont posées en une seule exécution qui survit aux redémarrages. Écrivez-en un sur votre ordinateur, dans Workflows, puis Définitions.",
+  "fc9c3a00cfc18b55": "Tous les types",
+  "e4d1316c85ed7066": "Aucune question de ce type ne vous attend.",
+  "45a94c724845ec1d": "Autres",
   "86798f07ba2d7f4d": "Rechercher des tickets",
   "484cd83bb303bab8": "Rechercher des pull requests",
   "75ed31fcea4f741a": "Filtrer les tickets",
