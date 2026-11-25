@@ -110,6 +110,10 @@ describe("renameForkText", () => {
       "      /^editor_t3_?code_[0-9a-f]{8}$/.test(qualified[1]) &&",
       "      /^editor_(?:lathe|t3_?code)_[0-9a-f]{8}$/.test(qualified[1]) &&",
     ],
+    [
+      "const T3_PREFIX = /^(?:mcp__t3[-_]?code(?:[-_]direct)?__|t3[-_]?code(?:[-_]direct)?[.:/])/iu;",
+      "const LATHE_PREFIX = /^(?:mcp__(?:lathe|t3[-_]?code)(?:[-_]direct)?__|(?:lathe|t3[-_]?code)(?:[-_]direct)?[.:/])/iu;",
+    ],
   ])("widens an MCP name matcher to accept lathe: %s", (input, expected) => {
     const once = rename("packages/shared/src/t3McpToolPresentation.ts", input);
     expect(once).toBe(expected);
@@ -144,6 +148,10 @@ describe("renameForkPath", () => {
     ["packaging/aur/t3code-bin/PKGBUILD", "packaging/aur/t3code-bin/PKGBUILD"],
     // prove-scenario.ts finds iOS scenarios by this module's name, which renames with it.
     ["scripts/scenarios/t3-mobile.ts", "scripts/scenarios/lathe-mobile.ts"],
+    // Upstream's doc about its own Connect service keeps its name, wherever upstream numbers it.
+    ["docs/internals/t3-connect.md", "docs/internals/t3-connect.md"],
+    ["docs/internals/06_t3-connect.md", "docs/internals/06_t3-connect.md"],
+    ["skills/t3-workflows/SKILL.md", "skills/lathe-workflows/SKILL.md"],
   ])("renames %s", (path, expected) => {
     expect(renameForkPath(path)).toBe(expected);
   });

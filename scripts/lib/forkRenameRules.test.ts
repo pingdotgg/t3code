@@ -917,6 +917,161 @@ describe("FORK_RENAME_RULES", () => {
       "const PINNED_RUNTIME_ENTRY = /^(.*)\\/runtime\\/versions\\/[^/]+\\/t3$/;",
       "upstream-reference",
     ],
+    // Names upstream added between 22dcb0af5a and a76e554784.
+    [
+      "apps/server/src/mcp/toolkits/feedback/tools.ts",
+      '  Tool.make("t3_feedback", {',
+      "agent-facing",
+    ],
+    [
+      "apps/server/src/mcp/toolkits/thread/handlers.ts",
+      "  t3_submit_output: McpToolAccess.actsAsCaller((input) =>",
+      "agent-facing",
+    ],
+    [
+      "apps/server/src/workflows/workflowAgent.ts",
+      "      : `Do not redo the work: call \\`t3_submit_output\\` again with a corrected result.`,",
+      "agent-facing",
+    ],
+    [
+      "apps/server/src/feedback/FeedbackTrace.ts",
+      "  if (t3 !== undefined) return t3;",
+      "identifier",
+    ],
+    [
+      "apps/server/src/workflows/WorkflowRuntime.ts",
+      "  const { Duration, Effect: effect, Schedule, ...t3 } = api;",
+      "identifier",
+    ],
+    [
+      "scripts/server-metrics.ts",
+      "const COMPETING = /^(node|node-MainThread|t3|claude|codex|vite|pnpm)/;",
+      "identifier",
+    ],
+    [
+      "apps/server/src/workflows/WorkflowRuntime.ts",
+      '        "T3.workflow was called after its file finished loading. Call it at the top of the file.",',
+      "display",
+    ],
+    [
+      "scripts/scenarios/workflow-run-title-keeps-whole-characters.e2e.ts",
+      '    yield* T3.title("kept");',
+      "display",
+    ],
+    [
+      "evals/workflow-authoring/run.ts",
+      '  values.skill ?? NodePath.resolve(import.meta.dirname, "../../skills/t3-workflows/SKILL.md");',
+      "identifier",
+    ],
+    [
+      ".coderabbit.config.ts",
+      '      files: "docs/internals/06_t3-connect.md",',
+      "upstream-reference",
+    ],
+    [
+      "docs/internals/06_t3-connect.md",
+      "The relay signs the link with `T3CODE_LINK_SECRET`.",
+      "upstream-reference",
+    ],
+    ["docs/README.md", "- [06 · Connect](./internals/06_t3-connect.md)", "upstream-reference"],
+    [
+      "TRADEMARK.md",
+      "For trademark permission requests, contact [legal@t3.tools](mailto:legal@t3.tools).",
+      "upstream-reference",
+    ],
+    [
+      "apps/web/deps/README.md",
+      "To replace it, commit the change on `fork/t3-words`.",
+      "upstream-reference",
+    ],
+    ["apps/desktop/src/speech/AppleSpeech.ts", '        "t3-apple-speech",', "identifier"],
+    [
+      "apps/desktop/src/backend/DesktopBackendRecovery.ts",
+      'const directoryName = "t3code-backend-recovery";',
+      "identifier",
+    ],
+    [
+      "apps/desktop/src/backend/MacProcessAuditToken.ts",
+      '    const library = "t3-macos-process-identity";',
+      "identifier",
+    ],
+    [
+      "apps/server/src/vcs/GitVcsDriverCore.ts",
+      "      const copyPath = `${indexPath}.t3-refresh`;",
+      "identifier",
+    ],
+    [
+      "apps/web/src/markdown/wordsHast.ts",
+      "      output = `> [!T3-INSIGHT-${nonce}-${lineIndex}]${ending}`;",
+      "identifier",
+    ],
+    [
+      "apps/web/src/markdown/wordsHast.ts",
+      "    mathKey: `t3-math-${Math.random().toString(36).slice(2)}`,",
+      "identifier",
+    ],
+    [
+      "scripts/server-metrics.ts",
+      "      marker: `«t3-bench-gone-${index}-${spelling}»`,",
+      "identifier",
+    ],
+    [
+      "scripts/server-metrics.ts",
+      '    ["-c", "user.email=bench@t3.codes", "-c", "user.name=bench", "commit", "-qm", "init"],',
+      "upstream-reference",
+    ],
+    [
+      "scripts/server-metrics-report.ts",
+      "      `load on ${cpus} CPUs, other node/T3/agent processes up to ${worstOther} cores`,",
+      "display",
+    ],
+    [
+      "packages/shared/src/desktopReadinessProof.ts",
+      "  return Hex.encode(yield* mac.sign(key, utf8(`t3-desktop-readiness:${challenge}`)));",
+      "kept",
+    ],
+    [
+      "packages/shared/src/mcpApp.ts",
+      'export const MCP_APP_DOCUMENT_MESSAGE = "t3-mcp-app-document";',
+      "wire-peer",
+    ],
+    [
+      "packages/shared/src/mcpApp.ts",
+      '  const bootstrap = `<script>host.postMessage({t3:${JSON.stringify(MCP_APP_DOCUMENT_MESSAGE)}},"*",[port.port2]);</script>`;',
+      "wire-peer",
+    ],
+    [
+      "apps/web/src/components/chat/mcpAppDocumentLink.ts",
+      "        const port = event.data?.t3 === MCP_APP_DOCUMENT_MESSAGE ? (event.ports[0] ?? null) : null;",
+      "wire-peer",
+    ],
+    [
+      "packages/shared/src/model.ts",
+      'export const DEFAULT_VARIANT_CHOICE_ID = "t3:default";',
+      "kept",
+    ],
+    [
+      "scripts/scenarios/terminal-latched-modifier-reads-selected.e2e.ts",
+      "    await device.openLink(`t3code-dev://threads/${environment}/${threadId}/terminal`, {",
+      "kept",
+    ],
+    [
+      "apps/server/src/workspace/TaskFolders.ts",
+      "              T3_PROJECT_ROOT: taskFolder.projectRoot,",
+      "kept",
+    ],
+    [
+      "apps/server/src/workspace/TaskFolders.ts",
+      "              T3_WORKTREE_PROJECT_PATH: taskFolder.projectPath,",
+      "kept",
+    ],
+    [
+      "docs/user/multi-repo-projects.md",
+      '    "create": "(git worktree add \\"$T3_WORKTREE_PROJECT_PATH\\" \\"$T3_WORKTREE_BRANCH\\")"',
+      "kept",
+    ],
+    // The older exported names stay persisted: both spellings are exported.
+    ["apps/server/src/x.ts", "      T3CODE_PROJECT_ROOT: root,", "persisted"],
   ])("classifies %s: %s as %s", (path, line, expected) => {
     expect(classOf(path, line)).toBe(expected);
   });
