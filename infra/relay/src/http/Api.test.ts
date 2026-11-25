@@ -538,6 +538,8 @@ function layerRelayUnlinkTest(input?: {
         listForUser: () => Effect.die("unused listForUser"),
         getForUser: input?.getForUser ?? (() => Effect.succeed(null)),
         findActiveManagedForEnvironment: () => Effect.die("unused findActiveManagedForEnvironment"),
+        updateLiveActivityPreference: () =>
+          Effect.die("unexpected Live Activity preference update"),
         setHoldWebhooksWhileOffline: () => Effect.die("unused setHoldWebhooksWhileOffline"),
         revokeForUser: input?.revokeForUser ?? (() => Effect.succeed(false)),
       }),
@@ -1079,52 +1081,71 @@ describe("relay managed tunnel recovery", () => {
 });
 
 describe("relay environment unlink", () => {
-  it.effect("drops the unlinked endpoint's held webhooks, even if clearing fails", () => {
-    const cleared: Array<string> = [];
-    const endpointKey = "0123456789abcdef";
-    const unlink = (clearFails: boolean) =>
-      unlinkEnvironmentRecord({
-        userId: "user-1",
-        environmentId: "environment-1",
-        managedEndpointNamespace: "dev",
-      }).pipe(
-        Effect.provide(
-          layerRelayUnlinkTest({
-            getForUser: () => Effect.succeed(linkedEnvironmentRecord),
-            revokeForUser: () => Effect.succeed(true),
-            prepareDeprovision: () =>
-              Effect.succeed({
-                userId: "user-1",
-                environmentId: "environment-1",
-                hostname: "dev-0123456789abcdef.example.test",
-                tunnelId: "tunnel-1",
-                tunnelName: `t3coderelay-managedendpoint-dev-${endpointKey}`,
-                dnsRecordId: "dns-1",
-                readyAt: "2026-07-28T00:00:00.000Z",
-                tunnelReleasedAt: null,
-                origin: null,
-                updatedAt: "2026-07-28T00:00:00.000Z",
-                generation: 1,
-              }),
-            clearInbox: (input) =>
-              clearFails
-                ? Effect.fail(
-                    new HookInbox.HookInboxError({
-                      operation: "clear",
-                      endpointKey: input.endpointKey,
-                      cause: new Error("unavailable"),
-                    }),
-                  )
-                : Effect.sync(() => void cleared.push(input.endpointKey)),
-          }),
-        ),
-      );
-    return Effect.gen(function* () {
-      expect(yield* unlink(false)).toBe(true);
-      expect(cleared).toEqual([endpointKey]);
-      expect(yield* unlink(true)).toBe(true);
-    });
-  });
+  it.effect(
+    "drops the unlinked endpoint's held webhooks, even if clearing or teardown fails",
+    () => {
+      const cleared: Array<string> = [];
+      const endpointKey = "0123456789abcdef";
+      const unlink = (clearFails: boolean, teardownFails = false) =>
+        unlinkEnvironmentRecord({
+          userId: "user-1",
+          environmentId: "environment-1",
+          managedEndpointNamespace: "dev",
+        }).pipe(
+          Effect.provide(
+            layerRelayUnlinkTest({
+              getForUser: () => Effect.succeed(linkedEnvironmentRecord),
+              revokeForUser: () => Effect.succeed(true),
+              prepareDeprovision: () =>
+                Effect.succeed({
+                  userId: "user-1",
+                  environmentId: "environment-1",
+                  hostname: "dev-0123456789abcdef.example.test",
+                  tunnelId: "tunnel-1",
+                  tunnelName: `t3coderelay-managedendpoint-dev-${endpointKey}`,
+                  dnsRecordId: "dns-1",
+                  readyAt: "2026-07-28T00:00:00.000Z",
+                  tunnelReleasedAt: null,
+                  origin: null,
+                  updatedAt: "2026-07-28T00:00:00.000Z",
+                  generation: 1,
+                }),
+              clearInbox: (input) =>
+                clearFails
+                  ? Effect.fail(
+                      new HookInbox.HookInboxError({
+                        operation: "clear",
+                        endpointKey: input.endpointKey,
+                        cause: new Error("unavailable"),
+                      }),
+                    )
+                  : Effect.sync(() => void cleared.push(input.endpointKey)),
+              ...(teardownFails
+                ? {
+                    deprovision: (input) =>
+                      Effect.fail(
+                        new ManagedEndpointProvider.ManagedEndpointDeprovisioningFailed({
+                          userId: input.userId,
+                          environmentId: input.environmentId,
+                          stage: "delete-tunnel",
+                          cause: new Error("unavailable"),
+                        }),
+                      ),
+                  }
+                : {}),
+            }),
+          ),
+        );
+      return Effect.gen(function* () {
+        expect(yield* unlink(false)).toBe(true);
+        expect(cleared).toEqual([endpointKey]);
+        expect(yield* unlink(true)).toBe(true);
+        // A later link under another key shares the inbox, so it is emptied before teardown can fail.
+        yield* unlink(false, true).pipe(Effect.flip);
+        expect(cleared).toEqual([endpointKey, endpointKey]);
+      });
+    },
+  );
 
   it.effect("commits database revocation before deprovisioning the managed endpoint", () => {
     const calls: Array<string> = [];
@@ -1365,6 +1386,42 @@ describe("relay request tracing", () => {
         expect(Option.isNone(spans[0]!.parent)).toBe(true);
         expect(Option.getOrUndefined(spans[1]!.parent)?.spanId).toBe(spans[0]?.spanId);
       }),
+  );
+
+  it.effect("keeps the caller's address and user agent out of spans but not the route", () =>
+    Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = [];
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options);
+          spans.push(span);
+          return span;
+        },
+      });
+      const seen: Array<{ remoteAddress: string | undefined; userAgent: string | undefined }> = [];
+      const endpoint = Effect.gen(function* () {
+        const routed = yield* HttpServerRequest.HttpServerRequest;
+        seen.push({
+          remoteAddress: Option.getOrUndefined(routed.remoteAddress),
+          userAgent: routed.headers["user-agent"],
+        });
+        return HttpServerResponse.empty({ status: 204 });
+      });
+      const request = HttpServerRequest.fromWeb(
+        new Request("https://relay.test/v1/mobile/devices", {
+          method: "POST",
+          headers: { "user-agent": "T3Code/2.3.0 iPhone" },
+        }),
+      ).modify({ remoteAddress: Option.some("203.0.113.9") });
+
+      yield* traceRelayHttpRequestWith(endpoint, Layer.succeed(Tracer.Tracer, tracer)).pipe(
+        Effect.provideService(HttpServerRequest.HttpServerRequest, request),
+      );
+
+      expect(spans[0]?.attributes.get("client.address")).toBeUndefined();
+      expect(spans[0]?.attributes.get("user_agent.original")).toBeUndefined();
+      expect(seen).toEqual([{ remoteAddress: "203.0.113.9", userAgent: "T3Code/2.3.0 iPhone" }]);
+    }),
   );
 });
 

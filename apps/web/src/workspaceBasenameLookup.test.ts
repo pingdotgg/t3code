@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   agentWorkingDirectories,
-  claimWorkspaceBasenameLookup,
   findAgentDirectoryMatch,
   pickProjectLinkMatch,
   pickWorkspaceBasenameMatch,
@@ -108,9 +107,81 @@ describe("chat file links into another project", () => {
     ).toBe("/home/user/app-b/src/api/rules/categories.ts");
   });
 
+  it.each([
+    {
+      outer: "/home/user/reports",
+      inner: "/home/user/reports/docs",
+      found: "/home/user/reports/docs/handoff.txt",
+    },
+    { outer: "C:\\Reports", inner: "C:/Reports/docs/", found: "C:\\Reports\\docs\\handoff.txt" },
+  ])("resolves one file that a project nested in $outer also lists", ({ outer, inner, found }) => {
+    expect(
+      pickProjectLinkMatch("handoff.txt", [
+        { root: outer, entries: [{ path: "docs/handoff.txt", kind: "file" }] },
+        { root: inner, entries: [{ path: "handoff.txt", kind: "file" }] },
+      ]),
+    ).toBe(found);
+  });
+
   it("opens nothing when several projects have the file", () => {
     expect(
       pickProjectLinkMatch("rules/categories.ts", [appB, { ...appB, root: "/home/user/app-c" }]),
+    ).toBeNull();
+  });
+
+  it("opens nothing when a project left ambiguous by case also has the name", () => {
+    expect(
+      pickProjectLinkMatch("handoff.txt", [
+        { root: "/reports", entries: [{ path: "notes/HANDOFF.txt", kind: "file" }] },
+        {
+          root: "/support",
+          entries: [
+            { path: "current/Handoff.txt", kind: "file" },
+            { path: "archive/HANDOFF.txt", kind: "file" },
+          ],
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it("opens nothing when overlapping projects also list a second suffix match", () => {
+    expect(
+      pickProjectLinkMatch("docs/handoff.txt", [
+        {
+          root: "/home/user/reports",
+          entries: [
+            { path: "quarter/docs/handoff.txt", kind: "file" },
+            { path: "archive/docs/handoff.txt", kind: "file" },
+          ],
+        },
+        {
+          root: "/home/user/reports/quarter",
+          entries: [{ path: "docs/handoff.txt", kind: "file" }],
+        },
+        {
+          root: "/home/user/reports/quarter/docs",
+          entries: [{ path: "handoff.txt", kind: "file" }],
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it.each([
+    { cited: "handoff.txt", other: "archive/handoff.txt" },
+    { cited: "HANDOFF.txt", other: "archive/Handoff.txt" },
+  ])("opens nothing when overlapping projects also list $other", ({ cited, other }) => {
+    expect(
+      pickProjectLinkMatch("handoff.txt", [
+        {
+          root: "/home/user/reports",
+          entries: [
+            { path: `team/docs/${cited}`, kind: "file" },
+            { path: other, kind: "file" },
+          ],
+        },
+        { root: "/home/user/reports/team", entries: [{ path: `docs/${cited}`, kind: "file" }] },
+        { root: "/home/user/reports/team/docs", entries: [{ path: cited, kind: "file" }] },
+      ]),
     ).toBeNull();
   });
 });
@@ -146,10 +217,20 @@ describe("agentWorkingDirectories", () => {
         "abcd /work/a; echo cd /work/b; git -C /work/c status; cd /work/d",
         `echo "cd /work/g"; echo 'x; cd /work/h' && grep -c "cd /work/i" notes`,
         "echo bash -c 'cd /work/j'; cd -",
+        `sh "cd /work/l"`,
         "cat <<EOF > notes\ncd /work/k\nEOF",
         "cd /work/e\\ f && cd `pwd`/x",
       ),
     ).toEqual(["/work/d"]);
+  });
+
+  it("leaves network shares out of the search roots", () => {
+    expect(
+      directories(
+        "cd //files.example/share",
+        String.raw`cd '\\files.example\share'; cd C:\work\repo`,
+      ),
+    ).toEqual([String.raw`C:\work\repo`]);
   });
 });
 
@@ -181,15 +262,5 @@ describe("findAgentDirectoryMatch", () => {
       await findAgentDirectoryMatch("config.test.yaml", ["/work/repo-b", "/work/repo-c"], found),
     ).toBe("/work/repo-c/etc/config.test.yaml");
     expect(await findAgentDirectoryMatch("config.test.yaml", ["/work/repo-b"], found)).toBeNull();
-  });
-});
-
-describe("claimWorkspaceBasenameLookup", () => {
-  it("keeps only the newest claim, whatever order the lookups settle in", () => {
-    const first = claimWorkspaceBasenameLookup();
-    const second = claimWorkspaceBasenameLookup();
-
-    expect(second()).toBe(true);
-    expect(first()).toBe(false);
   });
 });

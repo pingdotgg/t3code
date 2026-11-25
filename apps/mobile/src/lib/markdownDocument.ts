@@ -9,6 +9,7 @@ import {
   parseMarkdownFileLink,
 } from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { hasRightToLeftLetter, textDirection } from "@t3tools/shared/textDirection";
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
 export type MarkdownNode = Root | RootContent;
@@ -497,13 +498,65 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+// Only a bare image paragraph gets a native image slot; a linked one would draw full width.
+const isImage = (node: MarkdownNode) => node.type === "image" || node.type === "imageReference";
+const isSpace = (node: MarkdownNode) =>
+  node.type === "break" || (node.type === "text" && node.value.trim() === "");
+
+/**
+ * Native Markdown sizes an image as a block only when it starts its paragraph. These are the
+ * images web puts on their own line: one alone on its source line, and the images that end a
+ * paragraph after its text, like a screenshot after its caption. A row of those can't sit side
+ * by side natively, so each gets its own paragraph.
+ */
+function markdownWithImageParagraphs(markdown: string): string {
+  if (!markdown.includes("![")) return markdown;
+  const edits = new Map<number, MarkdownEdit>();
+  const split = (start: number, gap: string) => {
+    const ending = /\r\n?|\n/.exec(gap)?.[0] ?? "\n";
+    edits.set(start, { start, end: start + gap.length, content: ending.repeat(2) });
+  };
+  for (const block of parser.parse(markdown).children) {
+    const blockStart = block.position?.start.offset;
+    const blockEnd = block.position?.end.offset;
+    if (block.type !== "paragraph" || blockStart === undefined || blockEnd === undefined) continue;
+    let trailingStart: number | undefined;
+    for (let index = block.children.length - 1; index >= 0; index--) {
+      const child = block.children[index]!;
+      if (isImage(child)) trailingStart = index;
+      else if (!isSpace(child)) break;
+    }
+    block.children.forEach((child, index) => {
+      const start = child.position?.start.offset;
+      const end = child.position?.end.offset;
+      if (!isImage(child) || start === undefined || end === undefined) return;
+      const before = markdown.slice(blockStart, start);
+      const after = markdown.slice(end, blockEnd);
+      const ownsLine = /(?:^|\r|\n)[ \t]*$/.test(before) && /^[ \t]*\\?(?:\r\n?|\n|$)/.test(after);
+      if (before.trim() && (ownsLine || (trailingStart !== undefined && index >= trailingStart))) {
+        const gap = /[ \t]*(?:\\?(?:\r\n?|\n)[ \t]*)?$/.exec(before)![0];
+        split(start - gap.length, gap);
+      }
+      if (ownsLine && after.trim()) split(end, /^[ \t]*\\?(?:\r\n?|\n)[ \t]*/.exec(after)![0]);
+    });
+  }
+  return applyMarkdownEdits(
+    markdown,
+    [...edits.values()].sort((a, b) => a.start - b.start),
+  );
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
-export function markdownForNativeParsing(markdown: string): string {
+function normalizedMarkdown(markdown: string): string {
   return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
 }
 
+export function markdownForNativeParsing(markdown: string): string {
+  return markdownWithImageParagraphs(normalizedMarkdown(markdown));
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
-  return parser.parse(markdownForNativeParsing(markdown));
+  return parser.parse(normalizedMarkdown(markdown));
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
@@ -561,4 +614,65 @@ export function markdownWithFileEmbeds(
   }
   parts.push(markdown.slice(offset));
   return { markdown: parts.join(""), fileHrefs };
+}
+
+const DIRECTION_MARK = { ltr: "‎", rtl: "‏" } as const;
+
+function proseText(node: MarkdownNode): string {
+  if (node.type === "text") return node.value;
+  if (node.type === "inlineCode" || node.type === "code") return " ";
+  if (!("children" in node)) return "";
+  const text = node.children.map(proseText).join("");
+  return node.type === "paragraph" || node.type === "heading" || node.type === "tableCell"
+    ? ` ${text} `
+    : text;
+}
+
+// The native renderer scans inline code too when it picks a paragraph's direction.
+function renderedText(node: MarkdownNode): string {
+  if (node.type === "text" || node.type === "inlineCode") return node.value;
+  if (!("children" in node)) return "";
+  return node.children.map(renderedText).join("");
+}
+
+// A mark inside `[label]` or `<url>` would break the reference or autolink.
+function firstLeafOffset(node: MarkdownNode): number | undefined {
+  if (
+    !("children" in node) ||
+    node.children.length === 0 ||
+    node.type === "link" ||
+    node.type === "linkReference"
+  ) {
+    return node.position?.start.offset;
+  }
+  return firstLeafOffset(node.children[0]!);
+}
+
+/**
+ * The native renderer gives each paragraph the direction of its first letter, so an Arabic
+ * line that opens with an English name renders left to right. Like the web's
+ * `rehypeTextDirection`, each top-level block follows the majority of its words, and a
+ * paragraph whose first letter disagrees gets a direction mark that the renderer reads first.
+ */
+export function markdownWithTextDirection(markdown: string): string {
+  if (!hasRightToLeftLetter(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  for (const block of parser.parse(markdown).children) {
+    if (block.type === "code" || block.type === "html") continue;
+    const direction = textDirection(proseText(block));
+    if (!direction) continue;
+    const mark = (node: MarkdownNode) => {
+      if (node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") {
+        const offset = firstLeafOffset(node);
+        const first = renderedText(node).match(/\p{L}/u)?.[0];
+        if (offset !== undefined && first && textDirection(first) !== direction) {
+          edits.push({ start: offset, end: offset, content: DIRECTION_MARK[direction] });
+        }
+        return;
+      }
+      if ("children" in node) node.children.forEach(mark);
+    };
+    mark(block);
+  }
+  return applyMarkdownEdits(markdown, edits);
 }

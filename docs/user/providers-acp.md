@@ -51,6 +51,10 @@ version published by the Registry. Their commands are available in a new server 
 sign-in and direct use. Removing an agent's last provider instance removes T3-managed binary files
 but keeps package installs. To use an existing local binary, set **Executable override** explicitly.
 
+T3 Code checks the Registry for new versions in the background and installs them for T3-managed
+agents on the next provider check; a check is skipped while that agent is starting a session.
+Refreshing providers in Settings checks the Registry right away.
+
 ## Signing in
 
 Open the agent's account section in **Settings → Providers** on web or desktop. Choose
@@ -131,9 +135,11 @@ Checkpoint rollback restores your files as usual. ACP agents cannot rewind their
 so the next turn after a rollback starts a fresh agent session and T3 Code sends it the kept
 conversation, without the turns you rolled back.
 
-Registry instances are not used for T3's app-owned text generation, such as thread titles, commit
-messages, branch names, or pull request descriptions. Configure a text-generation-capable provider
-for those actions.
+Select an ACP model in **Settings → Threads → Text generation model** to use it for generated text,
+such as thread titles, commit messages, and pull request descriptions. Branch names use this model
+unless a source-control writer model is configured. Each request opens a separate session outside
+the project checkout. T3 requests session deletion when the agent supports it. The agent controls
+whether it retains session history.
 
 ## Advanced configuration
 

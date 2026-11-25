@@ -29,10 +29,10 @@ import {
 import { Branch, msg, T, useGT, useMessages } from "gt-react";
 import { useId, useState } from "react";
 
+import { useOpenLink } from "~/browser/useOpenLink";
 import { m } from "~/i18n/messages";
 
 import { shortcutLabelForCommand } from "~/keybindings";
-import { readLocalApi } from "~/localApi";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -70,7 +70,9 @@ export function PullRequestActionsMenu({
   reference,
   pullRequestKey,
   detail,
+  observedAt,
   terminology,
+  threadRef,
   linkThreadRef,
   onThreadPickerOpenChange,
   refreshing,
@@ -120,9 +122,11 @@ export function PullRequestActionsMenu({
     | "capabilities"
     | "viewerPermissions"
     | "maintainerCanModify"
-    | "observedAt"
   >;
+  /** When the detail was last read; the detail itself keeps its older stamp across refreshes. */
+  observedAt: number | undefined;
   terminology: ChangeRequestTerminology;
+  threadRef: ScopedThreadRef | null;
   linkThreadRef: ScopedThreadRef | null;
   onThreadPickerOpenChange: (open: boolean) => void;
   refreshing: boolean;
@@ -161,6 +165,7 @@ export function PullRequestActionsMenu({
   copyReference: (value: string, failureTitle: string) => void;
 }) {
   const gt = useGT();
+  const openLink = useOpenLink(threadRef);
   const resolve = useMessages();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const inlineConfirm = useInlineActionConfirm(pullRequestKey);
@@ -176,7 +181,7 @@ export function PullRequestActionsMenu({
   const maintainerEditsChoiceKept = maintainerEditsChoiceInForce(
     maintainerEditsChoice,
     pullRequestKey,
-    detail.observedAt,
+    observedAt,
     maintainerEditsSaving,
   );
   if (maintainerEditsChoiceKept !== maintainerEditsChoice) {
@@ -188,7 +193,7 @@ export function PullRequestActionsMenu({
   const saveMaintainerEdits = async (value: boolean) => {
     if (!canSaveMaintainerEdits) return;
     const previousChoice = maintainerEditsChoice;
-    setMaintainerEditsChoice({ key: pullRequestKey, observedAt: detail.observedAt, value });
+    setMaintainerEditsChoice({ key: pullRequestKey, observedAt, value });
     setMaintainerEditsSaving(true);
     const result = await updatePullRequest({
       environmentId,
@@ -434,7 +439,7 @@ export function PullRequestActionsMenu({
             ) : null}
           </>
         ) : null}
-        <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}>
+        <MenuItem onClick={(event) => void openLink(detail.url, { event }).catch(console.error)}>
           <ArrowUpRightIcon className="size-3.5" />
           {openOnHostText}
         </MenuItem>
