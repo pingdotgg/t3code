@@ -104,6 +104,24 @@ export function terminalSequenceEnd(state: number, text: string): number {
   return index;
 }
 
+function scanSnapshotContinuation(state: number, data: string, limit = data.length) {
+  let replay = "";
+  const replayC1 = (byte: number, remainingBytes: number) => {
+    // Replay IND, NEL, HTS and RI from ground. Any bytes parsed after the control
+    // are now stray UTF-8 continuation bytes.
+    if (byte === 0x84 || byte === 0x85 || byte === 0x88 || byte === 0x8d) {
+      replay = "\u001b" + String.fromCharCode(byte - 0x40);
+    }
+    replay += "\ufffd".repeat(remainingBytes);
+  };
+  let end = 0;
+  while (state !== TERMINAL_SEQUENCE_GROUND && end < limit) {
+    state = nextTerminalSequenceState(state, data.charCodeAt(end), replayC1);
+    end += 1;
+  }
+  return { state, end, replay };
+}
+
 /** Skip the continuation of an omitted snapshot prefix, retaining any new escape sequence. */
 export function skipTerminalSnapshotContinuation(state: number, data: string) {
   if (data.length === 0) return { state, data };
@@ -114,20 +132,14 @@ export function skipTerminalSnapshotContinuation(state: number, data: string) {
     };
   }
 
-  let replay = "";
-  const replayC1 = (byte: number, remainingBytes: number) => {
-    // IND, NEL and RI move the cursor after ending the omitted sequence.
-    if (byte === 0x84 || byte === 0x85 || byte === 0x8d) {
-      replay = "\u001b" + String.fromCharCode(byte - 0x40) + "\ufffd".repeat(remainingBytes);
-    }
-  };
-  let end = 0;
-  while (state !== TERMINAL_SEQUENCE_GROUND && end < data.length && data[end] !== "\u001b") {
-    state = nextTerminalSequenceState(state, data.charCodeAt(end), replayC1);
-    end += 1;
-  }
-  if (state === TERMINAL_SEQUENCE_GROUND || end === data.length) {
-    return { state, data: replay + data.slice(end) };
+  const escape = data.indexOf("\u001b");
+  const {
+    state: next,
+    end,
+    replay,
+  } = scanSnapshotContinuation(state, data, escape < 0 ? data.length : escape);
+  if (next === TERMINAL_SEQUENCE_GROUND || end === data.length) {
+    return { state: next, data: replay + data.slice(end) };
   }
   // Hold a final ESC until we know whether it starts a new sequence or completes ST.
   if (end + 1 === data.length) return { state: SEQUENCE_ESCAPE, data: "" };
@@ -167,7 +179,13 @@ export function retainedTerminalHistory(history: string, maxBytes: number): stri
     0,
     history.length - retained.length,
   );
-  return retained.slice(terminalSequenceEnd(state, retained));
+  if (state === TERMINAL_SEQUENCE_GROUND) return retained;
+  const { end, replay } = scanSnapshotContinuation(state, retained);
+  const tail = retained.slice(end);
+  if (replay.length === 0) return tail;
+  // Replacement glyphs can take more bytes than the original continuation.
+  const snapshot = replay + tail;
+  return historyEncoder.encode(snapshot).byteLength <= maxBytes ? snapshot : tail;
 }
 
 /** Keep a whole unfinished prefix when possible, or skip its continuation during replay. */
