@@ -1185,6 +1185,60 @@ function actionReplyClient(overrides: Record<string, unknown> = {}) {
   } as unknown as WsRpcProtocolClient;
 }
 
+it.effect("waits for a fresh check status before clearing a workflow approval", () =>
+  Effect.gen(function* () {
+    const afterApproval = yield* Deferred.make<void>();
+    const checksStarted = yield* Deferred.make<void>();
+    const staleReadStarted = yield* Deferred.make<void>();
+    const approvalStarted = yield* Deferred.make<void>();
+    const commitApproval = yield* Deferred.make<void>();
+    let reads = 0;
+    let approved = false;
+    const client = actionReplyClient({
+      [WS_METHODS.pullRequestsRunAction]: () =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(approvalStarted, undefined);
+          yield* Deferred.await(commitApproval);
+          approved = true;
+        }),
+      [WS_METHODS.pullRequestsChecks]: () =>
+        Effect.gen(function* () {
+          if (++reads === 1) return { state: "open", checks: [], workflowApprovalsRequired: 1 };
+          if (!approved) {
+            yield* Deferred.succeed(staleReadStarted, undefined);
+            return yield* Effect.never;
+          }
+          yield* Deferred.succeed(checksStarted, undefined);
+          yield* Deferred.await(afterApproval);
+          return { state: "open", checks: [], workflowApprovalsRequired: 0 };
+        }),
+    });
+    const { atoms, registry } = yield* makeTestRuntime(client);
+    const target = { environmentId: TARGET.environmentId, input: actionReference };
+    const checks = atoms.checks(target);
+    yield* AtomRegistry.mount(registry, checks);
+    yield* AtomRegistry.getResult(registry, checks);
+    const action = yield* atoms.runAction
+      .run(registry, { ...target, input: { ...actionReference, action: "approve-workflows" } })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(approvalStarted);
+    registry.refresh(checks);
+    yield* Deferred.await(staleReadStarted);
+    yield* Deferred.succeed(commitApproval, undefined);
+    yield* Effect.raceFirst(
+      Deferred.await(checksStarted),
+      Fiber.join(action).pipe(
+        Effect.andThen(Effect.die("Approval finished before refreshing the checks")),
+      ),
+    );
+    yield* Deferred.succeed(afterApproval, undefined);
+    yield* Fiber.join(action);
+    expect(Option.getOrThrow(AsyncResult.value(registry.get(checks)))).toMatchObject({
+      workflowApprovalsRequired: 0,
+    });
+  }),
+);
+
 it.effect("shows an action's reply in loaded readers and moves list rows without reads", () =>
   Effect.gen(function* () {
     const reads: string[] = [];
