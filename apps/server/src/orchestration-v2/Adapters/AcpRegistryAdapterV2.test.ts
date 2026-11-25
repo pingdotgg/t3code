@@ -3157,6 +3157,101 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  // regression: a user message mid-turn interrupted and superseded every Devin attempt,
+  // because Devin answers a concurrent session/prompt as a steer (leaving its tools and
+  // subagents alone) but the flavor never declared it, so steering fell to interrupt-restart
+  it.effect("steers an active Devin turn with a concurrent prompt instead of a cancel", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "reply",
+            content: { type: "text", text: "working" },
+          }),
+          claudeMarker("before steer"),
+          // The steer must be a second concurrent session/prompt; a session/cancel here
+          // is the interrupt-restart path this regression test rejects.
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "reply",
+            content: { type: "text", text: "steered" },
+          }),
+          claudeMarker("steer output"),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const started = yield* session.throughMarker("before steer");
+      const running = started.findLast((event) => event.type === "provider_turn.updated");
+      if (running?.type !== "provider_turn.updated") throw new Error("Missing active turn");
+      yield* session.runtime.steerTurn({
+        threadId: session.turnInput(1).threadId,
+        runId: session.turnInput(1).runId,
+        providerThread: session.providerThread,
+        providerTurnId: running.providerTurn.id,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make("message-devin-steer"),
+          text: "steer message",
+          attachments: [],
+        },
+      });
+      yield* session.throughMarker("steer output");
+      const terminal = yield* session.terminal;
+      assert.equal(terminal.status, "completed");
+      const outbound = Array.from(yield* Queue.takeAll(session.outgoing));
+      const methods = outbound.flatMap((frame) =>
+        typeof frame === "object" && frame !== null && "method" in frame
+          ? [(frame as { method: unknown }).method]
+          : [],
+      );
+      assert.notInclude(methods, "session/cancel");
+      assert.equal(methods.filter((method) => method === "session/prompt").length, 2);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("keeps native child tools interrupted after idle and late output", () =>
     Effect.gen(function* () {
       const { update, childState } = claudeFrames;

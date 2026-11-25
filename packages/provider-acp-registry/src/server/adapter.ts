@@ -327,6 +327,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
           answerablePermissionOptions: devinAnswerablePermissionOptions,
+          // Devin answers a concurrent session/prompt by ending the running prompt
+          // end_turn and carrying the turn on under the new one, leaving its tools and
+          // subagents alone. Interrupt-restart steering would tear that work down.
+          steersWithPrompt: () => true,
         }
       : {}),
     ...(copilotRouting === undefined
