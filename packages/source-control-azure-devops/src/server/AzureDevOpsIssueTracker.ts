@@ -36,7 +36,10 @@ import {
   type AzureDevOpsWorkItem,
   type ClosedStates,
 } from "./azureDevOpsIssueJson.ts";
-import { decodePullRequestJson } from "./azureDevOpsPullRequestJson.ts";
+import {
+  decodePullRequestJson,
+  type AzureDevOpsRepositoryLocation,
+} from "./azureDevOpsPullRequestJson.ts";
 
 const KIND = IssueTrackerKind.make("azure-devops");
 
@@ -145,6 +148,16 @@ function parseScope(
   if (parts.length !== 2) return null;
   const [organization, project] = parts as [string, string];
   return { organization: `https://${host}/${encodeURIComponent(organization)}`, project };
+}
+
+/**
+ * A linked pull request's repository as its pull request URL spells it below the work item's
+ * host: `organization/project/_git/repository`, or `project/_git/repository` on a legacy host.
+ * Clients open it on that host, and `project/repository` names no organization or route there.
+ */
+function linkedRepository(organization: string, location: AzureDevOpsRepositoryLocation): string {
+  const path = new URL(organization).pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  return [...path, location.project, "_git", location.repository].join("/");
 }
 
 function parseNumber(key: string): number | null {
@@ -516,7 +529,7 @@ export const make: Effect.Effect<
               ? []
               : [
                   {
-                    repository: `${pullRequest.location.project}/${pullRequest.location.repository}`,
+                    repository: linkedRepository(input.organization, pullRequest.location),
                     number: pullRequest.number,
                     title: pullRequest.title,
                     url: pullRequest.url,
