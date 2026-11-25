@@ -11,6 +11,7 @@ import {
   type PullRequestMergeability,
   type PullRequestReviewDecision,
   type PullRequestState,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -38,6 +39,7 @@ import {
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import { m, type MessageResolver } from "~/i18n/messages";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
@@ -568,14 +570,17 @@ export function PullRequestActorLabel({
   variant = "label",
   tooltip = true,
   profileUrl,
+  threadRef = null,
 }: {
   actor: PullRequestActor | null;
   className?: string;
   variant?: "label" | "avatar";
   tooltip?: boolean;
   profileUrl?: string | null;
+  threadRef?: ScopedThreadRef | null;
 }) {
   const gt = useGT();
+  const openLink = useOpenLink(threadRef);
   const login = actor?.login ?? "ghost";
   const label = (
     <span className={cn("flex min-w-0 items-baseline", variant === "label" && "gap-1.5")}>
@@ -601,6 +606,10 @@ export function PullRequestActorLabel({
                 aria-label={gt("Open {login}'s profile", { login })}
               />
             }
+            onClick={(event) => {
+              event.preventDefault();
+              void openLink(profileUrl, { event }).catch(console.error);
+            }}
           />
         ) : (
           <span className={placement} />

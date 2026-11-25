@@ -1788,6 +1788,7 @@ export function PullRequestDetailPanel({
                       <PullRequestActorLabel
                         actor={detail.author}
                         profileUrl={authorProfileUrl}
+                        threadRef={threadRef}
                         variant="avatar"
                         className="shrink-0"
                       />
@@ -1883,7 +1884,11 @@ export function PullRequestDetailPanel({
                     />
                   }
                   author={
-                    <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
+                    <PullRequestActorLabel
+                      actor={detail.author}
+                      profileUrl={authorProfileUrl}
+                      threadRef={threadRef}
+                    />
                   }
                   updated={
                     <span>
