@@ -1,4 +1,5 @@
 import type { Editor, EditorEvents } from "@tiptap/core";
+import { closeHistory } from "@tiptap/pm/history";
 import {
   flatToMarkdown,
   flatToPm,
@@ -11,10 +12,75 @@ import {
   formatInlineContextReference,
   inlineContextReferenceReplacement,
 } from "../lib/composerContextReferences";
+import { ComposerImageHistoryStep, type RetainedComposerImage } from "../composer-image-history";
 import { markAsClipboardEdit } from "../composer-undo-grouping";
+
+export interface ComposerImageHistoryAttachment {
+  readonly targetKey: string;
+  readonly images: ReadonlyArray<RetainedComposerImage>;
+}
 
 const INSERTION_ORDER_META = "composerAttachmentInsertionOrder";
 let nextInsertionOrder = 0;
+
+export function insertComposerContextReferencesInEditor(
+  editor: Editor,
+  references: ReadonlyArray<ComposerContextReference>,
+  options?: {
+    readonly from?: number;
+    readonly to?: number;
+    readonly imageHistory?: ComposerImageHistoryAttachment | undefined;
+    readonly insertionOrder?: number | undefined;
+  },
+): boolean {
+  if (editor.isDestroyed || references.length === 0) return false;
+  const nodeType = editor.schema.nodes["composer-context-reference"];
+  if (!nodeType) return false;
+  // Default to a collapsed caret when no explicit range is passed, so a delayed
+  // attachment whose captured range was lost never replaces a later user selection.
+  const from = options?.from ?? editor.state.selection.from;
+  const to = options?.to ?? from;
+  const map = serializeEditorDoc(editor.state.doc);
+  const edit = inlineContextReferenceReplacement(
+    map.value,
+    {
+      start: flatToMarkdown(map, pmToFlat(map, from)),
+      end: flatToMarkdown(map, pmToFlat(map, to)),
+    },
+    references,
+  );
+  const acceptsReference =
+    editor.state.doc.resolve(from).parent.type.contentMatch.matchType(nodeType) !== null;
+  const content = acceptsReference
+    ? references.flatMap((reference) => [
+        nodeType.create({ ...reference, source: formatInlineContextReference(reference) }),
+        editor.schema.text(" "),
+      ])
+    : [editor.schema.text(edit.text)];
+  if (acceptsReference && edit.text.startsWith(" ")) content.unshift(editor.schema.text(" "));
+  const replaceEnd = flatToPm(map, markdownToFlat(map, edit.end));
+  const tr = editor.state.tr.replaceWith(from, replaceEnd, content);
+  if (options?.imageHistory && options.imageHistory.images.length > 0) {
+    closeHistory(tr);
+    tr.step(
+      new ComposerImageHistoryStep(
+        "add",
+        options.imageHistory.targetKey,
+        options.imageHistory.images,
+      ),
+    );
+  }
+  markAsClipboardEdit(tr, "paste");
+  if (options?.insertionOrder !== undefined) {
+    tr.setMeta(INSERTION_ORDER_META, {
+      order: options.insertionOrder,
+      from,
+      end: tr.mapping.map(replaceEnd, 1),
+    });
+  }
+  editor.view.dispatch(tr);
+  return true;
+}
 
 export function captureComposerAttachmentInsertion(editor: Editor) {
   const order = nextInsertionOrder++;
@@ -45,39 +111,18 @@ export function captureComposerAttachmentInsertion(editor: Editor) {
     editor.off("transaction", track);
   };
   return {
-    insert: (references: ReadonlyArray<ComposerContextReference>): boolean => {
+    insert: (
+      references: ReadonlyArray<ComposerContextReference>,
+      options?: { readonly imageHistory?: ComposerImageHistoryAttachment | undefined },
+    ): boolean => {
       dispose();
-      if (lost || editor.isDestroyed || references.length === 0) return false;
-      const nodeType = editor.schema.nodes["composer-context-reference"];
-      if (!nodeType) return false;
-      const map = serializeEditorDoc(editor.state.doc);
-      const edit = inlineContextReferenceReplacement(
-        map.value,
-        {
-          start: flatToMarkdown(map, pmToFlat(map, from)),
-          end: flatToMarkdown(map, pmToFlat(map, to)),
-        },
-        references,
-      );
-      const acceptsReference =
-        editor.state.doc.resolve(from).parent.type.contentMatch.matchType(nodeType) !== null;
-      const content = acceptsReference
-        ? references.flatMap((reference) => [
-            nodeType.create({ ...reference, source: formatInlineContextReference(reference) }),
-            editor.schema.text(" "),
-          ])
-        : [editor.schema.text(edit.text)];
-      if (acceptsReference && edit.text.startsWith(" ")) content.unshift(editor.schema.text(" "));
-      const replaceEnd = flatToPm(map, markdownToFlat(map, edit.end));
-      const tr = editor.state.tr.replaceWith(from, replaceEnd, content);
-      editor.view.dispatch(
-        markAsClipboardEdit(tr, "paste").setMeta(INSERTION_ORDER_META, {
-          order,
-          from,
-          end: tr.mapping.map(replaceEnd, 1),
-        }),
-      );
-      return true;
+      if (lost) return false;
+      return insertComposerContextReferencesInEditor(editor, references, {
+        from,
+        to,
+        imageHistory: options?.imageHistory,
+        insertionOrder: order,
+      });
     },
     dispose,
   };

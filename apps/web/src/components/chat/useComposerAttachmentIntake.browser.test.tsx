@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { createRef, useEffect, useLayoutEffect, useRef } from "react";
 import {
   EnvironmentId,
   ProjectId,
@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { makeThreadRequestsResolvedAnnouncer } from "@t3tools/client-runtime/state/thread-requests";
+import { undoDepth } from "@tiptap/pm/history";
 import { expect, it, vi } from "vite-plus/test";
 import { AsyncResult } from "effect/reactivity";
 
@@ -18,10 +19,23 @@ import {
   composerTargetKey,
   hydrateImagesFromPersisted,
   useComposerDraftStore,
+  useComposerThreadDraft,
 } from "../../composerDraftStore";
-import { showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
+import { toRetainedComposerImage } from "../../composer-image-history";
+import {
+  completeConfirmDialogClose,
+  respondToConfirmDialog,
+  subscribeConfirmDialogHost,
+} from "../../confirmDialog";
+import { releaseThreadUndoShortcut, showThreadUndoNotice } from "../../hooks/showThreadUndoNotice";
+import { imageContextReference } from "../../lib/composerContextRecords";
+import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { questionAttachmentDraftId } from "../../questionAttachments";
+import {
+  ComposerPromptEditorTiptap as ComposerPromptEditor,
+  type ComposerPromptEditorHandle,
+} from "../ComposerPromptEditorTiptap";
 import { readComposerImageBytes } from "./composerAttachmentFiles";
 import {
   getPreparingComposerImages,
@@ -34,7 +48,10 @@ vi.mock("../../lib/imageCompression", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/imageCompression")>()),
   prepareImageForAttachment: compression.prepare,
 }));
-vi.mock("../../hooks/showThreadUndoNotice", () => ({ showThreadUndoNotice: vi.fn() }));
+vi.mock("../../hooks/showThreadUndoNotice", () => ({
+  showThreadUndoNotice: vi.fn(),
+  releaseThreadUndoShortcut: vi.fn(),
+}));
 
 type IntakeInput = Parameters<typeof useComposerAttachmentIntake>[0];
 type Intake = ReturnType<typeof useComposerAttachmentIntake>;
@@ -398,3 +415,242 @@ it.each(["thread", "session"] as const)(
     expect(restored?.images).toEqual([]);
   },
 );
+
+it("releases thread.undo on intake and records snapshotted draft indices for empty-prompt batches", async () => {
+  const target = DraftId.make("intake-empty-history");
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  compression.prepare.mockReset().mockImplementation(compress);
+  vi.mocked(releaseThreadUndoShortcut).mockClear();
+
+  const existingFile = new File([new Uint8Array(20).fill(9)], "existing.png", {
+    type: "image/png",
+  });
+  await readComposerImageBytes(existingFile);
+  store.addImages(target, [
+    {
+      type: "image",
+      id: "existing",
+      name: "existing.png",
+      mimeType: "image/png",
+      sizeBytes: existingFile.size,
+      previewUrl: URL.createObjectURL(existingFile),
+      file: existingFile,
+    },
+  ]);
+
+  const recordImageHistory = vi.fn(() => true);
+  const composerImagesRef = {
+    current: store.getComposerDraft(target)?.images ?? [],
+  };
+  const addImages = (images: ComposerImageAttachment[]) => {
+    const ids = store.addImages(target, images);
+    composerImagesRef.current =
+      useComposerDraftStore.getState().getComposerDraft(target)?.images ?? [];
+    return ids;
+  };
+  const input = {
+    activeThreadId: ThreadId.make("thread"),
+    activePendingProgress: null,
+    activePendingIsResponding: false,
+    pendingUserInputs: [],
+    supportsQuestionAttachments: false,
+    isLiteralPendingAnswer: false,
+    projectSelectionRequired: false,
+    questionAttachmentTarget: null,
+    attachmentTargetKey: target,
+    readDraftImages: () => useComposerDraftStore.getState().getComposerDraft(target)?.images ?? [],
+    fileStagingLimit: null,
+    promptRef: { current: "" },
+    composerImagesRef,
+    composerFilesRef: { current: [] },
+    composerEditorRef: {
+      current: {
+        focus: () => {},
+        focusAt: () => {},
+        focusAtEnd: () => {},
+        readSelectionRange: () => ({ start: 0, end: 0 }),
+        captureAttachmentInsertion: () => undefined,
+        insertAttachmentReferences: () => false,
+        recordImageHistory,
+        removeImageWithHistory: () => false,
+        requestCitationComment: () => {},
+        readSnapshot: () => ({ value: "", cursor: 0, expandedCursor: 0, contextIds: [] }),
+        isCaretOnVisualEdge: () => true,
+      },
+    },
+    isRevertingCheckpointRef: { current: false },
+    setThreadError: () => {},
+    countReservedAttachments: () =>
+      composerImagesRef.current.length + getPreparingComposerImages(target).length,
+    addComposerImage: (image) => addImages([image]),
+    addComposerImagesToDraft: addImages,
+    addComposerFilesToDraft: () => [],
+    removeComposerImageFromDraft: () => {},
+    insertAttachmentReferences: () => false,
+  } satisfies IntakeInput;
+
+  let intake!: Intake;
+  await using _screen = await render(
+    <Harness
+      input={input}
+      ready={(value) => {
+        intake = value;
+      }}
+    />,
+  );
+
+  await act(async () => {
+    await intake.addComposerAttachments([pastedImage(3), pastedImage(4)]);
+  });
+  expect(releaseThreadUndoShortcut).toHaveBeenCalledOnce();
+  expect(composerImagesRef.current).toHaveLength(3);
+  expect(recordImageHistory).toHaveBeenCalledWith("add", target, [
+    expect.objectContaining({ id: composerImagesRef.current[1]!.id, index: 1 }),
+    expect.objectContaining({ id: composerImagesRef.current[2]!.id, index: 2 }),
+  ]);
+});
+
+it("strips a confirmed thumbnail removal from the original draft without touching question history after takeover", async () => {
+  const unsubscribeHost = subscribeConfirmDialogHost(() => {});
+  try {
+    const draftTarget = DraftId.make("confirmed-remove-takeover");
+    const questionTarget = questionAttachmentDraftId(
+      EnvironmentId.make("env-takeover"),
+      ThreadId.make("thread-takeover"),
+      RuntimeRequestId.make("req-takeover"),
+      "q1",
+    );
+    const file = new File(["img"], "shot.png", { type: "image/png" });
+    const imageAttachment: ComposerImageAttachment = {
+      type: "image",
+      id: "img-shot",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: file.size,
+      previewUrl: URL.createObjectURL(file),
+      file,
+    };
+    const store = useComposerDraftStore.getState();
+    store.addImages(draftTarget, [imageAttachment]);
+    const chip = formatInlineContextReference(imageContextReference(imageAttachment));
+    store.setPrompt(draftTarget, `Check ${chip}`);
+
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    let intake!: Intake;
+
+    function TakeoverHarness({ questionActive }: { questionActive: boolean }) {
+      const draft = useComposerThreadDraft(draftTarget);
+      const attachmentDraftTarget = questionActive ? questionTarget : draftTarget;
+      const attachmentDraft = useComposerThreadDraft(attachmentDraftTarget);
+      const attachmentTargetKey = composerTargetKey(attachmentDraftTarget);
+      const attachmentTargetKeyRef = useRef(attachmentTargetKey);
+      const promptValue = questionActive ? "Question answer" : draft.prompt;
+      const promptRef = useRef(promptValue);
+      const composerImagesRef = useRef(attachmentDraft.images);
+      useLayoutEffect(() => {
+        attachmentTargetKeyRef.current = attachmentTargetKey;
+        promptRef.current = promptValue;
+        composerImagesRef.current = attachmentDraft.images;
+      });
+
+      const removeComposerImageFromDraft = (
+        imageId: string,
+        options?: { readonly recordHistory?: boolean; readonly stripReferences?: boolean },
+      ) => {
+        const editorOwnsTarget = attachmentTargetKeyRef.current === attachmentTargetKey;
+        const images =
+          useComposerDraftStore.getState().getComposerDraft(attachmentDraftTarget)?.images ?? [];
+        const imageIndex = images.findIndex((candidate) => candidate.id === imageId);
+        const image = imageIndex >= 0 ? images[imageIndex] : undefined;
+        const recordedInEditor =
+          editorOwnsTarget && options?.recordHistory === true && image !== undefined
+            ? (editorRef.current?.removeImageWithHistory(
+                attachmentTargetKey,
+                toRetainedComposerImage(image, imageIndex),
+                imageContextReference(image).contextId,
+              ) ?? false)
+            : false;
+        useComposerDraftStore.getState().removeImage(attachmentDraftTarget, imageId, {
+          stripReferences: options?.stripReferences ?? !recordedInEditor,
+        });
+      };
+
+      const currentIntake = useComposerAttachmentIntake({
+        activeThreadId: ThreadId.make("thread-takeover"),
+        activePendingProgress: null,
+        activePendingIsResponding: false,
+        pendingUserInputs: [],
+        supportsQuestionAttachments: true,
+        isLiteralPendingAnswer: false,
+        projectSelectionRequired: false,
+        questionAttachmentTarget: questionActive ? questionTarget : null,
+        attachmentTargetKey,
+        readDraftImages: () =>
+          useComposerDraftStore.getState().getComposerDraft(attachmentDraftTarget)?.images ?? [],
+        fileStagingLimit: null,
+        promptRef,
+        composerImagesRef,
+        composerFilesRef: { current: [] },
+        composerEditorRef: editorRef,
+        isRevertingCheckpointRef: { current: false },
+        setThreadError: () => {},
+        countReservedAttachments: () => attachmentDraft.images.length,
+        addComposerImage: () => [],
+        addComposerImagesToDraft: () => [],
+        addComposerFilesToDraft: () => [],
+        removeComposerImageFromDraft,
+        insertAttachmentReferences: () => false,
+      });
+      useEffect(() => {
+        intake = currentIntake;
+      });
+
+      return (
+        <ComposerPromptEditor
+          draftKey={attachmentTargetKey}
+          editorRef={editorRef}
+          value={promptValue}
+          cursor={promptValue.length}
+          richTextEnabled
+          contextRecords={new Map()}
+          skills={[]}
+          disabled={false}
+          placeholder=""
+          onChange={(next) => {
+            if (!questionActive) useComposerDraftStore.getState().setPrompt(draftTarget, next);
+          }}
+          onPaste={() => {}}
+        />
+      );
+    }
+
+    await using screen = await render(<TakeoverHarness questionActive={false} />);
+    await act(() => {
+      intake.removeComposerImage("img-shot");
+    });
+
+    await screen.rerender(<TakeoverHarness questionActive />);
+    const questionEditorEl = screen.container.querySelector<
+      HTMLElement & { editor?: { state: Parameters<typeof undoDepth>[0] } }
+    >(".tiptap");
+    expect(questionEditorEl?.editor).toBeDefined();
+
+    await act(async () => {
+      respondToConfirmDialog(true);
+      await Promise.resolve();
+    });
+
+    expect(editorRef.current?.readSnapshot().value).toBe("Question answer");
+    expect(undoDepth(questionEditorEl!.editor!.state)).toBe(0);
+    expect(useComposerDraftStore.getState().getComposerDraft(draftTarget)?.images).toHaveLength(0);
+    expect(useComposerDraftStore.getState().getComposerDraft(draftTarget)?.prompt).toBe("Check");
+
+    await screen.rerender(<TakeoverHarness questionActive={false} />);
+    expect(editorRef.current?.readSnapshot().value).toBe("Check");
+    expect(screen.container.textContent).not.toContain("Unavailable context");
+  } finally {
+    completeConfirmDialogClose();
+    unsubscribeHost();
+  }
+});

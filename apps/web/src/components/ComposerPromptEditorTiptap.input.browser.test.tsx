@@ -1433,3 +1433,190 @@ it("lets a one-line placeholder's button take clicks and passes the rest to the 
   await userEvent.click(screen.getByRole("button", { name: "Tab" }));
   expect(onClick).toHaveBeenCalledOnce();
 });
+
+it("keeps a rejected image-restore history event intact until preflight allows it", async () => {
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const file = new File(["img"], "shot.png", { type: "image/png" });
+  const retained = {
+    id: "shot-1",
+    name: "shot.png",
+    mimeType: "image/png",
+    sizeBytes: file.size,
+    file,
+    index: 0,
+  };
+  const chipRef = { kind: "image" as const, contextId: "image_shot-1", label: "shot.png" };
+  const initialPrompt = `Check ${formatInlineContextReference(chipRef)} `;
+  let allowRestore = false;
+  const applied = vi.fn();
+
+  function Harness() {
+    const [prompt, setPrompt] = useState({ value: initialPrompt, cursor: initialPrompt.length });
+    return (
+      <ComposerPromptEditor
+        editorRef={editorRef}
+        value={prompt.value}
+        cursor={prompt.cursor}
+        richTextEnabled
+        contextRecords={new Map()}
+        skills={[]}
+        disabled={false}
+        placeholder=""
+        onChange={(nextValue, nextCursor) => setPrompt({ value: nextValue, cursor: nextCursor })}
+        onBeforeImageHistoryChange={() => allowRestore}
+        onImageHistoryChange={applied}
+        onPaste={() => {}}
+      />
+    );
+  }
+
+  await using screen = await render(<Harness />);
+  const editor = editorIn(screen.container);
+  await act(() => {
+    editor.view.focus();
+    expect(editorRef.current?.removeImageWithHistory("draft-1", retained, chipRef.contextId)).toBe(
+      true,
+    );
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("Check");
+  expect(undoDepth(editor.state)).toBe(1);
+
+  // Blocked restore: neither the chip nor the history stack advances.
+  await act(() => {
+    editor.commands.undo();
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("Check");
+  expect(undoDepth(editor.state)).toBe(1);
+  expect(applied).not.toHaveBeenCalled();
+
+  // Once space is available, the same undo event restores both chip and retained File.
+  allowRestore = true;
+  await act(() => {
+    editor.commands.undo();
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(initialPrompt);
+  expect(applied).toHaveBeenCalledWith([{ kind: "add", targetKey: "draft-1", images: [retained] }]);
+});
+
+it("invalidates undone shelf-only image history when draftKey changes between targets", async () => {
+  const retained = {
+    id: "img-q1",
+    name: "question.png",
+    mimeType: "image/png",
+    sizeBytes: 3,
+    file: new File(["png"], "question.png", { type: "image/png" }),
+    index: 0,
+  };
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+  const applied = vi.fn();
+
+  function Harness({ targetKey }: { targetKey: string }) {
+    const [prompt, setPrompt] = useState({ value: "", cursor: 0 });
+    return (
+      <ComposerPromptEditor
+        draftKey={targetKey}
+        editorRef={editorRef}
+        value={prompt.value}
+        cursor={prompt.cursor}
+        richTextEnabled
+        contextRecords={new Map()}
+        skills={[]}
+        disabled={false}
+        placeholder=""
+        onChange={(nextValue, nextCursor) => setPrompt({ value: nextValue, cursor: nextCursor })}
+        onImageHistoryChange={applied}
+        onPaste={() => {}}
+      />
+    );
+  }
+
+  await using screen = await render(<Harness targetKey="question-1" />);
+  let editor = editorIn(screen.container);
+  await act(() => {
+    editor.view.focus();
+    expect(editorRef.current?.recordImageHistory("add", "question-1", [retained])).toBe(true);
+    editor.commands.undo();
+  });
+  expect(applied).toHaveBeenLastCalledWith([
+    { kind: "remove", targetKey: "question-1", images: [retained] },
+  ]);
+  expect(redoDepth(editor.state)).toBe(1);
+
+  applied.mockClear();
+  await screen.rerender(<Harness targetKey="question-2" />);
+  await screen.rerender(<Harness targetKey="question-1" />);
+  editor = editorIn(screen.container);
+  expect(undoDepth(editor.state)).toBe(0);
+  expect(redoDepth(editor.state)).toBe(0);
+
+  await act(() => {
+    editor.view.focus();
+    editor.commands.redo();
+  });
+  expect(applied).not.toHaveBeenCalled();
+});
+
+it("reuses the editor instance when historyResetKey bumps and ignores image history for another target", async () => {
+  const retained = {
+    id: "img-a",
+    name: "a.png",
+    mimeType: "image/png",
+    sizeBytes: 3,
+    file: new File(["png"], "a.png", { type: "image/png" }),
+    index: 0,
+  };
+  const chipRef = { kind: "image" as const, contextId: "image_img-a", label: "a.png" };
+  const editorRef = createRef<ComposerPromptEditorHandle>();
+
+  function Harness({
+    targetKey,
+    historyResetKey,
+    value,
+  }: {
+    targetKey: string;
+    historyResetKey: number;
+    value: string;
+  }) {
+    return (
+      <ComposerPromptEditor
+        draftKey={targetKey}
+        historyResetKey={historyResetKey}
+        editorRef={editorRef}
+        value={value}
+        cursor={value.length}
+        richTextEnabled
+        contextRecords={new Map()}
+        skills={[]}
+        disabled={false}
+        placeholder=""
+        onChange={() => {}}
+        onPaste={() => {}}
+      />
+    );
+  }
+
+  await using screen = await render(
+    <Harness targetKey="draft-a" historyResetKey={0} value="hello" />,
+  );
+  const initialEditor = editorIn(screen.container);
+  await act(() => {
+    initialEditor.view.focus();
+    expect(editorRef.current?.recordImageHistory("add", "draft-a", [retained])).toBe(true);
+  });
+  expect(undoDepth(initialEditor.state)).toBe(1);
+
+  await screen.rerender(<Harness targetKey="draft-a" historyResetKey={1} value="" />);
+  expect(editorIn(screen.container)).toBe(initialEditor);
+  expect(undoDepth(initialEditor.state)).toBe(0);
+
+  await screen.rerender(<Harness targetKey="question-0" historyResetKey={1} value="answer" />);
+  expect(editorIn(screen.container)).toBe(initialEditor);
+  await act(() => {
+    expect(editorRef.current?.removeImageWithHistory("draft-a", retained, chipRef.contextId)).toBe(
+      false,
+    );
+    expect(editorRef.current?.recordImageHistory("add", "draft-a", [retained])).toBe(false);
+  });
+  expect(serializeEditorDoc(initialEditor.state.doc).value).toBe("answer");
+  expect(undoDepth(initialEditor.state)).toBe(0);
+});

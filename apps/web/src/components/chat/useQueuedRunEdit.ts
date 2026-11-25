@@ -543,7 +543,7 @@ export function useQueuedRunEdit(input: {
     releaseDraftAttachments(newAttachments);
     promptRef.current = "";
     clearEditDraft(editing.runId);
-    composerRef.current?.resetCursorState();
+    composerRef.current?.resetCursorState({ clearHistory: true });
     focusComposerSoon();
     // A plain submit means "Update queued message"; only the opposite-action shortcut or
     // modifier-click asks to steer, as it does for a new follow-up.

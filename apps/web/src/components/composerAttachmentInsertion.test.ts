@@ -1,11 +1,20 @@
 import { Editor, Node, type Extensions, type JSONContent } from "@tiptap/core";
+import { isHistoryTransaction } from "@tiptap/pm/history";
 import StarterKit from "@tiptap/starter-kit";
 import { TextSelection } from "@tiptap/pm/state";
 import { expect, it, vi } from "vite-plus/test";
 
+import {
+  extractComposerImageHistoryChanges,
+  type ComposerImageHistoryChange,
+  type RetainedComposerImage,
+} from "../composer-image-history";
 import { serializeEditorDoc } from "../composer-rich-text-doc";
 import { formatInlineContextReference } from "../lib/composerContextReferences";
-import { captureComposerAttachmentInsertion } from "./composerAttachmentInsertion";
+import {
+  captureComposerAttachmentInsertion,
+  insertComposerContextReferencesInEditor,
+} from "./composerAttachmentInsertion";
 import { ComposerMarkdownSourceExtension } from "../composer-markdown-source";
 
 const image = { kind: "image", contextId: "image_pending", label: "picture.png" } as const;
@@ -177,3 +186,118 @@ it.each([
     }
   },
 );
+
+it("preserves image history payloads through detached Markdown source replay across undo and redo", () => {
+  const editor = createEditor(
+    {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "bold", marks: [{ type: "bold" }] },
+            { type: "text", text: " after" },
+          ],
+        },
+      ],
+    },
+    [ComposerMarkdownSourceExtension],
+  );
+  const historyEvents: ComposerImageHistoryChange[][] = [];
+  editor.on("transaction", ({ transaction, appendedTransactions }) => {
+    if (!isHistoryTransaction(transaction)) return;
+    const changes = extractComposerImageHistoryChanges([transaction, ...appendedTransactions]);
+    if (changes.length > 0) historyEvents.push(changes);
+  });
+  try {
+    using _alive = vi.spyOn(editor, "isDestroyed", "get").mockReturnValue(false);
+    // Trigger an edit and undo so ComposerMarkdownSourceExtension enters its detached state.
+    editor.view.dispatch(editor.state.tr.insertText("!", editor.state.doc.content.size - 1));
+    expect(editor.commands.undo()).toBe(true);
+    // Place the caret inside bold text so detached Markdown source (`**bold**`) is revealed.
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 3)));
+    expect(editor.state.doc.textContent).toContain("**bold**");
+
+    const file = new File(["img"], "picture.png", { type: "image/png" });
+    const retained: RetainedComposerImage = {
+      id: "pending",
+      name: "picture.png",
+      mimeType: "image/png",
+      sizeBytes: file.size,
+      file,
+      index: 0,
+    };
+    const insertion = captureComposerAttachmentInsertion(editor);
+    expect(
+      insertion.insert([image], { imageHistory: { targetKey: "draft-1", images: [retained] } }),
+    ).toBe(true);
+    expect(serializeEditorDoc(editor.state.doc).value).toContain(
+      formatInlineContextReference(image),
+    );
+
+    expect(editor.commands.undo()).toBe(true);
+    expect(serializeEditorDoc(editor.state.doc).value).not.toContain(
+      formatInlineContextReference(image),
+    );
+    expect(historyEvents).toEqual([[{ kind: "remove", targetKey: "draft-1", images: [retained] }]]);
+
+    expect(editor.commands.redo()).toBe(true);
+    expect(serializeEditorDoc(editor.state.doc).value).toContain(
+      formatInlineContextReference(image),
+    );
+    expect(historyEvents[1]).toEqual([{ kind: "add", targetKey: "draft-1", images: [retained] }]);
+    expect(historyEvents[1]?.[0]?.images[0]?.file).toBe(file);
+  } finally {
+    editor.destroy();
+  }
+});
+
+it("does not delete a later text selection when fallback insertion runs after capture loss", () => {
+  const editor = createEditor({
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: "original text" }] }],
+  });
+  try {
+    using _alive = vi.spyOn(editor, "isDestroyed", "get").mockReturnValue(false);
+    editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 5)));
+    const insertion = captureComposerAttachmentInsertion(editor);
+    editor.commands.setContent(
+      {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "new text" }] }],
+      },
+      { emitUpdate: false },
+    );
+    // Select "new" after the original paragraph was replaced.
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 1, 4)),
+    );
+    expect(insertion.insert([image])).toBe(false);
+
+    const file = new File(["img"], "picture.png", { type: "image/png" });
+    expect(
+      insertComposerContextReferencesInEditor(editor, [image], {
+        imageHistory: {
+          targetKey: "draft-1",
+          images: [
+            {
+              id: "pending",
+              name: "picture.png",
+              mimeType: "image/png",
+              sizeBytes: file.size,
+              file,
+              index: 0,
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(
+      `${formatInlineContextReference(image)} new text`,
+    );
+    expect(editor.commands.undo()).toBe(true);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("new text");
+  } finally {
+    editor.destroy();
+  }
+});

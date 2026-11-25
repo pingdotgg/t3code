@@ -144,7 +144,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
       clearComposerDraftContent(composerDraftTarget);
       if (currentRouteThreadKeyRef.current === routeThreadKey) {
         promptRef.current = "";
-        composerRef.current?.resetCursorState();
+        composerRef.current?.resetCursorState({ clearHistory: true });
       }
       clearedDraft = true;
       const clearedDraftSnapshot = useComposerDraftStore
