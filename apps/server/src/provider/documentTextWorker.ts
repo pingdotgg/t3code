@@ -953,11 +953,11 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
   }
 }
 
-// A nested list starts its own line unless its parent item's text already ended one.
+// Undefined when the text holds only spaces and tabs, so the line state carries over.
 function endsMidLine(text: string) {
   let index = text.length - 1;
   while (text[index] === " " || text[index] === "\t") index--;
-  return index >= 0 && text[index] !== "\n";
+  return index < 0 ? undefined : text[index] !== "\n";
 }
 
 export async function extractDocumentText(path: string, extension: string): Promise<string> {
@@ -966,6 +966,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let cellDepth = 0;
   let started = false;
   let space = false;
+  let midLine = false;
   let truncated = false;
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
@@ -983,7 +984,8 @@ export async function extractDocumentText(path: string, extension: string): Prom
         continue;
       }
       if (part === LINE_START) {
-        if (!endsMidLine(result)) continue;
+        // A nested list starts its own line unless its parent item's text already ended one.
+        if (!midLine) continue;
         part = "\n";
       }
       if (typeof part !== "string" && started) continue;
@@ -996,9 +998,13 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (trimmed) {
           result += (started && (space || value.startsWith(" ")) ? " " : "") + trimmed;
           started = true;
+          midLine = true;
         }
         space = value.endsWith(" ") || (!value && space);
-      } else result += value;
+      } else {
+        result += value;
+        midLine = endsMidLine(value) ?? midLine;
+      }
       if (remaining === 0) throw new Truncation("Output budget");
     }
   } catch (error) {
