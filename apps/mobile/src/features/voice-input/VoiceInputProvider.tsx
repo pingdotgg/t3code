@@ -18,9 +18,9 @@ import {
 } from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import {
-  deviceSpeechCatalog,
   deviceSpeechModelStatesAtom,
   deviceSpeechTranscriber,
+  findRunnableDeviceSpeechModel,
 } from "../../native/deviceSpeechModels";
 import { createVoiceRecorder } from "../../native/voiceRecorder";
 import { m } from "../../i18n/messages";
@@ -87,6 +87,7 @@ export const voiceInputAvailableAtom = Atom.make((get) => {
     const id = get(iosVoiceModelAtom);
     if (id === undefined) return false;
     if (id !== null) {
+      if (!findRunnableDeviceSpeechModel(id)) return false;
       const catalog = get(deviceSpeechModelStatesAtom);
       return catalog.kind === "ready" && catalog.states[id]?.kind === "ready";
     }
@@ -108,7 +109,7 @@ export const voiceInputAtom = Atom.make((get) => {
   };
   const iosTranscriber = (id: string | null) => {
     if (id === null) return systemTranscriber();
-    const model = deviceSpeechCatalog.find((entry) => entry.id === id);
+    const model = findRunnableDeviceSpeechModel(id);
     return model ? deviceSpeechTranscriber(model) : null;
   };
   const audioLevels = makeMutable<ReadonlyArray<number>>(

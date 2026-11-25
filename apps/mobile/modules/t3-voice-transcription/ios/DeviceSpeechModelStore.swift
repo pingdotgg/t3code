@@ -49,7 +49,7 @@ actor DeviceSpeechModelStore {
   private var current: Snapshot { Snapshot(states: states, revision: revision) }
 
   private func model(_ id: String) throws -> DeviceSpeechModel {
-    guard let model = DeviceSpeechCatalog.availableModels.first(where: { $0.id == id }) else {
+    guard let model = DeviceSpeechCatalog.models.first(where: { $0.id == id }) else {
       throw CocoaError(.featureUnsupported)
     }
     return model
@@ -58,7 +58,7 @@ actor DeviceSpeechModelStore {
   func snapshot(publish: Publish) -> Snapshot {
     prepareStorage()
     let previous = states
-    for model in DeviceSpeechCatalog.availableModels where model.id != download?.modelId {
+    for model in DeviceSpeechCatalog.models where model.id != download?.modelId {
       let ready = Self.isCompleteFile(modelURL(model), size: model.size)
       if ready || states[model.id] != .failed {
         states[model.id] = ready ? .ready : .missing
@@ -73,6 +73,7 @@ actor DeviceSpeechModelStore {
 
   func startDownload(_ modelId: String, publish: @escaping Publish) throws {
     let model = try model(modelId)
+    guard model.canRun else { throw POSIXError(.ENOMEM) }
     guard download == nil, snapshot(publish: publish).states[modelId] != .ready else { return }
     setState(.downloading(percent: 0), for: modelId, publish: publish)
     let revision = revision
@@ -129,7 +130,7 @@ actor DeviceSpeechModelStore {
     guard Self.isCompleteFile(modelURL(model), size: model.size) else {
       throw CocoaError(.fileNoSuchFile)
     }
-    guard model.fits(availableMemory: DeviceSpeechCatalog.availableMemory) else {
+    guard model.canRun, model.fits(availableMemory: DeviceSpeechCatalog.availableMemory) else {
       throw POSIXError(.ENOMEM)
     }
 

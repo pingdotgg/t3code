@@ -20,7 +20,7 @@ export function ListChoiceRow(
     readonly selected: boolean;
     readonly separated?: boolean;
     readonly disabled?: boolean;
-    readonly onPress: () => void;
+    readonly onPress?: (() => void) | undefined;
   },
 ) {
   const rippleStyle = useResolveClassNames("bg-subtle-strong");

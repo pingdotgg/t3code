@@ -29,20 +29,24 @@ export function useDeviceVoiceModels() {
   const savePreferences = useAtomCommand(saveMobilePreferences);
   const actions = deviceSpeechModelActions;
 
-  const models = deviceSpeechCatalog.map((model): VoiceModel => {
-    const state = catalog.kind === "ready" ? catalog.states[model.id] : undefined;
-    return {
-      ...model,
-      active: activeId === model.id,
-      state:
-        state?.kind === "ready"
-          ? "installed"
-          : state?.kind === "missing" || !state
-            ? "downloadable"
-            : state.kind,
-      ...(state?.kind === "downloading" ? { downloaded: (model.size * state.percent) / 100 } : {}),
-    };
-  });
+  const models = deviceSpeechCatalog
+    .map((model): VoiceModel => {
+      const state = catalog.kind === "ready" ? catalog.states[model.id] : undefined;
+      return {
+        ...model,
+        active: activeId === model.id,
+        state:
+          state?.kind === "ready"
+            ? "installed"
+            : state?.kind === "missing" || !state
+              ? "downloadable"
+              : state.kind,
+        ...(state?.kind === "downloading"
+          ? { downloaded: (model.size * state.percent) / 100 }
+          : {}),
+      };
+    })
+    .filter((model) => model.canRun !== false || model.state === "installed");
 
   const select = async (id: string | null) => {
     if (id === activeId) return;
@@ -97,7 +101,10 @@ export function DeviceVoiceEngineSection() {
   } else if (pending?.state === "cancelling") {
     detail = gt("Cancelling download…");
   } else if (active?.state === "installed") {
-    detail = gt("Local model · {size}", { size: formatBytes(active.size) });
+    detail =
+      active.canRun === false
+        ? gt("Transcription unavailable")
+        : gt("Local model · {size}", { size: formatBytes(active.size) });
   } else if (!voice.models.some((model) => model.state === "installed")) {
     detail = gt("No model installed · Choose one to download");
   }

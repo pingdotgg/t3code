@@ -33,6 +33,7 @@ const Model = Schema.Struct({
   size: Schema.Int.check(Schema.isGreaterThan(0)),
   languages: Schema.Array(Schema.String),
   benchmark: EnvironmentSpeechModel.fields.benchmark,
+  canRun: Schema.optionalKey(Schema.Boolean),
 });
 type Model = typeof Model.Type;
 type CatalogState =
@@ -65,6 +66,9 @@ export const deviceSpeechCatalog = Option.getOrElse(
   Schema.decodeUnknownOption(Schema.Array(Model))(native?.getDeviceSpeechCatalog?.()),
   () => [],
 );
+
+export const findRunnableDeviceSpeechModel = (id: string) =>
+  deviceSpeechCatalog.find((model) => model.id === id && model.canRun !== false);
 
 export const deviceSpeechModelStatesAtom = Atom.make<CatalogState>((get) => {
   if (!native || deviceSpeechCatalog.length === 0) return { kind: "unavailable" };

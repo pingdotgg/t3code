@@ -17,6 +17,14 @@ const native = vi.hoisted(() => ({
       size: 269_751_136,
       languages: ["uk", "en"],
     },
+    {
+      id: "handy-computer/whisper-large-v3-gguf",
+      name: "Whisper Large v3",
+      description: "Multilingual dictation",
+      size: 1_575_200_000,
+      languages: ["uk", "en"],
+      canRun: false,
+    },
   ] as const,
   snapshot: vi.fn<() => Promise<unknown>>(),
   listen: vi.fn<(name: string, listener: (snapshot: unknown) => void) => { remove(): void }>(
@@ -91,7 +99,7 @@ const preferences = mobilePreferencesAtom as Atom.Writable<
   AsyncResult.AsyncResult<Preferences>,
   AsyncResult.AsyncResult<Preferences>
 >;
-const [parakeet, whisper] = native.models;
+const [parakeet, whisper, largeWhisper] = native.models;
 
 function modelSnapshot(revision: number, first: "ready" | "missing") {
   return {
@@ -248,6 +256,25 @@ it("keeps a removed selection unavailable until a different model or Apple Speec
     registry.set(preferences, AsyncResult.success({ deviceVoiceModelId: whisper.id }));
     expect(registry.get(voiceInputAvailableAtom)).toBe(true);
     registry.set(preferences, AsyncResult.success({ deviceVoiceModelId: null }));
+    expect(registry.get(voiceInputAvailableAtom)).toBe(true);
+  } finally {
+    registry.dispose();
+  }
+});
+
+it("keeps an installed model unavailable for dictation when it exceeds the memory budget", () => {
+  const registry = AtomRegistry.make();
+  native.snapshot.mockResolvedValue(modelSnapshot(1, "ready"));
+  registry.set(preferences, AsyncResult.success({ deviceVoiceModelId: largeWhisper.id }));
+  try {
+    registry.get(deviceSpeechModelStatesAtom);
+    native.listen.mock.lastCall?.[1]({
+      revision: 2,
+      states: { [largeWhisper.id]: { kind: "ready" }, [whisper.id]: { kind: "ready" } },
+    });
+    expect(registry.get(voiceInputAvailableAtom)).toBe(false);
+
+    registry.set(preferences, AsyncResult.success({ deviceVoiceModelId: whisper.id }));
     expect(registry.get(voiceInputAvailableAtom)).toBe(true);
   } finally {
     registry.dispose();

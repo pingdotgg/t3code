@@ -22,9 +22,12 @@ struct DeviceSpeechModel: Decodable, Sendable {
   let sha256: String
   let benchmark: Benchmark
 
+  var canRun: Bool { fits(availableMemory: DeviceSpeechCatalog.launchMemoryBudget) }
+
   var payload: [String: Any] {
     [
       "id": id, "name": name, "description": description, "languages": languages, "size": size,
+      "canRun": canRun,
       "benchmark": [
         "accuracy": benchmark.accuracy.mapValues { ["grade": $0.grade, "errorPercent": $0.errorPercent] },
         "secondsPer30s": ["accelerated": NSNull()],
@@ -55,10 +58,7 @@ enum DeviceSpeechCatalog {
     return catalog.models
   }()
 
-  static let availableModels = {
-    let budget = availableMemory
-    return models.filter { $0.fits(availableMemory: budget) }
-  }()
+  static let launchMemoryBudget = availableMemory
 
   static var availableMemory: Int {
     #if os(iOS) && !targetEnvironment(simulator)

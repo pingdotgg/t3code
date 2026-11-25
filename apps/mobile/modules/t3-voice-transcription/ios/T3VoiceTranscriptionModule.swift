@@ -46,7 +46,7 @@ public class T3VoiceTranscriptionModule: Module {
       try VoiceRecordingPCM.signed16(file: uri)
     }
 
-    Function("getDeviceSpeechCatalog") { DeviceSpeechCatalog.availableModels.map(\.payload) }
+    Function("getDeviceSpeechCatalog") { DeviceSpeechCatalog.models.map(\.payload) }
 
     AsyncFunction("getDeviceSpeechModelStates") { () async -> [String: Any] in
       await self.models.snapshot(publish: self.publishModelStates).payload

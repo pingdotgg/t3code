@@ -50,6 +50,7 @@ export type VoiceModel = Pick<
   | "linkedFrom"
 > & {
   readonly state: EnvironmentSpeechModel["state"] | "cancelling" | "failed";
+  readonly canRun?: boolean;
 };
 
 export type VoiceModelList = {
@@ -281,6 +282,7 @@ export function VoiceModelRow(props: {
   const disabled = !voice.canManage || voice.busy || voice.downloading;
   if (model.state === "installed") {
     const linked = Boolean(model.linkedFrom);
+    const canRun = model.canRun !== false;
     const actionLabel = linked ? gt("Unlink") : gt("Remove", { $context: "verb" });
     const accessibilityLabel = linked
       ? gt("Unlink {model}", { model: model.name })
@@ -293,9 +295,13 @@ export function VoiceModelRow(props: {
           : gt("Remove {model}?", { model: model.name }),
         message: linked
           ? gt("Your model file stays on disk.")
-          : model.active
-            ? gt("This model is selected for dictation. Download it again to use it after removal.")
-            : gt("Download the model again to use it for dictation."),
+          : !canRun
+            ? undefined
+            : model.active
+              ? gt(
+                  "This model is selected for dictation. Download it again to use it after removal.",
+                )
+              : gt("Download the model again to use it for dictation."),
         confirmText: actionLabel,
         destructive: !linked,
         onConfirm: () => voice.remove(model),
@@ -305,12 +311,12 @@ export function VoiceModelRow(props: {
       <ListChoiceRow
         leading={<InstalledModelGlyph linked={linked} />}
         label={model.name}
-        description={model.description}
+        description={canRun ? model.description : gt("Transcription unavailable")}
         meta={meta}
         selected={model.active}
         separated={separated}
         disabled={disabled}
-        onPress={() => voice.select(model)}
+        onPress={canRun ? () => voice.select(model) : undefined}
         accessibilityActions={
           disabled ? undefined : [{ name: "remove", label: accessibilityLabel }]
         }
