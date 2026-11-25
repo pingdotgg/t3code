@@ -17,10 +17,12 @@ import {
   type ServerLifecycleStreamReadyEvent,
   type ServerProviderWorkspaceSnapshot,
   ServerSelfUpdateError,
+  applyWorkflowRunsUpdate,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
   shouldRecommendDatabaseCompaction,
   type UsageSummary,
+  type WorkflowRunsSnapshot,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -1468,9 +1470,19 @@ export function createServerEnvironmentAtoms<R, E>(
       ),
     );
   });
-  const workflowsLive = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+  const workflowsLive = createEnvironmentSubscriptionAtomFamily(runtime, {
     label: "environment-data:server:workflows:live",
-    tag: WS_METHODS.workflowsSubscribe,
+    // Asks for what changed after the first list; a server older than that sends whole lists.
+    subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.workflowsSubscribe>) =>
+      subscribe(WS_METHODS.workflowsSubscribe, { ...input, changes: true }).pipe(
+        Stream.mapAccum(
+          (): WorkflowRunsSnapshot | undefined => undefined,
+          (snapshot, update) => {
+            const next = applyWorkflowRunsUpdate(snapshot, update);
+            return [next, [next]] as const;
+          },
+        ),
+      ),
   });
   const liveWorkflowSnapshot = (environmentId: EnvironmentId) => {
     const live = workflowsLive({ environmentId, input: {} });
@@ -1654,6 +1666,11 @@ export function createServerEnvironmentAtoms<R, E>(
         return Atom.make((get) => workflowRunRefreshKey(snapshot(get), input.runId));
       },
       isFinal: (detail) => detail.run.endedAt !== null,
+    }),
+    // Read when an item's view opens: the live list holds only the newest runs of every subject.
+    workflowRunsAbout: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:workflows:about",
+      tag: WS_METHODS.workflowsAbout,
     }),
     // Read again whenever the server loads the files or finds them wrong, which `revision` says.
     workflowDefinition: createEnvironmentRpcQueryAtomFamily(runtime, {
