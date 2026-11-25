@@ -11,6 +11,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
 import {
+  antigravitySessionMatchesWorkspace,
   removeAntigravitySessionFiles,
   retireAntigravityRuntimeTempDirs,
 } from "./AntigravitySessionFiles.ts";
@@ -219,6 +220,110 @@ it.layer(NodeServices.layer)("removeAntigravitySessionFiles", (it) => {
         expect(yield* fs.exists(`${wrongId.base}.db`)).toBe(true);
         expect(yield* fs.exists(`${corrupt.base}.db`)).toBe(true);
       }),
+  );
+});
+
+it.layer(NodeServices.layer)("antigravitySessionMatchesWorkspace", (it) => {
+  it.effect("matches a session DB against its workspace and rejects a handoff worktree", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const originalCwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-orig-" });
+      const worktreeCwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-wt-" });
+      const realOriginal = yield* fs.realPath(originalCwd);
+      const fixture = yield* makeNativeSessionFixture({
+        workspacePaths: [realOriginal],
+      });
+
+      expect(
+        yield* antigravitySessionMatchesWorkspace({
+          profileDirectory: fixture.profileDirectory,
+          sessionId: fixture.sessionId,
+          cwd: originalCwd,
+        }),
+      ).toBe(true);
+      expect(
+        yield* antigravitySessionMatchesWorkspace({
+          profileDirectory: fixture.profileDirectory,
+          sessionId: fixture.sessionId,
+          cwd: worktreeCwd,
+        }),
+      ).toBe(false);
+    }),
+  );
+
+  it.effect("resolves symlinks when comparing workspace paths", () =>
+    Effect.gen(function* () {
+      if (!symlinksSupported) return;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-match-symlink-" });
+      const realDir = path.join(parent, "real");
+      const linkDir = path.join(parent, "link");
+      yield* fs.makeDirectory(realDir);
+      yield* fs.symlink(realDir, linkDir);
+      const fixture = yield* makeNativeSessionFixture({
+        workspacePaths: [yield* fs.realPath(realDir)],
+      });
+
+      expect(
+        yield* antigravitySessionMatchesWorkspace({
+          profileDirectory: fixture.profileDirectory,
+          sessionId: fixture.sessionId,
+          cwd: linkDir,
+        }),
+      ).toBe(true);
+    }),
+  );
+
+  it.effect("checks legacy .meta sidecars and fails open when metadata is missing or corrupt", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const originalCwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-meta-orig-" });
+      const worktreeCwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-meta-wt-" });
+      const fixture = yield* makeNativeSessionFixture({
+        workspacePaths: [originalCwd],
+        corruptBlob: true,
+      });
+
+      expect(
+        yield* antigravitySessionMatchesWorkspace({
+          profileDirectory: fixture.profileDirectory,
+          sessionId: fixture.sessionId,
+          cwd: worktreeCwd,
+        }),
+      ).toBe(true);
+      expect(
+        yield* antigravitySessionMatchesWorkspace({
+          profileDirectory: fixture.profileDirectory,
+          sessionId: OTHER_SESSION_ID,
+          cwd: worktreeCwd,
+        }),
+      ).toBe(true);
+
+      const metaPath = path.join(
+        fixture.profileDirectory,
+        "antigravity-acp",
+        "conversations",
+        `${OTHER_SESSION_ID}.meta`,
+      );
+      yield* fs.writeFileString(metaPath, JSON.stringify({ cwd: originalCwd }));
+
+      expect(
+        yield* antigravitySessionMatchesWorkspace({
+          profileDirectory: fixture.profileDirectory,
+          sessionId: OTHER_SESSION_ID,
+          cwd: originalCwd,
+        }),
+      ).toBe(true);
+      expect(
+        yield* antigravitySessionMatchesWorkspace({
+          profileDirectory: fixture.profileDirectory,
+          sessionId: OTHER_SESSION_ID,
+          cwd: worktreeCwd,
+        }),
+      ).toBe(false);
+    }),
   );
 });
 
