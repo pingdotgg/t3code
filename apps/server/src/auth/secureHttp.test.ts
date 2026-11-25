@@ -196,6 +196,20 @@ it.live("runs a sealed DPoP request through the real routes and refuses its repl
           expect(refused.status).toBe(401);
           expect(refused.headers["www-authenticate"]).toBe("DPoP");
 
+          // A route that fails answers inside the envelope, like one that succeeds.
+          const missing = yield* session.seal({
+            method: "GET",
+            url: `${ORIGIN}/api/no-such-route`,
+            headers: {},
+            body: new Uint8Array(0),
+          });
+          const missingAnswer = yield* sendSealed(missing.envelope);
+          expect(missingAnswer.status).toBe(200);
+          const notFound = yield* missing.open(
+            new Uint8Array(yield* Effect.promise(() => missingAnswer.arrayBuffer())),
+          );
+          expect(notFound.status).toBe(404);
+
           // The same kind of proof sent in plaintext is refused before its jti is spent.
           const plaintext = yield* send(
             new Request(ticketUrl, {

@@ -183,6 +183,9 @@ export const layer = HttpRouter.use(
       ).pipe(
         Effect.provideService(HttpServerRequest.HttpServerRequest, request),
         Effect.provideService(SealedHttpRequest, true),
+        // After a route failure `toHandled` hands over the error response and then fails with it.
+        // Left to propagate, the outer request would answer with that response in plaintext.
+        Effect.exit,
       );
       return answered;
     });
