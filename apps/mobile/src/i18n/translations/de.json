@@ -5697,5 +5697,11 @@
   "1a1beecff68a6e61": "Google-Konto bestätigen",
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
-  "201490988858b511": "zurückgezogen von {by}"
+  "201490988858b511": "zurückgezogen von {by}",
+  "098549c08bf45d23": "5 Std.",
+  "af4bf3c8cde6720c": "12 Std.",
+  "8f126b32d299db76": "180 T.",
+  "deb55022bc10a6d6": "Letzte 5 Stunden",
+  "65fef2cf613dd798": "Letzte 12 Stunden",
+  "fca7cf4e1ffd7cad": "Letzte 180 Tage"
 }

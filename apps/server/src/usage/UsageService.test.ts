@@ -1868,7 +1868,7 @@ describe("UsageService", () => {
   );
 
   it.effect.each([
-    { label: "default", retention: undefined, cutoff: CURSOR_NOW - 92 * 24 * HOUR_MS },
+    { label: "default", retention: undefined, cutoff: CURSOR_NOW - 182 * 24 * HOUR_MS },
     { label: "unlimited", retention: "unlimited" as const, cutoff: 0 },
     { label: "36500 days", retention: 36500, cutoff: 0 },
   ])(
@@ -3811,7 +3811,7 @@ describe("UsageService", () => {
   );
 
   it.effect.each([
-    { label: "the default 92 days", retention: undefined, expected: 1 },
+    { label: "the default 182 days", retention: undefined, expected: 1 },
     { label: "unlimited", retention: "unlimited" as const, expected: 15 },
   ])(
     "retains deleted transcripts according to $label across restart and settings changes",
@@ -3821,7 +3821,7 @@ describe("UsageService", () => {
         const now = Date.parse("2026-08-02T12:00:00Z");
         yield* TestClock.setTime(now);
         const window = { ...WINDOW, sinceDay: UsageDay.make("2024-01-01") };
-        const files = [92, 93, 180, 730].map((days, index) => ({
+        const files = [182, 183, 365, 730].map((days, index) => ({
           path: `${transcript}-${index}.jsonl`,
           timestamp: now - days * 86400000,
           content: claudeLine(index, 2 ** index).replace(

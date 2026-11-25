@@ -1120,7 +1120,18 @@ describe("Usage shortcuts", () => {
         platform: "Linux",
         context: { usagePageOpen: true },
       }),
-      "usage.period.day",
+      "usage.period.5h",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "&", code: "Digit7", ctrlKey: true, shiftKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        {
+          platform: "Linux",
+          context: { usagePageOpen: true },
+        },
+      ),
+      "usage.period.180d",
     );
     assert.isNull(
       resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {

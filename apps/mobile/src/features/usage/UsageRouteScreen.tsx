@@ -21,7 +21,8 @@ import {
   formatPercent,
   formatTokens,
   formatUsd,
-  makeWindow,
+  makeUsageWindow,
+  type UsageWindowId,
 } from "@t3tools/shared/usageFormat";
 import { formatUsageContractMismatch, usageSourceMessages } from "@t3tools/shared/usageFormatCopy";
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react-native";
@@ -58,26 +59,45 @@ const VIEW_OPTIONS = [
 
 const WINDOW_OPTIONS = [
   {
-    value: 1,
+    value: "5h",
+    label: msg("5h", { $context: "short label for the past 5 hours" }),
+    accessibilityLabel: msg("Past 5 hours"),
+  },
+  {
+    value: "12h",
+    label: msg("12h", { $context: "short label for the past 12 hours" }),
+    accessibilityLabel: msg("Past 12 hours"),
+  },
+  {
+    value: "24h",
     label: msg("24h", { $context: "short label for the past 24 hours" }),
     accessibilityLabel: msg("Past 24 hours"),
   },
   {
-    value: 7,
+    value: "7d",
     label: msg("7d", { $context: "short label for the past 7 days" }),
     accessibilityLabel: msg("Past 7 days"),
   },
   {
-    value: 30,
+    value: "30d",
     label: msg("30d", { $context: "short label for the past 30 days" }),
     accessibilityLabel: msg("Past 30 days"),
   },
   {
-    value: 90,
+    value: "90d",
     label: msg("90d", { $context: "short label for the past 90 days" }),
     accessibilityLabel: msg("Past 90 days"),
   },
-] as const;
+  {
+    value: "180d",
+    label: msg("180d", { $context: "short label for the past 180 days" }),
+    accessibilityLabel: msg("Past 180 days"),
+  },
+] as const satisfies readonly {
+  readonly value: UsageWindowId;
+  readonly label: string;
+  readonly accessibilityLabel: string;
+}[];
 
 const CHART_HEIGHT = 180;
 const WIDE_CHART_HEIGHT = 260;
@@ -121,12 +141,15 @@ function UsageScreen(props: {
   // A workspace pane knows its width in the render that resizes it; measuring lags a frame.
   const width = useWorkspaceSettledContentWidth() ?? measuredWidth;
   const wide = width >= WIDE_WIDTH;
-  const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
-    window: makeWindow(30),
+  const [windowSelection, setWindowSelection] = useState<{
+    readonly id: UsageWindowId;
+    readonly window: ReturnType<typeof makeUsageWindow>;
+  }>(() => ({
+    id: "30d",
+    window: makeUsageWindow("30d"),
   }));
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const { id: windowId, window } = windowSelection;
+  const isHourly = window.resolution === "hour";
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
@@ -149,10 +172,10 @@ function UsageScreen(props: {
 
   const days = enumerateDays(window.sinceDay, window.untilDay);
   const chartDays =
-    isPast24Hours && window.sinceTime !== undefined && window.untilTime !== undefined
+    isHourly && window.sinceTime !== undefined && window.untilTime !== undefined
       ? enumerateHourStarts(window.sinceTime, window.untilTime)
       : days;
-  const chartTotals: readonly DailyTotals[] = isPast24Hours
+  const chartTotals: readonly DailyTotals[] = isHourly
     ? merged.hourly.map((hour) => ({
         day: hour.hourStart,
         costUsd: hour.costUsd,
@@ -173,22 +196,22 @@ function UsageScreen(props: {
     },
     m,
   );
-  const selectWindow = (days: number) => {
+  const selectWindow = (id: UsageWindowId) => {
     setWindowSelection({
-      days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+      id,
+      window: makeUsageWindow(id),
     });
   };
   const refreshWindow = () => {
     if (refreshingRef.current) return;
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow = makeUsageWindow(windowId);
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||
       nextWindow.sinceTime !== window.sinceTime ||
       nextWindow.untilTime !== window.untilTime
     ) {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      setWindowSelection({ id: windowId, window: nextWindow });
     }
     refreshingRef.current = true;
     setRefreshingUsage(true);
@@ -205,7 +228,7 @@ function UsageScreen(props: {
     metric,
     sinceDay: window.sinceDay,
     untilDay: window.untilDay,
-    isPast24Hours,
+    isHourly,
     timeZone: window.timeZone,
   };
   const providers = <ProviderSection merged={merged} metric={metric} compact={wide} />;
@@ -274,10 +297,10 @@ function UsageScreen(props: {
                 ) : (
                   <SegmentedControl
                     options={windowOptions}
-                    selected={windowDays}
+                    selected={windowId}
                     onSelect={selectWindow}
                     size="compact"
-                    className="flex-1"
+                    className="flex-[2]"
                   />
                 )}
                 <SegmentedControl
@@ -314,7 +337,7 @@ function UsageScreen(props: {
                   {wide ? null : (
                     <SegmentedControl
                       options={windowOptions}
-                      selected={windowDays}
+                      selected={windowId}
                       onSelect={selectWindow}
                       size="compact"
                     />
@@ -372,7 +395,7 @@ function UsageScreen(props: {
                                 height={WIDE_CHART_HEIGHT}
                                 fill
                                 title={
-                                  isPast24Hours
+                                  isHourly
                                     ? metric === "cost"
                                       ? gt("Hourly cost")
                                       : gt("Hourly processed tokens")
@@ -391,7 +414,7 @@ function UsageScreen(props: {
                         )}
                         <TotalsSection
                           merged={merged}
-                          isPast24Hours={isPast24Hours}
+                          isHourly={isHourly}
                           columns={width >= 900 ? 6 : wide ? 3 : 2}
                         />
                         <CostSection merged={merged} wide={wide} />
@@ -456,7 +479,7 @@ function ChartCard(props: {
   readonly metric: UsageChartMetric;
   readonly sinceDay: string;
   readonly untilDay: string;
-  readonly isPast24Hours: boolean;
+  readonly isHourly: boolean;
   readonly timeZone: string;
   readonly height: number;
   /** Replaces the summary when it sits beside the chart. */
@@ -506,12 +529,12 @@ function ChartCard(props: {
       <View className="gap-2">
         <View className="flex-row items-center justify-between">
           <Text className="text-xs text-foreground-tertiary">
-            {props.isPast24Hours
+            {props.isHourly
               ? usageAxisHourLabel(props.days[0] ?? "", locale, props.timeZone)
               : usageAxisDayLabel(props.sinceDay, locale)}
           </Text>
           <Text className="text-xs text-foreground-tertiary">
-            {props.isPast24Hours
+            {props.isHourly
               ? usageAxisHourLabel(props.days[props.days.length - 1] ?? "", locale, props.timeZone)
               : usageAxisDayLabel(props.untilDay, locale)}
           </Text>
@@ -640,12 +663,12 @@ function ProviderSection(props: {
 
 function TotalsSection(props: {
   readonly merged: MergedUsage;
-  readonly isPast24Hours: boolean;
+  readonly isHourly: boolean;
   readonly columns: number;
 }) {
   const { merged } = props;
   const gt = useGT();
-  const activePeriods = (props.isPast24Hours ? merged.hourly : merged.daily).filter(
+  const activePeriods = (props.isHourly ? merged.hourly : merged.daily).filter(
     (period) => period.totalTokens > 0,
   ).length;
   const periodAverage = activePeriods === 0 ? 0 : merged.totalTokens / activePeriods;
@@ -660,7 +683,7 @@ function TotalsSection(props: {
           label={gt("Processed tokens")}
           value={formatTokens(merged.totalTokens)}
           detail={
-            props.isPast24Hours
+            props.isHourly
               ? gt("{tokens} per active hour", { tokens: formatTokens(periodAverage) })
               : gt("{tokens} per active day", { tokens: formatTokens(periodAverage) })
           }

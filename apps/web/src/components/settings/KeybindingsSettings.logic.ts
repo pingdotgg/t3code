@@ -522,10 +522,13 @@ const USAGE_COMMAND_LABELS: Record<
   "usage.cost": msg("Usage: Cost"),
   "usage.tokens": msg("Usage: Tokens"),
   "usage.limits": msg("Usage: Limits"),
+  "usage.period.5h": msg("Usage: Period: Past 5h"),
+  "usage.period.12h": msg("Usage: Period: Past 12h"),
   "usage.period.day": msg("Usage: Period: Past 24h"),
   "usage.period.week": msg("Usage: Period: 7 days"),
   "usage.period.month": msg("Usage: Period: 30 days"),
   "usage.period.quarter": msg("Usage: Period: 90 days"),
+  "usage.period.180d": msg("Usage: Period: 180 days"),
 };
 
 const LATE_COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {

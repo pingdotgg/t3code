@@ -12451,10 +12451,6 @@
   "b6be43c36bab124c": "Actualiza el servidor para asignar modelos",
   "1eee306da7eb0382": "No se pudo guardar. Inténtalo de nuevo.",
   "c8fa587fc0be1938": "Límites",
-  "14955bff9f2f90cd": "Últimas 24 h",
-  "2cddd6095abc734a": "7 días",
-  "53493056306708cf": "30 días",
-  "c719359d18d37ad3": "90 días",
   "0bd950151ddc6407": "¿Salir sin guardar? Se perderán tus cambios en este archivo.",
   "c0ba3f6756b09f30": "Cambios sin guardar",
   "6914e22d357f0ad6": "Guardado y en ejecución",
@@ -12975,5 +12971,15 @@
   "201490988858b511": "retirada por {by}",
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
-  "92e129bf413a1220": "retirada"
+  "92e129bf413a1220": "retirada",
+  "d7402c42567e2624": "Uso: periodo: últimas 5 h",
+  "8814a8e6b5abeae8": "Uso: periodo: últimas 12 h",
+  "689018977cd8dde9": "Uso: periodo: 180 días",
+  "098549c08bf45d23": "5 h",
+  "af4bf3c8cde6720c": "12 h",
+  "e4d8f24f51cb20b2": "24 h",
+  "0844acc394bc9316": "7 d",
+  "cc0963671e0f7d45": "30 d",
+  "1fffffb1a1de7b75": "90 d",
+  "8f126b32d299db76": "180 d"
 }
