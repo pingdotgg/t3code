@@ -558,10 +558,9 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
 
       assert.isTrue(status.hasWorkingTreeChanges);
-      assert.deepStrictEqual(
-        status.workingTree.files.map((file) => file.path),
-        ["asset.txt"],
-      );
+      assert.deepStrictEqual(status.workingTree.files, [
+        { path: "asset.txt", insertions: 1, deletions: 1 },
+      ]);
     }).pipe(Effect.provide(layerMountInfoTest(wslMountInfo("/mnt/c")))),
 );
 
