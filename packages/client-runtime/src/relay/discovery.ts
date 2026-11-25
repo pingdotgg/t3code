@@ -200,8 +200,13 @@ export const make = Effect.fn("RelayEnvironmentDiscovery.make")(function* () {
       } else {
         yield* clearOfflineReport(environment.environmentId);
       }
+      // The relay list carries the label stored at link time; the signed descriptor is current.
+      const label = result.success.descriptor?.label;
       yield* updateEnvironment(generation, environment.environmentId, (current) => ({
         ...current,
+        ...(label === undefined || label === current.environment.label
+          ? {}
+          : { environment: { ...current.environment, label } }),
         availability: result.success.status,
         status: Option.some(result.success),
         error: Option.none(),

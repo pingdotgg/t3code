@@ -109,6 +109,7 @@ function makeEnvironmentLinks(
     updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
     setHoldWebhooksWhileOffline: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
+    updateLabel: () => Effect.die("unexpected label update"),
     ...overrides,
   };
 }

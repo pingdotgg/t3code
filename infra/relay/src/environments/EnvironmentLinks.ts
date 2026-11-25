@@ -155,6 +155,12 @@ export class EnvironmentLinks extends Context.Service<
       readonly userId: string;
       readonly environmentId: string;
     }) => Effect.Effect<boolean, EnvironmentLinkRevokePersistenceError>;
+    readonly updateLabel: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly label: string;
+    }) => Effect.Effect<void, EnvironmentLinkEnvironmentLookupPersistenceError>;
   }
 >()("t3code-relay/environments/EnvironmentLinks") {}
 
@@ -531,6 +537,33 @@ const make = Effect.gen(function* () {
           ),
         );
       return rows.length > 0;
+    }),
+
+    updateLabel: Effect.fn("relay.environment_links.update_label")(function* (input) {
+      yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
+      yield* db
+        .update(relayEnvironmentLinks)
+        .set({
+          environmentLabel: input.label,
+          updatedAt: DateTime.formatIso(yield* DateTime.now),
+        })
+        .where(
+          and(
+            eq(relayEnvironmentLinks.userId, input.userId),
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+            isNull(relayEnvironmentLinks.revokedAt),
+          ),
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentLinkEnvironmentLookupPersistenceError({
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
     }),
   });
 });

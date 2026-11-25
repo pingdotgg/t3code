@@ -138,6 +138,7 @@ function layerTest(input?: {
             Effect.die("unexpected Live Activity preference update"),
           setHoldWebhooksWhileOffline: () => Effect.void,
           revokeForUser: () => Effect.succeed(false),
+          updateLabel: () => Effect.die("unexpected label update"),
         }),
         Layer.succeed(EnvironmentCredentials.EnvironmentCredentials, {
           create: () => Effect.succeed("t3env_credential_secret"),

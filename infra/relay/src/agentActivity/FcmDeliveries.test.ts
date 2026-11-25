@@ -174,6 +174,7 @@ function harness() {
       updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
       setHoldWebhooksWhileOffline: () => Effect.void,
       revokeForUser: () => Effect.succeed(false),
+      updateLabel: () => Effect.die("unexpected label update"),
       getForUser: (input) =>
         Effect.sync(() =>
           current.linked && !current.revokedEnvironments.includes(input.environmentId)

@@ -553,6 +553,24 @@ const make = Effect.gen(function* () {
           operation: "status",
         });
       }
+      // The label is stored at link time; a signed health response is the environment's current name.
+      if (decoded.descriptor.label !== link.label) {
+        yield* links
+          .updateLabel({
+            userId: input.userId,
+            environmentId: link.environmentId,
+            environmentPublicKey: link.environmentPublicKey,
+            label: decoded.descriptor.label,
+          })
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("Failed to update environment link label", {
+                environmentId: link.environmentId,
+                error: error.message,
+              }),
+            ),
+          );
+      }
       return {
         environmentId: link.environmentId,
         endpoint,

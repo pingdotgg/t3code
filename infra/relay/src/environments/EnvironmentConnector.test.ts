@@ -232,6 +232,7 @@ function makeLinks(
     updateLiveActivityPreference: () => Effect.die("unexpected Live Activity preference update"),
     setHoldWebhooksWhileOffline: () => Effect.void,
     revokeForUser: () => Effect.succeed(false),
+    updateLabel: () => Effect.void,
   };
 }
 
@@ -274,6 +275,37 @@ describe("EnvironmentConnector", () => {
         },
       });
     }).pipe(Effect.provide(layerConnectorTest(execute)));
+  });
+
+  it.effect("stores the label from a signed health response when the environment renamed", () => {
+    const updates: Array<{ readonly label: string; readonly environmentPublicKey: string }> = [];
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() =>
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json(signHealthResponse(decodeHealthRequestBody(requestBodyText(request))), {
+            status: 200,
+          }),
+        ),
+      );
+    const links = {
+      ...makeLinks({ label: "DESKTOP-PC" }),
+      updateLabel: (input: { readonly label: string; readonly environmentPublicKey: string }) =>
+        Effect.sync(() => {
+          updates.push(input);
+        }),
+    };
+
+    return Effect.gen(function* () {
+      const connector = yield* EnvironmentConnector.EnvironmentConnector;
+      yield* connector.status({ userId: "user_123", environmentId: "env-connector-test" });
+      expect(updates).toMatchObject([
+        {
+          label: "Connector Test Environment",
+          environmentPublicKey: environmentKeyPair.publicKey,
+        },
+      ]);
+    }).pipe(Effect.provide(layerConnectorTest(execute, { links })));
   });
 
   it.effect("rejects manual endpoints before sending a health request", () => {

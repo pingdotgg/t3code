@@ -542,6 +542,7 @@ function layerRelayUnlinkTest(input?: {
           Effect.die("unexpected Live Activity preference update"),
         setHoldWebhooksWhileOffline: () => Effect.die("unused setHoldWebhooksWhileOffline"),
         revokeForUser: input?.revokeForUser ?? (() => Effect.succeed(false)),
+        updateLabel: () => Effect.die("unexpected label update"),
       }),
     ),
     Layer.succeed(

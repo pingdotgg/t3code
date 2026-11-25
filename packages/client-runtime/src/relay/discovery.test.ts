@@ -286,6 +286,42 @@ describe("RelayEnvironmentDiscovery", () => {
     }),
   );
 
+  it.effect(
+    "names an environment by its signed descriptor instead of the label stored at link",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Effect.gen(function* () {
+          const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+          const [renamed, unchanged] = environments;
+          const requests = yield* Ref.get(harness.statusRequests);
+          yield* Deferred.succeed(requests.get(renamed!.environmentId)!, {
+            ...status(renamed!, "online"),
+            descriptor: {
+              environmentId: renamed!.environmentId,
+              label: "DESKTOP-PC (alice)",
+              platform: { os: "windows", arch: "x64" },
+              serverVersion: "0.0.0-test",
+              capabilities: { repositoryIdentity: true },
+            },
+          });
+          yield* Deferred.succeed(
+            requests.get(unchanged!.environmentId)!,
+            status(unchanged!, "offline"),
+          );
+          yield* discovery.refresh;
+
+          const { environments: discovered } = yield* SubscriptionRef.get(discovery.state);
+          expect(discovered.get(renamed!.environmentId)?.environment.label).toBe(
+            "DESKTOP-PC (alice)",
+          );
+          expect(discovered.get(unchanged!.environmentId)?.environment.label).toBe(
+            "Environment Two",
+          );
+        }).pipe(Effect.provide(harness.layer));
+      }),
+  );
+
   it.effect("reports an environment as unregistered only once the relay list has loaded", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
