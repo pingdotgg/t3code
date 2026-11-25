@@ -111,12 +111,18 @@ function PairingForm({
     setOwnAttempt(true);
   };
 
-  const handleHostChange = (value: string) => {
+  const splitPairingAddress = (value: string) => {
     const pairing = parsePairingUrl(value);
-    if (pairing.code) {
-      setHostInput(pairing.host);
-      setCodeInput(pairing.code);
-    } else {
+    if (!pairing.code) return null;
+    setHostInput(pairing.host);
+    setCodeInput(pairing.code);
+    return pairing;
+  };
+
+  const handleHostChange = (value: string) => {
+    // React Native doesn't identify paste in onChangeText. Split bulk inserts right away
+    // and let single-character edits finish before parsing the address.
+    if (!insertsMultipleCharacters(hostInput, value) || !splitPairingAddress(value)) {
       setHostInput(value);
     }
     clearError();
@@ -174,7 +180,8 @@ function PairingForm({
   };
 
   const handleSubmit = async () => {
-    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+    const pairing = splitPairingAddress(hostInput);
+    const pairingUrl = buildPairingUrl(pairing?.host ?? hostInput, pairing?.code ?? codeInput);
     setOwnAttempt(true);
     setSubmitError(null);
     setIsSubmitting(true);
@@ -258,6 +265,7 @@ function PairingForm({
                 placeholder="192.168.1.100:3773"
                 value={hostInput}
                 onChangeText={handleHostChange}
+                onEndEditing={() => splitPairingAddress(hostInput)}
               />
               <View className="ml-4 border-t border-border-subtle" />
               <PairingInputRow
@@ -425,6 +433,23 @@ function T3ConnectSection() {
       )}
     </View>
   );
+}
+
+function insertsMultipleCharacters(previous: string, next: string) {
+  let start = 0;
+  while (start < next.length && previous[start] === next[start]) start++;
+
+  let previousEnd = previous.length;
+  let nextEnd = next.length;
+  while (
+    previousEnd > start &&
+    nextEnd > start &&
+    previous[previousEnd - 1] === next[nextEnd - 1]
+  ) {
+    previousEnd--;
+    nextEnd--;
+  }
+  return nextEnd - start > 1;
 }
 
 function PairingInputRow({
