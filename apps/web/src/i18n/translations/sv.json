@@ -4123,6 +4123,8 @@
   "ac7416afe98ba5f8": "Terminalutdrag, {label}",
   "bf04d61dc50685dc": "Rad {lineStart}",
   "000e3bef072f07c8": "Rader {lineStart}–{lineEnd}",
+  "f3c70064a22a0c76": "{terminalLabel} rad {lineStart}",
+  "8ba6febaabeb6f14": "{terminalLabel} rader {lineStart}–{lineEnd}",
   "b3336a0e9a6e3fba": "Inspelad terminalutdata",
   "8d24730972ce4fd3": "Terminalutdrag, {label}, utgånget",
   "dd8f1439c88ef92b": "Terminalkontexten har gått ut. Ta bort och lägg till {label} igen för att ta med den i ditt meddelande.",
