@@ -3493,7 +3493,9 @@ describe("OrchestratorMcpService provider resolution", () => {
       const pi = ProviderInstanceId.make("pi-bedrock");
       const claude = ProviderInstanceId.make("claude-local");
       const agy = antigravityInstanceId;
-      const piBackup = ProviderInstanceId.make("pi-backup");
+      const piReviewer = ProviderInstanceId.make("pi-reviewer");
+      const piDisabled = ProviderInstanceId.make("pi-disabled");
+      const missingPi = ProviderInstanceId.make("missing-pi");
       const piModel = "amazon-bedrock/openai-test:stable";
       const cwd = "/repo/caller-worktree";
       const providerByVendor = { openai: pi, anthropic: claude, google: agy };
@@ -3508,7 +3510,12 @@ describe("OrchestratorMcpService provider resolution", () => {
         profiles: {
           worker,
           restricted: { ...worker, deniedSkills: ["private:skill"] },
-          reviewer: { model: worker.model, checkout: "shared", deniedSkills: [] },
+          reviewer: {
+            model: "openai:review-model",
+            providerInstanceId: piReviewer,
+            checkout: "shared",
+            deniedSkills: [],
+          },
           google: { ...worker, model: "google:gemini-test", deniedSkills: ["private:skill"] },
         },
       } satisfies DelegationSettings;
@@ -3560,9 +3567,14 @@ describe("OrchestratorMcpService provider resolution", () => {
           models: models("gemini-test", "live-thinking"),
         },
         {
-          ...providerSnapshot({ instanceId: piBackup, driver: ProviderDriverKind.make("pi") }),
-          models: models("backup-model", "thinking"),
+          ...providerSnapshot({ instanceId: piReviewer, driver: ProviderDriverKind.make("pi") }),
+          models: models("review-model", "thinking", ["review-alias"]),
         },
+        providerSnapshot({
+          instanceId: piDisabled,
+          driver: ProviderDriverKind.make("pi"),
+          enabled: false,
+        }),
       ];
       const inheritedSelection = {
         instanceId: pi,
@@ -3592,6 +3604,8 @@ describe("OrchestratorMcpService provider resolution", () => {
           [pi]: { driver: "pi", enabled: true },
           [claude]: { driver: "claudeAgent", enabled: true },
           [agy]: { driver: "antigravity", enabled: true },
+          [piReviewer]: { driver: "pi", enabled: true },
+          [piDisabled]: { driver: "pi", enabled: false },
         },
       });
       const serviceLayer = layerOrchestratorService.pipe(
@@ -3648,7 +3662,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 return Effect.succeed(providers);
               },
             }),
-            adapterRegistryLayer([pi, claude, agy, piBackup]),
+            adapterRegistryLayer([pi, claude, agy, piReviewer]),
             Layer.mock(ProjectService.ProjectService)({ workspaceScanDirectory: Effect.succeed }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
@@ -3714,7 +3728,12 @@ describe("OrchestratorMcpService provider resolution", () => {
             model: "gemini-test",
             options: [{ id: "live-thinking", value: "high" }],
           },
-          { input: { profile: "reviewer" }, instanceId: pi, model: piModel, options: [] },
+          {
+            input: { profile: "reviewer", target: { model: "openai:review-alias" } },
+            instanceId: piReviewer,
+            model: "review-alias",
+            options: [],
+          },
         ]) {
           const child = yield* start(input);
           assert.equal(child.providerInstanceId, instanceId);
@@ -3751,17 +3770,30 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(dispatched.at(-1)?.delegationProfile, "restricted");
           assert.deepEqual(dispatched.at(-1)?.deniedSkills, ["private:skill"]);
         }
-        const wrongModel = yield* start({ target: { model: "openai:backup-model" } }).pipe(
+        const wrongModel = yield* start({ target: { model: "openai:review-model" } }).pipe(
           Effect.flip,
         );
         assert.equal(wrongModel.code, "model_unavailable");
         assert.deepEqual(refreshed, [pi]);
 
+        const wrongOverrideVendor = yield* start({
+          profile: "reviewer",
+          target: { model: "anthropic:claude-test" },
+        }).pipe(Effect.flip);
+        assert.equal(wrongOverrideVendor.code, "invalid_request");
+        assert.include(wrongOverrideVendor.message, "pi-reviewer");
+        assert.include(wrongOverrideVendor.message, "requires claudeAgent");
+
         yield* settings.updateSettings({
           projectSettingsOverrides: {
-            [projectId]: { providerInstances: { [pi]: { enabled: false } } },
+            [projectId]: {
+              providerInstances: { [pi]: { enabled: false }, [piReviewer]: { enabled: false } },
+            },
           },
         });
+        const disabledReviewer = yield* start({ profile: "reviewer" }).pipe(Effect.flip);
+        assert.equal(disabledReviewer.code, "invalid_request");
+        assert.include(disabledReviewer.message, "pi-reviewer is disabled for this project");
         const disabled = yield* start({}).pipe(Effect.flip);
         assert.equal(disabled.code, "provider_unavailable");
         assert.include(disabled.message, "disabled for this project");
@@ -3789,6 +3821,36 @@ describe("OrchestratorMcpService provider resolution", () => {
         const missing = yield* start({}).pipe(Effect.flip);
         assert.equal(missing.code, "provider_unavailable");
         assert.include(missing.message, "missing-pi is not registered");
+
+        for (const [providerInstanceId, expectedMessage] of [
+          [missingPi, "missing-pi is not registered"],
+          [piDisabled, "pi-disabled is disabled"],
+          [claude, "requires pi"],
+        ] as const) {
+          yield* settings.updateSettings({
+            delegation: {
+              ...delegation,
+              profiles: {
+                ...delegation.profiles,
+                reviewer: { ...delegation.profiles.reviewer, providerInstanceId },
+              },
+            },
+          });
+          const invalidReviewer = yield* start({ profile: "reviewer" }).pipe(Effect.flip);
+          assert.equal(invalidReviewer.code, "invalid_request");
+          assert.include(invalidReviewer.message, expectedMessage);
+          const unavailable = yield* service.capabilities(caller, { profile: "reviewer" });
+          assert.deepEqual(unavailable.profiles?.[0], {
+            name: "reviewer",
+            model: "openai:review-model",
+            providerInstanceId,
+            options: {},
+            checkout: "shared",
+            deniedSkillCount: 0,
+            canRunChildTask: false,
+            constraints: [invalidReviewer.message],
+          });
+        }
         assert.lengthOf(dispatched, 7);
       }).pipe(Effect.provide(serviceLayer));
     }),

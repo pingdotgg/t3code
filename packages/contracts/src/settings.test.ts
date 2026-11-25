@@ -43,6 +43,37 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("delegation profiles", () => {
+  const profile = { model: "openai:review-model", deniedSkills: [], checkout: "shared" };
+
+  it("round-trips a profile's optional provider instance in settings and patches", () => {
+    const delegation = {
+      providerByVendor: { openai: "pi" },
+      profiles: { worker: profile, reviewer: { ...profile, providerInstanceId: "pi-reviewer" } },
+    };
+    expect(encodeServerSettings(decodeServerSettings({ delegation })).delegation).toEqual(
+      delegation,
+    );
+    expect(encodeServerSettingsPatch(decodeServerSettingsPatch({ delegation }))).toEqual({
+      delegation,
+    });
+  });
+
+  it.each(["", "not an instance ID", "a".repeat(65), null])(
+    "rejects an invalid provider instance ID (%s)",
+    (providerInstanceId) => {
+      const input = {
+        delegation: {
+          providerByVendor: {},
+          profiles: { reviewer: { ...profile, providerInstanceId } },
+        },
+      };
+      expect(() => decodeServerSettings(input)).toThrow();
+      expect(() => decodeServerSettingsPatch(input)).toThrow();
+    },
+  );
+});
+
 it("drops theme defaults from a client's settings patch", () => {
   expect(
     decodeClientServerSettingsPatch({
