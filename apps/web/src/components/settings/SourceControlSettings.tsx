@@ -450,7 +450,7 @@ function EmptySourceControlDiscovery({
         <EmptyContent>
           <Button size="sm" variant="outline" onClick={onScan} disabled={isPending}>
             <RefreshIcon size="sm" refreshing={isPending} />
-            <T>Scan</T>
+            <T>Rescan</T>
           </Button>
         </EmptyContent>
       </Empty>
@@ -564,13 +564,14 @@ export function SourceControlSettingsPanel() {
       <TooltipTrigger
         render={
           <Button
-            size="icon-xs"
+            size="xs"
             variant="ghost-muted"
             onClick={handleScan}
             disabled={discovery.isPending}
             aria-label={gt("Rescan server environment")}
           >
             <RefreshIcon refreshing={discovery.isPending} />
+            <T>Rescan</T>
           </Button>
         }
       />
