@@ -4123,6 +4123,8 @@
   "ac7416afe98ba5f8": "Trecho do terminal, {label}",
   "bf04d61dc50685dc": "Linha {lineStart}",
   "000e3bef072f07c8": "Linhas {lineStart}–{lineEnd}",
+  "f3c70064a22a0c76": "{terminalLabel} linha {lineStart}",
+  "8ba6febaabeb6f14": "{terminalLabel} linhas {lineStart}–{lineEnd}",
   "b3336a0e9a6e3fba": "Saída do terminal capturada",
   "8d24730972ce4fd3": "Trecho do terminal, {label}, expirado",
   "dd8f1439c88ef92b": "O contexto do terminal expirou. Remova e adicione {label} de novo para incluí-lo na mensagem.",
