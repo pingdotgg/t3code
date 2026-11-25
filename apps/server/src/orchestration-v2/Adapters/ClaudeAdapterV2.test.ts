@@ -22438,6 +22438,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         .at(-1)?.subagent;
       assert.equal(running?.status, "running", "the fork's command appeared only after it ended");
 
+      // As captured from Claude Code 2.1.332: the fork's report is written to its transcript
+      // just before task_notification and never sent on the stream.
+      yield* fileSystem.writeFileString(
+        NodePath.join(subagentsDir, "agent-task-forked-live.jsonl"),
+        `${JSON.stringify(bashCall)}\n${JSON.stringify({
+          type: "assistant",
+          parent_tool_use_id: forkParent,
+          message: {
+            model: "claude-haiku-5-5",
+            id: "msg_fork_live_reply",
+            type: "message",
+            role: "assistant",
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "FORK-REPORT greetings" }],
+          },
+          uuid: "00000000-0000-4000-8000-000000000b06",
+          session_id: WAKE_NATIVE_SESSION,
+        })}\n`,
+      );
       for (const frame of [
         claudeSdkFrame({
           type: "system",
@@ -22447,6 +22466,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           summary: "/fork-probe",
           output_file: "",
           uuid: "00000000-0000-4000-8000-000000000b02",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          uuid: "00000000-0000-4000-8000-000000000b09",
           session_id: WAKE_NATIVE_SESSION,
         }),
         claudeSdkFrame(bashCall),
@@ -22464,15 +22489,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
         claudeSdkFrame({
           type: "assistant",
-          parent_tool_use_id: forkParent,
+          parent_tool_use_id: null,
           message: {
             model: "claude-haiku-5-5",
-            id: "msg_fork_live_reply",
+            id: "msg_root_live_reply",
             type: "message",
             role: "assistant",
             content: [{ type: "text", text: "FORK-REPORT greetings" }],
           },
-          uuid: "00000000-0000-4000-8000-000000000b06",
+          uuid: "00000000-0000-4000-8000-000000000b08",
           session_id: WAKE_NATIVE_SESSION,
         }),
         makeResultFrame({

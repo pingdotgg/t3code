@@ -6436,7 +6436,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // Frames whose uuid the transcript already showed are skipped when they arrive.
         const forkedSkillTranscripts = new Map<
           string,
-          { readonly fiber: Fiber.Fiber<void>; readonly shownUuids: Set<string> }
+          {
+            readonly fiber: Fiber.Fiber<void>;
+            readonly shownUuids: Set<string>;
+            readonly finish: Deferred.Deferred<void>;
+          }
         >();
         // Subagent frames can precede the task_started that registers their owner.
         const pendingSubagentFramesByToolUseId = yield* Ref.make(
@@ -9467,16 +9471,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           context: ActiveClaudeTurnContext,
           taskId: string,
           shownUuids: Set<string>,
+          finish: Deferred.Deferred<void>,
         ) {
           let located: Effect.Success<ReturnType<typeof findSubagentTranscriptDir>>;
           let cursor = initialWorkflowAgentTranscriptCursor;
-          while (true) {
-            yield* Effect.sleep(CLAUDE_FORKED_SKILL_TRANSCRIPT_POLL);
-            if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId)?.task.status !== "running") {
-              return;
-            }
-            located ??= yield* findSubagentTranscriptDir(context, taskId);
-            if (located === undefined) continue;
+          let turnEnded = false;
+          const drain = Effect.fnUntraced(function* () {
+            if (located === undefined) return;
             const { transcriptDir, configDir } = located;
             for (let drained = false; !drained;) {
               const read = yield* readWorkflowAgentTranscript({
@@ -9515,11 +9516,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       subagent.lastAssistantMessageId = messageId;
                     }
                     shownUuids.add(uuid);
+                    turnEnded = isClaudeTranscriptTurnEnd(line);
                   }
                 }),
               );
               drained = !read.value.truncated || !advanced;
             }
+          });
+          while (true) {
+            const finishing = yield* Deferred.await(finish).pipe(
+              Effect.as(true),
+              Effect.timeoutOrElse({
+                duration: CLAUDE_FORKED_SKILL_TRANSCRIPT_POLL,
+                orElse: () => Effect.succeed(false),
+              }),
+            );
+            if ((yield* Ref.get(sessionSubagentsByTaskId)).get(taskId)?.task.status !== "running") {
+              return;
+            }
+            located ??= yield* findSubagentTranscriptDir(context, taskId);
+            yield* drain();
+            if (!finishing) continue;
+            // The fork's report is only in its transcript (the stream never sends it) and can land
+            // just after the task_notification.
+            if (located !== undefined && !turnEnded) {
+              yield* Effect.sleep(WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS);
+              yield* drain();
+            }
+            return;
           }
         });
 
@@ -12125,12 +12149,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 const previous = forkedSkillTranscripts.get(forkedSkillToolUseId);
                 if (previous !== undefined) yield* Fiber.interrupt(previous.fiber);
                 const shownUuids = new Set<string>();
+                const finish = yield* Deferred.make<void>();
                 const fiber = yield* followForkedSkillTranscript(
                   context,
                   message.task_id,
                   shownUuids,
+                  finish,
                 ).pipe(Effect.forkIn(sessionScope));
-                forkedSkillTranscripts.set(forkedSkillToolUseId, { fiber, shownUuids });
+                forkedSkillTranscripts.set(forkedSkillToolUseId, { fiber, shownUuids, finish });
               }
               yield* Ref.update(wakeBuffers, (current) => {
                 const entry = current.get(liveQuery.nativeThreadId);
@@ -12829,8 +12855,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
         }) {
           const parentToolUseId = Reflect.get(input.message, "parent_tool_use_id");
+          // The fork's frames end where the root turn resumes; a system frame (init) can come between.
+          const forkFramesDone =
+            input.message.type === "result" ||
+            (input.message.type !== "system" && isClaudeRootTurnFrame(input.message));
           for (const [toolUseId, notification] of heldForkedSkillNotifications) {
-            if (toolUseId === parentToolUseId) continue;
+            if (!forkFramesDone) break;
             heldForkedSkillNotifications.delete(toolUseId);
             forkedSkillTranscripts.delete(toolUseId);
             yield* routeSdkMessage({ query: input.query, message: notification });
@@ -12841,8 +12871,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               forkedSkillToolUseId !== undefined &&
               !heldForkedSkillNotifications.has(forkedSkillToolUseId)
             ) {
+              // Read the rest of the transcript, including the report, before the fork can settle.
               const transcript = forkedSkillTranscripts.get(forkedSkillToolUseId);
-              if (transcript !== undefined) yield* Fiber.interrupt(transcript.fiber);
+              if (transcript !== undefined) {
+                yield* Deferred.succeed(transcript.finish, undefined);
+                yield* Fiber.join(transcript.fiber);
+              }
               heldForkedSkillNotifications.set(forkedSkillToolUseId, input.message);
               return;
             }
