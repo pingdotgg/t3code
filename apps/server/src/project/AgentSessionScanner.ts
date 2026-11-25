@@ -442,7 +442,10 @@ function claudeCommand(text: string): { readonly text: string; readonly titleTex
 function claudeUserText(text: string): { readonly text: string; readonly titleText: string } {
   if (CLAUDE_UI_OUTPUT.test(text)) return { text: "", titleText: "" };
   const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
-  if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
+  if (shellInput !== undefined) {
+    const command = `!${shellInput}`;
+    return { text: command, titleText: shellInput.trim().length > 0 ? command : "" };
+  }
   return claudeCommand(text) ?? { text, titleText: text };
 }
 
