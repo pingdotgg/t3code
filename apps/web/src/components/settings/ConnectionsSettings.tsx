@@ -850,6 +850,10 @@ function ConnectionsSettingsContent({
     visibleDesktopAdvertisedEndpoints,
     defaultAdvertisedEndpointKey,
   );
+  const defaultDesktopNetworkAdvertisedEndpoint = selectPairingEndpoint(
+    visibleDesktopNetworkAdvertisedEndpoints,
+    defaultAdvertisedEndpointKey,
+  );
   const defaultDesktopAdvertisedEndpointKey = defaultDesktopAdvertisedEndpoint
     ? endpointDefaultPreferenceKey(defaultDesktopAdvertisedEndpoint)
     : null;
