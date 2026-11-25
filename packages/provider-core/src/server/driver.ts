@@ -25,8 +25,8 @@ import type { ProviderUsageReader } from "./usage.ts";
 
 export interface ProviderDriverMetadata {
   readonly displayName: string;
-  /** Name an unlabeled snapshot reports, if the driver supplies one. */
-  readonly defaultSnapshotDisplayName?: string;
+  /** Overrides displayName for unlabeled snapshots. Null means the snapshot omits the name. */
+  readonly defaultSnapshotDisplayName?: string | null;
   /** Defaults to true; false rejects multiple instances of a global resource. */
   readonly supportsMultipleInstances?: boolean;
   readonly hasDefaultInstance?: boolean;
