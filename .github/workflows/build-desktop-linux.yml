@@ -154,6 +154,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          node apps/server/scripts/cli.ts build-exe
           node scripts/apply-web-brand-assets.ts production apps/server/dist/client
           mkdir -p "$RUNNER_TEMP/cli-resource-monitor"
           cp "native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor" \
