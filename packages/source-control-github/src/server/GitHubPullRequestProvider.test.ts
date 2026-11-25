@@ -967,6 +967,54 @@ describe("loginAvatarUrl", () => {
   });
 });
 
+describe("listChangeRequests", () => {
+  it.effect("counts a review requested from the viewer's team as requested from the viewer", () =>
+    Effect.gen(function* () {
+      const teamOnly = {
+        number: 1,
+        title: "Change",
+        url: "https://github.com/acme/web/pull/1",
+        author: null,
+        headBranch: "feature",
+        baseBranch: "main",
+        state: "open" as const,
+        isDraft: false,
+        mergeability: "mergeable" as const,
+        additions: 0,
+        deletions: 0,
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: "2026-07-02T00:00:00Z",
+        reviewRequestLogins: ["someone-else"],
+        hasTeamReviewRequest: true,
+        labels: [],
+        reviewDecision: null,
+        checksState: null,
+      };
+      const list = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+            listPullRequests: () =>
+              Effect.succeed({ items: [teamOnly], truncated: false, continues: true }),
+          }),
+        ),
+        Effect.map((provider) => provider.listChangeRequests),
+      );
+      const input = {
+        cwd: "/w",
+        host: "github.com",
+        repository: "acme/web",
+        state: "open" as const,
+        viewer: "Viewer",
+        limit: 50,
+      };
+      const reviewing = yield* list({ ...input, involvement: "reviewing" });
+      expect(reviewing.items[0]!.reviewRequestLogins).toEqual(["someone-else", "Viewer"]);
+      const all = yield* list({ ...input, involvement: "all" });
+      expect(all.items[0]!.reviewRequestLogins).toEqual(["someone-else"]);
+    }),
+  );
+});
+
 describe("listChangeRequestsAcross", () => {
   const searched = (repository: string): GitHubPullRequestSearchItem => ({
     repository,
@@ -1079,6 +1127,23 @@ describe("listChangeRequestsAcross", () => {
         covered: () => true,
       });
       expect((yield* read(across)).unresolved).toEqual(["acme/docs"]);
+    }),
+  );
+
+  it.effect("counts a review requested from the viewer's team as requested from the viewer", () =>
+    Effect.gen(function* () {
+      const teamOnly = { ...searched("acme/web"), hasTeamReviewRequest: true };
+      const read = yield* providerAnswering({
+        pages: [
+          { items: [teamOnly], truncated: false },
+          { items: [teamOnly], truncated: false },
+        ],
+        covered: () => true,
+      });
+      const reviewing = yield* read({ ...across, involvement: "reviewing" });
+      expect(reviewing.items[0]!.reviewRequestLogins).toEqual(["viewer"]);
+      const all = yield* read(across);
+      expect(all.items[0]!.reviewRequestLogins).toEqual([]);
     }),
   );
 

@@ -32,6 +32,22 @@ import type {
 } from "./gitHubPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
+/**
+ * A "reviewing" read already holds only pull requests awaiting the viewer, including those whose
+ * review was requested from a team the viewer belongs to. A team request names no login, so record
+ * the viewer as requested; otherwise the service drops team-only requests from the list.
+ */
+function withViewerRequested<T extends { readonly reviewRequestLogins: ReadonlyArray<string> }>(
+  item: T,
+  input: { readonly involvement: string; readonly viewer: string },
+): T {
+  const viewer = input.viewer.toLowerCase();
+  return input.involvement === "reviewing" &&
+    !item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer)
+    ? { ...item, reviewRequestLogins: [...item.reviewRequestLogins, input.viewer] }
+    : item;
+}
+
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
@@ -434,7 +450,7 @@ export const make = Effect.gen(function* () {
           Effect.map((page) => ({
             ...page,
             items: page.items.map((item) => ({
-              ...item,
+              ...withViewerRequested(item, input),
               author: withAvatar(item.author, new Map<string, string>(), input.host),
             })),
           })),
@@ -460,7 +476,7 @@ export const make = Effect.gen(function* () {
             Effect.map(unresolvedBySearch(input, batch), (unresolved) => ({
               truncated: batch.truncated,
               items: batch.items.map((item) => ({
-                ...item,
+                ...withViewerRequested(item, input),
                 author: withAvatar(item.author, new Map<string, string>(), input.host),
               })),
               unresolved,
