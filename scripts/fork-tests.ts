@@ -92,22 +92,10 @@ function runTests(
 }
 
 function runVitest(args: ReadonlyArray<string>): Promise<number> {
-  return runTests(
-    vitePlus,
-    [
-      "test",
-      "run",
-      "--reporter=verbose",
-      "--testTimeout=30000",
-      "--exclude",
-      nodeTestFiles,
-      ...args,
-    ],
-    {
-      ...process.env,
-      T3CODE_RENDER_REPORT_DIR: NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-renders-")),
-    },
-  );
+  return runTests(vitePlus, ["test", "run", "--reporter=verbose", "--testTimeout=30000", ...args], {
+    ...process.env,
+    T3CODE_RENDER_REPORT_DIR: NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-renders-")),
+  });
 }
 
 async function main(argv: ReadonlyArray<string>): Promise<number> {
