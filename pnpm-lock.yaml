@@ -287,7 +287,7 @@ overrides:
   expo-sharing: 58.0.23
   expo-widgets: 58.0.29
   '@ff-labs/fff-node': 0.11.0
-  '@legendapp/list': 3.7.3
+  '@legendapp/list': 3.9.0
   '@pierre/diffs': 1.7.0-beta.4
   '@react-native-menu/menu': 2.0.0
   '@react-navigation/native-stack': 7.21.0
@@ -372,7 +372,7 @@ patchedDependencies:
   '@effect/vitest@4.1.5': dd0bf2b1ae0f63aff0d620ebc67b82d19759b3fa69a608ef85e2a5b40b4d46c5
   '@expo/ui@58.0.29': 2346ac02073363a401e85357e541055e9737bcbc1cdcb63e056cda9368fa79f6
   '@ff-labs/fff-node@0.11.0': 93f62a76399b435a76588b2bef237db0a1e85880c1ac0d0759c416e9cc579252
-  '@legendapp/list@3.7.3': c4bf72fc2117c7357839807722ed379370cdd91dffd4edaa6b836236597d83ae
+  '@legendapp/list@3.9.0': 2c8e2542c7f2a2f51d1ec96bee4725c2ccf395dd56d0a63a266982f38c629b50
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.7.0-beta.4': 7edcdd484a99c7ec0b2667499c4cb21d113ec9bea1f8570c0b0a030d33bbf1cd
   '@react-native-menu/menu@2.0.0': 6872ba71b9847c5a0210b1b896923dadc3860faedfe28d9f062bcedfe786ef1d
@@ -578,8 +578,8 @@ importers:
         specifier: 5.4.6
         version: 5.4.6
       '@legendapp/list':
-        specifier: 3.7.3
-        version: 3.7.3(patch_hash=c4bf72fc2117c7357839807722ed379370cdd91dffd4edaa6b836236597d83ae)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+        specifier: 3.9.0
+        version: 3.9.0(patch_hash=2c8e2542c7f2a2f51d1ec96bee4725c2ccf395dd56d0a63a266982f38c629b50)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       '@material/material-color-utilities':
         specifier: 0.3.0
         version: 0.3.0
@@ -1102,8 +1102,8 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       '@legendapp/list':
-        specifier: 3.7.3
-        version: 3.7.3(patch_hash=c4bf72fc2117c7357839807722ed379370cdd91dffd4edaa6b836236597d83ae)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
+        specifier: 3.9.0
+        version: 3.9.0(patch_hash=2c8e2542c7f2a2f51d1ec96bee4725c2ccf395dd56d0a63a266982f38c629b50)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
       '@noble/hashes':
         specifier: 'catalog:'
         version: 1.8.0
@@ -2616,6 +2616,9 @@ importers:
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../packages/contracts
+      '@t3tools/provider-testing':
+        specifier: workspace:*
+        version: link:../packages/provider-testing
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../packages/shared
@@ -4991,8 +4994,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@legendapp/list@3.7.3':
-    resolution: {integrity: sha512-trGu1i4xo1+r6gG6GI3qrrZAfYHbB25uVj32/KnxhaQ7/eW4AqzhM5cW21Oye4dpg+180Ts1aejRuI8z6Xc4eg==}
+  '@legendapp/list@3.9.0':
+    resolution: {integrity: sha512-gMLdgX0TzCtD1VGlrPZ423Npq7CtkQK8oWNRWvtO0AYkAFt5MP+knzaxnojbifHW82817QVc5lmit9JU2xKsaQ==}
     peerDependencies:
       react: '*'
       react-dom: '*'
@@ -15719,7 +15722,7 @@ snapshots:
   '@koromix/koffi-win32-x64@3.3.6':
     optional: true
 
-  '@legendapp/list@3.7.3(patch_hash=c4bf72fc2117c7357839807722ed379370cdd91dffd4edaa6b836236597d83ae)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)':
+  '@legendapp/list@3.9.0(patch_hash=2c8e2542c7f2a2f51d1ec96bee4725c2ccf395dd56d0a63a266982f38c629b50)(react-dom@19.3.0(react@19.3.0))(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)':
     dependencies:
       react: 19.3.0
       use-sync-external-store: 1.7.0(react@19.3.0)
