@@ -185,8 +185,10 @@ object AgentNotifications {
     val title = data["alert_title"].orEmpty().take(120)
     // Grouped alerts list up to five 120-character thread titles.
     val body = data["alert_body"].orEmpty().take(608)
-    val id = alertId.hashCode()
-    val group = data["alert_group"]?.takeIf { it.isNotBlank() } ?: ALERT_TAG
+    val threadGroup = data["alert_group"]?.takeIf { it.isNotBlank() }
+    // alert_id is unique per turn; keying on the thread makes its next alert replace this one.
+    val id = (threadGroup ?: alertId).hashCode()
+    val group = threadGroup ?: ALERT_TAG
     val notification = base(context, ALERT_CHANNEL)
       .setContentTitle(title).setContentText(body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(body))
