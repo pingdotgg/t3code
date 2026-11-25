@@ -37,7 +37,11 @@ interface DiffPanelStoreState {
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId | null, filePath?: string) => void;
-  selectTurnRepository: (ref: ScopedThreadRef, turnId: RunId, repository: string | null) => void;
+  selectTurnRepository: (
+    ref: ScopedThreadRef,
+    turnId: RunId | null,
+    repository: string | null,
+  ) => void;
   selectCommit: (ref: ScopedThreadRef, sha: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;

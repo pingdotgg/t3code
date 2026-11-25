@@ -357,7 +357,7 @@ export default function DiffPanel({
     latestTurn !== undefined &&
     storedDiffSelection.kind !== "turn" &&
     storedDiffSelection.kind !== "tool-call"
-      ? { kind: "turn", turnId: latestTurn.runId, filePath: null, revealRequestId: 0 }
+      ? { kind: "turn", turnId: null, filePath: null, revealRequestId: 0 }
       : storedDiffSelection;
   const rememberedBaseRef = useDiffPanelStore((state) =>
     selectThreadBranchBaseRef(state, routeThreadRef),
@@ -955,7 +955,7 @@ export default function DiffPanel({
       .getState()
       .selectTurnRepository(
         routeThreadRef,
-        selectedTurn.runId,
+        followsLatestTurn ? null : selectedTurn.runId,
         key === ALL_REPOSITORIES ? null : key,
       );
   };
