@@ -11053,7 +11053,7 @@
   "4889f7885396c26b": "워크트리",
   "2d96fe39105aae8f": "순환된 로그",
   "1214c77f4bf1ee81": "브라우저 아티팩트",
-  "9831e9c703b3bdd0": "{omitted, plural, other {{environment}: 결과 {count}개 더 있음.}}",
+  "d9e33a2a8d404a96": "{omitted, plural, other {{environment}: 결과 {count}개 더 있음.}}",
   "c8192b219451a0d0": "{removed}개 제거, {kept}개 유지, {failed}개 실패",
   "cbd8bf91a856906a": "{removed}개 제거, {kept}개 유지",
   "754564dc0b82aff7": "{count, plural, other {마지막 실행 {when}. {bytes} 회수됨. 항목 {count}개를 제거할 수 없습니다.}}",
