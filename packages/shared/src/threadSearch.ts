@@ -26,33 +26,16 @@ function scanThreadSearchOccurrences(
 ): number {
   if (text.length === 0 || query.length === 0) return 0;
 
-  const foldedText = foldThreadSearchCase(text);
-  const foldedQuery = foldThreadSearchCase(query);
   // Search snippets collapse whitespace. Match a single space between words
   // against the original run, while allowing explicit indentation queries.
-  const parts = foldedQuery.split(/(?<=\S) (?=\S)/);
-  if (parts.length > 1) {
-    const phrase = new RegExp(
-      parts.map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s+"),
-      "g",
-    );
-    let count = 0;
-    for (const match of foldedText.matchAll(phrase)) {
-      ranges?.push({ start: match.index, end: match.index + match[0].length });
-      count += 1;
-    }
-    return count;
-  }
-
+  const phrase = foldThreadSearchCase(query)
+    .split(/(?<=\S) (?=\S)/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("\\s+");
   let count = 0;
-  let cursor = 0;
-
-  while (cursor <= foldedText.length - foldedQuery.length) {
-    const offset = foldedText.indexOf(foldedQuery, cursor);
-    if (offset === -1) break;
-    ranges?.push({ start: offset, end: offset + foldedQuery.length });
+  for (const match of foldThreadSearchCase(text).matchAll(new RegExp(phrase, "g"))) {
+    ranges?.push({ start: match.index, end: match.index + match[0].length });
     count += 1;
-    cursor = offset + foldedQuery.length;
   }
   return count;
 }
