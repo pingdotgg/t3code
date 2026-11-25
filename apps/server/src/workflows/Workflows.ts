@@ -96,7 +96,14 @@ export class Workflows extends Context.Service<
     readonly signal: (
       address: WorkflowStore.SignalAddress,
       value: Schema.Json,
-      options: { readonly id: string; readonly ttl?: Duration.Input },
+      options: {
+        readonly id: string;
+        readonly ttl?: Duration.Input;
+        /** Who sent it, kept with an answer to a question. */
+        readonly answeredBy?: string | undefined;
+        /** The client session that sent it, where one did. A name is shared; this is not. */
+        readonly answeredBySession?: string | undefined;
+      },
     ) => Effect.Effect<"delivered" | "buffered", WorkflowInputError>;
     /**
      * Answer the question a run asks a person. One answer per time it is asked: a second, a
@@ -106,6 +113,8 @@ export class Workflows extends Context.Service<
       runId: string,
       name: string,
       value: Schema.Json,
+      /** Who answered, as the server knows them; kept with the answer. */
+      answeredBy?: { readonly label: string; readonly sessionId?: string | undefined },
     ) => Effect.Effect<void, WorkflowInputError>;
     /** Run a paused run's failed step again. */
     readonly resume: (runId: string) => Effect.Effect<void, WorkflowError>;

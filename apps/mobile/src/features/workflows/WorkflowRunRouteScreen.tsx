@@ -8,6 +8,7 @@ import {
   workflowResultLines,
   workflowRunState,
   type WorkflowBeat,
+  type WorkflowQuestionChoice,
   type WorkflowRunNode,
 } from "@t3tools/client-runtime/workflows";
 import { EnvironmentId, type WorkflowQuestion } from "@t3tools/contracts";
@@ -19,14 +20,16 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RelativeTime } from "../../components/RelativeTime";
 import { AppBar } from "../../components/ui/AppBar";
-import { AppText as Text } from "../../components/ui/AppText";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { cn } from "../../lib/cn";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentSessionId } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   Card,
@@ -57,16 +60,30 @@ function QuestionCard(props: {
   const view = readWorkflowQuestion(question);
   const gt = useGT();
   const [busy, setBusy] = useState<string | null>(null);
+  // Opened by a choice the server refuses without a reason; it goes with the answer sent next.
+  const [reason, setReason] = useState<{ readonly for: string; readonly text: string } | null>(
+    null,
+  );
   const answer = useAtomCommand(serverEnvironment.answerWorkflowQuestion, {
     label: "workflow answer",
     reportFailure: false,
   });
-  const choose = async (choice: string) => {
+  const choose = async ({ value: choice, requireReason }: WorkflowQuestionChoice) => {
     if (busy !== null) return;
+    const given = reason?.text.trim() ?? "";
+    if (requireReason && given === "") {
+      setReason({ for: choice, text: reason?.text ?? "" });
+      return;
+    }
     setBusy(choice);
     const result = await answer({
       environmentId: props.environmentId,
-      input: { runId: question.runId, name: question.name, choice },
+      input: {
+        runId: question.runId,
+        name: question.name,
+        choice,
+        ...(given === "" ? {} : { reason: given }),
+      },
     });
     setBusy(null);
     reportFailure(gt("Could not send the answer"), result);
@@ -93,18 +110,49 @@ function QuestionCard(props: {
       {view.body === null ? null : (
         <Text className="text-sm text-foreground-secondary">{plain(view.body)}</Text>
       )}
+      {view.links.map((link) => (
+        <Button
+          key={`${link.label}:${link.url}`}
+          tone="text"
+          label={link.label}
+          onPress={() => void tryOpenExternalUrl(link.url)}
+        />
+      ))}
       <View className="gap-2 pt-1">
         {view.choices.map((choice, index) => (
-          <Button
-            key={choice}
-            label={choice}
-            tone={index === 0 ? "primary" : "secondary"}
-            fullWidth
-            disabled={!props.canAnswer || (busy !== null && busy !== choice)}
-            loading={busy === choice}
-            onPress={() => void choose(choice)}
-          />
+          <View key={choice.value} className="gap-1">
+            <Button
+              label={choice.value}
+              tone={index === 0 ? "primary" : "secondary"}
+              fullWidth
+              disabled={!props.canAnswer || (busy !== null && busy !== choice.value)}
+              loading={busy === choice.value}
+              onPress={() => void choose(choice)}
+            />
+            {choice.description === null ? null : (
+              <Text className="text-xs text-foreground-muted">{choice.description}</Text>
+            )}
+          </View>
         ))}
+        {reason === null ? null : (
+          <View className="gap-1">
+            <TextInput
+              autoFocus
+              value={reason.text}
+              editable={busy === null && props.canAnswer}
+              accessibilityLabel={gt("Reason for {title}", { title: view.title })}
+              placeholder={gt("Why, in a sentence. It goes with whichever answer you pick.")}
+              onChangeText={(text) => setReason({ for: reason.for, text })}
+            />
+            {reason.text.trim() !== "" ? null : (
+              <Text className="text-xs text-foreground-muted">
+                <T>
+                  <Var>{reason.for}</Var> needs a reason.
+                </T>
+              </Text>
+            )}
+          </View>
+        )}
         {thread === null || props.onOpenThread === null ? null : (
           <Button
             tone="text"
@@ -129,6 +177,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   const insets = useSafeAreaInsets();
   const gt = useGT();
   const m = useMessages();
+  const sessionId = useEnvironmentSessionId(environmentId);
   const detail = useEnvironmentQuery(
     serverEnvironment.workflowRun({ environmentId, input: { runId: run.runId } }),
   );
@@ -249,6 +298,8 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   return (
     <ScreenScrollView
       contentInsetAdjustmentBehavior="automatic"
+      // With the reason's keyboard up, a tap on a choice answers; it does not only put it away.
+      keyboardShouldPersistTaps="handled"
       contentContainerClassName="gap-3 px-4 pt-3"
       contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
     >
@@ -288,6 +339,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
           <WorkflowTimeline
             rows={feed}
             node={node}
+            sessionId={sessionId}
             question={questionOf}
             loose={loose}
             renderQuestion={(asked) => question(asked, true)}

@@ -12892,5 +12892,66 @@
   "f6a91589456cca50": "Genehmigt",
   "c92657bb7f2293ff": "Genehmigung nötig",
   "f1e5c1be1ac92361": "Genehmigen",
-  "fcb5f3c4d4753326": "Über diese Verbindung lassen sich keine Befehle genehmigen. Verwende einen Client, der das Terminal verwenden darf."
+  "fcb5f3c4d4753326": "Über diese Verbindung lassen sich keine Befehle genehmigen. Verwende einen Client, der das Terminal verwenden darf.",
+  "4e96712d839ccbff": "{who} hat {choice} gesagt",
+  "19097cfb8f5a79cf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " hat",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " gesagt."
+  ],
+  "e7bbf693910057bf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " hat",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    " gesagt: ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
+  "3759768c5d342c22": [
+    "beantwortet",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " braucht eine Begründung."
+  ]
 }

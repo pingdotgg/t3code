@@ -1,5 +1,6 @@
 import {
   workflowAgentSummary,
+  isOwnWorkflowAnswer,
   workflowAnswer,
   workflowOneLine,
   workflowResultLines,
@@ -288,6 +289,8 @@ const styles = StyleSheet.create({
 export function WorkflowTimeline(props: {
   readonly rows: ReadonlyArray<WorkflowFeedRow>;
   readonly node: WorkflowRunNode;
+  /** This device's session on the run's environment: an answer it gave reads as yours. */
+  readonly sessionId: string | null;
   /** The question a step waits on a person for. */
   readonly question: (beat: WorkflowBeat) => WorkflowQuestion | null;
   readonly loose: ReadonlyArray<WorkflowQuestion>;
@@ -345,7 +348,11 @@ export function WorkflowTimeline(props: {
         const answer = workflowAnswer(beat.result);
         return answer === null
           ? gt("nobody answered")
-          : gt("Answered {choice}", { choice: answer.choice });
+          : isOwnWorkflowAnswer(answer, props.sessionId)
+            ? gt("You answered {choice}", { choice: answer.choice })
+            : answer.answeredBy === null
+              ? gt("Answered {choice}", { choice: answer.choice })
+              : gt("{who} answered {choice}", { who: answer.answeredBy, choice: answer.choice });
       }
       case "run": {
         const child = node.children.find(
