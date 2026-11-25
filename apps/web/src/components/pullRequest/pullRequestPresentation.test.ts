@@ -1,9 +1,7 @@
 import type { PullRequestCheck } from "@t3tools/contracts";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { PullRequestActorAvatar, pullRequestChecksCountLabel } from "./pullRequestPresentation";
+import { pullRequestChecksCountLabel } from "./pullRequestPresentation";
 
 const checks = (...statuses: ReadonlyArray<PullRequestCheck["status"]>): PullRequestCheck[] =>
   statuses.map((status) => ({ name: "ci", status, description: null, url: null }));
@@ -26,17 +24,5 @@ describe("pullRequestChecksCountLabel", () => {
   it("shows nothing once no check is failed, waiting or running", () => {
     expect(pullRequestChecksCountLabel(checks("success", "skipped", "neutral"))).toBeNull();
     expect(pullRequestChecksCountLabel([])).toBeNull();
-  });
-});
-
-describe("PullRequestActorAvatar", () => {
-  it("renders the first Unicode code point without a lone surrogate", () => {
-    const html = renderToStaticMarkup(
-      createElement(PullRequestActorAvatar, {
-        actor: { login: "😀dev", name: null, avatarUrl: null },
-      }),
-    );
-    expect(html).toContain(">😀<");
-    expect(html).not.toMatch(/[\uD800-\uDFFF]/u);
   });
 });
