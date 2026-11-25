@@ -4077,6 +4077,84 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  it.effect("marks a surfaced MCP startup failure recovered when the server reaches ready", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "mcp-startup-recovered-thread";
+      const nativeTurnId = "mcp-startup-recovered-turn";
+      const startupError = "HTTP request to the OAuth metadata endpoint failed";
+      const status = (value: "starting" | "ready" | "failed", label: string) =>
+        ({
+          type: "emit_inbound",
+          label,
+          frame: {
+            method: "mcpServer/startupStatus/updated",
+            params: {
+              threadId: nativeThreadId,
+              name: "context7",
+              status: value,
+              error: value === "failed" ? startupError : null,
+              failureReason: null,
+            },
+          },
+        }) satisfies CodexReplay.CodexAppServerReplayEntry;
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-mcp-startup-recovered",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "use context7" }),
+          // Order recorded from Codex app-server 0.172.0: an HTTP MCP server fails, then recovers.
+          status("starting", "mcp-starting-1"),
+          status("failed", "mcp-failed"),
+          status("starting", "mcp-starting-2"),
+          status("ready", "mcp-ready"),
+          {
+            type: "emit_inbound",
+            label: "complete",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-startup-recovered-attempt"),
+          text: "use context7",
+        }),
+      );
+      yield* harness.firstTerminal;
+      const notices = new Map(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [[event.turnItem.id, event.turnItem] as const]
+            : [],
+        ),
+      );
+      const [notice, ...others] = notices.values();
+      assert.isDefined(notice);
+      assert.lengthOf(others, 0);
+      // The latest state of the notice must no longer claim the server is down.
+      assert.notStrictEqual(notice.title, "MCP server context7 failed to start");
+      assert.include(JSON.stringify(notice), startupError);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("reports MCP servers starting only until the thread's turn opens", () =>
     Effect.gen(function* () {
       const nativeThreadId = "mcp-startup-phase-thread";
