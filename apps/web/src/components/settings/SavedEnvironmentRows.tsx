@@ -43,6 +43,7 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/men
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { Button, InlineButton } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import {
@@ -51,7 +52,6 @@ import {
   supportsDesktopAppUpdate,
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
-import { isElectron } from "~/env";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
@@ -79,9 +79,11 @@ type SavedBackendListRowProps = {
   onSetEnabled: (environmentId: EnvironmentId, enabled: boolean) => void;
   onRemove: (environment: EnvironmentPresentation) => void;
   onAddRoute: (environment: EnvironmentPresentation) => void;
+  /** The map's details open on a machine's routes; the list keeps them folded. */
+  initialRoutesOpen?: boolean;
 };
 
-function savedBackendStatus(
+export function savedBackendStatus(
   environment: EnvironmentPresentation,
   resolve: MessageResolver = m,
 ): {
@@ -129,10 +131,11 @@ export function SavedBackendListRow({
   onSetEnabled,
   onRemove,
   onAddRoute,
+  initialRoutesOpen = false,
 }: SavedBackendListRowProps) {
   const messages = useMessages();
   const gt = useGT();
-  const [routesOpen, setRoutesOpen] = useState(false);
+  const [routesOpen, setRoutesOpen] = useState(initialRoutesOpen);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
   const environmentId = environment.environmentId;
@@ -409,26 +412,22 @@ export function SavedBackendListRow({
           appearance="icon"
         />
       ) : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Switch
-              size="sm"
-              checked={enabled}
-              disabled={isRemoving || blocked}
-              aria-label={
-                enabled
-                  ? gt("Switch off {label}", { label: environment.label })
-                  : gt("Switch on {label}", { label: environment.label })
-              }
-              onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
-            />
-          }
-        />
-        <TooltipPopup side="top">
-          {blocked ? gt("Client not supported") : enabled ? gt("Switch off") : gt("Switch on")}
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          <Switch
+            size="sm"
+            checked={enabled}
+            disabled={isRemoving || blocked}
+            aria-label={
+              enabled
+                ? gt("Switch off {label}", { label: environment.label })
+                : gt("Switch on {label}", { label: environment.label })
+            }
+            onCheckedChange={(checked) => onSetEnabled(environmentId, checked)}
+          />
+        }
+        label={blocked ? gt("Client not supported") : enabled ? gt("Switch off") : gt("Switch on")}
+      />
       <Menu>
         <MenuTrigger
           render={
@@ -495,10 +494,10 @@ function CloudLinkSwitch({
     />
   );
   return disabledReason ? (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex">{control}</span>} />
-      <TooltipPopup side="top">{disabledReason}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={<span className="inline-flex">{control}</span>}
+      label={disabledReason}
+    />
   ) : (
     control
   );
@@ -582,6 +581,7 @@ function ConfiguredCloudLinkRow({
     holdWebhooksWhileOffline,
     operationError,
     tunnelLimit,
+    needsRelayConfiguration,
     reconcileCloudState,
   } = useCloudLinkController(environmentId);
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
@@ -593,8 +593,8 @@ function ConfiguredCloudLinkRow({
     messages,
   );
   const turnOn = useT3ConnectTurnOn(environmentId);
-  // Turning on links from this desktop's own backend only; turning off works from anywhere.
-  const showSwitch = isElectron && (turnOn.kind !== "on-host" || managedTunnelActive);
+  // Turning on needs relay configuration permission; turning off works from anywhere.
+  const showSwitch = turnOn.kind !== "on-host" || managedTunnelActive;
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
@@ -608,6 +608,17 @@ function ConfiguredCloudLinkRow({
     cloudLinkState.data === null ||
     cloudLinkState.isPending ||
     isBusy;
+  const configureReason = gt(
+    "This connection needs the relay configuration permission to configure T3 Connect.",
+  );
+  const tunnelNeedsConfigure = needsRelayConfiguration({
+    managedTunnel: !managedTunnelActive,
+    publish: publishAgentActivity,
+  });
+  const publishNeedsConfigure = needsRelayConfiguration({
+    managedTunnel: managedTunnelActive,
+    publish: !publishAgentActivity,
+  });
   // `isSignedIn` is undefined until Clerk loads. Signed out, one row shows a
   // sign-in button instead of its switch; the onboarding dialog that opens after
   // a fresh sign-in offers both linking and publishing.
@@ -744,8 +755,8 @@ function ConfiguredCloudLinkRow({
             ) : (
               <CloudLinkSwitch
                 checked={managedTunnelActive}
-                disabled={switchDisabled}
-                disabledReason={disabledReason}
+                disabled={switchDisabled || tunnelNeedsConfigure}
+                disabledReason={disabledReason ?? (tunnelNeedsConfigure ? configureReason : null)}
                 onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
               />
             )
@@ -762,12 +773,12 @@ function ConfiguredCloudLinkRow({
             "This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again.",
           )}
         />
-      ) : isElectron ? (
+      ) : (
         <SettingsRow
           title={setting("t3-connect").title}
           description={gt("Run `t3 connect link` on the host, then restart T3 Code there.")}
         />
-      ) : null}
+      )}
       {signedOut && showSwitch ? null : (
         <SettingsRow
           title={setting("publish-agent-activity").title}
@@ -784,8 +795,8 @@ function ConfiguredCloudLinkRow({
               <CloudLinkSwitch
                 ariaLabel={gt("Publish agent activity to mobile clients")}
                 checked={publishAgentActivity}
-                disabled={switchDisabled}
-                disabledReason={disabledReason}
+                disabled={switchDisabled || publishNeedsConfigure}
+                disabledReason={disabledReason ?? (publishNeedsConfigure ? configureReason : null)}
                 onCheckedChange={(enabled) => void updatePublishAgentActivity(enabled)}
               />
             )
@@ -902,10 +913,21 @@ function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnable
 export function CloudRemoteEnvironmentRows({
   primaryEnvironmentId,
   savedEnvironments,
+  only,
 }: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly savedEnvironments: ReadonlyArray<EnvironmentPresentation>;
+  readonly only?: EnvironmentId;
 }) {
+  if (only !== undefined) {
+    return (
+      <CloudEnvironmentConnectRows
+        only={only}
+        primaryEnvironmentId={primaryEnvironmentId}
+        savedEnvironments={savedEnvironments}
+      />
+    );
+  }
   return hasCloudPublicConfig() ? (
     <CloudEnvironmentConnectRows
       primaryEnvironmentId={primaryEnvironmentId}

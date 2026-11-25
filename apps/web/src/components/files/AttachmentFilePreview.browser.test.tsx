@@ -1,5 +1,5 @@
 import DocumentPages, { sanitizeDocumentHtml } from "./DocumentPages";
-import { act, render, stubGlobal, type Screen } from "../../../test/render";
+import { act, fakeTimers, render, stubGlobal, type Screen } from "../../../test/render";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -20,9 +20,16 @@ vi.mock(import("pdfjs-dist/build/pdf.worker.min.mjs?url"), () => ({
   default: pdfWorkerUrl,
 }));
 
+// Like the real hook, the callback is a new function whenever its resource object is.
+const refreshers = new WeakMap<object, () => Promise<string | null>>();
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
-  useAssetUrlRefresh: () => refresh,
+  useAssetUrlRefresh: (_environmentId, resource) => {
+    if (!resource) return refresh;
+    let callback = refreshers.get(resource);
+    if (!callback) refreshers.set(resource, (callback = () => refresh()));
+    return callback;
+  },
   useAssetUrlState: assetUrlState,
 }));
 // Hands each document pdf.js opens to the PDF test, which awaits its load instead of a poll window.
@@ -65,7 +72,7 @@ vi.mock(import("./office/WordDocument"), async () => {
   };
 });
 
-import { getClientSettings } from "~/hooks/useSettings";
+import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import LargeTextViewer from "./LargeTextViewer";
 import VirtualTablePreview from "./VirtualTablePreview";
@@ -231,37 +238,79 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("can leave an archive folder with a repeated separator", async () => {
+  it("names archive folders whose paths have leading or repeated slashes", async () => {
     const bytes = new Uint8Array(2048);
     const write = (offset: number, value: string) =>
       bytes.set(new TextEncoder().encode(value), offset);
-    write(0, "a//hello.txt");
-    write(124, "00000000014\0");
-    bytes.fill(32, 148, 156);
-    write(156, "0");
-    write(
-      148,
-      bytes
-        .subarray(0, 512)
-        .reduce((sum, byte) => sum + byte, 0)
-        .toString(8)
-        .padStart(6, "0") + "\0 ",
-    );
-    write(512, "nested hello");
+    const member = (offset: number, name: string, content: string) => {
+      write(offset, name);
+      write(offset + 124, content.length.toString(8).padStart(11, "0") + "\0");
+      bytes.fill(32, offset + 148, offset + 156);
+      write(offset + 156, "0");
+      write(
+        offset + 148,
+        bytes
+          .subarray(offset, offset + 512)
+          .reduce((sum, byte) => sum + byte, 0)
+          .toString(8)
+          .padStart(6, "0") + "\0 ",
+      );
+      write(offset + 512, content);
+    };
+    member(0, "/a//hello.txt", "nested hello");
+    member(1024, "a/hello.txt", "plain hello");
     const src = URL.createObjectURL(new Blob([bytes]));
     try {
       await using screen = await render(<BinaryViewer src={src} name="paths.tar" kind="archive" />);
-      const child = () => screen.container.querySelector<HTMLButtonElement>("tbody button");
-      await vi.waitFor(() => expect(child()?.textContent).toBe("a"), 10_000);
-      await act(() => child()!.click());
-      await act(() => child()!.click());
-      await vi.waitFor(() => expect(child()?.textContent).toBe("hello.txt"));
+      const buttons = () => [
+        ...screen.container.querySelectorAll<HTMLButtonElement>("tbody button"),
+      ];
+      const rows = () => buttons().map((button) => button.textContent);
+      const back = () =>
+        screen.container.querySelector<HTMLButtonElement>('[aria-label="Back to archive"]')!;
+      const preview = () => screen.container.querySelector("pre")?.textContent;
+      await vi.waitFor(() => expect(rows()).toEqual(["a"]), 10_000);
+      await act(() => buttons()[0]!.click());
+      await vi.waitFor(() => expect(rows()).toEqual(["hello.txt", "hello.txt"]));
+      await act(() => buttons()[0]!.click());
+      await vi.waitFor(() => expect(preview()).toContain("nested hello"), 10_000);
+      await act(() => back().click());
+      await act(() => buttons()[1]!.click());
+      await vi.waitFor(() => expect(preview()).toContain("plain hello"), 10_000);
+      await act(() => back().click());
+      await vi.waitFor(() => expect(rows()).toEqual(["hello.txt", "hello.txt"]));
       const parent = () =>
         screen.container.querySelector<HTMLButtonElement>('[aria-label="Parent folder"]')!;
       await act(() => parent().click());
-      await act(() => parent().click());
       expect(parent().disabled).toBe(true);
-      expect(child()?.textContent).toBe("a");
+      expect(rows()).toEqual(["a"]);
+    } finally {
+      URL.revokeObjectURL(src);
+    }
+  });
+
+  it("shows 0 bytes for empty archive entries and folders", async () => {
+    const zip = new JSZip();
+    zip.file("empty.txt", "");
+    zip.folder("empty-dir");
+    zip.file("pkg/__init__.py", "");
+    zip.file("readme.txt", "hello");
+    const bytes = await zip.generateAsync({ type: "arraybuffer" });
+    const src = URL.createObjectURL(new Blob([bytes]));
+    try {
+      await using screen = await render(<BinaryViewer src={src} name="sizes.zip" kind="archive" />);
+      const rows = () =>
+        [...screen.container.querySelectorAll("tbody tr")].map((row) =>
+          [...row.querySelectorAll("td")].slice(0, 2).map((cell) => cell.textContent?.trim()),
+        );
+      await vi.waitFor(() => {
+        expect(rows()).toEqual([
+          ["empty-dir", "0 bytes"],
+          ["pkg", "0 bytes"],
+          ["empty.txt", "0 bytes"],
+          ["readme.txt", "1 KB"],
+        ]);
+      }, 10_000);
     } finally {
       URL.revokeObjectURL(src);
     }
@@ -492,55 +541,83 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("keeps WhiteIsZero TIFF brightness and rejects oversized metadata before decoding", async () => {
-    const tags = [
-      [256, 2],
-      [257, 1],
-      [258, 8],
-      [259, 1],
-      [262, 0],
-      [273, 134],
-      [277, 1],
-      [278, 1],
-      [279, 2],
-      [284, 1],
-    ];
-    const bytes = new ArrayBuffer(136);
-    const view = new DataView(bytes);
-    view.setUint16(0, 0x4949);
-    view.setUint16(2, 42, true);
-    view.setUint32(4, 8, true);
-    view.setUint16(8, tags.length, true);
-    tags.forEach(([tag, value], index) => {
-      const offset = 10 + index * 12;
-      view.setUint16(offset, tag!, true);
-      view.setUint16(offset + 2, 4, true);
-      view.setUint32(offset + 4, 1, true);
-      view.setUint32(offset + 8, value!, true);
-    });
-    view.setUint8(135, 255);
-    const src = URL.createObjectURL(new Blob([bytes]));
-    try {
-      const blob = await decodeImagePreview(src, false, new AbortController().signal);
-      const bitmap = await createImageBitmap(blob);
-      const canvas = new OffscreenCanvas(2, 1);
-      const context = canvas.getContext("2d")!;
-      context.drawImage(bitmap, 0, 0);
-      expect([...context.getImageData(0, 0, 2, 1).data]).toEqual([
-        255, 255, 255, 255, 0, 0, 0, 255,
-      ]);
-      bitmap.close();
-    } finally {
-      URL.revokeObjectURL(src);
+  it("keeps WhiteIsZero TIFF brightness and alpha with SubIFDs and type-13 ExifIFD pointers and rejects invalid metadata before decoding", async () => {
+    let bytes = new ArrayBuffer(0);
+    let exifEntry = 0;
+    for (const { pixels, expected } of [
+      { pixels: [0, 255], expected: [255, 255, 255, 255, 0, 0, 0, 255] },
+      { pixels: [0, 255, 255, 0], expected: [255, 255, 255, 255, 0, 0, 0, 0] },
+    ]) {
+      const samples = pixels.length / 2;
+      const start = samples === 2 ? 170 : 158;
+      const exif = start + pixels.length;
+      const tags = [
+        [256, 2],
+        [257, 1],
+        [258, 8],
+        [259, 1],
+        [262, 0],
+        [273, start],
+        [277, samples],
+        [278, 1],
+        [279, pixels.length],
+        [284, 1],
+        [330, 0, 13],
+        ...(samples === 2 ? [[338, 2]] : []),
+        [34665, exif, 13],
+      ];
+      exifEntry = 10 + (tags.length - 1) * 12;
+      bytes = new ArrayBuffer(exif + 8);
+      const view = new DataView(bytes);
+      view.setUint16(0, 0x4949);
+      view.setUint16(2, 42, true);
+      view.setUint32(4, 8, true);
+      view.setUint16(8, tags.length, true);
+      tags.forEach(([tag, value, type = 4], index) => {
+        const offset = 10 + index * 12;
+        view.setUint16(offset, tag!, true);
+        view.setUint16(offset + 2, type, true);
+        view.setUint32(offset + 4, 1, true);
+        view.setUint32(offset + 8, value!, true);
+      });
+      new Uint8Array(bytes, start).set(pixels);
+      const src = URL.createObjectURL(new Blob([bytes]));
+      try {
+        const blob = await decodeImagePreview(src, false, new AbortController().signal);
+        const bitmap = await createImageBitmap(blob);
+        const canvas = new OffscreenCanvas(2, 1);
+        const context = canvas.getContext("2d")!;
+        context.drawImage(bitmap, 0, 0);
+        expect([...context.getImageData(0, 0, 2, 1).data]).toEqual(expected);
+        bitmap.close();
+      } finally {
+        URL.revokeObjectURL(src);
+      }
     }
-    view.setUint32(14, 1_000_000, true);
-    const invalid = URL.createObjectURL(new Blob([bytes]));
-    try {
-      await expect(
-        decodeImagePreview(invalid, false, new AbortController().signal),
-      ).rejects.toThrow("metadata");
-    } finally {
-      URL.revokeObjectURL(invalid);
+    for (const [mutate, message] of [
+      [
+        (view: DataView) => view.setUint16(exifEntry + 2, 3, true),
+        "Invalid TIFF metadata pointer.",
+      ],
+      [
+        (view: DataView) => view.setUint32(exifEntry + 4, 2, true),
+        "Invalid TIFF metadata pointer.",
+      ],
+      [
+        (view: DataView) => view.setUint32(14, 1_000_000, true),
+        "This TIFF has too much or truncated metadata.",
+      ],
+    ] as const) {
+      const copy = bytes.slice(0);
+      mutate(new DataView(copy));
+      const invalid = URL.createObjectURL(new Blob([copy]));
+      try {
+        await expect(
+          decodeImagePreview(invalid, false, new AbortController().signal),
+        ).rejects.toThrow(message);
+      } finally {
+        URL.revokeObjectURL(invalid);
+      }
     }
   });
 });
@@ -575,8 +652,14 @@ describe("large text preview recovery", () => {
           environmentId={EnvironmentId.make("test")}
           threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
           absolutePath="/repo/large.txt"
+          draftCwd={null}
           name="large.txt"
           delimiter={null}
+          markdownCwd={null}
+          copyContents={{ current: null }}
+          preview=""
+          // Past the highlighted-source cap, so the worker-backed viewer under test renders.
+          sizeBytes={128 * 1024 * 1024}
           workspaceMutationId={mutation}
           revealLine={null}
           revealRequestId={0}
@@ -833,6 +916,112 @@ describe("large text preview recovery", () => {
     expect(screen.container.textContent).toContain("C19");
   });
 
+  it("keeps row height and vertical position stable across horizontal scroll, fresh row arrays, resize, and typography changes", async () => {
+    const columns = 35;
+    const header = Array.from({ length: columns }, (_, i) => `Col ${i}`);
+    const forcedEightLines = Array.from({ length: 8 }, (_, i) => `L${i + 1}`).join("\n");
+    const wrappedTwelveWords = Array.from({ length: 12 }, (_, i) => `segment${i + 1}`).join(" ");
+    const makeRows = () => [
+      header,
+      ...Array.from({ length: 24 }, (_, rowIndex) =>
+        Array.from({ length: columns }, (_, columnIndex) => {
+          if (rowIndex === 0) {
+            if (columnIndex >= 10 && columnIndex < 28) return forcedEightLines;
+            if (columnIndex === 34) return wrappedTwelveWords;
+          }
+          if (columnIndex === 33 && rowIndex % 3 === 1) return forcedEightLines;
+          // Wide lowercase glyphs that wrap without spaces or newlines.
+          if (rowIndex === 2 && columnIndex === 34) return "m".repeat(11);
+          return `r${rowIndex + 1}-c${columnIndex}`;
+        }),
+      ),
+    ];
+    const view = (width: number) => (
+      <div style={{ display: "flex", height: 320, width }}>
+        <VirtualTablePreview
+          name="wide-wrapped.csv"
+          count={25}
+          columns={columns}
+          header={header}
+          // Fresh arrays per call must not loop or lose measured row heights.
+          getRows={(page) => (page === 0 ? makeRows() : undefined)}
+        />
+      </div>
+    );
+    const previousSettings = getClientSettings();
+    const previousRootFontSize = document.documentElement.style.fontSize;
+    try {
+      await using screen = await render(view(420));
+      const horizontal = () => screen.container.querySelector('[role="table"]')!.parentElement!;
+      const vertical = () => screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+      const row = (index: number) =>
+        screen.container.querySelector<HTMLElement>(`[data-preview-row="${index}"]`)!;
+
+      await vi.waitFor(() => {
+        expect(row(1)).not.toBeNull();
+        expect(row(1).getBoundingClientRect().height).toBeGreaterThan(150);
+      });
+
+      const initialRow1Height = row(1).getBoundingClientRect().height;
+      const initialRow2Height = row(2).getBoundingClientRect().height;
+      const initialRow3Height = row(3).getBoundingClientRect().height;
+      const initialRow4Top = row(4).getBoundingClientRect().top;
+
+      // Scroll to the far right where the word-wrapped column 34 mounts after 18 newline cells.
+      await act(() => {
+        horizontal().scrollLeft = horizontal().scrollWidth;
+        horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("segment12"));
+
+      expect(Math.abs(row(1).getBoundingClientRect().height - initialRow1Height)).toBeLessThan(1);
+      expect(Math.abs(row(2).getBoundingClientRect().height - initialRow2Height)).toBeLessThan(1);
+      expect(row(3).getBoundingClientRect().height).toBeGreaterThan(40);
+      expect(Math.abs(row(3).getBoundingClientRect().height - initialRow3Height)).toBeLessThan(1);
+      expect(Math.abs(row(4).getBoundingClientRect().top - initialRow4Top)).toBeLessThan(1);
+
+      // Scroll vertically into the table, then sweep horizontally back to the left edge.
+      await act(() => {
+        vertical().scrollTop = 120;
+        vertical().dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await vi.waitFor(() => expect(row(5)).not.toBeNull());
+      const scrolledRow5Top = row(5).getBoundingClientRect().top;
+      const scrolledRow5Height = row(5).getBoundingClientRect().height;
+
+      await act(() => {
+        horizontal().scrollLeft = 0;
+        horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("r6-c0"));
+
+      expect(Math.abs(row(5).getBoundingClientRect().height - scrolledRow5Height)).toBeLessThan(1);
+      expect(Math.abs(row(5).getBoundingClientRect().top - scrolledRow5Top)).toBeLessThan(1);
+
+      // Widening the container widens each uniform column, reducing wrapped line count.
+      await screen.rerender(view(1600));
+      await vi.waitFor(() =>
+        expect(row(1).getBoundingClientRect().height).toBeLessThan(initialRow1Height),
+      );
+      const widenedRow1Height = row(1).getBoundingClientRect().height;
+
+      // Typography changes invalidate cached minimums even at the same container width.
+      await act(() => {
+        document.documentElement.style.fontSize = "20px";
+        __setClientSettingsForTests({
+          ...previousSettings,
+          fontSizeInterface: previousSettings.fontSizeInterface + 4,
+        });
+      });
+      await vi.waitFor(() =>
+        expect(row(1).getBoundingClientRect().height).toBeGreaterThan(widenedRow1Height),
+      );
+    } finally {
+      document.documentElement.style.fontSize = previousRootFontSize;
+      __setClientSettingsForTests(previousSettings);
+    }
+  });
+
   it("reveals and highlights requested source lines again for a new request", async () => {
     const view = (line: number, request: number, loaded = true) => (
       <div style={{ display: "flex", height: 400, width: 600 }}>
@@ -959,6 +1148,25 @@ describe("large text preview recovery", () => {
     );
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
   });
+
+  it.each([
+    [1024, false],
+    [1025, true],
+  ] as const)(
+    "shows the column truncation banner only when a CSV exceeds 1,024 columns (%i columns)",
+    async (columnCount, truncated) => {
+      const row = Array.from({ length: columnCount }, (_, i) => i).join(",");
+      await using screen = await render(
+        <LargeTextViewer name="wide.csv" text={`${row}\n${row}\n`} delimiter="," />,
+      );
+      const hasBanner = () =>
+        screen.container.textContent?.includes("Showing the first 1,024 columns") ?? false;
+      expect(hasBanner()).toBe(truncated);
+      const status = () => screen.container.querySelector('[role="status"]')?.textContent ?? "";
+      await vi.waitFor(() => expect(status()).toContain("1 row · 1,024 columns"), 10_000);
+      expect(hasBanner()).toBe(truncated);
+    },
+  );
 
   it("reloads a partial page when the indexed row count grows", async () => {
     const load = vi.fn();
@@ -1232,6 +1440,28 @@ describe("document output sanitization", () => {
     expect(html).not.toContain("https://");
   });
 });
+it("keeps an attachment URL when the parent passes a fresh asset object for the same attachment", async () => {
+  const url = URL.createObjectURL(new Blob(["%PDF-1.4"], { type: "application/pdf" }));
+  refresh.mockReset().mockResolvedValue(url);
+  const preview = () => (
+    <AttachmentFilePreview
+      name="report.pdf"
+      mimeType="application/pdf"
+      sizeBytes={8}
+      asset={{ environmentId: EnvironmentId.make("test"), attachmentId: "report" }}
+    />
+  );
+  try {
+    await using screen = await render(preview());
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    // FilePreviewPanel rebuilds `asset` when an agent command completes.
+    await screen.rerender(preview());
+    expect(refresh).toHaveBeenCalledTimes(1);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+
 it("opens a known empty attachment even when its range response is inaccessible", async () => {
   refresh.mockResolvedValue("https://unreachable.invalid/empty.txt");
   await using screen = await render(
@@ -1479,7 +1709,7 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
     expect(image?.alt).toBe("Mermaid diagram");
     expect(image?.naturalWidth).toBeGreaterThan(0);
   });
-  await page.getByRole("button", { name: "Back, close image preview" }).click();
+  await page.getByRole("button", { name: "Close image preview" }).click();
   await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
   await screen.getByRole("button", { name: "Show Mermaid source" }).click();
   await vi.waitFor(() => expect(screen.container.querySelector("pre")?.textContent).toBe(text));
@@ -1590,6 +1820,58 @@ it("loads an edited HTML file outside the workspace from a renewed URL", async (
   expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
     /^data:text\/html,edited/,
   );
+});
+
+it("keeps an unchanged workspace HTML page loaded across commands and renews its grant", async () => {
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  const preview = (mutation: string) => (
+    <WorkspaceBrowserPreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/repo/report.html"
+      title="Report"
+      workspaceMutationId={mutation}
+    />
+  );
+  const minted = (url: string, fileRevision: string, expiresAt: number) =>
+    assetUrlState.mockReturnValue({ _tag: "Success", url, expiresAt, fileRevision });
+  const shownSrc = (screen: Screen) =>
+    screen.container.querySelector("iframe")?.getAttribute("src");
+  refresh.mockReset();
+  using _timers = fakeTimers();
+  vi.setSystemTime(0);
+  const expiresAt = 60 * 60_000;
+  minted("data:text/html,original", "one", expiresAt);
+  await using screen = await render(preview("first"));
+  const opened = screen.container.querySelector("iframe");
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,original/);
+
+  // Agent commands re-mint the URL; the page and everything it loaded are unchanged.
+  minted("data:text/html,renewed", "one", expiresAt + 30 * 60_000);
+  await screen.rerender(preview("second"));
+  await screen.rerender(preview("third"));
+  expect(screen.container.querySelector("iframe")).toBe(opened);
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,original/);
+  expect(refresh).not.toHaveBeenCalled();
+
+  // Its grant is about to expire, so the page moves to the URL minted since.
+  await act(() => vi.advanceTimersByTime(59 * 60_000));
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,renewed/);
+  expect(refresh).not.toHaveBeenCalled();
+
+  // With no command since, the page asks for a fresh URL itself and moves to it.
+  refresh.mockResolvedValue(null);
+  await act(() => vi.advanceTimersByTime(30 * 60_000));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  minted("data:text/html,renewed-again", "one", expiresAt + 90 * 60_000);
+  await screen.rerender(preview("third"));
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,renewed-again/);
+
+  minted("data:text/html,edited", "two", expiresAt + 90 * 60_000);
+  await screen.rerender(preview("fourth"));
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,edited/);
 });
 
 function planningPdf(
@@ -1764,7 +2046,9 @@ it("mounts a bounded set of saved notebook outputs as the reader scrolls", async
   );
   expect(screen.container.querySelectorAll("iframe").length).toBeLessThanOrEqual(16);
   const first = screen.container.querySelector("iframe")!;
+  const firstOutput = first.parentElement!;
   expect(first.srcdoc).toContain("saved 0-0");
+  await vi.waitFor(() => expect(first.clientHeight).toBeGreaterThan(0));
   const viewport = screen.container.querySelector<HTMLElement>(".scrollbar-gutter-both")!;
   await act(() => {
     viewport.scrollTop = viewport.scrollHeight;
@@ -1778,12 +2062,27 @@ it("mounts a bounded set of saved notebook outputs as the reader scrolls", async
     expect(first.isConnected).toBe(false);
   });
   expect(screen.container.querySelectorAll("iframe").length).toBeLessThanOrEqual(16);
+  const reservedHeight = firstOutput.getBoundingClientRect().height;
+  using cleanup = new DisposableStack();
+  const pending = new AbortController();
+  cleanup.defer(() => pending.abort());
+  // Hold the remounted frame in its loading state until it scrolls away again.
+  firstOutput.addEventListener("load", (event) => event.stopPropagation(), {
+    capture: true,
+    signal: pending.signal,
+  });
   await act(() => {
     viewport.scrollTop = 0;
   });
-  await vi.waitFor(() =>
-    expect(screen.container.querySelector("iframe")?.srcdoc).toContain("saved 0-0"),
-  );
+  await vi.waitFor(() => {
+    expect(firstOutput.querySelector("iframe")?.srcdoc).toContain("saved 0-0");
+    expect(firstOutput.getBoundingClientRect().height).toBe(reservedHeight);
+  });
+  await act(() => {
+    viewport.scrollTop = viewport.scrollHeight;
+  });
+  await vi.waitFor(() => expect(firstOutput.querySelector("iframe")).toBeNull());
+  expect(firstOutput.getBoundingClientRect().height).toBe(reservedHeight);
 });
 
 it.each([
@@ -2060,3 +2359,22 @@ it.each([
     `Unsupported PDF ${directory} asset.`,
   );
 });
+
+it.each([
+  ["firmware", "Save it to open in an app that supports this format."],
+  [".cache", "Save it to open in an app that supports this format."],
+  ["a.dir/firmware", "Save it to open in an app that supports this format."],
+  ["blob.foo", "Save it to open in an app that supports foo files."],
+] as const)(
+  "describes unsupported binary attachment %s without misreading its name as an extension",
+  async (name, expected) => {
+    const file = new Blob([new Uint8Array([0, 1, 2, 3])], { type: "application/octet-stream" });
+    await using screen = await render(
+      <AttachmentFilePreview name={name} mimeType={file.type} sizeBytes={file.size} file={file} />,
+    );
+    await expect
+      .element(screen.getByText("No preview for this file", { exact: true }))
+      .toBeVisible();
+    await expect.element(screen.getByText(expected, { exact: true })).toBeVisible();
+  },
+);
