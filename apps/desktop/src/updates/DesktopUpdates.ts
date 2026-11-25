@@ -39,6 +39,7 @@ import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
+import * as LocalSourceUpdates from "./LocalSourceUpdates.ts";
 import {
   normalizeDesktopUpdateReleaseNotes,
   releaseNotesOfOfferedVersion,
@@ -1504,4 +1505,14 @@ export const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(DesktopUpdates, make);
+export const layer = Layer.effect(
+  DesktopUpdates,
+  Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    // Fork: the local build updates from its source checkout instead of a release feed.
+    if (environment.branding.stageLabel === "Local") {
+      return DesktopUpdates.of(yield* LocalSourceUpdates.make);
+    }
+    return yield* make;
+  }),
+);

@@ -3947,6 +3947,14 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     options.verbose,
   );
 
+  // Fork: the local build updates itself from this checkout.
+  if (isDesktopLocalVersion(appVersion)) {
+    yield* fs.writeFileString(
+      path.join(stageResourcesDir, "kaluwa-source.json"),
+      JSON.stringify({ repoRoot, commit: commitHash }),
+    );
+  }
+
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
   const stageProdResourcesDir = path.join(stageAppDir, "apps/desktop/prod-resources");
   yield* fs.copy(stageResourcesDir, stageProdResourcesDir);
