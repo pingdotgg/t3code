@@ -831,3 +831,32 @@ describe("project name composition", () => {
     ]);
   });
 });
+
+it("restores the saved project name when cleared or left blank", async () => {
+  setup();
+  await using _screen = await mountPanel();
+  const input = page.getByRole("textbox", { name: "Project name" });
+
+  await userEvent.clear(input);
+  await userEvent.keyboard("{Enter}");
+
+  await expect.element(input).toHaveValue("Shared repo");
+  expect(state.update).not.toHaveBeenCalled();
+  expect(state.toast).toHaveBeenCalledWith({
+    type: "warning",
+    title: "Project title cannot be empty",
+  });
+
+  await userEvent.fill(input, "   ");
+  await userEvent.keyboard("{Tab}");
+
+  await expect.element(input).toHaveValue("Shared repo");
+  expect(state.update).not.toHaveBeenCalled();
+  expect(state.toast).toHaveBeenCalledTimes(2);
+
+  await userEvent.click(input);
+  await userEvent.keyboard("{Tab}");
+
+  expect(state.toast).toHaveBeenCalledTimes(2);
+  expect(state.update).not.toHaveBeenCalled();
+});
