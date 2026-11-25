@@ -1,5 +1,7 @@
 /// <reference lib="dom" />
 import { expect } from "e2e";
+import * as Effect from "effect/Effect";
+import * as Schedule from "effect/Schedule";
 
 import { test, WEB } from "./t3.ts";
 
@@ -40,13 +42,24 @@ test(
       await browser.keyboard.press("Control+Shift+C");
       return browser.evaluate(() => document.body.dataset.terminalCopy?.trim() ?? "");
     };
-    await expect.poll(copySelection, { timeout: 15_000 }).not.toBe("");
+    const waitForSelection = (ready: (text: string) => boolean, description: string) =>
+      Effect.runPromise(
+        Effect.promise(copySelection).pipe(
+          Effect.repeat({ schedule: Schedule.spaced("250 millis"), until: ready }),
+          Effect.timeoutOrElse({
+            duration: "15 seconds",
+            orElse: () =>
+              Effect.fail(new Error(`Terminal setup timed out waiting for ${description}.`)),
+          }),
+        ),
+      );
+    await waitForSelection((text) => text !== "", "the shell prompt");
     // Clear the screen and scrollback, print exactly two rows, and keep the next prompt offscreen.
     await browser.keyboard.type(
       "printf '\\033[3J\\033[2J\\033[Hfirst row\\r\\nsecond row'; sleep 60",
     );
     await browser.keyboard.press("Enter");
-    await expect.poll(copySelection, { timeout: 15_000 }).toBe("first row\nsecond row");
+    await waitForSelection((text) => text === "first row\nsecond row", "the two seeded rows");
     await browser.evaluate((selector) => {
       const canvas = document.activeElement?.matches(selector)
         ? document.activeElement.parentElement?.querySelector("canvas")
@@ -67,7 +80,8 @@ test(
     await screen.getByText("チャットに追加", { exact: true }).tap();
 
     const excerpt = screen.getByRole("button", /ターミナルの抜粋、ターミナル 2/);
-    await expect(excerpt).toHaveText("ターミナル 2 1–2 行目");
+    await excerpt.waitFor();
     await app.screenshot("terminal-excerpt-two-lines");
+    await expect(excerpt).toHaveText("ターミナル 2 1–2 行目");
   },
 );
