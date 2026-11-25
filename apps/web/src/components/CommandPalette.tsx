@@ -600,10 +600,11 @@ function OpenCommandPaletteDialog(props: {
     return true;
   };
   const openAddedProject = async (projectRef: ScopedProjectRef): Promise<void> => {
-    // A moved draft is keyed from the project record, so wait for it to reach this client.
-    const project =
-      addProjectDraftId === null ? null : await waitForProject(projectRef, 3_000).catch(() => null);
-    if (project !== null && (await moveDraftToAddedProject(project))) return;
+    if (addProjectDraftId !== null) {
+      // If the record never arrives, leave the current draft open and report the failure.
+      const project = await waitForProject(projectRef);
+      if (await moveDraftToAddedProject(project)) return;
+    }
     await handleNewThread(projectRef);
   };
   const createNewProject = useNewProject(openAddedProject);
@@ -2382,7 +2383,9 @@ function OpenCommandPaletteDialog(props: {
       addProjectCloneFlow.environmentId,
       startResult.value.projectId,
     );
-    await waitForProject(projectRef, 3_000).catch(() => null);
+    if (addProjectDraftId === null) {
+      await waitForProject(projectRef, 3_000).catch(() => null);
+    }
     const navigationResult = await settlePromise(() => openAddedProject(projectRef));
     if (navigationResult._tag === "Failure") {
       const error = squashAtomCommandFailure(navigationResult);
