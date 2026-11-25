@@ -23,10 +23,6 @@ export interface Release {
   assets: ReleaseAsset[];
 }
 
-function cacheKey(channel: ReleaseChannel) {
-  return `tix-${channel}-release`;
-}
-
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`GitHub API responded ${response.status}`);
@@ -47,17 +43,7 @@ async function fetchNightly(): Promise<Release> {
 }
 
 export async function fetchLatestRelease(channel: ReleaseChannel = "stable"): Promise<Release> {
-  const key = cacheKey(channel);
-  const cached = sessionStorage.getItem(key);
-  if (cached) return JSON.parse(cached);
-
-  const data = channel === "nightly" ? await fetchNightly() : await fetchStable();
-
-  if (data?.assets) {
-    sessionStorage.setItem(key, JSON.stringify(data));
-  }
-
-  return data;
+  return channel === "nightly" ? fetchNightly() : fetchStable();
 }
 
 export async function fetchLatestReleaseAtBuild(): Promise<Release | null> {
