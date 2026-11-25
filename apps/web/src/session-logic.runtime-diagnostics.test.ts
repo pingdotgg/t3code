@@ -133,6 +133,62 @@ describe("runtime diagnostics in the v2 work log", () => {
     expect(workEntryDisplayLabel(diagnostic.groupedEntries[0]!, undefined)).toBe(retainedMessage);
   });
 
+  // regression: #42561 one Claude api_retry showed as two "Retrying provider (1/1)" rows
+  it("shows a single running provider retry once when its group is expanded", () => {
+    const retry = errorItem({
+      title: "Provider retry",
+      status: "running",
+      completedAt: null,
+      failure: {
+        class: "provider_error",
+        message: "Claude API unknown.",
+        code: "unknown",
+        retryable: true,
+      },
+      retry: { attempt: 1, maxAttempts: 1, retryDelayMs: 0 },
+    });
+    const timelineEntries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        {
+          position: 0,
+          visibility: "local",
+          sourceThreadId: retry.threadId,
+          sourceItemId: retry.id,
+          item: retry,
+        },
+      ],
+      optimisticMessages: [],
+    });
+    const deriveRows = (expandedWorkGroupIds?: ReadonlySet<string>) =>
+      deriveMessagesTimelineRows({
+        timelineEntries,
+        isWorking: true,
+        activeTurnStartedAt: DateTime.formatIso(now),
+        latestRun: {
+          runId: baseItem.runId,
+          status: "running",
+          startedAt: DateTime.formatIso(now),
+          completedAt: null,
+        },
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+        ...(expandedWorkGroupIds ? { expandedWorkGroupIds } : {}),
+      });
+    const groupIds = new Set(
+      deriveRows().flatMap((row) => ("groupId" in row && row.groupId ? [row.groupId] : [])),
+    );
+    const rows = deriveRows(groupIds);
+    const rowsShowingRetry = rows.flatMap((row) => {
+      if (row.kind === "work-live") return row.entry.id === retry.id ? [row.kind] : [];
+      if (row.kind === "work") {
+        return row.groupedEntries.some((entry) => entry.id === retry.id) ? [row.kind] : [];
+      }
+      return [];
+    });
+
+    expect(rowsShowingRetry).toHaveLength(1);
+  });
+
   it("does not turn an unrelated tool payload message into a diagnostic", () => {
     const entry = workEntry({
       ...baseItem,
