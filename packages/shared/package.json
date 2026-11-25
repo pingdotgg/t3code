@@ -95,6 +95,10 @@
       "types": "./src/observability.ts",
       "import": "./src/observability.ts"
     },
+    "./forkPrivacy": {
+      "types": "./src/forkPrivacy.ts",
+      "import": "./src/forkPrivacy.ts"
+    },
     "./otelEnvironment": {
       "types": "./src/otelEnvironment.ts",
       "import": "./src/otelEnvironment.ts"

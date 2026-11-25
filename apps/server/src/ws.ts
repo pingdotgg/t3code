@@ -2,6 +2,7 @@ import { GitCommandError, OrchestrationDispatchCommandError } from "@t3tools/con
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous digest inside the pure provider mapping.
 import * as NodeCrypto from "node:crypto";
 import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
+import { sendsTelemetry } from "@t3tools/shared/forkPrivacy";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as NodeHttpServerRequest from "@effect/platform-node/NodeHttpServerRequest";
@@ -1949,10 +1950,10 @@ export const layerWsRpc = (
                 }
               : {}),
             otlpLogsEnabled: config.otlpLogsUrl !== undefined,
-            relayTracingAllowed: RelayTracing.allowedFor(
-              hostEnvironment,
-              serverSettings.managedPolicy,
-            ),
+            // Fork: tells connected clients, including the hosted app, not to trace.
+            relayTracingAllowed:
+              sendsTelemetry &&
+              RelayTracing.allowedFor(hostEnvironment, serverSettings.managedPolicy),
           },
           settings,
           ...(serverSettings.managedPolicy === undefined

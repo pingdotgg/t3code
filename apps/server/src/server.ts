@@ -21,6 +21,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
+import { sendsTelemetry } from "@t3tools/shared/forkPrivacy";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -70,6 +71,7 @@ import * as PullRequestReviewGuides from "./persistence/PullRequestReviewGuides.
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as ForkNoAnalytics from "./telemetry/ForkNoAnalytics.ts";
 import * as DelegatedTaskAnalytics from "./telemetry/DelegatedTaskAnalytics.ts";
 import * as ProviderUsageAnalytics from "./telemetry/ProviderUsageAnalytics.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
@@ -877,7 +879,12 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(TraceDiagnostics.layer),
   Layer.provideMerge(TriageService.layer.pipe(Layer.provide(GitVcsDriver.layer))),
   // Layers memoize by reference, so this is the same policy the settings layer reads.
-  Layer.provideMerge(AnalyticsService.layer.pipe(Layer.provide(ManagedPolicy.layer))),
+  // Fork: product events never leave the machine.
+  Layer.provideMerge(
+    sendsTelemetry
+      ? AnalyticsService.layer.pipe(Layer.provide(ManagedPolicy.layer))
+      : ForkNoAnalytics.layer,
+  ),
   Layer.provideMerge(ExternalLauncher.layer),
   Layer.provideMerge(RemoteOpenTargets.layer),
   Layer.provideMerge(DirectEndpoints.layer.pipe(Layer.provide(layerServerEnvironment))),

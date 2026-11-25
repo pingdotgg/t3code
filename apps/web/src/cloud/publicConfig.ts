@@ -3,6 +3,7 @@ import {
   relayClerkTokenOptions,
 } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { sendsTelemetry } from "@t3tools/shared/forkPrivacy";
 import * as Schema from "effect/Schema";
 
 import { isHostedStaticApp } from "../hostedPairing";
@@ -81,7 +82,8 @@ export function relayTelemetryEnabled(): boolean | null {
 
 export function resolveRelayTracingConfig() {
   // The relay exporter is created during module initialization, so this must be synchronous.
-  if (relayTelemetryEnabled() === false) {
+  // Fork: relay traces never leave the machine.
+  if (!sendsTelemetry || relayTelemetryEnabled() === false) {
     return null;
   }
   const { relayTracing } = resolveCloudPublicConfig();

@@ -1,5 +1,6 @@
 import type { ManagedPolicySummary } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { sendsTelemetry } from "@t3tools/shared/forkPrivacy";
 import {
   nodeProcessRuntimeAttributes,
   processServiceInstanceId,
@@ -12,7 +13,8 @@ import * as Layer from "effect/Layer";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { resolveRelayClientTracingConfig } from "./publicConfig.ts";
 
-const relayClientTracingConfig = resolveRelayClientTracingConfig();
+// Fork: relay traces never leave the machine.
+const relayClientTracingConfig = sendsTelemetry ? resolveRelayClientTracingConfig() : null;
 
 /**
  * `false` once the environment or a managed policy opted out. Until the desktop has read the
