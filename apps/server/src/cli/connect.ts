@@ -655,7 +655,7 @@ const connectLinkCommand = Command.make("link", {
             ? "publish agent activity (no managed tunnel)"
             : "make this machine reachable";
           const next = Option.isSome(running)
-            ? `Restart the running server with \`${yield* resolveHostCliHint("service restart", flags.baseDir)}\` to ${purpose}.`
+            ? `A T3 Code server is already running. Restart it to ${purpose}: run \`${yield* resolveHostCliHint("service restart", flags.baseDir)}\` for the background service, or stop the server and start it again.`
             : flags.publishOnly
               ? `Start T3 to ${purpose}.`
               : `Start the server with \`${yield* resolveHostCliHint("serve", flags.baseDir)}\` to ${purpose}.`;
