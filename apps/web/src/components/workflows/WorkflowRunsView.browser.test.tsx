@@ -61,6 +61,7 @@ const state = vi.hoisted(() => ({
   permitted: true,
   detailError: null as string | null,
   linked: [] as ReadonlyArray<string>,
+  sessionId: null as string | null,
 }));
 const canOperate = Atom.make(true);
 const cannotOperate = Atom.make(false);
@@ -77,6 +78,7 @@ function setup(
   state.permitted = true;
   state.detailError = null;
   state.linked = [];
+  state.sessionId = null;
 }
 
 const environment = { environmentId, label: "Laptop" };
@@ -126,6 +128,10 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
       state.commands.push([options.label, value.input]);
       return Promise.resolve({ _tag: "Success", value: undefined });
     }) as never,
+}));
+vi.mock(import("../../state/session"), async (original) => ({
+  ...(await original()),
+  useEnvironmentSessionId: () => state.sessionId,
 }));
 vi.mock(import("../../state/peerLinks"), async (original) => ({
   ...(await original()),
@@ -238,6 +244,57 @@ describe("WorkflowRunsView", () => {
         [
           "workflow answer",
           { runId: "ship", name: "approve", choice: "Hold", reason: "Too risky today" },
+        ],
+      ]),
+    );
+  });
+
+  it("shows what choices do and the links, and sends a choice that needs a reason only with one", async () => {
+    setup(
+      {
+        runs: [run({ runId: "ship", title: "Release 1.2", status: "waiting", detail: "approve" })],
+        questions: [
+          {
+            ...question,
+            request: {
+              title: "Ship release 1.2?",
+              choices: ["Ship", "Hold", "Close as a duplicate of the earlier request"],
+              choiceDetails: [
+                { value: "Hold", description: "It waits a week", requireReason: true },
+              ],
+              links: [{ label: "The diff", url: "https://example.com/diff" }],
+            },
+          },
+        ],
+      },
+      { ship: [step({ name: "approve", kind: "ask", status: "running", endedAt: null })] },
+    );
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    await expect.element(screen.getByText("It waits a week")).toBeVisible();
+    // A long label keeps a button as wide as itself, as before choices could say more.
+    const long = screen
+      .getByRole("button", { name: "Close as a duplicate of the earlier request" })
+      .element();
+    expect(long.scrollWidth).toBeLessThanOrEqual(long.clientWidth);
+    await expect
+      .element(screen.getByRole("link", { name: "The diff" }))
+      .toHaveAttribute("href", "https://example.com/diff");
+    await screen.getByRole("button", { name: "Hold", exact: true }).click();
+    await expect.element(screen.getByText("Hold needs a reason.")).toBeVisible();
+    expect(state.commands).toEqual([]);
+
+    await userEvent.fill(
+      screen.getByRole("textbox", { name: "Reason for Ship release 1.2?" }),
+      "Not this week",
+    );
+    await screen.getByRole("button", { name: "Hold", exact: true }).click();
+    await vi.waitFor(() =>
+      expect(state.commands).toEqual([
+        [
+          "workflow answer",
+          { runId: "ship", name: "approve", choice: "Hold", reason: "Not this week" },
         ],
       ]),
     );
@@ -430,6 +487,49 @@ describe("WorkflowRunsView", () => {
     await expect
       .element(screen.getByRole("button", { name: "Cancel run" }))
       .not.toBeInTheDocument();
+  });
+
+  it("says You for this client's own answer, and names any other client that answered", async () => {
+    const answered = (name: string, minute: number, result: WorkflowStep["result"]) =>
+      step({ name, kind: "ask", startedAt: at(minute), endedAt: at(minute + 1), result });
+    const chrome = { answeredBy: "Chrome on Linux", answeredAt: at(2) };
+    setup(
+      {
+        runs: [run({ runId: "fix", title: "Fix", status: "completed", endedAt: at(12) })],
+        questions: [],
+      },
+      {
+        fix: [
+          answered("mine", 1, { choice: "Yes", ...chrome, answeredBySession: "this-browser" }),
+          // Another browser the server gives the same name.
+          answered("theirs", 3, { choice: "No", ...chrome, answeredBySession: "other-browser" }),
+          answered("agent", 5, {
+            choice: "Yes",
+            answeredBy: "Fix the login bug",
+            answeredAt: at(6),
+          }),
+          // Kept before answers recorded a session: named, as it was.
+          answered("old", 7, { choice: "Yes", reason: "Fine", ...chrome }),
+        ],
+      },
+    );
+    state.sessionId = "this-browser";
+    await using screen = await render(page("fix"));
+
+    const flow = screen.getByRole("navigation", { name: "Steps so far" });
+    await expect
+      .element(flow)
+      .toMatchTextContent(
+        /mine.*You said Yes.*theirs.*Chrome on Linux said No.*agent.*Fix the login bug said Yes.*old.*Chrome on Linux said Yes/,
+      );
+    const card = async (name: string) => {
+      await flow.getByRole("button", { name: new RegExp(name) }).click();
+      return screen.getByRole("region", { name });
+    };
+    await expect.element(await card("mine")).toMatchTextContent("You said Yes.");
+    await expect.element(await card("theirs")).toMatchTextContent("Chrome on Linux said No.");
+    await expect.element(await card("agent")).toMatchTextContent("Fix the login bug said Yes.");
+    await expect.element(await card("old")).toMatchTextContent("Chrome on Linux said Yes: Fine");
   });
 
   it("opens an agent's thread on an environment this server links to", async () => {
