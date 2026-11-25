@@ -23,12 +23,14 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
       part: "opener",
       publishing: "old output\r\n",
       queued: "\u001b]0;Build ",
+      pending: "\u001b]0;Build ",
       afterClear: "progress\u0007ready\r\n",
     },
     {
       part: "CSI",
       publishing: "old output\r\n",
       queued: "\u001b[\n",
+      pending: "\u001b[",
       afterClear: "mready\r\n",
     },
     {
@@ -107,12 +109,7 @@ it.layer(Layer.mergeAll(node, ProcessRunner.layer.pipe(Layer.provide(node))), {
         expect(exited).toMatchObject({ type: "exited", exitCode: row.exit.exitCode });
         return;
       }
-      if (row.part === "opener") {
-        expect(cleared).toMatchObject({ pendingControlSequence: row.queued });
-      }
-      if (row.part === "CSI") {
-        expect(cleared).toMatchObject({ pendingControlSequence: "\u001b[" });
-      }
+      if (row.pending) expect(cleared).toMatchObject({ pendingControlSequence: row.pending });
       emitData(row.afterClear);
       yield* Deferred.await(printed);
 
