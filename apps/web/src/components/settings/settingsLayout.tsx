@@ -12,7 +12,13 @@ import {
 import * as Equal from "effect/Equal";
 import { useGT } from "gt-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
-import { createContext, type ComponentPropsWithoutRef, type ReactNode, useContext } from "react";
+import {
+  createContext,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+  useContext,
+  useId,
+} from "react";
 
 import {
   PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
@@ -346,6 +352,7 @@ export function SettingsRow({
 }) {
   const gt = useGT();
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
+  const titleId = useId();
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -429,7 +436,11 @@ export function SettingsRow({
         render={
           <span
             tabIndex={0}
-            className="flex w-full items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[32rem]/settings-row:w-auto"
+            role="group"
+            aria-disabled="true"
+            aria-labelledby={titleId}
+            aria-description={message}
+            className="flex w-full cursor-not-allowed items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring @min-[32rem]/settings-row:w-auto"
           />
         }
       >
@@ -465,11 +476,11 @@ export function SettingsRow({
         ? inertControl(gt("Managed by {organization}.", { organization: managedBy }))
         : unavailable && control
           ? inertControl(
-              !canWriteSettings
-                ? lackingPermissionMessage()
-                : context
+              !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable)
+                ? context && (context.environments.length > 0 || primarySettingsAvailable)
                   ? gt("Reconnect the selected environment to change this setting.")
-                  : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+                  : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE
+                : lackingPermissionMessage(),
             )
           : environmentWide && control
             ? inertControl(gt("Environment-wide setting. Select an environment to change it."))
@@ -538,7 +549,9 @@ export function SettingsRow({
       <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_auto] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
-            <h3 className="text-sm font-medium text-foreground">{title}</h3>
+            <h3 id={titleId} className="text-sm font-medium text-foreground">
+              {title}
+            </h3>
             {renderedInheritance ? (
               <span
                 className={cn(
