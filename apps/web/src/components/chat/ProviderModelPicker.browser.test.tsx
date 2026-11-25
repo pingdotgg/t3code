@@ -14,6 +14,7 @@ import "~/index.css";
 import { render } from "../../../test/render";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { SharedTooltipProvider } from "../ui/shared-tooltip";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 
 it("keeps each registry image when adding a model from another ACP agent", async () => {
@@ -100,6 +101,44 @@ it("keeps each registry image when adding a model from another ACP agent", async
   }
   await userEvent.keyboard("{Escape}");
   await vi.waitFor(() => expect(imageWidths()).toEqual([11, 17]));
+});
+
+it("shows the active instance card when the pointer rests on the trigger's provider icon", async () => {
+  const entries = deriveProviderInstanceEntries(
+    ["Work A", "Work B"].map((name) => ({
+      instanceId: ProviderInstanceId.make(name.replace(" ", "-").toLowerCase()),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      displayName: name,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready" as const,
+      auth: { status: "authenticated" as const },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      models: [{ slug: "opus", name: "Opus", isCustom: false, capabilities: {} }],
+      slashCommands: [],
+      skills: [],
+    })),
+  );
+  const active = entries[1]!;
+
+  await using screen = await render(
+    <SharedTooltipProvider>
+      <ProviderModelPicker
+        environmentId={null}
+        activeInstanceId={active.instanceId}
+        model="opus"
+        lockedProvider={null}
+        instanceEntries={entries}
+        modelOptionsByInstance={new Map(entries.map((entry) => [entry.instanceId, entry.models]))}
+        onInstanceModelChange={() => {}}
+      />
+    </SharedTooltipProvider>,
+  );
+  const icon = screen.container.querySelector("[data-chat-provider-model-picker-icon] svg");
+  expect(icon).not.toBeNull();
+  await userEvent.hover(page.elementLocator(icon!));
+  await expect.element(page.getByText("Work B", { exact: true })).toBeVisible();
 });
 
 it("keeps a docked picker open after a pick and hands focus to that model's effort", async () => {
