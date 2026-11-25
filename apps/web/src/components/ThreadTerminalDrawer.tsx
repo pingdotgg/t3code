@@ -29,6 +29,8 @@ import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
+  TERMINAL_BRACKETED_PASTE_END,
+  type TerminalWriteInput,
   type ContextMenuItem,
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
@@ -964,12 +966,20 @@ function TerminalSessionViewport({
 
       const readInputSession = () => appAtomRegistry.get(terminalSessionAtom);
       const canWriteInput = () => readEnvironmentScope(environmentId, AuthTerminalOperateScope);
-      const writeInputChunk = (data: string, kind?: "binary" | "reply") =>
+      const writeInputChunk = (
+        data: string,
+        kind?: "binary" | "reply",
+        bracketedPaste?: TerminalWriteInput["bracketedPaste"],
+      ) =>
         retainedTerminalWrite.current({
           environmentId,
-          input: kind
-            ? { threadId, terminalId, data, [kind]: true }
-            : { threadId, terminalId, data },
+          input: {
+            threadId,
+            terminalId,
+            data,
+            ...(kind ? { [kind]: true } : {}),
+            ...(bracketedPaste ? { bracketedPaste } : {}),
+          },
         });
       const sendTerminalInput = (
         data: string,
@@ -994,7 +1004,7 @@ function TerminalSessionViewport({
         };
         return writeInput(
           data,
-          async (chunk) => {
+          async (chunk, bracketedPaste) => {
             const currentSession = readInputSession();
             if (
               terminalRef.current !== terminal ||
@@ -1003,7 +1013,7 @@ function TerminalSessionViewport({
             ) {
               return "not-dispatched";
             }
-            const result = await writeInputChunk(chunk, kind);
+            const result = await writeInputChunk(chunk, kind, bracketedPaste);
             if (result._tag === "Success") return true;
             if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
@@ -1019,7 +1029,7 @@ function TerminalSessionViewport({
             if (currentPid === null) return false;
             if (pid !== null && currentPid !== pid) return true;
             if (writableSessionGeneration(current, canWriteInput()) === null) return false;
-            const result = await writeInputChunk("\x1b[201~");
+            const result = await writeInputChunk(TERMINAL_BRACKETED_PASTE_END, undefined, "abort");
             if (result._tag === "Success") return true;
             if (!isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);

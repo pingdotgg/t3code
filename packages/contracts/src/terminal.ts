@@ -238,11 +238,16 @@ export type TerminalAttachInput = typeof TerminalAttachInput.Type;
 /** Longest `data` one `terminal.write` carries, in UTF-16 code units. */
 export const TERMINAL_WRITE_MAX_LENGTH = 65_536;
 
+export const TERMINAL_BRACKETED_PASTE_START = "\x1b[200~";
+export const TERMINAL_BRACKETED_PASTE_END = "\x1b[201~";
+
 export const TerminalWriteInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   data: Schema.String.check(Schema.isNonEmpty()).check(
     Schema.isMaxLength(TERMINAL_WRITE_MAX_LENGTH),
   ),
+  // Older servers ignore the phase and still receive the bracket markers in data.
+  bracketedPaste: Schema.optionalKey(Schema.Literals(["start", "continue", "end", "abort"])),
   // `data` holds one byte per UTF-16 code unit; older servers write it as UTF-8 text.
   binary: Schema.optionalKey(Schema.Boolean),
   // A renderer's answer to a terminal query (DA, DSR, DECRQM). Every attached renderer

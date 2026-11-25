@@ -5,6 +5,9 @@ import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   DEFAULT_TERMINAL_ID,
+  TERMINAL_BRACKETED_PASTE_START,
+  TERMINAL_BRACKETED_PASTE_END,
+  type TerminalWriteInput,
   ProjectId,
   ThreadId,
   TerminalCwdNotFoundError,
@@ -875,6 +878,41 @@ it.layer(
       yield* write(DEFAULT_TERMINAL_ID, "first", modeReply, true);
       expect(shared!.writes).toEqual([modeReply, "iHELLO", modeReply]);
     }),
+  );
+
+  it.effect.each(["abort", "timeout", "close"] as const)(
+    "releases pending terminal input after paste %s",
+    (interruption) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        const target = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
+        const process = ptyAdapter.processes[0]!;
+        const begin = TERMINAL_BRACKETED_PASTE_START + "partial";
+        const writePaste = (data: string, bracketedPaste: TerminalWriteInput["bracketedPaste"]) =>
+          manager.write({ ...target, data, ...(bracketedPaste && { bracketedPaste }) }, "paste");
+        yield* writePaste(begin, "start");
+        const pending = yield* manager
+          .write({ ...target, data: "next" }, "typing")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        expect(process.writes).toEqual([begin]);
+
+        if (interruption === "abort") {
+          yield* writePaste(TERMINAL_BRACKETED_PASTE_END, "abort");
+        } else if (interruption === "timeout") {
+          yield* TestClock.adjust("15 seconds");
+        } else {
+          yield* manager.close(target);
+          yield* manager.open(openInput());
+          expect(ptyAdapter.processes[1]!.writes).toEqual([]);
+        }
+        yield* Fiber.join(pending);
+        expect(process.writes).toEqual(
+          interruption === "close" ? [begin] : [begin, TERMINAL_BRACKETED_PASTE_END, "next"],
+        );
+        const lateEnd = yield* writePaste(TERMINAL_BRACKETED_PASTE_END, "end").pipe(Effect.exit);
+        expect(Exit.isFailure(lateEnd)).toBe(true);
+      }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("resumed attaches after close never respawn until the terminal is reopened", () =>
