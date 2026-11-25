@@ -1291,28 +1291,81 @@ export function withTrackedPermissionToolCall(
 }
 
 /**
+ * Every file path the locations, diffs and raw input of a tool call say it changes, or undefined
+ * when one of them changes something whose path cannot be read.
+ */
+function changedPathsOfToolCall(input: {
+  readonly locations?: unknown;
+  readonly content?: unknown;
+  readonly rawInput?: unknown;
+}): ReadonlyArray<string> | undefined {
+  const paths: Array<string> = [];
+  let complete = true;
+  const requirePath = (value: unknown) => {
+    const path = filePathFromToolValue(value);
+    if (path === undefined) complete = false;
+    else paths.push(path);
+  };
+  if (Array.isArray(input.locations)) {
+    for (const location of input.locations) {
+      requirePath(isRecord(location) ? location.path : undefined);
+    }
+  }
+  if (Array.isArray(input.content)) {
+    for (const entry of input.content) {
+      if (!isRecord(entry) || entry.type !== "diff") continue;
+      if (!Array.isArray(entry.changes)) {
+        requirePath(entry.path);
+        continue;
+      }
+      for (const change of entry.changes) {
+        switch (isRecord(change) ? change.operation : undefined) {
+          case "move":
+            requirePath(change.oldPath);
+            requirePath(change.path);
+            break;
+          case "add":
+          case "delete":
+          case "modify":
+          // A copy only reads its source.
+          case "copy":
+            requirePath(change.path);
+            break;
+          default:
+            // An operation this client does not know may write where its fields do not show.
+            complete = false;
+        }
+      }
+    }
+  }
+  if (isRecord(input.rawInput)) {
+    for (const value of [input.rawInput.path, input.rawInput.filePath, input.rawInput.file_path]) {
+      const path = filePathFromToolValue(value);
+      if (path !== undefined) paths.push(path);
+    }
+  }
+  return complete ? paths : undefined;
+}
+
+/**
  * The request with every file path it or its tracked tool call names as `locations`, so policy
  * can check where a change lands when the request itself carries only a diff, raw input or an ID.
+ * `tracked` must be the call of the session that sent the request. When part of the change has
+ * no readable path the request gets no locations at all, so no policy takes the rest for the whole.
  */
 export function withKnownPermissionLocations(
   params: EffectAcpSchema.RequestPermissionRequest,
   tracked: AcpToolCallState | undefined,
 ): EffectAcpSchema.RequestPermissionRequest {
-  const { locations, content, rawInput } = params.toolCall;
-  const known = new Map<string, EffectAcpSchema.ToolCallLocation>();
-  const trackedLocations: ReadonlyArray<unknown> = Array.isArray(tracked?.data.locations)
-    ? tracked.data.locations
-    : [];
-  for (const location of [
-    ...(locationsFromToolCallInput({ locations: locations ?? undefined, content, rawInput }) ?? []),
-    ...trackedLocations,
-  ]) {
-    const path = isRecord(location) ? filePathFromToolValue(location.path) : undefined;
-    if (path !== undefined && !known.has(path)) known.set(path, { path });
+  const requested = changedPathsOfToolCall(params.toolCall);
+  const seen = tracked === undefined ? [] : changedPathsOfToolCall(tracked.data);
+  if (requested === undefined || seen === undefined) {
+    return { ...params, toolCall: { ...params.toolCall, locations: [] } };
   }
-  return known.size === 0
+  const known = [...new Set([...requested, ...seen])];
+  return known.length === 0
     ? params
-    : { ...params, toolCall: { ...params.toolCall, locations: [...known.values()] } };
+    : { ...params, toolCall: { ...params.toolCall, locations: known.map((path) => ({ path })) } };
 }
 
 export function parsePermissionRequest(

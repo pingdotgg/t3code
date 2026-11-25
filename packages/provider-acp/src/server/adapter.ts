@@ -7649,11 +7649,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const context = followsAgentWorkState
                     ? yield* Ref.get(activeTurn)
                     : yield* activeContext;
-                  // Kiro sends the tool's kind on its `tool_call` and leaves it
-                  // off the permission request for that call; take it from the
-                  // tool already seen under the same id so policy can tell a
-                  // read from a write.
-                  const knownTool = context?.tools.get(params.toolCall.toolCallId);
+                  // Kiro leaves the kind off the permission request for a `tool_call`
+                  // it already sent, so policy takes it from that tool. Tool ids are
+                  // only unique within a session and these are the root session's
+                  // tools, so another session's request takes nothing from them.
+                  const knownTool =
+                    params.sessionId === (yield* Ref.get(activeSessionId))
+                      ? context?.tools.get(params.toolCall.toolCallId)
+                      : undefined;
                   const knownKind = knownTool?.kind;
                   const disposition = dispositionFor(
                     context?.input.runtimePolicy ?? latestRuntimePolicy,

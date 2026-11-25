@@ -612,6 +612,119 @@ describe("AcpRuntimeModel", () => {
     expect(withKnownPermissionLocations(bare, undefined)).toBe(bare);
   });
 
+  it("names a permission request's diff and raw input paths when its locations are empty", () => {
+    const options = [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" as const }];
+    const tracked: AcpToolCallState = {
+      toolCallId: "tool-1",
+      kind: "edit",
+      data: { toolCallId: "tool-1", locations: [{ path: "/work/a.ts" }] },
+    };
+    for (const locations of [[], null]) {
+      expect(
+        withKnownPermissionLocations(
+          {
+            sessionId: "session-1",
+            options,
+            toolCall: {
+              toolCallId: "tool-1",
+              locations,
+              content: [{ type: "diff", path: "/elsewhere/b.ts", newText: "b" }],
+              rawInput: { file_path: "/elsewhere/c.ts" },
+            },
+          },
+          tracked,
+        ).toolCall.locations,
+      ).toEqual([{ path: "/elsewhere/b.ts" }, { path: "/elsewhere/c.ts" }, { path: "/work/a.ts" }]);
+    }
+  });
+
+  it("names the paths a tracked tool call's diff and raw input carry beside its locations", () => {
+    const options = [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" as const }];
+    expect(
+      withKnownPermissionLocations(
+        { sessionId: "session-1", options, toolCall: { toolCallId: "tool-1" } },
+        {
+          toolCallId: "tool-1",
+          kind: "edit",
+          data: {
+            toolCallId: "tool-1",
+            locations: [{ path: "/work/a.ts" }],
+            content: [{ type: "diff", path: "/elsewhere/b.ts", newText: "b" }],
+            rawInput: { path: "/elsewhere/c.ts" },
+          },
+        },
+      ).toolCall.locations,
+    ).toEqual([{ path: "/work/a.ts" }, { path: "/elsewhere/b.ts" }, { path: "/elsewhere/c.ts" }]);
+  });
+
+  it("names every path of a permission request's diff changes as a location", () => {
+    const options = [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" as const }];
+    const request = (
+      changes: Extract<EffectAcpSchema.ToolCallContent, { readonly changes: unknown }>["changes"],
+    ): EffectAcpSchema.RequestPermissionRequest => ({
+      sessionId: "session-1",
+      options,
+      toolCall: {
+        toolCallId: "tool-1",
+        locations: [{ path: "/work/a.ts" }],
+        content: [{ type: "diff", changes }],
+      },
+    });
+    expect(
+      withKnownPermissionLocations(
+        request([
+          { operation: "modify", path: "/elsewhere/b.ts" },
+          { operation: "move", oldPath: "/elsewhere/c.ts", path: "/work/c.ts" },
+          { operation: "copy", oldPath: "/elsewhere/d.ts", path: "/work/d.ts" },
+        ]),
+        undefined,
+      ).toolCall.locations,
+    ).toEqual([
+      { path: "/work/a.ts" },
+      { path: "/elsewhere/b.ts" },
+      { path: "/elsewhere/c.ts" },
+      { path: "/work/c.ts" },
+      { path: "/work/d.ts" },
+    ]);
+  });
+
+  it("names no location when part of what a permission request changes has no readable path", () => {
+    const options = [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" as const }];
+    // Shapes the wire accepts through the schema's open variants, so the types do not name them.
+    const request = (toolCall: Record<string, unknown>) =>
+      ({
+        sessionId: "session-1",
+        options,
+        toolCall: { toolCallId: "tool-1", ...toolCall },
+      }) as EffectAcpSchema.RequestPermissionRequest;
+    const inside = [{ path: "/work/a.ts" }];
+    for (const toolCall of [
+      // An operation this client does not know may write somewhere its fields do not show.
+      { locations: inside, content: [{ type: "diff", changes: [{ operation: "_swap" }] }] },
+      {
+        locations: inside,
+        content: [{ type: "diff", changes: [{ operation: "_swap", path: "/work/b.ts" }] }],
+      },
+      { locations: inside, content: [{ type: "diff" }] },
+      { locations: [...inside, { path: " " }] },
+    ]) {
+      expect(withKnownPermissionLocations(request(toolCall), undefined).toolCall.locations).toEqual(
+        [],
+      );
+    }
+    expect(
+      withKnownPermissionLocations(request({}), {
+        toolCallId: "tool-1",
+        kind: "edit",
+        data: {
+          toolCallId: "tool-1",
+          locations: inside,
+          content: [{ type: "diff", changes: [{ operation: "_swap" }] }],
+        },
+      }).toolCall.locations,
+    ).toEqual([]);
+  });
+
   it("bounds an oversized cumulative tool_call_update content buffer to a tail window", () => {
     const hugeText = Array.from({ length: 2_000 }, (_, i) => `line ${i}: ${"x".repeat(50)}`).join(
       "\n",
