@@ -1012,7 +1012,7 @@ function TerminalSessionViewport({
             const result = await writeInputChunk(chunk, kind, expectedPid);
             if (result._tag === "Success") return true;
             const error = squashAtomCommandFailure(result);
-            if (error instanceof TerminalProcessChangedError) return "not-dispatched";
+            if (Schema.is(TerminalProcessChangedError)(error)) return "not-dispatched";
             if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
               report(thrownErrorMessage(error, m) ?? fallbackError);
             }
@@ -1043,7 +1043,7 @@ function TerminalSessionViewport({
             );
             if (result._tag === "Success") return true;
             const error = squashAtomCommandFailure(result);
-            if (error instanceof TerminalProcessChangedError) return true;
+            if (Schema.is(TerminalProcessChangedError)(error)) return true;
             if (!isAtomCommandInterrupted(result)) {
               report(thrownErrorMessage(error, m) ?? m(msg("Failed to close interrupted paste")));
             }
