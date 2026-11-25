@@ -3414,11 +3414,11 @@ it.effect(
       });
 
       yield* preparationSettled(launched.threadId);
-      assert.equal(
-        (yield* tracker.get(launched.threadId))?.stages.find((stage) => stage.id === "setup-script")
-          ?.status,
-        "skipped",
+      const stage = (yield* tracker.get(launched.threadId))?.stages.find(
+        (candidate) => candidate.id === "setup-script",
       );
+      assert.equal(stage?.status, "skipped");
+      assert.match(stage?.detail ?? "", /Full access/);
       assert.equal(harness.runSetup.mock.calls.length, 0);
     }).pipe(Effect.provide(harness.layer));
   },

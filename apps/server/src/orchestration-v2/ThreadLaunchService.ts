@@ -1071,8 +1071,10 @@ const make = Effect.gen(function* () {
       }
       yield* setupTracker.stageStatus(threadId, "setup-script", "running");
       // The saved setup script is the project's code too.
+      const agentBelowFullAccess =
+        worktreePath !== null && (yield* projectCommandsNow) === "agent-below-full-access";
       const setup =
-        worktreePath === null || (yield* projectCommandsNow) === "agent-below-full-access"
+        worktreePath === null || agentBelowFullAccess
           ? ({ status: "no-script" } as const)
           : yield* setupScripts
               .runForThread({
@@ -1144,7 +1146,16 @@ const make = Effect.gen(function* () {
           yield* setupTracker.stageStatus(threadId, "setup-script", "done");
         }
       } else {
-        yield* setupTracker.stageStatus(threadId, "setup-script", "skipped");
+        yield* setupTracker.stageStatus(
+          threadId,
+          "setup-script",
+          "skipped",
+          setup.status === "skipped-for-link"
+            ? "Project setup scripts do not run for a thread started from a link below Full access."
+            : agentBelowFullAccess
+              ? "Project setup scripts do not run for a worktree an agent asked for from a thread below Full access."
+              : null,
+        );
       }
       // The agent must start on the branch name the thread will show.
       if (branchRename !== null) yield* Fiber.join(branchRename);
