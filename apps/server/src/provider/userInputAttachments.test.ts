@@ -705,6 +705,18 @@ describe("question answer paths", () => {
           expected: ["Heading", "[Extracted text truncated"],
           absent: ["Out of range", "After the table"],
         },
+        {
+          ext: "epub",
+          bounded: true,
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Guide</title></head><body><div>Quarterly revenue<table><tr><th>Month</th><th>Revenue</th></tr><tr><td>June</td><td>400</td></tr></table></div></body></html>',
+          },
+          expected: ["Quarterly revenue\nMonth\tRevenue"],
+        },
         // Word stores object layout and field data outside the visible document text.
         {
           ext: "docx",
