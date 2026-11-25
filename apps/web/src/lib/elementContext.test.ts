@@ -51,8 +51,6 @@ describe("normalizeElementContextSelection", () => {
       makePayload({ htmlPreview: straddling, styles: straddling }),
     );
     expect(result).not.toBeNull();
-    expect(/\p{Surrogate}/u.test(result!.htmlPreview)).toBe(false);
-    expect(/\p{Surrogate}/u.test(result!.styles)).toBe(false);
     expect(result!.htmlPreview).toBe(`${prefix}…`);
     expect(result!.styles).toBe(`${prefix}…`);
   });
