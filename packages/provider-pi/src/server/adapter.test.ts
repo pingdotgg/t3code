@@ -225,7 +225,9 @@ const recordedIdleState = (sessionFile: string) => ({
 const PI_COMPACTING_PROMPT_ERROR =
   "Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.";
 
-const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
+const makeFakePiWithResponses = Effect.fnUntraced(function* (
+  override?: (request: PiRpcRecord, response: PiRpcRecord) => Effect.Effect<PiRpcRecord>,
+) {
   const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const requests = yield* Queue.unbounded<PiRpcRecord>();
   const entriesQueue: Array<unknown> = [];
@@ -406,7 +408,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
           continue;
         }
         const response = respondTo(record);
-        if (response !== null) yield* emit(response);
+        if (response !== null)
+          yield* emit(override === undefined ? response : yield* override(record, response));
       }
     });
 
@@ -523,6 +526,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     lastSpawn: () => lastSpawn,
   } satisfies FakePi;
 });
+
+const makeFakePi: Effect.Effect<FakePi> = makeFakePiWithResponses();
 
 const makeAdapter = Effect.fnUntraced(function* (
   fake: FakePi,
@@ -4540,8 +4545,11 @@ describe("PiAdapterV2", () => {
     "command-only handoff",
     "legacy uncaptured boundary",
     "adopted prompt",
-    "equivalent prior rollback fork",
+    "retry after creating a recovery fork",
     "conflicting prior fork",
+    "captured boundary on a sibling branch",
+    "dangling checkpoint parent",
+    "different branch attached after recovery",
   ] as const)("restores a legacy checkpoint after a %s", (scenario) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -4550,29 +4558,88 @@ describe("PiAdapterV2", () => {
       const switched = `${dir}/current.jsonl`;
       const priorFork = `${dir}/fork.jsonl`;
       const retained = TURN_ONE_ENTRIES;
-      const unrelated = [sessionMessage("u3", null, "user", 180)];
-      const write = (file: string, entries: ReadonlyArray<unknown>) =>
-        fs.writeFileString(
-          file,
-          [{ type: "session", version: 3 }, ...entries]
-            .map((entry) => encodeJsonLine(entry))
-            .join("\n") + "\n",
-        );
-      const equivalent = scenario === "equivalent prior rollback fork";
+      const retry = scenario === "retry after creating a recovery fork";
       const conflicting = scenario === "conflicting prior fork";
+      const sibling = scenario === "captured boundary on a sibling branch";
+      const changedBranch = scenario === "different branch attached after recovery";
+      const handoff = sessionMessage(
+        "u3",
+        sibling || scenario === "dangling checkpoint parent" ? "a1b" : null,
+        "user",
+        180,
+      );
+      const sessions = new Map<string, ReadonlyArray<ReturnType<typeof sessionMessage>>>();
+      const write = (file: string, entries: ReadonlyArray<ReturnType<typeof sessionMessage>>) =>
+        fs
+          .writeFileString(
+            file,
+            [{ type: "session", version: 3 }, ...entries]
+              .map((entry) => encodeJsonLine(entry))
+              .join("\n") + "\n",
+          )
+          .pipe(Effect.tap(() => Effect.sync(() => sessions.set(file, entries))));
+      const extra = sessionMessage("other", "a1b", "assistant", 45);
+      const discarded = sessionMessage("discarded", "a1b", "user", 160);
       yield* write(
         original,
-        equivalent ? [...retained, sessionMessage("discarded", "a1b", "user", 160)] : retained,
+        changedBranch
+          ? [...retained, extra, discarded]
+          : retry
+            ? [...retained, discarded]
+            : retained,
       );
-      yield* write(switched, unrelated);
-      if (equivalent || conflicting)
-        yield* write(
-          priorFork,
-          conflicting ? [...retained, sessionMessage("other", "a1b", "assistant", 40)] : retained,
-        );
+      yield* write(
+        switched,
+        sibling
+          ? [...retained, handoff, sessionMessage("sibling", null, "assistant", 28)]
+          : scenario === "dangling checkpoint parent"
+            ? [...retained.slice(1), handoff]
+            : [handoff],
+      );
+      if (conflicting) yield* write(priorFork, [...retained, extra]);
 
-      const fake = yield* makeFakePi;
-      fake.reloadExtensions(switched);
+      let liveFile = switched;
+      const fake = yield* makeFakePiWithResponses((request, response) =>
+        Effect.gen(function* () {
+          const entries = sessions.get(liveFile) ?? [];
+          switch (request.type) {
+            case "get_state":
+              return { ...response, data: recordedIdleState(liveFile) };
+            case "get_entries":
+              return {
+                ...response,
+                data: {
+                  entries,
+                  leafId:
+                    changedBranch && liveFile === original ? "other" : (entries.at(-1)?.id ?? null),
+                },
+              };
+            case "switch_session": {
+              const file = request.sessionPath;
+              if (typeof file !== "string" || !sessions.has(file))
+                throw new Error("Pi switch requested an unknown fixture session");
+              liveFile = file;
+              return response;
+            }
+            case "fork": {
+              let parentId = entries.find(({ id }) => id === request.entryId)?.parentId;
+              assert.isDefined(parentId);
+              const branch: Array<ReturnType<typeof sessionMessage>> = [];
+              while (parentId !== null) {
+                const entry = entries.find(({ id }) => id === parentId);
+                assert.isDefined(entry);
+                branch.unshift(entry);
+                parentId = entry.parentId;
+              }
+              yield* write(priorFork, branch).pipe(Effect.orDie);
+              liveFile = priorFork;
+              return response;
+            }
+            default:
+              return response;
+          }
+        }),
+      );
       const { runtime } = yield* openRuntime(fake);
       const providerThread = yield* runtime.ensureThread({
         threadId: THREAD_ID,
@@ -4597,40 +4664,48 @@ describe("PiAdapterV2", () => {
               nativeThreadRef: { driver: PI_PROVIDER, strength: "strong", nativeId: switched },
             }),
       };
-      const expected = equivalent ? priorFork : original;
-      fake.queueEntries({ entries: unrelated, leafId: "u3" });
-      fake.queueState({ sessionFile: expected });
-      fake.queueState({ sessionFile: expected });
-      fake.queueEntries({ entries: retained, leafId: "a1b" });
-      fake.queueEntries({ entries: retained, leafId: "a1b" });
-      const result = yield* runtime
-        .rollbackThread({
-          providerThread: { ...providerThread, createdAt: at(0) },
-          target: {
-            type: "provider_turn",
-            checkpointId: CheckpointId.make("legacy-checkpoint"),
-            appRunOrdinal: target.ordinal,
-            providerTurn: target,
-          },
-          providerThreadTurns: [target, boundary],
-        })
-        .pipe(Effect.result);
-      const requests = fake
-        .allRequests()
-        .filter(({ type }) => type === "switch_session" || type === "fork");
-      if (conflicting) {
-        assert.equal(result._tag, "Failure");
-        assert.deepEqual(requests, []);
+      const rewind = runtime.rollbackThread({
+        providerThread: { ...providerThread, createdAt: at(0) },
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("legacy-checkpoint"),
+          appRunOrdinal: target.ordinal,
+          providerTurn: target,
+        },
+        providerThreadTurns: [target, boundary],
+      });
+      const requests = () =>
+        fake.allRequests().flatMap((request) => {
+          if (request.type === "switch_session")
+            return [{ type: request.type, value: request.sessionPath }];
+          if (request.type === "fork") return [{ type: request.type, value: request.entryId }];
+          return [];
+        });
+      if (conflicting || changedBranch) {
+        assert.equal((yield* rewind.pipe(Effect.result))._tag, "Failure");
+        assert.deepEqual(
+          requests(),
+          changedBranch ? [{ type: "switch_session", value: original }] : [],
+        );
         return;
       }
-      assert.equal(result._tag, "Success");
-      if (result._tag !== "Success") return;
-      assert.equal(result.success.providerThread.nativeThreadRef?.nativeId, expected);
-      assert.equal(result.success.providerThread.nativeConversationHeadRef?.nativeId, "a1b");
-      assert.deepEqual(
-        requests.map(({ type, sessionPath }) => ({ type, sessionPath })),
-        [{ type: "switch_session", sessionPath: expected }],
-      );
+      const expected = retry || sibling ? priorFork : original;
+      const assertRestored = ({ providerThread: restored }: Effect.Success<typeof rewind>) => {
+        assert.equal(restored.nativeThreadRef?.nativeId, expected);
+        assert.equal(restored.nativeConversationHeadRef?.nativeId, "a1b");
+        assert.equal(liveFile, expected);
+        assert.deepEqual(sessions.get(liveFile), retained);
+      };
+      const expectedRequests = [
+        ...(sibling ? [] : [{ type: "switch_session", value: original }]),
+        ...(retry || sibling ? [{ type: "fork", value: sibling ? "u3" : "discarded" }] : []),
+      ];
+      assertRestored(yield* rewind);
+      assert.deepEqual(requests(), expectedRequests);
+      if (retry) {
+        assertRestored(yield* rewind);
+        assert.deepEqual(requests(), expectedRequests);
+      }
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
