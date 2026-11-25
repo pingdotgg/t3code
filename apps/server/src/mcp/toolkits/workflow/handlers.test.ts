@@ -1,6 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -251,33 +251,22 @@ it.effect("questions are narrowed to a kind, and runs to a tag", () =>
   }),
 );
 
-it.effect(
-  "an answer sent through the tool names its caller: the client, or the calling thread",
-  () =>
-    Effect.gen(function* () {
-      const named: Array<string | undefined> = [];
-      const workflows = {
-        signal: (
-          _address: unknown,
-          _value: unknown,
-          options: { readonly answeredBy?: string | undefined },
-        ) => Effect.sync(() => (named.push(options.answeredBy), "delivered" as const)),
-      };
-      const answer = { action: "signal", runId: "run-1", wait: "review", value: { choice: "Yes" } };
-      yield* call(answer).pipe(Effect.provide(handlersWith(workflows)));
-      yield* call(answer).pipe(
-        Effect.provide(
-          handlersWith(workflows, {
-            client: undefined,
-            thread: {
-              threadId: ThreadId.make("thread:triage"),
-              providerSessionId: "provider:triage",
-              providerInstanceId: ProviderInstanceId.make("codex"),
-            },
-          }),
-        ),
-      );
-      // The test threads are titled with their id.
-      expect(named).toEqual(["t3 CLI", "thread:triage"]);
-    }),
+it.effect("an answer sent through the tool names the client that sent it", () =>
+  Effect.gen(function* () {
+    const named: Array<string | undefined> = [];
+    yield* call({
+      action: "signal",
+      runId: "run-1",
+      wait: "review",
+      value: { choice: "Yes" },
+    }).pipe(
+      Effect.provide(
+        handlersWith({
+          signal: (_address, _value, options) =>
+            Effect.sync(() => (named.push(options.answeredBy), "delivered" as const)),
+        }),
+      ),
+    );
+    expect(named).toEqual(["t3 CLI"]);
+  }),
 );

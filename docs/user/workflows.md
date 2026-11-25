@@ -103,7 +103,7 @@ yield *
   });
 ```
 
-The app asks for the reason before it sends a choice that requires one, and `t3 workflow signal` refuses that choice without a `reason`. Links open in your browser and are part of `t3 workflow questions --json`. The answer also records when it was given and who sent it (`answeredAt`, `answeredBy`): the device's name as **Connections** lists it, the CLI or tool, or the thread of an agent that answered. The run shows both on the question's step.
+The app asks for the reason before it sends a choice that requires one, and `t3 workflow signal` refuses that choice without a `reason`. Links open in your browser and are part of `t3 workflow questions --json`. The answer also records when it was given and who sent it (`answeredAt`, `answeredBy`): the device's name as **Connections** lists it, the tool that sent it, or for `t3 workflow signal` run by an agent, that agent's thread. The run shows both on the question's step.
 
 `tags([...])` labels a run for `t3 workflow list --tag backlog`, whether or not it waits on anyone.
 
