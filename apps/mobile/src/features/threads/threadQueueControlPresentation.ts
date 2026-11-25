@@ -1,5 +1,4 @@
 import type { EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
-import { msg } from "gt-react-native";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -7,13 +6,10 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { composerFileLinksToPlainText } from "@t3tools/shared/composerInlineTokens";
 
-export const REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL = msg("Remove queued message");
-
 export interface ThreadQueueRowControls {
   readonly canDismiss: boolean;
   readonly canEdit: boolean;
   readonly canSend: boolean;
-  readonly dismissAccessibilityLabel: string;
   readonly displayText: string;
   readonly isEditing: boolean;
 }
@@ -39,7 +35,6 @@ export function resolveThreadQueueRowControls(input: {
     canEdit:
       mutationEnabled && !isEditing && input.isGuestMessage !== true && input.editBlocked !== true,
     canSend: mutationEnabled && (input.canPromoteToSteer || input.canSendNow) && !isEditing,
-    dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     // Editing and sending keep the original text so quoted citations stay linked.
     displayText: isAttachmentOnlyBootstrapPrompt(input.text)
       ? ""

@@ -1,4 +1,3 @@
-import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -15,24 +14,15 @@ import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/co
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
-import { msg, T, useGT, useMessages } from "gt-react-native";
-import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import ReanimatedSwipeable, {
-  type SwipeableMethods,
-} from "react-native-gesture-handler/ReanimatedSwipeable";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { msg, useGT, useMessages } from "gt-react-native";
+import { useRef, useState } from "react";
+import { Pressable, View } from "react-native";
 
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
-import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { Menu } from "../../components/ui/Menu";
-import { ScreenContent } from "../../components/ui/ScreenContent";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useAssetUrl } from "../../state/assets";
 import { useQuietThreadShell } from "../../state/entities";
@@ -44,12 +34,10 @@ import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edi
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
-  REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
 
-const REMOVE_ACTION_WIDTH = 76;
 const THUMBNAIL_LIMIT = 3;
 const EMPTY_QUEUED_COUNT_ATOM = Atom.make(0).pipe(
   Atom.withLabel("mobile-thread-queue-count:empty"),
@@ -108,7 +96,7 @@ function QueuedRunSender(props: {
           : null;
   if (sender === null) return null;
   return (
-    <View className="flex-row items-center gap-1">
+    <View className="mb-1 flex-row items-center gap-1 pr-1">
       {sender.icon ? (
         <SymbolView
           name={sender.icon}
@@ -128,11 +116,15 @@ function QueuedRunSender(props: {
   );
 }
 
-export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
-  const theme = useUniwindTheme();
-  const target = route.params;
-  const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
+/**
+ * Messages waiting for the current turn, at the end of the feed as on web. Each waits as a dashed
+ * bubble until it is sent now, edited in the composer, or removed.
+ */
+export function ThreadQueuedRuns(props: {
+  readonly target: QueueTarget;
+  readonly bubbleMaxWidth: number | `${number}%`;
+}) {
+  const { target } = props;
   const gt = useGT();
   const m = useMessages();
   const workflow = useThreadQueueWorkflow(target);
@@ -157,24 +149,14 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const busyRef = useRef(false);
   const queuedRuns = workflow?.queuedRuns ?? [];
-
-  const hadQueuedRuns = useRef(queuedRuns.length > 0);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pops the navigator once the server-side queue empties after it had runs
-  useEffect(() => {
-    if (queuedRuns.length > 0) {
-      hadQueuedRuns.current = true;
-      return;
-    }
-    if (hadQueuedRuns.current) navigation.goBack();
-  }, [navigation, queuedRuns.length]);
+  if (queuedRuns.length === 0) return null;
 
   const act = async (runId: RunId, action: QueueAction) => {
     if (busyRef.current) return;
-    const index = queuedRuns.findIndex(({ run }) => run.id === runId);
-    if (index < 0) return;
+    const entry = queuedRuns.find(({ run }) => run.id === runId);
+    if (entry === undefined) return;
     if (action === "edit") {
       if (editBlockedReason !== null) return;
-      const entry = queuedRuns[index]!;
       void Haptics.selectionAsync();
       beginQueuedRunEdit(
         threadKey,
@@ -199,10 +181,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           ),
         }),
       );
-      navigation.goBack();
       return;
     }
-    if (action !== "steer" && action !== "remove") return;
     busyRef.current = true;
     setBusyRunId(runId);
     void Haptics.selectionAsync();
@@ -232,52 +212,37 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     }
   };
 
-  const content = (
-    <ScrollView
-      nestedScrollEnabled
-      className="flex-1"
-      // UIKit must inset content beneath the floating translucent iOS header.
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerClassName="px-5 pb-6"
-      contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
-    >
-      {workflow?.isHeld && queuedRuns.length > 0 ? (
-        <View className="gap-2 py-3">
+  const resumeQueue = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setResuming(true);
+    const result = await resumeHeldQueue({ ...target, input: { threadId: target.threadId } });
+    busyRef.current = false;
+    setResuming(false);
+    // A usage limit holds the queue until the composer's Resume thread continues the run.
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      Dialog.alert(gt("Could not resume queue"), errorDisplayMessage(error, m) ?? gt("Try again."));
+    }
+  };
+
+  return (
+    <View className="gap-4 pb-5">
+      {workflow?.isHeld ? (
+        <View className="flex-row items-center justify-end gap-3">
           <Text className="text-sm text-foreground-muted">
-            <T>Queue paused</T>
+            {gt("Queue paused", { $context: "status of the thread's queued messages" })}
           </Text>
           <Button
             label={gt("Resume queue")}
+            size="compact"
             disabled={resuming || busyRunId !== null}
-            onPress={async () => {
-              if (busyRef.current) return;
-              busyRef.current = true;
-              setResuming(true);
-              const result = await resumeHeldQueue({
-                ...target,
-                input: { threadId: target.threadId },
-              });
-              busyRef.current = false;
-              setResuming(false);
-              // A usage limit holds the queue until the composer's Resume thread continues the run.
-              if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-                const error = squashAtomCommandFailure(result);
-                Dialog.alert(
-                  gt("Could not resume queue"),
-                  errorDisplayMessage(error, m) ?? gt("Try again."),
-                );
-              }
-            }}
+            onPress={() => void resumeQueue()}
           />
         </View>
       ) : null}
-      {editBlockedReason !== null && queuedRuns.length > 0 ? (
-        <Text className="py-3 text-sm text-foreground-muted">{editBlockedReason}</Text>
-      ) : null}
-      {queuedRuns.length === 0 ? (
-        <Text className="pt-6 text-center text-sm text-foreground-muted">
-          <T>No messages waiting in this queue.</T>
-        </Text>
+      {editBlockedReason !== null ? (
+        <Text className="text-right text-sm text-foreground-muted">{editBlockedReason}</Text>
       ) : null}
       {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
         const controls = resolveThreadQueueRowControls({
@@ -292,187 +257,122 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           isGuestMessage: context?.guest !== undefined,
           text,
         });
-        const title =
-          controls.displayText ||
-          (attachments.length > 0 ? gt("Attachments") : gt("Queued message"));
+        const canOfferSend = workflow?.canPromoteToSteer || workflow?.canSendNow;
         return (
-          <View key={run.id} className="flex-row items-center border-b border-border bg-sheet">
-            <QueueRowSwipeable
-              enabled={busyRunId === null && controls.canDismiss}
-              background={theme["--color-sheet"]}
-              onRemove={() => void act(run.id, "remove")}
+          <View key={run.id} className="items-end">
+            {message ? (
+              <QueuedRunSender environmentId={target.environmentId} message={message} />
+            ) : null}
+            <View
+              className="min-w-0 gap-2 rounded-[20px] border border-dashed border-border bg-transparent px-3.5 py-2.5"
+              style={{ maxWidth: props.bubbleMaxWidth }}
             >
-              <View className="flex-row items-center">
-                <Menu
-                  accessibilityLabel={gt("Actions for queued message {number}", {
-                    number: index + 1,
-                  })}
-                  shouldOpenOnLongPress
-                  style={{ flex: 1 }}
-                  actions={[
-                    ...(workflow?.canPromoteToSteer || workflow?.canSendNow
-                      ? [
-                          {
-                            id: "steer",
-                            title: gt("Send now"),
-                            attributes: { disabled: !controls.canSend },
-                            image: "arrow.up",
-                          },
-                        ]
-                      : []),
-                    {
-                      id: "edit",
-                      title: gt("Edit", { $context: "verb, menu action" }),
-                      attributes: { disabled: !controls.canEdit },
-                      image: "pencil",
-                    },
-                    {
-                      id: "remove",
-                      title: gt("Remove", { $context: "verb, menu action" }),
-                      attributes: { disabled: !controls.canDismiss, destructive: true },
-                    },
-                  ]}
-                  onPressAction={({ nativeEvent }) =>
-                    void act(run.id, nativeEvent.event as QueueAction)
+              {controls.displayText ? (
+                <Text
+                  selectable
+                  numberOfLines={6}
+                  className={
+                    controls.isEditing
+                      ? "text-base text-foreground-muted"
+                      : "text-base text-foreground"
                   }
                 >
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={title}
-                    accessibilityHint={
-                      controls.canEdit
-                        ? gt("Opens this message in the composer for editing")
-                        : (editBlockedReason ?? undefined)
-                    }
-                    disabled={!controls.canEdit}
-                    onPress={() => void act(run.id, "edit")}
-                    className="min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
-                  >
-                    <QueueAttachmentThumbnails
-                      environmentId={target.environmentId}
-                      attachments={attachments}
-                      onPressPreview={setPreviewFile}
-                    />
-                    <View className="min-w-0 flex-1 gap-0.5">
-                      {message ? (
-                        <QueuedRunSender environmentId={target.environmentId} message={message} />
-                      ) : null}
-                      <Text
-                        className={
-                          controls.isEditing
-                            ? "text-sm text-foreground-muted"
-                            : "text-sm text-foreground"
-                        }
-                        numberOfLines={1}
-                      >
-                        {context?.guest === undefined ? null : (
-                          <Text className="font-t3-medium text-adaptive-fuchsia-600-300">
-                            {`${context.guest.name}  `}
-                          </Text>
-                        )}
-                        {title}
-                      </Text>
-                    </View>
-                    {controls.isEditing ? (
-                      <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
-                        {gt("Editing", {
-                          $context: "status badge on the queued message being edited",
-                        })}
-                      </Text>
-                    ) : null}
-                  </Pressable>
-                </Menu>
-                {workflow?.canPromoteToSteer || workflow?.canSendNow ? (
-                  // Outside the edit row and full row height, so a near miss never opens the editor.
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={gt("Send now, queued message {number}", {
-                      number: index + 1,
-                    })}
-                    disabled={!controls.canSend}
-                    onPress={() => void act(run.id, "steer")}
-                    className="shrink-0 justify-center self-stretch pl-4 active:opacity-70 disabled:opacity-40"
-                  >
-                    <View className="min-h-9 flex-row items-center gap-1.5 rounded-full bg-primary px-4">
-                      <SymbolView
-                        name="arrow.up"
-                        size={13}
-                        tintColorClassName="accent-primary-foreground"
-                      />
-                      <Text className="font-t3-medium text-sm text-primary-foreground">
-                        <T>Send now</T>
-                      </Text>
-                    </View>
-                  </Pressable>
-                ) : null}
-              </View>
-            </QueueRowSwipeable>
+                  {context?.guest === undefined ? null : (
+                    <Text className="font-t3-medium text-adaptive-fuchsia-600-300">
+                      {`${context.guest.name}  `}
+                    </Text>
+                  )}
+                  {controls.displayText}
+                </Text>
+              ) : null}
+              <QueueAttachmentThumbnails
+                environmentId={target.environmentId}
+                attachments={attachments}
+                onPressPreview={setPreviewFile}
+              />
+            </View>
+            <View className="mt-1 flex-row items-center gap-1 pl-2">
+              <SymbolView
+                name="tray.and.arrow.up"
+                size={11}
+                tintColorClassName="accent-foreground-muted"
+                type="monochrome"
+              />
+              <Text className="mr-1 text-2xs text-foreground-muted">
+                {controls.isEditing
+                  ? gt("Editing in the composer")
+                  : gt("Queued", { $context: "status of a message waiting for the current turn" })}
+              </Text>
+              <QueueAction
+                label={gt("Remove", { $context: "verb, menu action" })}
+                accessibilityLabel={gt("Remove queued message {number}", { number: index + 1 })}
+                disabled={!controls.canDismiss}
+                onPress={() => void act(run.id, "remove")}
+              />
+              <QueueAction
+                label={gt("Edit", { $context: "verb, menu action" })}
+                accessibilityLabel={gt("Edit queued message {number}", { number: index + 1 })}
+                accessibilityHint={editBlockedReason ?? undefined}
+                disabled={!controls.canEdit}
+                onPress={() => void act(run.id, "edit")}
+              />
+              {canOfferSend ? (
+                <QueueAction
+                  primary
+                  label={gt("Send now")}
+                  accessibilityLabel={gt("Send now, queued message {number}", {
+                    number: index + 1,
+                  })}
+                  disabled={!controls.canSend || busyRunId === run.id}
+                  onPress={() => void act(run.id, "steer")}
+                />
+              ) : null}
+            </View>
           </View>
         );
       })}
-    </ScrollView>
-  );
-
-  return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <View collapsable={false} className="flex-1 bg-sheet">
-        <SheetHeader
-          title={gt("Queued", { $context: "title of the queued messages sheet" })}
-          onClose={() => navigation.goBack()}
-        />
-        <ScreenContent>{content}</ScreenContent>
-      </View>
       <FilePreviewModal source={previewFile} onRequestClose={() => setPreviewFile(null)} />
-    </GestureHandlerRootView>
+    </View>
   );
 }
 
-function QueueRowSwipeable(props: {
-  readonly enabled: boolean;
-  readonly background: string;
-  readonly onRemove: () => void;
-  readonly children: React.ReactNode;
+/** A small action under a queued bubble, sized like the sent message's own footer actions. */
+function QueueAction(props: {
+  readonly label: string;
+  readonly accessibilityLabel: string;
+  readonly accessibilityHint?: string;
+  readonly disabled: boolean;
+  readonly primary?: boolean;
+  readonly onPress: () => void;
 }) {
-  const swipeableRef = useRef<SwipeableMethods | null>(null);
-  const gt = useGT();
-  const m = useMessages();
   return (
-    <ReanimatedSwipeable
-      ref={swipeableRef}
-      enabled={props.enabled}
-      friction={2}
-      rightThreshold={40}
-      overshootRight={false}
-      // Require a clearly sideways swipe to avoid competing with sheet scroll.
-      failOffsetY={[-12, 12]}
-      containerStyle={{ backgroundColor: props.background, flex: 1 }}
-      childrenContainerStyle={{ backgroundColor: props.background }}
-      onSwipeableOpen={(direction) => {
-        if (direction !== "right") return;
-        swipeableRef.current?.close();
-        props.onRemove();
-      }}
-      renderRightActions={() => (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={m(REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL)}
-          disabled={!props.enabled}
-          onPress={() => {
-            swipeableRef.current?.close();
-            props.onRemove();
-          }}
-          className="items-center justify-center bg-danger active:opacity-70 disabled:opacity-40"
-          style={{ width: REMOVE_ACTION_WIDTH }}
-        >
-          <SymbolView name="trash" size={16} tintColorClassName="accent-danger-foreground" />
-          <Text className="pt-1 text-2xs font-t3-medium text-danger-foreground">
-            {gt("Remove", { $context: "verb, menu action" })}
-          </Text>
-        </Pressable>
-      )}
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={props.accessibilityLabel}
+      accessibilityHint={props.accessibilityHint}
+      accessibilityState={{ disabled: props.disabled }}
+      disabled={props.disabled}
+      hitSlop={8}
+      onPress={props.onPress}
+      className={
+        props.primary
+          ? "h-7 flex-row items-center gap-1 rounded-full bg-primary px-3 active:opacity-70 disabled:opacity-40"
+          : "h-7 justify-center rounded-full px-2 active:opacity-70 disabled:opacity-40"
+      }
     >
-      {props.children}
-    </ReanimatedSwipeable>
+      {props.primary ? (
+        <SymbolView name="arrow.up" size={11} tintColorClassName="accent-primary-foreground" />
+      ) : null}
+      <Text
+        className={
+          props.primary
+            ? "font-t3-medium text-xs text-primary-foreground"
+            : "font-t3-medium text-xs text-foreground-muted"
+        }
+      >
+        {props.label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -487,7 +387,7 @@ function QueueAttachmentThumbnails(props: {
   const overflow = props.attachments.length - shown.length;
   if (props.attachments.length === 0) return null;
   return (
-    <View className="shrink-0 flex-row items-center gap-1">
+    <View className="flex-row items-center gap-1">
       {shown.map((attachment) => (
         <QueueAttachmentThumbnail
           key={attachment.id}
@@ -502,8 +402,8 @@ function QueueAttachmentThumbnails(props: {
         />
       ))}
       {overflow > 0 ? (
-        <View className="h-6 min-w-6 items-center justify-center rounded bg-subtle px-1">
-          <Text className="text-2xs tabular-nums text-foreground-muted">
+        <View className="h-10 min-w-10 items-center justify-center rounded-md bg-subtle px-1">
+          <Text className="text-xs tabular-nums text-foreground-muted">
             {shown.length === 0 ? `${overflow}` : `+${overflow}`}
           </Text>
         </View>
@@ -548,7 +448,6 @@ function QueueAttachmentThumbnail(props: {
   const url = useAssetUrl(props.environmentId, resource);
   const gt = useGT();
   return (
-    // Its own press target, so tapping an image previews it instead of editing the message.
     <Pressable
       accessibilityRole="imagebutton"
       accessibilityLabel={gt("Open {name}", { name: props.attachment.name })}
@@ -557,13 +456,13 @@ function QueueAttachmentThumbnail(props: {
       className="active:opacity-70"
     >
       {url === null ? (
-        <View className="h-6 w-6 rounded bg-subtle" />
+        <View className="h-10 w-10 rounded-md bg-subtle" />
       ) : (
         <Image
           source={assetImageSource(props.environmentId, resource, url)}
           cachePolicy="memory-disk"
           contentFit="cover"
-          style={{ width: 24, height: 24, borderRadius: 4 }}
+          style={{ width: 40, height: 40, borderRadius: 6 }}
           accessibilityIgnoresInvertColors
         />
       )}

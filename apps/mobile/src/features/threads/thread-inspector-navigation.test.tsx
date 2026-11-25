@@ -40,7 +40,7 @@ const { StackRouter, StackActions } = requireNavigation("@react-navigation/route
   StackActions: typeof import("@react-navigation/native").StackActions;
 };
 
-function setup(fromAgents: boolean, fullscreen = false, inspectorSupported = true) {
+function setup(fromSheet: boolean, fullscreen = false, inspectorSupported = true) {
   harness.inspectorSupported = inspectorSupported;
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const router = StackRouter({});
@@ -48,7 +48,7 @@ function setup(fromAgents: boolean, fullscreen = false, inspectorSupported = tru
     routeNames: [
       "Home",
       "Thread",
-      "ThreadAgents",
+      "ThreadPullRequests",
       "ThreadInspectorFullscreen",
       "LinkedThread",
       "ThreadReview",
@@ -71,9 +71,12 @@ function setup(fromAgents: boolean, fullscreen = false, inspectorSupported = tru
   const parentKey = state.routes.at(-1)!.key;
   if (fullscreen)
     dispatch(StackActions.push("ThreadInspectorFullscreen", { ...source, threadId: "child" }));
-  if (fromAgents)
+  if (fromSheet)
     dispatch(
-      StackActions.push("ThreadAgents", fullscreen ? { ...source, threadId: "child" } : source),
+      StackActions.push(
+        "ThreadPullRequests",
+        fullscreen ? { ...source, threadId: "child" } : source,
+      ),
     );
   let openInspector: ReturnType<typeof useOpenThreadInspector>;
   let openLinkedThread: ReturnType<typeof useOpenLinkedThread>;
@@ -123,7 +126,7 @@ function setup(fromAgents: boolean, fullscreen = false, inspectorSupported = tru
   };
 }
 
-it("opens a subagent from the Agents sheet without replacing the parent thread", () => {
+it("opens a subagent from a thread sheet without replacing the parent thread", () => {
   using screen = setup(true);
   const inspector = {
     type: "thread",
@@ -158,14 +161,14 @@ it("opens a completion link in the parent inspector", () => {
 });
 
 it.each([
-  { inspectorSupported: true, fromAgents: false },
-  { inspectorSupported: true, fromAgents: true },
-  { inspectorSupported: false, fromAgents: false },
-  { inspectorSupported: false, fromAgents: true },
+  { inspectorSupported: true, fromSheet: false },
+  { inspectorSupported: true, fromSheet: true },
+  { inspectorSupported: false, fromSheet: false },
+  { inspectorSupported: false, fromSheet: true },
 ])(
-  "opens a linked environment's thread in the inspector where there is one ($inspectorSupported, from Agents $fromAgents)",
-  ({ inspectorSupported, fromAgents }) => {
-    using screen = setup(fromAgents, false, inspectorSupported);
+  "opens a linked environment's thread in the inspector where there is one ($inspectorSupported, from a sheet $fromSheet)",
+  ({ inspectorSupported, fromSheet }) => {
+    using screen = setup(fromSheet, false, inspectorSupported);
     const thread = {
       environmentId: EnvironmentId.make("linked-vm"),
       threadId: ThreadId.make("there"),
@@ -173,10 +176,10 @@ it.each([
     const linked = { viaEnvironmentId: EnvironmentId.make("remote-environment"), label: "fs-17" };
     screen.openLinkedRead(thread, linked, "Fix the build", {
       source: screen.source,
-      replace: fromAgents,
+      replace: fromSheet,
     });
     if (inspectorSupported) {
-      // Beside the parent, like a subagent or a side chat; the Agents sheet gives way.
+      // Beside the parent, like a subagent or a side chat; the sheet gives way.
       expect(screen.state.routes.map((route) => route.name)).toEqual(["Home", "Thread"]);
       expect(screen.state.routes.at(-1)).toMatchObject({
         key: screen.parentKey,
@@ -255,7 +258,7 @@ it.each(["thread", "device"] as const)(
   },
 );
 
-it("keeps the parent when the maximized child's Agents sheet opens another child", () => {
+it("keeps the parent when a sheet over the maximized child opens another child", () => {
   using screen = setup(true, true);
   const child = { ...screen.source, threadId: "child" };
   const originalState = screen.state;

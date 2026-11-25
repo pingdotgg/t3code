@@ -12,23 +12,20 @@ import {
 } from "@t3tools/contracts";
 import { deriveSubagentElapsedMs } from "@t3tools/shared/orchestrationTiming";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
-import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
 import * as Haptics from "expo-haptics";
 import { T, useGT, useMessages } from "gt-react-native";
 import { useMemo } from "react";
-import { Pressable, ScrollView, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Keyboard, Pressable, View } from "react-native";
 
-import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import { environmentThreadDetails } from "../../state/threads";
 import { SubagentRow } from "./SubagentRow";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { SubagentStopButton } from "./SubagentStopButton";
 import { ThreadWorkflowGroup } from "./ThreadWorkflowGroup";
-import { ScreenContent } from "../../components/ui/ScreenContent";
 import { subagentThreadTarget, type SubagentThreadTarget } from "./threadAgentsPresentation";
 import { useLinkedThreadReach } from "../../state/linkedThread";
 
@@ -49,15 +46,18 @@ export function useThreadTurnSubagents(target: AgentsTarget | null): ThreadTurnS
   );
 }
 
-export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
-  const target = route.params;
+/** This turn's agents, listed inside the thread's expanded status card. */
+export function ThreadAgentsList(props: {
+  readonly target: AgentsTarget;
+  readonly turn: ThreadTurnSubagents | null;
+  /** Called before a child thread opens, so the card can close first. */
+  readonly onOpenChild: () => void;
+}) {
+  const { target, turn } = props;
   const navigation = useNavigation();
   const openInspector = useOpenThreadInspector();
   const openLinkedRead = useOpenLinkedThreadRead();
-  const insets = useSafeAreaInsets();
-  const gt = useGT();
   const messages = useMessages();
-  const turn = useThreadTurnSubagents(target);
   const subagents = turn?.subagents ?? [];
   const hasLiveAgent = (turn?.liveCount ?? 0) > 0;
   const workflowGroups = useMemo(
@@ -73,8 +73,10 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
 
   const openChildThread = (child: SubagentThreadTarget, title: string | null = null) => {
     void Haptics.selectionAsync();
+    Keyboard.dismiss();
+    props.onOpenChild();
     if (child.linked !== undefined) {
-      openLinkedRead(child, child.linked, title, { source: target, replace: true });
+      openLinkedRead(child, child.linked, title, { source: target });
       return;
     }
     if (
@@ -85,60 +87,46 @@ export function ThreadAgentsSheet({ route }: StaticScreenProps<AgentsTarget>) {
       })
     )
       return;
-    // Replace this leaf sheet so the child enters the workspace stack expected by Home's Back button.
     navigation.dispatch(
-      StackActions.replace("Thread", {
+      StackActions.push("Thread", {
         environmentId: child.environmentId,
         threadId: child.threadId,
       }),
     );
   };
 
-  const content = (
-    <ScrollView
-      nestedScrollEnabled
-      className="flex-1"
-      // UIKit must inset content beneath the floating translucent iOS header.
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerClassName="px-5 pb-6"
-      contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
-    >
-      {subagents.length === 0 ? (
-        <Text className="pt-6 text-center text-sm text-foreground-muted">
-          <T>No agents in this turn.</T>
-        </Text>
-      ) : (
-        subagents.map((subagent) => {
-          const group = workflowGroups.get(subagent.id);
-          return group === undefined ? (
-            <View key={subagent.id} className="border-b border-border">
-              <AgentRow
-                subagent={subagent}
-                environmentId={target.environmentId}
-                tickSeconds={hasLiveAgent}
-                onOpen={openChildThread}
-              />
-            </View>
-          ) : (
-            <ThreadWorkflowGroup
-              key={subagent.id}
-              environmentId={target.environmentId}
-              subagent={subagent}
-              group={group}
-              onOpen={(threadId) =>
-                openChildThread({ environmentId: target.environmentId, threadId })
-              }
-            />
-          );
-        })
-      )}
-    </ScrollView>
-  );
-
+  if (subagents.length === 0) {
+    return (
+      <Text className="py-4 text-center text-sm text-foreground-muted">
+        <T>No agents in this turn.</T>
+      </Text>
+    );
+  }
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      <SheetHeader title={gt("Agents")} onClose={() => navigation.goBack()} />
-      <ScreenContent>{content}</ScreenContent>
+    <View>
+      {subagents.map((subagent, index) => {
+        const group = workflowGroups.get(subagent.id);
+        return group === undefined ? (
+          <View key={subagent.id} className={index === 0 ? undefined : "border-t border-border"}>
+            <AgentRow
+              subagent={subagent}
+              environmentId={target.environmentId}
+              tickSeconds={hasLiveAgent}
+              onOpen={openChildThread}
+            />
+          </View>
+        ) : (
+          <ThreadWorkflowGroup
+            key={subagent.id}
+            environmentId={target.environmentId}
+            subagent={subagent}
+            group={group}
+            onOpen={(threadId) =>
+              openChildThread({ environmentId: target.environmentId, threadId })
+            }
+          />
+        );
+      })}
     </View>
   );
 }
@@ -160,7 +148,7 @@ function AgentRow(props: {
   );
 
   const row = (
-    <View className="py-3.5">
+    <View className="py-3">
       <SubagentRow
         environmentId={props.environmentId}
         subagent={subagent}

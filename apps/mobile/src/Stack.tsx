@@ -68,11 +68,9 @@ import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
 import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSheet";
-import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { LinkedThreadSheet } from "./features/threads/LinkedThreadSheet";
 import { ThreadGuestShareSheet } from "./features/threads/ThreadGuestShareSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
-import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
 import {
   FullscreenThreadRouteScreen,
   ThreadRouteScreen,
@@ -783,10 +781,6 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: ExistingThreadSettingsRouteScreen,
       options: THREAD_SETTINGS_ROUTE,
     }),
-    ThreadQueue: createNativeStackScreen({
-      screen: ThreadQueueSheet,
-      options: sheetRoute({ detent: 0.65, androidMaxDetent: 0.95 }),
-    }),
     WorkflowRun: createNativeStackScreen({
       screen: WorkflowRunRouteScreen,
       linking: { path: "workflows/:environmentId/:runId" },
@@ -798,10 +792,6 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     ThreadBackgroundWork: createNativeStackScreen({
       screen: ThreadBackgroundWorkSheet,
-      options: sheetRoute({ detent: 0.5, androidMaxDetent: 0.9 }),
-    }),
-    ThreadAgents: createNativeStackScreen({
-      screen: ThreadAgentsSheet,
       options: sheetRoute({ detent: 0.5, androidMaxDetent: 0.9 }),
     }),
     LinkedThread: createNativeStackScreen({

@@ -192,7 +192,11 @@ import { ProviderSubagentBar } from "./ProviderSubagentBar";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
 import {
   FLOATING_WORKING_CONTROL_COVERAGE,
-  FloatingWorkingControl,
+  ScrollToEndControl,
+  THREAD_STATUS_PILL_COVERAGE,
+  THREAD_STATUS_PILL_OFFSET,
+  ThreadStatusPill,
+  hasThreadStatusPill,
 } from "./floating-working-control";
 import {
   connectionFloatingStatus,
@@ -214,9 +218,8 @@ import {
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
-import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
+import { ThreadAgentsList, useThreadTurnSubagents } from "./ThreadAgentsList";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
-import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
@@ -516,7 +519,6 @@ function ThreadDetailBody(
   const toolCallVisibility = AsyncResult.isSuccess(preferences)
     ? (preferences.value.toolCallVisibility ?? "showAll")
     : "showAll";
-  const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents, messages);
   const defaultComposerEditorRef = useRef<ComposerEditorHandle>(null);
@@ -751,8 +753,7 @@ function ThreadDetailBody(
   const extensionStatus = props.extensionStatuses?.length
     ? {
         label: `Pi · ${props.extensionStatuses.map((status) => status.text).join(" · ")}`,
-        onPress: () =>
-          Dialog.alert("Pi", props.extensionStatuses?.map((status) => status.text).join("\n\n")),
+        detail: props.extensionStatuses.map((status) => status.text).join("\n\n"),
       }
     : null;
   const backgroundLine = ((): ThreadStatusLineModel | null => {
@@ -917,6 +918,7 @@ function ThreadDetailBody(
       return {
         kind: "goal",
         label: goal.title,
+        detail: goal.objective,
         accessibilityLabel: `${goal.title}: ${goal.objective}`,
         actions: goalActions,
       };
@@ -926,13 +928,18 @@ function ThreadDetailBody(
     }
     return null;
   })();
-  const showWorkingControl = floatingStatus !== null;
-  const showFloatingStatus =
-    showWorkingControl ||
-    queuedCount > 0 ||
-    agentsSegment !== null ||
-    devicePreviews.length > 0 ||
-    browserTabs.tabs.length > 0;
+  const devicePreview =
+    devicePreviews.length > 0 ? { count: devicePreviews.length, onPress: openDevicePreview } : null;
+  const browserPreview =
+    browserTabs.tabs.length > 0
+      ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
+      : null;
+  const showStatusPill = hasThreadStatusPill({
+    status: floatingStatus,
+    agents: agentsSegment,
+    devicePreview,
+    browserPreview,
+  });
   const selectedThreadFeed = props.selectedThreadFeed;
   // A palette message result opens the thread at that message: earlier
   // history loads until the message is in the feed, which then scrolls to it.
@@ -1092,10 +1099,7 @@ function ThreadDetailBody(
       windowHeight: screenAreaHeight,
       keyboardHeight: keyboardStickyEnabled ? -keyboardTranslation.value : 0,
       navigationHeaderHeight,
-      // An in-flow question shares the room above it with the floating control.
-      composerOverlapHeight:
-        composerBottomInset +
-        (questionInFlow && showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0),
+      composerOverlapHeight: composerBottomInset,
     }),
   );
   // A question pads itself clear of the bottom inset, below the card's own height limit.
@@ -1174,21 +1178,15 @@ function ThreadDetailBody(
   const composerPopoverHeight = useSharedValue(0);
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
   const reduceMotion = useReducedMotion();
-  const floatingCoverageTarget = showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0;
-  const floatingControlCoverage = useDerivedValue(
-    () => withTiming(floatingCoverageTarget, { duration: 180, reduceMotion: ReduceMotion.System }),
-    [floatingCoverageTarget],
-  );
   const userInputCoverageApplies = Platform.OS === "ios" && activeUserInputRequestId !== null;
-  const questionStatusSpace = useAnimatedStyle(() => ({ height: floatingControlCoverage.value }));
   const combinedContentInsetEndAdjustment = useSharedValue(estimatedOverlayHeight);
   useAnimatedReaction(
     () =>
       questionInFlow
         ? 0
         : contentInsetEndAdjustment.value +
-          // The feed's last row keeps a gap above the composer; the status row grows from it.
-          Math.max(FEED_END_GAP, floatingControlCoverage.value) +
+          // The feed's last row keeps a gap above the composer.
+          FEED_END_GAP +
           (userInputCoverageApplies
             ? userInputInsetProgress.value * userInputCardCoverage.value
             : 0),
@@ -1506,6 +1504,26 @@ function ThreadDetailBody(
 
   return (
     <View className="flex-1" onLayout={handleScreenLayout}>
+      {/* First in the tree so VoiceOver reads the status right after the header; zIndex keeps it on top. */}
+      {showContent ? (
+        <ThreadStatusPill
+          colorScheme={isDarkMode ? "dark" : "light"}
+          top={navigationHeaderHeight + 8}
+          maxWidth={contentMaxWidth}
+          status={floatingStatus}
+          extensionStatus={floatingStatus?.kind === "goal" ? extensionStatus : null}
+          devicePreview={devicePreview}
+          browserPreview={browserPreview}
+          agents={agentsSegment}
+          renderAgents={(close) => (
+            <ThreadAgentsList
+              target={{ environmentId: props.environmentId, threadId: props.selectedThread.id }}
+              turn={turnSubagents}
+              onOpenChild={close}
+            />
+          )}
+        />
+      ) : null}
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {props.draftMode ? (
         props.draftMode.content(
@@ -1580,13 +1598,9 @@ function ThreadDetailBody(
                   keyboardOffset={composerKeyboardOffset}
                   sendingWithKeyboard={sendingWithKeyboard}
                   fitShortFeedToViewport={questionInFlow && !isKeyboardVisible}
-                  contentBottomInset={
-                    questionInFlow
-                      ? 0
-                      : estimatedOverlayHeight +
-                        (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : FEED_END_GAP)
-                  }
+                  contentBottomInset={questionInFlow ? 0 : estimatedOverlayHeight + FEED_END_GAP}
                   contentMaxWidth={contentMaxWidth}
+                  contentTopInset={showStatusPill ? THREAD_STATUS_PILL_COVERAGE : 0}
                   historyControls={props.historyControls}
                   contentSideInsets={deriveContentSideInsets(nativeMetrics)}
                   layoutVariant={layoutVariant}
@@ -1612,7 +1626,7 @@ function ThreadDetailBody(
           threadId={props.selectedThread.id}
           tabs={browserTabs.tabs}
           loaded={browserTabs.loaded}
-          top={navigationHeaderHeight + 8}
+          top={navigationHeaderHeight + 8 + (showStatusPill ? THREAD_STATUS_PILL_OFFSET : 0)}
           onOpen={openBrowserPreview}
         />
       ) : null}
@@ -1667,53 +1681,21 @@ function ThreadDetailBody(
                       ]
               }
             >
-              {/* Android clips accessibility bounds to the parent, so the floating control's
-                space stays inside this host, or TalkBack cannot reach the pill. */}
-              {questionInFlow ? (
-                <Animated.View pointerEvents="none" style={questionStatusSpace} />
+              {/* Android clips touches and accessibility bounds to the parent, so the arrow's
+                space stays inside this host. */}
+              {questionInFlow && Platform.OS === "android" && showScrollToEndButton ? (
+                <View pointerEvents="none" style={{ height: FLOATING_WORKING_CONTROL_COVERAGE }} />
               ) : null}
               {/* No paddingTop here: the overlay's measured height becomes the
-                list's bottom inset, so any padding above the pill/composer
+                list's bottom inset, so any padding above the arrow/composer
                 pushes the resting content floor up by the same amount. */}
               <View onLayout={handleComposerOverlayLayout} className="w-full">
                 <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
-                  <FloatingWorkingControl
+                  <ScrollToEndControl
                     colorScheme={isDarkMode ? "dark" : "light"}
-                    status={floatingStatus}
-                    extensionStatus={
-                      floatingStatus !== null && floatingStatus.kind === "goal"
-                        ? extensionStatus
-                        : null
-                    }
+                    visible={showScrollToEndButton}
+                    onPress={handleScrollToEnd}
                     lift={floatingControlLift}
-                    devicePreview={
-                      devicePreviews.length > 0
-                        ? { count: devicePreviews.length, onPress: openDevicePreview }
-                        : null
-                    }
-                    browserPreview={
-                      browserTabs.tabs.length > 0
-                        ? { count: browserTabs.tabs.length, onPress: () => openBrowserPreview() }
-                        : null
-                    }
-                    showScrollToEnd={showScrollToEndButton}
-                    onScrollToEnd={handleScrollToEnd}
-                    agents={agentsSegment}
-                    onOpenAgents={() => {
-                      Keyboard.dismiss();
-                      navigation.navigate("ThreadAgents", {
-                        environmentId: props.environmentId,
-                        threadId: props.selectedThread.id,
-                      });
-                    }}
-                    queuedCount={queuedCount}
-                    onOpenQueue={() => {
-                      Keyboard.dismiss();
-                      navigation.navigate("ThreadQueue", {
-                        environmentId: props.environmentId,
-                        threadId: props.selectedThread.id,
-                      });
-                    }}
                   />
                   <ComposerPanels
                     className="w-full"

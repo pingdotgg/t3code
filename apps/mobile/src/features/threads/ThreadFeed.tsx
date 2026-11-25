@@ -42,6 +42,7 @@ import {
 } from "./thread-handoff-row";
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
+import { ThreadQueuedRuns, useThreadQueuedCount } from "./ThreadQueueControl";
 import { LinkRequestCard } from "./LinkRequestCard";
 import { FeedbackRequestCard } from "./FeedbackRequestCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -266,6 +267,7 @@ import {
 } from "./thread-work-log";
 import {
   appendGuestPendingMessages,
+  appendQueuedRuns,
   appendPendingThreadMessages,
   createPendingTurnAppender,
   createThreadFeedGrouping,
@@ -388,6 +390,8 @@ export interface ThreadFeedProps {
   readonly threadId: ThreadId;
   /** Null while the thread's creation is queued: reading detail then caches a not-found as deleted. */
   readonly detailRef: ScopedThreadRef | null;
+  /** Room above the first row for an overlay pinned under the header. */
+  readonly contentTopInset?: number;
   readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
@@ -2019,6 +2023,15 @@ function renderFeedEntry(
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor, m } = props;
+
+  if (entry.type === "queued-runs") {
+    return (
+      <ThreadQueuedRuns
+        target={{ environmentId: props.environmentId, threadId: props.threadId }}
+        bubbleMaxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
+      />
+    );
+  }
 
   if (entry.type === "guest-pending") {
     return (
@@ -3823,14 +3836,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setInteractionState((current) => ({ ...current, revealedMessageId: jumpToMessageId }));
   }
   const [appendPendingTurn] = useState(createPendingTurnAppender);
-  const presentedFeed = appendGuestPendingMessages(
-    appendPendingTurn(
-      useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
-      { zen: props.toolCallVisibility === "zen" },
+  const queuedRunCount = useThreadQueuedCount(props.detailRef);
+  const presentedFeed = appendQueuedRuns(
+    appendGuestPendingMessages(
+      appendPendingTurn(
+        useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
+        { zen: props.toolCallVisibility === "zen" },
+        m,
+      ),
+      guestShare,
       m,
     ),
-    guestShare,
-    m,
+    queuedRunCount,
   );
   const pendingFoldMessageId =
     presentedFeed.findLast((entry) => entry.type === "pending-fold")?.messageId ?? null;
@@ -3906,7 +3923,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     presentedFeed,
     props.anchorMessageId,
     (entry) => (entry.type === "message" ? entry.id : null),
-    { anchorOffset: anchorTopInset + CHAT_LIST_ANCHOR_OFFSET },
+    { anchorOffset: anchorTopInset + (props.contentTopInset ?? 0) + CHAT_LIST_ANCHOR_OFFSET },
   );
   const failedRunIds = failedFeedRunIds(props.feed, props.latestRun);
   const terminalAssistantMessageIds = (() => {
@@ -4114,7 +4131,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   // estimatedItemSize tall, and scrolling up through unmeasured content
   // corrects each row's height as it mounts — the feed visibly jumps.
   const getFixedItemSize = (entry: ThreadFeedRow) => {
-    if (entry.type === "guest-pending") return undefined;
+    if (entry.type === "guest-pending" || entry.type === "queued-runs") return undefined;
     if (entry.type === "pending-fold") {
       return workRowSizing.fixedRowHeight === undefined
         ? undefined
@@ -4365,6 +4382,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             ListHeaderComponent={
               <>
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                {props.contentTopInset ? <View style={{ height: props.contentTopInset }} /> : null}
                 {setupAnchorIndex < 0 && props.worktreeSetup ? (
                   <WorktreeSetupCard
                     key={props.threadId}

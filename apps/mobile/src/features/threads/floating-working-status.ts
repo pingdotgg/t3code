@@ -26,10 +26,11 @@ export type FloatingWorkingStatus =
   | {
       readonly kind: "goal";
       readonly label: string;
+      readonly detail: string;
       readonly accessibilityLabel: string;
       readonly actions: ReadonlyArray<FloatingStatusAction>;
     }
-  | { readonly kind: "extension"; readonly label: string; readonly onPress: () => void }
+  | { readonly kind: "extension"; readonly label: string; readonly detail: string }
   | { readonly kind: "preparing"; readonly label: string }
   | {
       readonly kind: "connection";
