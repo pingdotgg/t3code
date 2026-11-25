@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
 # Check a merge from resolve-sync.sh, run full CI on it, and fast-forward the target branch.
+# When CI fails, the merge stays in a pull request and failed_ci names the run for a repair.
 # A fast-forward keeps upstream's ancestry, which a squash or rebase merge loses. This job holds
 # the write credential, so it treats the merge as data and never runs its code.
 #
 # Usage: land-sync.sh <input-dir> <branch>
-#   PUSH_TOKEN  contents and workflows write. Its push starts CI on the sync branch.
-#   GH_TOKEN    pull requests write and actions read. A pull request from GITHUB_TOKEN starts no
-#               CI, so the pull request only shows the merge and keeps a failed one open.
+#   PUSH_TOKEN   contents and workflows write. Its push starts CI on the sync branch.
+#   GH_TOKEN     pull requests write and actions read. A pull request from GITHUB_TOKEN starts no
+#                CI, so the pull request only shows the merge and keeps a failed one open.
+#   SYNC_BRANCH  sync branch of the merge under repair. Empty names a new one.
+#   FINAL        true when no repair follows, so a CI failure fails the job.
 set -euo pipefail
 
+source "$(dirname "$0")/lib.sh"
 IN="$1"
 BRANCH="$2"
-UPSTREAM="https://github.com/pingdotgg/t3code.git"
 PUSH_URL="https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-fail() { echo "::error::$1"; exit 1; }
 
 git fetch --quiet --no-tags "$UPSTREAM" main:refs/remotes/upstream/main
-git fetch --quiet "$IN/sync.bundle" HEAD:refs/sync/resolved
+git fetch --quiet "$IN/sync.bundle" +HEAD:refs/sync/resolved
 merge="$(git rev-parse refs/sync/resolved)"
 ours="$(git rev-parse "$merge^1")"
 theirs="$(git rev-parse "$merge^2")"
@@ -29,7 +31,7 @@ git merge-base --is-ancestor "$theirs" upstream/main || fail "The second parent 
 auto="$(git merge-tree --write-tree --name-only "$ours" "$theirs" || true)"
 tree="$(head -n 1 <<<"$auto")"
 conflicts="$(sed -n '2,/^$/p' <<<"$auto" | sed '/^$/d')"
-changed="$(git diff --name-only "$tree" "$merge")"
+changed="$(git diff --name-only --no-renames "$tree" "$merge")"
 
 while IFS= read -r file; do
   [[ -n "$file" ]] || continue
@@ -49,16 +51,12 @@ git diff --quiet "$theirs" "$merge" -- \
   apps/server/src/provider/agentContextBudget.json ||
   fail "Migrations and agentContextBudget.json must match upstream."
 
-index="$(mktemp -u)"
-GIT_INDEX_FILE="$index" git read-tree "$merge"
-git show "$merge:.github/hardened/hardened.patch" | GIT_INDEX_FILE="$index" git apply --cached --check ||
-  fail "hardened.patch does not apply to the merge."
-rm -f "$index"
+check_patch "$merge"
 
-sync_branch="sync/upstream-${GITHUB_RUN_ID}"
-git push --quiet "$PUSH_URL" "$merge:refs/heads/$sync_branch"
+sync_branch="${SYNC_BRANCH:-sync/upstream-${GITHUB_RUN_ID}}"
+echo "sync_branch=$sync_branch" >>"$GITHUB_OUTPUT"
 {
-  echo "The daily sync resolved a merge conflict with upstream. It lands by itself when CI passes."
+  echo "The upstream sync made this merge. It lands by itself when CI passes."
   echo
   echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
   echo
@@ -68,22 +66,22 @@ git push --quiet "$PUSH_URL" "$merge:refs/heads/$sync_branch"
   echo
   echo "## Files that differ from the automatic merge"
   echo
-  sed "s/.*/- \`&\`/" <<<"$changed"
+  sed "s/.*/- \`&\`/" <<<"${changed:-none}"
   echo
   echo "Claude Opus 5.5 via Claude Code."
 } >"$IN/pr.md"
-pr="$(gh pr create --base "$BRANCH" --head "$sync_branch" --title "chore: merge upstream pingdotgg/t3code main" --body-file "$IN/pr.md")"
-echo "Opened $pr"
+open_pr() { upsert_pr "$BRANCH" "$sync_branch" "chore: merge upstream pingdotgg/t3code main" "$IN/pr.md"; }
 
-run=""
-for _ in {1..40}; do
-  run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$merge&event=push" \
-    --jq '.workflow_runs[] | select(.path == ".github/workflows/ci.yml") | .id' | head -n 1)"
-  [[ -n "$run" ]] && break
-  sleep 15
-done
-[[ -n "$run" ]] || fail "CI did not start for $pr."
-gh run watch "$run" --exit-status --interval 30 >/dev/null || fail "CI failed. Finish the merge in $pr."
+if ! push_and_wait_ci "$merge" "$sync_branch"; then
+  open_pr
+  [[ "${FINAL:-}" == "true" ]] && fail "CI failed. Finish the merge in $PR."
+  echo "::warning::CI failed on the merge. A repair follows."
+  echo "failed_ci=$CI_RUN" >>"$GITHUB_OUTPUT"
+  exit 0
+fi
 
+# A merge that the agent changed keeps a pull request as its record. GitHub marks it merged.
+[[ -z "$changed" ]] || open_pr
 git push --quiet "$PUSH_URL" "$merge:refs/heads/$BRANCH"
 echo "Landed $merge on $BRANCH."
+[[ -n "$changed" ]] || git push --quiet "$PUSH_URL" ":refs/heads/$sync_branch"

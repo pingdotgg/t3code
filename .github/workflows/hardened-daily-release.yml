@@ -1,5 +1,8 @@
 name: Hardened Daily Release
 
+# Releases main once a day. Hardened Sync keeps main current with upstream. When the release
+# fails, Claude Code repairs the cause one time and the release runs again.
+
 on:
   schedule:
     - cron: "23 9 * * *"
@@ -10,8 +13,8 @@ on:
         required: false
         default: false
         type: boolean
-      sync_only:
-        description: "Sync with upstream and skip the release"
+      repaired:
+        description: "This run follows a repair, so a failure starts no other repair"
         required: false
         default: false
         type: boolean
@@ -24,56 +27,9 @@ permissions:
   contents: write
 
 jobs:
-  sync:
-    name: Sync upstream
-    if: github.repository == 'HYRMedia-LLC/t3code'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      conflict: ${{ steps.merge.outputs.conflict }}
-    steps:
-      # GITHUB_TOKEN cannot push upstream commits that change workflow files, so the
-      # merge runs as the private hyrmedia-t3code-sync GitHub App.
-      - id: sync_token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ secrets.SYNC_APP_CLIENT_ID }}
-          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
-
-      - id: merge
-        name: Sync main with upstream
-        env:
-          GH_TOKEN: ${{ steps.sync_token.outputs.token }}
-        run: |
-          if output="$(gh api -X POST "repos/$GITHUB_REPOSITORY/merge-upstream" -f branch=main --jq '.message' 2>&1)"; then
-            echo "$output"
-          elif [[ "$output" == *"HTTP 409"* ]]; then
-            echo "Upstream does not merge cleanly into main."
-            echo "conflict=true" >>"$GITHUB_OUTPUT"
-          else
-            echo "$output"
-            echo "::error::The merge-upstream API failed."
-            exit 1
-          fi
-
-  resolve:
-    name: Resolve conflicts
-    needs: sync
-    if: needs.sync.outputs.conflict == 'true'
-    permissions:
-      actions: read
-      contents: read
-      pull-requests: write
-    uses: ./.github/workflows/hardened-sync-resolve.yml
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      SYNC_APP_CLIENT_ID: ${{ secrets.SYNC_APP_CLIENT_ID }}
-      SYNC_APP_PRIVATE_KEY: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
-
   release:
     name: Release
-    needs: [sync, resolve]
-    if: ${{ !cancelled() && !inputs.sync_only && needs.sync.result == 'success' && (needs.resolve.result == 'success' || needs.resolve.result == 'skipped') }}
+    if: github.repository == 'HYRMedia-LLC/t3code'
     runs-on: macos-26
     timeout-minutes: 90
     env:
@@ -154,3 +110,36 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           T3_HARDENED_OUT: ${{ runner.temp }}/hardened
         run: .github/hardened/release.sh
+
+  fix:
+    name: Repair
+    needs: release
+    if: ${{ failure() && needs.release.result == 'failure' && !inputs.repaired }}
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/hardened-agent-change.yml
+    with:
+      task: release-fix
+      failed_run: ${{ github.run_id }}
+      final: true
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SYNC_APP_CLIENT_ID: ${{ secrets.SYNC_APP_CLIENT_ID }}
+      SYNC_APP_PRIVATE_KEY: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
+
+  # The repair landed on main, or found a cause outside the repository. Either way, try once more.
+  retry:
+    name: Release again
+    needs: fix
+    if: ${{ !cancelled() && needs.fix.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || false }}
+        run: gh workflow run hardened-daily-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f repaired=true -f force="$FORCE"
