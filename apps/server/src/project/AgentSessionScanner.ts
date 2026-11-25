@@ -422,8 +422,17 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
 
 // Claude Code records its own UI as user turns: slash commands, `!` shell runs and
 // their output, task notifications. Keep what the user typed, as they typed it.
-const CLAUDE_UI_OUTPUT =
-  /^(?:<(?:task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>|\[Request interrupted by user(?: for tool use)?\]$)/;
+function isClaudeUiOutput(text: string): boolean {
+  if (/^\[Request interrupted by user(?: for tool use)?\]$/.test(text)) return true;
+  if (!text.startsWith("<")) return false;
+  const block =
+    /<(task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>\s*/y;
+  // Consume each block at its first closing tag so prose between blocks stays visible.
+  while (block.test(text)) {
+    if (block.lastIndex === text.length) return true;
+  }
+  return false;
+}
 
 /**
  * A slash command as typed. Its arguments may name the thread; a bare command
@@ -440,7 +449,7 @@ function claudeCommand(text: string): { readonly text: string; readonly titleTex
 
 /** What a Claude user turn shows the user typed, and the part of it that may name the thread. */
 function claudeUserText(text: string): { readonly text: string; readonly titleText: string } {
-  if (CLAUDE_UI_OUTPUT.test(text)) return { text: "", titleText: "" };
+  if (isClaudeUiOutput(text)) return { text: "", titleText: "" };
   const shellInput = /^<bash-input>([\s\S]*)<\/bash-input>$/.exec(text)?.[1];
   if (shellInput !== undefined) return { text: `!${shellInput}`, titleText: "" };
   return claudeCommand(text) ?? { text, titleText: text };
