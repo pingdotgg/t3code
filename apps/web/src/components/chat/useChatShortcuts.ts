@@ -11,7 +11,10 @@ import { isInSideChatPane } from "../../lib/sideChatPane";
 import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
-import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
+import {
+  TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
+  shouldTypeToFocusComposer,
+} from "./composerFocusRedirect";
 import { composerShortcutCommands } from "./composerShortcuts";
 
 /** Returning false lets the key through, except for cycling while a terminal owns focus. */
@@ -33,11 +36,12 @@ interface ChatShortcutsInput {
   readonly enabled: boolean;
   /**
    * A side chat inside another chat leaves the window to the outer chat. It listens on its
-   * side chat pane, around `composerElement`: find and Escape closing it anywhere in the pane,
-   * composer chords only inside `composerElement`.
+   * side chat pane, around `composerElement`: find, scroll-to-end and Escape closing find
+   * anywhere in the pane, composer chords only inside `composerElement`.
    */
   readonly embedded?: boolean;
   readonly composerElement?: HTMLElement | null;
+  readonly messageAreaRef?: { readonly current: HTMLElement | null };
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly scriptKeybindings: ResolvedKeybindingsConfig;
   readonly getShortcutContext: (target: EventTarget | null) => ShortcutMatchContext & {
@@ -51,6 +55,16 @@ interface ChatShortcutsInput {
   readonly commands: ChatShortcutCommands;
   /** Handles commands not in `commands`, such as project scripts. */
   readonly fallback: (command: KeybindingCommand) => ChatShortcutHandler | undefined;
+}
+
+function canScrollToEnd(context: ShortcutMatchContext) {
+  return (
+    (context.messageAreaFocus || context.composerFocus) &&
+    !context.terminalFocus &&
+    !context.previewFocus &&
+    !context.modelPickerOpen &&
+    document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) === null
+  );
 }
 
 /**
@@ -80,8 +94,13 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const terminalFocusOwner = getTerminalFocusOwner();
     if (event.defaultPrevented && terminalFocusOwner === null) return;
     const shortcutContext = input.getShortcutContext(event.target);
+    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
+      context: shortcutContext,
+    });
+    const scrollToEndAvailable = command === "chat.scrollToEnd" && canScrollToEnd(shortcutContext);
 
     if (
+      !scrollToEndAvailable &&
       !inSideChatPane &&
       !shortcutContext.terminalFocus &&
       !shortcutContext.modelPickerOpen &&
@@ -93,10 +112,8 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       return;
     }
 
-    const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
-      context: shortcutContext,
-    });
     if (!command || (inSideChatPane && !SIDE_CHAT_PANE_COMMANDS.has(command))) return;
+    if (command === "chat.scrollToEnd" && !scrollToEndAvailable) return;
     const run =
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
@@ -137,7 +154,9 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     });
     let run: ChatShortcutHandler | undefined;
     if (command === "chat.find") run = input.commands[command];
-    else if (command && event.target instanceof Node && composerElement?.contains(event.target)) {
+    else if (command === "chat.scrollToEnd") {
+      if (canScrollToEnd(input.getShortcutContext(event.target))) run = input.commands[command];
+    } else if (command && event.target instanceof Node && composerElement?.contains(event.target)) {
       run = composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command];
     }
     if (!run || run({ event, terminalFocusOwner: null }) === false) return;
