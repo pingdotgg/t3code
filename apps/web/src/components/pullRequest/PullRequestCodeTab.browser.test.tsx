@@ -257,9 +257,14 @@ it("can show test files again from the narrow Code tab empty state", async () =>
   const container = document.createElement("div");
   container.className = "h-[700px] w-[429px]";
   await using screen = await render(tab(0), { container });
-  await screen.getByRole("button", { name: "Hide test files", exact: true }).click();
+  const filter = screen.getByRole("button", { name: "Hide test files", exact: true });
+  await expect.element(filter).toHaveAttribute("aria-pressed", "false");
+  expect(filter.element().querySelector(".lucide-flask-conical")).not.toBeNull();
+  await filter.click();
 
   await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
+  await expect.element(filter).toHaveAttribute("aria-pressed", "true");
+  expect(filter.element().querySelector(".lucide-flask-conical-off")).not.toBeNull();
   await screen.getByRole("button", { name: "Show test files", exact: true }).click();
   await expect.element(screen.getByText("a.test.ts", { exact: true }).first()).toBeVisible();
 });
