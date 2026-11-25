@@ -2452,6 +2452,8 @@ it.effect("a run says what it is about, and is found by it", () =>
         assert.deepStrictEqual(found.result, ["started thread", "b thread"]);
         assert.throws(() => subject("not an address"), /is not a web address/);
         assert.throws(() => subject({ project: "/x", url: "https://x" } as never), /subject takes/);
+        // Nothing can open a bare project, so it is no subject.
+        assert.throws(() => subject({ projectId: "p1" } as never), /subject takes/);
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

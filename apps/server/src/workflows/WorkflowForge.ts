@@ -190,7 +190,7 @@ export const linkedPullRequestReferences = (
 
 /**
  * What `subject` and `runs({ subject })` take: an issue or a pull request as a trigger or a
- * listing gave it, `{ threadId }`, `{ projectId }`, or a web address.
+ * listing gave it, `{ threadId }`, or a web address.
  */
 export type SubjectInput =
   | string
@@ -202,11 +202,10 @@ export type SubjectInput =
       readonly title?: string;
       readonly url?: string;
     })
-  | { readonly threadId: string }
-  | { readonly projectId: string };
+  | { readonly threadId: string };
 
 const SUBJECT_EXAMPLE =
-  "an issue or pull request a trigger or listing gave, { threadId }, { projectId }, or a web address";
+  "an issue or pull request a trigger or listing gave, { threadId }, or a web address";
 
 const nonEmpty = (value: unknown): value is string =>
   typeof value === "string" && value.trim() !== "";
@@ -246,14 +245,6 @@ export const subjectReference = (what: string, subject: SubjectInput) => {
       kind: WorkflowReferenceKind.thread,
       key: subject.threadId,
       address: { threadId: subject.threadId },
-      title: "",
-    } satisfies ReferenceInput;
-  }
-  if ("projectId" in subject && nonEmpty(subject.projectId) && Object.keys(subject).length === 1) {
-    return {
-      kind: WorkflowReferenceKind.project,
-      key: subject.projectId,
-      address: { projectId: subject.projectId },
       title: "",
     } satisfies ReferenceInput;
   }

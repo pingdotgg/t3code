@@ -643,7 +643,7 @@ export const tags = (
 
 /**
  * Say what the run is about: an issue or pull request a trigger or listing gave, `{ threadId }`,
- * `{ projectId }`, or a web address. Lists show it and link to it, and `runs({ subject })` and
+ * or a web address. Lists show it and link to it, and `runs({ subject })` and
  * `t3 workflow list --subject` find the run by it. Calling it again replaces the subject.
  */
 export const subject = (

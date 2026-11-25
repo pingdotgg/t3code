@@ -103,9 +103,7 @@ const listCommand = Command.make("list", {
     Flag.optional,
   ),
   subject: Flag.String("subject").pipe(
-    Flag.withDescription(
-      "Only runs about this: the web address of their subject, or a thread or project id.",
-    ),
+    Flag.withDescription("Only runs about this: the web address of their subject, or a thread id."),
     Flag.optional,
   ),
   json: jsonFlag,

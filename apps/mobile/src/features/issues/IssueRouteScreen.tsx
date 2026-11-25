@@ -47,6 +47,7 @@ import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { WorkflowRunsAbout } from "../workflows/WorkflowSubject";
 import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { PullRequestDescription } from "../pull-requests/PullRequestDescription";
 import {
@@ -746,6 +747,17 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                       <LinkedPullRequests params={params} links={detail.linkedPullRequests} />
                     ) : null}
                     <LinkedThreads params={params} host={detail.host} />
+                    <WorkflowRunsAbout
+                      environmentId={issueTarget(params).environmentId}
+                      item={{
+                        issue: {
+                          tracker: issueTarget(params).input.tracker,
+                          host: params.host ?? detail.host,
+                          scope: params.scope,
+                          key: params.issueKey,
+                        },
+                      }}
+                    />
                     <View className="gap-3">
                       <PullRequestSectionHeading>
                         {detail.commentCount > 0

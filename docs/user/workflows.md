@@ -91,7 +91,7 @@ Under **Needs you**, a picker then shows each kind with how many questions of it
 
 ## What a run is about
 
-A run can name the one thing it is about with `subject(...)`: an issue or pull request a trigger or listing gave it, `{ threadId }`, `{ projectId }`, or a web address. Calling it again replaces the subject, and `start(workflow, payload, { key, subject })` gives a new run one from the start.
+A run can name the one thing it is about with `subject(...)`: an issue or pull request a trigger or listing gave it, `{ threadId }`, or a web address. Calling it again replaces the subject, and `start(workflow, payload, { key, subject })` gives a new run one from the start.
 
 ```ts
 const { workflow, subject, Issue } = T3;
@@ -99,7 +99,7 @@ const { workflow, subject, Issue } = T3;
 workflow("triage", { version: 1, payload: Issue }, (issue) => subject(issue));
 ```
 
-The run lists, **Needs you** included, show the subject under the run and open it beside the run. An issue's or pull request's own view lists the runs about it. `t3 workflow list --subject <url>` finds runs by their subject's web address, or by a thread or project id, and a step finds them with `runs({ subject })`. The subject is only a label with a link: nothing watches it.
+The run lists, **Needs you** included, show the subject under the run and open it beside the run. An issue's or pull request's own view lists the runs about it. `t3 workflow list --subject <url>` finds runs by their subject's web address, or by a thread id, and a step finds them with `runs({ subject })`. The subject is only a label with a link: nothing watches it.
 
 ## Triggers
 

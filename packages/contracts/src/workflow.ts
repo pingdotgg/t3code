@@ -16,8 +16,8 @@ export const WorkflowRunStatus = Schema.Literals([
 export type WorkflowRunStatus = typeof WorkflowRunStatus.Type;
 
 /**
- * The one thing a run is about, as the workflow declared it: an issue, a pull request, a thread,
- * a project or a web address. Its `kind`, `key` and `address` read as a `WorkflowRunReference`'s.
+ * The one thing a run is about, as the workflow declared it: an issue, a pull request, a thread
+ * or a web address. Its `kind`, `key` and `address` read as a `WorkflowRunReference`'s.
  */
 export const WorkflowRunSubject = Schema.Struct({
   kind: Schema.String,
@@ -208,13 +208,12 @@ export type WorkflowRunReference = typeof WorkflowRunReference.Type;
 
 /**
  * The kinds of reference runs record today. `address` is an `IssueRef`, a `PullRequestRef`,
- * `{ threadId }`, `{ projectId }` or `{ url }`.
+ * `{ threadId }` or `{ url }`.
  */
 export const WorkflowReferenceKind = {
   issue: "issue",
   pullRequest: "pullRequest",
   thread: "thread",
-  project: "project",
   url: "url",
 } as const;
 export const WorkflowIssueAddress = IssueRef;

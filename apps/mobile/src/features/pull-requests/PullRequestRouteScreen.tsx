@@ -62,6 +62,7 @@ import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-reac
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import {
+  EnvironmentId,
   pullRequestConversationThreads,
   type PullRequestDetail,
   type PullRequestListEntry,
@@ -146,6 +147,7 @@ import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFa
 import { subscribePullRequestFileJump } from "./pullRequestFileJump";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
+import { WorkflowRunsAbout } from "../workflows/WorkflowSubject";
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();
@@ -389,6 +391,17 @@ function PullRequestOverview(props: {
           footer={<PullRequestReactions params={props.params} />}
         />
       </Animated.View>
+      <WorkflowRunsAbout
+        environmentId={EnvironmentId.make(props.params.environmentId)}
+        item={{
+          pullRequest: {
+            host: props.params.host ?? (URL.canParse(pr.url) ? new URL(pr.url).hostname : ""),
+            repository: props.params.repository,
+            number: props.params.number,
+            url: pr.url,
+          },
+        }}
+      />
     </View>
   );
 }
