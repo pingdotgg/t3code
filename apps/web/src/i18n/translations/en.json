@@ -13056,5 +13056,7 @@
   "2830c15ca3574a86": "Highlight the spoken word in 25 languages, not just English. Downloads a 740 MB model to the selected environment instead of a 135 MB one.",
   "ac1541a6ce6ec81e": "Time words in 25 languages",
   "e5ad64bb69db1045": "Pause reading",
-  "f3878b68dbf06c22": "Go to the word being read"
+  "d8e91bcf106d3bca": "Preparing to read",
+  "d5a4a3f4c97e473c": "Reading aloud",
+  "53dac468c9738c4e": "Jump to current"
 }

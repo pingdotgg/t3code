@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { useGT } from "gt-react";
-import { ArrowDownToLineIcon, PauseIcon, PlayIcon, SquareIcon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, PauseIcon, PlayIcon, SquareIcon } from "lucide-react";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { readAloudController } from "../../speech/readAloud";
 import {
@@ -8,14 +8,16 @@ import {
   returnToReadAloud,
   subscribeReadAloudAway,
 } from "../../speech/readAloudHighlight";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ComposerBanner } from "./ComposerBanner";
 import { VoiceWaveform } from "./VoiceInputPill";
 
 const SPEEDS = [0.75, 1, 1.25, 1.5];
 
-/** Above the composer while a reply is read: how loud it plays, its speed, and its controls. */
+/** Tucked above the composer while a reply is read: what it is doing, how loud, how fast. */
 export function ReadAloudBar() {
   const gt = useGT();
   const state = useSyncExternalStore(
@@ -33,51 +35,71 @@ export function ReadAloudBar() {
   const paused = state.status === "paused";
   const toggle = paused ? gt("Resume reading") : gt("Pause reading");
   return (
-    // Floats above the composer, so starting and stopping never shifts the thread.
-    <div className="pointer-events-none absolute inset-x-0 bottom-full mb-2 flex justify-center">
-      <div
-        role="toolbar"
-        aria-label={gt("Read aloud")}
-        className="pointer-events-auto flex h-8 items-center gap-1 rounded-full border bg-popover px-1.5 shadow-md/5"
-      >
-        <div className="flex w-14 items-center pl-1">
-          <VoiceWaveform level={paused ? 0 : level} />
-        </div>
-        <Select
-          value={String(settings.speed)}
-          onValueChange={(value) => {
-            const speed = Number(value);
-            void updateClientSettings({ readAloud: { ...settings, speed } });
-            void readAloudController.setSpeed(speed);
-          }}
-        >
-          <SelectTrigger size="compact" variant="ghost" aria-label={gt("Read-aloud speed")}>
-            <SelectValue>{settings.speed}×</SelectValue>
-          </SelectTrigger>
-          <SelectPopup>
-            {SPEEDS.map((speed) => (
-              <SelectItem key={speed} value={String(speed)}>
-                {speed}×
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
-        <BarButton
-          label={toggle}
-          onClick={() => (paused ? void readAloudController.resume() : readAloudController.pause())}
-        >
-          {paused ? <PlayIcon className="size-3.5" /> : <PauseIcon className="size-3.5" />}
-        </BarButton>
-        <BarButton label={gt("Stop reading")} onClick={() => readAloudController.stop()}>
-          <SquareIcon className="size-3.5" />
-        </BarButton>
-        {away ? (
-          <BarButton label={gt("Go to the word being read")} onClick={returnToReadAloud}>
-            <ArrowDownToLineIcon className="size-3.5" />
-          </BarButton>
-        ) : null}
-      </div>
-    </div>
+    <ComposerBanner.Attachment className="transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none">
+      <ComposerBanner.Root role="toolbar" aria-label={gt("Read aloud")}>
+        <ComposerBanner.Row>
+          <ComposerBanner.Content className="gap-1.5">
+            <BarButton
+              label={toggle}
+              onClick={() =>
+                paused ? void readAloudController.resume() : readAloudController.pause()
+              }
+            >
+              {paused ? (
+                <PlayIcon className="fill-current" />
+              ) : (
+                <PauseIcon className="fill-current" />
+              )}
+            </BarButton>
+            <span className="min-w-0 truncate font-medium">
+              {state.status === "loading"
+                ? gt("Preparing to read")
+                : paused
+                  ? gt("Paused")
+                  : gt("Reading aloud")}
+            </span>
+          </ComposerBanner.Content>
+          <ComposerBanner.Actions className="flex-nowrap">
+            {away ? (
+              <Badge
+                variant="info"
+                size="control"
+                className="rounded-full"
+                render={<button type="button" onClick={returnToReadAloud} />}
+              >
+                {away === "above" ? <ArrowUpIcon /> : <ArrowDownIcon />}
+                {gt("Jump to current")}
+              </Badge>
+            ) : null}
+            <div className="flex w-12 items-center">
+              <VoiceWaveform level={paused ? 0 : level} />
+            </div>
+            <Select
+              value={String(settings.speed)}
+              onValueChange={(value) => {
+                const speed = Number(value);
+                void updateClientSettings({ readAloud: { ...settings, speed } });
+                void readAloudController.setSpeed(speed);
+              }}
+            >
+              <SelectTrigger size="compact" variant="ghost" aria-label={gt("Read-aloud speed")}>
+                <SelectValue>{settings.speed}×</SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                {SPEEDS.map((speed) => (
+                  <SelectItem key={speed} value={String(speed)}>
+                    {speed}×
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <BarButton label={gt("Stop reading")} onClick={() => readAloudController.stop()}>
+              <SquareIcon className="fill-current" />
+            </BarButton>
+          </ComposerBanner.Actions>
+        </ComposerBanner.Row>
+      </ComposerBanner.Root>
+    </ComposerBanner.Attachment>
   );
 }
 
@@ -92,7 +114,7 @@ function BarButton(props: {
         render={
           <Button
             type="button"
-            size="icon-sm-pill"
+            size="icon-xs"
             variant="ghost"
             aria-label={props.label}
             onClick={props.onClick}

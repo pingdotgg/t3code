@@ -32,27 +32,30 @@ let highlights: {
 let scroller: HTMLElement | null = null;
 let userScrolledAt: number | null = null;
 let readingId: string | null = null;
-// The word being read, and whether it is out of view, for the player's way back to it.
+// The word being read, for the player's way back to it.
 let readingRange: Range | null = null;
-let away = false;
+// Where the word being read is, relative to the view, while it is out of view.
+let away: "above" | "below" | null = null;
 const awayListeners = new Set<() => void>();
 let reveal: ((id: string) => boolean) | null = null;
 
-function setAway(next: boolean) {
+function setAway(next: typeof away) {
   if (next === away) return;
   away = next;
   for (const listener of awayListeners) listener();
 }
 
 function measureAway() {
-  if (!readingId) return setAway(false);
-  if (!readingRange || !scroller || !readingRange.startContainer.isConnected) return setAway(true);
+  if (!readingId) return setAway(null);
+  // Virtualized out of the DOM: it went the way it was last seen going.
+  if (!readingRange || !scroller || !readingRange.startContainer.isConnected)
+    return setAway(away ?? "below");
   const rect = readingRange.getBoundingClientRect();
   const view = scroller.getBoundingClientRect();
-  setAway(rect.bottom < view.top || rect.top > view.bottom);
+  setAway(rect.bottom < view.top ? "above" : rect.top > view.bottom ? "below" : null);
 }
 
-/** Whether the word being read is scrolled out of view; virtualized away counts. */
+/** Which way the word being read is scrolled out of view, if it is; virtualized away counts. */
 export const readAloudAway = () => away;
 export function subscribeReadAloudAway(listener: () => void) {
   awayListeners.add(listener);

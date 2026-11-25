@@ -13054,5 +13054,7 @@
   "2830c15ca3574a86": "Markerar det upplästa ordet på 25 språk, inte bara engelska. Laddar ned en modell på 740 MB till den valda miljön i stället för en på 135 MB.",
   "ac1541a6ce6ec81e": "Synkronisera ord på 25 språk",
   "e5ad64bb69db1045": "Pausa uppläsningen",
-  "f3878b68dbf06c22": "Gå till ordet som läses upp"
+  "d8e91bcf106d3bca": "Förbereder uppläsning",
+  "d5a4a3f4c97e473c": "Läser upp",
+  "53dac468c9738c4e": "Gå till aktuell plats"
 }
