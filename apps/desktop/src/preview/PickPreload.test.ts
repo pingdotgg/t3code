@@ -221,8 +221,5 @@ it("drops a straddling surrogate pair when falling back to outerHTML preview", a
   const card = document.body.appendChild(document.createElement("div"));
   card.textContent = `${"a".repeat(494)}🚀tail`;
   expect(card.outerHTML.charCodeAt(499)).toBe(0xd83d);
-  const htmlPreview = (await pickAndAttach(card))?.htmlPreview;
-  expect(htmlPreview).toBe(card.outerHTML.slice(0, 499));
-  expect(htmlPreview).toHaveLength(499);
-  expect(htmlPreview?.isWellFormed()).toBe(true);
+  expect((await pickAndAttach(card))?.htmlPreview).toBe(card.outerHTML.slice(0, 499));
 });
