@@ -9,10 +9,13 @@ import {
   useCommandPaletteMount,
   useCommandPaletteStore,
 } from "../commandPaletteStore";
+import { useThemeEditorStore } from "../components/settings/themeEditorStore";
 import { installCommandPaletteCommands } from "./commandPaletteCommands";
 
 const keybindings = compileResolvedKeybindingsConfig([
   { key: "mod+k", command: "commandPalette.toggle" },
+  { key: "mod+alt+shift+t", command: "themeEditor.toggle" },
+  { key: "mod+u", command: "usage.open" },
 ]);
 
 function MountedPalette() {
@@ -22,6 +25,7 @@ function MountedPalette() {
 
 function setup() {
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
+  useThemeEditorStore.setState(useThemeEditorStore.getInitialState(), true);
 }
 
 describe("command palette shortcuts", () => {
@@ -39,7 +43,7 @@ describe("command palette shortcuts", () => {
     expect(useCommandPaletteStore.getState().open).toBe(false);
   });
 
-  it("open the palette while it is mounted, and it closes when it unmounts", async () => {
+  it("open the palette while it is mounted, keep it open on repeat, and it closes when it unmounts", async () => {
     setup();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     await using screen = await render(<MountedPalette />, { router: "/" });
@@ -49,6 +53,17 @@ describe("command palette shortcuts", () => {
     );
 
     await userEvent.keyboard("{Control>}k{/Control}");
+    expect(useCommandPaletteStore.getState().open).toBe(true);
+
+    const repeatEvent = new KeyboardEvent("keydown", {
+      key: "k",
+      ctrlKey: true,
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(repeatEvent);
+    expect(repeatEvent.defaultPrevented).toBe(true);
     expect(useCommandPaletteStore.getState().open).toBe(true);
 
     await screen.rerender(<div />);
@@ -136,6 +151,59 @@ describe("command palette shortcuts", () => {
     input.element().dispatchEvent(freshEscape);
     expect(freshEscape.defaultPrevented).toBe(true);
     expect(useCommandPaletteStore.getState()).toMatchObject({ open: true, mode: "command" });
+  });
+
+  it("keeps the theme editor open on a repeated themeEditor.toggle shortcut", async () => {
+    setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    await using screen = await render(<MountedPalette />, { router: "/" });
+    using commands = new DisposableStack();
+    commands.defer(
+      installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
+    );
+
+    await userEvent.keyboard("{Control>}{Alt>}{Shift>}t{/Shift}{/Alt}{/Control}");
+    const openedSession = useThemeEditorStore.getState().session;
+    expect(openedSession).not.toBeNull();
+
+    const repeatEvent = new KeyboardEvent("keydown", {
+      key: "T",
+      ctrlKey: true,
+      altKey: true,
+      shiftKey: true,
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(repeatEvent);
+    expect(repeatEvent.defaultPrevented).toBe(true);
+    expect(useThemeEditorStore.getState().session).toBe(openedSession);
+  });
+
+  it("open Usage once while its shortcut is held", async () => {
+    setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    await using screen = await render(<MountedPalette />, { router: "/" });
+    using commands = new DisposableStack();
+    commands.defer(
+      installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
+    );
+    using navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
+
+    await userEvent.keyboard("{Control>}u{/Control}");
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith({ to: "/usage" });
+
+    const repeatEvent = new KeyboardEvent("keydown", {
+      key: "u",
+      ctrlKey: true,
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(repeatEvent);
+    expect(repeatEvent.defaultPrevented).toBe(true);
+    expect(navigate).toHaveBeenCalledOnce();
   });
 });
 
