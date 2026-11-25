@@ -267,7 +267,7 @@ export function createReadAloudController(
           return;
         }
         playback = next;
-        if (settings.highlightWords && next.words)
+        if (next.words)
           unfollow = next.words((word) => {
             const position =
               word && readAloudPosition(speech, chunk.start + word.start, chunk.start + word.end);

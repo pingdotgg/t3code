@@ -43,7 +43,6 @@ export const ReadAloudSettings = Schema.Struct({
   language: Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(16)),
   skipCodeBlocks: Schema.Boolean,
   backgroundPlayback: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  highlightWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
 export type ReadAloudSettings = typeof ReadAloudSettings.Type;
 export const DEFAULT_READ_ALOUD_SETTINGS: ReadAloudSettings = {
@@ -55,7 +54,6 @@ export const DEFAULT_READ_ALOUD_SETTINGS: ReadAloudSettings = {
   language: "auto",
   skipCodeBlocks: true,
   backgroundPlayback: true,
-  highlightWords: true,
 };
 export const ReadAloudPreference = ReadAloudSettings.pipe(
   Schema.withDecodingDefault(Effect.succeed(DEFAULT_READ_ALOUD_SETTINGS)),

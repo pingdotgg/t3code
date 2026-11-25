@@ -222,9 +222,9 @@ Choose a speech provider in **Settings → Voice → Read aloud**, then use **Re
 beside a completed assistant reply. Select it again to stop playback. Leaving the
 thread stops it. Code blocks are skipped by default.
 
-On web and desktop, the paragraph and the word being read are highlighted, and the thread
-scrolls along until you scroll away. ElevenLabs reports exact word timings. With other
-providers the word position is an estimate. Turn this off with **Highlight words**.
+The paragraph and the word being read are highlighted, and the thread scrolls along until
+you scroll away. ElevenLabs reports exact word timings. With other providers the word
+position is an estimate.
 
 While a reply is read, click or tap one of its paragraphs to continue reading from there.
 On web and desktop, you can also select text in a reply and choose **Read from here**.

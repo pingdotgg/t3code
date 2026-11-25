@@ -285,12 +285,6 @@ it("highlights the spoken word by its markdown range, across chunks, while highl
   expect(controller.getHighlight()).toBeNull();
   expect(emit.filter(Boolean)).toHaveLength(0);
   await run;
-
-  const off = controller.start("2", "Short reply.", { ...settings, highlightWords: false });
-  await Promise.resolve();
-  controller.stop();
-  await off;
-  expect(emit.filter(Boolean)).toHaveLength(0);
 });
 
 it("starts at the block a user picks, keeps its markdown offsets, and ignores a place after the last block", async () => {
