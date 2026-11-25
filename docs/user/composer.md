@@ -230,8 +230,10 @@ English, or 740 MB for 25 languages, which non-English app languages use and whi
 on under **Multilingual word timing**. Until it is installed, and for Japanese, Korean and
 Chinese replies, the highlighted word is an estimate.
 
-While a reply is read, click or tap one of its paragraphs to continue reading from there.
-On web and desktop, you can also select text in a reply and choose **Read from here**.
+While a reply is read, a small player above the composer pauses, stops, and changes the speed,
+and brings you back to the word being read after you scroll away. Click or tap any word in the
+reply to continue reading from it. On web and desktop, you can also select text in a reply and
+choose **Read from here**.
 
 System voices run on your device. Grok TTS, OpenRouter, and ElevenLabs send the reply text
 through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and

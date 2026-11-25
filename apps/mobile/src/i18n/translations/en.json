@@ -5744,5 +5744,10 @@
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "201490988858b511": "withdrawn by {by}",
   "1235caa9d67f09c6": "Multilingual word timing",
-  "1c68db6bfe3f1a9e": "Highlight the spoken word in 25 languages. Downloads a 740 MB model instead of a 135 MB one."
+  "1c68db6bfe3f1a9e": "Highlight the spoken word in 25 languages. Downloads a 740 MB model instead of a 135 MB one.",
+  "a092ae05913a1f09": "Playback speed: {speed}×",
+  "8a0a725cd4a505ce": "Playback speed",
+  "dc28e2793b510896": "Preparing speech",
+  "e5ad64bb69db1045": "Pause reading",
+  "53dac468c9738c4e": "Jump to current"
 }

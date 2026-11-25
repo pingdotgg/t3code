@@ -1,4 +1,5 @@
 import { readAloudController } from "../../speech/readAloud";
+import { setReadAloudRevealer } from "../../speech/readAloudHighlight";
 import { readAloudSourceAt } from "../../speech/readAloudHighlight";
 import { toastReadAloudError } from "./ReadAloudButton";
 import { T, useGT, useMessages, Var } from "gt-react";
@@ -794,6 +795,23 @@ const ConversationTimeline = memo(function ConversationTimeline({
   });
   const rows = useStableRows(rawRows, listIdentityKey);
   const readAloudSettings = useClientSettings((settings) => settings.readAloud);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Lends the read-aloud player a way back to a reply that virtualization unmounted.
+  useEffect(
+    () =>
+      setReadAloudRevealer((id) => {
+        const index = rows.findIndex(
+          (row) => row.kind === "message" && `${routeThreadKey}:${row.message.id}` === id,
+        );
+        if (index === -1) return false;
+        void listRef.current?.scrollToIndex({
+          index,
+          animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+          viewOffset: TIMELINE_MINIMAP_TARGET_OFFSET,
+        });
+        return true;
+      }),
+    [rows, routeThreadKey, listRef],
+  );
   // Read aloud reads only finished replies, as the reply's own button does.
   const readableText = (messageId: string) => {
     const row = rows.find(

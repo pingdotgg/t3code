@@ -5736,5 +5736,10 @@
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
   "1235caa9d67f09c6": "Sincronización de palabras multilingüe",
-  "1c68db6bfe3f1a9e": "Resalta la palabra pronunciada en 25 idiomas. Descarga un modelo de 740 MB en lugar de uno de 135 MB."
+  "1c68db6bfe3f1a9e": "Resalta la palabra pronunciada en 25 idiomas. Descarga un modelo de 740 MB en lugar de uno de 135 MB.",
+  "a092ae05913a1f09": "Velocidad de reproducción: {speed}×",
+  "8a0a725cd4a505ce": "Velocidad de reproducción",
+  "dc28e2793b510896": "Preparando la voz",
+  "e5ad64bb69db1045": "Pausar lectura",
+  "53dac468c9738c4e": "Ir a la posición actual"
 }

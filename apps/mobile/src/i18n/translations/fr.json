@@ -5736,5 +5736,10 @@
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "201490988858b511": "retirée par {by}",
   "1235caa9d67f09c6": "Synchronisation des mots multilingue",
-  "1c68db6bfe3f1a9e": "Met en évidence le mot prononcé dans 25 langues. Télécharge un modèle de 740 Mo au lieu d’un modèle de 135 Mo."
+  "1c68db6bfe3f1a9e": "Met en évidence le mot prononcé dans 25 langues. Télécharge un modèle de 740 Mo au lieu d’un modèle de 135 Mo.",
+  "a092ae05913a1f09": "Vitesse de lecture : {speed}×",
+  "8a0a725cd4a505ce": "Vitesse de lecture",
+  "dc28e2793b510896": "Préparation de la voix",
+  "e5ad64bb69db1045": "Mettre la lecture en pause",
+  "53dac468c9738c4e": "Aller au passage lu"
 }

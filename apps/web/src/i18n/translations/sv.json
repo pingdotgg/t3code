@@ -13052,5 +13052,7 @@
   "92e129bf413a1220": "återkallad",
   "1235caa9d67f09c6": "Flerspråkig ordsynkronisering",
   "2830c15ca3574a86": "Markerar det upplästa ordet på 25 språk, inte bara engelska. Laddar ned en modell på 740 MB till den valda miljön i stället för en på 135 MB.",
-  "ac1541a6ce6ec81e": "Synkronisera ord på 25 språk"
+  "ac1541a6ce6ec81e": "Synkronisera ord på 25 språk",
+  "e5ad64bb69db1045": "Pausa uppläsningen",
+  "f3878b68dbf06c22": "Gå till ordet som läses upp"
 }

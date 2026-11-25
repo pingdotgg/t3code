@@ -1,5 +1,10 @@
 import { ReadAloudButton, toastReadAloudError } from "./ReadAloudButton";
-import { jumpReadAloudOnClick, readAloudHighlightRoot } from "../../speech/readAloudHighlight";
+import {
+  clearReadAloudHover,
+  hoverReadAloudWord,
+  jumpReadAloudOnClick,
+  readAloudHighlightRoot,
+} from "../../speech/readAloudHighlight";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/assistantInsights";
 import { MessageId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -47,6 +52,8 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
         <div
           data-thread-find-text="true"
           ref={readAloudHighlightRoot(readAloudId)}
+          onMouseMove={(event) => hoverReadAloudWord(readAloudId, event.nativeEvent)}
+          onMouseLeave={() => clearReadAloudHover(readAloudId)}
           onClick={(event) => {
             const reading = jumpReadAloudOnClick(readAloudId, text, event.nativeEvent);
             if (reading)

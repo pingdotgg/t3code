@@ -6,7 +6,11 @@ import { toServerClock } from "@t3tools/client-runtime/clock";
 import { readAloudController } from "../read-aloud/playback";
 import { ReadAloudButton } from "../read-aloud/ReadAloudButton";
 import { ReadAloudMarkdownText } from "../read-aloud/ReadAloudMarkdownText";
-import { markReadAloudUserScroll, registerReadAloudFeed } from "../read-aloud/readAloudFollow";
+import {
+  markReadAloudUserScroll,
+  readAloudFeedScrolled,
+  registerReadAloudFeed,
+} from "../read-aloud/readAloudFollow";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { Sheet } from "../../components/ui/Sheet";
 import { ListActionRow } from "../../components/ui/ListActionRow";
@@ -3819,6 +3823,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       event.nativeEvent.contentOffset.y + (usesNativeAutomaticInsets ? barInset : 0) > 6,
     );
     handleMetricsChange();
+    readAloudFeedScrolled();
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the list's end state to report it to the parent
   useLayoutEffect(() => {
@@ -3936,6 +3941,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           viewportRef.current?.measureInWindow((_x, top, _width, height) =>
             callback({ top, height }),
           ),
+        offset: () => listRef.current?.getState().scroll ?? 0,
         scrollBy: (delta) => {
           const list = listRef.current;
           if (list)

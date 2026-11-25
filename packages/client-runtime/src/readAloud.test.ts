@@ -337,6 +337,51 @@ it("starts at the block a user picks, keeps its markdown offsets, and ignores a 
   expect(controller.jump("1", 0)).toBeNull();
 });
 
+it("seeks to a picked word in the audio when its time is known, else reads from that word", async () => {
+  const markdown = "First paragraph here.\n\nSecond **bold** one.";
+  const texts: string[] = [];
+  const seeks: number[] = [];
+  const speeds: number[] = [];
+  let seekable = true;
+  const prepared: Array<ReturnType<typeof deferred<void>>> = [];
+  const controller = createReadAloudController(async (text) => {
+    texts.push(text);
+    const finished = deferred<void>();
+    prepared.push(finished);
+    return {
+      play: async () => {},
+      pause: () => {},
+      stop: () => finished.resolve(),
+      finished: finished.promise,
+      seek: (at) => {
+        seeks.push(at);
+        return seekable;
+      },
+      setSpeed: (speed) => speeds.push(speed),
+    };
+  });
+  const settings = { ...DEFAULT_READ_ALOUD_SETTINGS, provider: "local" as const };
+  void controller.start("1", markdown, settings);
+  await vi.waitFor(() => expect(controller.getSnapshot().status).toBe("playing"));
+  expect(controller.seek("2", 0)).toBeNull();
+
+  // "bold" sits at offset 29 of the spoken text "First paragraph here.\nSecond bold one."
+  await controller.seek("1", markdown.indexOf("old"));
+  expect(seeks).toEqual(["First paragraph here.\nSecond ".length]);
+  expect(texts).toHaveLength(1);
+
+  // A word whose time has not arrived is read from instead, from the word itself, not its block.
+  seekable = false;
+  void controller.seek("1", markdown.indexOf("one"));
+  await vi.waitFor(() => expect(texts).toEqual([texts[0], "one."]));
+
+  // Speed changes go to the player, and later readings keep them.
+  await controller.setSpeed(1.25);
+  expect(speeds).toEqual([1.25]);
+  controller.stop();
+  expect(controller.setSpeed(1.5)).toBeNull();
+});
+
 it("follows the environment's word timings on the audio clock and estimates them when there are none", async () => {
   vi.useFakeTimers();
   try {

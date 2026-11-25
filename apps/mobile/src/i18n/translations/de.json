@@ -5742,5 +5742,10 @@
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "201490988858b511": "zurückgezogen von {by}",
   "1235caa9d67f09c6": "Mehrsprachiges Wort-Timing",
-  "1c68db6bfe3f1a9e": "Markiert das gesprochene Wort in 25 Sprachen. Lädt ein 740-MB-Modell statt eines 135-MB-Modells herunter."
+  "1c68db6bfe3f1a9e": "Markiert das gesprochene Wort in 25 Sprachen. Lädt ein 740-MB-Modell statt eines 135-MB-Modells herunter.",
+  "a092ae05913a1f09": "Wiedergabegeschwindigkeit: {speed}×",
+  "8a0a725cd4a505ce": "Wiedergabegeschwindigkeit",
+  "dc28e2793b510896": "Sprache wird vorbereitet",
+  "e5ad64bb69db1045": "Vorlesen pausieren",
+  "53dac468c9738c4e": "Zur aktuellen Stelle"
 }

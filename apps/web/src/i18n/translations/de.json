@@ -13045,5 +13045,7 @@
   "92e129bf413a1220": "zurückgezogen",
   "1235caa9d67f09c6": "Mehrsprachiges Wort-Timing",
   "2830c15ca3574a86": "Markiert das gesprochene Wort in 25 Sprachen, nicht nur auf Englisch. Lädt ein 740-MB-Modell statt eines 135-MB-Modells in die ausgewählte Umgebung herunter.",
-  "ac1541a6ce6ec81e": "Wörter in 25 Sprachen synchronisieren"
+  "ac1541a6ce6ec81e": "Wörter in 25 Sprachen synchronisieren",
+  "e5ad64bb69db1045": "Vorlesen pausieren",
+  "f3878b68dbf06c22": "Zum vorgelesenen Wort springen"
 }

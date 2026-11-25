@@ -11,6 +11,8 @@ import {
   readAloudPosition,
   readAloudSpeech,
   splitReadAloudSpans,
+  spokenWordAt,
+  type ReadAloudSpeech,
   type ReadAloudPosition,
 } from "@t3tools/shared/read-aloud";
 import { mFallback, msg } from "gt-i18n";
@@ -47,6 +49,12 @@ export type SpeechPlayback = {
   finished: Promise<void>;
   /** Reports each word as it is spoken, and null when none is; returns the unsubscribe. */
   words?: (listener: (word: SpokenWord | null) => void) => () => void;
+  /** Moves to the word at offset `at` of the text it speaks; false while its time is unknown. */
+  seek?: (at: number) => boolean;
+  /** Plays at `speed` from now on, for players that can change rate mid-speech. */
+  setSpeed?: (speed: number) => void;
+  /** Reports how loud what plays is, from 0 to 1, while it plays; returns the unsubscribe. */
+  levels?: (listener: (level: number) => void) => () => void;
 };
 
 /** What a read-aloud message is reading now, for clients to highlight. */
@@ -165,12 +173,23 @@ export function createTimedWords(input: {
       };
     },
     refresh,
+    /** When the word holding offset `at` starts, once its timing has arrived. */
+    secondsAt: (at: number) => {
+      const index = words.findIndex((word) => word.end > at);
+      return index === -1 ? undefined : words[index]!.startSeconds;
+    },
     stop: () => {
       loading.abort();
       clearTimeout(timer);
       listeners.clear();
     },
   };
+}
+
+/** Where in the speech the word at or after markdown offset `from` starts. */
+function spokenWordStart(speech: ReadAloudSpeech, from: number) {
+  const at = speech.sources.findIndex((source) => source >= from);
+  return at === -1 ? undefined : spokenWordAt(speech.text, at).start;
 }
 
 export function createReadAloudController(
@@ -200,6 +219,12 @@ export function createReadAloudController(
   };
   let paused = false;
   let starting = false;
+  // The spoken range of the chunk `playback` speaks, and the word it is on, for seeking.
+  let chunkStart = 0;
+  let chunkEnd = 0;
+  let spokenAt = 0;
+  const levelListeners = new Set<(level: number) => void>();
+  let unlevel: (() => void) | null = null;
   let resumePending: (() => void) | null = null;
   const waitForResume = async () => {
     if (paused)
@@ -221,7 +246,21 @@ export function createReadAloudController(
     highlight = next;
     for (const listener of highlightListeners) listener();
   };
+  // Players measure loudness only while something shows it.
+  const followLevels = () => {
+    unlevel?.();
+    unlevel =
+      playback?.levels?.((level) => {
+        for (const listener of levelListeners) listener(level);
+      }) ?? null;
+  };
+  const stopLevels = () => {
+    unlevel?.();
+    unlevel = null;
+    for (const listener of levelListeners) listener(0);
+  };
   const stopFollowing = () => {
+    stopLevels();
     unfollow?.();
     unfollow = null;
     publishHighlight(null);
@@ -255,9 +294,15 @@ export function createReadAloudController(
     markdown: string,
     settings: ReadAloudSettings,
     from?: number,
+    fromWord = false,
   ) => {
     const speech = readAloudSpeech(markdown, settings.skipCodeBlocks);
-    const offset = from === undefined ? 0 : readAloudBlockFrom(speech, from)?.spokenStart;
+    const offset =
+      from === undefined
+        ? 0
+        : fromWord
+          ? spokenWordStart(speech, from)
+          : readAloudBlockFrom(speech, from)?.spokenStart;
     // Nothing is read after `from`, such as in a skipped closing code block: keep reading.
     if (offset === undefined) return;
     stop();
@@ -280,12 +325,17 @@ export function createReadAloudController(
           return;
         }
         playback = next;
+        chunkStart = chunk.start;
+        chunkEnd = chunk.start + chunk.text.length;
+        spokenAt = chunk.start;
         if (next.words)
           unfollow = next.words((word) => {
+            if (word) spokenAt = chunk.start + word.start;
             const position =
               word && readAloudPosition(speech, chunk.start + word.start, chunk.start + word.end);
             publishHighlight(position ? { id, ...position } : null);
           });
+        if (levelListeners.size) followLevels();
         // Playback can fail while the platform is still activating its audio session.
         void next.finished.catch(() => {});
         await waitForResume();
@@ -386,6 +436,46 @@ export function createReadAloudController(
      */
     jump(id: string, from: number) {
       return reading && isReading(id) ? start(id, reading.markdown, reading.settings, from) : null;
+    },
+    /**
+     * While message `id` is being read, moves to the word at markdown offset `from`: within the
+     * audio when its time is known, otherwise by reading again from that word. Null when `id` is
+     * not being read.
+     */
+    seek(id: string, from: number) {
+      if (!reading || !isReading(id)) return null;
+      const speech = readAloudSpeech(reading.markdown, reading.settings.skipCodeBlocks);
+      const at = spokenWordStart(speech, from);
+      if (at === undefined) return null;
+      if (at >= chunkStart && at < chunkEnd && playback?.seek?.(at - chunkStart))
+        return Promise.resolve();
+      return start(id, reading.markdown, reading.settings, from, true);
+    },
+    /** Reads on at `speed`; players that cannot change rate read again from the current word. */
+    setSpeed(speed: number) {
+      if (!reading) return null;
+      const current = reading;
+      reading = { ...current, settings: { ...current.settings, speed } };
+      if (playback?.setSpeed) {
+        playback.setSpeed(speed);
+        return Promise.resolve();
+      }
+      const speech = readAloudSpeech(current.markdown, current.settings.skipCodeBlocks);
+      const from = speech.sources.slice(spokenAt).find((source) => source >= 0);
+      return from === undefined
+        ? null
+        : start(current.id, current.markdown, reading.settings, from, true);
+    },
+    /** How loud the reply being read is, from 0 to 1, while it plays. */
+    subscribeLevel(listener: (level: number) => void) {
+      levelListeners.add(listener);
+      if (levelListeners.size === 1) followLevels();
+      return () => {
+        levelListeners.delete(listener);
+        if (levelListeners.size) return;
+        unlevel?.();
+        unlevel = null;
+      };
     },
   };
 }

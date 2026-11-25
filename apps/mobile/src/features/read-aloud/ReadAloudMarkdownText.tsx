@@ -37,7 +37,7 @@ function locator(markdown: string, shown: RenderedTextChangeEvent) {
 
 /**
  * Markdown of a reply that read aloud can read: tints the paragraph and word being read, keeps
- * the word in view, and while the reply is read, a tap on a paragraph reads from there.
+ * the word in view, and while the reply is read, a tap on a word reads from it.
  * `readAloud.markdown` is the text read aloud reads, which can differ from the part of it this
  * view shows.
  */
@@ -90,8 +90,8 @@ export function ReadAloudMarkdownText(
           reading && shown
             ? (tap) => {
                 const from = readAloudTapSource(readAloud.markdown, shown, tap);
-                const jumped = from === null ? null : readAloudController.jump(readAloud.id, from);
-                void jumped?.then(() =>
+                const moved = from === null ? null : readAloudController.seek(readAloud.id, from);
+                void moved?.then(() =>
                   alertReadAloudError(readAloud.id, gt("Could not read aloud")),
                 );
               }

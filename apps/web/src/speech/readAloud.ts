@@ -16,6 +16,7 @@ import {
 } from "@t3tools/client-runtime/voice-input";
 import { spokenWordAt } from "@t3tools/shared/read-aloud";
 import { readPreparedConnection } from "../state/session";
+import { playbackLevels } from "./playbackLevels";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 
 function systemPlayback(
@@ -114,8 +115,13 @@ export const readAloudController = createReadAloudController(async (text, settin
     { signal },
   );
   signal.throwIfAborted();
-  const audio = new Audio(url);
-  if (!speechSpeedAppliedByProvider(catalog, model)) audio.playbackRate = settings.speed;
+  const audio = new Audio();
+  // CORS mode, like the environment's API requests, so the waveform can read what plays.
+  audio.crossOrigin = "anonymous";
+  audio.src = url;
+  // Audio a provider already sped up plays at 1×; later speed changes are relative to it.
+  const synthesizedSpeed = speechSpeedAppliedByProvider(catalog, model) ? settings.speed : 1;
+  audio.playbackRate = settings.speed / synthesizedSpeed;
   let done: () => void = () => {};
   const finished = new Promise<void>((resolve, reject) => {
     done = resolve;
@@ -151,5 +157,24 @@ export const readAloudController = createReadAloudController(async (text, settin
       }
       return timed.subscribe(listener);
     },
+    seek: (at) => {
+      const seconds = timed?.secondsAt(at);
+      // A live stream ignores seeks beyond what the browser can seek, so those read again instead.
+      if (seconds === undefined || !seekable(audio, seconds)) return false;
+      audio.currentTime = seconds;
+      timed?.refresh();
+      return true;
+    },
+    setSpeed: (speed) => {
+      audio.playbackRate = speed / synthesizedSpeed;
+      timed?.refresh();
+    },
+    levels: (listener) => playbackLevels(audio, listener),
   };
 }, m);
+
+function seekable(audio: HTMLAudioElement, seconds: number) {
+  for (let index = 0; index < audio.seekable.length; index++)
+    if (audio.seekable.start(index) <= seconds && seconds <= audio.seekable.end(index)) return true;
+  return false;
+}

@@ -13040,5 +13040,7 @@
   "92e129bf413a1220": "retirada",
   "1235caa9d67f09c6": "Sincronización de palabras multilingüe",
   "2830c15ca3574a86": "Resalta la palabra pronunciada en 25 idiomas, no solo en inglés. Descarga un modelo de 740 MB en el entorno seleccionado en lugar de uno de 135 MB.",
-  "ac1541a6ce6ec81e": "Sincronizar palabras en 25 idiomas"
+  "ac1541a6ce6ec81e": "Sincronizar palabras en 25 idiomas",
+  "e5ad64bb69db1045": "Pausar la lectura",
+  "f3878b68dbf06c22": "Ir a la palabra que se está leyendo"
 }

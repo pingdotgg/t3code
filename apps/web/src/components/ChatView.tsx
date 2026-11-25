@@ -299,6 +299,7 @@ import {
 } from "../state/entities";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
+import { ReadAloudBar } from "./chat/ReadAloudBar";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -3850,6 +3851,7 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                               />
                             ) : null}
+                            <ReadAloudBar />
                             {!composerMounted ? null : (
                               <ChatComposer
                                 canOperateThread={canOperateThread}

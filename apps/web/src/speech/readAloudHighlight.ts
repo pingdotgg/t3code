@@ -1,9 +1,14 @@
 import type { ReadAloudHighlight } from "@t3tools/client-runtime/read-aloud";
-import { readAloudSourceAtShown, type ReadAloudCue } from "@t3tools/shared/read-aloud";
+import {
+  readAloudSourceAtShown,
+  spokenWordAt,
+  type ReadAloudCue,
+} from "@t3tools/shared/read-aloud";
 import { readAloudController } from "./readAloud";
 
 const BLOCK_HIGHLIGHT = "t3-read-aloud-block";
 const WORD_HIGHLIGHT = "t3-read-aloud-word";
+const HOVER_HIGHLIGHT = "t3-read-aloud-hover";
 /** Text a listener never hears: controls, icons, labels the UI adds, and math markup. */
 const UNSPOKEN_SELECTOR =
   "svg, button, [role=button], [data-thread-find-ignore], [aria-hidden=true], .katex";
@@ -19,10 +24,58 @@ const INTERACTIVE_SELECTOR =
 const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
 const roots = new Map<string, HTMLElement>();
-let highlights: { readonly block: Highlight; readonly word: Highlight } | null = null;
+let highlights: {
+  readonly block: Highlight;
+  readonly word: Highlight;
+  readonly hover: Highlight;
+} | null = null;
 let scroller: HTMLElement | null = null;
 let userScrolledAt: number | null = null;
 let readingId: string | null = null;
+// The word being read, and whether it is out of view, for the player's way back to it.
+let readingRange: Range | null = null;
+let away = false;
+const awayListeners = new Set<() => void>();
+let reveal: ((id: string) => boolean) | null = null;
+
+function setAway(next: boolean) {
+  if (next === away) return;
+  away = next;
+  for (const listener of awayListeners) listener();
+}
+
+function measureAway() {
+  if (!readingId) return setAway(false);
+  if (!readingRange || !scroller || !readingRange.startContainer.isConnected) return setAway(true);
+  const rect = readingRange.getBoundingClientRect();
+  const view = scroller.getBoundingClientRect();
+  setAway(rect.bottom < view.top || rect.top > view.bottom);
+}
+
+/** Whether the word being read is scrolled out of view; virtualized away counts. */
+export const readAloudAway = () => away;
+export function subscribeReadAloudAway(listener: () => void) {
+  awayListeners.add(listener);
+  return () => {
+    awayListeners.delete(listener);
+  };
+}
+
+/** The timeline lends this a way to scroll a reply back in after virtualization dropped it. */
+export function setReadAloudRevealer(next: (id: string) => boolean) {
+  reveal = next;
+  return () => {
+    if (reveal === next) reveal = null;
+  };
+}
+
+/** Brings the word being read back into view and lets the thread follow it again. */
+export function returnToReadAloud() {
+  if (!readingId) return;
+  userScrolledAt = null;
+  if (readingRange?.startContainer.isConnected) follow(readingRange, true);
+  else reveal?.(readingId);
+}
 
 const supported = () =>
   typeof CSS !== "undefined" && "highlights" in CSS && typeof Highlight !== "undefined";
@@ -35,12 +88,13 @@ export function readAloudHighlightRoot(id: string) {
   return (element: HTMLElement | null) => {
     if (!element || !supported()) return;
     if (!highlights) {
-      highlights = { block: new Highlight(), word: new Highlight() };
+      highlights = { block: new Highlight(), word: new Highlight(), hover: new Highlight() };
       // Thread find paints over read aloud where they overlap.
       highlights.block.priority = -2;
       highlights.word.priority = -1;
       CSS.highlights.set(BLOCK_HIGHLIGHT, highlights.block);
       CSS.highlights.set(WORD_HIGHLIGHT, highlights.word);
+      CSS.highlights.set(HOVER_HIGHLIGHT, highlights.hover);
       readAloudController.subscribeHighlight(paint);
     }
     roots.set(id, element);
@@ -58,7 +112,10 @@ function paint() {
   highlights.word.clear();
   if (!highlight) {
     readingId = null;
+    readingRange = null;
+    highlights.hover.clear();
     watchScroller(null);
+    measureAway();
     return;
   }
   if (highlight.id !== readingId) {
@@ -67,7 +124,10 @@ function paint() {
   }
   const root = roots.get(highlight.id);
   const block = root?.isConnected ? blockElement(root, highlight.block) : null;
-  if (!block) return;
+  if (!block) {
+    readingRange = null;
+    return measureAway();
+  }
   const text = spokenText(block);
   const first = locate(text, highlight.block.first);
   const last = locate(text, highlight.block.last);
@@ -83,7 +143,9 @@ function paint() {
   const wordRange = word ? range(text, word.start, word.end) : null;
   if (wordRange) highlights.word.add(wordRange);
   watchScroller(block.closest<HTMLElement>(".messages-timeline-scroll"));
-  follow(wordRange ?? blockRange);
+  readingRange = wordRange ?? blockRange;
+  follow(readingRange);
+  measureAway();
 }
 
 /** The element that renders the block: by its markdown range, else by its text. */
@@ -132,8 +194,63 @@ export function readAloudSourceAt(id: string, markdown: string, node: Node, offs
   return at === null ? null : readAloudSourceAtShown(markdown, text.value, at);
 }
 
+/** The word under a pointer in message `id` while it is read aloud, as a DOM range. */
+function wordAtPoint(id: string, event: MouseEvent) {
+  const target = event.target;
+  if (
+    !readAloudController.isReading(id) ||
+    !(target instanceof Element) ||
+    target.closest(INTERACTIVE_SELECTOR) ||
+    target.closest(UNSPOKEN_SELECTOR)
+  )
+    return null;
+  const caret = caretAt(event.clientX, event.clientY);
+  const root = roots.get(id);
+  if (!caret || !(caret.node instanceof Text) || !root?.contains(caret.node)) return null;
+  const { start, end } = spokenWordAt(caret.node.data, caret.offset);
+  if (start === end) return null;
+  const word = document.createRange();
+  word.setStart(caret.node, start);
+  word.setEnd(caret.node, end);
+  // A caret lands on the nearest word even past the end of a line; only the word itself counts.
+  const box = word.getBoundingClientRect();
+  return event.clientX >= box.left &&
+    event.clientX <= box.right &&
+    event.clientY >= box.top &&
+    event.clientY <= box.bottom
+    ? word
+    : null;
+}
+
+function caretAt(x: number, y: number) {
+  if ("caretPositionFromPoint" in document) {
+    const position = document.caretPositionFromPoint(x, y);
+    return position && { node: position.offsetNode, offset: position.offset };
+  }
+  const legacy = (
+    document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+  ).caretRangeFromPoint?.(x, y);
+  return legacy ? { node: legacy.startContainer, offset: legacy.startOffset } : null;
+}
+
+/** While message `id` is read aloud, marks the word under the pointer as one a click reads from. */
+export function hoverReadAloudWord(id: string, event: MouseEvent) {
+  if (!highlights) return;
+  const word = wordAtPoint(id, event);
+  highlights.hover.clear();
+  if (word) highlights.hover.add(word);
+  const root = roots.get(id);
+  if (root) root.style.cursor = word ? "pointer" : "";
+}
+
+export function clearReadAloudHover(id: string) {
+  highlights?.hover.clear();
+  const root = roots.get(id);
+  if (root) root.style.cursor = "";
+}
+
 /**
- * While message `id` is read aloud, a plain click on one of its blocks reads from that block.
+ * While message `id` is read aloud, a plain click on one of its words reads from that word.
  * Clicks that select text, follow links, or use controls and code blocks keep their behavior.
  */
 export function jumpReadAloudOnClick(id: string, markdown: string, event: MouseEvent) {
@@ -151,6 +268,11 @@ export function jumpReadAloudOnClick(id: string, markdown: string, event: MouseE
     return null;
   const target = event.target;
   if (!(target instanceof Element) || target.closest(INTERACTIVE_SELECTOR)) return null;
+  const word = wordAtPoint(id, event);
+  if (word) {
+    const from = readAloudSourceAt(id, markdown, word.startContainer, word.startOffset);
+    if (from !== null) return readAloudController.seek(id, from);
+  }
   const block = target.closest<HTMLElement>(SPEECH_BLOCK_SELECTOR);
   const from = block ? readAloudSourceAt(id, markdown, block, 0) : null;
   return from === null ? null : readAloudController.jump(id, from);
@@ -213,12 +335,12 @@ function range(text: SpokenText, start: number, end: number) {
   return result;
 }
 
-function follow(target: Range | null) {
+function follow(target: Range | null, force = false) {
   if (!target || !scroller) return;
   const rect = target.getClientRects()[0] ?? target.getBoundingClientRect();
   if (rect.width === 0 && rect.height === 0) return;
   const view = scroller.getBoundingClientRect();
-  if (userScrolledAt !== null) {
+  if (userScrolledAt !== null && !force) {
     if (performance.now() - userScrolledAt < FOLLOW_PAUSE_MS) return;
     // Never pull the user back; follow again once they bring the word into view themselves.
     if (rect.bottom < view.top || rect.top > view.bottom) return;
@@ -252,7 +374,9 @@ function watchScroller(next: HTMLElement | null) {
   scroller?.removeEventListener("touchmove", markUserScroll);
   scroller?.removeEventListener("keydown", markScrollKey);
   scroller?.removeEventListener("pointerdown", markScrollbarDrag);
+  scroller?.removeEventListener("scroll", measureAway);
   scroller = next;
+  next?.addEventListener("scroll", measureAway, { passive: true });
   next?.addEventListener("wheel", markUserScroll, { passive: true });
   next?.addEventListener("touchmove", markUserScroll, { passive: true });
   next?.addEventListener("keydown", markScrollKey);

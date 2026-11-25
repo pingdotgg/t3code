@@ -116,6 +116,9 @@ it("removes lock-screen playback when recording takes audio focus", async () => 
   await started.promise;
   await playing.promise;
   expect(player.setPlaybackRate).toHaveBeenCalledWith(1.25);
+  // Audio the provider did not speed up follows a new speed through the player rate alone.
+  await readAloudController.setSpeed(1.5);
+  expect(player.setPlaybackRate).toHaveBeenLastCalledWith(1.5);
   expect(createAudioPlayer).toHaveBeenLastCalledWith(
     "https://host.test/api/voice/synthesis/audio?token=stream",
     expect.anything(),
@@ -194,14 +197,17 @@ it("keeps a reply resumable when recording takes focus while playback activates"
     activating.resolve();
     await activated.promise;
   });
-  vi.mocked(createAudioPlayer).mockReturnValue({
+  const player = {
     play: vi.fn(),
     pause: vi.fn(),
     release: vi.fn(),
     setPlaybackRate: vi.fn(),
     setActiveForLockScreen: vi.fn(),
     addListener: vi.fn(),
-  } as unknown as ReturnType<typeof createAudioPlayer>);
+  };
+  vi.mocked(createAudioPlayer).mockReturnValue(
+    player as unknown as ReturnType<typeof createAudioPlayer>,
+  );
   const settled = Promise.withResolvers<string>();
   const unsubscribe = readAloudController.subscribe(() => {
     const { status } = readAloudController.getSnapshot();
@@ -210,6 +216,7 @@ it("keeps a reply resumable when recording takes focus while playback activates"
   void readAloudController.start("cloud", "reply", {
     ...DEFAULT_READ_ALOUD_SETTINGS,
     provider: "xai",
+    speed: 1.25,
     environmentId: EnvironmentId.make("host"),
   });
   await activating.promise;
@@ -219,6 +226,10 @@ it("keeps a reply resumable when recording takes focus while playback activates"
     activated.resolve();
     await readAloudController.resume();
     expect(await settled.promise).toBe("playing");
+    // The provider made this audio at 1.25×, so 1.5× plays it 1.2 times as fast.
+    expect(player.setPlaybackRate).not.toHaveBeenCalled();
+    await readAloudController.setSpeed(1.5);
+    expect(player.setPlaybackRate).toHaveBeenLastCalledWith(1.2);
   } finally {
     unsubscribe();
     readAloudController.stop();
