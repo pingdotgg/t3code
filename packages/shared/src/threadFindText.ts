@@ -1,5 +1,5 @@
 import { shouldPreserveAssistantLineBreaks } from "./assistantInsights.ts";
-import { THREAD_FIND_BLOCK_TAGS } from "./threadFindBlockTags.ts";
+import { THREAD_FIND_BLOCK_TAGS, threadFindLineBreakText } from "./threadFindBlockTags.ts";
 import {
   matchInlineSkills,
   formatProviderSkillDisplayName,
@@ -197,8 +197,15 @@ function markdownThreadFindText(
       node.tagName === "code" || node.tagName === "a"
         ? false
         : inlineSkills || node.tagName === "p" || node.tagName === "li";
-    for (const child of node.children ?? [])
-      visit(child, inPre || node.tagName === "pre", renderSkills);
+    const children = node.children ?? [];
+    for (const [index, child] of children.entries()) {
+      if (child.tagName === "br") {
+        const next = children[index + 1];
+        text += threadFindLineBreakText(next?.type === "text" ? next.value : undefined);
+      } else {
+        visit(child, inPre || node.tagName === "pre", renderSkills);
+      }
+    }
     if (block) flush();
   };
   visit(tree);

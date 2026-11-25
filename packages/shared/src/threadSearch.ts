@@ -1,3 +1,5 @@
+import { EXACT_PHRASE_GAP } from "./paletteSearch.ts";
+
 // A typed straight apostrophe finds a curly one: iOS keyboards type "’".
 const foldCharacters = (text: string) => text.replace(/ς/g, "σ").replace(/[‘’]/g, "'");
 
@@ -26,12 +28,12 @@ function scanThreadSearchOccurrences(
 ): number {
   if (text.length === 0 || query.length === 0) return 0;
 
-  // Search snippets collapse whitespace. Match a single space between words
-  // against the original run, while allowing explicit indentation queries.
+  // Search snippets collapse whitespace. Use the same gap limit as quoted
+  // search so a wider gap in the message cannot take the selected occurrence.
   const phrase = foldThreadSearchCase(query)
     .split(/(?<=\S) (?=\S)/)
     .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-    .join("\\s+");
+    .join(`\\s{1,${EXACT_PHRASE_GAP}}`);
   let count = 0;
   for (const match of foldThreadSearchCase(text).matchAll(new RegExp(phrase, "g"))) {
     ranges?.push({ start: match.index, end: match.index + match[0].length });

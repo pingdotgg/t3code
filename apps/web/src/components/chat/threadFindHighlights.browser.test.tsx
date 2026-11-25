@@ -11,6 +11,15 @@ function row(html: string) {
 }
 
 describe("collectThreadFindRanges", () => {
+  it("spans a rendered break even when no newline text node follows it", () => {
+    const container = row("before<br>after");
+    const ranges = collectThreadFindRanges(container, "before after");
+    expect(ranges.map(({ range }) => range.cloneContents().querySelector("br")?.tagName)).toEqual([
+      "BR",
+    ]);
+    expect(ranges.map(({ range }) => range.toString())).toEqual(["beforeafter"]);
+  });
+
   it("finds matches split across inline token spans, in order", () => {
     const container = row(
       "<pre><code><span>con</span><span>st</span> a = <span>c</span>onst; const</code></pre>",

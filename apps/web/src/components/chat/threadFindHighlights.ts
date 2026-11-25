@@ -1,6 +1,9 @@
 import { findThreadSearchRanges } from "@t3tools/shared/threadSearch";
 import { useEffect, useEffectEvent, useRef } from "react";
-import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindBlockTags";
+import {
+  THREAD_FIND_BLOCK_TAGS,
+  threadFindLineBreakText,
+} from "@t3tools/shared/threadFindBlockTags";
 
 import { observeResize } from "~/lib/observeResize";
 
@@ -40,8 +43,16 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
         const end = nodes[endIndex];
         if (!start || !end) continue;
         const range = container.ownerDocument.createRange();
-        range.setStart(start.node, match.start - start.start);
-        range.setEnd(end.node, match.end - end.start);
+        if (start.node.nodeType === Node.TEXT_NODE) {
+          range.setStart(start.node, match.start - start.start);
+        } else {
+          range.setStartBefore(start.node);
+        }
+        if (end.node.nodeType === Node.TEXT_NODE) {
+          range.setEnd(end.node, match.end - end.start);
+        } else {
+          range.setEndAfter(end.node);
+        }
         const occurrence = occurrenceByRowId.get(rowId) ?? 0;
         ranges.push({ rowId, occurrence, range });
         occurrenceByRowId.set(rowId, occurrence + 1);
@@ -57,6 +68,18 @@ export function collectThreadFindRanges(container: HTMLElement, query: string): 
         return;
       }
       const tag = element?.tagName.toLowerCase() ?? "";
+      if (tag === "br") {
+        const next = node.nextSibling;
+        const separator = threadFindLineBreakText(
+          next?.nodeType === Node.TEXT_NODE ? next.nodeValue : null,
+        );
+        if (separator) {
+          const start = text.length;
+          text += separator;
+          nodes.push({ node, start, end: text.length });
+        }
+        return;
+      }
       const block = THREAD_FIND_BLOCK_TAGS.has(tag);
       if (block) flush();
       if (node.nodeType === 3) {
