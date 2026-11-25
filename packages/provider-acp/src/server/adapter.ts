@@ -8736,6 +8736,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         reportRuntimeGone = Effect.suspend(() =>
           providerSession.startupPhase === undefined ? reportStartupPhase(undefined) : Effect.void,
         );
+        // An agent that exited while the session opened found these reports unset.
+        yield* reportRuntimeGone;
         lateSessionSetup.openSessionConfigured = true;
         const pendingLateSessionSetup = lateSessionSetup.pending;
         lateSessionSetup.pending = null;
