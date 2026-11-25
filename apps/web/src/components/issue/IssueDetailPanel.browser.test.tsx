@@ -68,18 +68,26 @@ vi.mock(import("~/state/issues"), async (original) => {
 
 import { IssueDetailPanel } from "./IssueDetailPanel";
 
+const reference = {
+  projectId: "project-1" as never,
+  tracker: "github" as never,
+  scope: "owner/repo",
+  key: "7",
+};
+
+function setComments(comments: IssueDetail["comments"]) {
+  state.openLink.mockClear();
+  (detail as { comments: unknown }).comments = comments;
+}
+
 describe("IssueDetailPanel", () => {
   it("opens the issue number through the link-target setting, not a popup", async () => {
+    setComments([]);
     const threadRef = { environmentId: "env-1", threadId: "thread-1" } as never;
     await using screen = await render(
       <IssueDetailPanel
         environmentId={"env-1" as never}
-        reference={{
-          projectId: "project-1" as never,
-          tracker: "github" as never,
-          scope: "owner/repo",
-          key: "7",
-        }}
+        reference={reference}
         threadRef={threadRef}
       />,
     );
@@ -90,5 +98,36 @@ describe("IssueDetailPanel", () => {
     expect(click.defaultPrevented).toBe(true);
     expect(state.openLink).toHaveBeenCalledOnce();
     expect(state.openLink).toHaveBeenCalledWith(url, { event: expect.anything() });
+  });
+
+  it("opens a comment's timestamp through the link-target setting, not a popup", async () => {
+    const commentUrl = `${url}#issuecomment-1`;
+    setComments([
+      {
+        id: "1",
+        author: null,
+        body: "Same here",
+        createdAt: "2026-01-02T00:00:00.000Z",
+        url: commentUrl,
+      },
+    ]);
+    await using screen = await render(
+      <IssueDetailPanel
+        environmentId={"env-1" as never}
+        reference={reference}
+        threadRef={{ environmentId: "env-1", threadId: "thread-1" } as never}
+      />,
+    );
+    const link = await vi.waitFor(() => {
+      const found = screen.container.querySelector(`a[href="${commentUrl}"]`);
+      expect(found).not.toBeNull();
+      return found!;
+    });
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    link.dispatchEvent(click);
+
+    expect(click.defaultPrevented).toBe(true);
+    expect(state.openLink).toHaveBeenCalledOnce();
+    expect(state.openLink).toHaveBeenCalledWith(commentUrl, { event: expect.anything() });
   });
 });
