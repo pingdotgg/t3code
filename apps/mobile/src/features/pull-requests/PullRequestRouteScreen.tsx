@@ -147,7 +147,7 @@ import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFa
 import { subscribePullRequestFileJump } from "./pullRequestFileJump";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
-import { WorkflowRunsAbout } from "../workflows/WorkflowSubject";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();

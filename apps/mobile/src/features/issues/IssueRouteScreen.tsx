@@ -47,7 +47,7 @@ import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { WorkflowRunsAbout } from "../workflows/WorkflowSubject";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { PullRequestDescription } from "../pull-requests/PullRequestDescription";
 import {
