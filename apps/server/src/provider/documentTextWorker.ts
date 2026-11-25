@@ -1086,7 +1086,6 @@ export async function extractDocumentText(path: string, extension: string): Prom
       if (
         (isImageDescription || afterImageDescription) &&
         endsWithWord &&
-        !(cellDepth && space) &&
         /^\u00ad*[\p{L}\p{M}\p{N}_]/u.test(raw)
       )
         raw = " " + raw;
