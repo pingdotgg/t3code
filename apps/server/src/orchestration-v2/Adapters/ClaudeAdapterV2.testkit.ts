@@ -950,6 +950,7 @@ function replayQueryRunnerService(
     forkSession: (input) => replay(() => queryRunner.forkSession(input)),
     subagentLaunchToolUseId: (input) => replay(() => queryRunner.subagentLaunchToolUseId(input)),
     subagentModel: () => Effect.succeed(null),
+    subagentMessages: () => Effect.succeed([]),
     assertComplete: replay(() => queryRunner.assertComplete()),
   });
 }

@@ -65,6 +65,7 @@ import {
   type SDKRateLimitInfo,
   type SDKResultMessage,
   type SDKUserMessage,
+  type SessionMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AskUserQuestionInput,
@@ -952,6 +953,10 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   readonly subagentModel: (
     input: ClaudeAgentSdkSubagentLookupInput,
   ) => Effect.Effect<string | null, ClaudeAgentSdkQueryRunnerError>;
+  /** A subagent's transcript from `offset`, for one whose frames Claude withholds until it ends. */
+  readonly subagentMessages: (
+    input: ClaudeAgentSdkSubagentLookupInput & { readonly offset: number },
+  ) => Effect.Effect<ReadonlyArray<SessionMessage>, ClaudeAgentSdkQueryRunnerError>;
   readonly assertComplete: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -2348,6 +2353,16 @@ export const layerQueryRunner: Layer.Layer<
             .find((model) => model !== undefined) ?? null
         );
       }),
+      subagentMessages: Effect.fn("ClaudeAgentSdkQueryRunner.subagentMessages")((input) =>
+        Effect.tryPromise({
+          try: () =>
+            getSubagentMessages(input.sessionId, input.agentId, {
+              ...(input.dir === null ? {} : { dir: input.dir }),
+              offset: input.offset,
+            }),
+          catch: (cause) => queryRunnerError(cause, "getSubagentMessages"),
+        }),
+      ),
       assertComplete: Effect.void,
     });
   }),
@@ -6300,6 +6315,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
           });
         const sdkMessageLock = yield* Semaphore.make(1);
+        const forkTranscriptPolls = new Map<string, Deferred.Deferred<void>>();
+        // Claude re-sends a finished fork's frames; these already arrived from its transcript.
+        const polledForkFrameUuids = new Set<string>();
         // Members can finish after the launching turn; retain state to emit each transition once.
         const workflowMemberStates = yield* Ref.make(
           new Map<
@@ -12037,6 +12055,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 reopen: true,
                 ...(message.run_id === undefined ? {} : { nativeRunId: message.run_id }),
               });
+              if (
+                message.tool_use_id === undefined &&
+                toolUseId !== undefined &&
+                !forkTranscriptPolls.has(message.task_id)
+              ) {
+                const stop = yield* Deferred.make<void>();
+                forkTranscriptPolls.set(message.task_id, stop);
+                yield* pollForkTranscript({
+                  query: input.query,
+                  context,
+                  nativeThreadId: liveQuery.nativeThreadId,
+                  taskId: message.task_id,
+                  toolUseId,
+                  stop,
+                }).pipe(Effect.forkIn(sessionScope));
+              }
               yield* Ref.update(wakeBuffers, (current) => {
                 const entry = current.get(liveQuery.nativeThreadId);
                 if (entry === undefined) return current;
@@ -12145,6 +12179,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 message.task_id,
                 message,
               );
+            }
+            const forkPoll = forkTranscriptPolls.get(message.task_id);
+            if (forkPoll !== undefined) {
+              forkTranscriptPolls.delete(message.task_id);
+              yield* Deferred.succeed(forkPoll, undefined);
             }
             const wasBackgroundTask = yield* isKnownOpaqueBackgroundTaskOnNativeThread(
               liveQuery.nativeThreadId,
@@ -12714,6 +12753,62 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
+        // A forked skill streams nothing until it ends; its transcript is written as it works.
+        const pollForkTranscript: (fork: {
+          readonly query: ClaudeAgentSdkQuerySession;
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeThreadId: string;
+          readonly taskId: string;
+          readonly toolUseId: string;
+          readonly stop: Deferred.Deferred<void>;
+        }) => Effect.Effect<void> = Effect.fnUntraced(function* (fork) {
+          let offset = 0;
+          // A stopped turn ends the fork without a task_notification.
+          const forkRunning = Ref.get(sessionSubagentsByTaskId).pipe(
+            Effect.map((registry) => registry.get(fork.taskId)?.task.status === "running"),
+          );
+          while (!(yield* Deferred.isDone(fork.stop)) && (yield* forkRunning)) {
+            const messages = yield* queryRunner
+              .subagentMessages({
+                sessionId: fork.nativeThreadId,
+                agentId: fork.taskId,
+                dir: fork.context.input.runtimePolicy.cwd,
+                threadId: fork.context.input.threadId,
+                providerSessionId: input.providerSessionId,
+                offset,
+              })
+              .pipe(
+                Effect.catch((error) =>
+                  Effect.logWarning("orchestration-v2.claude-fork-transcript-read-failed", {
+                    taskId: fork.taskId,
+                    error,
+                  }).pipe(Effect.as(null)),
+                ),
+              );
+            // Claude still sends the fork's frames once it ends.
+            if (messages === null) return;
+            offset += messages.length;
+            yield* sdkMessageLock.withPermits(1)(
+              Effect.gen(function* () {
+                // Once it ends, Claude's own frames cover the rest.
+                if ((yield* Deferred.isDone(fork.stop)) || !(yield* forkRunning)) return;
+                for (const message of messages) {
+                  if (message.type === "system" || polledForkFrameUuids.has(message.uuid)) continue;
+                  polledForkFrameUuids.add(message.uuid);
+                  yield* handleSdkMessageFrame({
+                    query: fork.query,
+                    message: { ...message, parent_tool_use_id: fork.toolUseId } as SDKMessage,
+                    replayed: true,
+                  });
+                }
+              }),
+            );
+            yield* Deferred.await(fork.stop).pipe(
+              Effect.timeoutOrElse({ duration: "1 second", orElse: () => Effect.void }),
+            );
+          }
+        });
+
         const handleRoutedSdkMessage = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
@@ -12757,6 +12852,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
         }) {
           const message = input.message;
+          if ("uuid" in message && polledForkFrameUuids.delete(message.uuid)) return;
+          // A fork ends within its turn, and Claude re-sends its frames before the turn's result.
+          if (message.type === "result") {
+            for (const stop of forkTranscriptPolls.values())
+              yield* Deferred.succeed(stop, undefined);
+            forkTranscriptPolls.clear();
+            polledForkFrameUuids.clear();
+          }
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
           // The API answering again is recovery; a long text or tool input block emits nothing
