@@ -530,10 +530,12 @@ export function AddEnvironmentDialog({
           {progress ? <Spinner /> : <PlusIcon className="size-3.5" />}
           {progress ? progress.label : routeTarget ? gt("Add route") : gt("Connect & add")}
         </Button>
+        {/* Always mounted, so screen readers announce the target; the spinner only says loading. */}
+        <span aria-live="polite" className="sr-only">
+          {progress ? [progress.label, progress.detail].filter(Boolean).join(" ") : null}
+        </span>
         {progress?.detail ? (
-          <p aria-live="polite" className="text-center text-xs text-muted-foreground">
-            {progress.detail}
-          </p>
+          <p className="text-center text-xs text-muted-foreground">{progress.detail}</p>
         ) : null}
       </div>
     );
