@@ -9,6 +9,7 @@ import {
   type ScopedThreadRef,
   type FilesystemEntryMetadata,
   type ResolvedKeybindingsConfig,
+  type TerminalSummary,
 } from "@t3tools/contracts";
 import { Cause } from "effect";
 import { compileResolvedKeybindingsConfig, DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -31,13 +32,22 @@ const fixture = vi.hoisted(() => ({
   writes: [] as Array<{ threadId: string; data: string; expectedPid?: number }>,
   messages: [] as string[],
   resetSessions: () => {},
+  terminalMetadata: (
+    _environmentId: EnvironmentId,
+  ): Atom.Atom<AsyncResult.AsyncResult<ReadonlyArray<TerminalSummary>>> =>
+    Atom.make(AsyncResult.success([])),
+  setMetadataPid: (_thread: ScopedThreadRef, _pid: number) => {},
   setSession: (
     _thread: ScopedThreadRef,
     _status: "closed" | "starting" | "running",
     _version: number,
     _generation?: number,
   ) => {},
-  sessionEvent: (_thread: ScopedThreadRef, _type: "snapshot" | "restarted", _pid = 123) => {},
+  sessionEvent: (
+    _thread: ScopedThreadRef,
+    _type: "snapshot" | "restarted" | "closed",
+    _pid = 123,
+  ) => {},
   surfaceOptions: [] as GhosttyTerminalSurfaceOptions[],
   reportedSize: null as { cols: number; rows: number } | null,
   resizeCommand: {},
@@ -115,6 +125,17 @@ vi.mock("../state/terminalSessions", async () => {
   fixture.resetSessions = () => {
     sessions = new Map();
   };
+  const metadata = Atom.family((_environmentId: EnvironmentId) =>
+    Atom.make<AsyncResult.AsyncResult<ReadonlyArray<TerminalSummary>>>(
+      AsyncResult.waiting(AsyncResult.success([])),
+    ),
+  );
+  fixture.terminalMetadata = metadata;
+  fixture.setMetadataPid = (thread, pid) =>
+    appAtomRegistry.set(
+      metadata(thread.environmentId),
+      AsyncResult.waiting(AsyncResult.success([summary(thread.threadId, pid)])),
+    );
   fixture.setSession = (thread, status, version, generation) => {
     appAtomRegistry.set(session(thread.environmentId, thread.threadId), {
       ...EMPTY_TERMINAL_SESSION_STATE,
@@ -131,23 +152,27 @@ vi.mock("../state/terminalSessions", async () => {
     appAtomRegistry.set(atom, {
       ...current,
       ...applyTerminalAttachStreamEvent(current, {
-        type,
         threadId: thread.threadId,
         terminalId: "term-1",
-        snapshot: {
-          threadId: thread.threadId,
-          terminalId: "term-1",
-          cwd: "/repo",
-          worktreePath: null,
-          status: "running",
-          pid,
-          supportsConditionalWrites: fixture.supportsConditionalWrites,
-          history: "",
-          exitCode: null,
-          exitSignal: null,
-          label: "Terminal 1",
-          updatedAt: "2026-11-15T00:00:00.000Z",
-        },
+        ...(type === "closed"
+          ? { type }
+          : {
+              type,
+              snapshot: {
+                threadId: thread.threadId,
+                terminalId: "term-1",
+                cwd: "/repo",
+                worktreePath: null,
+                status: "running",
+                pid,
+                supportsConditionalWrites: fixture.supportsConditionalWrites,
+                history: "",
+                exitCode: null,
+                exitSignal: null,
+                label: "Terminal 1",
+                updatedAt: "2026-11-15T00:00:00.000Z",
+              },
+            }),
       }),
     });
   };
@@ -184,7 +209,12 @@ vi.mock("../state/server", async () => {
   return { serverEnvironment: { configValueAtom: () => config } };
 });
 vi.mock("../state/terminal", () => ({
-  terminalEnvironment: { write: {}, resize: fixture.resizeCommand },
+  terminalEnvironment: {
+    write: {},
+    resize: fixture.resizeCommand,
+    metadata: ({ environmentId }: { environmentId: EnvironmentId }) =>
+      fixture.terminalMetadata(environmentId),
+  },
 }));
 vi.mock("../state/preview", () => ({ previewEnvironment: { open: {} } }));
 vi.mock("../state/projects", async () => {
@@ -471,6 +501,7 @@ it.each([
   async ({ pid, guarded, recovers }) => {
     const { other: threadRef } = setup();
     fixture.supportsConditionalWrites = guarded;
+    if (!guarded) fixture.setMetadataPid(threadRef, 123);
     let settleWrite = () => {};
     fixture.runWrite = () =>
       new Promise((resolve) => {
@@ -504,28 +535,72 @@ it.each([
   },
 );
 
-it.each([1, 2])("stops a split paste when the server rejects chunk %i", async (rejectedChunk) => {
-  const { other: threadRef } = setup();
-  fixture.runWrite = async () =>
-    fixture.writes.length === rejectedChunk || fixture.writes.at(-1)?.data === "\x1b[201~"
-      ? AsyncResult.failure(Cause.fail(new TerminalProcessChangedError()))
-      : { _tag: "Success" };
-  await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
-  await act(async () => {
-    fixture.pendingSurfaces.shift()?.();
-  });
-  const paste = `\x1b[200~${"p".repeat(140_000)}\x1b[201~`;
-  await act(async () => {
+it.each(["metadata first", "closed"] as const)(
+  "clears legacy paste recovery when the process is gone (%s)",
+  async (change) => {
+    const { other: threadRef } = setup();
+    fixture.supportsConditionalWrites = false;
+    fixture.setMetadataPid(threadRef, 123);
+    let failWrite = () => {};
+    fixture.runWrite = () =>
+      new Promise((resolve) => {
+        failWrite = () => {
+          fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
+          resolve(AsyncResult.failure(Cause.die(new Error("acknowledgement lost"))));
+        };
+      });
+    await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+    await act(async () => {
+      fixture.pendingSurfaces.shift()?.();
+    });
+    const paste = `\x1b[200~${"p".repeat(70_000)}\x1b[201~`;
     fixture.typeIntoSurface?.(paste);
-    fixture.typeIntoSurface?.("after");
-  });
-  const attempted = [paste.slice(0, 65_536)];
-  if (rejectedChunk > 1) attempted.push(paste.slice(65_536, 131_072), "\x1b[201~");
-  expect(fixture.writes.map(({ data, expectedPid }) => ({ data, expectedPid }))).toEqual([
-    ...attempted.map((data) => ({ data, expectedPid: 123 })),
-    { data: "after", expectedPid: undefined },
-  ]);
-});
+    await act(async () => {
+      if (change === "closed") fixture.sessionEvent(threadRef, "closed");
+      else fixture.setMetadataPid(threadRef, 456);
+      failWrite();
+    });
+    expect(fixture.writes.map(({ data }) => data)).toEqual([paste.slice(0, 65_536)]);
+    await act(async () => {
+      // After close, reopen without a PID change to expose any stale recovery obligation.
+      fixture.sessionEvent(threadRef, "snapshot", change === "closed" ? 123 : 456);
+      fixture.typeIntoSurface?.("after");
+    });
+    expect(fixture.writes.map(({ data }) => data)).toEqual([paste.slice(0, 65_536), "after"]);
+  },
+);
+
+it.each([
+  { rejectedChunk: 1, bracketed: true },
+  { rejectedChunk: 2, bracketed: true },
+  { rejectedChunk: 2, bracketed: false },
+])(
+  "stops a split paste when chunk $rejectedChunk fails (bracketed: $bracketed)",
+  async ({ rejectedChunk, bracketed }) => {
+    const { other: threadRef } = setup();
+    fixture.runWrite = async () =>
+      fixture.writes.length === rejectedChunk || fixture.writes.at(-1)?.data === "\x1b[201~"
+        ? AsyncResult.failure(Cause.fail(new TerminalProcessChangedError()))
+        : { _tag: "Success" };
+    await using _screen = await render(<Drawer threadRef={threadRef} onCloseTerminal={() => {}} />);
+    await act(async () => {
+      fixture.pendingSurfaces.shift()?.();
+    });
+    const text = "p".repeat(140_000);
+    const paste = bracketed ? `\x1b[200~${text}\x1b[201~` : text;
+    await act(async () => {
+      fixture.typeIntoSurface?.(paste);
+      fixture.typeIntoSurface?.("after");
+    });
+    const attempted = [paste.slice(0, 65_536)];
+    if (rejectedChunk > 1) attempted.push(paste.slice(65_536, 131_072));
+    if (rejectedChunk > 1 && bracketed) attempted.push("\x1b[201~");
+    expect(fixture.writes.map(({ data, expectedPid }) => ({ data, expectedPid }))).toEqual([
+      ...attempted.map((data) => ({ data, expectedPid: 123 })),
+      { data: "after", expectedPid: undefined },
+    ]);
+  },
+);
 
 it("closes an interrupted paste after disposal before input from a remounted view", async () => {
   const { other: threadRef } = setup();

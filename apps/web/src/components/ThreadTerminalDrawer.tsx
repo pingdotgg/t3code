@@ -999,7 +999,7 @@ function TerminalSessionViewport({
         };
         return writeInput(
           data,
-          async (chunk, bracketed) => {
+          async (chunk, split) => {
             if (terminalRef.current !== terminal) return "not-dispatched";
             const currentSession = appAtomRegistry.get(terminalSessionAtom);
             if (
@@ -1009,7 +1009,7 @@ function TerminalSessionViewport({
               return "not-dispatched";
             }
             const expectedPid =
-              bracketed && session.supportsConditionalWrites ? session.pid : undefined;
+              split && session.supportsConditionalWrites ? session.pid : undefined;
             if (expectedPid === null) return "not-dispatched";
             const result = await writeInputChunk(chunk, kind, expectedPid);
             if (result._tag === "Success") return true;
@@ -1025,18 +1025,27 @@ function TerminalSessionViewport({
             if (session.pid === null) return true;
             if (!canWriteInput()) return false;
             if (!session.supportsConditionalWrites) {
-              const current =
-                terminalRef.current === terminal
-                  ? appAtomRegistry.get(terminalSessionAtom)
-                  : AsyncResult.getOrElse(
-                      appAtomRegistry.get(
-                        terminalEnvironment.metadata({ environmentId, input: null }),
-                      ),
-                      () => [],
-                    ).find((item) => item.threadId === threadId && item.terminalId === terminalId);
+              const attached =
+                terminalRef.current === terminal ? appAtomRegistry.get(terminalSessionAtom) : null;
+              if (attached && attached.version > 0) {
+                if (attached.status === "closed" || attached.status === "exited") return true;
+                if (attached.pid !== null && attached.pid !== session.pid) return true;
+              }
+              const metadata = appAtomRegistry.get(
+                terminalEnvironment.metadata({ environmentId, input: null }),
+              );
+              if (!AsyncResult.isSuccess(metadata)) return false;
+              const current = metadata.value.find(
+                (item) => item.threadId === threadId && item.terminalId === terminalId,
+              );
               if (current?.pid == null) return false;
-              if (current.pid !== session.pid || current.status === "exited") return true;
-              if (current.status !== "running") return false;
+              if (attached) {
+                // An unguarded write needs both streams to agree the original PTY is running.
+                if (attached.status !== "running" || attached.pid !== current.pid) return false;
+              } else if (current.pid !== session.pid || current.status === "exited") {
+                return true;
+              }
+              if (current.status !== "running" || current.pid !== session.pid) return false;
             }
             const result = await writeInputChunk(
               "\x1b[201~",
