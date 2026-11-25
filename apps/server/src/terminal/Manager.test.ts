@@ -888,6 +888,7 @@ it.layer(
         yield* manager.open(openInput());
         const target = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
         const process = ptyAdapter.processes[0]!;
+        process.onKill = () => process.emitExit({ exitCode: 0, signal: 0 });
         const begin = TERMINAL_BRACKETED_PASTE_START + "partial";
         const writePaste = (data: string, bracketedPaste: TerminalWriteInput["bracketedPaste"]) =>
           manager.write({ ...target, data, ...(bracketedPaste && { bracketedPaste }) }, "paste");
@@ -904,7 +905,9 @@ it.layer(
         } else {
           yield* manager.close(target);
           yield* manager.open(openInput());
-          expect(ptyAdapter.processes[1]!.writes).toEqual([]);
+          const reopened = ptyAdapter.processes[1]!;
+          reopened.onKill = () => reopened.emitExit({ exitCode: 0, signal: 0 });
+          expect(reopened.writes).toEqual([]);
         }
         yield* Fiber.join(pending);
         expect(process.writes).toEqual(
