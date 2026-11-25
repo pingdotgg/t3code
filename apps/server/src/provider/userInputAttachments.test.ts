@@ -661,6 +661,25 @@ describe("question answer paths", () => {
           },
           expected: ["Before boarding\nCheck passports"],
         },
+        {
+          ext: "epub",
+          bounded: true,
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body>Intro<ul><li>Read the checklist</li></ul><dl><dt>Visa</dt><dd>Requirements<ul><li>Photo</li></ul></dd></dl><div>Carry<dl><dt>Passport</dt><dd>Required</dd></dl></div><div>Leave <ul></ul>room</div><div>Keep <ul><li hidden="">Draft</li></ul>walking</div><table><caption>Before departure<div><ul><li>Check gate</li></ul></div></caption><tr><td>Terminal 1</td></tr></table></body></html>',
+          },
+          expected: [
+            "Intro\nRead the checklist",
+            "Requirements\nPhoto",
+            "Carry\nPassport\nRequired",
+            "Leave room",
+            "Keep walking",
+            "Before departure\nCheck gate",
+          ],
+        },
         // Word stores object layout and field data outside the visible document text.
         {
           ext: "docx",
