@@ -501,8 +501,9 @@ export const make = Effect.gen(function* () {
   });
 
   // Whoever asked first gets a free place; the rest keep their turn. A pool is as big as the
-  // smallest limit anyone in it asked for, so a lock stays one. A paused run is passed over until
-  // it is resumed. Run inside a transaction.
+  // smallest limit anyone in it asked for, so a lock stays one. A resumed run taking back what it
+  // held counts only those already in, or a smaller limit queued meanwhile could strand it holding
+  // half of what it had. A paused run is passed over until it is resumed. Run inside a transaction.
   const give = Effect.fn("WorkflowStore.give")(function* (pool: string | undefined) {
     const waiting = yield* sql<PlaceRow & { readonly size: number | bigint }>`
         SELECT p.seq, p.pool, p.size, p.run_id, p.name, p.state
@@ -516,18 +517,23 @@ export const make = Effect.gen(function* () {
       readonly pool: string;
       readonly n: number | bigint;
       readonly size: number | bigint;
+      readonly settled: number | bigint | null;
     }>`
-        SELECT pool, SUM(state = 'held') AS n, MIN(size) AS size
+        SELECT pool, SUM(state = 'held') AS n, MIN(size) AS size,
+          MIN(CASE WHEN state != 'queued' THEN size END) AS settled
         FROM workflow_pool_places GROUP BY pool
       `;
     const held = new Map(pools.map((row) => [row.pool, Number(row.n)] as const));
-    const sizes = new Map(pools.map((row) => [row.pool, Number(row.size)] as const));
+    const sizes = new Map(pools.map((row) => [row.pool, row] as const));
     const full = new Set<string>();
     const given: Array<PlaceRow> = [];
     for (const place of waiting) {
       if (full.has(place.pool)) continue;
       const holding = held.get(place.pool) ?? 0;
-      if (holding >= (sizes.get(place.pool) ?? Number(place.size))) {
+      const sized = sizes.get(place.pool);
+      const size =
+        place.state === "returning" && sized?.settled != null ? sized.settled : sized?.size;
+      if (holding >= Number(size ?? place.size)) {
         full.add(place.pool);
         continue;
       }

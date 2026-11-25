@@ -816,3 +816,38 @@ it.effect("a run waiting on a question is listed however many runs started after
     }),
   ),
 );
+
+it.effect("a resumed run takes back all it held, though a smaller limit queued meanwhile", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      for (const runId of ["a", "c", "b"]) {
+        yield* store.runStarted({
+          runId,
+          workflow: "pooled",
+          version: 1,
+          engineTag: "pooled@1",
+          idempotencyKey: runId,
+          input: {},
+        });
+      }
+      const ask = (runId: string, name: string, size: number) =>
+        Effect.map(store.placeAsked({ runId, name, pool: "p", size }), (asked) => asked.held);
+      assert.deepStrictEqual(
+        [yield* ask("a", "outer", 2), yield* ask("a", "inner", 2)],
+        [true, true],
+      );
+      yield* store.runPaused("a", "a step failed");
+      assert.isTrue(yield* ask("c", "only", 2));
+      assert.isFalse(yield* ask("b", "lock", 1));
+      yield* store.runUnpaused("a");
+      assert.isTrue(yield* store.placesBack("a"));
+      yield* store.placeLeft("c", "only");
+      const given = yield* store.placesGiven;
+      assert.deepStrictEqual(
+        given.map((place) => `${place.run_id}/${place.name}`),
+        ["a/outer", "a/inner"],
+      );
+    }),
+  ),
+);
