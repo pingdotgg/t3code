@@ -41,7 +41,7 @@ abstract class AgentNotificationFixture {
   }
 
   protected fun update(alertId: String, active: Boolean): Map<String, String> = mapOf(
-    "device_id" to "device", "user_id" to "user",
+    "device_id" to "device", "user_hash" to "60a4ea94a99303630c40fff23f4de5c06a8f978289a3889f31edfac3b89f85d7",
     "updated_at" to System.currentTimeMillis().toString(), "active" to active.toString(),
     "activity_title" to "1 active agent", "activity_body" to "Test thread · Working",
     "activity_path" to "/threads/environment/thread", "alert_id" to alertId,

@@ -12,6 +12,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
+import type * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
@@ -28,6 +29,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { isGitImport, parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
+import type { CheckpointCaptureResult } from "../vcs/VcsDriver.ts";
+import type { CheckpointStoreError } from "../checkpointing/Errors.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
@@ -413,9 +416,11 @@ export const layer: Layer.Layer<
     const captureWorkspaceCheckpoint = Effect.fn("CheckpointService.captureWorkspaceCheckpoint")(
       function* (input: CheckpointStore.CaptureCheckpointInput, baseline = false) {
         const capture = checkpointStore.captureCheckpoint(input);
-        return yield* (
-          baseline ? capture.pipe(Effect.timeout(BASELINE_CAPTURE_BUDGET)) : capture
-        ).pipe(
+        const bounded: Effect.Effect<
+          CheckpointCaptureResult,
+          CheckpointStoreError | Cause.TimeoutError
+        > = baseline ? capture.pipe(Effect.timeout(BASELINE_CAPTURE_BUDGET)) : capture;
+        return yield* bounded.pipe(
           Effect.tap(() =>
             Effect.andThen(
               Cache.invalidate(captureTimeouts, input.cwd),
@@ -673,33 +678,33 @@ export const layer: Layer.Layer<
             lastCapture !== undefined &&
             lastCapture.timedOut &&
             lastCapture.count > capturesBeforeLock;
-          const capture = timedOutWhileWaiting
+          // `range` is undefined when the capture did not read the previous checkpoint itself.
+          type Captured = {
+            readonly status: "ready" | "missing" | "error";
+            readonly exclusions?: ReadonlyArray<string>;
+            readonly range?: CheckpointStore.CheckpointRange | null;
+          };
+          const snapshot: Effect.Effect<Captured, CheckpointStoreError | Cause.TimeoutError> =
+            input.cleanHead === undefined
+              ? captureWorkspaceCheckpoint({
+                  cwd: input.scope.cwd,
+                  checkpointRef,
+                  ...(input.ordinalWithinScope > 0 ? { previousCheckpointRef } : {}),
+                  ...(input.excludePaths === undefined ? {} : { excludePaths: input.excludePaths }),
+                }).pipe(Effect.map((result) => ({ status: "ready" as const, ...result })))
+              : checkpointStore
+                  .captureHeadCheckpoint({
+                    cwd: input.scope.cwd,
+                    checkpointRef,
+                    head: input.cleanHead,
+                  })
+                  .pipe(Effect.as({ status: "ready" as const }));
+          const captured: Captured = timedOutWhileWaiting
             ? yield* Effect.logWarning(
                 "orchestration V2 checkpoint capture skipped after a capture timed out in its folder",
                 { scopeId: input.scope.id, checkpointRef },
               ).pipe(Effect.as({ status: "error" as const }))
-            : yield* (
-                input.cleanHead === undefined
-                  ? captureWorkspaceCheckpoint({
-                      cwd: input.scope.cwd,
-                      checkpointRef,
-                      ...(input.ordinalWithinScope > 0 ? { previousCheckpointRef } : {}),
-                      ...(input.excludePaths === undefined
-                        ? {}
-                        : { excludePaths: input.excludePaths }),
-                    })
-                  : checkpointStore
-                      .captureHeadCheckpoint({
-                        cwd: input.scope.cwd,
-                        checkpointRef,
-                        head: input.cleanHead,
-                      })
-                      .pipe(Effect.as({ exclusions: [] }))
-              ).pipe(
-                Effect.map((captured) => ({
-                  status: "ready" as const,
-                  exclusions: captured.exclusions,
-                })),
+            : yield* snapshot.pipe(
                 Effect.catchTags({
                   VcsUnsupportedOperationError: () =>
                     Effect.succeed({ status: "missing" as const }),
@@ -713,7 +718,7 @@ export const layer: Layer.Layer<
                 ),
               );
 
-          if (capture.status !== "ready") {
+          if (captured.status !== "ready") {
             return {
               checkpoint: makeCheckpoint({
                 id: checkpointId,
@@ -724,7 +729,7 @@ export const layer: Layer.Layer<
                 ordinalWithinScope: input.ordinalWithinScope,
                 appRunOrdinal: input.appRunOrdinal,
                 ref: checkpointRef,
-                status: capture.status,
+                status: captured.status,
                 files: [],
                 capturedAt: input.capturedAt,
               }),
@@ -732,65 +737,73 @@ export const layer: Layer.Layer<
             };
           }
 
-          const previousExists = yield* checkpointStore
-            .hasCheckpointRef({
-              cwd: input.scope.cwd,
-              checkpointRef: previousCheckpointRef,
-            })
-            .pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("orchestration V2 previous checkpoint ref lookup failed", {
-                  scopeId: input.scope.id,
-                  checkpointRef: previousCheckpointRef,
-                  cause: String(cause),
-                }).pipe(Effect.as(false)),
-              ),
-            );
+          const { range } = captured;
+          const previousExists =
+            range !== undefined
+              ? range !== null
+              : yield* checkpointStore
+                  .hasCheckpointRef({
+                    cwd: input.scope.cwd,
+                    checkpointRef: previousCheckpointRef,
+                  })
+                  .pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("orchestration V2 previous checkpoint ref lookup failed", {
+                        scopeId: input.scope.id,
+                        checkpointRef: previousCheckpointRef,
+                        cause: String(cause),
+                      }).pipe(Effect.as(false)),
+                    ),
+                  );
           const refs = {
             cwd: input.scope.cwd,
             fromCheckpointRef: previousCheckpointRef,
             toCheckpointRef: checkpointRef,
+            ...(range === undefined || range === null ? {} : { range }),
           };
           // A pull or rebase can change thousands of files the turn did not write.
-          const files = previousExists
-            ? yield* Effect.all([
-                checkpointStore.diffCheckpoints({
-                  ...refs,
-                  fallbackFromToHead: false,
-                  ignoreWhitespace: false,
-                  format: "numstat",
-                  // An earlier checkpoint can predate a nested folder getting its own scope.
-                  ...(input.excludePaths === undefined ? {} : { excludePaths: input.excludePaths }),
-                }),
-                checkpointStore.listAuthoredPaths(refs).pipe(
+          const files =
+            !previousExists || range?.unchanged === true
+              ? []
+              : yield* Effect.all([
+                  checkpointStore.diffCheckpoints({
+                    ...refs,
+                    fallbackFromToHead: false,
+                    ignoreWhitespace: false,
+                    format: "numstat",
+                    // An earlier checkpoint can predate a nested folder getting its own scope.
+                    ...(input.excludePaths === undefined
+                      ? {}
+                      : { excludePaths: input.excludePaths }),
+                  }),
+                  checkpointStore.listAuthoredPaths(refs).pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("orchestration V2 checkpoint authored paths failed", {
+                        scopeId: input.scope.id,
+                        checkpointRef,
+                        cause: String(cause),
+                      }).pipe(Effect.as(null)),
+                    ),
+                  ),
+                ]).pipe(
+                  Effect.map(([diff, authoredPaths]) =>
+                    parseTurnDiffFilesFromNumstat(diff)
+                      .filter((file) => !isGitImport(file, authoredPaths))
+                      .map((file) => ({
+                        path: file.path,
+                        kind: "modified",
+                        additions: file.additions,
+                        deletions: file.deletions,
+                      })),
+                  ),
                   Effect.catch((cause) =>
-                    Effect.logWarning("orchestration V2 checkpoint authored paths failed", {
+                    Effect.logWarning("orchestration V2 checkpoint diff summary failed", {
                       scopeId: input.scope.id,
                       checkpointRef,
                       cause: String(cause),
                     }).pipe(Effect.as(null)),
                   ),
-                ),
-              ]).pipe(
-                Effect.map(([diff, authoredPaths]) =>
-                  parseTurnDiffFilesFromNumstat(diff)
-                    .filter((file) => !isGitImport(file, authoredPaths))
-                    .map((file) => ({
-                      path: file.path,
-                      kind: "modified",
-                      additions: file.additions,
-                      deletions: file.deletions,
-                    })),
-                ),
-                Effect.catch((cause) =>
-                  Effect.logWarning("orchestration V2 checkpoint diff summary failed", {
-                    scopeId: input.scope.id,
-                    checkpointRef,
-                    cause: String(cause),
-                  }).pipe(Effect.as(null)),
-                ),
-              )
-            : [];
+                );
 
           return {
             checkpoint: makeCheckpoint({
@@ -804,7 +817,7 @@ export const layer: Layer.Layer<
               ref: checkpointRef,
               status: "ready",
               files: files ?? [],
-              exclusions: capture.exclusions,
+              ...(captured.exclusions === undefined ? {} : { exclusions: captured.exclusions }),
               capturedAt: input.capturedAt,
             }),
             summaryFailed: files === null,

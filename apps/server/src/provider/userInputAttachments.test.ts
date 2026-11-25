@@ -375,6 +375,11 @@ describe("question answer paths", () => {
       "{\\rtf1\\ansi\\ansicpg936 \\'c4\n\\'e3\\'ba\\'c3}",
       "你好",
     ],
+    [
+      "GB18030 code page",
+      String.raw`{\rtf1\ansi\ansicpg54936 \'d6\'d0\'ce\'c4 \'95\'32\'82\'36}`,
+      "中文 𠀀",
+    ],
     ["Big5 code page", String.raw`{\rtf1\ansi\ansicpg950 \'a7A\'a6n}`, "你好"],
     [
       "multibyte font charsets and font code pages",
@@ -431,6 +436,27 @@ describe("question answer paths", () => {
       expect(yield* Effect.promise(() => extractDocumentText(path, ".rtf"))).toBe(expected);
       expect(yield* (yield* DocumentText.DocumentText).ensure(path)).toBe(path + ".txt");
       expect(NodeFS.readFileSync(path + ".txt", "utf8")).toBe(expected);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("keeps long GB18030 four-byte RTF runs intact up to the output limit", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const path = NodePath.join(config.attachmentsDir, "gb18030-long.rtf");
+      NodeFS.writeFileSync(
+        path,
+        Buffer.concat([
+          Buffer.from(String.raw`{\rtf1\ansi\ansicpg54936 `, "latin1"),
+          Buffer.from([0xd6, 0xd0]),
+          Buffer.alloc(1_050_000 * 4, Buffer.from([0x81, 0x39, 0xee, 0x39])),
+          Buffer.from("}", "latin1"),
+        ]),
+      );
+      const text = yield* Effect.promise(() => extractDocumentText(path, ".rtf"));
+      expect(text.search(/[^中㐀]/u)).toBe(1_000_000);
+      expect(text.slice(1_000_000)).toBe(
+        "\n\n[Extracted text truncated at document extraction limits.]",
+      );
     }).pipe(Effect.provide(layer)),
   );
 
@@ -505,8 +531,23 @@ describe("question answer paths", () => {
             outputs: [
               { output_type: "stream", name: "stdout", text: "\u001b[32m301\u001b[0m\n" },
               {
+                output_type: "stream",
+                name: "stderr",
+                text: [
+                  "\r\u001b[32m 10%|#         |\u001b[0m",
+                  "\r\u001b[32m100%|##########|\u001b[0m\n",
+                  "done\r",
+                  "\n",
+                ],
+              },
+              {
                 output_type: "display_data",
                 data: { "text/plain": ["\u001b[", "33m42\u001b[0m\n", "Next line"] },
+                metadata: {},
+              },
+              {
+                output_type: "display_data",
+                data: { "text/plain": "raw\rvalue" },
                 metadata: {},
               },
               {
@@ -534,7 +575,10 @@ describe("question answer paths", () => {
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("Vessel: Larkspur");
       const extracted = NodeFS.readFileSync(`${path}.txt`, "utf8");
       expect(extracted).toContain("Output:\n301\n");
+      expect(extracted).toContain("100%|##########|\ndone\n");
+      expect(extracted).not.toContain("10%|#");
       expect(extracted).toContain("42\nNext line");
+      expect(extracted).toContain("raw\rvalue");
       expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
@@ -908,13 +952,13 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Report &amp; totals</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>12</w:t></w:r></w:p><w:p><w:r><w:t>34</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:sdt><w:sdtPr><w:alias w:val="Title"/></w:sdtPr><w:sdtContent><w:tc><w:p><w:r><w:t>Annual report</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt><w:tc><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Neighbor</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>',
+              '<w:document xmlns:w="urn:w" xmlns:wps="urn:wps"><w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Report &amp; totals</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>12</w:t></w:r></w:p><w:p><w:r><w:t>34</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:sdt><w:sdtPr><w:alias w:val="Title"/></w:sdtPr><w:sdtContent><w:tc><w:p><w:r><w:t>Annual report</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt><w:tc><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Neighbor</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:pPr><w:pPrChange><w:pPr><w:pStyle w:val="Heading2"/></w:pPr></w:pPrChange></w:pPr><w:r><w:t>Demoted</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Intro. </w:t></w:r><w:r><w:drawing><wps:wsp><wps:txbx><w:txbxContent><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Box title</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></w:r></w:p></w:body></w:document>',
           },
           expected: [
             "## Report & totals",
             "North\t12 34",
             "Annual report\tDraft",
-            "Before Inner After\tNeighbor\t\u2011\n\u2011",
+            "Before Inner After\tNeighbor\t\u2011\n\u2011\nDemoted\nIntro. # Box title",
           ],
         },
         {
@@ -973,6 +1017,16 @@ describe("question answer paths", () => {
           },
           expected: ["Fee $700\n150\nFormula x+yx+y"],
           absent: ["Reviewer", "2026-01-01", "JR", "Check", "was 120"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
+              '<office:document-content><office:automatic-styles><number:currency-style style:name="N1"><number:currency-symbol>USD</number:currency-symbol><number:number number:decimal-places="2" number:min-integer-digits="1"/></number:currency-style></office:automatic-styles><office:body><office:text><text:p>Invoice was paid in euros.</text:p></office:text></office:body></office:document-content>',
+          },
+          expected: ["Invoice was paid in euros."],
+          absent: ["USD"],
         },
         {
           ext: "docx",
@@ -1137,8 +1191,10 @@ describe("question answer paths", () => {
             </p:presentation>`,
             "ppt/_rels/presentation.xml.rels":
               '<Relationships><Relationship Id="a" Target="slides/slide1.xml"/><Relationship Id="b" Target="slides/slide2.xml"/></Relationships>',
-            "ppt/slides/slide1.xml": "<p:sld><a:p><a:r><a:t>Departure</a:t></a:r></a:p></p:sld>",
-            "ppt/slides/slide2.xml": "<p:sld><a:p><a:r><a:t>Juniper Pier</a:t></a:r></a:p></p:sld>",
+            "ppt/slides/slide1.xml":
+              '<p:sld><a:p><a:r><a:t>Departure</a:t></a:r></a:p><p:timing><p:tnLst><p:par><p:cTn id="1"><p:childTnLst><p:set><p:cBhvr><p:cTn id="2"/><p:tgtEl><p:spTgt spid="2"/></p:tgtEl><p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="visible"/></p:to></p:set></p:childTnLst></p:cTn></p:par></p:tnLst></p:timing></p:sld>',
+            "ppt/slides/slide2.xml":
+              '<p:sld><a:p><x:timing><a:r><a:t>Juniper Pier</a:t></a:r></x:timing></a:p><mc:AlternateContent><mc:Choice Requires="p14"><p:timing><p:attrName>ppt_x</p:attrName></p:timing></mc:Choice></mc:AlternateContent></p:sld>',
             "ppt/slides/_rels/slide2.xml.rels":
               '<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../notesSlides/ignored.xml"/><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" TargetMode="External" Target="https://example.com/notes.xml"/><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/notes7.xml"/></Relationships>',
             "ppt/slides/_rels/slide1.xml.rels":
@@ -1162,6 +1218,8 @@ describe("question answer paths", () => {
             "11/21/2026",
             "Crew only",
             "57",
+            "style.visibility",
+            "ppt_x",
             "[Skipped document part",
             "[Extracted text truncated",
           ],
@@ -1435,11 +1493,13 @@ describe("question answer paths", () => {
             "META-INF/container.xml":
               '<container><rootfile full-path="OEBPS/book.opf"/></container>',
             "OEBPS/book.opf":
-              '<package><manifest><item id="a" href="a.xhtml"/><item id="b" href="b.xhtml"/></manifest><spine><itemref idref="b"/><itemref idref="a"/></spine></package>',
+              '<package><manifest><item id="a" href="a.xhtml"/><item id="b" href="b.xhtml"/><item id="c" href="c.xhtml"/></manifest><spine><itemref idref="b"/><itemref idref="a" hidden=""/><itemref idref="c"/></spine></package>',
             "OEBPS/a.xhtml":
-              '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><body><p>Last chapter</p><p>Price <s>10</s> 8 <del>old</del></p></body></html>',
+              '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><body><p>Last chapter</p><p>Price <s>10</s> 8 <del>old</del></p><p><ruby>山路<rt>やまみち</rt></ruby>を歩く。<ruby>東京<rp>（</rp><script type="application/json">{}</script><rt>とうきょう</rt><script type="application/json">{}</script><rp>）</rp></ruby>に着く。<ruby>川<rt/></ruby>を見る。<ruby>海<rp/><rt>うみ</rt><rp> </rp></ruby>まで。</p></body></html>',
             "OEBPS/b.xhtml":
-              '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table></body></html>',
+              '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table><dl><dt>Port</dt><dd>443</dd><dt>Timeout</dt><dd>30 seconds</dd></dl><p hidden="">Draft note</p><div hidden="hidden">Hidden block<p>Hidden nested</p></div><p hidden="UNTIL-FOUND">Findable note</p><p aria-hidden="true">Decorative note</p><p x:hidden="true">Prefixed note</p><ol><li>Before boarding<ul><li>Check passports<ol><li>Compare names</li></ol></li><li>Confirm gate</li></ul></li><li>Board promptly</li><li><p>Before landing</p><ul><li>Collect bags</li></ul></li></ol>' +
+              "<ol><li>Indented\n  <ul><li>Alpha</li></ul></li></ol></body></html>",
+            "OEBPS/c.xhtml": '<html hidden=""><body><p>Root hidden</p></body></html>',
           },
           expected: [
             "## Chapter 1",
@@ -1452,11 +1512,25 @@ describe("question answer paths", () => {
             "Heading\tTotal",
             "Important value\t731",
             "Before Inner After\tNeighbor",
+            "Port\n443\nTimeout\n30 seconds",
+            "Findable note\nDecorative note\nPrefixed note",
+            "Before boarding\nCheck passports\nCompare names\n\nConfirm gate\n\nBoard promptly",
+            "Before landing\nCollect bags",
+            "Indented\n  Alpha",
             "## Chapter 2",
             "Last chapter",
             "Price 10 8 old",
+            "山路(やまみち)を歩く。東京（とうきょう）に着く。川を見る。海(うみ) まで。",
+            "## Chapter 3",
           ],
-          absent: ["My Novel", "Hidden Author"],
+          absent: [
+            "My Novel",
+            "Hidden Author",
+            "Draft note",
+            "Hidden block",
+            "Hidden nested",
+            "Root hidden",
+          ],
         },
       ];
       for (const [caseIndex, item] of cases.entries()) {
@@ -1585,6 +1659,33 @@ describe("question answer paths", () => {
         notebookPath + ".txt",
       );
       expect(NodeFS.readFileSync(notebookPath + ".txt", "utf8")).toBe(notebookLimited);
+      const progressPath = NodePath.join(config.attachmentsDir, "progress.ipynb");
+      NodeFS.writeFileSync(
+        progressPath,
+        JSON.stringify({
+          cells: [
+            {
+              cell_type: "code",
+              source: "train()",
+              outputs: [
+                {
+                  output_type: "stream",
+                  name: "stderr",
+                  text: [`${"  1%|#               |\r".repeat(50_000)}100%|################|\n`],
+                },
+              ],
+            },
+            { cell_type: "markdown", source: "Later cell survived" },
+          ],
+        }),
+      );
+      const progressExtracted = yield* Effect.promise(() =>
+        extractDocumentText(progressPath, ".ipynb"),
+      );
+      expect(progressExtracted).toContain("100%|################|");
+      expect(progressExtracted).not.toContain("1%|#");
+      expect(progressExtracted).toContain("Later cell survived");
+      expect(progressExtracted).not.toContain("[Extracted text truncated");
       const errorPath = NodePath.join(config.attachmentsDir, "limited-error.ipynb");
       NodeFS.writeFileSync(
         errorPath,

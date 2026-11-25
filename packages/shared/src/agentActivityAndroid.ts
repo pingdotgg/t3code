@@ -1,3 +1,5 @@
+import { compareSemverVersions, parseSemver } from "./semver.ts";
+import { hashTelemetryId } from "./telemetryId.ts";
 import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
@@ -15,6 +17,22 @@ import {
   terminalTransitionRows,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
+
+/**
+ * Lets the device ignore pushes for an account it no longer has without FCM
+ * seeing the account id. Builds before 2.4.0 only match the raw `user_id`.
+ */
+export function androidRecipientData(userId: string, deviceId: string, appVersion: string | null) {
+  const readsHash =
+    appVersion !== null &&
+    parseSemver(appVersion) !== null &&
+    compareSemverVersions(appVersion, "2.4.0") >= 0;
+  return {
+    device_id: deviceId,
+    user_hash: hashTelemetryId(`${userId}:${deviceId}`),
+    ...(readsHash ? {} : { user_id: userId }),
+  };
+}
 
 export interface AndroidAgentAlert {
   readonly alert_id: string;

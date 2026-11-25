@@ -26,6 +26,7 @@ import {
 import * as Schema from "effect/Schema";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
+  memo,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -56,7 +57,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import {
   PullRequestActorLabel,
   PullRequestCheckStatusIcon,
@@ -131,30 +132,30 @@ function CommentIdentity({
   return (
     <h2 className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
       <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            comment.url ? (
-              <a
-                href={comment.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-muted-foreground hover:text-foreground hover:underline"
-              />
-            ) : (
-              <span className="text-muted-foreground" />
-            )
-          }
-        >
-          <time dateTime={comment.createdAt}>
-            <RelativeTime timestamp={comment.createdAt} />
-          </time>
-        </TooltipTrigger>
-        <TooltipPopup>
-          {formatFullTimestamp(comment.createdAt, timestampFormat)}
-          {comment.url ? ` · ${gt("Open comment on host")}` : ""}
-        </TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger
+        render={
+          comment.url ? (
+            <a
+              href={comment.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-muted-foreground hover:text-foreground hover:underline"
+            />
+          ) : (
+            <span className="text-muted-foreground" />
+          )
+        }
+        label={
+          <>
+            {formatFullTimestamp(comment.createdAt, timestampFormat)}
+            {comment.url ? ` · ${gt("Open comment on host")}` : ""}
+          </>
+        }
+      >
+        <time dateTime={comment.createdAt}>
+          <RelativeTime timestamp={comment.createdAt} />
+        </time>
+      </SharedTooltipTrigger>
     </h2>
   );
 }
@@ -171,10 +172,9 @@ function CommentLocation({
   const label = `${path}${thread?.line ? `:${thread.line}` : ""}`;
   return (
     <div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-      <Tooltip>
-        <TooltipTrigger render={<span className="truncate font-mono" />}>{label}</TooltipTrigger>
-        <TooltipPopup>{label}</TooltipPopup>
-      </Tooltip>
+      <SharedTooltipTrigger render={<span className="truncate font-mono" />} label={label}>
+        {label}
+      </SharedTooltipTrigger>
       {thread?.isOutdated ? (
         <span className="shrink-0">
           <T context="review thread state">Outdated</T>
@@ -328,6 +328,9 @@ function CollapsedComment({
                 })}
               </span>
             ) : null}
+            {/* Collapsed, the status label already says "Resolved". It goes before the
+                trigger so opening doesn't shift the trigger out from under the cursor. */}
+            {open ? resolveButton : null}
             <CollapsibleTrigger
               ref={statusTriggerRef}
               className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -338,8 +341,6 @@ function CollapsedComment({
                 className={cn("size-3.5 transition-transform", open && "rotate-180")}
               />
             </CollapsibleTrigger>
-            {/* Collapsed, the status label already says "Resolved". */}
-            {open ? resolveButton : null}
             {onAddToChat ? <AddToChatButton onClick={onAddToChat} /> : null}
             {reactionBar}
           </div>
@@ -480,7 +481,8 @@ const COMMENT_FILTER_STORAGE_KEY = "t3code:pull-request-comment-filter:v1";
 const CommentFilterSchema = Schema.Struct({ bots: Schema.Boolean, resolved: Schema.Boolean });
 const DEFAULT_COMMENT_FILTER: typeof CommentFilterSchema.Type = { bots: false, resolved: false };
 
-export function PullRequestSummaryTab({
+// Memoized: it renders every comment, and the panel re-renders on each query state change.
+export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
   revealUrl,
   onRevealSettled,
   scrollerRef,
@@ -488,6 +490,7 @@ export function PullRequestSummaryTab({
   threadRef,
   reference,
   detail,
+  observedAt,
   activityPending,
   checksStale = false,
   activityError,
@@ -507,6 +510,8 @@ export function PullRequestSummaryTab({
   threadRef: ScopedThreadRef | null;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
+  /** When the detail was last read; the detail itself keeps its older stamp across refreshes. */
+  observedAt: number | undefined;
   activityPending: boolean;
   checksStale?: boolean;
   activityError: string | null;
@@ -640,11 +645,7 @@ export function PullRequestSummaryTab({
     readonly body: string;
   } | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState<DescriptionDraft | null>(null);
-  const descriptionDraftKept = descriptionDraftInForce(
-    descriptionDraft,
-    detail.url,
-    detail.observedAt,
-  );
+  const descriptionDraftKept = descriptionDraftInForce(descriptionDraft, detail.url, observedAt);
   if (descriptionDraftKept !== descriptionDraft) setDescriptionDraft(descriptionDraftKept);
   const description = descriptionDraftKept?.body ?? detail.body;
   const descriptionSaving = (descriptionDraftKept?.saves ?? 0) > 0;
@@ -724,7 +725,10 @@ export function PullRequestSummaryTab({
   // Checkbox ticks and the editor share one draft, so each starts from the other's latest body.
   const saveDescription = async (body: string) => {
     const key = detail.url;
-    setDescriptionDraft((draft) => startDescriptionSave(draft, detail, body));
+    // The shown detail keeps its older stamp across refreshes; the draft must use the live one.
+    setDescriptionDraft((draft) =>
+      startDescriptionSave(draft, { url: detail.url, observedAt }, body),
+    );
     descriptionSavesRunning.current += 1;
     const result = await update({ environmentId, input: { ...reference, body } });
     descriptionSavesRunning.current -= 1;
@@ -858,7 +862,7 @@ export function PullRequestSummaryTab({
             <CommentLocation comment={comment} thread={thread} />
           </div>
         )}
-        {body === null && !commentEditing.canEdit(comment) ? null : (
+        {body === null && !canEditPullRequestComment(detail, comment) ? null : (
           <CommentBody className="px-3 py-3" comment={comment} editing={commentEditing} />
         )}
       </article>
@@ -941,51 +945,48 @@ export function PullRequestSummaryTab({
                         ? `${entry.actor.name} (@${login})`
                         : login;
                     return (
-                      <Tooltip key={entry.key}>
-                        <TooltipTrigger
-                          render={
-                            <span
-                              className={cn(
-                                "relative rounded-full hover:z-10",
-                                entry.outcome
-                                  ? pullRequestReviewOutcomeRingClassName(
-                                      entry.outcome,
-                                      entry.stale,
-                                    )
-                                  : undefined,
-                              )}
-                            />
-                          }
-                        >
-                          <PullRequestActorLabel
-                            actor={entry.actor}
-                            tooltip={false}
-                            variant="avatar"
+                      <SharedTooltipTrigger
+                        key={entry.key}
+                        render={
+                          <span
+                            className={cn(
+                              "relative rounded-full hover:z-10",
+                              entry.outcome
+                                ? pullRequestReviewOutcomeRingClassName(entry.outcome, entry.stale)
+                                : undefined,
+                            )}
                           />
-                          {entry.outcome ? (
-                            <>
-                              <PullRequestReviewOutcomeAvatarBadge
-                                outcome={entry.outcome}
-                                stale={entry.stale}
-                              />
-                              <span className="sr-only">
-                                {entry.stale
-                                  ? pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)
-                                  : pullRequestReviewOutcomeLabel(entry.outcome, resolve)}
-                              </span>
-                            </>
-                          ) : null}
-                        </TooltipTrigger>
-                        <TooltipPopup side="bottom">
-                          {entry.outcome
+                        }
+                        label={
+                          entry.outcome
                             ? `${named}: ${
                                 entry.stale
                                   ? pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)
                                   : pullRequestReviewOutcomeLabel(entry.outcome, resolve)
                               }`
-                            : named}
-                        </TooltipPopup>
-                      </Tooltip>
+                            : named
+                        }
+                        side="bottom"
+                      >
+                        <PullRequestActorLabel
+                          actor={entry.actor}
+                          tooltip={false}
+                          variant="avatar"
+                        />
+                        {entry.outcome ? (
+                          <>
+                            <PullRequestReviewOutcomeAvatarBadge
+                              outcome={entry.outcome}
+                              stale={entry.stale}
+                            />
+                            <span className="sr-only">
+                              {entry.stale
+                                ? pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)
+                                : pullRequestReviewOutcomeLabel(entry.outcome, resolve)}
+                            </span>
+                          </>
+                        ) : null}
+                      </SharedTooltipTrigger>
                     );
                   })}
                 </span>
@@ -1270,4 +1271,4 @@ export function PullRequestSummaryTab({
       </PullRequestSection>
     </div>
   );
-}
+});
