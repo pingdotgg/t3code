@@ -10,6 +10,7 @@ import * as Path from "effect/Path";
 import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/contracts";
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import * as GitxVcsDriver from "./GitxVcsDriver.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 
@@ -62,8 +63,10 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
   const git = yield* GitVcsDriver.makeVcsDriver;
+  const gitx = yield* GitxVcsDriver.makeVcsDriver;
   const drivers: Partial<Record<VcsDriverKind, VcsDriver.VcsDriver["Service"]>> = {
     git,
+    gitx,
   };
 
   const get: VcsDriverRegistry["Service"]["get"] = (kind) => {
@@ -116,7 +119,12 @@ export const make = Effect.gen(function* () {
       return yield* detectWithDriver(requestedKind, driver, input.cwd);
     }
 
-    return yield* detectWithDriver("git", git, input.cwd);
+    const detectedGit = yield* detectWithDriver("git", git, input.cwd);
+    if (detectedGit !== null) {
+      return detectedGit;
+    }
+
+    return yield* detectWithDriver("gitx", gitx, input.cwd);
   });
 
   // Symlinks can put cwd outside root; then inspect cwd alone.
@@ -132,8 +140,12 @@ export const make = Effect.gen(function* () {
 
   const readDiskState = (cwd: string, repository: VcsRepositoryIdentity) =>
     Effect.all({
-      gitEntries: Effect.forEach(foldersBelowRoot(cwd, repository.rootPath), (folder) =>
-        fileSystem.exists(path.join(folder, ".git")),
+      gitEntries: Effect.forEach(
+        foldersBelowRoot(cwd, repository.rootPath).flatMap((folder) => [
+          path.join(folder, ".git"),
+          path.join(folder, ".gitx"),
+        ]),
+        (marker) => fileSystem.exists(marker),
       ),
       repositoryOnDisk: Effect.forEach(
         repository.metadataPath === null

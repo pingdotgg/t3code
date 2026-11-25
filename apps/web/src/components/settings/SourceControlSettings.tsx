@@ -34,7 +34,7 @@ import { Switch } from "../ui/switch";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "../../i18n/messages";
 
-import { GitIcon, JujutsuIcon, type Icon } from "../Icons";
+import { GitIcon, GitxIcon, JujutsuIcon, type Icon } from "../Icons";
 import { IssueTrackerSettings } from "./IssueTrackerSettings";
 import { SourceControlHostSettings } from "./SourceControlHostSettings";
 import { SourceControlAccountSettings } from "./SourceControlAccountSettings";
@@ -64,6 +64,7 @@ const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
   git: GitIcon,
   jj: JujutsuIcon,
+  gitx: GitxIcon,
 };
 
 const SOURCE_CONTROL_SKELETON_ROWS = ["primary", "secondary"] as const;

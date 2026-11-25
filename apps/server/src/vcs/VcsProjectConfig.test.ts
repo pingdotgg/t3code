@@ -37,6 +37,27 @@ describe("VcsProjectConfig", () => {
         assert.equal(kind, "jj");
       }),
     );
+
+    it.effect("accepts gitx as a configured VCS kind", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-config-gitx-",
+        });
+        const configDir = path.join(root, ".t3code");
+        yield* fileSystem.makeDirectory(configDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(configDir, "vcs.json"),
+          JSON.stringify({ vcs: { kind: "gitx" } }),
+        );
+
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
+        const kind = yield* config.resolveKind({ cwd: root });
+
+        assert.equal(kind, "gitx");
+      }),
+    );
   });
 
   it.layer(layerTest)("continues to parent configs after a candidate inspect failure", (it) => {

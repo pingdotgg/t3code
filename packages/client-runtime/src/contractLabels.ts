@@ -243,6 +243,9 @@ const INSTALL_HINTS = [
     command: "`brew install jj`",
     url: "https://github.com/jj-vcs/jj",
   }),
+  msg("Install GitX from {url}.", {
+    url: "https://github.com/cube-one-ber/gitx",
+  }),
   msg(
     "Install the GitHub command-line tool ({cli}) via {url} or your package manager (for example {command}).",
     {

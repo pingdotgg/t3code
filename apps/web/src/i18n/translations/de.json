@@ -44,6 +44,7 @@
   "7a92629ebbd4373b": "Die Cookie-Datenbank des Browsers konnte nicht gelesen werden.",
   "868f7db396cd02e1": "Installiere Git von {url} oder mit deinem Paketmanager.",
   "1fcffc9b1a7d921c": "Installiere Jujutsu mit {command} oder von {url}.",
+  "d2e88e055cf24217": "Installiere GitX von {url}.",
   "94168222df47e6a3": "Installiere das GitHub-Kommandozeilentool ({cli}) über {url} oder deinen Paketmanager (zum Beispiel {command}).",
   "6ff697b80a1714c7": "Installiere das GitLab-Kommandozeilentool ({cli}) über {url} oder deinen Paketmanager (zum Beispiel {command}).",
   "929a11e234f6e5d9": "Installiere die Azure-Kommandozeilentools ({cli}) und aktiviere dann die Azure-DevOps-Unterstützung mit {command}.",

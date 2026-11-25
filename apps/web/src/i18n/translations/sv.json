@@ -44,6 +44,7 @@
   "7a92629ebbd4373b": "Webbläsarens cookie-databas kunde inte läsas.",
   "868f7db396cd02e1": "Installera Git från {url} eller med din pakethanterare.",
   "1fcffc9b1a7d921c": "Installera Jujutsu med {command} eller från {url}.",
+  "d2e88e055cf24217": "Installera GitX från {url}.",
   "94168222df47e6a3": "Installera GitHubs kommandoradsverktyg ({cli}) via {url} eller din pakethanterare (till exempel {command}).",
   "6ff697b80a1714c7": "Installera GitLabs kommandoradsverktyg ({cli}) från {url} eller din pakethanterare (till exempel {command}).",
   "929a11e234f6e5d9": "Installera Azures kommandoradsverktyg ({cli}) och aktivera sedan stöd för Azure DevOps med {command}.",

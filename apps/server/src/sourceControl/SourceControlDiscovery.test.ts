@@ -168,10 +168,11 @@ it.effect("reports every hosting integration in registry order with its sign-in"
       ],
     );
     assert.deepStrictEqual(
-      result.versionControlSystems.map((item) => [item.kind, item.status]),
+      result.versionControlSystems.map((item) => [item.kind, item.status, item.implemented]),
       [
-        ["git", "available"],
-        ["jj", "available"],
+        ["git", "available", true],
+        ["jj", "available", false],
+        ["gitx", "available", true],
       ],
     );
   }).pipe(

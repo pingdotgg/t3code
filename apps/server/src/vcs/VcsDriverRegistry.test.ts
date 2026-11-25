@@ -182,4 +182,35 @@ describe("VcsDriverRegistry", () => {
       assert.equal(fallbackFailure._tag, "VcsProcessExitError");
     }),
   );
+
+  it.effect(
+    "detects pure GitX repositories and honors explicit gitx selection on colocated repos",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repoDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-vcs-registry-gitx-" });
+        yield* fs.makeDirectory(path.join(repoDir, ".gitx"), { recursive: true });
+        yield* fs.writeFileString(path.join(repoDir, ".gitx", "config.json"), "{}\n");
+        const calls: string[] = [];
+
+        yield* Effect.gen(function* () {
+          const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+          const detected = yield* registry.detect({ cwd: repoDir });
+          assert.equal(detected?.kind, "gitx");
+          assert.equal(detected?.repository.rootPath, repoDir);
+
+          yield* fs.makeDirectory(path.join(repoDir, ".git"));
+          const colocatedAuto = yield* registry.detect({ cwd: repoDir });
+          assert.equal(colocatedAuto?.kind, "git");
+
+          const colocatedExplicit = yield* registry.detect({ cwd: repoDir, requestedKind: "gitx" });
+          assert.equal(colocatedExplicit?.kind, "gitx");
+
+          yield* fs.remove(path.join(repoDir, ".git"), { recursive: true });
+          yield* fs.remove(path.join(repoDir, ".gitx"), { recursive: true });
+          assert.equal(yield* registry.detect({ cwd: repoDir }), null);
+        }).pipe(Effect.provide(makeDiskBackedLayer(repoDir, calls)));
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
 });

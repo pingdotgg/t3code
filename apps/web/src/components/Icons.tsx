@@ -78,6 +78,16 @@ export const GitIcon: Icon = (props) => (
   </svg>
 );
 
+export const GitxIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 64 64">
+    <rect width="64" height="64" rx="14" fill="#0d9488" />
+    <path
+      d="M44.2 31.2H32.6v4.6h6.4c-.8 4.4-4 7-8.4 7-5.5 0-9.5-4.3-9.5-10.8 0-6.4 4.1-10.8 9.6-10.8 3.6 0 6.3 1.6 7.7 4.4l4.7-2.4C40.9 18.6 36.4 16 30.7 16c-9.1 0-15.4 6.7-15.4 16s6.2 16 15.1 16c8.8 0 14.3-5.9 14.3-14.6 0-.8-.2-1.6-.5-2.2Z"
+      fill="#ffffff"
+    />
+  </svg>
+);
+
 export const JujutsuIcon: Icon = (props) => {
   const groupId = `${useId().replaceAll(":", "")}-jj-a`;
 

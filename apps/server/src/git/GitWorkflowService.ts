@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import {
   GitManagerError,
   GitCommandError,
+  VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -219,6 +220,18 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    if (handle.kind !== "git") {
+      return yield* new GitManagerError({
+        operation,
+        cwd,
+        detail: `Git workflow operation requires a Git repository (detected ${handle.kind}).`,
+        cause: new VcsUnsupportedOperationError({
+          operation,
+          kind: handle.kind,
+          detail: "This workflow operation requires a Git repository.",
+        }),
+      });
+    }
     return handle;
   });
 
@@ -238,6 +251,19 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    if (handle.kind !== "git") {
+      return yield* new GitCommandError({
+        operation,
+        command: "vcs-route",
+        cwd,
+        detail: `Git command requires a Git repository (detected ${handle.kind}).`,
+        cause: new VcsUnsupportedOperationError({
+          operation,
+          kind: handle.kind,
+          detail: "This command requires a Git repository.",
+        }),
+      });
+    }
     return handle;
   });
 
@@ -254,10 +280,7 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-      if (!handle) {
-        return false;
-      }
-      return true;
+      return handle?.kind === "git";
     },
   );
 
@@ -276,10 +299,7 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (!handle) {
-      return false;
-    }
-    return true;
+    return handle?.kind === "git";
   });
 
   const routeGitManager =

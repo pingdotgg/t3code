@@ -44,6 +44,7 @@
   "7a92629ebbd4373b": "无法读取浏览器的 Cookie 数据库。",
   "868f7db396cd02e1": "请从 {url} 或使用包管理器安装 Git。",
   "1fcffc9b1a7d921c": "请使用 {command} 或从 {url} 安装 Jujutsu。",
+  "d2e88e055cf24217": "请从 {url} 安装 GitX。",
   "94168222df47e6a3": "请通过 {url} 或包管理器（例如 {command}）安装 GitHub 命令行工具（{cli}）。",
   "6ff697b80a1714c7": "请从 {url} 或包管理器（例如 {command}）安装 GitLab 命令行工具（{cli}）。",
   "929a11e234f6e5d9": "请安装 Azure 命令行工具（{cli}），然后使用 {command} 启用 Azure DevOps 支持。",

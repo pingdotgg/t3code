@@ -129,7 +129,8 @@ export const make = Effect.gen(function* () {
   )(function* (cwd) {
     if ((yield* vcsRegistry.detect({ cwd, requestedKind: "git" })) !== null) return true;
     const git = yield* vcsRegistry.get("git");
-    return (yield* git.detectRepository(cwd)) !== null;
+    if ((yield* git.detectRepository(cwd)) !== null) return true;
+    return (yield* vcsRegistry.detect({ cwd })) !== null;
   });
 
   const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(

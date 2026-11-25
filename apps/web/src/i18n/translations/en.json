@@ -44,6 +44,7 @@
   "7a92629ebbd4373b": "The browser's cookie database could not be read.",
   "868f7db396cd02e1": "Install Git from {url} or with your package manager.",
   "1fcffc9b1a7d921c": "Install Jujutsu with {command} or from {url}.",
+  "d2e88e055cf24217": "Install GitX from {url}.",
   "94168222df47e6a3": "Install the GitHub command-line tool ({cli}) via {url} or your package manager (for example {command}).",
   "6ff697b80a1714c7": "Install the GitLab command-line tool ({cli}) from {url} or your package manager (for example {command}).",
   "929a11e234f6e5d9": "Install the Azure command-line tools ({cli}), then enable Azure DevOps support with {command}.",

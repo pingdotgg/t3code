@@ -44,6 +44,7 @@
   "7a92629ebbd4373b": "Impossible de lire la base de cookies du navigateur.",
   "868f7db396cd02e1": "Installez Git depuis {url} ou avec votre gestionnaire de paquets.",
   "1fcffc9b1a7d921c": "Installez Jujutsu avec {command} ou depuis {url}.",
+  "d2e88e055cf24217": "Installez GitX depuis {url}.",
   "94168222df47e6a3": "Installez l’outil en ligne de commande GitHub ({cli}) via {url} ou votre gestionnaire de paquets (par exemple {command}).",
   "6ff697b80a1714c7": "Installez l’outil en ligne de commande GitLab ({cli}) depuis {url} ou votre gestionnaire de paquets (par exemple {command}).",
   "929a11e234f6e5d9": "Installez les outils en ligne de commande Azure ({cli}), puis activez la prise en charge d’Azure DevOps avec {command}.",

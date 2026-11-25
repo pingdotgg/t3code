@@ -116,7 +116,7 @@ export const make = Effect.gen(function* () {
     yield* assertWorkspaceBoundCwd("ReviewService.getDiffPreview", input.cwd);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
-    if (!handle) {
+    if (!handle || handle.kind !== "git") {
       return {
         cwd: input.cwd,
         generatedAt: yield* DateTime.now,

@@ -44,6 +44,7 @@
   "7a92629ebbd4373b": "브라우저의 쿠키 데이터베이스를 읽을 수 없습니다.",
   "868f7db396cd02e1": "{url}에서 또는 패키지 관리자로 Git을 설치하세요.",
   "1fcffc9b1a7d921c": "{command}로 또는 {url}에서 Jujutsu를 설치하세요.",
+  "d2e88e055cf24217": "{url}에서 GitX를 설치하세요.",
   "94168222df47e6a3": "{url}에서 또는 패키지 관리자로 GitHub 명령줄 도구({cli})를 설치하세요(예: {command}).",
   "6ff697b80a1714c7": "{url}에서 또는 패키지 관리자로 GitLab 명령줄 도구({cli})를 설치하세요(예: {command}).",
   "929a11e234f6e5d9": "Azure 명령줄 도구({cli})를 설치한 후 {command}로 Azure DevOps 지원을 켜세요.",
