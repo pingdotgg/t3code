@@ -847,9 +847,25 @@ it.effect.each([
     change: ({ git, checkpointRef }: UntrackedBlobChange) =>
       git(["update-ref", "-d", checkpointRef]).pipe(Effect.andThen(git(["prune", "--expire=now"]))),
   },
+  ...(HostProcess.Platform.defaultValue() === "win32"
+    ? []
+    : [
+        {
+          name: "it became ignored under a name that looks like a git pathspec",
+          file: ":large.txt",
+          reuses: false,
+          change: ({ write }: UntrackedBlobChange) => write(".gitignore", ":large.txt\n"),
+        },
+        {
+          name: "its name looks like git pathspec magic",
+          file: ":(magic)",
+          reuses: true,
+          change: () => Effect.void,
+        },
+      ]),
 ])(
   "checkpoint capture skips hashing an untracked file only while a fresh hash would match: $name",
-  ({ reuses, change, during }) =>
+  ({ file = "nested/large.txt", reuses, change, during }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -877,7 +893,7 @@ it.effect.each([
       const write = (relativePath: string, contents: string) =>
         fs.writeFileString(path.join(cwd, relativePath), contents);
       yield* fs.makeDirectory(path.join(cwd, "nested"));
-      yield* write("nested/large.txt", "line\r\n".repeat(3 * 1024 * 1024));
+      yield* write(file, "line\r\n".repeat(3 * 1024 * 1024));
       // Only files left alone for a few seconds before a capture are remembered.
       yield* TestClock.adjust("36500 days");
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
