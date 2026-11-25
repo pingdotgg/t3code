@@ -968,7 +968,7 @@ function TerminalSessionViewport({
       const writeInputChunk = (
         data: string,
         kind?: "binary" | "reply",
-        bracketedPaste?: TerminalWriteInput["bracketedPaste"],
+        framing?: Pick<TerminalWriteInput, "bracketedPaste" | "plainWrite">,
       ) =>
         retainedTerminalWrite.current({
           environmentId,
@@ -977,7 +977,7 @@ function TerminalSessionViewport({
             terminalId,
             data,
             ...(kind ? { [kind]: true } : {}),
-            ...(bracketedPaste ? { bracketedPaste } : {}),
+            ...framing,
           },
         });
       const sendTerminalInput = (
@@ -1003,7 +1003,7 @@ function TerminalSessionViewport({
         };
         return writeInput(
           data,
-          async (chunk, bracketedPaste) => {
+          async (chunk, framing) => {
             const currentSession = readInputSession();
             if (
               terminalRef.current !== terminal ||
@@ -1012,7 +1012,7 @@ function TerminalSessionViewport({
             ) {
               return "not-dispatched";
             }
-            const result = await writeInputChunk(chunk, kind, bracketedPaste);
+            const result = await writeInputChunk(chunk, kind, kind ? undefined : framing);
             if (result._tag === "Success") return true;
             if (terminalRef.current === terminal && !isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
@@ -1021,15 +1021,18 @@ function TerminalSessionViewport({
             return false;
           },
           // Close the bracket only for the process that saw it open; wait while its pid is unknown.
-          async () => {
+          async (bracketed) => {
+            if (kind) return true;
             const pid = session.summary?.pid ?? null;
             const current = readInputSession();
             const currentPid = current.summary?.pid ?? null;
             if (currentPid === null) return false;
             if (pid !== null && currentPid !== pid) return true;
             if (writableSessionGeneration(current, canWriteInput()) === null) return false;
-            const result = await writeInputChunk("\x1b[201~", undefined, "abort");
-            if (result._tag === "Success") return true;
+            const result = bracketed
+              ? await writeInputChunk("\x1b[201~", undefined, { bracketedPaste: "abort" })
+              : await writeInputChunk("", undefined, { plainWrite: "abort" });
+            if (!bracketed || result._tag === "Success") return true;
             if (!isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);
               report(thrownErrorMessage(error, m) ?? m(msg("Failed to close interrupted paste")));

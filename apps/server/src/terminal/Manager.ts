@@ -2040,6 +2040,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       readonly owner: string;
       readonly finished: Deferred.Deferred<void>;
       lastWrite: number;
+      readonly bracketed: boolean;
       trailingData: string;
     }
   >();
@@ -3904,7 +3905,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(
     function* (input, viewerId) {
       const terminalId = input.terminalId;
-      const phase = input.bracketedPaste;
+      const phase = input.bracketedPaste ?? input.plainWrite;
+      const bracketed = input.bracketedPaste !== undefined;
       const session = yield* requireSession(input.threadId, terminalId);
       const process = session.process;
       if (!process || session.status !== "running") {
@@ -3932,16 +3934,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           },
           catch: writeError,
         });
-      if (phase && (viewerId === undefined || input.binary || input.reply)) {
-        return yield* writeError("Invalid bracketed paste write");
+      if (
+        phase &&
+        (viewerId === undefined || input.binary || input.reply || (bracketed && input.plainWrite))
+      ) {
+        return yield* writeError("Invalid split terminal write");
       }
       if (phase === "continue" || phase === "end" || phase === "abort") {
         const paste = activePastes.get(process);
-        if (!paste || paste.owner !== viewerId) {
+        if (!paste || paste.owner !== viewerId || paste.bracketed !== bracketed) {
           if (phase === "abort") return;
-          return yield* writeError("Bracketed paste is no longer active");
+          return yield* writeError("Split terminal write is no longer active");
         }
         if (
+          bracketed &&
           phase === "end" &&
           !(paste.trailingData + input.data).endsWith(TERMINAL_BRACKETED_PASTE_END)
         ) {
@@ -3953,7 +3959,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           paste.trailingData = (paste.trailingData + input.data).slice(-pasteEndOverlap);
           return;
         }
-        yield* writeData(phase === "abort" ? TERMINAL_BRACKETED_PASTE_END : input.data);
+        if (phase !== "abort" || bracketed) {
+          yield* writeData(phase === "abort" ? TERMINAL_BRACKETED_PASTE_END : input.data);
+        }
         return releasePaste(process);
       }
 
@@ -3961,7 +3969,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       let active = activePastes.get(process);
       while (active) {
         if (phase === "start" && active.owner === viewerId) {
-          return yield* writeError("Bracketed paste already active");
+          return yield* writeError("Split terminal write already active");
         }
         yield* Deferred.await(active.finished);
         if (session.process !== process || session.status !== "running") {
@@ -3972,12 +3980,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       if (phase !== "start" || viewerId === undefined) {
         return yield* writeData(input.data, input.binary);
       }
-      if (!input.data.startsWith(TERMINAL_BRACKETED_PASTE_START)) {
+      if (bracketed && !input.data.startsWith(TERMINAL_BRACKETED_PASTE_START)) {
         return yield* writeError("Missing start of bracketed paste");
       }
 
       const paste = {
         owner: viewerId,
+        bracketed,
         finished: Deferred.makeUnsafe<void>(),
         lastWrite: clock.currentTimeMillisUnsafe(),
         trailingData: input.data.slice(-pasteEndOverlap),
@@ -3992,9 +4001,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             while (activePastes.get(process) === paste && session.process === process) {
               const remaining = paste.lastWrite + pasteIdleMillis - clock.currentTimeMillisUnsafe();
               if (remaining <= 0) {
-                yield* writeData(TERMINAL_BRACKETED_PASTE_END).pipe(
-                  Effect.ignoreCause({ log: true }),
-                );
+                if (bracketed) {
+                  yield* writeData(TERMINAL_BRACKETED_PASTE_END).pipe(
+                    Effect.ignoreCause({ log: true }),
+                  );
+                }
                 break;
               }
               const finished = yield* Deferred.await(paste.finished).pipe(

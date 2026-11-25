@@ -1,9 +1,13 @@
-import { chunkTerminalWrite, type TerminalWriteInput } from "@t3tools/contracts";
+import {
+  chunkTerminalWrite,
+  terminalWritePhase,
+  type TerminalWriteInput,
+} from "@t3tools/contracts";
 
 /** Sends one chunk of terminal input; resolves false when it failed and the rest should drop. */
 type SendTerminalChunk = (
   chunk: string,
-  bracketedPaste?: TerminalWriteInput["bracketedPaste"],
+  framing?: Pick<TerminalWriteInput, "bracketedPaste" | "plainWrite">,
 ) => Promise<boolean | "not-dispatched">;
 
 /**
@@ -26,7 +30,7 @@ export function createTerminalInputWriter(onIdle = () => {}) {
     data: string,
     chunks: ReadonlyArray<string>,
     send: SendTerminalChunk,
-    recover: () => Promise<boolean>,
+    recover: (bracketed: boolean) => Promise<boolean>,
     interrupted: () => void,
   ) => {
     if (closeInterruptedPaste !== null && !(await closePaste())) {
@@ -38,20 +42,27 @@ export function createTerminalInputWriter(onIdle = () => {}) {
     let opened = false;
     try {
       for (const [index, chunk] of chunks.entries()) {
-        const phase = index === 0 ? "start" : index === chunks.length - 1 ? "end" : "continue";
-        const result = await send(chunk, bracketed ? phase : undefined);
+        const phase = terminalWritePhase(index, chunks.length);
+        const result = await send(
+          chunk,
+          phase ? (bracketed ? { bracketedPaste: phase } : { plainWrite: phase }) : undefined,
+        );
         if (result !== true) {
-          if (result !== "not-dispatched") opened = bracketed;
+          if (result !== "not-dispatched") opened = chunks.length > 1;
           if (chunks.length > 1) interrupted();
           return;
         }
-        opened = bracketed;
+        opened = chunks.length > 1;
       }
       opened = false;
     } finally {
       if (opened) {
-        closeInterruptedPaste = recover;
-        await closePaste();
+        if (bracketed) {
+          closeInterruptedPaste = () => recover(true);
+          await closePaste();
+        } else {
+          await recover(false);
+        }
       }
     }
   };
@@ -59,7 +70,10 @@ export function createTerminalInputWriter(onIdle = () => {}) {
   return (
     data: string,
     send: SendTerminalChunk,
-    recover: () => Promise<boolean> = async () => (await send("\x1b[201~", "abort")) === true,
+    recover: (bracketed: boolean) => Promise<boolean> = async (bracketed) =>
+      (await (bracketed
+        ? send("\x1b[201~", { bracketedPaste: "abort" })
+        : send("", { plainWrite: "abort" }))) === true,
     interrupted = () => {},
   ): Promise<void> => {
     const idle = () => {

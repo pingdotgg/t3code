@@ -243,17 +243,18 @@ export const TERMINAL_BRACKETED_PASTE_END = "\x1b[201~";
 
 export const TerminalWriteInput = Schema.Struct({
   ...TerminalSessionInput.fields,
-  data: Schema.String.check(Schema.isNonEmpty()).check(
-    Schema.isMaxLength(TERMINAL_WRITE_MAX_LENGTH),
-  ),
+  data: Schema.String.check(Schema.isMaxLength(TERMINAL_WRITE_MAX_LENGTH)),
   // Older servers ignore the phase and still receive the bracket markers in data.
   bracketedPaste: Schema.optionalKey(Schema.Literals(["start", "continue", "end", "abort"])),
+  plainWrite: Schema.optionalKey(Schema.Literals(["start", "continue", "end", "abort"])),
   // `data` holds one byte per UTF-16 code unit; older servers write it as UTF-8 text.
   binary: Schema.optionalKey(Schema.Boolean),
   // A renderer's answer to a terminal query (DA, DSR, DECRQM). Every attached renderer
   // answers, so the server passes on one viewer's replies; older servers ignore it.
   reply: Schema.optionalKey(Schema.Boolean),
-});
+}).check(
+  Schema.makeFilter(({ data, plainWrite }) => (plainWrite === "abort") === (data.length === 0)),
+);
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 
 /** Splits input into writes that fit `TerminalWriteInput`, never between a surrogate pair. */
@@ -270,6 +271,11 @@ export function chunkTerminalWrite(data: string): ReadonlyArray<string> {
     start = end;
   }
   return chunks;
+}
+
+export function terminalWritePhase(index: number, count: number) {
+  if (count <= 1) return undefined;
+  return index === 0 ? "start" : index === count - 1 ? "end" : "continue";
 }
 
 export const TerminalResizeInput = Schema.Struct({

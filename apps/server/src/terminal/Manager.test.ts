@@ -935,6 +935,35 @@ it.layer(
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect.each(["end", "abort", "timeout"] as const)(
+    "releases input after a plain split write ends by %s without adding a bracket",
+    (finish) =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager();
+        yield* manager.open(openInput());
+        const target = { threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID };
+        const process = ptyAdapter.processes[0]!;
+        process.onKill = () => process.emitExit({ exitCode: 0, signal: 0 });
+        yield* manager.write({ ...target, data: "first", plainWrite: "start" }, "paste");
+        const pending = yield* manager
+          .write({ ...target, data: "typing" }, "other")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        expect(process.writes).toEqual(["first"]);
+        if (finish === "timeout") {
+          yield* TestClock.adjust("15 seconds");
+        } else {
+          yield* manager.write(
+            { ...target, data: finish === "end" ? "last" : "", plainWrite: finish },
+            "paste",
+          );
+        }
+        yield* Fiber.join(pending);
+        expect(process.writes).toEqual(
+          finish === "end" ? ["first", "last", "typing"] : ["first", "typing"],
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not reserve the terminal when writing a paste start fails", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
