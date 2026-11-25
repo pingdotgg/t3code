@@ -12987,5 +12987,7 @@
   "201490988858b511": "återkallad av {by}",
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
-  "92e129bf413a1220": "återkallad"
+  "92e129bf413a1220": "återkallad",
+  "28802448438c2f76": "Kör en gång om missad",
+  "cb6a9fca98dcf52b": "Om T3 Code var avstängt eller i viloläge vid den tiden körs uppgiften en gång när det är tillbaka i stället för att vänta till nästa gång."
 }

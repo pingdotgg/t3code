@@ -12980,5 +12980,7 @@
   "201490988858b511": "retirada por {by}",
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
-  "92e129bf413a1220": "retirada"
+  "92e129bf413a1220": "retirada",
+  "28802448438c2f76": "Executar uma vez se perdido",
+  "cb6a9fca98dcf52b": "Se o T3 Code estava desligado ou em suspensão nesse horário, executa uma vez quando voltar em vez de esperar o próximo horário."
 }

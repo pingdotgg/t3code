@@ -5691,5 +5691,11 @@
   "1a1beecff68a6e61": "Vérifier le compte Google",
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
-  "201490988858b511": "retirée par {by}"
+  "201490988858b511": "retirée par {by}",
+  "82c0494f92de3e6e": "Exécuter une fois si manqué",
+  "28802448438c2f76": "Exécuter une fois si manqué",
+  "08be609613f1be70": [
+    " ",
+    "« Exécuter une fois si manqué » rattrape l’exécution si l’environnement était éteint ou en veille à ce moment-là."
+  ]
 }

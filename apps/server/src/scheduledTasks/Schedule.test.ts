@@ -81,5 +81,11 @@ describe("scheduled task schedule calculation", () => {
         { type: "fixed_time", timeOfDay: "09:00" },
       ),
     ).toBe(false);
+    expect(
+      isSameSchedule(
+        { type: "fixed_time", timeOfDay: "09:00", missedRun: "run_once" },
+        { type: "fixed_time", timeOfDay: "09:00" },
+      ),
+    ).toBe(true);
   });
 });

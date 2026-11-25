@@ -5699,5 +5699,11 @@
   "1a1beecff68a6e61": "Verify Google account",
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
-  "201490988858b511": "withdrawn by {by}"
+  "201490988858b511": "withdrawn by {by}",
+  "82c0494f92de3e6e": "Run once if missed",
+  "28802448438c2f76": "Run once if missed",
+  "08be609613f1be70": [
+    " ",
+    "Run once if missed catches up when the environment was off or asleep at that time."
+  ]
 }

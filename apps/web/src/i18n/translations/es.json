@@ -12975,5 +12975,7 @@
   "201490988858b511": "retirada por {by}",
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
-  "92e129bf413a1220": "retirada"
+  "92e129bf413a1220": "retirada",
+  "28802448438c2f76": "Ejecutar una vez si se omitió",
+  "cb6a9fca98dcf52b": "Si T3 Code estaba apagado o en reposo a esa hora, se ejecuta una vez cuando vuelva en lugar de esperar a la próxima."
 }

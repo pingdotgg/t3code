@@ -12980,5 +12980,7 @@
   "201490988858b511": "retirée par {by}",
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
-  "92e129bf413a1220": "retirée"
+  "92e129bf413a1220": "retirée",
+  "28802448438c2f76": "Exécuter une fois si manqué",
+  "cb6a9fca98dcf52b": "Si T3 Code était éteint ou en veille à ce moment-là, la tâche s’exécute une fois à son retour au lieu d’attendre la prochaine fois."
 }

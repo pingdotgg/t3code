@@ -179,6 +179,26 @@ describe("editing scheduled task branch settings", () => {
 });
 
 describe("fixed-time scheduled tasks", () => {
+  it("preserves untouched missed-run choices and sends explicit edits", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "fixed_time", timeOfDay: "07:30", weekdays: [1], missedRun: "run_once" },
+    });
+    expect(draft.runMissedOnce).toBe(true);
+    expect(scheduleFromDraft(draft)).not.toHaveProperty("missedRun");
+    expect(scheduleFromDraft({ ...draft, runMissedOnce: false })).toMatchObject({
+      missedRun: "skip",
+    });
+    expect(scheduleFromDraft({ ...draft, savedRunMissedOnce: false })).toMatchObject({
+      missedRun: "run_once",
+    });
+    const off = { ...draft, runMissedOnce: false, savedRunMissedOnce: false };
+    expect(scheduleFromDraft(off)).not.toHaveProperty("missedRun");
+    expect(scheduleFromDraft({ ...off, runMissedOnce: true })).toMatchObject({
+      missedRun: "run_once",
+    });
+  });
+
   it("pads a stored single-digit hour so the time input shows it", () => {
     const draft = taskToDraft({
       ...legacyTask,
