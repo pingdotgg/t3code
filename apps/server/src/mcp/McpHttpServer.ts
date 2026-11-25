@@ -55,6 +55,10 @@ import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
+import * as McpWebhookTransport from "./McpWebhookTransport.ts";
+import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
+import { compactT3McpToolOutput } from "@t3tools/shared/toolOutput";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -290,20 +294,28 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     Effect.map((settings) => ({
       linkedEnvironments: settings.linkedEnvironmentsEnabled,
       agentFeedback: settings.agentFeedback.mode,
+      workflows: settings.workflowsEnabled,
     })),
-    Effect.orElseSucceed(() => ({ linkedEnvironments: false, agentFeedback: "off" as const })),
+    Effect.orElseSucceed(() => ({
+      linkedEnvironments: false,
+      agentFeedback: "off" as const,
+      workflows: false,
+    })),
   );
   const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
   const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
-  // Auth runs once per request, so a response that streams on, such as `events/stream`, ends
-  // when the outside client's session is revoked or expires.
+  // Auth runs once per request, so a response that streams on ends when the outside client's
+  // session is revoked or expires. `events/stream` ends itself first with
+  // `notifications/events/terminated`, which cutting the body here would lose.
   const endWithSession = (
     response: HttpServerResponse.HttpServerResponse,
+    request: HttpServerRequest.HttpServerRequest,
     client: McpInvocationContext.McpClientCaller | undefined,
   ) => {
     const body = response.body;
     if (client === undefined || Option.isNone(sessions) || body._tag !== "Stream") return response;
+    if (request.headers["mcp-method"] === "events/stream") return response;
     const invalidated = sessions.value
       .awaitInvalidation(AuthSessionId.make(client.sessionId))
       .pipe(Effect.ignore);
@@ -362,7 +374,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withModeLimit(withSenderThread(invocation, request), request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
-    const { linkedEnvironments, agentFeedback } = yield* settingsFlags;
+    const { linkedEnvironments, agentFeedback, workflows } = yield* settingsFlags;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
     const forge =
@@ -373,6 +385,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       ...limited,
       linkedEnvironments,
       agentFeedback,
+      workflows,
       origin,
       ...(forge === undefined ? {} : { forge }),
     };
@@ -389,7 +402,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
       Effect.map(normalizeMcpHttpResponse),
-      Effect.map((response) => endWithSession(response, admitted.client)),
+      Effect.map((response) => endWithSession(response, request, admitted.client)),
       Effect.map((response) =>
         linkExpiresAt === undefined
           ? response
@@ -1208,6 +1221,67 @@ const withToolAnalytics =
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
 
+/**
+ * ACP runtimes and Code Mode wrappers can drop or replace structured MCP tool results on
+ * completion. Recording each thread-scoped call's compact result before returning lets adapters
+ * recover sent messages, IDs, counts, and error flags without depending on output passthrough.
+ */
+const withToolResultCapture = Effect.fn("McpHttpServer.withToolResultCapture")(function* <A, E, R>(
+  registration: Effect.Effect<A, E, R>,
+) {
+  const server = yield* McpServer.McpServer;
+  const mcpSessions = yield* Effect.serviceOption(McpProviderSessions.McpProviderSessions);
+  if (Option.isNone(mcpSessions)) {
+    return yield* registration;
+  }
+  const capturingServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function (options) {
+      const toolName = options.tool.name;
+      // html_render tracks its own path/hash recovery with publish cleanup in HtmlRender.
+      if (toolName === HTML_RENDER_TOOL_NAME) {
+        return server.addTool(options);
+      }
+      return server.addTool({
+        ...options,
+        // Untraced: withToolSpans already opens a span per tool call.
+        handle: Effect.fnUntraced(function* (payload) {
+          const scopeOption = yield* Effect.serviceOption(
+            McpInvocationContext.McpInvocationContext,
+          );
+          const thread = Option.getOrUndefined(scopeOption)?.thread;
+          const epoch =
+            thread === undefined
+              ? undefined
+              : yield* mcpSessions.value.toolResultEpoch(thread.threadId);
+          return yield* options.handle(payload).pipe(
+            Effect.onExit((exit) => {
+              if (thread === undefined) return Effect.void;
+              if (exit._tag === "Success" && exit.value instanceof McpSchema.InputRequired) {
+                return Effect.void;
+              }
+              if (exit._tag === "Failure" && Cause.hasInterruptsOnly(exit.cause)) {
+                return Effect.void;
+              }
+              const output =
+                exit._tag === "Success"
+                  ? compactT3McpToolOutput(toolName, exit.value)
+                  : { isError: true };
+              return output === undefined
+                ? Effect.void
+                : mcpSessions.value.recordToolResult(thread.threadId, toolName, payload, output, {
+                    providerSessionId: thread.providerSessionId,
+                    epoch,
+                  });
+            }),
+          );
+        }),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, capturingServer));
+});
+
 /** Each tool call gets a span named for its tool; arguments stay out, as they carry prompts and IDs. */
 const withToolSpans = Effect.fn("McpHttpServer.withToolSpans")(function* <A, E, R>(
   registration: Effect.Effect<A, E, R>,
@@ -1290,8 +1364,10 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
 ) =>
   Layer.effectDiscard(
     withToolAnalytics(
-      withToolSpans(
-        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+      withToolResultCapture(
+        withToolSpans(
+          withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        ),
       ),
     ),
   ).pipe(
@@ -1308,7 +1384,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
-  Layer.effectDiscard(withToolAnalytics(withToolSpans(register))).pipe(
+  Layer.effectDiscard(withToolAnalytics(withToolResultCapture(withToolSpans(register)))).pipe(
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 
@@ -1340,7 +1416,7 @@ export const layerOrchestratorToolkit = toolkitRegistration(
 export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
 const layerWorkflowToolkit = toolkitRegistration(WorkflowToolkit, WorkflowHandlers.layer);
 
-const layerMessageToolkit = toolkitRegistration(MessageToolkit, MessageHandlers.layer);
+export const layerMessageToolkit = toolkitRegistration(MessageToolkit, MessageHandlers.layer);
 
 const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeToolkit,
@@ -1499,8 +1575,44 @@ export const layerToolSearch = Layer.mergeAll(
 ).pipe(Layer.provide(layerToolExposure));
 
 /**
- * Milestones as MCP events (SEP-3415) for outside clients to poll or stream. Protocol-level, so no
- * thread lists them.
+ * A webhook subscription belongs to the outside client's session. Its id is the same for the
+ * session's whole life, and a client signs in again rather than refreshing a token, so a new
+ * sign-in is a new principal whose subscriptions the old session's end does not touch.
+ */
+const webhookPrincipal = Effect.serviceOption(McpInvocationContext.McpInvocationContext).pipe(
+  Effect.flatMap((scope) => {
+    const client = Option.getOrUndefined(scope)?.client;
+    return client === undefined
+      ? Effect.fail(
+          new McpSchema.Forbidden({
+            message: "Webhook delivery needs an outside client's sign-in",
+          }),
+        )
+      : Effect.succeed(client.sessionId);
+  }),
+);
+
+/** Webhooks reach public addresses only, through a client pinned to the address it checked. */
+const layerWebhookTransport = Layer.unwrap(
+  Effect.gen(function* () {
+    const transport = McpWebhookTransport.make(yield* McpWebhookTransport.allowedHosts);
+    return Layer.merge(
+      Layer.succeed(McpServer.CallbackGuard, {
+        allowsPlaintext: transport.allowsPlaintext,
+        check: Effect.fn("McpHttpServer.webhookCallbackCheck")(function* (url: URL) {
+          return yield* transport
+            .check(url)
+            .pipe(Effect.mapError((error) => new McpServer.CallbackRejected(error)));
+        }),
+      }),
+      transport.layerClient,
+    );
+  }).pipe(Effect.orDie),
+);
+
+/**
+ * Milestones as MCP events (SEP-3415) for outside clients to poll, stream or receive by webhook.
+ * Protocol-level, so no thread lists them.
  */
 export const layerMilestoneEvents = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -1509,10 +1621,18 @@ export const layerMilestoneEvents = Layer.effectDiscard(
     for (const options of events.threads) {
       yield* McpServer.registerEvent({ ...options, annotations });
     }
+    // Listed only while Labs → Workflows is on, since no run can reach them otherwise.
+    const workflowAnnotations = Context.make(
+      McpSchema.EnabledWhen,
+      McpInvocationContext.hiddenUnlessWorkflowEvents,
+    );
     for (const options of events.workflows) {
-      yield* McpServer.registerEvent({ ...options, annotations });
+      yield* McpServer.registerEvent({ ...options, annotations: workflowAnnotations });
     }
   }),
+).pipe(
+  Layer.provide(McpServer.layerEventWebhooks({ principal: webhookPrincipal })),
+  Layer.provide(layerWebhookTransport),
 );
 
 export const layer = layerMcpTransport(

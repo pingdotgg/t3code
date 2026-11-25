@@ -481,18 +481,46 @@ export const make = Effect.gen(function* () {
     return yield* updateCachedLocalStatus(cwd, yield* readLocalStatus(cwd), observation, options);
   });
 
+  // A branch read while a HEAD watch was ready stays current for that watch's lifetime: any
+  // checkout after it reaches the cache through the watch. A reconnect burst then forks git once.
+  const branchConfirmedUnder = new Map<string, Fiber.Fiber<void, never>>();
+  // Bumped on every HEAD event, so a read that a checkout overtook cannot confirm its branch.
+  const headGenerations = new Map<string, number>();
+  const readyHeadWatch = (cwd: string) =>
+    SynchronizedRef.get(headWatchersRef).pipe(
+      Effect.map((watchers) => {
+        const watcher = watchers.get(cwd);
+        return watcher &&
+          watcher.fiber.pollUnsafe() === undefined &&
+          Deferred.isDoneUnsafe(watcher.ready)
+          ? watcher.fiber
+          : undefined;
+      }),
+    );
+
   const getOrLoadLocalStatusUnlocked = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(
     function* (cwd: string) {
+      const watch = yield* readyHeadWatch(cwd);
+      const generation = headGenerations.get(cwd);
+      const confirm = <A>(value: A) => {
+        if (watch !== undefined && headGenerations.get(cwd) === generation) {
+          branchConfirmedUnder.set(cwd, watch);
+        }
+        return value;
+      };
       const cached = yield* getCachedStatus(cwd);
       if (cached?.local) {
         if (cached.local.includesBranchChanges || !wantsBranchChanges(cwd)) {
+          if (watch !== undefined && branchConfirmedUnder.get(cwd) === watch) {
+            return cached.local.value;
+          }
           const branch = yield* workflow.currentBranch(cwd);
-          if (branch === cached.local.value.refName) return cached.local.value;
+          if (branch === cached.local.value.refName) return confirm(cached.local.value);
         }
         yield* workflow.invalidateLocalStatus(cwd);
-        return yield* loadLocalStatus(cwd, { publish: true });
+        return confirm(yield* loadLocalStatus(cwd, { publish: true }));
       }
-      return yield* loadLocalStatus(cwd);
+      return confirm(yield* loadLocalStatus(cwd));
     },
   );
 
@@ -1120,7 +1148,18 @@ export const make = Effect.gen(function* () {
             ? fs.exists(headDirectory).pipe(Effect.map((exists) => !exists))
             : Effect.succeed(false),
         ),
-        Stream.filter((event) => path.basename(event.path) === "HEAD"),
+        // A terminal commit moves the branch ref but not HEAD; it always rewrites the index beside it.
+        Stream.filter((event) => {
+          const name = path.basename(event.path);
+          return name === "HEAD" || name === "index";
+        }),
+        // On arrival: the cache keeps the old branch until reads below land, and they can retry.
+        Stream.tap(() =>
+          Effect.sync(() => {
+            branchConfirmedUnder.delete(cwd);
+            headGenerations.set(cwd, (headGenerations.get(cwd) ?? 0) + 1);
+          }),
+        ),
         // A rebase moves HEAD many times; refresh once for whatever arrived during a refresh.
         Stream.buffer({ capacity: 1, strategy: "sliding" }),
         Stream.mapEffect(() => retryCheckedOutRef(cwd, publishCheckedOutRef(cwd))),
@@ -1179,6 +1218,9 @@ export const make = Effect.gen(function* () {
         return [null, nextWatchers] as const;
       }
       nextWatchers.delete(cwd);
+      // In this step, so a watch that registers next for cwd cannot lose its generation.
+      if (branchConfirmedUnder.get(cwd) === existing.fiber) branchConfirmedUnder.delete(cwd);
+      headGenerations.delete(cwd);
       return [existing.fiber, nextWatchers] as const;
     });
     if (watcherToInterrupt) {

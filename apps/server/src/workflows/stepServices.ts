@@ -57,6 +57,7 @@ export interface RunSummary {
   readonly title: string;
   readonly status: WorkflowRunStatus;
   readonly detail: string | null;
+  readonly tags: ReadonlyArray<string>;
   readonly startedAt: string;
   readonly endedAt: string | null;
 }
@@ -64,6 +65,8 @@ export interface RunFilter {
   readonly workflow?: string | undefined;
   readonly status?: WorkflowRunStatus | undefined;
   readonly keyPrefix?: string | undefined;
+  readonly kind?: string | undefined;
+  readonly tag?: string | undefined;
 }
 
 /** Signals from the step that is running. Its signals are numbered, so a retry sends the same ones. */
@@ -117,6 +120,8 @@ export class EngineLink extends Context.Service<
           readonly list: ListRuns;
           /** Tell the run that invoked `runId`, if one did, how it ended. */
           readonly ended: (runId: string) => Effect.Effect<void>;
+          /** Watch the agent turn behind an open wait of `runId` until it ends. */
+          readonly watchTurn: (runId: string, wait: string) => Effect.Effect<void>;
         }
       | undefined;
     /** The steps of each run that are running in this process right now. */
@@ -440,19 +445,23 @@ export const cancel = (runId: string, reason: string) =>
   Effect.flatMap(Runs, (runs) => runs.cancel(runId, reason));
 
 /**
- * Find runs: of one workflow, in one status, or started with a key that begins with `keyPrefix`.
- * Newest first, 500 at most. Inside `step` or `onEnd` only: the answer changes over time.
+ * Find runs: of one workflow, in one status, started with a key that begins with `keyPrefix`,
+ * tagged with `tag`, or with an open question of `kind`. Newest first, 500 at most. Inside `step` or `onEnd` only: the answer changes over time.
  */
 export const runs = (filter?: {
   readonly workflow?: WorkflowName;
   readonly status?: WorkflowRunStatus;
   readonly keyPrefix?: string;
+  readonly kind?: string;
+  readonly tag?: string;
 }) =>
   Effect.flatMap(Runs, (all) => {
-    checkOptions("runs", filter, ["workflow", "status", "keyPrefix"]);
+    checkOptions("runs", filter, ["workflow", "status", "keyPrefix", "kind", "tag"]);
     return all.list({
       workflow: filter?.workflow === undefined ? undefined : nameOf(filter.workflow),
       status: filter?.status,
       keyPrefix: filter?.keyPrefix,
+      kind: filter?.kind,
+      tag: filter?.tag,
     });
   });

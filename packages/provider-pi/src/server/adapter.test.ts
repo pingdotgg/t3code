@@ -2078,6 +2078,42 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("ends the session as stopped when Pi exits while no turn is running", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const adapter = yield* makeAdapter(fake, "");
+      const runtime = yield* adapter.openSession({
+        threadId: THREAD_ID,
+        providerSessionId: SESSION_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const statuses: Array<{ status: string; lastError: string | null | undefined }> = [];
+      const drained = yield* runtime.events.pipe(
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            if (event.type === "provider_session.updated")
+              statuses.push({
+                status: event.providerSession.status,
+                lastError: event.providerSession.lastError,
+              });
+          }),
+        ),
+        Effect.exit,
+        Effect.forkScoped,
+      );
+      yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* fake.closeStdout;
+      const exit = yield* Fiber.join(drained);
+      assert.isTrue(Exit.isSuccess(exit));
+      assert.deepEqual(statuses.at(-1), { status: "stopped", lastError: null });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("counts a running Pi for port discovery until its session closes", () =>
     Effect.gen(function* () {
       const host = yield* ProviderHost.ProviderHost;
@@ -2541,6 +2577,31 @@ describe("PiAdapterV2", () => {
         yield* startTurn(runtime, providerThread, "default").pipe(Effect.flip);
         assert.isFalse(fake.allRequests().some((request) => request.type === "prompt"));
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("reports resuming while Pi switches to the thread's session", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.queueState({ sessionFile: "/fake/other-session.jsonl" });
+      yield* runtime.resumeThread({ providerThread });
+      yield* fake.takeRequest("switch_session");
+      const phases: Array<string | null> = [];
+      for (let index = 0; index < 2; index += 1) {
+        const event = yield* takeEvent(
+          (candidate) => candidate.type === "provider_session.updated",
+        );
+        if (event.type === "provider_session.updated") {
+          phases.push(event.providerSession.startupPhase ?? null);
+        }
+      }
+      assert.deepEqual(phases, ["resume", null]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("retires an interrupted switch before accepting further requests", () =>
@@ -3864,6 +3925,18 @@ describe("PiAdapterV2", () => {
         statuses: ["running", "running"],
         pending: [true],
       });
+      // The run dies with the Pi process, so an idle release must wait for it.
+      const otherThread = { ...providerThread, id: ProviderThreadId.make("other-provider-thread") };
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(
+        yield* runtime.hasPendingBackgroundWorkForThread!(providerThread, {
+          includeSubagents: true,
+        }),
+      );
+      assert.isFalse(
+        yield* runtime.hasPendingBackgroundWorkForThread!(otherThread, { includeSubagents: true }),
+      );
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
       // pi-subagents can mark the run settled one snapshot before the member that ran last.
       yield* emitSnapshot("failed", "running", "failed");
       yield* emitSnapshot("failed", "complete", "failed");
@@ -3871,6 +3944,12 @@ describe("PiAdapterV2", () => {
         statuses: ["completed", "failed"],
         pending: [false],
       });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(
+        yield* runtime.hasPendingBackgroundWorkForThread!(providerThread, {
+          includeSubagents: true,
+        }),
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

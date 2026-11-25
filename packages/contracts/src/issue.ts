@@ -332,7 +332,7 @@ export const IssueListResult = Schema.Struct({
   /** The signed-in account per host that involvement compared against. Empty for `all`. */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   trackers: Schema.Array(IssueTrackerSummary),
-  /** By update, newest first, across every scope this answer covers. */
+  /** Newest first by the requested `sort` (`updated` when absent), across every scope this answer covers. */
   entries: Schema.Array(IssueListEntry),
   errors: Schema.Array(IssueListProjectError),
   /** Where each scope carries on, sent straight back as `cursors`. Absent once a scope is done. */

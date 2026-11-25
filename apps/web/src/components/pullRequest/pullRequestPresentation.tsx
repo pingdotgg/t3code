@@ -481,7 +481,7 @@ export function PullRequestActorAvatar({
         className,
       )}
     >
-      {login.slice(0, 1).toUpperCase()}
+      {[...login][0]?.toUpperCase()}
     </span>
   ) : (
     <img
@@ -601,6 +601,36 @@ export function PullRequestMetaLine({
       )}
     </span>
   );
+}
+
+/** The short label beside the checks icon; null when every check passed. */
+export function pullRequestChecksCountLabel(
+  checks: ReadonlyArray<PullRequestCheck>,
+  resolve: MessageResolver = m,
+): string | null {
+  const count = (statuses: ReadonlyArray<PullRequestCheckStatus>) =>
+    checks.filter((check) => statuses.includes(check.status)).length;
+  const failed = count(["failure", "cancelled"]);
+  if (failed > 0) {
+    return resolve(
+      msg("{count, plural, one {{count} failed} other {{count} failed}}", { count: failed }),
+    );
+  }
+  const awaitingAction = count(["action-required"]);
+  if (awaitingAction > 0) {
+    return resolve(
+      msg("{count, plural, one {{count} awaiting action} other {{count} awaiting action}}", {
+        count: awaitingAction,
+      }),
+    );
+  }
+  const running = count(["pending"]);
+  if (running > 0) {
+    return resolve(
+      msg("{count, plural, one {{count} running} other {{count} running}}", { count: running }),
+    );
+  }
+  return null;
 }
 
 export function summarizePullRequestChecks(

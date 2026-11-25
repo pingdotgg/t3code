@@ -71,6 +71,8 @@ const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadPro
       id: threadId,
       projectId,
       title: "Worktree test thread",
+      runtimeMode: "full-access",
+      interactionMode: "default",
       branch: null,
       worktreePath: null,
       archivedAt: null,
