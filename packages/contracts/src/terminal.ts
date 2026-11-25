@@ -105,21 +105,22 @@ export function terminalSequenceEnd(state: number, text: string): number {
 }
 
 function scanSnapshotContinuation(state: number, data: string, limit = data.length) {
-  let replay = "";
+  let control = "";
+  let replacementCount = 0;
   const replayC1 = (byte: number, remainingBytes: number) => {
     // Replay IND, NEL, HTS and RI from ground. Any bytes parsed after the control
     // are now stray UTF-8 continuation bytes.
     if (byte === 0x84 || byte === 0x85 || byte === 0x88 || byte === 0x8d) {
-      replay = "\u001b" + String.fromCharCode(byte - 0x40);
+      control = "\u001b" + String.fromCharCode(byte - 0x40);
     }
-    replay += "\ufffd".repeat(remainingBytes);
+    replacementCount = remainingBytes;
   };
   let end = 0;
   while (state !== TERMINAL_SEQUENCE_GROUND && end < limit) {
     state = nextTerminalSequenceState(state, data.charCodeAt(end), replayC1);
     end += 1;
   }
-  return { state, end, replay };
+  return { state, end, control, replacementCount };
 }
 
 /** Skip the continuation of an omitted snapshot prefix, retaining any new escape sequence. */
@@ -136,10 +137,11 @@ export function skipTerminalSnapshotContinuation(state: number, data: string) {
   const {
     state: next,
     end,
-    replay,
+    control,
+    replacementCount,
   } = scanSnapshotContinuation(state, data, escape < 0 ? data.length : escape);
   if (next === TERMINAL_SEQUENCE_GROUND || end === data.length) {
-    return { state: next, data: replay + data.slice(end) };
+    return { state: next, data: control + "\ufffd".repeat(replacementCount) + data.slice(end) };
   }
   // Hold a final ESC until we know whether it starts a new sequence or completes ST.
   if (end + 1 === data.length) return { state: SEQUENCE_ESCAPE, data: "" };
@@ -179,12 +181,13 @@ export function retainedTerminalHistory(history: string, maxBytes: number): stri
     0,
     history.length - retained.length,
   );
-  const { end, replay } = scanSnapshotContinuation(state, retained);
+  const { end, control, replacementCount } = scanSnapshotContinuation(state, retained);
   const tail = retained.slice(end);
-  if (replay.length === 0) return tail;
-  // Replacement glyphs can take more bytes than the original continuation.
-  const snapshot = replay + tail;
-  return historyEncoder.encode(snapshot).byteLength <= maxBytes ? snapshot : tail;
+  if (replacementCount === 0) return control + tail;
+  // The two-byte ESC form fits where the consumed code point did. Each replacement
+  // glyph takes three bytes, so keep only as many as fit alongside the control and tail.
+  const available = maxBytes - historyEncoder.encode(tail).byteLength - control.length;
+  return control + "\ufffd".repeat(Math.min(replacementCount, Math.floor(available / 3))) + tail;
 }
 
 /** Keep a whole unfinished prefix when possible, or skip its continuation during replay. */
