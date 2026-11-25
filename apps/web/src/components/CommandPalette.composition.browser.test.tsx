@@ -152,7 +152,7 @@ it.each(["dismissed", "timed out"] as const)(
       waiting.resolve();
       return update.promise;
     });
-    const draftId = DraftId.make(crypto.randomUUID());
+    const draftId = DraftId.make(`pending-folder-add-${outcome}`);
     const environmentId = EnvironmentId.make("local");
     const original = { environmentId, projectId: ProjectId.make("original") };
     const newer = { environmentId, projectId: ProjectId.make("newer") };

@@ -595,6 +595,12 @@ function OpenCommandPaletteDialog(props: {
   const draftProjectAddPending = useRef(false);
   const isCurrentAddProjectIntent = () =>
     addProjectDraftId === null || useCommandPaletteStore.getState().openIntent === props.openIntent;
+  const runProjectAdd = async (add: () => Promise<void>): Promise<void> => {
+    draftProjectAddPending.current = addProjectDraftId !== null;
+    await add().finally(() => {
+      draftProjectAddPending.current = false;
+    });
+  };
   const moveDraftToAddedProject = async (project: EnvironmentProject): Promise<boolean> => {
     if (addProjectDraftId === null || !moveDraftToProject(addProjectDraftId, project)) {
       return false;
@@ -2116,8 +2122,7 @@ function OpenCommandPaletteDialog(props: {
       );
       return;
     }
-    draftProjectAddPending.current = addProjectDraftId !== null;
-    try {
+    await runProjectAdd(async () => {
       const projectId = newProjectId();
       const createResult = await createProject({
         environmentId: input.environmentId,
@@ -2159,9 +2164,7 @@ function OpenCommandPaletteDialog(props: {
         );
       }
       setOpen(false);
-    } finally {
-      draftProjectAddPending.current = false;
-    }
+    });
   };
 
   const handleAddProject = async (rawCwd: string) => {
@@ -2393,9 +2396,8 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    draftProjectAddPending.current = addProjectDraftId !== null;
     setIsRemoteProjectCloning(true);
-    try {
+    await runProjectAdd(async () => {
       const startResult = await startProjectClone({
         environmentId: addProjectCloneFlow.environmentId,
         input: {
@@ -2444,10 +2446,9 @@ function OpenCommandPaletteDialog(props: {
         );
       }
       if (addProjectDraftId !== null) setOpen(false);
-    } finally {
+    }).finally(() => {
       setIsRemoteProjectCloning(false);
-      draftProjectAddPending.current = false;
-    }
+    });
   }
 
   const browseTo = async (name: string): Promise<void> => {
