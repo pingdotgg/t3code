@@ -248,6 +248,8 @@ export const TerminalWriteInput = Schema.Struct({
   // A renderer's answer to a terminal query (DA, DSR, DECRQM). Every attached renderer
   // answers, so the server passes on one viewer's replies; older servers ignore it.
   reply: Schema.optionalKey(Schema.Boolean),
+  // Paste recovery is a no-op when the process that opened the bracket has gone.
+  expectedPid: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
 });
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 

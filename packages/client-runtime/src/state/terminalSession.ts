@@ -34,6 +34,7 @@ export interface TerminalGrid {
 
 export interface TerminalSessionState {
   readonly summary: TerminalSummary | null;
+  readonly pid: number | null;
   readonly output: TerminalOutputState;
   /** Null when the server predates shared terminal geometry. */
   readonly grid: TerminalGrid | null;
@@ -46,6 +47,7 @@ export interface TerminalSessionState {
 }
 
 export interface TerminalBufferState {
+  readonly pid: number | null;
   readonly output: TerminalOutputState;
   readonly grid: TerminalGrid | null;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
@@ -75,6 +77,7 @@ export function selectRunningSubprocessTerminalIds(
 }
 
 export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
+  pid: null,
   output: EMPTY_TERMINAL_OUTPUT_STATE,
   grid: null,
   status: "closed",
@@ -86,6 +89,7 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
 
 export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>({
   summary: null,
+  pid: null,
   output: EMPTY_TERMINAL_OUTPUT_STATE,
   grid: null,
   status: "closed",
@@ -115,6 +119,7 @@ function terminalBufferStateFromSnapshot(
   current: TerminalBufferState = EMPTY_TERMINAL_BUFFER_STATE,
 ): TerminalBufferState {
   return {
+    pid: snapshot.pid,
     output: resetOutput(current.output, snapshot, maxBufferBytes),
     grid: nextGrid(current.grid, snapshot),
     status: snapshot.status,
@@ -147,6 +152,7 @@ export function combineTerminalSessionState(
 ): TerminalSessionState {
   return {
     summary,
+    pid: buffer.pid,
     output: buffer.output,
     grid: buffer.grid,
     status: buffer.version > 0 ? buffer.status : (summary?.status ?? buffer.status),

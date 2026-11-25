@@ -962,8 +962,6 @@ function TerminalSessionViewport({
         }
       };
 
-      const readInputSession = () => appAtomRegistry.get(terminalSessionAtom);
-      const metadataAtom = terminalEnvironment.metadata({ environmentId, input: null });
       const canWriteInput = () => readEnvironmentScope(environmentId, AuthTerminalOperateScope);
       const writeInputChunk = (data: string, kind?: "binary" | "reply") =>
         retainedTerminalWrite.current({
@@ -985,8 +983,6 @@ function TerminalSessionViewport({
         if (generation === null) return;
         const writeInput = terminalInputWriter(
           JSON.stringify([environmentId, threadId, terminalId]),
-          // Paste recovery needs the process status, while reply ownership belongs to the view.
-          () => appAtomRegistry.mount(metadataAtom),
         );
         let reported = false;
         const report = (message: string) => {
@@ -997,9 +993,9 @@ function TerminalSessionViewport({
         return writeInput(
           data,
           async (chunk) => {
-            const currentSession = readInputSession();
+            if (terminalRef.current !== terminal) return "not-dispatched";
+            const currentSession = appAtomRegistry.get(terminalSessionAtom);
             if (
-              terminalRef.current !== terminal ||
               currentSession.lifecycleVersion !== lifecycleVersion ||
               writableSessionGeneration(currentSession, canWriteInput()) !== generation
             ) {
@@ -1013,18 +1009,14 @@ function TerminalSessionViewport({
             }
             return false;
           },
-          // Close the bracket only for the process that saw it open; wait while its pid is unknown.
+          // The attachment's PID stays with the paste even after the viewport detaches.
           async () => {
-            const pid = session.summary?.pid ?? null;
-            const metadata = appAtomRegistry.get(metadataAtom);
-            if (!AsyncResult.isSuccess(metadata) || metadata.waiting) return false;
-            const current = metadata.value.find(
-              (summary) => summary.threadId === threadId && summary.terminalId === terminalId,
-            );
-            if (!current || current.pid === null) return false;
-            if (pid !== null && current.pid !== pid) return true;
-            if (current.status !== "running" || !canWriteInput()) return false;
-            const result = await writeInputChunk("\x1b[201~");
+            if (session.pid === null) return true;
+            if (!canWriteInput()) return false;
+            const result = await retainedTerminalWrite.current({
+              environmentId,
+              input: { threadId, terminalId, data: "\x1b[201~", expectedPid: session.pid },
+            });
             if (result._tag === "Success") return true;
             if (!isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);

@@ -8,7 +8,6 @@ import {
   type ScopedThreadRef,
   type FilesystemEntryMetadata,
   type ResolvedKeybindingsConfig,
-  type TerminalSummary,
 } from "@t3tools/contracts";
 import { Cause } from "effect";
 import { compileResolvedKeybindingsConfig, DEFAULT_KEYBINDINGS } from "@t3tools/shared/keybindings";
@@ -27,13 +26,9 @@ const fixture = vi.hoisted(() => ({
   pendingSurfaces: [] as Array<() => void>,
   typeIntoSurface: null as ((data: string) => void) | null,
   pressKey: null as ((event: KeyboardEvent) => boolean) | null,
-  writes: [] as Array<{ threadId: string; data: string }>,
+  writes: [] as Array<{ threadId: string; data: string; expectedPid?: number }>,
   messages: [] as string[],
   resetSessions: () => {},
-  terminalMetadata: (
-    _environmentId: EnvironmentId,
-  ): Atom.Atom<AsyncResult.AsyncResult<ReadonlyArray<TerminalSummary>>> =>
-    Atom.make(AsyncResult.success([])),
   setSession: (
     _thread: ScopedThreadRef,
     _status: "closed" | "starting" | "running",
@@ -102,6 +97,7 @@ vi.mock("../state/terminalSessions", async () => {
     Atom.make<typeof EMPTY_TERMINAL_SESSION_STATE>({
       ...EMPTY_TERMINAL_SESSION_STATE,
       summary: summary(threadId, 123),
+      pid: 123,
       status: fixture.statusByThreadId.get(threadId) ?? "closed",
       version: 1,
     });
@@ -115,17 +111,6 @@ vi.mock("../state/terminalSessions", async () => {
   fixture.resetSessions = () => {
     sessions = new Map();
   };
-  fixture.terminalMetadata = Atom.family((environmentId: EnvironmentId) =>
-    Atom.make((get): AsyncResult.AsyncResult<ReadonlyArray<TerminalSummary>> => {
-      const summaries: TerminalSummary[] = [];
-      for (const [key, atom] of sessions) {
-        if (JSON.parse(key)[0] !== environmentId) continue;
-        const { summary } = get(atom);
-        if (summary) summaries.push(summary);
-      }
-      return AsyncResult.success(summaries);
-    }),
-  );
   fixture.setSession = (thread, status, version, generation) => {
     appAtomRegistry.set(session(thread.environmentId, thread.threadId), {
       ...EMPTY_TERMINAL_SESSION_STATE,
@@ -141,7 +126,6 @@ vi.mock("../state/terminalSessions", async () => {
     const current = appAtomRegistry.get(atom);
     appAtomRegistry.set(atom, {
       ...current,
-      summary: summary(thread.threadId, pid),
       ...applyTerminalAttachStreamEvent(current, {
         type,
         threadId: thread.threadId,
@@ -173,10 +157,16 @@ vi.mock("../state/session", () => ({
 }));
 vi.mock("../state/use-atom-command", () => ({
   useAtomCommand:
-    (command: object) => async (args: { input: { threadId: string; data?: string } }) => {
+    (command: object) =>
+    async (args: { input: { threadId: string; data?: string; expectedPid?: number } }) => {
       if (command === fixture.resizeCommand) return fixture.runResize(args);
       if (args.input.data !== undefined) {
-        fixture.writes.push({ threadId: args.input.threadId, data: args.input.data });
+        const { threadId, data, expectedPid } = args.input;
+        fixture.writes.push({
+          threadId,
+          data,
+          ...(expectedPid === undefined ? {} : { expectedPid }),
+        });
         return fixture.runWrite();
       }
       return { _tag: "Success" };
@@ -189,12 +179,7 @@ vi.mock("../state/server", async () => {
   return { serverEnvironment: { configValueAtom: () => config } };
 });
 vi.mock("../state/terminal", () => ({
-  terminalEnvironment: {
-    write: {},
-    resize: fixture.resizeCommand,
-    metadata: ({ environmentId }: { environmentId: EnvironmentId }) =>
-      fixture.terminalMetadata(environmentId),
-  },
+  terminalEnvironment: { write: {}, resize: fixture.resizeCommand },
 }));
 vi.mock("../state/preview", () => ({ previewEnvironment: { open: {} } }));
 vi.mock("../state/projects", async () => {
@@ -470,12 +455,9 @@ it("drops the rest of a split paste when the shell restarts mid-paste", async ()
   expect(fixture.writes.map(({ data }) => data.length)).toEqual([65_536, 5]);
 });
 
-it.each([
-  { pid: 123, closes: true },
-  { pid: 456, closes: false },
-])(
-  "closes interrupted bracket framing only for its process (PID $pid)",
-  async ({ pid, closes }) => {
+it.each([123, 456])(
+  "targets the original process when a new attachment snapshot reports PID %i",
+  async (pid) => {
     const { other: threadRef } = setup();
     let settleWrite = () => {};
     fixture.runWrite = () =>
@@ -501,10 +483,10 @@ it.each([
     expect(
       fixture.messages.filter((message) => message.includes("paste interrupted")),
     ).toHaveLength(1);
-    expect(fixture.writes.map(({ data }) => data)).toEqual([
-      large.slice(0, 65_536),
-      ...(closes ? ["\x1b[201~"] : []),
-      "after",
+    expect(fixture.writes).toEqual([
+      { threadId: threadRef.threadId, data: large.slice(0, 65_536) },
+      { threadId: threadRef.threadId, data: "\x1b[201~", expectedPid: 123 },
+      { threadId: threadRef.threadId, data: "after" },
     ]);
   },
 );

@@ -3880,6 +3880,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const terminalId = input.terminalId;
       const session = yield* requireSession(input.threadId, terminalId);
       const process = session.process;
+      if (input.expectedPid !== undefined && process?.pid !== input.expectedPid) return;
       if (!process || session.status !== "running") {
         if (session.status === "exited") return;
         return yield* new TerminalNotRunningError({

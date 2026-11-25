@@ -1013,6 +1013,31 @@ it.layer(
     }),
   );
 
+  it.effect("writes paste recovery only to the process that opened the bracket", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      const input = openInput();
+      const original = yield* manager.open(input);
+      if (original.pid === null) throw new Error("Expected a running terminal");
+      const recovery = {
+        threadId: input.threadId,
+        terminalId: original.terminalId,
+        data: "\x1b[201~",
+        expectedPid: original.pid,
+      };
+      yield* manager.write(recovery);
+      yield* manager.close({ threadId: input.threadId, terminalId: original.terminalId });
+      yield* manager.open(input);
+      yield* manager.write(recovery);
+      yield* manager.write({
+        threadId: input.threadId,
+        terminalId: original.terminalId,
+        data: "after",
+      });
+      expect(ptyAdapter.processes.map(({ writes }) => writes)).toEqual([["\x1b[201~"], ["after"]]);
+    }),
+  );
+
   it.effect("supports multiple terminals per thread independently", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

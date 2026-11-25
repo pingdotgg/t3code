@@ -93,13 +93,11 @@ export function createTerminalInputWriter(onIdle = () => {}) {
 const writers = new Map<string, ReturnType<typeof createTerminalInputWriter>>();
 
 /** Retain ordering and framing obligations until acknowledged, across terminal view remounts. */
-export function terminalInputWriter(key: string, retain: () => () => void) {
+export function terminalInputWriter(key: string) {
   const existing = writers.get(key);
   if (existing) return existing;
-  const release = retain();
   const writer = createTerminalInputWriter(() => {
     if (writers.get(key) === writer) writers.delete(key);
-    release();
   });
   writers.set(key, writer);
   return writer;
