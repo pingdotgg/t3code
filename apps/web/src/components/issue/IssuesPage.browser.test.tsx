@@ -1,5 +1,6 @@
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
 
@@ -86,5 +87,26 @@ describe("IssuesPage shortcuts", () => {
     expect(panelSurfaces()).toEqual([]);
     expect(state.navigate).toHaveBeenCalledOnce();
     expect(state.navigate).toHaveBeenCalledWith({ search: { who: "all", status: "open" } });
+  });
+
+  it("hides the add-surface button and leaves Mod+T unhandled when an issue tab is open", async () => {
+    setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    await using screen = await render(<IssuesPage />);
+    expect(panelSurfaces()).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Add panel surface" }).query()).toBeNull();
+
+    const event = new KeyboardEvent("keydown", {
+      key: "t",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(() => {
+      document.body.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(page.getByRole("menu").query()).toBeNull();
   });
 });
