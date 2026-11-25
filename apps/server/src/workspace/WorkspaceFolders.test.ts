@@ -61,8 +61,15 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       const tmp = yield* makeTempDir;
       const root = path.join(tmp, "wrapper");
       const outside = path.join(tmp, "outside");
+      // Labels are cut at 128 UTF-16 units; an emoji across the cut is left out whole.
+      const cut = `${"a".repeat(127)}🚀`;
+      const fits = `${"b".repeat(126)}🚀`;
+      const padded = `${" ".repeat(127)}🚀`;
       for (const folder of [
         ".git",
+        `${cut}/.git`,
+        `${fits}/.git`,
+        `${padded}/.git`,
         "api/.git",
         "web/.git",
         "sub/.git",
@@ -121,6 +128,14 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
             source: "code-workspace",
           },
           { path: outside, name: "outside", isGitRepository: true, source: "code-workspace" },
+          { path: path.join(root, padded), name: "🚀", isGitRepository: true, source: "child" },
+          {
+            path: path.join(root, cut),
+            name: "a".repeat(127),
+            isGitRepository: true,
+            source: "child",
+          },
+          { path: path.join(root, fits), name: fits, isGitRepository: true, source: "child" },
           // One level below a plain folder is looked into.
           {
             path: path.join(root, "src", "svc"),

@@ -6,12 +6,14 @@ an authenticated connection does not count as product use.
 
 ## Identity
 
-- **Never change `distinct_id`.** It preserves historical continuity in PostHog charts; add fields
-  instead of changing how it is computed.
-- **Count installs with `installId`, resolve owners at query time.** `installId` is a stable hash
-  persisted in the state directory; `install.owner_observed` links installs to owners (Connect
-  account, OpenAI `user_id`—not the shared Codex Team `account_id` or per-login `sub`—Claude id,
-  client device). Two Connect accounts are never merged as one person.
+- **`distinct_id` is the install id.** Both are the hash of a random id persisted in the state
+  directory. Events carry it under both names because older builds derived `distinct_id` from the
+  Codex or Claude sign-in files, so the ingest side counts installs by `installId`.
+- **Identity never comes from a provider.** Do not read a provider's sign-in files or derive an id
+  or owner from a user's OpenAI, Claude, or other provider account, even hashed: users did not sign
+  in to those to be identified by T3 Code.
+- **Resolve owners at query time.** `install.owner_observed` links installs to owners (Connect
+  account, client device). Two Connect accounts are never merged as one person.
 - **Hash everywhere with [one helper](../../packages/shared/src/telemetryId.ts).** Clients and
   servers hash with the same SHA-256 helper so IDs correlate; the server accepts only hashes from
   clients.
@@ -28,15 +30,20 @@ an authenticated connection does not count as product use.
 
 - Payloads stay strictly to product metadata, closed contract enums, and normalized measurements:
   never attach prompts, file paths, credentials, raw provider payloads, device names, conversation
-  IDs, or user-named provider instance IDs. Model IDs are reported as the provider used them,
-  including custom models; known aliases and routed IDs map to one catalog slug, and a model
-  that is a file path reports only its file name.
+  IDs, or user-named provider instance IDs. Models in the bundled manifest or a vendor's own
+  model list report their catalog slug, with aliases and routed IDs mapped to it. Any other model
+  ID can name a user, a deployment, or a local file, so it reports only `custom:<driver>`.
 - The sole exception is opt-in `agent.feedback`, which
   [`FeedbackService`](../../apps/server/src/feedback/FeedbackService.ts) scrubs of paths, private
   values, and secret-shaped strings, and only attaches bounded conversation traces when the user
-  explicitly previews and sends them.
+  explicitly previews and sends them. Each report is sent under its own id without `installId` or
+  host properties, in a request of its own, so it links to no install or other report; reports sent
+  without a preview carry only their categories.
 - Delivery ([`AnalyticsService.ts`](../../apps/server/src/telemetry/AnalyticsService.ts)) attaches a
   UUID per event, backs off on failure, and drops batches after bounded retries so a stuck batch
   cannot loop forever.
-- Dev-runner servers and CI smoke tests disable telemetry (and relay tracing) by default so they do
-  not inflate install counts; set `T3CODE_TELEMETRY_ENABLED=true` to test locally.
+- Dev-runner servers and servers on CI runners disable telemetry (and relay tracing) by default so
+  they do not inflate install counts. CI detection is `isCiEnvironment` in
+  [`otelEnvironment.ts`](../../packages/shared/src/otelEnvironment.ts). An explicit
+  `T3CODE_TELEMETRY_ENABLED=true` overrides both defaults; a managed policy that denies telemetry
+  overrides everything.

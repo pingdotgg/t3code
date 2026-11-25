@@ -476,6 +476,8 @@ const make = Effect.gen(function* () {
     comments: ReadonlyArray<ReviewLineComment>,
   ) {
     const placed = new Map<ReviewLineComment, PullRequestReviewCommentDraft>();
+    // Comments whose end line some page showed, so a failure names the line that is missing.
+    const lineShown = new Set<ReviewLineComment>();
     const unplaced = () => comments.filter((comment) => !placed.has(comment));
     let cursor: string | undefined;
     for (let page = 0; page < REVIEW_DIFF_PAGES && unplaced().length > 0; page += 1) {
@@ -489,6 +491,7 @@ const make = Effect.gen(function* () {
           comment.startLine === undefined
             ? undefined
             : reviewPositionInPatch(diff.patch, comment.path, comment.startLine, side);
+        if (position !== null) lineShown.add(comment);
         if (position === null || start === null) continue;
         placed.set(comment, {
           path: comment.path,
@@ -502,8 +505,12 @@ const make = Effect.gen(function* () {
     }
     const missing = unplaced()[0];
     if (missing !== undefined) {
+      const missingLine =
+        missing.startLine !== undefined && lineShown.has(missing)
+          ? missing.startLine
+          : missing.line;
       return yield* new PullRequestForgeError({
-        detail: `${missing.path} line ${missing.startLine ?? missing.line} (${missing.side ?? "new"} side) is not in this PR's diff. Comment on a changed line or one shown around it.`,
+        detail: `${missing.path} line ${missingLine} (${missing.side ?? "new"} side) is not in this PR's diff. Comment on a changed line or one shown around it.`,
       });
     }
     return comments.map((comment) => placed.get(comment)!);

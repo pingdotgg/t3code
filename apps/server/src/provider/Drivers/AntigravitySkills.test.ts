@@ -81,8 +81,8 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       ];
       const expected = [];
       for (const [index, root] of roots.entries()) {
-        const name = `review-${index}`;
-        const description = `Review changes in root ${index}.`;
+        const name = index === 0 ? "2026" : `review-${index}`;
+        const description = index === 1 ? "1.0" : `Review changes in root ${index}.`;
         const skillPath = yield* writeSkill(
           path.join(root.directory, name),
           `---\nname: ${name}\ndescription: ${description}\n---\n# Review\n`,
@@ -115,8 +115,11 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       const input = { ...workspace, profileDirectory };
 
       assert.deepEqual(
-        (yield* discoverAntigravitySkills(input)).map((skill) => skill.name),
-        ["demo-skill"],
+        (yield* discoverAntigravitySkills(input)).map(({ name, displayName }) => ({
+          name,
+          displayName,
+        })),
+        [{ name: "demo-skill", displayName: "demo:demo-skill" }],
       );
     }),
   );

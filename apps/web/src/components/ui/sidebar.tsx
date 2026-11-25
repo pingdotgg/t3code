@@ -32,6 +32,7 @@ const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "calc(100vw - var(--spacing) * 3)";
 const SIDEBAR_WIDTH_ICON = "3rem";
 const SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH = 16 * 16;
+const SIDEBAR_COLLAPSE_DRAG_RATIO = 0.75;
 const SIDEBAR_TITLEBAR_CONTROL_SIZE = "max-sm:[--workspace-titlebar-control-size:--spacing(8)]";
 
 type SidebarContextProps = {
@@ -49,6 +50,7 @@ type SidebarContextProps = {
 };
 
 type SidebarResizableOptions = {
+  collapseOnResize?: boolean;
   maxWidth?: number;
   minWidth?: number;
   onResize?: (width: number) => void;
@@ -64,6 +66,7 @@ type SidebarResizableOptions = {
 };
 
 type SidebarResolvedResizableOptions = {
+  collapseOnResize: boolean;
   maxWidth: number;
   minWidth: number;
   onResize?: (width: number) => void;
@@ -271,6 +274,7 @@ function resolveSidebarResizable({
 
   const options = typeof resizable === "boolean" ? {} : resizable;
   return {
+    collapseOnResize: options.collapseOnResize ?? false,
     maxWidth: options.maxWidth ?? Number.POSITIVE_INFINITY,
     minWidth: options.minWidth ?? SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH,
     storageKey: options.storageKey ?? null,
@@ -422,6 +426,9 @@ function Sidebar({
           </div>
         </div>
       </div>
+      {offcanvasCollapsed && side === "left" && resolvedResizable?.collapseOnResize && (
+        <SidebarRestoreHandle options={resolvedResizable} />
+      )}
     </SidebarInstanceContext>
   );
 }
@@ -459,6 +466,110 @@ function clampSidebarWidth(width: number, options: SidebarResolvedResizableOptio
   return Math.max(options.minWidth, Math.min(width, options.maxWidth));
 }
 
+function commitSidebarWidth(
+  wrapper: HTMLElement,
+  options: SidebarResolvedResizableOptions,
+  width: number,
+) {
+  wrapper.style.setProperty("--sidebar-width", `${width}px`);
+  if (options.storageKey) {
+    try {
+      setLocalStorageItem(options.storageKey, width, Schema.Finite);
+    } catch (error) {
+      console.error("Could not persist sidebar width.", error);
+    }
+  }
+  options.onResize?.(width);
+}
+
+function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOptions }) {
+  const { setOpen } = useSidebar();
+  const gt = useGT();
+  const [near, setNear] = React.useState(false);
+  const suppressClick = React.useRef(false);
+  const resize = useResizeDrag<HTMLButtonElement>((event) => {
+    if (event.pointerType !== "mouse") return null;
+    const wrapper = event.currentTarget.closest<HTMLElement>('[data-slot="sidebar-wrapper"]');
+    const sidebar = wrapper?.querySelector<HTMLElement>('[data-slot="sidebar"][data-side="left"]');
+    const container = sidebar?.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
+    const gap = sidebar?.querySelector<HTMLElement>('[data-slot="sidebar-gap"]');
+    if (!wrapper || !container || !gap) return null;
+    let restorePending = false;
+    wrapper.dataset.sidebarDragState = "collapsed";
+    return {
+      width: 0,
+      edge: "right",
+      bounds: { min: 0, max: options.maxWidth },
+      cancelOnInterrupt: true,
+      resize(nextWidth) {
+        const shouldRestore = nextWidth >= 48;
+        if (shouldRestore !== restorePending) {
+          restorePending = shouldRestore;
+          wrapper.dataset.sidebarDragState = restorePending ? "expanded" : "collapsed";
+        }
+        const width = clampSidebarWidth(nextWidth, options);
+        container.style.left = restorePending ? "0px" : `${-width}px`;
+        for (const element of [container, gap]) {
+          element.style.width = `${restorePending || element === container ? width : 0}px`;
+          element.style.transitionDuration = "0ms";
+        }
+        return width;
+      },
+      finish(width, moved) {
+        suppressClick.current = moved;
+        if (moved && restorePending) {
+          commitSidebarWidth(wrapper, options, width);
+          setOpen(true);
+        }
+      },
+      cleanup() {
+        delete wrapper.dataset.sidebarDragState;
+        container.style.removeProperty("left");
+        for (const element of [container, gap]) {
+          element.style.removeProperty("width");
+          element.style.removeProperty("transition-duration");
+        }
+      },
+    };
+  });
+  const { ref: handleRef, ...drag } = resize;
+  return (
+    <div
+      className="fixed top-1/2 left-[8px] z-41 h-16 w-[16px] -translate-y-1/2 [-webkit-app-region:no-drag]"
+      data-slot="sidebar-restore-edge"
+      onPointerEnter={(event) => {
+        if (event.pointerType === "mouse") setNear(true);
+      }}
+      onPointerLeave={() => setNear(false)}
+    >
+      <button
+        aria-label={gt("Show sidebar")}
+        className={cn(
+          "absolute inset-0 cursor-e-resize before:absolute before:inset-y-0 before:left-0 before:w-1/2 before:rounded-md before:bg-sidebar-border",
+          !near && "opacity-0",
+        )}
+        data-slot="sidebar-restore-handle"
+        tabIndex={-1}
+        type="button"
+        ref={handleRef}
+        onPointerDown={drag.onPointerDown}
+        onPointerMove={drag.onPointerMove}
+        onPointerUp={drag.onPointerUp}
+        onPointerCancel={drag.onPointerCancel}
+        onLostPointerCapture={drag.onLostPointerCapture}
+        onClick={(event) => {
+          if (suppressClick.current) {
+            suppressClick.current = false;
+            return;
+          }
+          if (event.detail !== 0 && !near) return;
+          setOpen(true);
+        }}
+      />
+    </div>
+  );
+}
+
 function SidebarRail({
   className,
   onClick,
@@ -469,7 +580,7 @@ function SidebarRail({
   onPointerUp,
   ...props
 }: React.ComponentProps<"button">) {
-  const { open, toggleSidebar, onCollapse } = useSidebar();
+  const { open, setOpen, toggleSidebar, onCollapse } = useSidebar();
   const gt = useGT();
   const sidebarInstance = React.use(SidebarInstanceContext);
   const suppressClickRef = React.useRef(false);
@@ -489,6 +600,9 @@ function SidebarRail({
     if (!wrapper || !sidebarRoot || !sidebarContainer) return null;
 
     const side = sidebarInstance?.side ?? "left";
+    const canCollapse = open && side === "left" && options.collapseOnResize;
+    let collapsePending = false;
+    if (canCollapse) wrapper.dataset.sidebarDragState = "expanded";
     let width = clampSidebarWidth(sidebarContainer.getBoundingClientRect().width, options);
     // Write width only to gap/container during drag; inherited --sidebar-width restyles the whole app, so
     // update it at commit.
@@ -498,8 +612,13 @@ function SidebarRail({
     ].filter((element): element is HTMLElement => element !== null);
     const setTargetWidth = (value: number) => {
       widthTargets.forEach((element) => {
-        element.style.setProperty("width", `${value}px`);
+        element.style.setProperty(
+          "width",
+          `${collapsePending && element !== sidebarContainer ? 0 : value}px`,
+        );
       });
+      // Match the offcanvas left offset so releasing a drag cannot restart the slide.
+      if (canCollapse) sidebarContainer.style.left = collapsePending ? `${-value}px` : "0px";
     };
     widthTargets.forEach((element) => {
       element.style.setProperty("transition-duration", "0ms");
@@ -510,7 +629,14 @@ function SidebarRail({
       width,
       edge: side === "left" ? "right" : "left",
       bounds: { min: options.minWidth, max: options.maxWidth },
-      resize(nextWidth) {
+      cancelOnInterrupt: canCollapse,
+      resize(nextWidth, rawWidth) {
+        const shouldCollapse =
+          canCollapse && rawWidth < options.minWidth * (1 - SIDEBAR_COLLAPSE_DRAG_RATIO);
+        if (shouldCollapse !== collapsePending) {
+          collapsePending = shouldCollapse;
+          wrapper.dataset.sidebarDragState = collapsePending ? "collapsed" : "expanded";
+        }
         const accepted =
           options.shouldAcceptWidth?.({
             currentWidth: width,
@@ -521,24 +647,21 @@ function SidebarRail({
             wrapper,
           }) ?? true;
         if (accepted) {
-          setTargetWidth(nextWidth);
           width = nextWidth;
         }
+        setTargetWidth(width);
         return width;
       },
       finish(finalWidth, moved) {
-        wrapper.style.setProperty("--sidebar-width", `${finalWidth}px`);
         suppressClickRef.current = moved;
-        if (options.storageKey) {
-          try {
-            setLocalStorageItem(options.storageKey, finalWidth, Schema.Finite);
-          } catch (error) {
-            console.error("Could not persist sidebar width.", error);
-          }
-        }
-        options.onResize?.(finalWidth);
+        commitSidebarWidth(wrapper, options, finalWidth);
+        if (moved && collapsePending) setOpen(false);
       },
       cleanup() {
+        if (canCollapse) {
+          delete wrapper.dataset.sidebarDragState;
+          sidebarContainer.style.removeProperty("left");
+        }
         widthTargets.forEach((element) => {
           element.style.removeProperty("width");
           element.style.removeProperty("transition-duration");
@@ -576,55 +699,56 @@ function SidebarRail({
     toggleSidebar();
   };
 
+  const rail = (
+    <button
+      aria-label={railLabel}
+      className={cn(
+        /* A collapsed offcanvas rail overlaps the native scrollbar on Windows and Linux. */
+        "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
+        "[[data-panel-animations=true]_&]:transition-all [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
+        "touch-none",
+        canResize
+          ? "cursor-col-resize"
+          : "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize [[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
+        "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
+        "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
+        "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
+        className,
+      )}
+      data-sidebar="rail"
+      data-slot="sidebar-rail"
+      onClick={handleClick}
+      onLostPointerCapture={(event) => {
+        onLostPointerCapture?.(event);
+        if (!event.defaultPrevented) resize.onLostPointerCapture(event);
+      }}
+      onPointerCancel={(event) => {
+        onPointerCancel?.(event);
+        if (!event.defaultPrevented) resize.onPointerCancel(event);
+      }}
+      onPointerDown={(event) => {
+        onPointerDown?.(event);
+        if (!event.defaultPrevented) resize.onPointerDown(event);
+      }}
+      onPointerMove={(event) => {
+        onPointerMove?.(event);
+        if (!event.defaultPrevented) resize.onPointerMove(event);
+      }}
+      onPointerUp={(event) => {
+        onPointerUp?.(event);
+        if (!event.defaultPrevented) resize.onPointerUp(event);
+      }}
+      ref={railRef}
+      tabIndex={-1}
+      type="button"
+      {...props}
+    />
+  );
+  if (canResize && resolvedResizable.collapseOnResize) return rail;
+
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            aria-label={railLabel}
-            className={cn(
-              /* A collapsed offcanvas rail overlaps the native scrollbar on Windows and Linux. */
-              "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
-              "[[data-panel-animations=true]_&]:transition-all [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
-              "touch-none",
-              canResize
-                ? "cursor-col-resize"
-                : "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize [[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
-              "group-data-[collapsible=offcanvas]:translate-x-0 hover:group-data-[collapsible=offcanvas]:bg-sidebar group-data-[collapsible=offcanvas]:after:left-full",
-              "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
-              "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
-              className,
-            )}
-            data-sidebar="rail"
-            data-slot="sidebar-rail"
-            onClick={handleClick}
-            onLostPointerCapture={(event) => {
-              onLostPointerCapture?.(event);
-              if (!event.defaultPrevented) resize.onLostPointerCapture(event);
-            }}
-            onPointerCancel={(event) => {
-              onPointerCancel?.(event);
-              if (!event.defaultPrevented) resize.onPointerCancel(event);
-            }}
-            onPointerDown={(event) => {
-              onPointerDown?.(event);
-              if (!event.defaultPrevented) resize.onPointerDown(event);
-            }}
-            onPointerMove={(event) => {
-              onPointerMove?.(event);
-              if (!event.defaultPrevented) resize.onPointerMove(event);
-            }}
-            onPointerUp={(event) => {
-              onPointerUp?.(event);
-              if (!event.defaultPrevented) resize.onPointerUp(event);
-            }}
-            ref={railRef}
-            tabIndex={-1}
-            type="button"
-            {...props}
-          />
-        }
-      />
+      <TooltipTrigger render={rail} />
       <TooltipPopup side="right">{railTitle}</TooltipPopup>
     </Tooltip>
   );
