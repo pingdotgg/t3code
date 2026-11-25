@@ -500,6 +500,31 @@ describe("thread execution presentation", () => {
     ).toBeUndefined();
   });
 
+  it("does not label a send to a provider session that is already live as starting", () => {
+    const attemptId = RunAttemptId.make("attempt-second-send");
+    const secondRun = { ...run("run-second-send", 2, "running"), activeAttemptId: attemptId };
+    const liveSession = {
+      id: ProviderSessionId.make("session-live"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      providerInstanceId: secondRun.providerInstanceId,
+      status: "ready" as const,
+      cwd: "/repo",
+      model: null,
+      capabilities: {} as never,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    };
+
+    expect(
+      deriveThreadActivityRun({
+        ...v2Projection,
+        runs: [secondRun],
+        providerSessions: [liveSession],
+      })?.providerStartingLabel,
+    ).toBeUndefined();
+  });
+
   it("presents a held queue as the stopped run instead of queued work", () => {
     const interrupted = { ...run("run-interrupted", 1, "interrupted"), completedAt: now };
     const held = { ...run("run-held", 2, "queued"), queueHeld: true };
