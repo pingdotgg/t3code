@@ -3954,11 +3954,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (boundary.type === "nothing") {
               return piThreadSnapshot(state.providerThread);
             }
-            const forkEntryId = yield* piForkEntry(
-              boundary,
-              rollbackInput.providerThread.createdAt,
-              request({ type: "get_entries" }),
-            );
             return yield* Effect.acquireUseRelease(
               sessionEventPermit.withPermits(1)(
                 Effect.gen(function* () {
@@ -3984,9 +3979,45 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               ),
               (barrier) =>
                 Effect.gen(function* () {
-                  const forkData = yield* lifecycleRequest({ type: "fork", entryId: forkEntryId });
-                  if (recordField(forkData, "cancelled") === true)
-                    return yield* protocolError("A Pi extension cancelled the session fork");
+                  const currentFile = state.providerThread.nativeThreadRef?.nativeId;
+                  const sourceFile = boundary.turn.nativeThreadRef?.nativeId;
+                  let switchedTo: string | undefined;
+                  if (
+                    sourceFile != null &&
+                    (currentFile == null ||
+                      path.resolve(cwd, sourceFile) !== path.resolve(cwd, currentFile))
+                  ) {
+                    // Fork the old session before switching so a failed fork leaves the live session attached.
+                    switchedTo = yield* forkSessionIntoCwd(
+                      sourceFile,
+                      boundary,
+                      state.providerThread.createdAt,
+                    );
+                    const switched = yield* lifecycleRequest({
+                      type: "switch_session",
+                      sessionPath: switchedTo,
+                    }).pipe(
+                      Effect.onError(() =>
+                        Effect.sync(() => {
+                          threadState = null;
+                        }),
+                      ),
+                    );
+                    if (recordField(switched, "cancelled") === true)
+                      return yield* protocolError("A Pi extension cancelled the session switch");
+                  } else {
+                    const forkEntryId = yield* piForkEntry(
+                      boundary,
+                      state.providerThread.createdAt,
+                      request({ type: "get_entries" }),
+                    );
+                    const forkData = yield* lifecycleRequest({
+                      type: "fork",
+                      entryId: forkEntryId,
+                    });
+                    if (recordField(forkData, "cancelled") === true)
+                      return yield* protocolError("A Pi extension cancelled the session fork");
+                  }
                   const forkState = yield* request({ type: "get_state" }).pipe(
                     Effect.onError(() =>
                       Effect.sync(() => {
@@ -3998,6 +4029,15 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   if (forkSessionFile === undefined) {
                     threadState = null;
                     return yield* protocolError("Pi fork did not return a persisted session file");
+                  }
+                  if (
+                    switchedTo !== undefined &&
+                    path.resolve(cwd, forkSessionFile) !== path.resolve(cwd, switchedTo)
+                  ) {
+                    threadState = null;
+                    return yield* protocolError(
+                      "Pi rollback did not attach the forked session file",
+                    );
                   }
                   const entriesData = yield* request({ type: "get_entries" }).pipe(
                     Effect.orElseSucceed(() => undefined),
