@@ -26,7 +26,7 @@ import {
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useState, type MouseEvent } from "react";
+import { useRef, useState, type MouseEvent } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
@@ -43,6 +43,7 @@ import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 import { Button } from "../ui/button";
 import type { BoardCard } from "./threadBoard.logic";
+import { useLaneChangeAnimation } from "./useLaneChangeAnimation";
 
 // Labels and colors match the sidebar's thread status (SidebarThreadRow).
 const STATUS_PRESENTATION: Record<
@@ -125,6 +126,7 @@ export function BoardStatusLabel(props: { card: BoardCard }) {
 
 export function ThreadBoardCard(props: {
   card: BoardCard;
+  cardKey: string;
   selected: boolean;
   onOpen: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
@@ -132,6 +134,8 @@ export function ThreadBoardCard(props: {
   const m = useMessages();
   const { card } = props;
   const { thread } = card;
+  const articleRef = useRef<HTMLElement>(null);
+  useLaneChangeAnimation(articleRef, props.cardKey, card.lane);
   const pullRequest = resolveThreadCurrentPullRequestLink(thread.pullRequests);
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const pullRequestState =
@@ -145,6 +149,7 @@ export function ThreadBoardCard(props: {
 
   return (
     <article
+      ref={articleRef}
       className={cn(
         "relative flex flex-col gap-1.5 rounded-lg border bg-card px-3 py-2.5 shadow-xs/5 transition-colors has-[>button:hover]:border-foreground/20",
         props.selected && "border-primary ring-1 ring-primary ring-inset",
@@ -156,6 +161,7 @@ export function ThreadBoardCard(props: {
         onClick={props.onOpen}
         aria-label={gt("Open {title}", { title: thread.title })}
         aria-pressed={props.selected}
+        data-board-card={props.cardKey}
         className="absolute inset-0 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
       />
       <div className="pointer-events-none flex min-w-0 items-center gap-1.5">

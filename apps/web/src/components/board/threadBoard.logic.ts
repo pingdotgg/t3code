@@ -120,3 +120,43 @@ export function buildBoardSwimlanes<G extends BoardProjectGroup, C extends Board
 function compareActivity(a: BoardSwimlaneCard, b: BoardSwimlaneCard): number {
   return Date.parse(a.activityAt) - Date.parse(b.activityAt);
 }
+
+export type BoardArrowKey = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
+
+/**
+ * The card an arrow key moves to. The grid is swimlanes × lanes of card keys. Up and down walk
+ * one lane across swimlanes; left and right move to the nearest card of the next lane that has
+ * one in the same swimlane. Null when there is nowhere to go.
+ */
+export function resolveBoardArrowTarget(
+  grid: ReadonlyArray<ReadonlyArray<ReadonlyArray<string>>>,
+  current: string,
+  key: BoardArrowKey,
+): string | null {
+  for (const [row, lanes] of grid.entries()) {
+    for (const [lane, cards] of lanes.entries()) {
+      const index = cards.indexOf(current);
+      if (index === -1) continue;
+      if (key === "ArrowDown") {
+        if (index + 1 < cards.length) return cards[index + 1]!;
+        for (const next of grid.slice(row + 1)) if (next[lane]?.length) return next[lane][0]!;
+        return null;
+      }
+      if (key === "ArrowUp") {
+        if (index > 0) return cards[index - 1]!;
+        for (const previous of grid.slice(0, row).toReversed()) {
+          const column = previous[lane];
+          if (column?.length) return column[column.length - 1]!;
+        }
+        return null;
+      }
+      const step = key === "ArrowRight" ? 1 : -1;
+      for (let column = lane + step; column >= 0 && column < lanes.length; column += step) {
+        const target = lanes[column]!;
+        if (target.length > 0) return target[Math.min(index, target.length - 1)]!;
+      }
+      return null;
+    }
+  }
+  return null;
+}

@@ -1,10 +1,4 @@
-import {
-  ArrowLeftIcon,
-  ArrowRightIcon,
-  ChartNoAxesColumnIcon,
-  SettingsIcon,
-  SquareKanbanIcon,
-} from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
@@ -21,6 +15,7 @@ import {
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
+import { ThreadBoardFooterIcon } from "../board/ThreadBoardFooterIcon";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -294,7 +289,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         <>
           {threadBoardEnabled ? (
             <SidebarUtilityItem
-              icon={<SquareKanbanIcon />}
+              icon={<ThreadBoardFooterIcon />}
               label={gt("Board", { $context: "sidebar link to the thread board" })}
               onClick={handleBoardClick}
             />

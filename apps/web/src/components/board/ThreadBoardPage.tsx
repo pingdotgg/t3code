@@ -1,26 +1,34 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { ArrowLeftIcon, ChevronDownIcon, SearchIcon, SquareKanbanIcon } from "lucide-react";
-import { useEffect, useState, type MouseEvent } from "react";
+import {
+  ArrowLeftIcon,
+  ChevronDownIcon,
+  SearchIcon,
+  SquareKanbanIcon,
+  SquarePenIcon,
+} from "lucide-react";
+import { useEffect, useState, type KeyboardEvent, type MouseEvent } from "react";
 
 import { isElectron } from "~/env";
+import { openCommandPalette } from "../../commandPaletteBus";
 import { useSidebarProjectGroups } from "../../hooks/useSidebarProjectGroups";
 import { cn } from "../../lib/utils";
-import { useDelegatedUnderParent, useQuietThreadShells } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { filterSidebarV2VisibleThreads, useSnoozeWakeClock } from "../Sidebar.logic";
 import { useNavigateToMainApp } from "../sidebar/mainAppLocation";
 import { Button } from "../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { SidebarInset } from "../ui/sidebar";
 import { ThreadBoardCard } from "./ThreadBoardCard";
 import { ThreadBoardPeek } from "./ThreadBoardPeek";
+import { ThreadBoardUndoNotice } from "./ThreadBoardUndoNotice";
+import { useBoardCards } from "./useBoardCards";
 import {
   BOARD_LANES,
   buildBoardSwimlanes,
-  resolveBoardCard,
+  resolveBoardArrowTarget,
+  type BoardArrowKey,
   type BoardCard,
   type BoardLane,
 } from "./threadBoard.logic";
@@ -37,10 +45,8 @@ export function ThreadBoardPage() {
   const m = useMessages();
   const navigate = useNavigate();
   const navigateBack = useNavigateToMainApp();
-  const threads = useQuietThreadShells();
-  const delegatedUnderParent = useDelegatedUnderParent();
+  const boardCards = useBoardCards();
   const groups = useSidebarProjectGroups();
-  const clockMs = useSnoozeWakeClock(threads);
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [peekKey, setPeekKey] = useState<string | null>(null);
@@ -54,14 +60,10 @@ export function ThreadBoardPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [peekKey]);
 
-  const now = new Date(clockMs).toISOString();
   const needle = query.trim().toLowerCase();
-  const cards: BoardCard[] = [];
-  for (const thread of filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent)) {
-    if (needle && !thread.title.toLowerCase().includes(needle)) continue;
-    const card = resolveBoardCard(thread, now);
-    if (card !== null) cards.push(card);
-  }
+  const cards = needle
+    ? boardCards.filter((card) => card.thread.title.toLowerCase().includes(needle))
+    : boardCards;
   const swimlanes = buildBoardSwimlanes(groups, cards);
   // A thread that leaves the board (settled, snoozed, filtered out) closes its peek.
   const peekCard = cards.find((card) => cardKey(card) === peekKey) ?? null;
@@ -84,6 +86,29 @@ export function ThreadBoardPage() {
       return;
     }
     setPeekKey(peekKey === cardKey(card) ? null : cardKey(card));
+  };
+  const onBoardKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const current =
+      event.target instanceof HTMLElement ? event.target.dataset.boardCard : undefined;
+    if (current === undefined) return;
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      const card = cards.find((candidate) => cardKey(candidate) === current);
+      if (card) {
+        event.preventDefault();
+        openThread(card);
+      }
+      return;
+    }
+    if (!ARROW_KEYS.has(event.key)) return;
+    const grid = swimlanes
+      .filter(({ group }) => !collapsed.has(group.projectKey))
+      .map(({ lanes }) => BOARD_LANES.map((lane) => lanes[lane].map(cardKey)));
+    const target = resolveBoardArrowTarget(grid, current, event.key as BoardArrowKey);
+    if (target === null) return;
+    event.preventDefault();
+    event.currentTarget.querySelector<HTMLElement>(`[data-board-card="${target}"]`)?.focus();
+    // With the peek open, it follows the focused card.
+    if (peekKey !== null) setPeekKey(target);
   };
   const toggleCollapsed = (projectKey: string) => {
     const next = new Set(collapsed);
@@ -108,6 +133,14 @@ export function ThreadBoardPage() {
           >
             <ArrowLeftIcon />
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openCommandPalette({ open: "new-thread-in" })}
+          >
+            <SquarePenIcon aria-hidden />
+            <T>New thread</T>
+          </Button>
           <InputGroup className="min-w-0 flex-1">
             <InputGroupAddon>
               <SearchIcon aria-hidden />
@@ -125,6 +158,8 @@ export function ThreadBoardPage() {
           <SquareKanbanIcon aria-hidden className="size-4" />
           <T>Board</T>
         </h1>
+        <span className="flex-1" />
+        <ThreadBoardUndoNotice />
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -137,7 +172,11 @@ export function ThreadBoardPage() {
             onOpenThread={() => openThread(peekCard)}
           />
         ) : null}
-        <div className="min-h-0 flex-1 overflow-auto px-4 pb-6 scrollbar-gutter-both">
+        <div
+          data-board-scroll=""
+          onKeyDown={onBoardKeyDown}
+          className="min-h-0 flex-1 overflow-auto px-4 pb-6 scrollbar-gutter-both"
+        >
           {swimlanes.length === 0 ? (
             <p className="mx-auto mt-16 max-w-sm text-center text-sm text-muted-foreground">
               {needle ? (
@@ -215,6 +254,7 @@ export function ThreadBoardPage() {
                               <ThreadBoardCard
                                 key={card.thread.id}
                                 card={card}
+                                cardKey={cardKey(card)}
                                 selected={peekCard === card}
                                 onOpen={(event) => onCardOpen(card, event)}
                               />
@@ -233,5 +273,12 @@ export function ThreadBoardPage() {
     </SidebarInset>
   );
 }
+
+const ARROW_KEYS: ReadonlySet<string> = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+]);
 
 const cardKey = (card: BoardCard) => `${card.thread.environmentId}:${card.thread.id}`;

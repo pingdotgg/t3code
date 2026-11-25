@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { SidebarThreadStatus } from "../Sidebar.logic";
 import {
   buildBoardSwimlanes,
+  resolveBoardArrowTarget,
   resolveBoardLane,
   type BoardLane,
   type BoardSwimlaneCard,
@@ -83,5 +84,31 @@ describe("buildBoardSwimlanes", () => {
 
   it("drops cards whose project is not in any group", () => {
     expect(buildBoardSwimlanes([group("alpha")], [card("stray", "done", 1)])).toEqual([]);
+  });
+});
+
+describe("resolveBoardArrowTarget", () => {
+  // Two swimlanes; lanes are Needs you, Working, Done.
+  const grid = [
+    [["a1", "a2"], [], ["a3"]],
+    [["b1"], ["b2", "b3"], []],
+  ];
+
+  it("walks a lane down and up across swimlanes", () => {
+    expect(resolveBoardArrowTarget(grid, "a1", "ArrowDown")).toBe("a2");
+    expect(resolveBoardArrowTarget(grid, "a2", "ArrowDown")).toBe("b1");
+    expect(resolveBoardArrowTarget(grid, "b1", "ArrowUp")).toBe("a2");
+    expect(resolveBoardArrowTarget(grid, "b1", "ArrowDown")).toBeNull();
+  });
+
+  it("skips empty lanes sideways and keeps the row position when it can", () => {
+    expect(resolveBoardArrowTarget(grid, "a2", "ArrowRight")).toBe("a3");
+    expect(resolveBoardArrowTarget(grid, "a3", "ArrowLeft")).toBe("a1");
+    expect(resolveBoardArrowTarget(grid, "b1", "ArrowRight")).toBe("b2");
+    expect(resolveBoardArrowTarget(grid, "b3", "ArrowRight")).toBeNull();
+  });
+
+  it("returns null for a card that is not on the board", () => {
+    expect(resolveBoardArrowTarget(grid, "gone", "ArrowDown")).toBeNull();
   });
 });

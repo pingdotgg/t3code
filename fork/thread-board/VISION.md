@@ -97,13 +97,13 @@ None right now.
 
 ## Phases
 
-| #   | Phase               | Output                                                                                  | Status                      |
-| --- | ------------------- | --------------------------------------------------------------------------------------- | --------------------------- |
-| 0   | Vision and setup    | This doc, the fork, the T3 project                                                      | done                        |
-| 1   | UX prototype        | Clickable mock with fake threads: lanes, card anatomy, click and Ctrl-click flow        | done                        |
-| 2   | Data spike          | Map lanes, cards and the peek to real thread state in client-runtime                    | done                        |
-| 3   | Build               | Board behind a Labs toggle, in small steps (shell → lanes → cards → peek → live polish) | in progress: steps 1–3 done |
-| 4   | Upstream (optional) | Ideas discussion upstream with a demo                                                   | -                           |
+| #   | Phase               | Output                                                                                  | Status                     |
+| --- | ------------------- | --------------------------------------------------------------------------------------- | -------------------------- |
+| 0   | Vision and setup    | This doc, the fork, the T3 project                                                      | done                       |
+| 1   | UX prototype        | Clickable mock with fake threads: lanes, card anatomy, click and Ctrl-click flow        | done                       |
+| 2   | Data spike          | Map lanes, cards and the peek to real thread state in client-runtime                    | done                       |
+| 3   | Build               | Board behind a Labs toggle, in small steps (shell → lanes → cards → peek → live polish) | steps 1–4 done; see review |
+| 4   | Upstream (optional) | Ideas discussion upstream with a demo                                                   | -                          |
 
 ## Data map (phase 2)
 
@@ -181,6 +181,12 @@ Add new entries at the bottom: date, decision, reason.
   opens the thread. Upstream has no single "retry", "switch model" or "fix checks" action that
   works without the thread, so failed and limited cards show the error or reset time, and
   failing-checks cards offer "Open pull request". Follow-ups for those go through the peek.
+- **2026-11-25** For now the board's New thread button opens the usual "New thread in…" project
+  picker, which then opens the regular new-thread composer (leaving the board). Reason: a
+  new thread's defaults (model, permissions, worktree, `t3.json`) live in that flow; starting
+  one from the board without leaving it needs a server RPC or a copy of that logic.
+- **2026-11-25** No keyboard shortcut to open the board yet: keybinding commands live in the
+  contracts and the keybinding settings, a bigger upstream touch than the palette entry.
 - **2026-11-25** Data choices: request text comes from thread detail fetched only for Needs-you
   cards (server preview only if that proves costly); checks show running/failing without
   counts, failing names only when the PR is watched; the diff chip shows only with a PR (file

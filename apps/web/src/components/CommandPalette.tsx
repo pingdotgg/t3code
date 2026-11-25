@@ -80,6 +80,7 @@ import {
   PinIcon,
   PinOffIcon,
   PlugIcon,
+  SquareKanbanIcon,
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
@@ -479,6 +480,7 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const threadBoardEnabled = useClientSettings((settings) => settings.threadBoardEnabled);
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -1725,6 +1727,19 @@ function OpenCommandPaletteDialog(props: {
       icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/issues", search: readIssueListPreferences() });
+      },
+    });
+  }
+
+  if (threadBoardEnabled) {
+    actionItems.push({
+      kind: "action",
+      value: "action:thread-board",
+      searchTerms: ["board", "kanban", "lanes", "overview", "needs you", "triage"],
+      title: gt("Open board"),
+      icon: <SquareKanbanIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/board" });
       },
     });
   }
