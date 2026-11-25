@@ -29,6 +29,7 @@ import {
   groupWorkflowRuns,
   listedWorkflowRuns,
   workflowQuestionKinds,
+  workflowReferenceThreadId,
   workflowRunAskingKind,
   workflowRunAsksKind,
   workflowRunLists,
@@ -398,11 +399,7 @@ export function WorkflowRunsView({
                       node={node}
                       current={node.run.runId === currentRunId}
                       subjectOpen={
-                        shownTab !== null &&
-                        "kind" in shownTab &&
-                        node.run.runId === selectedRunId &&
-                        shownTab.kind === node.run.subject?.kind &&
-                        shownTab.key === node.run.subject.key
+                        node.run.runId === selectedRunId && subjectShows(node.run.subject, shownTab)
                       }
                       onSelect={openListed}
                       onOpenSubject={(subject) => onOpenReference(node.run.runId, subject)}
@@ -448,6 +445,14 @@ export function WorkflowRunsView({
       </div>
     </div>
   );
+}
+
+/** Whether `shown` is the subject's tab: a thread's is its transcript, as `onOpenReference` opens it. */
+function subjectShows(subject: WorkflowRunSubject | undefined, shown: WorkflowPaneTab | null) {
+  if (subject === undefined || shown === null) return false;
+  return "thread" in shown
+    ? shown.thread === workflowReferenceThreadId(subject)
+    : shown.kind === subject.kind && shown.key === subject.key;
 }
 
 /** A run in the thread list's own shape: which workflow, its state in a word, and what it is at. */

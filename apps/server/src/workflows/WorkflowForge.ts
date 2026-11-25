@@ -6,14 +6,16 @@ import {
   IssueListEntry,
   type IssueCreateResult,
   type IssueListState,
-  type IssueRef,
+  IssueRef,
   type PullRequestAction,
   type PullRequestDetail,
   PullRequestListEntry,
   type PullRequestListState,
   type PullRequestMergeMethod,
   type PullRequestRef,
+  PositiveInt,
   ProjectId,
+  TrimmedNonEmptyString,
   WorkflowReferenceKind,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -207,6 +209,18 @@ export type SubjectInput =
 const SUBJECT_EXAMPLE =
   "an issue or pull request a trigger or listing gave, { threadId }, or a web address";
 
+const decodeSubjectIssue = Schema.decodeUnknownOption(
+  Schema.Struct({ ...IssueRef.fields, host: TrimmedNonEmptyString }),
+);
+const decodeSubjectPullRequest = Schema.decodeUnknownOption(
+  Schema.Struct({
+    projectId: ProjectId,
+    host: TrimmedNonEmptyString,
+    repository: TrimmedNonEmptyString,
+    number: PositiveInt,
+  }),
+);
+
 const nonEmpty = (value: unknown): value is string =>
   typeof value === "string" && value.trim() !== "";
 
@@ -234,11 +248,25 @@ export const subjectReference = (what: string, subject: SubjectInput) => {
     ...("title" in subject && nonEmpty(subject.title) ? { title: subject.title } : {}),
     ...("url" in subject && nonEmpty(subject.url) ? { url: subject.url } : {}),
   };
+  // Decoded, not trusted: an item's own view finds its runs by project and host, so a subject
+  // kept without either would be a run that view never lists.
   if ("repository" in subject && "number" in subject) {
-    return pullRequestReferenceOf(subject, seen);
+    const pullRequest = Option.getOrUndefined(decodeSubjectPullRequest(subject));
+    if (pullRequest === undefined) {
+      throw new Error(
+        `${what} takes ${SUBJECT_EXAMPLE}; a pull request needs its projectId, host, repository and number.`,
+      );
+    }
+    return pullRequestReferenceOf(pullRequest, seen);
   }
   if ("tracker" in subject && "key" in subject) {
-    return { ...issueReference(subject), ...seen } satisfies ReferenceInput;
+    const issue = Option.getOrUndefined(decodeSubjectIssue(subject));
+    if (issue === undefined) {
+      throw new Error(
+        `${what} takes ${SUBJECT_EXAMPLE}; an issue needs its projectId, tracker, host, scope and key.`,
+      );
+    }
+    return { ...issueReference(issue), ...seen } satisfies ReferenceInput;
   }
   if ("threadId" in subject && nonEmpty(subject.threadId)) {
     return {

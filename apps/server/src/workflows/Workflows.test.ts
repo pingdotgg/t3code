@@ -2708,6 +2708,8 @@ it.effect.each(["finds the question open", "finds it after keeping itself"] as c
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a run says what it is about, and is found by it", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();
@@ -2779,6 +2781,15 @@ it.effect("a run says what it is about, and is found by it", () =>
         assert.throws(() => subject({ project: "/x", url: "https://x" } as never), /subject takes/);
         // Nothing can open a bare project, so it is no subject.
         assert.throws(() => subject({ projectId: "p1" } as never), /subject takes/);
+        // An item's own view knows its project and host, and could not match one kept without.
+        const { projectId: _projectId, ...unowned } = issue;
+        const { host: _host, ...unhosted } = issue;
+        assert.throws(() => subject(unowned as never), /projectId, tracker, host, scope and key/);
+        assert.throws(() => subject(unhosted as never), /projectId, tracker, host, scope and key/);
+        assert.throws(
+          () => subject({ projectId: "p1", repository: "acme/app", number: 7 } as never),
+          /projectId, host, repository and number/,
+        );
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

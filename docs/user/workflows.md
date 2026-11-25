@@ -109,7 +109,7 @@ The app asks for the reason before it sends a choice that requires one, and `t3 
 
 ## What a run is about
 
-A run can name the one thing it is about with `subject(...)`: an issue or pull request a trigger or listing gave it, `{ threadId }`, or a web address. Calling it again replaces the subject, and `start(workflow, payload, { key, subject })` gives a new run one from the start.
+A run can name the one thing it is about with `subject(...)`: an issue or pull request a trigger or listing gave it, `{ threadId }`, or a web address. Calling it again replaces the subject, and `start(workflow, payload, { key, subject })` gives a new run one from the start. A project cannot be a subject, and an issue or pull request built by hand needs its `projectId` and `host`.
 
 ```ts
 const { workflow, subject, Issue } = T3;

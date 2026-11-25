@@ -162,6 +162,12 @@ export const detailCut = (text: string) =>
     : text.slice(0, splitsSurrogatePair(text, DETAIL_KEPT) ? DETAIL_KEPT - 1 : DETAIL_KEPT);
 const SIGNAL_IDS_KEPT = Duration.days(7);
 const REFERENCE_TITLE_KEPT = 300;
+const SUBJECT_TITLE_KEPT = 200;
+const subjectTitle = (title: string) =>
+  title.slice(
+    0,
+    splitsSurrogatePair(title, SUBJECT_TITLE_KEPT) ? SUBJECT_TITLE_KEPT - 1 : SUBJECT_TITLE_KEPT,
+  );
 const idsKeptUntil = Effect.map(DateTime.now, (at) =>
   DateTime.formatIso(DateTime.addDuration(at, SIGNAL_IDS_KEPT)),
 );
@@ -441,6 +447,36 @@ export const make = Effect.gen(function* () {
   const waitColumns = sql`run_id, name, token, schema_json, request_json, watch_json, deadline, opened_at, woke_json`;
   const summaryColumns = sql`run_id, workflow, idempotency_key, version, engine_tag, title, status, detail, result_json, parent_run_id, parent_wait, pauses, held, tags_json, subject_json, started_at, updated_at, ended_at`;
 
+  /**
+   * A run's subject is also among what it touched: when a touch learns that thing's title or web
+   * address, the subject the lists show learns it too. A title it has is replaced only by another.
+   */
+  const subjectLearned = Effect.fn("WorkflowStore.subjectLearned")(function* (
+    runId: string,
+    reference: { readonly kind: string; readonly key: string },
+    title: string,
+    url: string | null,
+  ) {
+    const rows = yield* sql<{ readonly subject_json: string }>`
+      SELECT subject_json FROM workflow_runs
+      WHERE run_id = ${runId} AND subject_kind = ${reference.kind}
+        AND subject_key = ${reference.key}
+    `;
+    const row = rows[0];
+    if (row === undefined) return;
+    const held = subjectOf(row.subject_json);
+    const next = {
+      ...held,
+      title: title === "" ? held.title : subjectTitle(title),
+      url: held.url ?? url,
+    };
+    if (next.title === held.title && next.url === held.url) return;
+    yield* sql`
+      UPDATE workflow_runs SET subject_url = ${next.url}, subject_json = ${jsonText(next)}
+      WHERE run_id = ${runId}
+    `;
+  });
+
   const hub = yield* Effect.serviceOption(MilestoneHub.MilestoneHub);
   /** Tells the milestone hub of a transition this store just wrote, under an id stable for it. */
   const tell = Effect.fn("WorkflowStore.tell")(function* (
@@ -641,13 +677,17 @@ export const make = Effect.gen(function* () {
       );
     }),
     runSubject: Effect.fn("WorkflowStore.runSubject")(function* (runId, subject) {
-      const title = subject.title.slice(0, splitsSurrogatePair(subject.title, 200) ? 199 : 200);
+      // What a step already learned of it stands in for what the workflow did not say.
+      const known = (yield* sql<{ readonly title: string; readonly url: string | null }>`
+        SELECT title, url FROM workflow_run_references
+        WHERE run_id = ${runId} AND kind = ${subject.kind} AND key = ${subject.key}
+      `.pipe(Effect.orDie))[0];
       const kept = {
         kind: subject.kind,
         key: subject.key,
         address: subject.address,
-        title,
-        url: subject.url ?? null,
+        title: subjectTitle(subject.title === "" ? (known?.title ?? "") : subject.title),
+        url: subject.url ?? known?.url ?? null,
       } satisfies WorkflowRunSubject;
       yield* write(
         runId,
@@ -1273,6 +1313,7 @@ export const make = Effect.gen(function* () {
                   ${at}
                 )
               `;
+              yield* subjectLearned(runId, reference, title, reference.url ?? null);
               return true;
             }
             const steps = jsonValue(row.steps_json) as ReadonlyArray<string>;
@@ -1300,6 +1341,7 @@ export const make = Effect.gen(function* () {
                   state = ${next.state}, steps_json = ${next.steps_json}
               WHERE run_id = ${runId} AND kind = ${reference.kind} AND key = ${reference.key}
             `;
+            yield* subjectLearned(runId, reference, next.title, next.url);
             return true;
           }),
         )
