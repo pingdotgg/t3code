@@ -23,27 +23,24 @@ test(
       return null;
     });
 
-    try {
-      await screen.getByRole("button", "Toggle terminal drawer").tap();
-      const input = browser.locator(".t3-ghostty-input:not([data-workspace-focus-default])");
-      await expect(input).toHaveAttribute("aria-label", "Terminal input");
-      await browser.evaluate(() => {
-        document.querySelector(".t3-ghostty-input")!.setAttribute("data-original-terminal", "");
-        return null;
-      });
+    await screen.getByRole("button", "Toggle terminal drawer").tap();
+    const input = browser.locator(".t3-ghostty-input:not([data-workspace-focus-default])");
+    await expect(input).toHaveAttribute("aria-label", "Terminal input");
+    await browser.evaluate(() => {
+      document.querySelector(".t3-ghostty-input")!.setAttribute("data-original-terminal", "");
+      return null;
+    });
 
-      await screen.getByRole("button", "Settings", { exact: true }).tap();
-      await screen.getByLabel("Language", { exact: true }).tap();
-      await screen.getByText("日本語", { exact: true }).tap();
-      await screen.getByLabel("言語", { exact: true }).waitFor();
+    await screen.getByRole("button", "Settings", { exact: true }).tap();
+    await screen.getByLabel("Language", { exact: true }).tap();
+    await screen.getByText("日本語", { exact: true }).tap();
+    await screen.getByLabel("言語", { exact: true }).waitFor();
 
-      const originalInput = browser.locator(
-        ".t3-ghostty-input[data-original-terminal]:not([data-workspace-focus-default])",
-      );
-      await expect(originalInput).toHaveAttribute("aria-label", "ターミナルの入力");
-    } finally {
-      await browser.evaluate(() => window.dispatchEvent(new Event("release-terminal-font")));
-    }
+    const originalInput = browser.locator(
+      ".t3-ghostty-input[data-original-terminal]:not([data-workspace-focus-default])",
+    );
+    await expect(originalInput).toHaveAttribute("aria-label", "ターミナルの入力");
+    await browser.evaluate(() => window.dispatchEvent(new Event("release-terminal-font")));
 
     const readyInput = browser.locator(
       ".t3-ghostty-input[data-original-terminal][data-workspace-focus-default]",
