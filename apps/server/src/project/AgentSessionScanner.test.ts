@@ -2564,6 +2564,63 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         }),
     );
 
+    it.effect.each([
+      { name: "a newer transcript too large to finish", sizes: [63, 2], skipped: 1 },
+      {
+        name: "a transcript that only fits when each byte is read once",
+        sizes: [63.5],
+        skipped: 0,
+      },
+    ])("shares the Claude metadata budget across $name", ({ sizes, skipped }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-metadata-budget-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-metadata-budget-codex-");
+        const workspace = yield* makeTempDir("t3code-metadata-budget-workspace-");
+        // Sizes in MiB against the 64 MiB per-source budget; cwd follows the image.
+        const sessions = sizes.map((size, index) => ({ sessionId: `image-${index}`, size }));
+        for (const [index, { sessionId, size }] of [
+          ...sessions,
+          { sessionId: "older", size: 0 },
+        ].entries()) {
+          const image = {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              data: "A".repeat(size * 1024 * 1024),
+            },
+          };
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-budget", `${sessionId}.jsonl`),
+            contents: encodeTranscriptRecord({
+              type: "user",
+              sessionId,
+              message: {
+                role: "user",
+                content: [{ type: "text", text: "Review this" }, ...(size === 0 ? [] : [image])],
+              },
+              cwd: workspace,
+            }),
+            mtimeMs: nowMs - (index + 1) * 60_000,
+          });
+        }
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads.map((thread) => thread.providerSessionId)).toEqual([
+          ...sessions.slice(skipped).map(({ sessionId }) => sessionId),
+          "older",
+        ]);
+      }),
+    );
+
     it.effect("imports every transcript that fits the per-file record limit", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
