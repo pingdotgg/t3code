@@ -44,6 +44,7 @@
     "mobile:install": "node scripts/mobile-native-client.ts ensure",
     "mobile:audit": "node scripts/mobile-audit.ts",
     "mobile:behavior": "node scripts/mobile-behavior.ts",
+    "mobile:metrics": "node scripts/mobile-metrics.ts",
     "mobile:e2e": "node scripts/mobile-e2e.ts",
     "scenarios": "vp run --filter @t3tools/scripts scenarios",
     "scenarios:prove": "node scripts/prove-scenario.ts",
