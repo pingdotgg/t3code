@@ -3,6 +3,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   GitManagerError,
   ProjectId,
   EventId,
@@ -59,7 +60,7 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestResumingMessageAt">;
 
 function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
   return {
@@ -98,7 +99,7 @@ function shell(overrides: Partial<SettlementShell> = {}): SettlementShell {
     latestRunStartedAt: null,
     latestRunCompletedAt: null,
     latestUserMessageAt: null,
-    latestUserAuthoredMessageAt: overrides.latestUserMessageAt ?? null,
+    latestResumingMessageAt: overrides.latestUserMessageAt ?? null,
     createdAt: at(-30 * DAY_MS),
     updatedAt: at(-10 * DAY_MS),
     archivedAt: null,
@@ -396,10 +397,10 @@ describe("resolveAutoSettlementAt", () => {
     ).toEqual(shell().createdAt);
   });
 
-  it("settles on merge after agent-started runs, but not after the user writes again", () => {
+  it("settles on merge after automatic agent wakes, but not after the thread is resumed", () => {
     const woken = shell({
       latestUserMessageAt: at(-30 * 60 * 1_000),
-      latestUserAuthoredMessageAt: at(-2 * 60 * 60 * 1_000),
+      latestResumingMessageAt: at(-2 * 60 * 60 * 1_000),
       latestRunRequestedAt: at(-30 * 60 * 1_000),
       latestRunCompletedAt: at(-29 * 60 * 1_000),
     });
@@ -414,7 +415,7 @@ describe("resolveAutoSettlementAt", () => {
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
         ...input,
-        thread: { ...woken, latestUserAuthoredMessageAt: at(-30 * 60 * 1_000) },
+        thread: { ...woken, latestResumingMessageAt: at(-30 * 60 * 1_000) },
       }),
     ).toBeNull();
   });
@@ -653,12 +654,12 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       ]);
       return yield* (
         options.pullRequestSummary?.(input, readOptions) ??
-          Effect.succeed(
-            makePullRequestSummary({
-              ...input,
-              state: "open",
-            }),
-          )
+        Effect.succeed(
+          makePullRequestSummary({
+            ...input,
+            state: "open",
+          }),
+        )
       );
     });
 
@@ -1280,6 +1281,56 @@ describe("ThreadSettlementServiceV2 worker", () => {
           ]);
           expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
           expect(yield* Ref.get(fixture.summaryCalls)).toEqual([]);
+        }).pipe(Effect.provide(fixture.layer));
+      }).pipe(Effect.provide(projectionStoreSql)),
+  );
+
+  it.effect(
+    "settles a finished task delegated from a linked environment, which has no parent here",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const delegated: OrchestrationV2AppThread = {
+          ...appThread("delegated-here", null),
+          branch: "feature",
+          delegatedFrom: {
+            environmentId: EnvironmentId.make("environment-elsewhere"),
+            threadId: ThreadId.make("parent-elsewhere"),
+            title: "Parent",
+          },
+        };
+        const ordinary = { ...appThread("ordinary", null), branch: "feature" };
+        for (const thread of [delegated, ordinary]) {
+          yield* store.apply({
+            type: "thread.created",
+            id: EventId.make(`created:${thread.id}`),
+            threadId: thread.id,
+            occurredAt: thread.createdAt,
+            payload: thread,
+          });
+        }
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([]),
+          projections: store,
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+          },
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* service.drain;
+          expect(yield* Ref.get(fixture.commands)).toEqual([
+            expect.objectContaining({
+              type: "thread.auto-settle",
+              threadId: delegated.id,
+              snapshotAt: delegated.updatedAt,
+            }),
+          ]);
+          expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
         }).pipe(Effect.provide(fixture.layer));
       }).pipe(Effect.provide(projectionStoreSql)),
   );
@@ -2065,7 +2116,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         snapshot: makeSnapshot([
           makeThread("worked-after-merge", {
             branch: "merged-feature",
-            latestUserAuthoredMessageAt: DateTime.makeUnsafe("2026-08-28T06:00:00.000Z"),
+            latestResumingMessageAt: DateTime.makeUnsafe("2026-08-28T06:00:00.000Z"),
           }),
         ]),
         settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: null },
