@@ -862,7 +862,12 @@ export const layerWithOptions = (
           payload,
           onlyIf: isLatestOpen,
         });
-        if (yield* isLatestOpen) latestOpenGeneration.delete(key);
+        // Compare and clear in one step: a replacement may publish its generation if this fiber yields.
+        yield* Effect.sync(() => {
+          if (latestOpenGeneration.get(key) === input.entry.openGeneration) {
+            latestOpenGeneration.delete(key);
+          }
+        });
       });
 
       // A detach removes its thread before releasing, but that thread's records still need releasing.
