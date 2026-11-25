@@ -90,14 +90,12 @@ const withLivePresentation = (
   let current = created;
   const restamp = <S extends ServerProvider>(snapshot: S): S => {
     const next: { -readonly [K in keyof S]: S[K] } = { ...snapshot };
-    if (current.displayName !== created.displayName) {
-      const displayName = current.displayName || defaultSnapshotDisplayName;
-      if (displayName) next.displayName = displayName;
-      else delete next.displayName;
-    }
-    if (current.accentColor !== created.accentColor) {
-      if (current.accentColor) next.accentColor = current.accentColor;
-      else delete next.accentColor;
+    for (const key of ["displayName", "accentColor"] as const) {
+      const value = current[key];
+      if (value === created[key]) continue;
+      const stamped = value || (key === "displayName" ? defaultSnapshotDisplayName : undefined);
+      if (stamped) next[key] = stamped;
+      else delete next[key];
     }
     return next;
   };
