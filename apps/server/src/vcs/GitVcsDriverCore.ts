@@ -932,6 +932,37 @@ export function parseGitCheckoutProgressLine(
 
 const OUTPUT_LINE_SEPARATOR = /\r\n|\r|\n/;
 
+const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const lenientUtf8Decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const gb18030Decoder = new TextDecoder("gb18030", { ignoreBOM: true });
+
+const decodeUtf8OrGb18030 = (bytes: Uint8Array): string => {
+  try {
+    return strictUtf8Decoder.decode(bytes);
+  } catch {
+    const fallback = gb18030Decoder.decode(bytes);
+    return fallback.includes("\uFFFD") ? lenientUtf8Decoder.decode(bytes) : fallback;
+  }
+};
+
+// Git emits file bytes as stored; without a working-tree-encoding attribute, GBK/GB18030
+// sources are not UTF-8. Decode per line so one such file does not garble UTF-8 neighbours.
+const decodeGitText = (bytes: Uint8Array): string => {
+  try {
+    return strictUtf8Decoder.decode(bytes);
+  } catch {
+    let text = "";
+    let start = 0;
+    while (start < bytes.length) {
+      const newline = bytes.indexOf(0x0a, start);
+      const end = newline === -1 ? bytes.length : newline + 1;
+      text += decodeUtf8OrGb18030(bytes.subarray(start, end));
+      start = end;
+    }
+    return text;
+  }
+};
+
 const collectOutput = Effect.fnUntraced(function* (
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
   stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
@@ -940,10 +971,10 @@ const collectOutput = Effect.fnUntraced(function* (
   onLine: ((line: string) => Effect.Effect<void, never>) | undefined,
   keepLineCallbacksAfterTruncation = false,
 ): Effect.fn.Return<{ readonly text: string; readonly truncated: boolean }, GitCommandError> {
-  const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
   const lineDecoder = keepLineCallbacksAfterTruncation && onLine ? new TextDecoder() : null;
+  const lineStreamDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+  const chunks: Array<Uint8Array> = [];
   let bytes = 0;
-  let text = "";
   let lineBuffer = "";
   let truncated = false;
   // Bound newline-free output; oversized lines are not useful to callbacks.
@@ -995,10 +1026,11 @@ const collectOutput = Effect.fnUntraced(function* (
     bytes += chunkToDecode.byteLength;
     truncated = appendTruncationMarker && nextBytes > maxOutputBytes;
 
-    const decoded = decoder.decode(chunkToDecode, { stream: !truncated });
-    text += decoded;
+    chunks.push(chunkToDecode);
     if (onLine) {
-      lineBuffer += lineDecoder ? lineDecoder.decode(chunk, { stream: true }) : decoded;
+      lineBuffer += lineDecoder
+        ? lineDecoder.decode(chunk, { stream: true })
+        : lineStreamDecoder.decode(chunkToDecode, { stream: !truncated });
       yield* emitCompleteLines(false);
     }
   });
@@ -1014,15 +1046,13 @@ const collectOutput = Effect.fnUntraced(function* (
     }),
   );
 
-  const remainder = truncated ? "" : decoder.decode();
-  text += remainder;
   if (onLine) {
-    lineBuffer += remainder;
+    if (!truncated && !lineDecoder) lineBuffer += lineStreamDecoder.decode();
     if (lineDecoder) lineBuffer += lineDecoder.decode();
     yield* emitCompleteLines(true);
   }
   return {
-    text,
+    text: decodeGitText(Buffer.concat(chunks)),
     truncated,
   };
 });
@@ -5184,7 +5214,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (bytes.includes(0)) {
       return yield* fileError("fs.readFile", `Cannot expand binary file '${input.newPath}'.`);
     }
-    const contents = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+    const contents = decodeGitText(bytes);
     if (!contents.includes("$Id:")) return contents;
     const collapsed = contents.replace(GIT_IDENT_KEYWORD, () => "$Id$");
     if (collapsed === contents) return contents;
