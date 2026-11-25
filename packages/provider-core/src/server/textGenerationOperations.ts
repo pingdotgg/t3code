@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 
 import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@t3tools/contracts";
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
-import { extractJsonObject } from "@t3tools/shared/schemaJson";
+import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
 
 import type { ProviderTextGeneration } from "./textGeneration.ts";
 import {
@@ -64,7 +64,8 @@ export const decodeJsonReply = <S extends Schema.Top>(
   provider: string,
   text: string,
 ) => {
-  const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(request.outputSchema));
+  // Lenient JSON tolerates trailing commas and comments common in model replies.
+  const decodeOutput = Schema.decodeEffect(fromLenientJson(request.outputSchema));
   return decodeOutput(extractJsonObject(text)).pipe(
     Effect.mapError(
       (cause) =>

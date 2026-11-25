@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildThreadTitlePrompt } from "./textGenerationPrompts.ts";
+import { buildCommitMessagePrompt, buildThreadTitlePrompt } from "./textGenerationPrompts.ts";
 import { normalizeCliError } from "./textGenerationUtils.ts";
 
 describe("normalizeCliError", () => {
@@ -14,6 +14,17 @@ describe("normalizeCliError", () => {
 
     expect(result.detail).toBe("Failed to generate a commit message");
     expect(result.message).not.toContain("secret-token");
+  });
+});
+
+describe("buildCommitMessagePrompt", () => {
+  it("asks for a string body instead of null or an array", () => {
+    const { prompt } = buildCommitMessagePrompt({
+      branch: "feature/commit",
+      stagedSummary: "M file.ts",
+      stagedPatch: "diff",
+    });
+    expect(prompt).toContain('body must be a string; use "" when empty (not null or an array)');
   });
 });
 

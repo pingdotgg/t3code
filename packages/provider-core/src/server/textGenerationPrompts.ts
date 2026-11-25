@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { limitTitleMessage } from "./threadTitleContext.ts";
 import type { BranchNamingOptions, ChatAttachment } from "@t3tools/contracts";
 
@@ -8,6 +9,33 @@ import type { ReviewGuideStackLayer } from "./textGeneration.ts";
 import type { TextGenerationPolicy } from "@t3tools/provider-core/server/textGenerationPolicy";
 
 const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
+
+type CommitMessageBodyEncoded = string | null | ReadonlyArray<string | number | boolean>;
+
+// Providers without schema-constrained decoding (Cursor SDK) often emit null or a
+// bullet array for body. Normalize those to a string so commit generation still works.
+const CommitMessageBody = Schema.Union([
+  Schema.String,
+  Schema.Null,
+  Schema.Array(Schema.Union([Schema.String, Schema.Number, Schema.Boolean])),
+]).pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transform<string, CommitMessageBodyEncoded>({
+      decode: (value): string => {
+        if (value === null) {
+          return "";
+        }
+        if (typeof value === "string") {
+          return value;
+        }
+        return value.map((part) => `${part}`).join("\n");
+      },
+      encode: (value) => value,
+    }),
+  ),
+  Schema.withDecodingDefault(Effect.succeed("")),
+);
 
 function policyInstruction(
   instruction: string | undefined,
@@ -35,7 +63,7 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
       : "Return a JSON object with keys: subject, body.",
     "Rules:",
     "- subject must be imperative, <= 72 chars, and no trailing period",
-    "- body can be empty string or short bullet points",
+    '- body must be a string; use "" when empty (not null or an array)',
     ...(wantsBranch
       ? ["- branch must be a short semantic git branch fragment for this change"]
       : []),
@@ -56,7 +84,7 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
       prompt,
       outputSchema: Schema.Struct({
         subject: Schema.String,
-        body: Schema.String,
+        body: CommitMessageBody,
         branch: Schema.String,
       }),
     };
@@ -66,7 +94,7 @@ export function buildCommitMessagePrompt(input: CommitMessagePromptInput) {
     prompt,
     outputSchema: Schema.Struct({
       subject: Schema.String,
-      body: Schema.String,
+      body: CommitMessageBody,
     }),
   };
 }

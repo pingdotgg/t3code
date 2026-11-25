@@ -195,16 +195,14 @@ describe("CursorTextGeneration", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each([
-    { name: "invalid JSON", result: "Add a generated commit message" },
-    {
-      name: "a body with the wrong type",
-      result: '{"subject":"Add generated commit message","body":[]}',
-    },
-  ])("retries $name with a fresh agent before returning a commit message", ({ result }) =>
+  it.effect("retries invalid JSON with a fresh agent before returning a commit message", () =>
     Effect.gen(function* () {
       cursorSdkMock.prompt
-        .mockResolvedValueOnce({ id: "invalid-output", status: "finished", result })
+        .mockResolvedValueOnce({
+          id: "invalid-output",
+          status: "finished",
+          result: "Add a generated commit message",
+        })
         .mockImplementationOnce(async () => {
           expect(cursorSdkMock.close).toHaveBeenCalledOnce();
           return {
@@ -234,12 +232,52 @@ describe("CursorTextGeneration", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    {
+      name: "null body",
+      result: '{"subject":"Add generated commit message","body":null}',
+      body: "",
+    },
+    {
+      name: "bullet array body",
+      result: '{"subject":"Add generated commit message","body":["- verify cursor sdk"]}',
+      body: "- verify cursor sdk",
+    },
+    {
+      name: "omitted body",
+      result: '{"subject":"Add generated commit message"}',
+      body: "",
+    },
+  ])("accepts a commit message with $name without retrying", ({ result, body }) =>
+    Effect.gen(function* () {
+      cursorSdkMock.prompt.mockResolvedValueOnce({
+        id: "loose-body",
+        status: "finished",
+        result,
+      });
+      const generation = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+      const generated = yield* generation.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: null,
+        stagedSummary: "M file.ts",
+        stagedPatch: "diff",
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "auto"),
+      });
+
+      expect(generated.subject).toBe("Add generated commit message");
+      expect(generated.body).toBe(body);
+      expect(cursorSdkMock.prompt).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("stops after a second invalid reply and preserves the validation error", () =>
     Effect.gen(function* () {
       cursorSdkMock.prompt.mockResolvedValue({
         id: "invalid-output",
         status: "finished",
-        result: '{"subject":"Add generated commit message","body":null}',
+        result: '{"subject":42,"body":""}',
       });
       const generation = yield* makeCursorTextGeneration(cursorSettings, {
         CURSOR_API_KEY: "test-cursor-key",

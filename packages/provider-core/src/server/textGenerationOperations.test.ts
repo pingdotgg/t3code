@@ -26,3 +26,36 @@ it.effect("fails a thread title reply that is only the schema key", () =>
     assert.strictEqual(outcome.operation, "generateThreadTitle");
   }),
 );
+
+it.effect.each([
+  { name: "null body", reply: '{"subject":"Fix reconnect","body":null}', body: "" },
+  {
+    name: "bullet array body",
+    reply: '{"subject":"Fix reconnect","body":["- cover null body"]}',
+    body: "- cover null body",
+  },
+  { name: "omitted body", reply: '{"subject":"Fix reconnect"}', body: "" },
+  {
+    name: "trailing comma",
+    reply: '{"subject":"Fix reconnect","body":"",}',
+    body: "",
+  },
+])("accepts a commit message reply with $name", ({ reply, body }) =>
+  Effect.gen(function* () {
+    const textGeneration = fromRunner("Stub", (request) => decodeJsonReply(request, "Stub", reply));
+
+    const generated = yield* textGeneration.generateCommitMessage({
+      cwd: process.cwd(),
+      branch: "feature/commit",
+      stagedSummary: "M file.ts",
+      stagedPatch: "diff",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("cursor"),
+        model: "composer-2",
+      },
+    });
+
+    assert.strictEqual(generated.subject, "Fix reconnect");
+    assert.strictEqual(generated.body, body);
+  }),
+);
