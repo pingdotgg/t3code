@@ -97,7 +97,19 @@ it.live("Pi 1.6.0 projects, expands, and reads only allowed skills in a delegate
         },
       }),
     );
-    const { PATH } = yield* HostProcess.Environment;
+    const host = yield* HostProcess.Environment;
+    // Version-manager shims read the real HOME, so put the real pi and node first on PATH.
+    const realBinaryDirectories = yield* spawner.string(
+      ChildProcess.make(
+        "sh",
+        [
+          "-c",
+          'for tool in pi node; do path=$(mise which "$tool" 2>/dev/null || command -v "$tool") || exit; dirname "$path"; done',
+        ],
+        { env: host, extendEnv: false },
+      ),
+    );
+    const PATH = [...realBinaryDirectories.trim().split("\n"), host.PATH].join(":");
     const environment = { PATH, HOME: cwd, PI_CODING_AGENT_DIR: agentDir };
     const version = yield* spawner.string(
       ChildProcess.make("pi", ["--version"], { cwd, env: environment, extendEnv: false }),
