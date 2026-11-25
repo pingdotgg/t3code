@@ -88,9 +88,7 @@ it.layer(Layer.mergeAll(platform, ProcessRunner.layer.pipe(Layer.provide(platfor
         emit("before\r\n" + pending);
         yield* live;
 
-        const viewerInput = supportsSnapshotSequenceState
-          ? { ...input, supportsSnapshotSequenceState: true }
-          : input;
+        const viewerInput = { ...input, supportsSnapshotSequenceState };
         const joining = yield* Stream.toPull(
           viewer === "attach"
             ? manager.attachOutputStream({ ...viewerInput, maxHistoryBytes: budget }, "joining")
@@ -107,11 +105,7 @@ it.layer(Layer.mergeAll(platform, ProcessRunner.layer.pipe(Layer.provide(platfor
         if (decoded.type !== "snapshot") throw new Error("Expected a terminal snapshot");
         expect(decoded.snapshot.history).toBe(history);
         const omitted = decoded.snapshot.historySequenceState;
-        if (supportsSnapshotSequenceState) {
-          expect(omitted).toBeDefined();
-        } else {
-          expect(omitted).toBeUndefined();
-        }
+        expect(omitted !== undefined).toBe(supportsSnapshotSequenceState);
         const state = omitted ?? terminalSequenceStateAfter(0, decoded.snapshot.history);
 
         emit(tail + "ready");
