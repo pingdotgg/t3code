@@ -495,13 +495,18 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
     const gap = sidebar?.querySelector<HTMLElement>('[data-slot="sidebar-gap"]');
     if (!wrapper || !container || !gap) return null;
     let restorePending = false;
+    wrapper.dataset.sidebarDragState = "collapsed";
     return {
       width: 0,
       edge: "right",
       bounds: { min: 0, max: options.maxWidth },
       cancelOnInterrupt: true,
       resize(nextWidth) {
-        restorePending = nextWidth >= 48;
+        const shouldRestore = nextWidth >= 48;
+        if (shouldRestore !== restorePending) {
+          restorePending = shouldRestore;
+          wrapper.dataset.sidebarDragState = restorePending ? "expanded" : "collapsed";
+        }
         const width = clampSidebarWidth(nextWidth, options);
         container.style.left = "0px";
         container.style.translate = restorePending ? "0px" : "-100%";
@@ -519,6 +524,7 @@ function SidebarRestoreHandle({ options }: { options: SidebarResolvedResizableOp
         }
       },
       cleanup() {
+        delete wrapper.dataset.sidebarDragState;
         container.style.removeProperty("left");
         container.style.removeProperty("translate");
         for (const element of [container, gap]) {
@@ -598,6 +604,7 @@ function SidebarRail({
     const side = sidebarInstance?.side ?? "left";
     const canCollapse = open && side === "left" && options.collapseOnResize;
     let collapsePending = false;
+    if (canCollapse) wrapper.dataset.sidebarDragState = "expanded";
     let width = clampSidebarWidth(sidebarContainer.getBoundingClientRect().width, options);
     // Write width only to gap/container during drag; inherited --sidebar-width restyles the whole app, so
     // update it at commit.
@@ -625,8 +632,12 @@ function SidebarRail({
       bounds: { min: options.minWidth, max: options.maxWidth },
       cancelOnInterrupt: canCollapse,
       resize(nextWidth, rawWidth) {
-        collapsePending =
+        const shouldCollapse =
           canCollapse && rawWidth < options.minWidth * (1 - SIDEBAR_COLLAPSE_DRAG_RATIO);
+        if (shouldCollapse !== collapsePending) {
+          collapsePending = shouldCollapse;
+          wrapper.dataset.sidebarDragState = collapsePending ? "collapsed" : "expanded";
+        }
         const accepted =
           options.shouldAcceptWidth?.({
             currentWidth: width,
@@ -648,7 +659,10 @@ function SidebarRail({
         if (moved && collapsePending) setOpen(false);
       },
       cleanup() {
-        if (canCollapse) sidebarContainer.style.removeProperty("translate");
+        if (canCollapse) {
+          delete wrapper.dataset.sidebarDragState;
+          sidebarContainer.style.removeProperty("translate");
+        }
         widthTargets.forEach((element) => {
           element.style.removeProperty("width");
           element.style.removeProperty("transition-duration");
