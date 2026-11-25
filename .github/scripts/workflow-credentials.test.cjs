@@ -226,16 +226,122 @@ test("the Vite+ toolchain is cached before the job installs or runs project code
   assert.ok(names.every((step) => !step.uses.startsWith("actions/cache@")));
 });
 
-const consumeScript = steps(jobs("workflows/mobile-eas-preview-fork.yml").preview)
-  .find((step) => step.startsWith("id: consume\n"))
-  .split(/^ {10}script: \|\n/m)[1]
-  .replace(/^ {12}/gm, "");
-const consume = new (Object.getPrototypeOf(async () => {}).constructor)(
-  "github",
-  "context",
-  "core",
-  consumeScript,
-);
+const forkPreview = jobs("workflows/mobile-eas-preview-fork.yml");
+const forkPreviewScript = (id) =>
+  new (Object.getPrototypeOf(async () => {}).constructor)(
+    "github",
+    "context",
+    "core",
+    steps(forkPreview.request)
+      .find((step) => step.startsWith(`id: ${id}\n`))
+      .split(/^ {10}script: \|\n/m)[1]
+      .split(/^ {0,11}\S/m)[0]
+      .replace(/^ {12}/gm, ""),
+  );
+const consume = forkPreviewScript("consume");
+const pin = forkPreviewScript("pin");
+const forkPreviewEnvironment = /^ {10}ENVIRONMENT: (\S+)$/m.exec(forkPreview.request)[1];
+
+test("a fork preview is requested by a job that reads no secrets and checks out nothing", () => {
+  const { request } = forkPreview;
+  assert.doesNotMatch(request, /secrets\.|actions\/checkout|^ {4}environment:/m);
+  assert.ok(!runsProjectCode(request), "request runs project code");
+  assert.match(request, /^ {6}sha: \$\{\{ steps\.pin\.outputs\.sha \}\}$/m);
+  const pinStep = steps(request).find((step) => step.startsWith("id: pin\n"));
+  assert.match(pinStep, /^ {8}if: steps\.consume\.outputs\.consumed == 'true'$/m);
+});
+
+test("every fork preview job that reads a secret or runs the PR's code waits in the environment and builds the requested commit", () => {
+  const { request: _request, comment, ...gated } = forkPreview;
+  assert.deepEqual(Object.keys(gated), ["preview", "android-build", "ios-build"]);
+  for (const [name, block] of Object.entries(gated)) {
+    assert.match(block, /^ {4}needs: (?:request|\[request, preview\])$/m, name);
+    assert.ok(
+      block.includes(`\n    environment:\n      name: ${forkPreviewEnvironment}\n`),
+      `${name} waits in ${forkPreviewEnvironment}`,
+    );
+    assert.doesNotMatch(block, /github\.event\.pull_request\.head/, name);
+    const refs = Array.from(block.matchAll(/^ {10}ref: (.+)$/gm), (match) => match[1]);
+    assert.deepEqual(refs, ["${{ needs.request.outputs.sha }}"], name);
+    const jobSteps = steps(block);
+    assert.match(jobSteps[0], /^name: Confirm the PR is still open\n/, name);
+    assert.ok(jobSteps.findIndex((step) => /secrets\.|actions\/checkout/.test(step)) > 0, name);
+  }
+  assert.match(gated.preview, /^ {4}if: needs\.request\.outputs\.sha != ''$/m);
+  assert.doesNotMatch(comment, /secrets\.|^ +ref: |github\.event\.pull_request\.head/m);
+});
+
+async function runPin(environment, sha = "a".repeat(40)) {
+  const outputs = {};
+  const written = { comments: [], summary: "", failed: "" };
+  await pin(
+    {
+      async request(route, params) {
+        assert.equal(route, "GET /repos/{owner}/{repo}/environments/{environment_name}");
+        assert.equal(params.environment_name, forkPreviewEnvironment);
+        if (!environment) throw Object.assign(new Error("missing"), { status: 404 });
+        return { data: environment };
+      },
+      rest: { issues: { createComment: async ({ body }) => written.comments.push(body) } },
+    },
+    {
+      repo: { owner: "example", repo: "app" },
+      serverUrl: "https://github.example",
+      runId: 99,
+      payload: { sender: { login: "labeler" }, pull_request: { number: 7, head: { sha } } },
+    },
+    {
+      setFailed: (message) => (written.failed = message),
+      setOutput: (name, value) => (outputs[name] = value),
+      summary: {
+        addRaw(text) {
+          written.summary += text;
+          return this;
+        },
+        async write() {},
+      },
+    },
+  );
+  return { outputs, ...written };
+}
+
+test("a fork preview request names the commit where the reviewer reads it", async () => {
+  process.env.ENVIRONMENT = forkPreviewEnvironment;
+  const sha = "a".repeat(40);
+  const reviewers = { type: "required_reviewers", reviewers: [{ type: "Team" }] };
+  const named = await runPin({ protection_rules: [{ type: "branch_policy" }, reviewers] });
+  assert.deepEqual(named.outputs, { sha });
+  assert.equal(named.failed, "");
+  assert.deepEqual(named.comments, [named.summary]);
+  assert.ok(named.summary.includes(`https://github.example/example/app/pull/7/commits/${sha}`));
+  assert.ok(named.summary.includes("https://github.example/example/app/actions/runs/99"));
+  // Quoted, or YAML would end the title at the " #".
+  assert.match(
+    read("workflows/mobile-eas-preview-fork.yml"),
+    /^run-name: "\$\{\{ .*format\('Mobile preview of #\{0\} at \{1\}', github\.event\.pull_request\.number, github\.event\.pull_request\.head\.sha\) \|\| '' \}\}"$/m,
+  );
+});
+
+test("a fork preview request builds nothing unless the environment has required reviewers", async () => {
+  process.env.ENVIRONMENT = forkPreviewEnvironment;
+  for (const environment of [
+    undefined,
+    {},
+    { protection_rules: [] },
+    { protection_rules: [{ type: "branch_policy" }, { type: "wait_timer", wait_timer: 5 }] },
+    { protection_rules: [{ type: "required_reviewers", reviewers: [] }] },
+  ]) {
+    const refused = await runPin(environment);
+    assert.deepEqual([refused.outputs, refused.comments, refused.summary], [{}, [], ""]);
+    assert.match(refused.failed, /no required reviewers/);
+  }
+  const noCommit = await runPin(
+    { protection_rules: [{ type: "required_reviewers", reviewers: [{ type: "User" }] }] },
+    "main",
+  );
+  assert.deepEqual([noCommit.outputs, noCommit.comments], [{}, []]);
+  assert.match(noCommit.failed, /no head commit/);
+});
 
 async function runConsume(permission, removeStatus, removed = []) {
   const outputs = {};

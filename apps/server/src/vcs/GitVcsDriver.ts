@@ -883,7 +883,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     }
 
     const ignoredPaths = new Set<string>();
-    const chunks = chunkPathsForGitCheckIgnore(relativePaths);
+    // ./ avoids leading : pathspec magic; check-ignore rejects --literal-pathspecs.
+    const chunks = chunkPathsForGitCheckIgnore(
+      relativePaths.map((relativePath) => `./${relativePath}`),
+    );
 
     for (const chunk of chunks) {
       const result = yield* gitCommand(
@@ -911,7 +914,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }
 
       for (const ignoredPath of splitNullSeparatedGitStdoutPaths(result)) {
-        ignoredPaths.add(ignoredPath);
+        ignoredPaths.add(ignoredPath.slice(2));
       }
     }
 
@@ -1347,7 +1350,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         { discard: true },
       );
 
-      yield* Effect.gen(function* () {
+      const range = yield* Effect.gen(function* () {
         const sparseConfig = yield* execute({
           operation,
           cwd: input.cwd,
@@ -1702,31 +1705,51 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
+        // Read once: it is both where a branch switch is replayed from and the turn's range.
+        const previousCheckpointRef = input.previousCheckpointRef;
+        const previous =
+          previousCheckpointRef === undefined
+            ? null
+            : yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: [
+                  "-c",
+                  "log.showSignature=false",
+                  "log",
+                  "--no-walk",
+                  "--format=%H %T %ct %P%n%B",
+                  `${previousCheckpointRef}^{commit}`,
+                ],
+                allowNonZeroExit: true,
+              }).pipe(
+                Effect.map((result) => {
+                  if (result.exitCode !== 0) return null;
+                  const [commit = "", tree = "", capturedAt = "", head = ""] = result.stdout
+                    .slice(0, result.stdout.indexOf("\n"))
+                    .split(" ");
+                  return commit === "" || tree === ""
+                    ? null
+                    : { commit, tree, capturedAt, head, message: result.stdout };
+                }),
+                Effect.catch((cause) =>
+                  Effect.logWarning("previous checkpoint lookup failed", {
+                    cwd: input.cwd,
+                    checkpointRef: previousCheckpointRef,
+                    errorTag: cause._tag,
+                  }).pipe(Effect.as(null)),
+                ),
+              );
+
         // Switching branches rewrites files the turn never wrote, and only HEAD's reflog tells a
         // switch from a reset. The trailer marks where that reflog stood for the next checkpoint.
         const turnStart =
-          headMark === undefined || input.previousCheckpointRef === undefined
+          headMark === undefined || previous === null
             ? null
             : yield* Effect.gen(function* () {
-                const previous = yield* execute({
-                  operation,
-                  cwd: input.cwd,
-                  args: [
-                    "-c",
-                    "log.showSignature=false",
-                    "log",
-                    "--no-walk",
-                    "--format=%H %T %ct %P%n%B",
-                    `${input.previousCheckpointRef}^{commit}`,
-                  ],
-                  allowNonZeroExit: true,
-                });
-                if (previous.exitCode !== 0) return null;
-                const [commit = "", tree = "", capturedAt = "", previousHead = ""] = previous.stdout
-                  .slice(0, previous.stdout.indexOf("\n"))
-                  .split(" ");
+                const { commit, tree, capturedAt, head: previousHead } = previous;
                 const [, markedAt, markedCount] =
-                  HEAD_MARK_TRAILER_PATTERN.exec(previous.stdout) ?? [];
+                  HEAD_MARK_TRAILER_PATTERN.exec(previous.message) ?? [];
                 const oldestMarked = headMoves.findLastIndex((move) => move.at === markedAt);
                 // -1 when the scan ended inside the marked second, so the count cannot be placed.
                 const since =
@@ -1818,7 +1841,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                   // listAuthoredPaths reads commits newer than the start as the turn's own.
                   env: { ...commitEnv, GIT_COMMITTER_DATE: `${capturedAt} +0000` },
                 });
-                return startCommit.stdout.trim() || null;
+                const startOid = startCommit.stdout.trim();
+                return startOid === "" ? null : { commit: startOid, tree: startTree, landedOn };
               }).pipe(
                 Effect.catch((cause) =>
                   Effect.logWarning("checkpoint branch switch turn start failed", {
@@ -1832,6 +1856,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         const message = `t3 checkpoint ref=${input.checkpointRef}${
           headMark === undefined ? "" : `\n\n${HEAD_MARK_TRAILER}: ${headMark}`
         }`;
+        // Git before 2.31 leaves `head` unread; a range names the parent the commit got.
+        const parentHead =
+          !headExists || head !== undefined
+            ? (head ?? "")
+            : previous === null
+              ? ""
+              : ((yield* resolveHeadCommit(input.cwd)) ?? "");
         // HEAD is the first parent so listAuthoredPaths can see how HEAD moved between checkpoints.
         const commitTreeResult = yield* execute({
           operation,
@@ -1840,8 +1871,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ...durableWrite,
             "commit-tree",
             treeOid,
-            ...(headExists ? ["-p", head ?? "HEAD"] : []),
-            ...(turnStart === null ? [] : ["-p", turnStart]),
+            ...(headExists ? ["-p", parentHead || "HEAD"] : []),
+            ...(turnStart === null ? [] : ["-p", turnStart.commit]),
             "-m",
             message,
           ],
@@ -1961,6 +1992,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             before,
           });
         }
+        if (previous === null) return null;
+        // A turn start is committed at the previous checkpoint's time, after `landedOn`.
+        return {
+          from: turnStart?.commit ?? previous.commit,
+          to: commitOid,
+          fromCapturedAt: previous.capturedAt,
+          startHead: turnStart?.landedOn ?? previous.head,
+          endHead: parentHead,
+          unchanged: treeOid === (turnStart?.tree ?? previous.tree),
+        } satisfies VcsDriver.VcsCheckpointRange;
       }).pipe(Effect.ensuring(cleanupTempIndex));
 
       // The tree records only each submodule's HEAD, so submodules keep their own ref.
@@ -1969,7 +2010,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         (yield* fileSystem
           .exists(path.join(topLevel, ".gitmodules"))
           .pipe(Effect.orElseSucceed(() => true)));
-      if (!hasSubmodules) return;
+      if (!hasSubmodules) return range;
       // A submodule that cannot be captured drops its ref, so restore leaves it alone.
       yield* listSubmodules(input.cwd).pipe(
         Effect.flatMap((submodules) =>
@@ -1996,6 +2037,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           Effect.logWarning("submodule checkpoint capture failed", { cwd: input.cwd, cause }),
         ),
       );
+      return range;
     }, Effect.scoped),
 
     resolveCleanHead: Effect.fn("GitVcsDriver.checkpoints.resolveCleanHead")(function* (cwd) {
@@ -2319,8 +2361,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       });
 
       const diffExclusions = excludedPathspecs(input.excludePaths);
-      let fromRevision = yield* resolveTurnStart(input);
-      if (input.fallbackFromToHead === true) {
+      let fromRevision = input.range?.from ?? (yield* resolveTurnStart(input));
+      if (input.fallbackFromToHead === true && input.range === undefined) {
         const resolvedFromCommit = yield* resolveCheckpointCommit(
           input.cwd,
           input.fromCheckpointRef,
@@ -2358,7 +2400,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           ...PATCH_RENDER_PREFIX_ARGS,
           ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
           `${fromRevision}^{commit}`,
-          `${input.toCheckpointRef}^{commit}`,
+          `${input.range?.to ?? input.toCheckpointRef}^{commit}`,
           // Paths are repository-relative, while cwd can be a subdirectory.
           ...(input.filePaths
             ? ["--", ...input.filePaths.map((file) => `:(top,literal)${file}`), ...diffExclusions]
@@ -2386,21 +2428,33 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
     listAuthoredPaths: Effect.fn("GitVcsDriver.checkpoints.listAuthoredPaths")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.listAuthoredPaths";
-      const turnStart = yield* resolveTurnStart(input);
-      const heads = yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: [
-          "log",
-          "--no-walk=unsorted",
-          "--format=%ct %P",
-          `${turnStart}^{commit}`,
-          `${input.toCheckpointRef}^{commit}`,
-        ],
-      });
-      const [fromLine = "", toLine = ""] = heads.stdout.trimEnd().split("\n");
-      const [capturedAt = "", startHead = ""] = fromLine.split(" ");
-      const [, endHead = ""] = toLine.split(" ");
+      const { turnStart, to, capturedAt, startHead, endHead } =
+        input.range === undefined
+          ? yield* Effect.gen(function* () {
+              const turnStart = yield* resolveTurnStart(input);
+              const heads = yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: [
+                  "log",
+                  "--no-walk=unsorted",
+                  "--format=%ct %P",
+                  `${turnStart}^{commit}`,
+                  `${input.toCheckpointRef}^{commit}`,
+                ],
+              });
+              const [fromLine = "", toLine = ""] = heads.stdout.trimEnd().split("\n");
+              const [capturedAt = "", startHead = ""] = fromLine.split(" ");
+              const [, endHead = ""] = toLine.split(" ");
+              return { turnStart, to: input.toCheckpointRef, capturedAt, startHead, endHead };
+            })
+          : {
+              turnStart: input.range.from,
+              to: input.range.to,
+              capturedAt: input.range.fromCapturedAt,
+              startHead: input.range.startHead,
+              endHead: input.range.endHead,
+            };
       if (startHead === "" || endHead === "" || startHead === endHead) {
         return null;
       }
@@ -2580,7 +2634,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         [
           listLines(["rev-list", `--max-age=${capturedAt}`, `${startHead}..${endHead}`]),
           listPaths(["diff", startHead, `${turnStart}^{commit}`]),
-          listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
+          listPaths(["diff", endHead, `${to}^{commit}`]),
           listCommitPaths([`${endHead}..${startHead}`]),
         ],
         { concurrency: "unbounded" },

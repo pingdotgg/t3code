@@ -155,6 +155,32 @@ it.effect.each([
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("filterIgnoredPaths treats leading-colon paths literally and preserves ./ prefixes", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-filter-ignored-pathspec-",
+    });
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    yield* runGit(cwd, ["init"]);
+    yield* fileSystem.writeFileString(
+      path.join(cwd, ".gitignore"),
+      ":ignored\nshadow\nplain.log\n",
+    );
+
+    const kept = yield* driver.filterIgnoredPaths(cwd, [
+      ":ignored",
+      ":shadow",
+      ":(foo)",
+      "keep.ts",
+      "plain.log",
+      "./plain.log",
+    ]);
+    assert.deepEqual(kept, [":shadow", ":(foo)", "keep.ts"]);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 // Forking the server for every git call stalls its event loop in proportion to its RSS.
 it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
   "runs git from the process launcher instead of forking the server",
@@ -821,9 +847,25 @@ it.effect.each([
     change: ({ git, checkpointRef }: UntrackedBlobChange) =>
       git(["update-ref", "-d", checkpointRef]).pipe(Effect.andThen(git(["prune", "--expire=now"]))),
   },
+  ...(HostProcess.Platform.defaultValue() === "win32"
+    ? []
+    : [
+        {
+          name: "it became ignored under a name that looks like a git pathspec",
+          file: ":large.txt",
+          reuses: false,
+          change: ({ write }: UntrackedBlobChange) => write(".gitignore", ":large.txt\n"),
+        },
+        {
+          name: "its name looks like git pathspec magic",
+          file: ":(magic)",
+          reuses: true,
+          change: () => Effect.void,
+        },
+      ]),
 ])(
   "checkpoint capture skips hashing an untracked file only while a fresh hash would match: $name",
-  ({ reuses, change, during }) =>
+  ({ file = "nested/large.txt", reuses, change, during }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -851,7 +893,7 @@ it.effect.each([
       const write = (relativePath: string, contents: string) =>
         fs.writeFileString(path.join(cwd, relativePath), contents);
       yield* fs.makeDirectory(path.join(cwd, "nested"));
-      yield* write("nested/large.txt", "line\r\n".repeat(3 * 1024 * 1024));
+      yield* write(file, "line\r\n".repeat(3 * 1024 * 1024));
       // Only files left alone for a few seconds before a capture are remembered.
       yield* TestClock.adjust("36500 days");
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
