@@ -10,7 +10,7 @@ import {
   type ScopedProjectRef,
 } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { act, render } from "../../test/render";
+import { act, fakeTimers, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { dispatchCommandPalette } from "../commandPaletteStore";
@@ -22,11 +22,15 @@ const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
   waitForProject: vi.fn<(ref: ScopedProjectRef) => Promise<EnvironmentProject | undefined>>(),
+  projectCommand: vi.fn<() => Promise<{ _tag: "Success"; value: { projectId: string } }>>(),
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
   scopes.sourceControl = sourceControl;
   scopes.waitForProject.mockReset().mockResolvedValue(undefined);
+  scopes.projectCommand
+    .mockReset()
+    .mockResolvedValue({ _tag: "Success", value: { projectId: "project-cloned" } });
 };
 const githubAvailable = {
   versionControlSystems: [],
@@ -81,7 +85,7 @@ vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestU
 vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
 vi.mock("../state/use-atom-command", () => ({
   // The add-project destination step starts a clone and follows its project id.
-  useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
+  useAtomCommand: () => scopes.projectCommand,
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   // Doubles as the add-project folder scan, which finds nothing to track.
@@ -230,6 +234,48 @@ it.each(["dismissed", "backed out of", "timed out"] as const)(
       expect(draftStore.getDraftSession(draftId)?.projectId).toBe(firstRef.projectId);
     }
     expect(draftStore.getComposerDraft(draftId)?.prompt).toBe("Keep this draft");
+  },
+);
+
+it.each(["replaced", "expired"] as const)(
+  "resubmits a folder when its earlier add was %s",
+  async (outcome) => {
+    setup();
+    const result = { _tag: "Success" as const, value: { projectId: "created" } };
+    const reply = Promise.withResolvers<typeof result>();
+    scopes.projectCommand.mockReturnValueOnce(reply.promise);
+    scopes.waitForProject.mockRejectedValue(new Error("Project has not reached this client."));
+    const draftId = DraftId.make(`resubmitted-folder-add-${outcome}`);
+    const folder = `/workspace/${draftId}`;
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+    const openAdd = () => act(() => openCommandPalette({ open: "add-project", draftId }));
+    const submitFolder = async () => {
+      await page.getByText("Local folder", { exact: true }).click();
+      await page.getByRole("combobox").fill(folder);
+      await userEvent.keyboard("{Enter}");
+    };
+    await openAdd();
+    await submitFolder();
+    expect(scopes.projectCommand).toHaveBeenCalledTimes(1);
+
+    if (outcome === "replaced") {
+      await page.getByRole("combobox").fill("");
+      await submitFolder();
+      expect(scopes.projectCommand).toHaveBeenCalledTimes(1);
+      await act(() => reply.resolve(result));
+      await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+      expect(scopes.waitForProject).toHaveBeenCalledTimes(1);
+    } else {
+      {
+        using _timers = fakeTimers();
+        await act(() => reply.resolve(result));
+        await act(() => vi.advanceTimersByTime(60_000));
+      }
+      await expect.element(page.getByRole("combobox")).not.toBeInTheDocument();
+      await openAdd();
+      await submitFolder();
+      expect(scopes.projectCommand).toHaveBeenCalledTimes(2);
+    }
   },
 );
 

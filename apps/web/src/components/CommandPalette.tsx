@@ -338,16 +338,34 @@ function openIntentView(
 
 const NEW_THREAD_NO_PROJECT_VALUE = "new-thread-in:no-project";
 
-const pendingFolderProjects = new Map<string, ScopedProjectRef>();
+const FOLDER_PROJECT_SYNC_TIMEOUT_MS = 60_000;
+const pendingFolderProjects = new Map<string, Promise<ScopedProjectRef | null>>();
 
-function rememberFolderProject(key: string, ref: ScopedProjectRef): void {
-  if (readProject(ref) !== null) return;
-  pendingFolderProjects.set(key, ref);
-  const unsubscribe = subscribeProject(ref, (project) => {
-    if (project === null) return;
-    if (pendingFolderProjects.get(key) === ref) pendingFolderProjects.delete(key);
-    unsubscribe();
-  });
+function startFolderProject(
+  key: string,
+  create: () => Promise<ScopedProjectRef | null>,
+): Promise<ScopedProjectRef | null> {
+  const pending = Promise.resolve().then(create);
+  pendingFolderProjects.set(key, pending);
+  const forget = () => {
+    if (pendingFolderProjects.get(key) === pending) pendingFolderProjects.delete(key);
+  };
+  void pending.then((ref) => {
+    if (ref === null || readProject(ref) !== null) {
+      forget();
+      return;
+    }
+    const release = () => {
+      window.clearTimeout(timeout);
+      unsubscribe();
+      forget();
+    };
+    const timeout = window.setTimeout(release, FOLDER_PROJECT_SYNC_TIMEOUT_MS);
+    const unsubscribe = subscribeProject(ref, (project) => {
+      if (project !== null) release();
+    });
+  }, forget);
+  return pending;
 }
 
 export function CommandPalette({ children }: { children: ReactNode }) {
@@ -2162,36 +2180,41 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     await runProjectAdd(async (ownsStep) => {
-      let projectRef = pendingProject;
-      if (projectRef === undefined) {
-        const projectId = newProjectId();
-        const createResult = await createProject({
-          environmentId: input.environmentId,
-          input: {
-            projectId,
-            title: inferProjectTitleFromPath(cwd),
-            workspaceRoot: cwd,
-            createWorkspaceRootIfMissing: true,
-            defaultModelSelection: null,
-          },
-        });
-        if (createResult._tag === "Failure") {
-          if (ownsStep() && !isAtomCommandInterrupted(createResult)) {
-            const error = squashAtomCommandFailure(createResult);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: gt("Failed to add project"),
-                description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
-              }),
-            );
+      const pending =
+        pendingProject ??
+        startFolderProject(folderKey, async () => {
+          const projectId = newProjectId();
+          const createResult = await createProject({
+            environmentId: input.environmentId,
+            input: {
+              projectId,
+              title: inferProjectTitleFromPath(cwd),
+              workspaceRoot: cwd,
+              createWorkspaceRootIfMissing: true,
+              defaultModelSelection: null,
+            },
+          });
+          if (createResult._tag === "Failure") {
+            if (isAtomCommandInterrupted(createResult)) return null;
+            throw squashAtomCommandFailure(createResult);
           }
-          return;
-        }
-        projectRef = scopeProjectRef(input.environmentId, projectId);
-        rememberFolderProject(folderKey, projectRef);
+          return scopeProjectRef(input.environmentId, projectId);
+        });
+      const created = await settlePromise(() => pending);
+      if (!ownsStep()) return;
+      if (created._tag === "Failure") {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: gt("Failed to add project"),
+            description:
+              thrownErrorMessage(squashAtomCommandFailure(created), m) ?? gt("An error occurred."),
+          }),
+        );
+        return;
       }
-
+      const projectRef = created.value;
+      if (projectRef === null) return;
       const navigationResult = await settlePromise(() => openAddedProject(projectRef, ownsStep));
       if (!ownsStep()) return;
       if (navigationResult._tag === "Failure") {
