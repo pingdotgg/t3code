@@ -3889,8 +3889,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Effect.gen(function* () {
         const terminalId = input.terminalId;
         const session = yield* requireSession(input.threadId, terminalId);
+        // The PTY can finish an in-flight control sequence after scrollback is cleared.
         session.history.clear();
-        session.pendingHistoryControlSequence = "";
         session.pendingProcessEvents = [];
         session.pendingProcessEventIndex = 0;
         session.processEventDrainRunning = false;
