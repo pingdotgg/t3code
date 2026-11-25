@@ -107,6 +107,9 @@ export const layer: Layer.Layer<
       }
 
       const capturedAt = yield* DateTime.now;
+      // The run's checkpoints are taken where it ran: the thread's scope follows its latest root run
+      // and may name another worktree by now. Runs recorded without a workspace use the scope's.
+      const runScope = run.workspaceCwd === undefined ? scope : { ...scope, cwd: run.workspaceCwd };
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const isPreserved = (ordinalWithinScope: number) =>
         preservedCheckpointOrdinals.includes(ordinalWithinScope);
@@ -114,7 +117,7 @@ export const layer: Layer.Layer<
       // thread's scope may already be a later run's: one queued meanwhile, or sent after Stop.
       const materializeBaseline = (ordinalWithinScope: number) =>
         checkpoints.materializeBaselineCheckpoint({
-          scope,
+          scope: runScope,
           ordinalWithinScope,
           nodeId: rootNode.id,
           capturedAt: run.requestedAt,
@@ -129,7 +132,7 @@ export const layer: Layer.Layer<
       const nested =
         repositoryScopes.length === 0
           ? undefined
-          : yield* checkpoints.nestedScopePaths([scope, ...repositoryScopes]);
+          : yield* checkpoints.nestedScopePaths([runScope, ...repositoryScopes]);
       const excluded = (target: OrchestrationV2CheckpointScope) => {
         const excludePaths = nested?.get(target.id);
         return excludePaths === undefined ? {} : { excludePaths };
@@ -137,14 +140,14 @@ export const layer: Layer.Layer<
       // Each scope is checked on its own, so a retried capture fills only what is missing.
       const captureRoot = Effect.gen(function* () {
         // Materializing a baseline waits on the folder's lock before the capture does.
-        const capturesBeforeLock = yield* checkpoints.capturesSoFar(scope.cwd);
+        const capturesBeforeLock = yield* checkpoints.capturesSoFar(runScope.cwd);
         const threadStartCheckpoint =
           baselineOrdinalWithinScope === 0 || isPreserved(0) ? null : yield* materializeBaseline(0);
         const baselineCheckpoint = isPreserved(baselineOrdinalWithinScope)
           ? null
           : yield* materializeBaseline(baselineOrdinalWithinScope);
         const checkpoint = yield* checkpoints.capture({
-          scope,
+          scope: runScope,
           runId: run.id,
           nodeId: rootNode.id,
           ordinalWithinScope: run.ordinal,
@@ -152,7 +155,7 @@ export const layer: Layer.Layer<
           capturedAt,
           forceMissing: sideChat,
           capturesBeforeLock,
-          ...excluded(scope),
+          ...excluded(runScope),
         });
         return { threadStartCheckpoint, baselineCheckpoint, checkpoint };
       });
