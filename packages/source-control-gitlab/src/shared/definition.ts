@@ -22,7 +22,10 @@ const CHANGE_REQUEST_REFERENCE =
 // Self-managed GitLab runs on any hostname and nests projects in groups.
 const CHANGE_REQUEST_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u;
 const COMMIT_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/commit\/([0-9a-f]+)\/?$/iu;
-const ISSUE_PATH = /^\/([^/]+(?:\/[^/]+)+)\/-\/(?:issues|work_items)\/(\d+)(?:\/|$)/u;
+// An incident is an issue that GitLab also serves at `/-/issues/incident/<iid>`. No project is
+// below `/groups/`: a work item there is the group's own, such as an epic.
+const ISSUE_PATH =
+  /^\/(?!groups\/)([^/]+(?:\/[^/]+)+)\/-\/(?:issues(?:\/incident)?|work_items)\/(\d+)(?:\/|$)/u;
 // Every GitLab page inside a project sits below its first `/-/`.
 const REPOSITORY_PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/-\//u;
 
