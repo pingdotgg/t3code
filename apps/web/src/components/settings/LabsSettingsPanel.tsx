@@ -91,7 +91,7 @@ function BoringSidebarMultilineRow() {
       {...searchableSetting("boring-sidebar-multiline")}
       className="px-0 py-2 sm:px-0"
       description={gt(
-        "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
+        "Show folder threads on two lines: the title, then the items you place on the sidebar thread card in Appearance.",
       )}
       control={
         <Switch
