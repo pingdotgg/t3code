@@ -191,7 +191,8 @@ function ProjectIconPickerBody({
                 setQuery("");
               }}
             />
-            <ScrollArea scrollFade className="max-h-64">
+            {/* Fixed height so the centered dialog, and the focused search above, stay put as results change. */}
+            <ScrollArea scrollFade className="h-64">
               <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
                 {icons.map((name) => (
                   <button
@@ -210,12 +211,12 @@ function ProjectIconPickerBody({
                   </button>
                 ))}
               </div>
+              {icons.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  <T>No icons found.</T>
+                </p>
+              ) : null}
             </ScrollArea>
-            {icons.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                <T>No icons found.</T>
-              </p>
-            ) : null}
           </>
         ) : mode === "monogram" ? (
           <div className="flex items-center gap-4 py-2">
