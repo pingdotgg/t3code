@@ -178,5 +178,15 @@
     "file": "apps/web/src/keybindings.test.ts",
     "test": "toggles the thread panel by default without taking terminal keystrokes",
     "reason": "fails on upstream v0.1.11 too"
+  },
+  {
+    "file": "apps/server/src/vcs/GitVcsDriverCore.test.ts",
+    "test": "runs background Git in its own lane so user commands never queue behind it",
+    "reason": "Upstream v0.1.12 also observes three background commands instead of six on this macOS runner."
+  },
+  {
+    "file": "apps/web/src/components/chat/ExpandedImageDialog.browser.test.tsx",
+    "test": "scrolling pans the image while Ctrl+wheel zooms around the pointer",
+    "reason": "Upstream v0.1.12 Chromium also reports vertical movement on a horizontal wheel step."
   }
 ]
