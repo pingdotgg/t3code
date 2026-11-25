@@ -7,6 +7,7 @@ import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import * as Predicate from "effect/Predicate";
 import {
   ProviderDriverKind,
+  ProviderSetupError,
   type ChatAttachment,
   type ModelSelection,
   type OrchestrationV2ExecutionNode,
@@ -547,7 +548,40 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         return Effect.succeed({ skills, commands: data.commands });
       };
-      const allowedSkills = new Map<string, string>();
+      const verifySkillInventory = Effect.fnUntraced(function* (connection: PiRpcConnection) {
+        if (deniedNames.size === 0) return;
+        const inventory = yield* connection
+          .request({ type: "get_commands" }, PI_REQUEST_TIMEOUT_MS)
+          .pipe(
+            Effect.mapError((cause) =>
+              protocolError(`Could not verify Pi skills for the deny list: ${cause.message}`),
+            ),
+          );
+        const { skills, commands } = yield* parseSkillInventory(inventory, "verify");
+        const denied = skills.find((skill) => deniedNames.has(skill.name));
+        if (denied !== undefined) {
+          const detail = `Pi loaded denied skill '${denied.name}' from '${denied.path}'`;
+          return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: PI_PROVIDER,
+            detail,
+            cause: new ProviderSetupError({
+              instanceId: options.instanceId,
+              operation: "verify_skill_deny_list",
+              detail,
+            }),
+          });
+        }
+        if (
+          !commands.some(
+            (command) =>
+              command.source === "extension" && command.name === PI_T3_SERVICE_TIER_COMMAND,
+          )
+        ) {
+          return yield* protocolError(
+            "Pi did not load the T3 extension required by the skill deny list",
+          );
+        }
+      });
       let skillPolicy: PiSkillLaunchPolicy | undefined;
       if (deniedNames.size > 0) {
         const commands = yield* readPiCommandsForCwd(
@@ -563,11 +597,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           ),
         );
         const { skills } = yield* parseSkillInventory(commands, "discover");
+        const allowedPaths: string[] = [];
         const deniedRoots = new Set<string>();
         const deniedFiles = new Set<string>();
         for (const skill of skills) {
           if (!deniedNames.has(skill.name)) {
-            allowedSkills.set(skill.name, skill.path);
+            allowedPaths.push(skill.path);
             continue;
           }
           const root = path.dirname(skill.path);
@@ -584,7 +619,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           deniedFiles.add(realFile);
         }
         skillPolicy = {
-          allowedPaths: [...allowedSkills.values()],
+          allowedPaths,
           denied: {
             deniedNames: [...deniedNames],
             deniedRoots: [...deniedRoots],
@@ -663,32 +698,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             cwd,
             env: launch.env,
           });
-          if (skillPolicy !== undefined) {
-            const inventory = yield* connection
-              .request({ type: "get_commands" }, PI_REQUEST_TIMEOUT_MS)
-              .pipe(
-                Effect.mapError((cause) =>
-                  protocolError(`Could not verify Pi skills for the deny list: ${cause.message}`),
-                ),
-              );
-            const { skills, commands } = yield* parseSkillInventory(inventory, "verify");
-            if (
-              skills.length !== allowedSkills.size ||
-              skills.some((skill) => allowedSkills.get(skill.name) !== skill.path)
-            ) {
-              return yield* protocolError("Pi did not load the expected skill allowlist");
-            }
-            if (
-              !commands.some(
-                (command) =>
-                  command.source === "extension" && command.name === PI_T3_SERVICE_TIER_COMMAND,
-              )
-            ) {
-              return yield* protocolError(
-                "Pi did not load the T3 extension required by the skill deny list",
-              );
-            }
-          }
+          yield* verifySkillInventory(connection);
           // Its tools carry T3CODE_THREAD_ID, so port discovery must scan while Pi runs.
           const trackAgent = host.trackAgent;
           if (trackAgent !== undefined) {
@@ -3517,6 +3527,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             ? null
             : requestedTier;
         if (serviceTier !== null || serviceTierMayBeSet) {
+          yield* verifySkillInventory(connection);
           serviceTierMayBeSet = true;
           const result = yield* request({
             type: "prompt",
@@ -3727,8 +3738,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             };
             // Lock only install/send/start events; correlated setup must leave the pump free for dialogs.
             while (true) {
+              const turnConnection = connection;
+              yield* verifySkillInventory(turnConnection);
               const pendingAck = yield* Effect.gen(function* () {
                 if (
+                  connection !== turnConnection ||
                   threadState !== state ||
                   registrationInProgress ||
                   state.activeTurn !== null ||
@@ -3841,11 +3855,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     steerInput.message.attachments,
                   )
                 : null;
+            const steerConnection = connection;
+            yield* verifySkillInventory(steerConnection);
             // prompt with steer atomically queues or starts; fire-and-forget under the permit avoids dialog deadlocks.
             // /compact uses its RPC, which aborts the agent first.
             yield* sessionEventPermit.withPermits(1)(
               Effect.gen(function* () {
-                if (threadState?.activeTurn !== turn) {
+                if (connection !== steerConnection || threadState?.activeTurn !== turn) {
                   return yield* protocolError(`Pi turn ${steerInput.providerTurnId} is not active`);
                 }
                 if (compactCommand !== null) {

@@ -289,10 +289,10 @@ export function buildPiRpcLaunch(input: {
 } {
   const hasT3Extension = input.disableExtensions !== true && input.extensionPath !== undefined;
   const hasT3Mcp = hasT3Extension && input.mcpSession !== undefined;
-  const disableExtensions = input.disableExtensions === true || input.skillPolicy !== undefined;
-  const extensionSafeArgs = disableExtensions
-    ? withoutExplicitExtensions(input.launchArgs)
-    : input.launchArgs;
+  const extensionSafeArgs =
+    input.disableExtensions === true
+      ? withoutExplicitExtensions(input.launchArgs)
+      : input.launchArgs;
   const launchArgs =
     input.disableTools === true ? withoutToolSelectionArgs(extensionSafeArgs) : extensionSafeArgs;
   const args = [
@@ -306,7 +306,7 @@ export function buildPiRpcLaunch(input: {
     ...launchArgs,
     ...(input.shortLived === true && !launchArgs.includes("--offline") ? ["--offline"] : []),
     // Restrictions must follow launch args so user flags cannot re-enable unattended tools/extensions.
-    ...(disableExtensions ? ["--no-extensions"] : []),
+    ...(input.disableExtensions === true ? ["--no-extensions"] : []),
     ...(input.skillPolicy === undefined
       ? []
       : ["--no-skills", ...input.skillPolicy.allowedPaths.flatMap((path) => ["--skill", path])]),

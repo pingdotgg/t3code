@@ -28,15 +28,12 @@ it.live("Pi 1.6.0 projects, expands, and reads only allowed skills in a delegate
     const agentDir = `${cwd}/agent`;
     const allowed = `${agentDir}/extension-skills/allowed/SKILL.md`;
     const denied = `${agentDir}/skills/denied/SKILL.md`;
-    const extensionDenied = `${agentDir}/extension-skills/extension-denied/SKILL.md`;
     const symlink = `${cwd}/linked-skill.md`;
     const allowedMarker = "FIXTURE_ALLOWED_BODY_7235";
     const deniedMarker = "FIXTURE_DENIED_BODY_1864";
-    const extensionMarker = "FIXTURE_EXTENSION_BODY_4913";
     for (const [path, name, marker] of [
       [allowed, "allowed", allowedMarker],
       [denied, "denied", deniedMarker],
-      [extensionDenied, "extension-denied", extensionMarker],
     ] as const) {
       yield* fs.makeDirectory(path.slice(0, path.lastIndexOf("/")), { recursive: true });
       yield* fs.writeFileString(
@@ -49,7 +46,8 @@ it.live("Pi 1.6.0 projects, expands, and reads only allowed skills in a delegate
     yield* fs.writeFileString(
       `${agentDir}/extensions/fixture.ts`,
       `export default function (pi) {
-      pi.on("resources_discover", () => ({ skillPaths: ${JSON.stringify([allowed, extensionDenied])} }));
+      pi.on("resources_discover", () => ({ skillPaths: ${JSON.stringify([allowed])} }));
+      pi.registerCommand("fixture-extension", { handler: async () => {} });
     }`,
     );
 
@@ -58,7 +56,7 @@ it.live("Pi 1.6.0 projects, expands, and reads only allowed skills in a delegate
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         providerRequests.push(yield* request.text);
-        const toolCalls = [denied, symlink, extensionDenied, allowed].map((path, index) => ({
+        const toolCalls = [denied, symlink, allowed].map((path, index) => ({
           index,
           id: `call_fixture_${index}`,
           type: "function",
@@ -135,26 +133,39 @@ it.live("Pi 1.6.0 projects, expands, and reads only allowed skills in a delegate
         },
         environment,
       });
-      yield* adapter.openSession({
-        threadId: ThreadId.make("delegated-pi"),
-        providerSessionId: ProviderSessionId.make("delegated-pi"),
-        modelSelection: { instanceId, model: "fixture/test" },
-        runtimePolicy: {
-          cwd,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          deniedSkills: ["denied", "extension-denied"],
-        },
-      });
+      const openSession = (sessionId: string, deniedSkills: ReadonlyArray<string>) =>
+        adapter.openSession({
+          threadId: ThreadId.make(sessionId),
+          providerSessionId: ProviderSessionId.make(sessionId),
+          modelSelection: { instanceId, model: "fixture/test" },
+          runtimePolicy: {
+            cwd,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            deniedSkills,
+          },
+        });
+      yield* openSession("delegated-pi", ["denied"]);
+      const error = yield* Effect.flip(
+        openSession("delegated-pi-denied-extension-skill", ["allowed"]),
+      );
+      assert.include(error.message, "denied skill 'allowed'");
+      assert.include(error.message, allowed);
+      assert.deepEqual(providerRequests, []);
     }).pipe(
       Effect.scoped,
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner),
     );
     const [delegatedLaunch] = delegatedLaunches;
     if (delegatedLaunch === undefined) return yield* Effect.die("Missing delegated Pi launch");
-    assert.include(delegatedLaunch.env.T3_PI_SKILL_POLICY ?? "", extensionDenied);
     const rpc = yield* makePiRpcConnection(delegatedLaunch);
-    const { skills } = parsePiDiscoveredCommands(yield* rpc.request({ type: "get_commands" }));
+    const { skills, slashCommands } = parsePiDiscoveredCommands(
+      yield* rpc.request({ type: "get_commands" }),
+    );
+    assert.include(
+      slashCommands.map((command) => command.name),
+      "fixture-extension",
+    );
     assert.deepEqual(
       skills.map((skill) => skill.name),
       ["allowed"],
@@ -171,13 +182,12 @@ it.live("Pi 1.6.0 projects, expands, and reads only allowed skills in a delegate
     assert.equal(providerRequests.length, 2);
     assert.include(providerRequests[0], allowedMarker);
     assert.notInclude(providerRequests[0], deniedMarker);
-    assert.notInclude(providerRequests[0], extensionMarker);
-    for (const index of [0, 1, 2]) {
+    for (const index of [0, 1]) {
       const result = toolResults.get(`call_fixture_${index}`);
       assert.isTrue(result?.isError);
       assert.include(JSON.stringify(result?.result), "belongs to a denied Pi skill");
     }
-    const allowedResult = toolResults.get("call_fixture_3");
+    const allowedResult = toolResults.get("call_fixture_2");
     assert.isFalse(allowedResult?.isError);
     assert.include(JSON.stringify(allowedResult?.result), allowedMarker);
 

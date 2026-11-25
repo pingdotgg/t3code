@@ -46,6 +46,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
+import { knownProviderFailureMessage } from "@t3tools/provider-core/server/failure";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { toolOutputImages, compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
@@ -644,6 +645,7 @@ const startTurn = Effect.fnUntraced(function* (
   runOrdinal = 1,
   threadId = THREAD_ID,
   continuation = false,
+  policy = runtimePolicy,
 ) {
   const appThread = yield* makeAppThread(model, threadId);
   const runId = RunId.make(`run:${threadId}:${runOrdinal}`);
@@ -664,7 +666,7 @@ const startTurn = Effect.fnUntraced(function* (
       creationSource: continuation ? "provider" : "web",
     },
     modelSelection: selection ?? modelSelection(model),
-    runtimePolicy,
+    runtimePolicy: policy,
   });
 });
 
@@ -713,8 +715,8 @@ describe("PiAdapterV2", () => {
       assert.notInclude(probe.lastSpawn().args, "--no-skills");
       assert.include(fake.lastSpawn().args, "--session");
       assert.include(fake.lastSpawn().args, "--no-skills");
-      assert.include(fake.lastSpawn().args, "--no-extensions");
-      assert.notInclude(fake.lastSpawn().args, "example.ts");
+      assert.notInclude(fake.lastSpawn().args, "--no-extensions");
+      assert.include(fake.lastSpawn().args, "example.ts");
       assert.include(fake.lastSpawn().args, allowed);
       assert.notInclude(fake.lastSpawn().args, denied);
       assert.include(fake.lastSpawn().env[T3_PI_SKILL_POLICY_ENV] ?? "", "private:denied");
@@ -740,10 +742,10 @@ describe("PiAdapterV2", () => {
   it.effect.each([
     {
       commands: [{ name: "skill:private", source: "skill", path: "/fake/skill.md" }],
-      detail: "expected skill allowlist",
+      detail: "denied skill 'private' from '/fake/skill.md'",
     },
     { commands: [], detail: "T3 extension required" },
-  ])("refuses a restricted Pi process without the $detail", ({ commands, detail }) =>
+  ])("refuses a restricted Pi process and reports $detail", ({ commands, detail }) =>
     Effect.gen(function* () {
       const probe = yield* fakePi({ commands: [] });
       const fake = yield* fakePi({ commands });
@@ -757,6 +759,64 @@ describe("PiAdapterV2", () => {
         }),
       );
       assert.include(error.message, detail);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("refuses a turn before prompting when Pi has added a denied skill since startup", () =>
+    Effect.gen(function* () {
+      const commands = [{ name: PI_T3_SERVICE_TIER_COMMAND, source: "extension" }];
+      const probe = yield* fakePi({ commands: [] });
+      const fake = yield* fakePi({ commands });
+      const adapter = yield* makeAdapter(fake, "", undefined, undefined, probe);
+      const policy = { ...runtimePolicy, deniedSkills: ["private"] };
+      const runtime = yield* adapter.openSession({
+        threadId: THREAD_ID,
+        providerSessionId: SESSION_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy: policy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy: policy,
+      });
+      fake.setCommands({
+        commands: [
+          ...commands,
+          {
+            name: "skill:private",
+            source: "skill",
+            sourceInfo: { path: "/fake/private/SKILL.md" },
+          },
+        ],
+      });
+      const error = yield* Effect.flip(
+        startTurn(
+          runtime,
+          providerThread,
+          "default",
+          [],
+          "Hello pi",
+          undefined,
+          1,
+          THREAD_ID,
+          false,
+          policy,
+        ),
+      );
+      assert.equal(error._tag, "ProviderAdapterTurnStartError");
+      assert.equal(
+        knownProviderFailureMessage(error),
+        "Pi loaded denied skill 'private' from '/fake/private/SKILL.md'",
+      );
+      assert.lengthOf(
+        fake.allRequests().filter((request) => request.type === "get_commands"),
+        2,
+      );
+      assert.notInclude(
+        fake.allRequests().map((request) => request.type),
+        "prompt",
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 
