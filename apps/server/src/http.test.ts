@@ -1118,7 +1118,10 @@ describe("OTLP traces proxy", () => {
           { url: "/v1/traces?api_key=query-secret", apiKey: "header-secret" },
         ]);
         const combinedLogs = loggedWarnings.join("\n");
-        expect(combinedLogs).toContain(`http://127.0.0.1:${collector.address.port}/v1/traces`);
+        expect(combinedLogs).toContain(
+          `"otlpTracesUrl":"http://127.0.0.1:${collector.address.port}"`,
+        );
+        expect(combinedLogs).not.toContain("/v1/traces");
         expect(combinedLogs).not.toContain("query-secret");
         expect(combinedLogs).not.toContain("header-secret");
       }),
@@ -1144,7 +1147,7 @@ describe("OTLP traces proxy", () => {
         const config = ServerConfig.make({
           ...baseConfig,
           otlpTracesUrl:
-            "http://collector-user:secret-pass@127.0.0.1:1/v1/traces?api_key=query-secret",
+            "http://collector-user:secret-pass@127.0.0.1:1/ingest/path-secret/v1/traces?api_key=query-secret",
           otlpTracesExport: {
             ...baseConfig.otlpTracesExport,
             headers: { "x-api-key": "header-secret" },
@@ -1204,7 +1207,9 @@ describe("OTLP traces proxy", () => {
 
         expect(response.status).toBe(502);
         const combinedLogs = loggedWarnings.join("\n");
-        expect(combinedLogs).toContain("http://127.0.0.1:1/v1/traces");
+        expect(combinedLogs).toContain('"otlpTracesUrl":"http://127.0.0.1:1"');
+        expect(combinedLogs).not.toContain("path-secret");
+        expect(combinedLogs).not.toContain("/v1/traces");
         expect(combinedLogs).not.toContain("collector-user");
         expect(combinedLogs).not.toContain("secret-pass");
         expect(combinedLogs).not.toContain("query-secret");
