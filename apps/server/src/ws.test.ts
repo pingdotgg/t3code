@@ -6,10 +6,12 @@ import * as NodeHttp from "node:http";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import {
   AuthAccessReadScope,
   AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
+  AuthFilesystemReadScope,
   AuthOrchestrationReadScope,
   AuthProvidersManageScope,
   type ManagedPolicySummary,
@@ -1938,6 +1940,102 @@ it.effect("a missing thread worktree gets its project's skills in the cwd snapsh
       ),
     ),
   ),
+);
+
+it.effect.skipIf(!symlinksSupported)(
+  "an HTML page linked by its real path under a symlinked project gets the project's preview grant",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const base = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-rpc-symroot-" });
+      const realRoot = path.join(base, "Documents", "project");
+      yield* fileSystem.makeDirectory(path.join(realRoot, "report"), { recursive: true });
+      const linkedRoot = path.join(base, "project-link");
+      yield* fileSystem.symlink(realRoot, linkedRoot);
+      const htmlPath = path.join(realRoot, "report", "index.html");
+      yield* fileSystem.writeFileString(htmlPath, '<link rel="stylesheet" href="style.css">');
+      const projectId = ProjectId.make("project:symlinked");
+      const assetsCreateUrlRpc = WsRpcGroup.requests.get(WS_METHODS.assetsCreateUrl);
+      if (!assetsCreateUrlRpc) throw new Error("Expected the assets.createUrl RPC");
+      const responses = yield* Queue.unbounded<unknown>();
+      const server = yield* RpcServer.makeNoSerialization(RpcGroup.make(assetsCreateUrlRpc), {
+        ...WS_RPC_SERVER_OPTIONS,
+        onFromServer: (response) =>
+          response._tag === "Exit" ? Queue.offer(responses, response.exit) : Effect.void,
+      }).pipe(
+        Effect.provide(
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("asset-symlink-test"),
+              subject: "asset-symlink-test",
+              method: "browser-session-cookie",
+              scopes: [],
+            },
+            {},
+            yield* ServerBrowser.ServerBrowser,
+            () => Effect.void,
+            { secretReferences: true },
+          ).pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                layerUnusedConfigRpcServices,
+                WorkspacePaths.layer,
+                Layer.mock(ThreadManagement.ThreadManagementService)({
+                  getThreadRecords: () =>
+                    Effect.succeed({ thread: { projectId, worktreePath: null } } as never),
+                }),
+                Layer.mock(ProjectService.ProjectService)({
+                  getById: () => Effect.succeedSome({ workspaceRoot: linkedRoot } as never),
+                }),
+                Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+                Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+                Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+                Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+                Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+                Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                  scratchRoot: Effect.succeedNone,
+                  namedProjectsRoot: process.cwd(),
+                }),
+                Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+                Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+                Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+              ),
+            ),
+            Layer.merge(
+              RpcAuthorization.layer([AuthOrchestrationReadScope, AuthFilesystemReadScope]),
+            ),
+          ),
+        ),
+      );
+
+      yield* server.write(0, {
+        _tag: "Request",
+        id: RpcMessage.RequestId("asset"),
+        tag: WS_METHODS.assetsCreateUrl,
+        payload: {
+          resource: { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: htmlPath },
+        },
+        headers: Headers.empty,
+      });
+      const exit = (yield* Queue.take(responses)) as Exit.Exit<{ readonly relativeUrl: string }>;
+      assert.isTrue(Exit.isSuccess(exit));
+      if (!Exit.isSuccess(exit)) return;
+      const token = exit.value.relativeUrl.split("/").at(-2) ?? "";
+      const [claims = ""] = token.split(".");
+      assert.equal(
+        JSON.parse(Buffer.from(claims, "base64url").toString("utf8")).kind,
+        "workspace-file",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+    ),
 );
 
 it.effect(

@@ -98,6 +98,7 @@ import {
   serverProviderDeltas,
   type FilesystemBrowseFailure,
   FilesystemBrowseError,
+  type AssetResource,
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
   SOURCE_CONTROL_MEDIA_ASSET,
@@ -3203,18 +3204,51 @@ export const layerWsRpc = (
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
             const path = yield* Path.Path;
+            const threadWorkspaceRoot = Effect.fnUntraced(function* (
+              resource: AssetResource & { readonly threadId: ThreadId },
+            ) {
+              const thread = yield* threadManagement
+                .getThreadRecords(resource.threadId, [])
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new AssetWorkspaceContextResolutionError({ resource, cause }),
+                  ),
+                );
+              const project = yield* projectService
+                .getById(thread.thread.projectId)
+                .pipe(
+                  Effect.mapError(
+                    (cause) => new AssetWorkspaceContextResolutionError({ resource, cause }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new AssetWorkspaceContextNotFoundError({ resource });
+              }
+              return thread.thread.worktreePath ?? project.value.workspaceRoot;
+            });
             if (
               input.resource._tag === "attachment" ||
               input.resource._tag === "native-app-icon" ||
               input.resource._tag === "environment-theme-background" ||
               input.resource._tag === "tool-output-image" ||
-              input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET ||
-              // A network path is served only from the thread's project, looked up below.
-              (input.resource._tag === "media-file" &&
-                path.isAbsolute(input.resource.path) &&
-                !isNetworkPath(input.resource.path))
+              input.resource._tag === SOURCE_CONTROL_MEDIA_ASSET
             ) {
               return yield* issueAssetUrl({ resource: input.resource });
+            }
+            // A network path is served only from the thread's project, looked up below.
+            if (
+              input.resource._tag === "media-file" &&
+              path.isAbsolute(input.resource.path) &&
+              !isNetworkPath(input.resource.path)
+            ) {
+              // An HTML page inside the project needs its workspace to load relative CSS and JS.
+              const workspaceRoot = /\.html?$/i.test(input.resource.path)
+                ? yield* threadWorkspaceRoot(input.resource).pipe(Effect.option)
+                : Option.none();
+              return yield* issueAssetUrl({
+                resource: input.resource,
+                ...(Option.isSome(workspaceRoot) ? { workspaceRoot: workspaceRoot.value } : {}),
+              });
             }
             if (input.resource._tag === "draft-workspace-file") {
               return yield* issueAssetUrl({
@@ -3251,34 +3285,9 @@ export const layerWsRpc = (
                   : {}),
               });
             }
-            const thread = yield* threadManagement
-              .getThreadRecords(input.resource.threadId, [])
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new AssetWorkspaceContextResolutionError({
-                      resource: input.resource,
-                      cause,
-                    }),
-                ),
-              );
-            const project = yield* projectService.getById(thread.thread.projectId).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new AssetWorkspaceContextResolutionError({
-                    resource: input.resource,
-                    cause,
-                  }),
-              ),
-            );
-            if (Option.isNone(project)) {
-              return yield* new AssetWorkspaceContextNotFoundError({
-                resource: input.resource,
-              });
-            }
             return yield* issueAssetUrl({
               resource: input.resource,
-              workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
+              workspaceRoot: yield* threadWorkspaceRoot(input.resource),
             });
           }),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>
