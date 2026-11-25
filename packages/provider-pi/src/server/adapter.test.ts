@@ -4534,6 +4534,104 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each([
+    "captured handoff",
+    "uncaptured handoff",
+    "command-only handoff",
+    "legacy uncaptured boundary",
+    "adopted prompt",
+    "equivalent prior rollback fork",
+    "conflicting prior fork",
+  ] as const)("restores a legacy checkpoint after a %s", (scenario) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped();
+      const original = `${dir}/z-original.jsonl`;
+      const switched = `${dir}/current.jsonl`;
+      const priorFork = `${dir}/fork.jsonl`;
+      const retained = TURN_ONE_ENTRIES;
+      const unrelated = [sessionMessage("u3", null, "user", 180)];
+      const write = (file: string, entries: ReadonlyArray<unknown>) =>
+        fs.writeFileString(
+          file,
+          [{ type: "session", version: 3 }, ...entries].map(encodeJsonLine).join("\n") + "\n",
+        );
+      const equivalent = scenario === "equivalent prior rollback fork";
+      const conflicting = scenario === "conflicting prior fork";
+      yield* write(
+        original,
+        equivalent ? [...retained, sessionMessage("discarded", "a1b", "user", 160)] : retained,
+      );
+      yield* write(switched, unrelated);
+      if (equivalent || conflicting)
+        yield* write(
+          priorFork,
+          conflicting ? [...retained, sessionMessage("other", "a1b", "assistant", 40)] : retained,
+        );
+
+      const fake = yield* makeFakePi;
+      fake.reloadExtensions(switched);
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const [first, next] = uncapturedTurns(providerThread.id);
+      assert.isDefined(first);
+      assert.isDefined(next);
+      const target = { ...first, startedAt: at(scenario === "adopted prompt" ? 20 : 0) };
+      const boundary: OrchestrationV2ProviderTurn = {
+        ...next,
+        nativeTurnRef:
+          scenario === "command-only handoff"
+            ? null
+            : scenario === "uncaptured handoff" || scenario === "legacy uncaptured boundary"
+              ? next.nativeTurnRef
+              : { driver: PI_PROVIDER, strength: "strong", nativeId: "u3" },
+        ...(scenario === "legacy uncaptured boundary"
+          ? {}
+          : {
+              nativeThreadRef: { driver: PI_PROVIDER, strength: "strong", nativeId: switched },
+            }),
+      };
+      const expected = equivalent ? priorFork : original;
+      fake.queueEntries({ entries: unrelated, leafId: "u3" });
+      fake.queueState({ sessionFile: expected });
+      fake.queueState({ sessionFile: expected });
+      fake.queueEntries({ entries: retained, leafId: "a1b" });
+      fake.queueEntries({ entries: retained, leafId: "a1b" });
+      const result = yield* runtime
+        .rollbackThread({
+          providerThread: { ...providerThread, createdAt: at(0) },
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("legacy-checkpoint"),
+            appRunOrdinal: target.ordinal,
+            providerTurn: target,
+          },
+          providerThreadTurns: [target, boundary],
+        })
+        .pipe(Effect.result);
+      const requests = fake
+        .allRequests()
+        .filter(({ type }) => type === "switch_session" || type === "fork");
+      if (conflicting) {
+        assert.equal(result._tag, "Failure");
+        assert.deepEqual(requests, []);
+        return;
+      }
+      assert.equal(result._tag, "Success");
+      if (result._tag !== "Success") return;
+      assert.equal(result.success.providerThread.nativeThreadRef?.nativeId, expected);
+      assert.equal(result.success.providerThread.nativeConversationHeadRef?.nativeId, "a1b");
+      assert.deepEqual(
+        requests.map(({ type, sessionPath }) => ({ type, sessionPath })),
+        [{ type: "switch_session", sessionPath: expected }],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("rolls back past a turn whose start entry was never captured", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
