@@ -12973,5 +12973,11 @@
   "92e129bf413a1220": "retirada",
   "09cebe0f0dccd412": "Ya tienes la última versión.",
   "cfce5d73178d9edb": "Uso de {account}: {summary}",
-  "8d7d95fc8f2ba79e": "Navegación de la app"
+  "8d7d95fc8f2ba79e": "Navegación de la app",
+  "f7229e51b4fef84a": "Cambiar icono…",
+  "07fec8715e3a066e": "Desarchivar proyecto",
+  "29ab65fe27110c0e": "Archivar proyecto…",
+  "22fae558d75a4588": "Eliminar proyecto…",
+  "9779cc45c92c163c": "{count, plural, =0 {¿Archivar «{project}»?} one {¿Archivar «{project}» y su hilo?} other {¿Archivar «{project}» y sus # hilos?}}\n\nLos hilos pasan a Ajustes → Archivados, y el proyecto se puede desarchivar desde sus ajustes.",
+  "bc6786ef8fc3ade4": "{count, plural, one {# hilo no se archivó. Puede que siga en ejecución.} other {# hilos no se archivaron. Puede que sigan en ejecución.}}"
 }

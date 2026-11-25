@@ -12978,5 +12978,11 @@
   "92e129bf413a1220": "retirée",
   "09cebe0f0dccd412": "Vous êtes déjà à jour.",
   "cfce5d73178d9edb": "Utilisation de {account} : {summary}",
-  "8d7d95fc8f2ba79e": "Navigation de l’app"
+  "8d7d95fc8f2ba79e": "Navigation de l’app",
+  "f7229e51b4fef84a": "Changer l’icône…",
+  "07fec8715e3a066e": "Désarchiver le projet",
+  "29ab65fe27110c0e": "Archiver le projet…",
+  "22fae558d75a4588": "Supprimer le projet…",
+  "9779cc45c92c163c": "{count, plural, =0 {Archiver « {project} » ?} one {Archiver « {project} » et son fil ?} other {Archiver « {project} » et ses # fils ?}}\n\nLes fils passent dans Réglages → Archives, et le projet peut être désarchivé depuis ses réglages.",
+  "bc6786ef8fc3ade4": "{count, plural, one {# fil n’a pas été archivé. Il est peut-être encore en cours.} other {# fils n’ont pas été archivés. Ils sont peut-être encore en cours.}}"
 }

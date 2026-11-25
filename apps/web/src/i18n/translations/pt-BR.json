@@ -12978,5 +12978,11 @@
   "92e129bf413a1220": "retirada",
   "09cebe0f0dccd412": "Você já está atualizado.",
   "cfce5d73178d9edb": "Uso de {account}: {summary}",
-  "8d7d95fc8f2ba79e": "Navegação do app"
+  "8d7d95fc8f2ba79e": "Navegação do app",
+  "f7229e51b4fef84a": "Alterar ícone…",
+  "07fec8715e3a066e": "Desarquivar projeto",
+  "29ab65fe27110c0e": "Arquivar projeto…",
+  "22fae558d75a4588": "Remover projeto…",
+  "9779cc45c92c163c": "{count, plural, =0 {Arquivar \"{project}\"?} one {Arquivar \"{project}\" e sua conversa?} other {Arquivar \"{project}\" e suas # conversas?}}\n\nAs conversas vão para Configurações → Arquivadas, e o projeto pode ser desarquivado nas configurações dele.",
+  "bc6786ef8fc3ade4": "{count, plural, one {# conversa não foi arquivada. Ela pode ainda estar em execução.} other {# conversas não foram arquivadas. Elas podem ainda estar em execução.}}"
 }

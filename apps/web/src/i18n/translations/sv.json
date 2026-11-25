@@ -12985,5 +12985,11 @@
   "92e129bf413a1220": "återkallad",
   "09cebe0f0dccd412": "Du är redan uppdaterad.",
   "cfce5d73178d9edb": "Användning för {account}: {summary}",
-  "8d7d95fc8f2ba79e": "Appnavigering"
+  "8d7d95fc8f2ba79e": "Appnavigering",
+  "f7229e51b4fef84a": "Ändra ikon…",
+  "07fec8715e3a066e": "Avarkivera projekt",
+  "29ab65fe27110c0e": "Arkivera projekt…",
+  "22fae558d75a4588": "Ta bort projekt…",
+  "9779cc45c92c163c": "{count, plural, =0 {Arkivera ”{project}”?} one {Arkivera ”{project}” och dess tråd?} other {Arkivera ”{project}” och dess # trådar?}}\n\nTrådar flyttas till Inställningar → Arkiv, och projektet kan avarkiveras i dess inställningar.",
+  "bc6786ef8fc3ade4": "{count, plural, one {# tråd arkiverades inte. Den kanske fortfarande körs.} other {# trådar arkiverades inte. De kanske fortfarande körs.}}"
 }

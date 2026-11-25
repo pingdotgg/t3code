@@ -12978,5 +12978,11 @@
   "92e129bf413a1220": "zurückgezogen",
   "09cebe0f0dccd412": "Du bist bereits auf dem neuesten Stand.",
   "cfce5d73178d9edb": "Nutzung von {account}: {summary}",
-  "8d7d95fc8f2ba79e": "App-Navigation"
+  "8d7d95fc8f2ba79e": "App-Navigation",
+  "f7229e51b4fef84a": "Symbol ändern…",
+  "07fec8715e3a066e": "Projekt wiederherstellen",
+  "29ab65fe27110c0e": "Projekt archivieren…",
+  "22fae558d75a4588": "Projekt entfernen…",
+  "9779cc45c92c163c": "{count, plural, =0 {„{project}“ archivieren?} one {„{project}“ und seinen Thread archivieren?} other {„{project}“ und seine # Threads archivieren?}}\n\nThreads landen unter Einstellungen → Archiv, und das Projekt lässt sich in seinen Einstellungen wiederherstellen.",
+  "bc6786ef8fc3ade4": "{count, plural, one {# Thread wurde nicht archiviert. Er läuft vielleicht noch.} other {# Threads wurden nicht archiviert. Sie laufen vielleicht noch.}}"
 }

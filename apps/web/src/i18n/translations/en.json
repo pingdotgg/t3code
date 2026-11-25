@@ -12987,5 +12987,11 @@
   "92e129bf413a1220": "withdrawn",
   "09cebe0f0dccd412": "You're already up to date.",
   "cfce5d73178d9edb": "{account} usage: {summary}",
-  "8d7d95fc8f2ba79e": "App navigation"
+  "8d7d95fc8f2ba79e": "App navigation",
+  "f7229e51b4fef84a": "Change icon…",
+  "07fec8715e3a066e": "Unarchive project",
+  "29ab65fe27110c0e": "Archive project…",
+  "22fae558d75a4588": "Remove project…",
+  "9779cc45c92c163c": "{count, plural, =0 {Archive \"{project}\"?} one {Archive \"{project}\" and its thread?} other {Archive \"{project}\" and its # threads?}}\n\nThreads move to Settings → Archived, and the project can be unarchived from its settings.",
+  "bc6786ef8fc3ade4": "{count, plural, one {# thread was not archived. It may still be running.} other {# threads were not archived. They may still be running.}}"
 }

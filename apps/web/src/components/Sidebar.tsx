@@ -133,6 +133,7 @@ import {
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
+import { useProjectFolderArchive } from "../hooks/useProjectFolderArchive";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
@@ -1239,6 +1240,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return count;
   });
 
+  // Fork: archive a project folder together with its threads.
+  const { canArchiveProjectFolder, archiveProjectFolder, unarchiveProjectFolder } =
+    useProjectFolderArchive();
   const openProjectSettings = useStableCallback(
     (projectGroup: SidebarProjectSnapshot, projectRef?: ScopedProjectRef) => {
       if (isMobile) {
@@ -1308,6 +1312,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   ]
                 : []),
               { id: "project-settings", label: gt("Project settings"), icon: "settings" },
+              // Fork: whole-project actions, so a folder can be managed from the sidebar.
+              { id: "change-icon", label: gt("Change icon…"), separatorBefore: true },
+              ...(canArchiveProjectFolder(group)
+                ? [
+                    group.archived
+                      ? { id: "unarchive-project", label: gt("Unarchive project") }
+                      : { id: "archive-project", label: gt("Archive project…") },
+                  ]
+                : []),
+              { id: "remove-project", label: gt("Remove project…"), destructive: true },
             ],
             position,
             source,
@@ -1317,6 +1331,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         switch (clicked.value) {
           case "new-thread":
             startThreadInProjectFolder(group);
+            return;
+          case "change-icon":
+          case "remove-project":
+            openProjectSettings(group);
+            return;
+          case "archive-project":
+            void archiveProjectFolder(group);
+            return;
+          case "unarchive-project":
+            void unarchiveProjectFolder(group);
             return;
           case "copy-path":
             copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
