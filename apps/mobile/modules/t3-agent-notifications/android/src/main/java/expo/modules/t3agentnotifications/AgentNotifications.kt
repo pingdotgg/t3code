@@ -293,7 +293,7 @@ object AgentNotifications {
       (alerted && data["alert_path"] == data["activity_path"]) ||
         isThreadOnScreen(data["activity_path"])
     } else {
-      alerted && data["alert_path"] == "/"
+      alerted && data["alert_path"] == "/" && data["alert_covers_activity"] == "true"
     }
   }
 

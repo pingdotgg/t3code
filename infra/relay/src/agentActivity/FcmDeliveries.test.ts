@@ -246,7 +246,43 @@ describe("Android delivery routing", () => {
           alert_path: "/",
           active,
         });
+        expect(alerts[0]?.data.alert_covers_activity).toBe(active === "false" ? "true" : undefined);
         expect(h.marked.at(-1)?.aggregate?.activities).toHaveLength(2);
+      }).pipe(Effect.provide(h.layer));
+    },
+  );
+
+  it.effect(
+    "does not mark a grouped completion alert as covering rows from muted environments",
+    () => {
+      const h = harness();
+      const mutedState: RelayAgentActivityState = {
+        ...state,
+        environmentId: EnvironmentId.make("muted-env"),
+        threadId: ThreadId.make("muted-thread"),
+        threadTitle: "Muted thread",
+        deepLink: "/threads/muted-env/muted-thread",
+      };
+      h.current.mutedEnvironments = [mutedState.environmentId];
+      h.current.otherStates = [secondState, mutedState];
+      return Effect.gen(function* () {
+        const delivery = yield* FcmDeliveries.FcmDeliveries;
+        yield* delivery.process(h.job);
+        h.current.state = { ...state, phase: "completed" };
+        h.current.otherStates = [
+          { ...secondState, phase: "completed" },
+          { ...mutedState, phase: "completed" },
+        ];
+        yield* delivery.process({ ...h.job, state: h.current.state });
+        const alerts = h.sent.filter((message) => message.alert);
+        expect(alerts).toHaveLength(1);
+        expect(alerts[0]?.data).toMatchObject({
+          alert_title: "2 agents finished",
+          alert_body: "Fix notifications, Second thread",
+          alert_path: "/",
+          active: "false",
+        });
+        expect(alerts[0]?.data.alert_covers_activity).toBeUndefined();
       }).pipe(Effect.provide(h.layer));
     },
   );

@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import {
+  type RelayAgentActivityAggregateRow,
   RelayAgentActivityState,
   RelayAgentActivityAggregateState,
   RelayAgentAwarenessPreferences,
@@ -74,9 +75,28 @@ export function androidAlertForState(
   };
 }
 
+function alertCoversFinishedAggregate(
+  alertedRows: ReadonlyArray<RelayAgentActivityAggregateRow>,
+  displayedAggregate: RelayAgentActivityAggregateState | null | undefined,
+): boolean {
+  if (!displayedAggregate || displayedAggregate.activeCount > 0) return false;
+  if (displayedAggregate.activities.length === 0) return false;
+  const alertedKeys = new Set(
+    alertedRows.map((row) =>
+      JSON.stringify([row.environmentId, row.threadId, row.phase, row.updatedAt]),
+    ),
+  );
+  return displayedAggregate.activities.every(
+    (row) =>
+      (row.phase === "completed" || row.phase === "failed") &&
+      alertedKeys.has(JSON.stringify([row.environmentId, row.threadId, row.phase, row.updatedAt])),
+  );
+}
+
 export function androidAlertForAggregate(input: {
   readonly previousAggregate: RelayAgentActivityAggregateState;
   readonly nextAggregate: RelayAgentActivityAggregateState;
+  readonly displayedAggregate?: RelayAgentActivityAggregateState | null;
   readonly preferences: RelayAgentAwarenessPreferences;
   readonly nowMs: number;
 }) {
@@ -99,6 +119,8 @@ export function androidAlertForAggregate(input: {
       alert_path: notification.deepLink,
     };
   }
+  const displayedAggregate =
+    input.displayedAggregate === undefined ? input.nextAggregate : input.displayedAggregate;
   return {
     // Stable group IDs let the native handler deduplicate across jobs, retries, and row orders.
     alert_id: JSON.stringify(
@@ -110,6 +132,9 @@ export function androidAlertForAggregate(input: {
     alert_body: alert.body,
     // Target the overview so one visible thread cannot suppress other threads' alerts.
     alert_path: "/",
+    ...(alertCoversFinishedAggregate(activities, displayedAggregate)
+      ? { alert_covers_activity: "true" }
+      : {}),
   };
 }
 
@@ -269,6 +294,7 @@ const make = Effect.gen(function* () {
                 allowedEnvironments.has(row.environmentId),
               ),
             },
+            displayedAggregate: aggregate,
             preferences: preferences.value,
             nowMs: now.epochMilliseconds,
           });

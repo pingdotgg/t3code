@@ -874,16 +874,29 @@ class AgentNotificationsCompletionTest : AgentNotificationsFixture() {
   @Test
   fun groupedCompletionAlertHidesFinishedMultiRowActivity() {
     val expiresAt = System.currentTimeMillis() + 900000
-    val grouped = finished("grouped-done", expiresAt) + mapOf(
-      "activity_line_1" to "Done\tSecond thread\tOther project",
+    val partialGrouped = finished("grouped-partial", expiresAt) + mapOf(
+      "activity_line_1" to "Done\tMuted thread\tOther project",
       "alert_title" to "2 agents finished",
       "alert_body" to "Test thread, Second thread",
       "alert_path" to "/",
     )
-    AgentNotifications.receive(context, grouped)
-    assertEquals("t3-agent-alert", manager.activeNotifications.single().tag)
+    // A grouped alert without full-card coverage leaves the multi-row finished card visible.
+    AgentNotifications.receive(context, partialGrouped)
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-activity" })
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
 
-    AgentNotifications.receive(context, grouped.filterKeys { !it.startsWith("alert_") })
-    assertEquals("t3-agent-alert", manager.activeNotifications.single().tag)
+    val coveredGrouped = finished("grouped-done", expiresAt + 60000) + mapOf(
+      "activity_line_1" to "Done\tSecond thread\tOther project",
+      "alert_title" to "2 agents finished",
+      "alert_body" to "Test thread, Second thread",
+      "alert_path" to "/",
+      "alert_covers_activity" to "true",
+    )
+    AgentNotifications.receive(context, coveredGrouped)
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
+    assertTrue(manager.activeNotifications.any { it.id == "grouped-done".hashCode() })
+
+    AgentNotifications.receive(context, coveredGrouped.filterKeys { !it.startsWith("alert_") })
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-activity" })
   }
 }
