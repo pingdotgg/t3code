@@ -192,7 +192,7 @@ export function ThreadBoardPage() {
           </p>
         ) : (
           <div className="min-w-[46rem]">
-            <div className="sticky top-0 z-10 grid grid-cols-3 gap-2.5 bg-background pt-3 pb-1.5">
+            <div className="sticky top-0 z-10 grid grid-cols-3 gap-2.5 bg-background surface-grain pt-3 pb-1.5">
               {BOARD_LANES.map((lane) => (
                 <div key={lane} className="flex items-center gap-2 px-1 text-sm font-semibold">
                   <span
