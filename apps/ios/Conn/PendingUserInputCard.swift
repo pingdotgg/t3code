@@ -34,8 +34,18 @@ struct PendingUserInputCard: View {
     private var lastIsText: Bool { !panel.showSend && !showNext }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Label("Question", systemImage: "text.bubble")
+                Spacer()
+                if let progress = panel.progress { Text(progress) }
+            }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(theme.mutedForeground)
+            .padding(.horizontal, 17).padding(.vertical, 10)
             scrollArea
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(theme.background, in: .rect(cornerRadius: 24))
             if let notice = panel.notice {
                 Text(notice)
                     .font(.system(size: 13))
@@ -43,23 +53,13 @@ struct PendingUserInputCard: View {
                     .foregroundStyle(theme.mutedForeground)
             }
             if panel.showFooter {
-                footer
+                footer.padding(.horizontal, 9)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
             }
         }
-        // `pt-4 pl-5 pr-2 pb-2` at 3.5pt per unit.
-        .padding(.top, 14)
-        .padding(.leading, 17.5)
-        .padding(.trailing, 7)
-        .padding(.bottom, 7)
+        .padding(3)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: Self.sheetRadius, style: .continuous).fill(theme.card)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Self.sheetRadius, style: .continuous)
-                .strokeBorder(theme.border, lineWidth: 1)
-        )
+        .background(RoundedRectangle(cornerRadius: Self.sheetRadius, style: .continuous).fill(theme.card))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("thread.question.\(question.requestId)")
     }
@@ -69,7 +69,7 @@ struct PendingUserInputCard: View {
     /// One content column from the 8pt edge on both sides. Text sits 12pt in (the 20pt inset);
     /// option highlights extend back out to the edge.
     private var scrollArea: some View {
-        let scrollMax = max(60, maxHeight - 24 - footerHeight - (panel.notice == nil ? 0 : 48))
+        let scrollMax = max(60, maxHeight - 72 - footerHeight - (panel.notice == nil ? 0 : 48))
         return HeightCappedScroll(maxHeight: scrollMax) {
             VStack(alignment: .leading, spacing: 8) {
                 MarkdownView(source: panel.question)
@@ -161,11 +161,6 @@ struct PendingUserInputCard: View {
     /// button at the text edge.
     private var footer: some View {
         HStack(spacing: 20) {
-            if let progress = panel.progress {
-                Text(progress)
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.mutedForeground)
-            }
             Spacer(minLength: 0)
             if panel.showSkip {
                 TextAction(

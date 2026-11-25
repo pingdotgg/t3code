@@ -19,10 +19,12 @@ struct NewThreadDraftView: View {
         store: CoreStore,
         initialProjectId: String?,
         initialProjectTitle: String,
+        initialPrompt: String = "",
         onCreated: @escaping (String) -> Void
     ) {
         self.store = store
         self.onCreated = onCreated
+        self._prompt = State(initialValue: initialPrompt)
         self._selectedProjectId = State(initialValue: initialProjectId)
         self._selectedProjectTitle = State(initialValue: initialProjectTitle)
     }

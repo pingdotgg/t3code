@@ -9,7 +9,9 @@ struct ThreadView: View {
     let initialProjectTitle: String?
     let initialBranch: String?
     let initialSettled: Bool
-    let onOpenThread: (String) -> Void
+    let onOpenThread: (String, String?) -> Void
+    let onTemplate: (String) -> Void
+    @State private var setup: FfiWorktreeSetup?
 
     @Environment(\.connTheme) private var theme
     @State private var readingWindow: FfiThreadSnapshot?
@@ -62,7 +64,8 @@ struct ThreadView: View {
         initialProjectTitle: String?,
         initialBranch: String?,
         initialSettled: Bool,
-        onOpenThread: @escaping (String) -> Void
+        onOpenThread: @escaping (String, String?) -> Void,
+        onTemplate: @escaping (String) -> Void
     ) {
         self.store = store
         self.threadId = threadId
@@ -71,6 +74,7 @@ struct ThreadView: View {
         self.initialBranch = initialBranch
         self.initialSettled = initialSettled
         self.onOpenThread = onOpenThread
+        self.onTemplate = onTemplate
         self._settled = State(initialValue: initialSettled)
     }
 
@@ -86,7 +90,12 @@ struct ThreadView: View {
         min(560, max(160, viewHeight - 140))
     }
 
-    private var pendingQuestion: FfiPendingQuestion? { store.status == .connected ? snapshot?.pendingQuestion : nil }
+    private var pendingApprovals: [FfiPendingApproval] {
+        readingWindow == nil && store.status == .connected ? snapshot?.pendingApprovals ?? [] : []
+    }
+    private var pendingQuestion: FfiPendingQuestion? {
+        readingWindow == nil && pendingApprovals.isEmpty && store.status == .connected ? snapshot?.pendingQuestion : nil
+    }
 
     /// The open question's panel for its current step; the composer's text shows as the answer.
     private var questionPanelModel: FfiQuestionPanel? {
@@ -223,7 +232,7 @@ struct ThreadView: View {
 
     /// With a question open, text answers it and an empty composer runs the answer action.
     private var overlayHasCards: Bool {
-        snapshot?.pendingApprovals.first != nil || questionPanelModel != nil
+        !pendingApprovals.isEmpty || questionPanelModel != nil
             || (snapshot?.queuedCount ?? 0) > 0
             || historyNotice != nil || readingWindow != nil || store.status != .connected
     }
@@ -303,6 +312,7 @@ struct ThreadView: View {
                             older = page.entries
                             current.serverPage = true
                             current.historyCursor = page.historyCursor
+                            current.feedDetails.merge(page.feedDetails) { current, _ in current }
                             current.workGroups.insert(contentsOf: page.workGroups, at: 0)
                         } while older.isEmpty
                     }
@@ -353,6 +363,7 @@ struct ThreadView: View {
                                 .disabled(paging)
                                 .font(.kitDetail)
                         }
+                        if let setup, setup.threadId == threadId, readingWindow == nil { ThreadWorktreeCard(setup: setup) }
                         if snapshot.entries.isEmpty {
                             Text(store.status == .connected ? "No messages in this thread yet." : "No saved messages for this thread.")
                                 .font(.kitDetail)
@@ -372,7 +383,10 @@ struct ThreadView: View {
                                             threadId: threadId,
                                             entry: entry,
                                             store: store,
-                                            onOpenThread: onOpenThread
+                                            detail: snapshot.feedDetails[entry.entryId],
+                                            interactive: readingWindow == nil && store.status == .connected,
+                                            onOpenThread: onOpenThread,
+                                            onTemplate: onTemplate
                                         )
                                     }
                                 }
@@ -477,15 +491,17 @@ struct ThreadView: View {
                         Text("Offline · Viewing saved messages").font(.kitDetail)
                     }
                     // Conn mobile pins the first pending approval above the composer.
-                    if store.status == .connected, let approval = snapshot?.pendingApprovals.first {
+                    if let approval = pendingApprovals.first {
                         HeightCappedScroll(maxHeight: approvalMaxHeight) {
                             PendingApprovalCard(
                                 approval: approval,
+                                remaining: pendingApprovals.count,
                                 responding: respondingApprovalId == approval.requestId
                             ) { decision in
                                 respond(to: approval, with: decision)
                             }
                         }
+                        .modifier(ComposerDeck(remaining: pendingApprovals.count))
                         .id(approval.requestId)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
@@ -506,6 +522,7 @@ struct ThreadView: View {
                             onSubmit: { submitQuestion(question) },
                             onDismiss: { dismissQuestion(question) }
                         )
+                        .modifier(ComposerDeck(remaining: question.questions.count - Int(panel.step)))
                         .id(question.requestId)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
@@ -690,6 +707,19 @@ struct ThreadView: View {
                     await store.renameThread(threadId: threadId, title: newTitle)
                 }
             }
+        }
+        .task(id: "\(threadId)|\(store.identityEpoch)|\(store.status == .connected)") {
+            setup = nil
+            guard store.status == .connected, let feed = try? store.setupFeed(thread: threadId) else { return }
+            await withTaskCancellationHandler {
+                do {
+                    while !Task.isCancelled {
+                        let next = try await feed.next()
+                        try Task.checkCancellation()
+                        setup = next
+                    }
+                } catch { }
+            } onCancel: { feed.cancel() }
         }
         .task(id: threadId) {
             store.openThread(threadId)

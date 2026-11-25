@@ -14,6 +14,7 @@
 mod annotations;
 pub mod conn_tools;
 pub mod custom_model_editor;
+pub mod diff_parser;
 mod discard_undo;
 mod drafts;
 pub mod environments;
@@ -42,6 +43,7 @@ mod test_threads;
 #[cfg(feature = "testkit")]
 pub mod testkit;
 mod thread;
+pub mod thread_feed;
 pub mod thread_models;
 pub mod thread_search;
 mod timeline;

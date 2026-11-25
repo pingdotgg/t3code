@@ -374,7 +374,7 @@ struct ProjectTileView: View {
 }
 
 /// A 6pt status dot in a 2pt ring of the screen colour (`StatusBadgeDot`).
-private struct StatusBadgeDot: View {
+struct StatusBadgeDot: View {
     let dot: FfiTaskDot
     @Environment(\.connTheme) private var theme
     @Environment(\.colorScheme) private var colorScheme

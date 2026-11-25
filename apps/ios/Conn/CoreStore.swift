@@ -147,6 +147,29 @@ final class CoreStore {
         }
     }
 
+    func assetURL(id: String, name: String, mime: String, mcp: Bool = false) async throws -> URL {
+        guard let core, status == .connected else { throw URLError(.notConnectedToInternet) }
+        let epoch = identityEpoch
+        let raw = try await core.attachmentUrl(id: id, name: name, mime: mime, mcpApp: mcp)
+        guard identityEpoch == epoch, let url = URL(string: raw) else { throw URLError(.cancelled) }
+        return url
+    }
+
+    func mcpApp(thread: String, item: String, attachment: String) async throws -> ThreadMcpApp {
+        guard let core, status == .connected else { throw URLError(.notConnectedToInternet) }
+        return try await core.threadMcpApp(thread: thread, item: item, attachment: attachment)
+    }
+
+    func patches(thread: String, turn: Int64) async throws -> [FfiFilePatch] {
+        guard let core, status == .connected else { throw URLError(.notConnectedToInternet) }
+        return try await core.turnPatch(threadId: thread, turn: turn)
+    }
+
+    func setupFeed(thread: String) throws -> WorktreeSetupFeed {
+        guard let core, status == .connected else { throw URLError(.notConnectedToInternet) }
+        return try core.worktreeSetup(threadId: thread)
+    }
+
     func openThread(_ threadId: String) {
         if openThreadId != threadId { openThread = nil }
         openThreadId = threadId

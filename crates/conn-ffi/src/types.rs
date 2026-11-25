@@ -499,6 +499,7 @@ pub struct FfiThreadSnapshot {
     pub branch: Option<String>,
     pub model_label: Option<String>,
     pub entries: Vec<FfiTimelineEntry>,
+    pub feed_details: HashMap<String, crate::FfiFeedDetail>,
     pub work_groups: Vec<FfiWorkGroupTiming>,
     pub working: bool,
     pub active_run_id: Option<String>,
@@ -816,12 +817,15 @@ fn build_work_groups(thread: &ThreadState) -> Vec<FfiWorkGroupTiming> {
     let mut groups = Vec::new();
     let mut idx = 0usize;
     while idx < entries.len() {
-        if !is_work_entry(&entries[idx]) {
+        if !is_work_entry(&entries[idx]) || thread.feed_details.contains_key(entries[idx].id()) {
             idx += 1;
             continue;
         }
         let start = idx;
-        while idx < entries.len() && is_work_entry(&entries[idx]) {
+        while idx < entries.len()
+            && is_work_entry(&entries[idx])
+            && !thread.feed_details.contains_key(entries[idx].id())
+        {
             idx += 1;
         }
         let slice = &entries[start..idx];
@@ -927,6 +931,37 @@ pub(crate) fn build_thread_snapshot(
         }
     }
 
+    let mut feed_details: HashMap<_, _> = thread
+        .feed_details
+        .iter()
+        .filter_map(|(id, detail)| Some((id.clone(), crate::FfiFeedDetail::from_detail(detail)?)))
+        .collect();
+    for entry in &thread.entries {
+        if let TimelineEntry::Subagent {
+            id, remote_child, ..
+        } = entry
+        {
+            let model = thread
+                .subagent_of_entry
+                .get(id)
+                .and_then(|k| thread.subagent_models.get(k));
+            feed_details.insert(
+                id.clone(),
+                crate::FfiFeedDetail::Subagent {
+                    provider: model.and_then(|m| m.instance_id.clone()),
+                    model: model.and_then(|m| m.model.clone()),
+                    effort: model.and_then(|m| {
+                        m.options
+                            .get("reasoningEffort")
+                            .or_else(|| m.options.get("effort"))
+                            .cloned()
+                    }),
+                    environment: remote_child.as_ref().map(|r| r.environment_id.clone()),
+                    thread: remote_child.as_ref().map(|r| r.thread_id.clone()),
+                },
+            );
+        }
+    }
     let work_groups = build_work_groups(thread);
 
     FfiThreadSnapshot {
@@ -940,6 +975,7 @@ pub(crate) fn build_thread_snapshot(
         branch: meta.and_then(|m| m.branch.clone()),
         model_label: meta.and_then(|m| m.model_label.clone()),
         entries,
+        feed_details,
         work_groups,
         working: thread.working,
         active_run_id: thread.active_run_id().map(str::to_owned),
@@ -1199,11 +1235,7 @@ pub(crate) fn map_timeline_entry_with_context(
                 status: (*status).into(),
                 status_label: status_label.to_owned(),
                 settled: subagent_settled(*status),
-                // The iPhone card shows one plain line; the model holds the Markdown.
-                summary: summary
-                    .as_deref()
-                    .map(conn_state::plain_subagent_detail)
-                    .filter(|line| !line.is_empty()),
+                summary: summary.clone(),
                 remote_label: remote_child.as_ref().map(|remote| remote.label.clone()),
                 created_at: created_at.clone(),
                 started_at: started_at.clone(),
@@ -1815,8 +1847,18 @@ mod tests {
                 assistant_bytes: 48,
             },
         );
-        let item: OrchestrationV2ThreadStreamItem =
-            serde_json::from_str(&raw).expect("synthetic snapshot must decode");
+        let mut snapshot: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let rows = &mut snapshot["projection"]["visibleTurnItems"];
+        rows[0]["item"]["context"] = json!({"version":1, "records":[{
+            "kind":"review-comment", "contextId":"comment-1", "filePath":"demo.rs",
+            "rangeLabel":"L1", "text":"Check this line", "diff":"+first"
+        }]});
+        let receipt = &mut rows[1]["item"];
+        receipt["type"] = json!("dynamic_tool");
+        receipt["toolName"] = json!("mcp__conn__html_render");
+        receipt["output"] =
+            json!({"htmlRender":{"attachmentId":"preview", "title":"Summary", "height":180}});
+        let item: OrchestrationV2ThreadStreamItem = serde_json::from_value(snapshot).unwrap();
         let mut state = ThreadState::new("thread-1");
         assert!(state.apply(item), "snapshot must change thread state");
 
@@ -1838,11 +1880,15 @@ mod tests {
             matches!(ffi.entries[2], FfiTimelineEntry::Assistant { .. }),
             "third entry is Assistant"
         );
-        assert_eq!(
-            ffi.work_groups.len(),
-            2,
-            "each turn has one tool work group"
+        assert!(
+            matches!(&ffi.feed_details["turn-item:user-0"], crate::FfiFeedDetail::Message { reviews, .. }
+            if reviews.len() == 1 && reviews[0].context_id == "comment-1")
         );
+        assert!(
+            matches!(&ffi.feed_details["turn-item:cmd-0-0"], crate::FfiFeedDetail::Html { attachment, .. } if attachment == "preview")
+        );
+        assert_eq!(ffi.work_groups.len(), 1);
+        assert_eq!(ffi.work_groups[0].entry_ids, ["turn-item:cmd-1-0"]);
     }
 
     #[expect(

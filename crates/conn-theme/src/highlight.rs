@@ -1,10 +1,10 @@
-//! Syntect-backed syntax highlighting whose colors derive purely from [`conn_theme::Tokens`].
+//! Syntect-backed syntax highlighting whose colors derive purely from [`crate::Tokens`].
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use conn_theme::{Rgba, Tokens, color_mix_srgb};
+use crate::{Rgba, Tokens, color_mix_srgb};
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
@@ -12,11 +12,11 @@ static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_
 
 /// One styled span within a single source line.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct HighlightSpan {
-    pub(crate) text: String,
-    pub(crate) color: Rgba,
-    pub(crate) bold: bool,
-    pub(crate) italic: bool,
+pub struct HighlightSpan {
+    pub text: String,
+    pub color: Rgba,
+    pub bold: bool,
+    pub italic: bool,
 }
 
 /// Highlights `source` for the file at `path` into one `Vec<HighlightSpan>` per line.
@@ -24,11 +24,7 @@ pub(crate) struct HighlightSpan {
 /// Falls back to plain `tokens.code_foreground` spans when the file extension has no
 /// matching syntect grammar or for files exceeding `MAX_HIGHLIGHT_BYTES`.
 #[must_use]
-pub(crate) fn highlight_lines(
-    path: &str,
-    source: &str,
-    tokens: &Tokens,
-) -> Vec<Vec<HighlightSpan>> {
+pub fn highlight_lines(path: &str, source: &str, tokens: &Tokens) -> Vec<Vec<HighlightSpan>> {
     const MAX_HIGHLIGHT_BYTES: usize = 512 * 1024;
     if source.is_empty() {
         return Vec::new();

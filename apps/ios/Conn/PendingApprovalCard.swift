@@ -6,6 +6,7 @@ import SwiftUI
 /// Its content comes from Rust (`conn-ffi` `approvals`); this view only draws it.
 struct PendingApprovalCard: View {
     let approval: FfiPendingApproval
+    let remaining: Int
     /// An answer for this approval is on its way.
     let responding: Bool
     let onRespond: (FfiApprovalDecision) -> Void
@@ -14,86 +15,85 @@ struct PendingApprovalCard: View {
     @State private var explanationOpen = false
 
     var body: some View {
-        // `gap-2.5 rounded-[20px] border p-4`; mobile's spacing unit is 3.5pt (`rem: 14`).
-        VStack(alignment: .leading, spacing: 8.75) {
-            Text("APPROVAL NEEDED")
-                .font(.system(size: 12, weight: .bold))
-                .tracking(1.1)
-                .foregroundStyle(theme.mutedForeground)
-            Text(approval.title)
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(theme.foreground)
-            if let detail = approval.detail {
-                Text(detail)
-                    .font(.system(size: 14))
-                    .lineSpacing(3)
-                    .foregroundStyle(theme.mutedForeground)
-                    .textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Label("Approval needed", systemImage: "lock")
+                Spacer()
+                Text(approval.title)
+                if remaining > 1 { Text("\(remaining) pending") }
             }
-            if let reason = approval.reason {
-                Text(reason)
-                    .font(.system(size: 13))
-                    .lineSpacing(3)
-                    .foregroundStyle(theme.warning)
-            }
-            if let explanation = approval.fullAccessExplanation {
-                Button {
-                    explanationOpen.toggle()
-                } label: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Why am I being asked this?")
-                            .font(.system(size: 13, weight: .bold))
-                            .underline()
-                            .foregroundStyle(theme.mutedForeground)
-                        if explanationOpen {
-                            Text(explanation)
-                                .font(.system(size: 13))
-                                .lineSpacing(3)
+            .font(.system(size: 13, weight: .medium)).foregroundStyle(theme.mutedForeground)
+            .padding(.horizontal, 17).padding(.vertical, 10)
+            VStack(alignment: .leading, spacing: 8) {
+                if let detail = approval.detail {
+                    HighlightedSource(code: detail, language: approval.title.lowercased() == "command" ? "sh" : "")
+                }
+                if let reason = approval.reason {
+                    Text(reason)
+                        .font(.system(size: 13))
+                        .lineSpacing(3)
+                        .foregroundStyle(theme.warning)
+                }
+                if let explanation = approval.fullAccessExplanation {
+                    Button {
+                        explanationOpen.toggle()
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Why am I being asked this?")
+                                .font(.system(size: 13, weight: .bold))
+                                .underline()
                                 .foregroundStyle(theme.mutedForeground)
-                                .multilineTextAlignment(.leading)
+                            if explanationOpen {
+                                Text(explanation)
+                                    .font(.system(size: 13))
+                                    .lineSpacing(3)
+                                    .foregroundStyle(theme.mutedForeground)
+                                    .multilineTextAlignment(.leading)
+                            }
                         }
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(explanationOpen ? "Expanded" : "Collapsed")
                 }
-                .buttonStyle(.plain)
-                .accessibilityValue(explanationOpen ? "Expanded" : "Collapsed")
-            }
-            if !approval.answerable {
-                Text(
-                    "The provider process for this request is no longer available. Interrupt or restart the run to continue."
-                )
-                .font(.system(size: 14))
-                .foregroundStyle(theme.mutedForeground)
-                .accessibilityIdentifier("approval.notAnswerable")
-            }
-            if let warning = approval.warning {
-                Text(warning)
-                    .font(.system(size: 13))
-                    .lineSpacing(3)
-                    .foregroundStyle(theme.warning)
-            }
-            VStack(spacing: 7) {
-                ForEach(approval.options, id: \.decision) { option in
-                    ConnButton(
-                        label: option.label,
-                        tone: option.tone,
-                        disabled: !approval.answerable || responding
-                    ) {
-                        onRespond(option.decision)
-                    }
-                    .accessibilityIdentifier("approval.option.\(option.label)")
+                if !approval.answerable {
+                    Text(
+                        "The provider process for this request is no longer available. Interrupt or restart the run to continue."
+                    )
+                    .font(.system(size: 14))
+                    .foregroundStyle(theme.mutedForeground)
+                    .accessibilityIdentifier("approval.notAnswerable")
+                }
+                if let warning = approval.warning {
+                    Text(warning)
+                        .font(.system(size: 13))
+                        .lineSpacing(3)
+                        .foregroundStyle(theme.warning)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 18).padding(.vertical, 12)
+            .background(theme.codeBackground, in: .rect(cornerRadius: 24))
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 7) { actions }.fixedSize(horizontal: true, vertical: false)
+                VStack(alignment: .trailing, spacing: 4) { actions }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.horizontal, 8).padding(.vertical, 7)
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(theme.card))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(theme.border, lineWidth: 1)
-        )
+        .padding(3)
+        .background(theme.card, in: .rect(cornerRadius: 28))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("thread.approval.\(approval.requestId)")
     }
+    private var actions: some View {
+        ForEach(approval.options, id: \.decision) { option in
+            ConnButton(label: option.label, tone: option.tone, size: .compact, disabled: !approval.answerable || responding) {
+                onRespond(option.decision)
+            }.accessibilityIdentifier("approval.option.\(option.label)")
+        }
+    }
+
 }
 
 // MARK: - ConnButton (port of mobile's ui/Button)

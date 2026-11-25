@@ -4,7 +4,9 @@ import SwiftUI
 struct MarkdownView: View {
     let source: String
     /// An agent's earlier text beside a question: a size smaller, in the muted colour.
+    var fillsWidth = true
     var muted = false
+    var onTemplate: ((String) -> Void)? = nil
     @Environment(\.connTheme) private var theme
 
     private var bodyFont: Font { muted ? .system(size: 15) : .kitBody }
@@ -16,7 +18,7 @@ struct MarkdownView: View {
                 blockView(block)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: fillsWidth ? .infinity : nil, alignment: .leading)
     }
 
     @ViewBuilder
@@ -36,33 +38,48 @@ struct MarkdownView: View {
                 .textSelection(.enabled)
 
         case let .codeBlock(language, code):
-            VStack(alignment: .leading, spacing: 0) {
-                if let language, !language.isEmpty {
-                    Text(language)
-                        .font(.kitDetail.monospaced())
-                        .foregroundStyle(theme.mutedForeground)
-                        .padding(.horizontal, Kit.Space.l)
-                        .padding(.top, Kit.Space.s)
-                        .padding(.bottom, Kit.Space.xs)
-                }
-                ScrollView(.horizontal, showsIndicators: true) {
-                    Text(code)
-                        .font(.kitMono)
-                        .foregroundStyle(theme.codeForeground)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, Kit.Space.l)
-                        .padding(.vertical, Kit.Space.m)
-                }
+            CodeCard(code: code, language: language)
+
+        case let .quote(text):
+            HStack(spacing: 10) {
+                Capsule().fill(theme.border).frame(width: 3)
+                inlineMarkdownText(text).foregroundStyle(theme.mutedForeground).textSelection(.enabled)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: Kit.Radius.group, style: .continuous)
-                    .fill(theme.codeBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Kit.Radius.group, style: .continuous)
-                    .strokeBorder(theme.border, lineWidth: 0.5)
-            )
+
+        case let .table(rows):
+            ScrollView(.horizontal) {
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 7) {
+                    ForEach(rows.indices, id: \.self) { i in
+                        GridRow {
+                            ForEach(rows[i].indices, id: \.self) { j in
+                                inlineMarkdownText(rows[i][j]).fontWeight(i == 0 ? .semibold : .regular)
+                            }
+                        }
+                        if i == 0 { Divider() }
+                    }
+                }
+                .font(.system(size: 14)).textSelection(.enabled).padding(10)
+            }
+            .background(theme.card, in: .rect(cornerRadius: 10))
+
+        case let .template(template, raw):
+            if let onTemplate {
+                ThreadCard {
+                    Label("Artifact template", systemImage: "doc.text")
+                } content: {
+                    Button { onTemplate(template.prompt) } label: {
+                        HStack {
+                            Text(template.name)
+                            Spacer()
+                            Image(systemName: "square.and.pencil")
+                        }.padding(12)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Start a draft with " + template.name)
+                }
+            } else {
+                Text(raw).textSelection(.enabled)
+            }
 
         case let .listItem(marker, text):
             HStack(alignment: .firstTextBaseline, spacing: Kit.Space.s) {
@@ -117,6 +134,9 @@ struct MarkdownView: View {
 private enum MarkdownBlock {
     case heading(level: Int, text: String)
     case paragraph(String)
+    case quote(String)
+    case table([[String]])
+    case template(ArtifactTemplate, String)
     case codeBlock(language: String?, code: String)
     case listItem(marker: String, text: String)
 }
@@ -139,13 +159,15 @@ private func parseBlocks(_ source: String) -> [MarkdownBlock] {
         let line = lines[index]
         let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-        if trimmed.hasPrefix("```") {
+        if let marker = trimmed.first, marker == "`" || marker == "~", trimmed.prefix(while: { $0 == marker }).count >= 3 {
+            let fence = trimmed.prefix(while: { $0 == marker })
             flushParagraph()
-            let lang = String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+            let lang = String(trimmed.dropFirst(fence.count)).trimmingCharacters(in: .whitespaces)
             var codeLines: [String] = []
             index += 1
             while index < lines.count {
-                if lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                let closer = lines[index].trimmingCharacters(in: .whitespaces)
+                if closer.count >= fence.count, closer.allSatisfy({ $0 == marker }) {
                     index += 1
                     break
                 }
@@ -154,6 +176,40 @@ private func parseBlocks(_ source: String) -> [MarkdownBlock] {
             }
             blocks.append(.codeBlock(language: lang.isEmpty ? nil : lang, code: codeLines.joined(separator: "\n")))
             continue
+        }
+
+        if let template = ArtifactTemplate(directive: trimmed) {
+            flushParagraph()
+            blocks.append(.template(template, line))
+            index += 1
+            continue
+        }
+        if trimmed.hasPrefix(">") {
+            flushParagraph()
+            var quote: [String] = []
+            while index < lines.count, lines[index].trimmingCharacters(in: .whitespaces).hasPrefix(">") {
+                let line = lines[index].trimmingCharacters(in: .whitespaces).dropFirst()
+                quote.append(String(line).trimmingCharacters(in: .whitespaces))
+                index += 1
+            }
+            blocks.append(.quote(quote.joined(separator: "\n")))
+            continue
+        }
+        if trimmed.contains("|"), index + 1 < lines.count {
+            let separators = tableCells(lines[index + 1])
+            let headings = tableCells(trimmed)
+            if headings.count > 1, headings.count == separators.count,
+               separators.allSatisfy({ $0.range(of: #"^:?-{3,}:?$"#, options: .regularExpression) != nil }) {
+                flushParagraph()
+                var rows = [headings]
+                index += 2
+                while index < lines.count, lines[index].contains("|") {
+                    rows.append(tableCells(lines[index]))
+                    index += 1
+                }
+                blocks.append(.table(rows))
+                continue
+            }
         }
 
         if trimmed.isEmpty {
@@ -214,4 +270,31 @@ private func parseListItem(_ line: String) -> (String, String)? {
         }
     }
     return nil
+}
+
+private func tableCells(_ line: String) -> [String] {
+    line.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "|"))
+        .components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+}
+
+private struct ArtifactTemplate {
+    let name: String
+    let prompt: String
+    init?(directive: String) {
+        guard directive.hasPrefix("::artifact-template{"), directive.hasSuffix("}") else { return nil }
+        var attributes: [String:String] = [:]
+        for match in directive.matches(of: /([a-z_]+)="([^"]*)"/) {
+            attributes[String(match.1)] = String(match.2)
+        }
+        guard let skill = attributes["skill_name"], skill.wholeMatch(of: /artifact-template-[A-Za-z0-9_-]+/) != nil,
+              let display = attributes["display_name"], !display.isEmpty,
+              let directory = attributes["skill_directory"], directory.hasPrefix("/") || directory.contains(":\\"),
+              let kind = attributes["artifact_kind"] else { return nil }
+        let kinds = ["document":"document", "presentation":"presentation", "spreadsheet":"spreadsheet",
+                     "site":"Site", "google-docs":"Google Doc", "google-slides":"Google Slides presentation",
+                     "google-sheets":"Google Sheet", "image":"image", "email":"email", "slack":"Slack message"]
+        guard let artifact = kinds[kind] else { return nil }
+        self.name = display
+        prompt = "Use $\(skill) to create a new \(artifact) about…"
+    }
 }
