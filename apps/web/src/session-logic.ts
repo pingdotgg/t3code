@@ -227,18 +227,6 @@ export function deriveActiveWorkStartedAt(
   return startedAt ?? (runtime?.activeRunId == null ? sendStartedAt : null);
 }
 
-export function derivePendingApprovals(
-  approvals: ReadonlyArray<ThreadPendingApproval>,
-): ThreadPendingApproval[] {
-  return [...approvals].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
-}
-
-export function derivePendingUserInputs(
-  inputs: ReadonlyArray<ThreadPendingUserInput>,
-): ThreadPendingUserInput[] {
-  return [...inputs].toSorted((left, right) => left.createdAt.localeCompare(right.createdAt));
-}
-
 const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"]["type"]>([
   "fork",
   "handoff",
