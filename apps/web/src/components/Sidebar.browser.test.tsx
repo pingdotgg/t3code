@@ -581,10 +581,11 @@ describe("sidebar thread card layout", () => {
     {
       name: "fixed height",
       layout: {
-        top: ["projectIcon", "spacer"],
+        top: ["projectIcon", "projectName", "spacer"],
         middle: ["title"],
-        bottom: ["branch", "projectName", "spacer", "agents"],
-        keep: ["middle", "bottom"],
+        bottom: ["branch", "spacer", "agents"],
+        // An older layout that kept only one line still means a fixed height.
+        keep: ["bottom"],
       },
       heights: [82, 82],
     },

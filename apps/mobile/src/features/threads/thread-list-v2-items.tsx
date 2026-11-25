@@ -1566,7 +1566,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       case "spacer":
         return <View className="flex-1" />;
       case "terminals":
-        // The thread list does not track terminals on mobile.
         return null;
     }
   };
@@ -1576,8 +1575,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ) ?? "top";
   const showsError =
     (rawStatus === "failed" || rawStatus === "limited") && Boolean(thread.runtime?.lastError);
-  // A failed run's error takes the bottom line, as it always has, even when that line would fold.
-  const errorLine = showsError && titleLine !== "bottom" ? "bottom" : null;
+  // A failed run's error takes the line under the title, as it always has, even when that line
+  // would fold. It replaces the line's text items and keeps its badges.
+  const errorLine = showsError ? (titleLine === "bottom" ? "middle" : "bottom") : null;
   const resolvedLines = resolveSidebarRowLines({
     lines: rowLayout,
     titleLine,
@@ -1585,10 +1585,22 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     hasContent: (token) => itemNode(token) !== null,
   });
   const lines = errorLine
-    ? { ...resolvedLines, bottom: resolvedLines.bottom ?? rowLayout.bottom }
+    ? { ...resolvedLines, [errorLine]: resolvedLines[errorLine] ?? rowLayout[errorLine] }
     : resolvedLines;
-  const titleTextInset =
-    rowLayout[titleLine][0]?.id === "projectIcon" && props.project ? projectIconSize + 8 : 0;
+  // Lines under the title start where the title text does.
+  const titleTextInset = rowLayout[titleLine]
+    .slice(
+      0,
+      rowLayout[titleLine].findIndex((token) => token.id === "title"),
+    )
+    .some((token) => token.id === "projectIcon" && props.project)
+    ? projectIconSize + 8
+    : 0;
+  const isTextItem = (token: SidebarRowToken) =>
+    token.id === "title" ||
+    token.id === "projectName" ||
+    token.id === "branch" ||
+    (token.id === "environment" && token.form !== "compact");
   const renderItems = (tokens: ReadonlyArray<SidebarRowToken>) =>
     tokens.map((token) => {
       const node = itemNode(token);
@@ -1596,15 +1608,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       const grows =
         token.id === "spacer" ||
         (token.id === "title" && !tokens.some((other) => other.id === "spacer"));
-      const text =
-        token.id === "title" ||
-        token.id === "projectName" ||
-        token.id === "branch" ||
-        (token.id === "environment" && token.form !== "compact");
       return (
         <View
           key={token.key}
-          className={cn("min-w-0", grows ? "flex-1" : text ? "shrink" : "shrink-0")}
+          className={cn("min-w-0", grows ? "flex-1" : isTextItem(token) ? "shrink" : "shrink-0")}
         >
           {node}
         </View>
@@ -1621,24 +1628,32 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             <View
               className={cn("flex-row gap-2", isTitleLine ? "items-start" : "mt-1 items-center")}
               style={{
-                minHeight: isTitleLine ? titleLineHeight : undefined,
+                // A kept line holds one line of metadata even when it has nothing to show.
+                minHeight: isTitleLine
+                  ? titleLineHeight
+                  : metadataTypography.lineHeight * fontScale,
                 paddingLeft: isTitleLine ? 0 : titleTextInset,
               }}
             >
               {line === errorLine ? (
-                <Text
-                  className={cn(
-                    "flex-1 text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : status === "limited"
-                        ? "text-warning-foreground"
-                        : "text-danger-foreground",
+                <>
+                  <Text
+                    className={cn(
+                      "flex-1 text-xs",
+                      selected
+                        ? selectedThreadRowColors.mutedForegroundClassName
+                        : status === "limited"
+                          ? "text-warning-foreground"
+                          : "text-danger-foreground",
+                    )}
+                    numberOfLines={1}
+                  >
+                    {thread.runtime?.lastError}
+                  </Text>
+                  {renderItems(
+                    tokens.filter((token) => !isTextItem(token) && token.id !== "spacer"),
                   )}
-                  numberOfLines={1}
-                >
-                  {thread.runtime?.lastError}
-                </Text>
+                </>
               ) : (
                 renderItems(tokens)
               )}

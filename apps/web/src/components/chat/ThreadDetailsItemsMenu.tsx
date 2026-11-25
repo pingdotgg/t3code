@@ -32,7 +32,15 @@ export function ThreadDetailsItemsMenuItems(props: {
   const order = useClientSettings(resolveThreadDetailsOrder);
   const m = useMessages();
   const section = THREAD_DETAILS_SECTIONS.find((candidate) => candidate.id === props.section);
-  const shown = order.filter((id) => props.shown?.includes(id) || id === section?.id);
+  // Sections shown when the menu opened, minus any turned off in this menu since.
+  const shown = order.filter(
+    (id) =>
+      id === section?.id ||
+      (props.shown?.includes(id) &&
+        THREAD_DETAILS_SECTIONS.find((candidate) => candidate.id === id)?.items.some(
+          (item) => visibility[item],
+        )),
+  );
   const neighbor = (direction: -1 | 1) =>
     section ? shown[shown.indexOf(section.id) + direction] : undefined;
   const move = (direction: -1 | 1) => {

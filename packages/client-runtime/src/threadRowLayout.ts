@@ -85,7 +85,7 @@ export const MOBILE_DEFAULT_STORED_LAYOUT: DefaultStoredLayout = {
   middle: [],
   bottom: ["environment:wide", "spacer", "pullRequest", "agents"],
   hidden: ["projectName", "branch", "terminals", "issues"],
-  keep: ["bottom"],
+  keep: ["middle", "bottom"],
 };
 
 export function resolveSidebarRowLayout(
@@ -117,7 +117,10 @@ export function resolveSidebarRowLayout(
   const hasStored = SIDEBAR_ROW_LINES.some((line) => (stored[line]?.length ?? 0) > 0);
   // Stored under "keep" next to the lines.
   const keep = hasStored ? stored.keep : defaults.keep;
-  layout.keepLines = (["middle", "bottom"] as const).filter((line) => keep?.includes(line));
+  // Height is all-or-nothing: an older layout that kept one line keeps both.
+  layout.keepLines = keep?.some((line) => line === "middle" || line === "bottom")
+    ? ["middle", "bottom"]
+    : [];
   for (const line of SIDEBAR_ROW_LINES) {
     for (const value of (hasStored ? stored[line] : defaults[line]) ?? []) {
       const token = parseToken(value);

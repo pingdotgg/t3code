@@ -31,9 +31,11 @@ import { SettingsSection } from "./components/SettingsSection";
 
 const LINES = ["top", "middle", "bottom", "hidden"] as const;
 
-/** Every item of the layout in its line order, the title first so it is easy to find. */
+/** Every item of the layout in its line order. The thread list does not track terminals. */
 function itemsInOrder(layout: SidebarRowLayout) {
-  return LINES.flatMap((line) => layout[line].filter((token) => token.id !== "spacer"));
+  return LINES.flatMap((line) =>
+    layout[line].filter((token) => token.id !== "spacer" && token.id !== "terminals"),
+  );
 }
 
 export function SettingsThreadRowsRouteScreen() {
