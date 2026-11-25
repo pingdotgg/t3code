@@ -2,12 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import {
-  applyWorkflowRunsUpdate,
-  ProjectId,
-  type WorkflowRunsSnapshot,
-  type WorkflowRunsUpdate,
-} from "@t3tools/contracts";
+import { ProjectId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -58,18 +53,6 @@ import { agent, ask } from "./workflowAgent.ts";
 import * as Workflows from "./Workflows.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 import type { WorkflowRun, WorkflowRunStatus } from "./WorkflowStore.ts";
-
-// The list as a client holds it, folded from what `watch` sends.
-const listed = (updates: Stream.Stream<WorkflowRunsUpdate>) =>
-  updates.pipe(
-    Stream.mapAccum(
-      (): WorkflowRunsSnapshot | undefined => undefined,
-      (list, update) => {
-        const next = applyWorkflowRunsUpdate(list, update);
-        return [next, [next]] as const;
-      },
-    ),
-  );
 
 const once = { retry: { times: 0 } } as const;
 
@@ -1893,7 +1876,9 @@ it.effect("a watcher is sent the runs again when one changes", () =>
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
-        const first = Option.getOrThrow(yield* Stream.runHead(listed(workflows.watch)));
+        const first = Option.getOrThrow(
+          yield* Stream.runHead(Workflows.wholeLists(workflows.watch)),
+        );
         assert.deepStrictEqual([first.runs, first.questions], [[], []]);
         // What exists is listed before anything has run, with what starts it.
         assert.deepInclude(first.workflows, {
@@ -1906,7 +1891,7 @@ it.effect("a watcher is sent the runs again when one changes", () =>
           { change: "c9", timeout: "1 hour" },
           { idempotencyKey: "c9" },
         );
-        const seen = yield* listed(workflows.watch).pipe(
+        const seen = yield* Workflows.wholeLists(workflows.watch).pipe(
           Stream.filter((snapshot) => snapshot.runs.some((run) => run.status === "waiting")),
           Stream.runHead,
         );
@@ -2299,7 +2284,9 @@ it.effect("questions carry their kind and runs their tags, and both can be filte
         for (const run of [feature, intended, plain]) {
           yield* workflows.waitFor(run.runId, status("waiting"));
         }
-        const snapshot = Option.getOrThrow(yield* Stream.runHead(listed(workflows.watch)));
+        const snapshot = Option.getOrThrow(
+          yield* Stream.runHead(Workflows.wholeLists(workflows.watch)),
+        );
         // The page reads the labels and their order from what the workflow declares.
         assert.deepStrictEqual(
           snapshot.workflows.find((workflow) => workflow.name === "sorter")?.asks,
@@ -2347,7 +2334,9 @@ it.effect("questions carry their kind and runs their tags, and both can be filte
         // A kind the workflow does not declare is asked all the same, and kept as it was written.
         const typo = yield* sort("d", [], "feture");
         yield* workflows.waitFor(typo.runId, status("waiting"));
-        const after = Option.getOrThrow(yield* Stream.runHead(listed(workflows.watch)));
+        const after = Option.getOrThrow(
+          yield* Stream.runHead(Workflows.wholeLists(workflows.watch)),
+        );
         assert.equal(
           after.questions.find((question) => question.runId === typo.runId)?.kind,
           "feture",

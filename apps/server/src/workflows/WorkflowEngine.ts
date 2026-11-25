@@ -880,7 +880,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             const questions = JSON.stringify(next.questions);
             const update: WorkflowRunsUpdate =
               sent === undefined
-                ? { _tag: "snapshot", ...next }
+                ? next
                 : {
                     _tag: "changed",
                     runs: next.runs.filter(

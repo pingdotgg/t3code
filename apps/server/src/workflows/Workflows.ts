@@ -3,6 +3,8 @@ import {
   type WorkflowHook,
   WorkflowQuestion,
   type WorkflowRunReference,
+  applyWorkflowRunsUpdate,
+  type WorkflowRunsSnapshot,
   type WorkflowRunsUpdate,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -201,14 +203,23 @@ export const disabled = Workflows.of({
   }),
   storeSet: refuse,
   storeDelete: refuse,
-  watch: Stream.concat(
-    Stream.make({ _tag: "snapshot" as const, workflows: [], runs: [], questions: [] }),
-    Stream.never,
-  ),
+  watch: Stream.concat(Stream.make({ workflows: [], runs: [], questions: [] }), Stream.never),
   counts: Stream.concat(Stream.make({ needsYou: 0, active: 0, total: 0 }), Stream.never),
   sweep: Effect.void,
 });
 export const layerDisabled = Layer.succeed(Workflows, disabled);
+
+/** What `watch` sends, as the whole list every time: for a client that did not ask for changes. */
+export const wholeLists = (updates: Stream.Stream<WorkflowRunsUpdate>) =>
+  updates.pipe(
+    Stream.mapAccum(
+      (): WorkflowRunsSnapshot | undefined => undefined,
+      (list, update) => {
+        const next = applyWorkflowRunsUpdate(list, update);
+        return [next, [next]] as const;
+      },
+    ),
+  );
 
 export const OFF =
   'Workflows are off on this server. Turn them on in its Settings → Labs → Workflows, or without a desktop, set "workflowsEnabled": true in userdata/settings.json in its T3 home (~/.t3 by default).';

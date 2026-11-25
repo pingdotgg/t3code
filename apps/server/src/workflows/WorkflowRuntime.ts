@@ -652,9 +652,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     }),
     // Every reload starts a watcher over on a whole list, which is where the definition rides.
     watch: followed((live) => live.watch).pipe(
-      Stream.map(([update, at]) =>
-        update._tag === "snapshot" ? { ...update, definition: at } : update,
-      ),
+      Stream.map(([update, at]) => ("_tag" in update ? update : { ...update, definition: at })),
     ),
     counts: followed((live) => live.counts).pipe(Stream.map(([counts]) => counts)),
     sweep: Effect.flatMap(current, (live) => live.sweep),

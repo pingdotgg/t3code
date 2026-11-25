@@ -357,7 +357,6 @@ describe("applyWorkflowRunsUpdate", () => {
   it("keeps the list a fresh snapshot would show, newest first", () => {
     const asked = question("b");
     const first = applyWorkflowRunsUpdate(undefined, {
-      _tag: "snapshot",
       workflows: [],
       runs: [run("c", { startedAt: at(3) }), run("b", { startedAt: at(2) }), run("a")],
       questions: [asked],

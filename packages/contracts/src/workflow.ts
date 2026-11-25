@@ -171,21 +171,21 @@ export const WorkflowCounts = Schema.Struct({
 export type WorkflowCounts = typeof WorkflowCounts.Type;
 export type WorkflowRunsSnapshot = typeof WorkflowRunsSnapshot.Type;
 
+/** What changed in the runs list since the last frame a watcher was sent. */
+export const WorkflowRunsChange = Schema.TaggedStruct("changed", {
+  /** Runs new to the list or different from what was last sent. */
+  runs: Schema.Array(WorkflowRun),
+  /** Runs that left the list. */
+  removed: Schema.Array(Schema.String),
+  /** All open questions, when any of them changed. */
+  questions: Schema.optional(Schema.Array(WorkflowQuestion)),
+});
+
 /**
- * What a watcher of the runs list is sent: the whole list first and after every reload, then
- * only what changed since the last frame, so one run moving does not resend every other run.
+ * A frame of `workflows.subscribe`: the whole list, or with `changes` asked for, what changed
+ * since the last frame. A server older than `changes` ignores it and sends whole lists.
  */
-export const WorkflowRunsUpdate = Schema.Union([
-  Schema.TaggedStruct("snapshot", WorkflowRunsSnapshot.fields),
-  Schema.TaggedStruct("changed", {
-    /** Runs new to the list or different from what was last sent. */
-    runs: Schema.Array(WorkflowRun),
-    /** Runs that left the list. */
-    removed: Schema.Array(Schema.String),
-    /** All open questions, when any of them changed. */
-    questions: Schema.optional(Schema.Array(WorkflowQuestion)),
-  }),
-]);
+export const WorkflowRunsUpdate = Schema.Union([WorkflowRunsSnapshot, WorkflowRunsChange]);
 export type WorkflowRunsUpdate = typeof WorkflowRunsUpdate.Type;
 
 /** The list once `update` is applied, in the order the server lists runs: newest first. */
@@ -193,10 +193,7 @@ export function applyWorkflowRunsUpdate(
   snapshot: WorkflowRunsSnapshot | undefined,
   update: WorkflowRunsUpdate,
 ): WorkflowRunsSnapshot {
-  if (update._tag === "snapshot") {
-    const { _tag, ...next } = update;
-    return next;
-  }
+  if (!("_tag" in update)) return update;
   const base = snapshot ?? { workflows: [], runs: [], questions: [] };
   const changed = new Map(update.runs.map((run) => [run.runId, run]));
   const gone = new Set(update.removed);
@@ -213,7 +210,10 @@ export function applyWorkflowRunsUpdate(
   return { ...base, runs, questions: update.questions ?? base.questions };
 }
 
-export const WorkflowRunsSubscribeInput = Schema.Struct({});
+export const WorkflowRunsSubscribeInput = Schema.Struct({
+  /** Send what changed after the first list instead of the whole list every time. */
+  changes: Schema.optionalKey(Schema.Boolean),
+});
 
 export const WorkflowRunGetInput = Schema.Struct({ runId: Schema.String });
 

@@ -1470,11 +1470,11 @@ export function createServerEnvironmentAtoms<R, E>(
       ),
     );
   });
-  const workflowsLive = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+  const workflowsLive = createEnvironmentSubscriptionAtomFamily(runtime, {
     label: "environment-data:server:workflows:live",
-    tag: WS_METHODS.workflowsSubscribe,
-    transform: (updates) =>
-      updates.pipe(
+    // Asks for what changed after the first list; a server older than that sends whole lists.
+    subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.workflowsSubscribe>) =>
+      subscribe(WS_METHODS.workflowsSubscribe, { ...input, changes: true }).pipe(
         Stream.mapAccum(
           (): WorkflowRunsSnapshot | undefined => undefined,
           (snapshot, update) => {
