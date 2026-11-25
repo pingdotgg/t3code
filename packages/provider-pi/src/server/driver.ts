@@ -17,7 +17,7 @@ import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import {
   buildInitialPiProviderSnapshot,
   checkPiProviderStatus,
-  discoverPiCommandsForCwd,
+  discoverPiWorkspaceInventory,
   enrichPiSnapshot,
 } from "./status.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -204,7 +204,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
           ? snapshot.getSnapshot
           : Effect.all([
               snapshot.getSnapshot,
-              discoverPiCommandsForCwd(effectiveConfig, processEnv, workspaceCwd).pipe(
+              discoverPiWorkspaceInventory(effectiveConfig, processEnv, workspaceCwd).pipe(
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
                 Effect.mapError(
                   (cause) =>
@@ -217,9 +217,9 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
                 ),
               ),
             ]).pipe(
-              Effect.map(([machineSnapshot, commands]) => ({
+              Effect.map(([machineSnapshot, inventory]) => ({
                 ...machineSnapshot,
-                ...commands,
+                ...inventory,
                 slashCommandsPending: false,
               })),
             ),

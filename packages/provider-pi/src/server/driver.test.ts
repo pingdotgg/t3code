@@ -45,7 +45,11 @@ const personalSkill = {
 };
 
 const makePiSpawner = Effect.fnUntraced(function* (
-  discovery: { readonly state?: unknown; readonly models?: ReadonlyArray<unknown> } = {},
+  discovery: {
+    readonly state?: unknown;
+    readonly models?: ReadonlyArray<unknown>;
+    readonly workspaceModels?: Record<string, ReadonlyArray<unknown>>;
+  } = {},
 ) {
   const pendingCommand = yield* Deferred.make<void>();
   const launches: Array<ChildProcess.StandardCommand> = [];
@@ -91,7 +95,14 @@ const makePiSpawner = Effect.fnUntraced(function* (
                   ],
                 }
               : request.type === "get_available_models"
-                ? { models: discovery.models ?? [{ provider: "test", id: "model" }] }
+                ? {
+                    models: [
+                      ...(discovery.models ?? [{ provider: "test", id: "model" }]),
+                      ...(command.args.includes("--no-extensions")
+                        ? []
+                        : (discovery.workspaceModels?.[cwd ?? ""] ?? [])),
+                    ],
+                  }
                 : request.type === "get_state"
                   ? (discovery.state ?? {})
                   : {};
@@ -124,9 +135,14 @@ const create = (config: Partial<PiSettings> = {}, enabled = true) =>
   });
 
 it.layer(layerTest)("PiDriver workspace discovery", (it) => {
-  it.effect("keeps each workspace's skills and commands separate from the machine catalog", () =>
+  it.effect("keeps each workspace's inventory separate from the machine catalog", () =>
     Effect.gen(function* () {
-      const { spawner, launches } = yield* makePiSpawner();
+      const { spawner, launches } = yield* makePiSpawner({
+        workspaceModels: {
+          "/first": [{ provider: "test", id: "first" }],
+          "/second": [{ provider: "test", id: "second" }],
+        },
+      });
       const instance = yield* create({ launchArgs: '--approve --skill "extra skill"' }).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       );
@@ -161,6 +177,16 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
       assert.equal(first.displayName, "My Pi");
       assert.equal(first.accentColor, "#abcdef");
       assert.deepEqual(first.models, machine.models);
+      assert.deepEqual(
+        [machine.models, first.workspaceModels, second.workspaceModels].map((models) =>
+          models?.map((model) => model.slug),
+        ),
+        [
+          ["default", "test/model"],
+          ["default", "test/model", "test/first"],
+          ["default", "test/model", "test/second"],
+        ],
+      );
       const workspaceLaunch = launches.find((launch) => launch.options.cwd === "/first");
       assert.isDefined(workspaceLaunch);
       assert.equal(workspaceLaunch!.command, "custom-pi");

@@ -191,13 +191,15 @@ const readPiInventory = Effect.fn("PiProviderStatus.readPiInventory")(function* 
   launchArgs: ReadonlyArray<string>,
   timeoutMs: number,
   cwd?: string,
+  requireCommands = false,
 ) {
   const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
   const stateData = yield* connection.request({ type: "get_state" }, timeoutMs);
   const modelsData = yield* connection.request({ type: "get_available_models" }, timeoutMs);
-  const commandsData = yield* connection
-    .request({ type: "get_commands" }, timeoutMs)
-    .pipe(Effect.orElseSucceed(() => undefined));
+  const commands = connection.request({ type: "get_commands" }, timeoutMs);
+  const commandsData = yield* requireCommands
+    ? commands
+    : commands.pipe(Effect.orElseSucceed(() => undefined));
   return { stateData, modelsData, commandsData };
 }, Effect.scoped);
 
@@ -228,6 +230,7 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
+  requireCommands = false,
 ) {
   const timeoutMs = resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment);
   // This optional probe must finish before the normal discovery deadline so
@@ -257,6 +260,7 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     launchArgs,
     timeoutMs,
     cwd,
+    requireCommands,
   ).pipe(
     // Pi's RPC mode reads stdin only after session_start, so a startup dialog (an MCP adapter asking
     // to approve a project server) can never be answered and Pi exits. Retry declining project trust
@@ -267,7 +271,14 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
         (error.operation === "read" || error.operation === "exit") &&
         !launchArgs.some((arg) => PI_PROJECT_TRUST_ARGUMENTS.has(arg)),
       () =>
-        readPiInventory(piSettings, environment, [...launchArgs, "--no-approve"], timeoutMs, cwd),
+        readPiInventory(
+          piSettings,
+          environment,
+          [...launchArgs, "--no-approve"],
+          timeoutMs,
+          cwd,
+          requireCommands,
+        ),
     ),
   );
   const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
@@ -300,25 +311,25 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
   } satisfies PiDiscovery;
 }, Effect.scoped);
 
-export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
+export const discoverPiWorkspaceInventory = Effect.fn("discoverPiWorkspaceInventory")(
   function* (piSettings: PiSettings, environment: NodeJS.ProcessEnv, cwd: string) {
     const launchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
     if (!launchArgs.ok) {
       return yield* new PiRpcError({ operation: "launch", detail: launchArgs.message });
     }
-    const connection = yield* makePiDiscoveryConnection(
+    // Keep the previous workspace catalog when discovery fails.
+    const { models, slashCommands, skills } = yield* discoverPiViaRpc(
       piSettings,
       providerProbeEnvironment(environment),
       launchArgs.args,
       cwd,
+      true,
     );
-    // A failed read must not replace a previously usable workspace catalog with an empty one.
-    const commandsData = yield* connection.request(
-      { type: "get_commands" },
-      resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment),
-    );
-    const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
-    return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };
+    return {
+      workspaceModels: piModelsFromSettings(piSettings.customModels, models),
+      slashCommands,
+      skills,
+    };
   },
   Effect.scoped,
   (effect, _settings, environment) => {
