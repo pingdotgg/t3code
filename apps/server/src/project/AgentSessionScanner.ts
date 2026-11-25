@@ -424,7 +424,6 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
 // their output, task notifications. Keep what the user typed, as they typed it.
 function isClaudeUiOutput(text: string): boolean {
   if (/^\[Request interrupted by user(?: for tool use)?\]$/.test(text)) return true;
-  if (!text.startsWith("<")) return false;
   const block =
     /<(task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>\s*/y;
   // Consume each block at its first closing tag so prose between blocks stays visible.
