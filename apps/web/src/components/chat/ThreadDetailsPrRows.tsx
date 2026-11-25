@@ -43,6 +43,7 @@ function ThreadDetailsPrLinkRow({
   onActed,
   onStopWatching,
   composerTarget,
+  handoffDisabled,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
@@ -50,6 +51,7 @@ function ThreadDetailsPrLinkRow({
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
   composerTarget?: ComposerThreadTarget | undefined;
+  handoffDisabled?: boolean | undefined;
 }) {
   const m = useMessages();
   const projects = useProjects();
@@ -75,6 +77,7 @@ function ThreadDetailsPrLinkRow({
       onOpen={onOpen}
       onStopWatching={onStopWatching}
       composerTarget={composerTarget}
+      handoffDisabled={handoffDisabled}
       {...(onActed ? { onActed } : {})}
     />
   );
@@ -85,12 +88,14 @@ function ThreadDetailsPrRows({
   links,
   currentLink,
   onOpenLink,
+  composerTargetFor,
   ...row
 }: ComponentProps<typeof ThreadDetailsPrRow> & {
   threadRef: ScopedThreadRef;
   links: ReadonlyArray<ThreadPullRequestLink>;
   currentLink: ThreadPullRequestLink | null;
   onOpenLink: (event: ReactMouseEvent<HTMLElement>, url: string) => void;
+  composerTargetFor: (url: string) => ComposerThreadTarget | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const watch = useAtomCommand(threadEnvironment.watchPullRequest, { reportFailure: true });
@@ -130,7 +135,8 @@ function ThreadDetailsPrRows({
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}
               onStopWatching={stopWatching(link)}
-              composerTarget={row.composerTarget}
+              composerTarget={composerTargetFor(link.url)}
+              handoffDisabled={row.handoffDisabled}
             />
           ))}
         </div>
@@ -152,13 +158,19 @@ export function ThreadDetailsThreadPrRows({
   branchSourceControlProvider,
   onActed,
   composerTarget,
+  checkout,
+  handoffDisabled,
 }: {
   threadRef: ScopedThreadRef;
   project: EnvironmentProject | null;
   branchPr?: VcsStatusResult["pr"];
   branchSourceControlProvider?: VcsStatusResult["sourceControlProvider"];
   onActed?: () => void;
+  /** Every row's Fix and Resolve write here, for threads without a checkout of their own. */
   composerTarget?: ComposerThreadTarget | undefined;
+  /** Only the row for the pull request this thread has checked out writes to its composer. */
+  checkout?: { target: ComposerThreadTarget; pullRequestUrl: string } | undefined;
+  handoffDisabled?: boolean | undefined;
 }) {
   const thread = useQuietThreadShell(threadRef);
   const displayed = useThreadDisplayedPullRequest(
@@ -182,6 +194,12 @@ export function ThreadDetailsThreadPrRows({
           projects.filter((candidate) => candidate.environmentId === threadRef.environmentId),
           parsed,
         ) ?? project);
+  const composerTargetFor = (prUrl: string) =>
+    composerTarget ??
+    (checkout !== undefined &&
+    sourceControlClients.isSameChangeRequest(prUrl, checkout.pullRequestUrl)
+      ? checkout.target
+      : undefined);
   if (number === undefined || url === undefined) return null;
   return (
     <ThreadDetailsPrRows
@@ -197,7 +215,9 @@ export function ThreadDetailsThreadPrRows({
       project={rowProject}
       label={`#${number}${pr?.title.trim() ? `: ${pr.title}` : ""}`}
       onOpen={(event) => openPrLink(event, url)}
-      composerTarget={composerTarget}
+      composerTarget={composerTargetFor(url)}
+      composerTargetFor={composerTargetFor}
+      handoffDisabled={handoffDisabled}
       {...(onActed ? { onActed } : {})}
     />
   );
