@@ -14,6 +14,7 @@ import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { ExternalLinkIcon } from "lucide-react";
 import { memo, type ReactNode, Suspense, use } from "react";
 
+import { useOpenLink } from "~/browser/useOpenLink";
 import { useRenderedAppearance } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
@@ -244,6 +245,11 @@ function ToolCallBody(
 
 export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspectorProps) {
   const gt = useGT();
+  const threadRef = {
+    environmentId: props.environmentId,
+    threadId: props.projectedItem.sourceThreadId,
+  };
+  const openLink = useOpenLink(threadRef);
   // Command rows stream their output, including the final output, from the server.
   const environmentStreamsOutput = useCommandOutputStreaming(props.environmentId);
   const streamsOutput =
@@ -375,6 +381,10 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      void openLink(safeHref, { event }).catch(console.error);
+                    }}
                   >
                     {result.title ?? result.url}
                     <ExternalLinkIcon className="size-3" />
