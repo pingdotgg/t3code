@@ -3770,9 +3770,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       return (event: TerminalAttachStreamEvent) => {
         if ("snapshot" in event) {
           const retained = retainTerminalSnapshotHistory(event.snapshot.history, maxHistoryBytes);
-          pending = supportsSnapshotSequenceState
-            ? TERMINAL_SEQUENCE_GROUND
-            : (retained.historySequenceState ?? TERMINAL_SEQUENCE_GROUND);
+          if (!supportsSnapshotSequenceState) {
+            pending = retained.historySequenceState ?? TERMINAL_SEQUENCE_GROUND;
+          }
           return listener({
             ...event,
             snapshot: {
