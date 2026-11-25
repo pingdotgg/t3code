@@ -3419,6 +3419,50 @@ it.effect("believes a search's silence about a repository it vouches for", () =>
     );
   }),
 );
+it.effect("fills in line counts for a project's root and tracked repositories", () =>
+  Effect.gen(function* () {
+    const child = project({
+      id: "p1",
+      title: "root",
+      workspaceRoot: "/a/child",
+      repository: "acme/child",
+    });
+    const service = yield* makeService({
+      projects: [
+        {
+          ...project({ id: "p1", title: "root", workspaceRoot: "/a", repository: "acme/root" }),
+          trackedFolders: [{ path: "/a/child", name: "child", discovered: true }],
+        },
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          listChangeRequestStats: (input) =>
+            Effect.succeed(
+              input.changeRequests.map((changeRequest) => ({
+                ...changeRequest,
+                additions: changeRequest.number,
+                deletions: 0,
+              })),
+            ),
+        }),
+      ],
+      resolveRepositoryIdentity: (cwd) =>
+        Effect.succeed(cwd === "/a/child" ? (child.repositoryIdentity ?? null) : null),
+    });
+
+    const result = yield* service.listStats({
+      refs: [
+        { projectId: "p1" as ProjectId, repository: "acme/root", number: 1 },
+        { projectId: "p1" as ProjectId, repository: "acme/child", number: 1 },
+      ],
+    });
+
+    assert.deepStrictEqual(result.stats.map((stat) => stat.repository).toSorted(), [
+      "acme/child",
+      "acme/root",
+    ]);
+  }),
+);
 it.effect("fills in the line counts for the rows it is given", () =>
   Effect.gen(function* () {
     const asked: Array<unknown> = [];
