@@ -48,7 +48,12 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/server/attachmentPrompt";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { parsePiCompactCommand, type PiCompactCommand } from "./commands.ts";
+import {
+  parsePiCompactCommand,
+  parsePiDiscoveredCommands,
+  type PiCompactCommand,
+} from "./commands.ts";
+import { readPiCommandsForCwd } from "./status.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -79,6 +84,7 @@ import {
   buildPiRpcLaunch,
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
+  type PiSkillLaunchPolicy,
 } from "./mcpInjection.ts";
 import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
@@ -92,6 +98,16 @@ const PI_INHERIT_MODEL_SLUG = "default";
 
 const STREAM_FLUSH_MS = 50;
 const PI_REQUEST_TIMEOUT_MS = 15_000;
+const isPiCommandsInventory = Schema.is(
+  Schema.Struct({
+    commands: Schema.Array(
+      Schema.Struct({
+        name: Schema.String.check(Schema.isMinLength(1)),
+        source: Schema.Literals(["extension", "prompt", "skill"]),
+      }),
+    ),
+  }),
+);
 const PI_SUBAGENT_ASYNC_PREFIX = "PI_SUBAGENT_ASYNC_JSON:";
 const decodePiJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 const PI_SESSION_TIMEOUT_MS = 60_000;
@@ -493,6 +509,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   return ProviderAdapter.ProviderAdapterV2.of({
     instanceId: options.instanceId,
     driver: PI_PROVIDER,
+    supportsSkillDenyList: true,
     getCapabilities: Effect.fn("PiAdapter.getCapabilities")(function () {
       return Effect.succeed(PiProviderCapabilitiesV2);
     }),
@@ -504,6 +521,77 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
     ) {
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
+      const deniedNames = new Set(input.runtimePolicy.deniedSkills);
+      const resolvedLaunchArgs = resolvePiLaunchArgs(
+        options.settings.launchArgs,
+        deniedNames.size > 0,
+      );
+      if (!resolvedLaunchArgs.ok) {
+        return yield* protocolError(resolvedLaunchArgs.message);
+      }
+      const hasSessionSkillPolicy = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) => {
+        const names = new Set(policy.deniedSkills);
+        return names.size === deniedNames.size && [...names].every((name) => deniedNames.has(name));
+      };
+      const parseSkillInventory = (data: unknown, operation: "discover" | "verify") => {
+        const detail = `Could not ${operation} Pi skills for the deny list`;
+        if (!isPiCommandsInventory(data)) {
+          return Effect.fail(protocolError(`${detail}: invalid command inventory`));
+        }
+        const { skills } = parsePiDiscoveredCommands(data);
+        if (
+          skills.length !== data.commands.filter((command) => command.source === "skill").length ||
+          skills.some((skill) => !path.isAbsolute(skill.path))
+        ) {
+          return Effect.fail(protocolError(`${detail}: missing skill names or file paths`));
+        }
+        return Effect.succeed({ skills, commands: data.commands });
+      };
+      const allowedSkills = new Map<string, string>();
+      let skillPolicy: PiSkillLaunchPolicy | undefined;
+      if (deniedNames.size > 0) {
+        const commands = yield* readPiCommandsForCwd(
+          options.settings,
+          options.environment,
+          cwd,
+          resolvedLaunchArgs.args,
+          PI_REQUEST_TIMEOUT_MS,
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.mapError((cause) =>
+            protocolError(`Could not discover Pi skills for the deny list: ${cause.message}`),
+          ),
+        );
+        const { skills } = yield* parseSkillInventory(commands, "discover");
+        const deniedRoots = new Set<string>();
+        const deniedFiles = new Set<string>();
+        for (const skill of skills) {
+          if (!deniedNames.has(skill.name)) {
+            allowedSkills.set(skill.name, skill.path);
+            continue;
+          }
+          const root = path.dirname(skill.path);
+          const [realRoot, realFile] = yield* Effect.all([
+            fileSystem.realPath(root),
+            fileSystem.realPath(skill.path),
+          ]).pipe(
+            Effect.mapError((cause) =>
+              protocolError(`Could not resolve denied Pi skill '${skill.name}': ${cause.message}`),
+            ),
+          );
+          deniedRoots.add(root);
+          deniedRoots.add(realRoot);
+          deniedFiles.add(realFile);
+        }
+        skillPolicy = {
+          allowedPaths: [...allowedSkills.values()],
+          denied: {
+            deniedNames: [...deniedNames],
+            deniedRoots: [...deniedRoots],
+            deniedFiles: [...deniedFiles],
+          },
+        };
+      }
       const mcpSession = yield* mcpSessions.read(input.threadId);
       const provideCacheFs = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
         effect.pipe(
@@ -521,10 +609,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const extensionPath = yield* provideCacheFs(
         materializePiT3McpExtension(host.paths.providerStatusCacheDir),
       );
-      const resolvedLaunchArgs = resolvePiLaunchArgs(options.settings.launchArgs);
-      if (!resolvedLaunchArgs.ok) {
-        return yield* protocolError(resolvedLaunchArgs.message);
-      }
       // A workspace handoff restarts Pi in a new cwd, but the session header still names the old one.
       const sessionHeaderNamesCwd = Effect.fnUntraced(function* (sessionFile: string) {
         const header = yield* fileSystem.stream(sessionFile).pipe(
@@ -557,6 +641,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             extensionPath,
             sessionPath,
             runtimeMode: input.runtimePolicy.runtimeMode,
+            skillPolicy,
           });
           const scopedLaunch = yield* agentScope.wrap({
             command: options.settings.binaryPath || "pi",
@@ -578,6 +663,32 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             cwd,
             env: launch.env,
           });
+          if (skillPolicy !== undefined) {
+            const inventory = yield* connection
+              .request({ type: "get_commands" }, PI_REQUEST_TIMEOUT_MS)
+              .pipe(
+                Effect.mapError((cause) =>
+                  protocolError(`Could not verify Pi skills for the deny list: ${cause.message}`),
+                ),
+              );
+            const { skills, commands } = yield* parseSkillInventory(inventory, "verify");
+            if (
+              skills.length !== allowedSkills.size ||
+              skills.some((skill) => allowedSkills.get(skill.name) !== skill.path)
+            ) {
+              return yield* protocolError("Pi did not load the expected skill allowlist");
+            }
+            if (
+              !commands.some(
+                (command) =>
+                  command.source === "extension" && command.name === PI_T3_SERVICE_TIER_COMMAND,
+              )
+            ) {
+              return yield* protocolError(
+                "Pi did not load the T3 extension required by the skill deny list",
+              );
+            }
+          }
           // Its tools carry T3CODE_THREAD_ID, so port discovery must scan while Pi runs.
           const trackAgent = host.trackAgent;
           if (trackAgent !== undefined) {
@@ -602,13 +713,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       });
       let started = yield* startConnection(initialSessionPath).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.mapError(
-          (cause) =>
-            new ProviderAdapter.ProviderAdapterOpenSessionError({
-              driver: PI_PROVIDER,
-              providerSessionId: input.providerSessionId,
-              cause,
-            }),
+        Effect.mapError((cause) =>
+          cause._tag === "ProviderAdapterProtocolError"
+            ? cause
+            : new ProviderAdapter.ProviderAdapterOpenSessionError({
+                driver: PI_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
         ),
       );
       let connection: PiRpcConnection = started.connection;
@@ -3026,6 +3138,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           shortLived: true,
           disableExtensions: true,
           disableTools: true,
+          skillPolicy,
         });
         return yield* Effect.scoped(
           Effect.gen(function* () {
@@ -3147,6 +3260,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
           publish = true,
         ) {
+          if (!hasSessionSkillPolicy(threadInput.runtimePolicy)) {
+            return yield* protocolError("Pi thread skill deny list does not match this session");
+          }
           if (rollbackBarrier !== null)
             return yield* protocolError("Cannot register a Pi thread during rollback");
           if (threadState !== null && threadState.activeTurn !== null) {
@@ -3507,6 +3623,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }),
         startTurn: Effect.fn("PiAdapter.startTurn")(
           function* (turnInput) {
+            if (!hasSessionSkillPolicy(turnInput.runtimePolicy)) {
+              return yield* protocolError("Pi turn skill deny list does not match this session");
+            }
             if (registrationInProgress)
               return yield* protocolError("Cannot start a Pi turn during registration");
             if (rollbackBarrier !== null)
@@ -4252,6 +4371,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ),
         forkThread: Effect.fn("PiAdapter.forkThread")(
           function* (forkInput) {
+            if (
+              forkInput.runtimePolicy !== undefined &&
+              !hasSessionSkillPolicy(forkInput.runtimePolicy)
+            ) {
+              return yield* protocolError(
+                "Pi fork target skill deny list does not match this session",
+              );
+            }
             if (threadState?.activeTurn != null) {
               return yield* protocolError("Cannot fork while a Pi turn is active");
             }

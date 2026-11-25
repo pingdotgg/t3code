@@ -57,7 +57,7 @@ import {
 } from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
-import { PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import { PI_T3_SERVICE_TIER_COMMAND, T3_PI_SKILL_POLICY_ENV } from "./mcpExtensionSource.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
 
 const layerTest = Layer.mergeAll(
@@ -178,6 +178,7 @@ interface FakePi {
   ) => void;
   readonly deferNextModelSelection: () => void;
   readonly queueModels: (models: ReadonlyArray<unknown>) => void;
+  readonly setCommands: (commands: unknown) => void;
   readonly vetoNextNewSession: () => void;
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   readonly promptThinkingLevels: ReadonlyArray<string>;
@@ -245,6 +246,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let sessionFile = FAKE_SESSION_FILE;
   let sessionGeneration = 0;
   let models: ReadonlyArray<unknown> = [];
+  let commands: unknown;
   let isStreaming: boolean | null = null;
   let isCompacting = false;
   let clearQueue: Parameters<FakePi["setClearQueue"]>[0] = { steering: [], followUp: [] };
@@ -335,6 +337,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
           : base;
       case "get_available_models":
         return { ...base, data: { models } };
+      case "get_commands":
+        return commands === undefined
+          ? { ...base, success: false, error: "commands unavailable" }
+          : { ...base, data: commands };
       case "new_session": {
         const cancelled = vetoNewSession;
         vetoNewSession = false;
@@ -498,6 +504,9 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     queueModels: (value) => {
       models = value;
     },
+    setCommands: (value) => {
+      commands = value;
+    },
     vetoNextNewSession: () => {
       vetoNewSession = true;
     },
@@ -524,20 +533,25 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   } satisfies FakePi;
 });
 
+const fakePi = (commands: unknown) =>
+  makeFakePi.pipe(Effect.tap((fake) => Effect.sync(() => fake.setCommands(commands))));
+
 const makeAdapter = Effect.fnUntraced(function* (
   fake: FakePi,
   launchArgs = "",
   forkFake?: FakePi,
   continuationRequests?: PiAdapterV2Options["continuationRequests"],
+  discoveryFake?: FakePi,
 ) {
-  const spawner =
-    forkFake === undefined
-      ? fake.spawner
-      : ChildProcessSpawner.make((command) =>
-          ChildProcess.isStandardCommand(command) && command.args.includes("--fork")
-            ? forkFake.spawner.spawn(command)
-            : fake.spawner.spawn(command),
-        );
+  const spawner = ChildProcessSpawner.make((command) => {
+    if (ChildProcess.isStandardCommand(command)) {
+      if (command.args.includes("--fork") && forkFake !== undefined)
+        return forkFake.spawner.spawn(command);
+      if (command.args.includes("--no-session") && discoveryFake !== undefined)
+        return discoveryFake.spawner.spawn(command);
+    }
+    return fake.spawner.spawn(command);
+  });
   if (continuationRequests !== undefined) {
     return yield* PiAdapterV2Driver.create({
       instanceId: PI_INSTANCE_ID,
@@ -655,6 +669,136 @@ const startTurn = Effect.fnUntraced(function* (
 });
 
 describe("PiAdapterV2", () => {
+  it.effect("applies the discovered skill allowlist to startup, native resume, and fork", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* fs.makeTempDirectoryScoped();
+      const allowed = `${cwd}/allowed/SKILL.md`;
+      const denied = `${cwd}/denied/SKILL.md`;
+      for (const name of ["allowed", "denied"]) {
+        yield* fs.makeDirectory(`${cwd}/${name}`);
+        yield* fs.writeFileString(`${cwd}/${name}/SKILL.md`, name);
+      }
+      const probe = yield* fakePi({
+        commands: [
+          { name: "skill:allowed", source: "skill", sourceInfo: { path: allowed } },
+          { name: "skill:private:denied", source: "skill", sourceInfo: { path: denied } },
+          { name: "other-command", source: "extension" },
+        ],
+      });
+      const fake = yield* fakePi({
+        commands: [
+          { name: "skill:allowed", source: "skill", sourceInfo: { path: allowed } },
+          { name: PI_T3_SERVICE_TIER_COMMAND, source: "extension" },
+        ],
+      });
+      const forkFake = yield* makeFakePi;
+      const adapter = yield* makeAdapter(
+        fake,
+        "--approve --extension example.ts",
+        forkFake,
+        undefined,
+        probe,
+      );
+      assert.isTrue(adapter.supportsSkillDenyList);
+      const policy = { ...runtimePolicy, cwd, deniedSkills: ["private:denied"] };
+      const runtime = yield* adapter.openSession({
+        threadId: THREAD_ID,
+        providerSessionId: SESSION_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy: policy,
+        initialNativeThreadId: FAKE_SESSION_FILE,
+      });
+      assert.include(probe.lastSpawn().args, "example.ts");
+      assert.notInclude(probe.lastSpawn().args, "--no-skills");
+      assert.include(fake.lastSpawn().args, "--session");
+      assert.include(fake.lastSpawn().args, "--no-skills");
+      assert.include(fake.lastSpawn().args, "--no-extensions");
+      assert.notInclude(fake.lastSpawn().args, "example.ts");
+      assert.include(fake.lastSpawn().args, allowed);
+      assert.notInclude(fake.lastSpawn().args, denied);
+      assert.include(fake.lastSpawn().env[T3_PI_SKILL_POLICY_ENV] ?? "", "private:denied");
+      const source = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy: policy,
+      });
+      const forkFile = "/fake/restricted-fork.jsonl";
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      yield* runtime.forkThread({
+        sourceProviderThread: source,
+        targetThreadId: ThreadId.make("restricted-fork"),
+        runtimePolicy: policy,
+      });
+      assert.include(forkFake.lastSpawn().args, "--no-skills");
+      assert.include(forkFake.lastSpawn().args, allowed);
+      assert.notInclude(forkFake.lastSpawn().args, denied);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      commands: [{ name: "skill:private", source: "skill", path: "/fake/skill.md" }],
+      detail: "expected skill allowlist",
+    },
+    { commands: [], detail: "T3 extension required" },
+  ])("refuses a restricted Pi process without the $detail", ({ commands, detail }) =>
+    Effect.gen(function* () {
+      const probe = yield* fakePi({ commands: [] });
+      const fake = yield* fakePi({ commands });
+      const adapter = yield* makeAdapter(fake, "", undefined, undefined, probe);
+      const error = yield* Effect.flip(
+        adapter.openSession({
+          threadId: THREAD_ID,
+          providerSessionId: SESSION_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy: { ...runtimePolicy, deniedSkills: ["private"] },
+        }),
+      );
+      assert.include(error.message, detail);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["--skill /tmp/skill", "--skill=/tmp/skill", "--no-skills", "-ns"])(
+    "refuses the configured skill-loading argument %s before spawning",
+    (launchArgs) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const adapter = yield* makeAdapter(fake, launchArgs);
+        const error = yield* Effect.flip(
+          adapter.openSession({
+            threadId: THREAD_ID,
+            providerSessionId: SESSION_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy: { ...runtimePolicy, deniedSkills: ["private"] },
+          }),
+        );
+        assert.include(error.message, launchArgs.split(/[ =]/)[0]!);
+        assert.deepEqual(fake.lastSpawn().args, []);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([undefined, { commands: [{ name: "skill:private", source: "skill" }] }])(
+    "refuses to start after failed or incomplete skill discovery (%j)",
+    (commands) =>
+      Effect.gen(function* () {
+        const probe = yield* fakePi(commands);
+        const fake = yield* makeFakePi;
+        const adapter = yield* makeAdapter(fake, "", undefined, undefined, probe);
+        const error = yield* Effect.flip(
+          adapter.openSession({
+            threadId: THREAD_ID,
+            providerSessionId: SESSION_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy: { ...runtimePolicy, deniedSkills: ["private"] },
+          }),
+        );
+        assert.match(error.message, /discover.*skills/i);
+        assert.deepEqual(fake.lastSpawn().args, []);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect(
     "replaces keyed extension statuses while idle without producing conversation items",
     () =>

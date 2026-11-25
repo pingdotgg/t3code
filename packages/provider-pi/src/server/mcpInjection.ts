@@ -10,6 +10,7 @@ import {
   T3_MCP_URL_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
+  T3_PI_SKILL_POLICY_ENV,
 } from "./mcpExtensionSource.ts";
 
 const RESERVED_PI_LAUNCH_ARGUMENTS = new Set([
@@ -100,7 +101,10 @@ function normalizePiBuiltInEqualsArguments(args: ReadonlyArray<string>): Readonl
   });
 }
 
-export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution {
+export function resolvePiLaunchArgs(
+  launchArgs: string,
+  hasSkillDenyList = false,
+): PiLaunchArgsResolution {
   // Pi treats equals-form tokens as extension flags; split only known built-ins.
   const args = normalizePiBuiltInEqualsArguments(tokenizeCliArgs(launchArgs));
   let hasProvider = false;
@@ -108,6 +112,16 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === undefined) continue;
+    const option = arg.split("=", 1)[0];
+    if (
+      hasSkillDenyList &&
+      (option === "--skill" || option === "--no-skills" || option === "-ns")
+    ) {
+      return {
+        ok: false,
+        message: `Pi launch argument '${option}' cannot be used with a skill deny list.`,
+      };
+    }
     const reserved = reservedPiArgument(arg);
     if (reserved !== undefined) {
       return {
@@ -246,6 +260,15 @@ export const materializePiT3McpExtension = Effect.fn("materializePiT3McpExtensio
   return dest;
 });
 
+export interface PiSkillLaunchPolicy {
+  readonly allowedPaths: ReadonlyArray<string>;
+  readonly denied: {
+    readonly deniedNames: ReadonlyArray<string>;
+    readonly deniedRoots: ReadonlyArray<string>;
+    readonly deniedFiles: ReadonlyArray<string>;
+  };
+}
+
 export function buildPiRpcLaunch(input: {
   readonly launchArgs: ReadonlyArray<string>;
   readonly environment: NodeJS.ProcessEnv;
@@ -258,6 +281,7 @@ export function buildPiRpcLaunch(input: {
   readonly shortLived?: boolean;
   readonly disableExtensions?: boolean;
   readonly disableTools?: boolean;
+  readonly skillPolicy?: PiSkillLaunchPolicy | undefined;
   readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 }): {
   readonly args: ReadonlyArray<string>;
@@ -265,10 +289,10 @@ export function buildPiRpcLaunch(input: {
 } {
   const hasT3Extension = input.disableExtensions !== true && input.extensionPath !== undefined;
   const hasT3Mcp = hasT3Extension && input.mcpSession !== undefined;
-  const extensionSafeArgs =
-    input.disableExtensions === true
-      ? withoutExplicitExtensions(input.launchArgs)
-      : input.launchArgs;
+  const disableExtensions = input.disableExtensions === true || input.skillPolicy !== undefined;
+  const extensionSafeArgs = disableExtensions
+    ? withoutExplicitExtensions(input.launchArgs)
+    : input.launchArgs;
   const launchArgs =
     input.disableTools === true ? withoutToolSelectionArgs(extensionSafeArgs) : extensionSafeArgs;
   const args = [
@@ -282,7 +306,10 @@ export function buildPiRpcLaunch(input: {
     ...launchArgs,
     ...(input.shortLived === true && !launchArgs.includes("--offline") ? ["--offline"] : []),
     // Restrictions must follow launch args so user flags cannot re-enable unattended tools/extensions.
-    ...(input.disableExtensions === true ? ["--no-extensions"] : []),
+    ...(disableExtensions ? ["--no-extensions"] : []),
+    ...(input.skillPolicy === undefined
+      ? []
+      : ["--no-skills", ...input.skillPolicy.allowedPaths.flatMap((path) => ["--skill", path])]),
     ...(input.disableTools === true ? ["--no-tools"] : []),
   ];
   if (
@@ -297,6 +324,7 @@ export function buildPiRpcLaunch(input: {
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
+  delete environment[T3_PI_SKILL_POLICY_ENV];
 
   return {
     args,
@@ -310,6 +338,9 @@ export function buildPiRpcLaunch(input: {
             [T3_PI_RUNTIME_MODE_ENV]:
               input.runtimeMode === "auto" ? "approval-required" : input.runtimeMode,
           }
+        : {}),
+      ...(hasT3Extension && input.skillPolicy !== undefined
+        ? { [T3_PI_SKILL_POLICY_ENV]: JSON.stringify(input.skillPolicy.denied) }
         : {}),
       ...(hasT3Mcp && input.mcpSession !== undefined
         ? {

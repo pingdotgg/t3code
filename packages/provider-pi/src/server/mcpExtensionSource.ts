@@ -7,6 +7,7 @@ export const T3_MCP_URL_ENV = "T3_MCP_URL";
 export const T3_MCP_BEARER_ENV = "T3_MCP_BEARER_TOKEN";
 export const T3_PI_RUNTIME_MODE_ENV = "T3_PI_RUNTIME_MODE";
 export const T3_PI_MCP_EXTENSION_PATH_ENV = "T3_PI_MCP_EXTENSION_PATH";
+export const T3_PI_SKILL_POLICY_ENV = "T3_PI_SKILL_POLICY";
 export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
 
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
@@ -17,12 +18,15 @@ import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@ear
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeOS from "node:os";
+import * as NodeURL from "node:url";
 import { Type } from "typebox";
 
 const URL_ENV = ${JSON.stringify(T3_MCP_URL_ENV)};
 const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
+const SKILL_POLICY_ENV = ${JSON.stringify(T3_PI_SKILL_POLICY_ENV)};
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const RUNTIME_INSTRUCTIONS = ${JSON.stringify(buildRuntimeInstructions({ harness: "Pi" }))};
 const PROTOCOL = "2025-06-18";
@@ -251,6 +255,16 @@ function createMcpClient(endpoint: string, token: string) {
 }
 
 export default async function t3McpExtension(pi: ExtensionAPI) {
+  const rawSkillPolicy = env(SKILL_POLICY_ENV);
+  const skillPolicy: { deniedNames: string[]; deniedRoots: string[]; deniedFiles: string[] } =
+    rawSkillPolicy === undefined ? { deniedNames: [], deniedRoots: [], deniedFiles: [] } : JSON.parse(rawSkillPolicy);
+  const deniedSkillNames = new Set(skillPolicy.deniedNames);
+  const deniedSkillFiles = new Set(skillPolicy.deniedFiles);
+  const isDeniedSkillPath = (path: string) => deniedSkillFiles.has(path) || skillPolicy.deniedRoots.some((root) => {
+    const relative = NodePath.relative(root, path);
+    return relative === "" || (relative !== ".." && !relative.startsWith(".." + NodePath.sep) && !NodePath.isAbsolute(relative));
+  });
+
   // RPC has no trust prompt, so Pi skips an untrusted folder's protected resources. Session
   // replacement reruns this factory without project_trust, and T3 drops notices outside a turn,
   // so check each session's first turn. An explicit --no-approve is deliberate and stays quiet.
@@ -275,7 +289,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     const blocks: string[] = [];
     for (const match of event.text.matchAll(/(^|\\s)\\$([^\\s]+)(?=\\s|$)/g)) {
       const name = match[2];
-      if (name === undefined || seen.has(name)) continue;
+      if (name === undefined || seen.has(name) || deniedSkillNames.has(name)) continue;
       const command = commands.find((candidate) => candidate.name === "skill:" + name);
       if (command === undefined) continue;
       seen.add(name);
@@ -361,6 +375,26 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   };
 
   pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "read" && skillPolicy.deniedRoots.length > 0 && typeof event.input.path === "string") {
+      const refuse = { block: true, reason: "T3 Code blocked read: the file belongs to a denied Pi skill." };
+      try {
+        let input = event.input.path.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+        if (input.startsWith("@")) input = input.slice(1);
+        if (input === "~") input = NodeOS.homedir();
+        if (input.startsWith("~/") || (process.platform === "win32" && input.startsWith("~\\\\"))) {
+          input = NodePath.join(NodeOS.homedir(), input.slice(2));
+        }
+        if (process.platform === "win32" && !input.includes("\\\\")) {
+          const drive = /^\\/(?:mnt\\/|cygdrive\\/)?([a-z])(?:\\/(.*))?$/i.exec(input);
+          if (drive) input = drive[1] + ":/" + (drive[2] ?? "");
+        }
+        if (input.startsWith("file://")) input = NodeURL.fileURLToPath(input);
+        const path = NodePath.resolve(ctx.cwd, input);
+        if (isDeniedSkillPath(path) || isDeniedSkillPath(await NodeFSP.realpath(path))) return refuse;
+      } catch {
+        return { block: true, reason: "T3 Code could not verify this read against the Pi skill deny list." };
+      }
+    }
     const mode = runtimeMode();
     if (mode === "full-access") return;
     if ((event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) || isReadOnlyMcpTool(event.toolName)) {

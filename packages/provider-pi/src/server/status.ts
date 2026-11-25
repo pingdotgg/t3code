@@ -310,37 +310,46 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
   } satisfies PiDiscovery;
 }, Effect.scoped);
 
-export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
-  function* (piSettings: PiSettings, environment: NodeJS.ProcessEnv, cwd: string) {
-    const launchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
-    if (!launchArgs.ok) {
-      return yield* new PiRpcError({ operation: "launch", detail: launchArgs.message });
-    }
-    const connection = yield* makePiDiscoveryConnection(
-      piSettings,
-      providerProbeEnvironment(environment),
-      launchArgs.args,
-      cwd,
-    );
-    // A failed read must not replace a previously usable workspace catalog with an empty one.
-    const commandsData = yield* connection.request(
-      { type: "get_commands" },
-      resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment),
-    );
-    const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
-    return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };
+export const readPiCommandsForCwd = Effect.fn("readPiCommandsForCwd")(
+  function* (
+    piSettings: PiSettings,
+    environment: NodeJS.ProcessEnv,
+    cwd: string,
+    launchArgs: ReadonlyArray<string>,
+    timeoutMs: number,
+  ) {
+    const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
+    return yield* connection.request({ type: "get_commands" }, timeoutMs);
   },
   Effect.scoped,
-  (effect, _settings, environment) => {
-    const timeoutMs = resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment);
-    return effect.pipe(
+  (effect, _settings, _environment, _cwd, _launchArgs, timeoutMs) =>
+    effect.pipe(
       Effect.timeoutOrElse({
         duration: timeoutMs,
         orElse: () => Effect.fail(new PiRpcTimeoutError({ operation: "discovery", timeoutMs })),
       }),
-    );
-  },
+    ),
 );
+
+export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(function* (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+) {
+  const launchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
+  if (!launchArgs.ok) {
+    return yield* new PiRpcError({ operation: "launch", detail: launchArgs.message });
+  }
+  const commandsData = yield* readPiCommandsForCwd(
+    piSettings,
+    providerProbeEnvironment(environment),
+    cwd,
+    launchArgs.args,
+    resolveProviderProbeTimeoutMs("pi", PI_RPC_DISCOVERY_TIMEOUT_MS, environment),
+  );
+  const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
+  return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };
+});
 
 export const runPiVersionCommand = Effect.fn("PiProviderStatus.runPiVersionCommand")(function* (
   piSettings: PiSettings,

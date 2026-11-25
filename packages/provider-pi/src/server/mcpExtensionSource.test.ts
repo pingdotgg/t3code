@@ -6,7 +6,11 @@ import * as NodeModule from "node:module";
 import * as NodeVM from "node:vm";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PI_T3_MCP_EXTENSION_SOURCE, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import {
+  PI_T3_MCP_EXTENSION_SOURCE,
+  PI_T3_SERVICE_TIER_COMMAND,
+  T3_PI_SKILL_POLICY_ENV,
+} from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
@@ -30,6 +34,7 @@ type InputHook = (
 async function loadHooks(
   commands: ReadonlyArray<SkillCommand> = [],
   argv: ReadonlyArray<string> = [],
+  env: NodeJS.ProcessEnv = {},
 ) {
   const handlers = new Map<string, unknown>();
   const source = NodeModule.stripTypeScriptTypes(
@@ -39,7 +44,8 @@ async function loadHooks(
     ),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: { env: {}, argv },
+    process: { env, argv },
+    NodeOS,
     NodeFSP,
     NodePath,
     stripFrontmatter: (content: string) => content,
@@ -676,6 +682,58 @@ async function loadInputHook(commands: ReadonlyArray<SkillCommand>) {
 }
 
 describe("Pi skill references", () => {
+  it("ignores denied chips and refuses full-access reads even through symlinks", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-denied-skills-"));
+    try {
+      const deniedDirectory = NodePath.join(directory, "denied");
+      const denied = NodePath.join(deniedDirectory, "SKILL.md");
+      const allowedDirectory = NodePath.join(directory, "denied-neighbor");
+      const allowed = NodePath.join(allowedDirectory, "SKILL.md");
+      const symlink = NodePath.join(directory, "linked.md");
+      const reference = NodePath.join(deniedDirectory, "references", "example.md");
+      await NodeFSP.mkdir(NodePath.dirname(reference), { recursive: true });
+      await NodeFSP.writeFile(reference, "DENIED_REFERENCE");
+      await NodeFSP.mkdir(allowedDirectory);
+      await NodeFSP.writeFile(denied, "DENIED_MARKER");
+      await NodeFSP.writeFile(allowed, "ALLOWED_MARKER");
+      await NodeFSP.symlink(denied, symlink);
+      const handlers = await loadHooks(
+        [
+          { name: "skill:private:denied", source: "skill", sourceInfo: { path: denied } },
+          { name: "skill:allowed", source: "skill", sourceInfo: { path: allowed } },
+        ],
+        [],
+        {
+          [T3_PI_SKILL_POLICY_ENV]: JSON.stringify({
+            deniedNames: ["private:denied"],
+            deniedRoots: [await NodeFSP.realpath(deniedDirectory)],
+            deniedFiles: [await NodeFSP.realpath(denied)],
+          }),
+        },
+      );
+      const result = await (handlers.get("input") as InputHook)(
+        { text: "Use $private:denied and $allowed" },
+        { ui: { notify: assert.fail } },
+      );
+      assert.include(result?.text ?? "", "ALLOWED_MARKER");
+      assert.notInclude(result?.text ?? "", "DENIED_MARKER");
+      const toolCall = handlers.get("tool_call") as (
+        event: { toolName: string; input: { path: string } },
+        ctx: { cwd: string },
+      ) => Promise<{ block: boolean; reason: string } | undefined>;
+      for (const path of [denied, "./denied/SKILL.md", symlink, "@linked.md", reference]) {
+        assert.isTrue(
+          (await toolCall({ toolName: "read", input: { path } }, { cwd: directory }))?.block,
+        );
+      }
+      assert.isUndefined(
+        await toolCall({ toolName: "read", input: { path: allowed } }, { cwd: directory }),
+      );
+    } finally {
+      await NodeFSP.rm(directory, { recursive: true });
+    }
+  });
+
   it("loads every selected skill once while preserving inline prose, whitespace, and images", async () => {
     const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "pi-skill-mentions-"));
     try {
