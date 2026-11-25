@@ -409,6 +409,39 @@ Object.assign(globalThis, {
         heapBytes: hermes?.js_heapSize ?? null,
       });
     },
+    /** What the app holds: atom registry nodes by label, and mounted fibers by component. */
+    retention() {
+      const { appAtomRegistry } = require("../../state/atom-registry") as {
+        appAtomRegistry: { getNodes: () => ReadonlyMap<unknown, unknown> };
+      };
+      const atoms = new Map<string, number>();
+      for (const key of appAtomRegistry.getNodes().keys()) {
+        const label =
+          typeof key === "string"
+            ? `key:${key.split(/[:/]/)[0]}`
+            : ((key as { label?: readonly [string, ...unknown[]] | string }).label ?? "unlabeled");
+        const name = Array.isArray(label) ? String(label[0]) : String(label);
+        atoms.set(name, (atoms.get(name) ?? 0) + 1);
+      }
+      const fibers = new Map<string, number>();
+      let fiberCount = 0;
+      for (const root of roots)
+        walk(root.current, null, (fiber) => {
+          fiberCount += 1;
+          const type = fiber.type as { displayName?: string; name?: string } | string | null;
+          const name = typeof type === "string" ? type : (type?.displayName ?? type?.name ?? "");
+          if (name) fibers.set(name, (fibers.get(name) ?? 0) + 1);
+          return null;
+        });
+      const top = (map: Map<string, number>) =>
+        Object.fromEntries([...map].sort((a, b) => b[1] - a[1]).slice(0, 25));
+      return JSON.stringify({
+        atomCount: appAtomRegistry.getNodes().size,
+        fiberCount,
+        atoms: top(atoms),
+        fibers: top(fibers),
+      });
+    },
     /** The Hermes heap, after a full collection when this runtime exposes `gc`. */
     heap() {
       const internal = globalThis as {

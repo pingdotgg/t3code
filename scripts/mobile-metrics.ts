@@ -241,6 +241,17 @@ const measureOnce = Effect.fn("mobileMetrics.measureOnce")(function* (options: M
   const sample = Effect.fn("mobileMetrics.soakSample")(function* (iteration: number, name: string) {
     const at = yield* memorySample(device, `soak-${iteration}-${name}`, options.out);
     soak.push({ iteration, case: name, heapMB: at.heapMB, processMB: at.processMB });
+    // What the app retains, so heap growth can be traced to atoms or mounted components.
+    const retention = yield* device
+      .evaluate("__t3Behavior.retention()")
+      .pipe(Effect.orElseSucceed(() => null));
+    if (typeof retention === "string")
+      yield* Effect.promise(() =>
+        NodeFSP.appendFile(
+          NodePath.join(options.out, "soak-retention.ndjson"),
+          `${JSON.stringify({ iteration, case: name, heapMB: at.heapMB, ...JSON.parse(retention) })}\n`,
+        ),
+      );
     yield* log(`soak ${iteration} ${name}: heap ${at.heapMB} MB, process ${at.processMB} MB`);
   });
   if (options.soak > 0) yield* sample(0, "start");
