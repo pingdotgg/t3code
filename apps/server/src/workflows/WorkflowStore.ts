@@ -381,6 +381,8 @@ export class WorkflowStore extends Context.Service<
         }
       | undefined
     >;
+    /** Who sent the kept signal and when it came. Undefined when none is kept, or it kept neither. */
+    readonly mailSender: (signalId: string) => Effect.Effect<SignalSender | undefined>;
     readonly mailDelete: (signalId: string) => Effect.Effect<void>;
     readonly mailExpire: Effect.Effect<void>;
     readonly run: (runId: string) => Effect.Effect<RunRow | undefined>;
@@ -1086,6 +1088,13 @@ export const make = Effect.gen(function* () {
         }
       }
       return undefined;
+    }),
+    mailSender: Effect.fn("WorkflowStore.mailSender")(function* (signalId) {
+      const rows = yield* sql<{ sender_json: string | null }>`
+        SELECT sender_json FROM workflow_mail WHERE signal_id = ${signalId}
+      `.pipe(Effect.orDie);
+      const kept = rows[0]?.sender_json;
+      return kept === undefined || kept === null ? undefined : senderOf(kept);
     }),
     mailDelete: Effect.fn("WorkflowStore.mailDelete")(function* (signalId) {
       yield* sql`DELETE FROM workflow_mail WHERE signal_id = ${signalId}`.pipe(Effect.orDie);

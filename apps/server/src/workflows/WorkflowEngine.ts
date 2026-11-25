@@ -969,11 +969,13 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       const valueJson = WorkflowStore.jsonText(value);
       const woke = { expired: false, value };
       // Who sent it and when it came, said once here and by no one else, however it is delivered.
-      const sender: WorkflowStore.SignalSender = {
+      // A retry of a signal that is still kept is that signal: its first arrival says both.
+      const arrived: WorkflowStore.SignalSender = {
         answeredBy: options.answeredBy,
         answeredBySession: options.answeredBySession,
         answeredAt: DateTime.formatIso(yield* DateTime.now),
       };
+      let sender = (yield* store.mailSender(options.id)) ?? arrived;
       // One signal per wait: a wait another signal took first sends this one to the next.
       while (true) {
         const wait = yield* store.waitAt(address);
@@ -1004,6 +1006,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       );
       if (yield* store.signalSeen(options.id)) return "delivered" as const;
       yield* store.mailPut({ signalId: options.id, address, valueJson, expiresAt, sender });
+      // A copy the same signal kept first, while this one looked for a wait, is the one that stays.
+      sender = (yield* store.mailSender(options.id)) ?? sender;
       // The wait may have opened and looked for mail between the look above and this write.
       while (true) {
         const late = yield* store.waitAt(address);

@@ -2573,6 +2573,93 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+// A retry meets its kept copy while the question is opening: before it looks for the question,
+// when it finds it open, or after, when it finds it only once it has kept itself again.
+it.effect.each(["finds the question open", "finds it after keeping itself"] as const)(
+  "a kept signal's retry that %s answers as the first arrival, when that was received",
+  (window) =>
+    Effect.gen(function* () {
+      const looked = yield* Deferred.make<void>();
+      const opening = yield* Deferred.make<void>();
+      const retried = yield* Deferred.make<void>();
+      const store = Layer.effect(
+        WorkflowStore.WorkflowStore,
+        Effect.gen(function* () {
+          const real = yield* WorkflowStore.make;
+          let looks = 0;
+          return WorkflowStore.WorkflowStore.of({
+            ...real,
+            // The retry's first look, the first arrival's two being done, waits for the question.
+            waitAt: (address) =>
+              Effect.tap(real.waitAt(address), () =>
+                "wait" in address &&
+                address.wait === "merge" &&
+                ++looks === 3 &&
+                window === "finds it after keeping itself"
+                  ? Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opening))
+                  : Effect.void,
+              ),
+            // The open question does not take its mail until the retry is through.
+            mailNext: (addresses, passed) =>
+              addresses.some((address) => "wait" in address && address.wait === "merge")
+                ? Effect.andThen(
+                    Effect.andThen(Deferred.succeed(opening, undefined), Deferred.await(retried)),
+                    real.mailNext(addresses, passed),
+                  )
+                : real.mailNext(addresses, passed),
+          });
+        }),
+      );
+      const { boot, agents } = yield* harness(store);
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const { runId } = yield* workflows.start(
+            "fix",
+            { project: "p1" },
+            { idempotencyKey: window },
+          );
+          yield* agents.started(runId, "write/0");
+          const merge = { runId, wait: "merge" };
+          const before = yield* DateTime.now;
+          assert.equal(
+            yield* workflows.signal(
+              merge,
+              { choice: "Merge" },
+              { id: "again", answeredBy: "Phone", answeredBySession: "session-phone" },
+            ),
+            "buffered",
+          );
+          const after = yield* DateTime.now;
+          yield* TestClock.adjust("1 hour");
+          const retry = workflows.signal(
+            merge,
+            { choice: "Merge" },
+            { id: "again", answeredBy: "Laptop", answeredBySession: "session-laptop" },
+          );
+          const sent = yield* Effect.forkChild(
+            window === "finds the question open"
+              ? Effect.andThen(Deferred.await(opening), retry)
+              : retry,
+          );
+          if (window === "finds it after keeping itself") yield* Deferred.await(looked);
+          yield* agents.end(runId, "write/0", { output: { branch: "fix/1" } });
+          assert.equal(yield* Fiber.join(sent), "delivered");
+          yield* Deferred.succeed(retried, undefined);
+          yield* agents.started(runId, "land/0");
+          const { steps } = yield* workflows.get(runId);
+          const { answeredAt, ...answer } = mergeAnswer(steps);
+          assert.deepStrictEqual(answer, {
+            choice: "Merge",
+            answeredBy: "Phone",
+            answeredBySession: "session-phone",
+          });
+          assert.isTrue(stampedBetween(answeredAt, before, after), answeredAt);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a workflow can take an agent's failure as an answer and go on", () =>
   Effect.gen(function* () {
     const { boot, agents } = yield* harness();
