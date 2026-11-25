@@ -49,7 +49,10 @@ for a fresh one. Keep using the same tab.
 
 ## Verify and retain
 
-Exercise the affected flow and capture the state that proves it works. Keep
+Exercise the affected flow and capture the state that proves it works. Actually
+look at the rendered result and think as a user using the feature—check layout,
+visual hierarchy, alignment, and end-to-end flow—and iterate on anything that
+feels awkward or unfinished until you are satisfied before handing back. Keep
 the server, state, and panel available while the user inspects or iterates.
 An assistant turn ending is not teardown. Stop only processes you started,
 using retained terminal sessions or captured PIDs.

@@ -11,7 +11,10 @@ const state = vi.hoisted(() => ({
   update: vi.fn(),
   canUpdate: true,
   timestampFormat: "locale" as "locale" | "12-hour" | "24-hour",
+  openLink: vi.fn(async () => {}),
 }));
+
+vi.mock(import("~/browser/useOpenLink"), () => ({ useOpenLink: () => state.openLink }));
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
@@ -51,6 +54,7 @@ function setup() {
   state.update.mockResolvedValue({ _tag: "Success", value: undefined });
   state.canUpdate = true;
   state.timestampFormat = "locale";
+  state.openLink.mockClear();
 }
 
 import "~/index.css";
@@ -119,6 +123,7 @@ const tab = (value = detail) => (
     threadRef={null}
     reference={value}
     detail={value}
+    observedAt={value.observedAt}
     activityPending={false}
     activityError={null}
     onRefresh={() => {}}
@@ -239,6 +244,7 @@ it("fixes an overview thread as its opening remark, since it has no line to atta
       threadRef={null}
       reference={value}
       detail={value}
+      observedAt={value.observedAt}
       activityPending={false}
       activityError={null}
       onRefresh={() => {}}
@@ -273,6 +279,63 @@ it("shows a comment's exact time in the chosen 24-hour clock", async () => {
   );
 });
 
+it("keeps the chosen comment order when the right panel remounts the tab", async () => {
+  setup();
+  const comment = (id: string, createdAt: string) => ({
+    id,
+    kind: "review-comment" as const,
+    body: `Remark ${id}`,
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    createdAt,
+    url: null,
+    path: null,
+    reviewState: null,
+  });
+  const value = {
+    ...detail,
+    comments: [comment("10", "2026-09-01T10:00:00Z"), comment("11", "2026-09-02T10:00:00Z")],
+    commentCount: 2,
+  };
+  {
+    await using screen = await render(value);
+    await userEvent.click(screen.getByRole("button", { name: "Show oldest comments first" }));
+    await expect
+      .element(screen.getByRole("button", { name: "Show newest comments first" }))
+      .toBeVisible();
+  }
+  // Switching to another right-panel tab unmounts the pull request surface.
+  await using screen = await render(value);
+  await expect
+    .element(screen.getByRole("button", { name: "Show newest comments first" }))
+    .toBeVisible();
+});
+
+it("comes back at the scroll position it left when the right panel remounts the tab", async () => {
+  setup();
+  const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");
+  const value = { ...detail, body, url: "https://github.com/owner/repo/pull/2" };
+  const mount = async (shown = value) => {
+    const container = document.createElement("div");
+    container.className = "flex h-[300px]";
+    const screen = await renderUi(tab(shown), { container });
+    const scroller = container.querySelector<HTMLElement>("[data-pull-request-summary-scroll]")!;
+    return Object.assign(screen, { scroller });
+  };
+  {
+    await using screen = await mount();
+    screen.scroller.scrollTop = 500;
+    await vi.waitFor(() => expect(screen.scroller.scrollTop).toBe(500));
+    await act(async () => screen.scroller.dispatchEvent(new Event("scroll")));
+  }
+  // The tab can come back before the content that reached that position has loaded.
+  await using screen = await mount({ ...value, body: "Paragraph 0" });
+  await screen.rerender(tab(value));
+  await vi.waitFor(() => expect(screen.scroller.scrollTop).toBe(500));
+  await screen.unmount();
+  await using again = await mount();
+  expect(again.scroller.scrollTop).toBe(500);
+});
+
 it("scrolls from the keyboard after a click inside it", async () => {
   setup();
   const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");
@@ -289,4 +352,77 @@ it("scrolls from the keyboard after a click inside it", async () => {
   await userEvent.click(screen.getByText("Paragraph 0", { exact: true }));
   await userEvent.keyboard("{PageDown}");
   await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+});
+
+it("opens comment timestamps through the link-target setting, not a popup", async () => {
+  setup();
+  const author = { login: "reviewer", name: null, avatarUrl: null };
+  const comment = (id: string, reviewState: string | null) => ({
+    id,
+    kind: "review" as const,
+    body: `Remark ${id}`,
+    author,
+    createdAt: `2026-09-0${id}T00:00:00Z`,
+    url: `${detail.url}#review-${id}`,
+    path: null,
+    reviewState,
+  });
+  // The dismissed review renders as a collapsed card; show it with the resolved filter on.
+  localStorage.setItem(
+    "t3code:pull-request-comment-filter:v1",
+    JSON.stringify({ bots: false, resolved: true }),
+  );
+  try {
+    await using screen = await render({
+      ...detail,
+      comments: [comment("1", null), comment("2", "DISMISSED")],
+      commentCount: 2,
+    });
+    for (const id of ["1", "2"]) {
+      const href = `${detail.url}#review-${id}`;
+      const link = screen.container.querySelector(`a[href="${href}"]`);
+      expect(link, href).not.toBeNull();
+      state.openLink.mockClear();
+      const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+      link!.dispatchEvent(click);
+
+      expect(click.defaultPrevented).toBe(true);
+      expect(state.openLink).toHaveBeenCalledOnce();
+      expect(state.openLink).toHaveBeenCalledWith(href, { event: expect.anything() });
+    }
+  } finally {
+    localStorage.removeItem("t3code:pull-request-comment-filter:v1");
+  }
+});
+
+it("opens a comment author's profile through the link-target setting, not a popup", async () => {
+  setup();
+  await using screen = await render({
+    ...detail,
+    comments: [
+      {
+        id: "1",
+        kind: "issue-comment" as const,
+        body: "Looks good",
+        author: { login: "reviewer", name: null, avatarUrl: null },
+        createdAt: "2026-09-01T00:00:00Z",
+        url: null,
+        path: null,
+        reviewState: null,
+      },
+    ],
+    commentCount: 1,
+  });
+  const link = await vi.waitFor(() => {
+    const found = screen.container.querySelector('a[aria-label="Open reviewer\'s profile"]');
+    expect(found).not.toBeNull();
+    return found!;
+  });
+  const href = link.getAttribute("href")!;
+  const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+  link.dispatchEvent(click);
+
+  expect(click.defaultPrevented).toBe(true);
+  expect(state.openLink).toHaveBeenCalledOnce();
+  expect(state.openLink).toHaveBeenCalledWith(href, { event: expect.anything() });
 });

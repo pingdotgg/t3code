@@ -47,6 +47,10 @@
       "types": "./src/contractLabels.ts",
       "default": "./src/contractLabels.ts"
     },
+    "./workflows": {
+      "types": "./src/workflows.ts",
+      "default": "./src/workflows.ts"
+    },
     "./locales": {
       "types": "./src/locales.ts",
       "default": "./src/locales.ts"
@@ -103,6 +107,10 @@
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
     },
+    "./feedback-request": {
+      "types": "./src/feedbackRequest.ts",
+      "default": "./src/feedbackRequest.ts"
+    },
     "./link-batch": {
       "types": "./src/linkBatch.ts",
       "default": "./src/linkBatch.ts"
@@ -138,6 +146,10 @@
     "./authorization": {
       "types": "./src/authorization/index.ts",
       "default": "./src/authorization/index.ts"
+    },
+    "./connect-device-notices": {
+      "types": "./src/connectDeviceNotices.ts",
+      "default": "./src/connectDeviceNotices.ts"
     },
     "./environment": {
       "types": "./src/environment/index.ts",
@@ -427,6 +439,10 @@
       "types": "./src/state/threadCheckpoints.ts",
       "default": "./src/state/threadCheckpoints.ts"
     },
+    "./state/thread-repositories": {
+      "types": "./src/state/threadRepositories.ts",
+      "default": "./src/state/threadRepositories.ts"
+    },
     "./state/thread-execution": {
       "types": "./src/state/threadExecution.ts",
       "default": "./src/state/threadExecution.ts"
@@ -650,11 +666,16 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./pull-request-references": {
+      "types": "./src/pullRequestReferences.ts",
+      "default": "./src/pullRequestReferences.ts"
     }
   },
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit",
-    "test": "vp test run"
+    "test": "vp test run",
+    "bench": "vp test bench"
   },
   "dependencies": {
     "@pierre/diffs": "catalog:",
@@ -676,16 +697,16 @@
     "effect": "catalog:",
     "gt-i18n": "1.0.40",
     "jszip": "3.10.1",
-    "remark-gfm": "catalog:",
-    "remark-parse": "catalog:",
     "three": "0.180.0",
-    "unbash": "^5.0.0",
-    "unified": "catalog:"
+    "unbash": "^5.0.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/mdast": "^4.0.4",
     "@types/three": "0.180.0",
+    "remark-gfm": "catalog:",
+    "remark-parse": "catalog:",
+    "unified": "catalog:",
     "vite-plus": "catalog:"
   }
 }
