@@ -106,15 +106,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
         <div class="nav-inner">
           <a href={homeHref} class="nav-brand" aria-label={t.homeLabel}>
             <span class="nav-brand-mark" aria-hidden="true">
-              <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path
-                  d="M14 2.5V25.5M2.5 14H25.5M5.87 5.87L22.13 22.13M22.13 5.87L5.87 22.13"
-                  stroke="currentColor"
-                  stroke-width="2.4"
-                  stroke-linecap="round"
-                />
-                <circle cx="14" cy="14" r="3.2" fill="#FAF9F5" stroke="currentColor" stroke-width="2" />
-              </svg>
+              <img src="/tix-icon.png" alt="" width="24" height="24" />
             </span>
             <span class="nav-brand-name">tix</span>
           </a>
@@ -172,15 +164,7 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
           <div class="footer-brand">
             <a href={homeHref} class="footer-logo">
               <span class="nav-brand-mark nav-brand-mark--sm" aria-hidden="true">
-                <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path
-                    d="M14 2.5V25.5M2.5 14H25.5M5.87 5.87L22.13 22.13M22.13 5.87L5.87 22.13"
-                    stroke="currentColor"
-                    stroke-width="2.4"
-                    stroke-linecap="round"
-                  />
-                  <circle cx="14" cy="14" r="3.2" fill="#FAF9F5" stroke="currentColor" stroke-width="2" />
-                </svg>
+                <img src="/tix-icon.png" alt="" width="20" height="20" />
               </span>
               <span>tix</span>
             </a>
@@ -372,15 +356,23 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
   .nav-brand-mark {
     width: 24px;
     height: 24px;
-    color: var(--accent);
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .nav-brand-mark img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
   .nav-brand-mark--sm {
     width: 20px;
     height: 20px;
+    border-radius: 5px;
   }
 
   .nav-brand-name {
