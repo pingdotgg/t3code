@@ -160,52 +160,29 @@ export function ThreadDetailsIssueRows({
   const [expandedThread, setExpandedThread] = useState<string | null>(null);
   const threadKey = scopedThreadKey(threadRef);
   const expanded = expandedThread === threadKey;
-  const hasMore = compact && links.length > 1;
-  const [firstLink, ...restLinks] = links;
-  if (firstLink === undefined) return null;
-  if (!hasMore) {
-    return (
-      <>
-        {links.map((link) => (
-          <LinkedIssueRow
-            key={threadIssueKeyOf(link)}
-            link={link}
-            threadRef={threadRef}
-            compact={compact}
-            mountScope={mountScope}
-            onOpen={onOpen}
-          />
-        ))}
-      </>
-    );
-  }
+  const row = (link: ThreadIssueLink) => (
+    <LinkedIssueRow
+      key={threadIssueKeyOf(link)}
+      link={link}
+      threadRef={threadRef}
+      compact={compact}
+      mountScope={mountScope}
+      onOpen={onOpen}
+    />
+  );
+  const [first, ...rest] = links;
+  if (first === undefined || !compact || rest.length === 0) return <>{links.map(row)}</>;
   return (
     <>
-      <LinkedIssueRow
-        key={threadIssueKeyOf(firstLink)}
-        link={firstLink}
-        threadRef={threadRef}
-        compact={compact}
-        mountScope={mountScope}
-        onOpen={onOpen}
-      />
+      {row(first)}
       {expanded ? (
         <div data-thread-details-issue-list className="flex flex-col">
-          {restLinks.map((link) => (
-            <LinkedIssueRow
-              key={threadIssueKeyOf(link)}
-              link={link}
-              threadRef={threadRef}
-              compact={compact}
-              mountScope={mountScope}
-              onOpen={onOpen}
-            />
-          ))}
+          {rest.map(row)}
         </div>
       ) : null}
       <ThreadDetailsMoreButton
         expanded={expanded}
-        remaining={restLinks.length}
+        remaining={rest.length}
         onToggle={() => setExpandedThread(expanded ? null : threadKey)}
       />
     </>
