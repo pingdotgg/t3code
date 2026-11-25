@@ -420,17 +420,23 @@ function codexHistoryBase(records: ReadonlyArray<DecodedTranscriptRecord>) {
     : undefined;
 }
 
-// Claude Code records its own UI as user turns: slash commands, `!` shell runs and
-// their output, task notifications. Keep what the user typed, as they typed it.
-function claudeUiOutputEnd(text: string): number {
-  const block =
-    /<(task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>(?:\s*<\/\1>)*\s*/y;
-  // Shell output can end with a literal copy of its wrapper's closing tag.
+// Where the run of sticky `block` matches at the start of `text` ends.
+function leadingBlocksEnd(text: string, block: RegExp): number {
   let end = 0;
   while (block.test(text)) {
     end = block.lastIndex;
   }
   return end;
+}
+
+// Claude Code records its own UI as user turns: slash commands, `!` shell runs and
+// their output, task notifications. Keep what the user typed, as they typed it.
+function claudeUiOutputEnd(text: string): number {
+  // Shell output can end with a literal copy of its wrapper's closing tag.
+  return leadingBlocksEnd(
+    text,
+    /<(task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>(?:\s*<\/\1>)*\s*/y,
+  );
 }
 
 /**
@@ -439,12 +445,11 @@ function claudeUiOutputEnd(text: string): number {
  */
 function claudeCommand(text: string): { readonly text: string; readonly titleText: string } | null {
   if (!/^<command-(?:name|message)>/.test(text)) return null;
-  const block = /<command-(name|message|args)>[\s\S]*?<\/command-\1>\s*/y;
-  let end = 0;
-  while (block.test(text)) {
-    end = block.lastIndex;
-  }
-  if (end !== text.length) return null;
+  if (
+    leadingBlocksEnd(text, /<command-(name|message|args)>[\s\S]*?<\/command-\1>\s*/y) !==
+    text.length
+  )
+    return null;
   const name =
     /<command-name>([^<]*)<\/command-name>/.exec(text)?.[1]?.trim() ||
     `/${/<command-message>([^<]*)<\/command-message>/.exec(text)?.[1]?.trim() ?? ""}`;
