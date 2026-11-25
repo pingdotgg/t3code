@@ -39,11 +39,30 @@ export interface CodexResetCreditsSummary {
 const SESSION_MINS = 5 * 60;
 const WEEK_MINS = 7 * 24 * 60;
 const MONTH_MINS = 30 * 24 * 60;
+const BUSINESS_PLAN_TYPES = new Set([
+  "business",
+  "team",
+  "self_serve_business_usage_based",
+  "self_serve_business_prolite",
+]);
 
 function isoFromEpochSeconds(value: number | null | undefined): string | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
   const dt = DateTime.make(value * 1000);
   return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
+}
+
+function businessCreditDurationMins(
+  planType: string | null | undefined,
+  resetsAt: string | undefined,
+): number | undefined {
+  // Codex reports only the reset. Infer a calendar month for Business at the exact UTC boundary.
+  if (!planType || !BUSINESS_PLAN_TYPES.has(planType) || !resetsAt?.endsWith("-01T00:00:00.000Z")) {
+    return undefined;
+  }
+  const end = DateTime.makeUnsafe(resetsAt);
+  const start = DateTime.subtract(end, { months: 1 });
+  return (DateTime.toEpochMillis(end) - DateTime.toEpochMillis(start)) / 60_000;
 }
 
 function kindForDuration(mins: number): ServerProviderUsageWindow["kind"] {
@@ -86,12 +105,14 @@ function codexRateLimitsToWindows(
   const individualLimit = snapshot.individualLimit;
   if (individualLimit && Number.isFinite(individualLimit.remainingPercent)) {
     const resetsAt = isoFromEpochSeconds(individualLimit.resetsAt);
+    const windowDurationMins = businessCreditDurationMins(snapshot.planType, resetsAt);
     windows.push({
       id: "individual",
       kind: "monthly",
       label: "Monthly credit limit",
       usedPercent: clampPercent(100 - individualLimit.remainingPercent),
       ...(resetsAt ? { resetsAt } : {}),
+      ...(windowDurationMins === undefined ? {} : { windowDurationMins }),
     });
   }
   return windows;
