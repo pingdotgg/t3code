@@ -2504,52 +2504,109 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("imports a Claude session whose first prompt carries an image over 1 MiB", () =>
+    it.effect.each(["before", "after"] as const)(
+      "imports a Claude prompt with a large image and cwd %s the message",
+      (cwdPosition) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-large-image-claude-");
+          const codexHomePath = yield* makeTempDir("t3code-large-image-codex-");
+          const workspace = yield* makeTempDir("t3code-large-image-workspace-");
+          const sessionId = "large-image-session";
+          const contents = [
+            { type: "queue-operation", operation: "enqueue", sessionId },
+            { type: "queue-operation", operation: "dequeue", sessionId },
+            {
+              type: "user",
+              ...(cwdPosition === "before" ? { cwd: workspace } : {}),
+              sessionId,
+              timestamp: "2026-08-24T10:00:00.000Z",
+              message: {
+                role: "user",
+                content: [
+                  { type: "text", text: "Look at this screenshot" },
+                  {
+                    type: "image",
+                    source: {
+                      type: "base64",
+                      media_type: "image/png",
+                      data: "A".repeat(1_100 * 1024),
+                    },
+                  },
+                ],
+              },
+              ...(cwdPosition === "after" ? { cwd: workspace } : {}),
+            },
+            {
+              type: "assistant",
+              sessionId,
+              timestamp: "2026-08-24T10:01:00.000Z",
+              message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
+            },
+          ]
+            .map((record) => encodeTranscriptRecord(record))
+            .join("\n");
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-large-image", `${sessionId}.jsonl`),
+            contents,
+            mtimeMs: nowMs - 60 * 60 * 1000,
+          });
+
+          const threads = yield* runRecentThreads({
+            claudeHomePath,
+            codexHomePath,
+            workspaceRoot: workspace,
+          });
+
+          expect(threads.map((thread) => thread.providerSessionId)).toEqual([sessionId]);
+        }),
+    );
+
+    it.effect.each([
+      { name: "a newer transcript too large to finish", sizes: [63, 2], skipped: 1 },
+      {
+        name: "a transcript that only fits when each byte is read once",
+        sizes: [63.5],
+        skipped: 0,
+      },
+    ])("shares the Claude metadata budget across $name", ({ sizes, skipped }) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
         yield* TestClock.setTime(nowMs);
-        const claudeHomePath = yield* makeTempDir("t3code-large-image-claude-");
-        const codexHomePath = yield* makeTempDir("t3code-large-image-codex-");
-        const workspace = yield* makeTempDir("t3code-large-image-workspace-");
-        const sessionId = "large-image-session";
-        const contents = [
-          { type: "queue-operation", operation: "enqueue", sessionId },
-          { type: "queue-operation", operation: "dequeue", sessionId },
-          {
-            type: "user",
-            cwd: workspace,
-            sessionId,
-            timestamp: "2026-08-24T10:00:00.000Z",
-            message: {
-              role: "user",
-              content: [
-                { type: "text", text: "Look at this screenshot" },
-                {
-                  type: "image",
-                  source: {
-                    type: "base64",
-                    media_type: "image/png",
-                    data: "A".repeat(1_100 * 1024),
-                  },
-                },
-              ],
+        const claudeHomePath = yield* makeTempDir("t3code-metadata-budget-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-metadata-budget-codex-");
+        const workspace = yield* makeTempDir("t3code-metadata-budget-workspace-");
+        // Sizes in MiB against the 64 MiB per-source budget; cwd follows the image.
+        const sessions = sizes.map((size, index) => ({ sessionId: `image-${index}`, size }));
+        for (const [index, { sessionId, size }] of [
+          ...sessions,
+          { sessionId: "older", size: 0 },
+        ].entries()) {
+          const image = {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              data: "A".repeat(size * 1024 * 1024),
             },
-          },
-          {
-            type: "assistant",
-            sessionId,
-            timestamp: "2026-08-24T10:01:00.000Z",
-            message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
-          },
-        ]
-          .map((record) => encodeTranscriptRecord(record))
-          .join("\n");
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-large-image", `${sessionId}.jsonl`),
-          contents,
-          mtimeMs: nowMs - 60 * 60 * 1000,
-        });
+          };
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-budget", `${sessionId}.jsonl`),
+            contents: encodeTranscriptRecord({
+              type: "user",
+              sessionId,
+              message: {
+                role: "user",
+                content: [{ type: "text", text: "Review this" }, ...(size === 0 ? [] : [image])],
+              },
+              cwd: workspace,
+            }),
+            mtimeMs: nowMs - (index + 1) * 60_000,
+          });
+        }
 
         const threads = yield* runRecentThreads({
           claudeHomePath,
@@ -2557,7 +2614,10 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           workspaceRoot: workspace,
         });
 
-        expect(threads.map((thread) => thread.providerSessionId)).toEqual([sessionId]);
+        expect(threads.map((thread) => thread.providerSessionId)).toEqual([
+          ...sessions.slice(skipped).map(({ sessionId }) => sessionId),
+          "older",
+        ]);
       }),
     );
 
