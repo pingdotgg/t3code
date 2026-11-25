@@ -12,7 +12,13 @@ const MAX_EXPANDED = 32 * 1024 * 1024;
 const MAX_OUTPUT = 1_000_000;
 const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
-type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: string };
+const LINE_START = Symbol("line-start");
+type TextPart =
+  | string
+  | typeof CELL_START
+  | typeof CELL_END
+  | typeof LINE_START
+  | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
 // Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
@@ -87,6 +93,22 @@ function collapseOdfWhitespace(paragraph: XmlNode) {
   if (tail && afterSpace) tail.node.children[tail.index] = tail.value.slice(0, -1);
 }
 
+function separateRubyReadings(ruby: XmlNode) {
+  const parts = ruby.children.filter((part) =>
+    typeof part === "string"
+      ? part.trim() !== ""
+      : !HIDDEN.has(part.name) && (part.name !== "rp" || part.hasText),
+  );
+  const isFallback = (part: XmlNode | string | undefined) =>
+    typeof part !== "string" && part?.name === "rp";
+  for (const [index, part] of parts.entries()) {
+    if (typeof part === "string" || part.name !== "rt" || !part.hasText) continue;
+    if (isFallback(parts[index - 1]) || isFallback(parts[index + 1])) continue;
+    part.children.unshift("(");
+    part.children.push(")");
+  }
+}
+
 function xml(source: string, extension: string): XmlNode {
   const odf = [".odt", ".ods", ".odp"].includes(extension);
   const root: XmlNode = { name: "root", attrs: {}, children: [] };
@@ -110,11 +132,15 @@ function xml(source: string, extension: string): XmlNode {
     stack.at(-1)!.children.push(node);
     stack.push(node);
   });
-  parser.on("closetag", () => {
+  parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
+      (extension === ".epub" &&
+        (stack[1] ?? node).name === "html" &&
+        Object.hasOwn(tag.attributes, "hidden") &&
+        !/^until-found$/i.test(String(tag.attributes.hidden))) ||
       (extension === ".docx" && node.name === "del") ||
       (extension === ".docx" &&
         node.name === "r" &&
@@ -124,6 +150,11 @@ function xml(source: string, extension: string): XmlNode {
             (prop) => prop.name === "vanish" && ["true", "1", "on"].includes(prop.attrs.val ?? "1"),
           )) ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (extension === ".pptx" &&
+        node.name === "timing" &&
+        stack.every((ancestor) =>
+          ["root", "sld", "AlternateContent", "Choice", "Fallback"].includes(ancestor.name),
+        )) ||
       (extension === ".odp" &&
         node.name === "page-thumbnail" &&
         stack.some((ancestor) => ancestor.name === "notes"))
@@ -131,6 +162,8 @@ function xml(source: string, extension: string): XmlNode {
       parent.children.pop();
       return;
     }
+    if (extension === ".epub" && node.name === "ruby" && stack[1]?.name === "html")
+      separateRubyReadings(node);
     if (node.name === "Fallback" && !retainCompatibilityFallback(parent, node)) return;
     if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
@@ -248,8 +281,9 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else {
+      if (node.name === "li" && ["ol", "ul"].includes(child.name)) yield LINE_START;
       yield* paragraphs(child);
-      if (["li", "div", "section"].includes(child.name)) yield "\n";
+      if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
     }
   }
 }
@@ -501,6 +535,7 @@ const RTF_CODE_PAGES = new Map([
   [949, "euc-kr"],
   [950, "big5"],
   [10000, "macintosh"],
+  [54936, "gb18030"],
   [65001, "utf-8"],
 ]);
 
@@ -541,7 +576,8 @@ function* rtf(source: string): Generator<string, void> {
       yield String.fromCharCode(byte);
       return;
     }
-    encoded ??= new Uint8Array(Math.min(source.length, MAX_OUTPUT * 3 + 4));
+    // GB18030 spends up to 4 bytes per UTF-16 unit, so a full buffer decodes past MAX_OUTPUT.
+    encoded ??= new Uint8Array(Math.min(source.length, MAX_OUTPUT * 4 + 4));
     if (encodedLength === encoded.length) yield* flushBytes();
     encoded[encodedLength++] = byte;
   }
@@ -732,7 +768,10 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       yield* paragraphs(read(mainPart("word/document.xml")));
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");
-      if (extension === ".odt") yield* paragraphs(content);
+      if (extension === ".odt")
+        yield* paragraphs(
+          children(children(content)[0]).find((child) => child.name === "body") ?? content,
+        );
       else {
         let index = 0;
         for (const part of all(content, extension === ".ods" ? "table" : "page")) {
@@ -932,16 +971,24 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
   }
 }
 
+// Undefined when the text holds only spaces and tabs, so the line state carries over.
+function endsMidLine(text: string) {
+  let index = text.length - 1;
+  while (text[index] === " " || text[index] === "\t") index--;
+  return index < 0 ? undefined : text[index] !== "\n";
+}
+
 export async function extractDocumentText(path: string, extension: string): Promise<string> {
   let result = "";
   let remaining = MAX_OUTPUT;
   let cellDepth = 0;
   let started = false;
   let space = false;
+  let midLine = false;
   let truncated = false;
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
-    for await (const part of document(path, extension)) {
+    for await (let part of document(path, extension)) {
       if (part === CELL_START) {
         if (cellDepth++ === 0) {
           started = false;
@@ -954,6 +1001,11 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (cellDepth > 0 && started) space = true;
         continue;
       }
+      if (part === LINE_START) {
+        // A nested list starts its own line unless its parent item's text already ended one.
+        if (!midLine) continue;
+        part = "\n";
+      }
       if (typeof part !== "string" && started) continue;
       const raw = typeof part === "string" ? part : part.fallback;
       let value = raw.slice(0, remaining).replaceAll("\0", "");
@@ -964,9 +1016,13 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (trimmed) {
           result += (started && (space || value.startsWith(" ")) ? " " : "") + trimmed;
           started = true;
+          midLine = true;
         }
         space = value.endsWith(" ") || (!value && space);
-      } else result += value;
+      } else {
+        result += value;
+        midLine = endsMidLine(value) ?? midLine;
+      }
       if (remaining === 0) throw new Truncation("Output budget");
     }
   } catch (error) {

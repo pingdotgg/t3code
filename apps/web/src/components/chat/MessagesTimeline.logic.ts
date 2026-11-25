@@ -464,40 +464,30 @@ export function resolveTimelineMinimapCurrentIndex(input: {
   return precedingIndex;
 }
 
-function resolveTimelineSideGutter(viewportWidth: number, contentWidth: number): number {
-  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0 || !Number.isFinite(contentWidth)) {
-    return 0;
-  }
-  return Math.max(0, (viewportWidth - Math.min(viewportWidth, contentWidth)) / 2);
+export function resolveTimelineMinimapHasPersistentGutter(sideGutter: number): boolean {
+  return sideGutter >= TIMELINE_MINIMAP_PERSISTENT_GUTTER;
 }
 
-export function resolveTimelineMinimapHasPersistentGutter(
-  viewportWidth: number,
-  contentWidth: number,
-): boolean {
-  return (
-    resolveTimelineSideGutter(viewportWidth, contentWidth) >= TIMELINE_MINIMAP_PERSISTENT_GUTTER
-  );
-}
-
-const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 12;
+const TIMELINE_MINIMAP_HIT_STRIP_LEFT = 32;
 const TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH = 40;
-
-export function resolveTimelineMinimapHitStripWidth(
-  viewportWidth: number,
-  contentWidth: number,
-): number {
-  const sideGutter = resolveTimelineSideGutter(viewportWidth, contentWidth);
-  return Math.max(
-    0,
-    Math.min(
-      TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH,
-      Math.floor(sideGutter) - TIMELINE_MINIMAP_HIT_STRIP_LEFT,
-    ),
-  );
-}
-
 const TIMELINE_MINIMAP_NAVIGATION_REACH = 14;
+
+export function resolveTimelineMinimapHitStrip(measuredSideGutter: number) {
+  const sideGutter = Number.isFinite(measuredSideGutter)
+    ? Math.max(0, Math.floor(measuredSideGutter))
+    : 0;
+  if (sideGutter < TIMELINE_MINIMAP_HIT_STRIP_LEFT + TIMELINE_MINIMAP_NAVIGATION_REACH) {
+    // Keep a hover target in the gutter, to the left of the sidebar restore handle.
+    return { left: 0, width: Math.min(8, sideGutter) };
+  }
+  return {
+    left: TIMELINE_MINIMAP_HIT_STRIP_LEFT,
+    width: Math.min(
+      TIMELINE_MINIMAP_HIT_STRIP_MAX_WIDTH,
+      sideGutter - TIMELINE_MINIMAP_HIT_STRIP_LEFT,
+    ),
+  };
+}
 
 export function resolveTimelineMinimapNavigationInteractive(collapsedWidth: number): boolean {
   return collapsedWidth >= TIMELINE_MINIMAP_NAVIGATION_REACH;

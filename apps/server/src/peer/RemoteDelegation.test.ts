@@ -451,7 +451,9 @@ const boxToolkitLayer = (thread: BoxThread) => {
                   },
                 ]),
           ]
-        ).map((entry, position) => ({ ...entry, position }));
+        )
+          // Position 0 is the task's prompt, which the follower reads past.
+          .map((entry, index) => ({ ...entry, position: index + 1 }));
         const visible =
           options.itemId === undefined
             ? replies.filter(
@@ -492,7 +494,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
                   }),
             } as never,
           })),
-          totalItems: replies.length,
+          totalItems: replies.length + 1,
           hasMore:
             options.itemId === undefined &&
             matching.length > 0 &&
@@ -1714,7 +1716,7 @@ it.effect.each(["tail-error", "middle-error", "reply-fallback", "cancel-refill"]
           const pages = reads.filter((read) => read.itemId === undefined && read.limit === 100);
           // A page moves on by however many items the response budget left it.
           const remaining = (read: OrchestratorMcpThreadReadInput) =>
-            timeline.length - 1 - (read.afterPosition ?? -1);
+            timeline.length - (read.afterPosition ?? 0);
           expect(pages[0]).toMatchObject({
             view: "activity",
             limit: 100,
@@ -1832,8 +1834,9 @@ it.effect.each([
         }
         const pages = reads.filter((read) => read.itemId === undefined && read.limit === 100);
         // The thread's final page starts at its canonical 100-item boundary.
-        const tailPosition = Math.floor((timeline.length - 1) / 100) * 100 - 1;
-        expect(pages.at(0)?.afterPosition).toBe(-1);
+        const tailPosition = Math.floor(timeline.length / 100) * 100 - 1;
+        // Starts after the prompt, a cursor every peer accepts.
+        expect(pages.at(0)?.afterPosition).toBe(0);
         expect(
           pages.every(
             (read) =>

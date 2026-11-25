@@ -289,30 +289,35 @@ const mergeProviderModels = (
   }
 
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
+  const preserveDefault =
+    nextModels.length > 0 && !nextModels.some((model) => model.isDefault === true);
   // Antigravity null means unobserved: retain previous non-null capabilities, even explicit empty.
-  // Explicit incoming capabilities replace them. Other providers keep the non-empty fallback below.
+  // Explicit capabilities replace them; other providers retain only previous non-empty capabilities.
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
-    if (
-      isAntigravity &&
-      previousModel !== undefined &&
-      model.capabilities === null &&
-      previousModel.capabilities !== null
-    ) {
-      return { ...model, capabilities: previousModel.capabilities };
-    }
-    if (
-      !previousModel ||
-      hasModelCapabilities(model) ||
-      !hasModelCapabilities(previousModel) ||
-      (isAntigravity && model.capabilities !== null)
-    ) {
+    if (!previousModel) {
       return model;
     }
+    const retainCapabilities = isAntigravity
+      ? model.capabilities === null && previousModel.capabilities !== null
+      : !hasModelCapabilities(model) && hasModelCapabilities(previousModel);
+    const retainDefault = preserveDefault && previousModel.isDefault === true;
+    if (!retainCapabilities && !retainDefault) {
+      return model;
+    }
+    const aliases = retainDefault
+      ? [...new Set([...(model.aliases ?? []), ...(previousModel.aliases ?? [])])]
+      : undefined;
     return {
       ...model,
-      capabilities: previousModel.capabilities,
+      ...(retainCapabilities ? { capabilities: previousModel.capabilities } : {}),
+      ...(retainDefault
+        ? {
+            isDefault: true,
+            ...(aliases && aliases.length > 0 ? { aliases } : {}),
+          }
+        : {}),
     };
   });
   const nextSlugs = new Set(nextModels.map((model) => model.slug));
