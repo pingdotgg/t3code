@@ -1027,6 +1027,7 @@ it.layer(
       };
       yield* manager.write(recovery);
       yield* manager.close({ threadId: input.threadId, terminalId: original.terminalId });
+      yield* manager.write(recovery);
       yield* manager.open(input);
       yield* manager.write(recovery);
       yield* manager.write({
