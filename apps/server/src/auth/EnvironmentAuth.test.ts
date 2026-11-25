@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -530,16 +531,22 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );
 
-    it.effect("renews a peer link's session while it is used, and no other MCP client's", () =>
+    it.effect.each([
+      { name: "default", ttl: undefined, days: 30 },
+      { name: "one-day", ttl: Duration.days(1), days: 1 },
+      { name: "90-day", ttl: Duration.days(90), days: 90 },
+    ])("renews a peer link with the $name lifetime, and no other MCP client", ({ ttl, days }) =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-        const day = 24 * 60 * 60 * 1000;
+        const lifetime = Duration.toMillis(Duration.days(days));
+        const renewalTime = Duration.hours(days * 18);
         const issue = (peerLink: boolean) =>
           serverAuth.issueMcpClientSession({
             label: peerLink ? "T3 Code · A" : "ChatGPT",
             access: "auto",
             peerLink,
             client: requestMetadata,
+            ...(ttl === undefined ? {} : { ttl }),
           });
         const use = (session: { readonly token: string }) =>
           serverAuth.authenticateMcpClient(makeBearerRequest(session.token)).pipe(
@@ -564,30 +571,30 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const revoked = yield* issue(true);
         const outside = yield* issue(false);
 
-        // Within a day of its full lifetime, a call leaves the session row alone.
-        yield* TestClock.adjust("12 hours");
-        expect(yield* use(used)).toBe(issuedAt + 30 * day);
-        expect(yield* listedExpiry(used)).toBe(issuedAt + 30 * day);
+        yield* TestClock.adjust("6 hours");
+        expect(yield* use(used)).toBe(issuedAt + lifetime);
+        expect(yield* listedExpiry(used)).toBe(issuedAt + lifetime);
 
-        yield* TestClock.adjust("468 hours");
-        expect(yield* use(used)).toBe(issuedAt + 50 * day);
-        expect(yield* listedExpiry(used)).toBe(issuedAt + 50 * day);
+        yield* TestClock.adjust(Duration.subtract(renewalTime, Duration.hours(6)));
+        const renewedAt = (yield* DateTime.now).epochMilliseconds;
+        expect(yield* use(used)).toBe(renewedAt + lifetime);
+        expect(yield* listedExpiry(used)).toBe(renewedAt + lifetime);
         expect(yield* use(outside)).toBeNull();
-        expect(yield* listedExpiry(outside)).toBe(issuedAt + 30 * day);
+        expect(yield* listedExpiry(outside)).toBe(issuedAt + lifetime);
         expect(yield* serverAuth.revokeSession(revoked.sessionId)).toBe(true);
         expect(yield* use(revoked)).toBe("refused");
 
-        // Day 40: past the token's own 30 days, so only the renewal keeps the used link.
-        yield* TestClock.adjust("20 days");
-        expect(yield* use(used)).toBe(issuedAt + 70 * day);
+        // The token's original expiry has passed, so only the renewal keeps the used link.
+        yield* TestClock.adjust(renewalTime);
+        const usedAgainAt = (yield* DateTime.now).epochMilliseconds;
+        expect(yield* use(used)).toBe(usedAgainAt + lifetime);
         expect(yield* use(idle)).toBe("refused");
         expect(yield* use(outside)).toBe("refused");
         expect(yield* use(revoked)).toBe("refused");
         expect(yield* listedExpiry(idle)).toBeUndefined();
         expect(yield* listedExpiry(revoked)).toBeUndefined();
 
-        // Renewed links still end 30 days after their last use.
-        yield* TestClock.adjust("30 days");
+        yield* TestClock.adjust(Duration.days(days));
         expect(yield* use(used)).toBe("refused");
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );

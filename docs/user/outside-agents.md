@@ -189,5 +189,25 @@ result that always includes the thread id.
 ## Remove an agent
 
 Approved agents appear under **Settings → Sharing & access** like other clients.
-Revoke one there to cut off its access immediately. A sign-in lasts 30 days;
-after that the agent asks you to approve it again.
+Revoke one there to cut off its access immediately.
+
+## Change the sign-in lifetime
+
+By default, a sign-in lasts 30 days; after that the agent asks you to approve it
+again.
+
+To change this lifetime on a server you run, set
+`T3CODE_MCP_CLIENT_SESSION_TTL_DAYS` to a positive whole number of days in the
+server's environment. For example, to allow 90-day sign-ins:
+
+```sh
+T3CODE_MCP_CLIENT_SESSION_TTL_DAYS=90 t3 serve
+```
+
+Restart the server after changing the variable. It applies to new MCP OAuth
+sign-ins, including links from other T3 Code environments. Peer links use the
+same lifetime when they renew.
+
+Existing sign-ins keep the lifetime they were issued with. To use the new
+lifetime, revoke the old sign-in and sign in again. Pairing codes and credentials
+issued by `t3 auth session issue` or `t3 thread` keep their own lifetimes.

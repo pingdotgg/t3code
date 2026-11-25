@@ -653,6 +653,7 @@ export class EnvironmentAuth extends Context.Service<
       readonly access: AuthMcpClientAccess;
       readonly peerLink: boolean;
       readonly client: AuthClientMetadata;
+      readonly ttl?: Duration.Duration;
       /**
        * `otherSessionRevocationCount` read before the sign-in was approved. The session is
        * refused when "revoke all others" has run since.
@@ -1639,16 +1640,19 @@ export const make = Effect.gen(function* () {
   const renewPeerLinkSession = Effect.fnUntraced(function* (
     sessionId: AuthSessionId,
     expiresAt: DateTime.DateTime,
+    ttl: Duration.Duration,
   ) {
     const now = yield* DateTime.now;
-    const renewed = DateTime.add(now, {
-      milliseconds: Duration.toMillis(MCP_CLIENT_SESSION_TTL),
-    });
-    if (DateTime.distance(expiresAt, renewed).pipe(Duration.isLessThan(PEER_LINK_RENEWAL_STEP))) {
+    const renewed = DateTime.make(now.epochMilliseconds + Duration.toMillis(ttl));
+    const step = Duration.min(PEER_LINK_RENEWAL_STEP, Duration.divideUnsafe(ttl, 2));
+    if (
+      Option.isNone(renewed) ||
+      Duration.isLessThan(DateTime.distance(expiresAt, renewed.value), step)
+    ) {
       return DateTime.toUtc(expiresAt);
     }
     const current = yield* sessions
-      .extend(sessionId, renewed, PEER_LINK_RENEWAL_STEP)
+      .extend(sessionId, renewed.value, step)
       .pipe(mapSessionVerificationErrors);
     // A revoke can land between the verification and the update.
     if (Option.isNone(current)) {
@@ -1677,12 +1681,16 @@ export const make = Effect.gen(function* () {
             access: session.scopes.includes(AuthOrchestrationOperateScope)
               ? (session.runtimeModeCeiling ?? "approval-required")
               : "read-only",
-            peerLink: session.peerLink === true,
+            peerLink: session.peerLinkTtl !== undefined,
           } satisfies McpClientSession;
-          if (session.peerLink !== true || session.expiresAt === undefined) return client;
+          if (session.peerLinkTtl === undefined || session.expiresAt === undefined) return client;
           return {
             ...client,
-            linkExpiresAt: yield* renewPeerLinkSession(session.sessionId, session.expiresAt),
+            linkExpiresAt: yield* renewPeerLinkSession(
+              session.sessionId,
+              session.expiresAt,
+              session.peerLinkTtl,
+            ),
           } satisfies McpClientSession;
         }),
       ),
@@ -1714,7 +1722,7 @@ export const make = Effect.gen(function* () {
         subject: MCP_CLIENT_SUBJECT,
         method: "bearer-access-token",
         scopes: mcpClientScopes(input.access),
-        ttl: MCP_CLIENT_SESSION_TTL,
+        ttl: input.ttl ?? MCP_CLIENT_SESSION_TTL,
         ...(input.access === "read-only" ? {} : { runtimeModeCeiling: input.access }),
         peerLink: input.peerLink,
         client: { ...input.client, label: input.label, deviceType: "bot" },
