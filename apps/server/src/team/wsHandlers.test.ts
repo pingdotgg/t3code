@@ -4,6 +4,8 @@ import {
   ALL_TEAM_ROLES,
   AuthStandardClientScopes,
   CommandId,
+  DeviceHostId,
+  DeviceId,
   EnvironmentId,
   NodeId,
   PreviewTabId,
@@ -12,6 +14,7 @@ import {
   RunId,
   ThreadId,
   type AuthClientMetadata,
+  type DeviceServiceState,
   type OrchestrationV2SearchThreadsResult,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
@@ -39,6 +42,7 @@ import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
 import {
   assertCanReadAssetResource,
+  filterDeviceStateForSession,
   filterPreviewEventsStreamForSession,
   filterSearchThreadsResultForSession,
   filterShellSnapshotForSession,
@@ -483,6 +487,65 @@ describe("Team WS access enforcement helpers", () => {
           ),
         );
         expect(bobPreviewEvents.map((event) => event.threadId)).toEqual([visibleThreadId]);
+
+        // Device state sessions and bootingDevices filter out restricted thread IDs for Bob.
+        const deviceState: DeviceServiceState = {
+          hostStatus: "ready",
+          hostStatuses: {},
+          hosts: [],
+          devices: [],
+          sessions: [
+            {
+              threadId,
+              hostId: DeviceHostId.make("local"),
+              deviceId: DeviceId.make("sim-secret"),
+              platform: "ios",
+              openedAt: "2026-01-01T00:00:00.000Z",
+            },
+            {
+              threadId: visibleThreadId,
+              hostId: DeviceHostId.make("local"),
+              deviceId: DeviceId.make("sim-public"),
+              platform: "ios",
+              openedAt: "2026-01-01T00:00:00.000Z",
+            },
+          ],
+          bootingDevices: [
+            {
+              threadId,
+              hostId: DeviceHostId.make("local"),
+              id: DeviceId.make("sim-secret"),
+              name: "Secret Sim",
+              platform: "ios",
+              version: "18.0",
+              booted: false,
+              physical: false,
+            },
+            {
+              threadId: visibleThreadId,
+              hostId: DeviceHostId.make("local"),
+              id: DeviceId.make("sim-public"),
+              name: "Public Sim",
+              platform: "ios",
+              version: "18.0",
+              booted: false,
+              physical: false,
+            },
+          ],
+          onboardingCompleted: true,
+          agentAccessEnabled: true,
+          hubBasePath: "/tmp/hub",
+          revision: 1,
+        };
+        const bobDeviceState = yield* filterDeviceStateForSession(
+          team,
+          bobSession.sessionId,
+          deviceState,
+        );
+        expect(bobDeviceState.sessions.map((s) => s.threadId)).toEqual([visibleThreadId]);
+        expect((bobDeviceState.bootingDevices ?? []).map((d) => d.threadId)).toEqual([
+          visibleThreadId,
+        ]);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });

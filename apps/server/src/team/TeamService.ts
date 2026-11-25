@@ -1310,6 +1310,7 @@ const make = Effect.gen(function* () {
       });
     }
     yield* publish({ version: 1, type: "threadAttributed", payload: updated.value });
+    yield* publishAccessChange({ type: "threadView", threadId: input.payload.threadId });
     return updated.value;
   });
 

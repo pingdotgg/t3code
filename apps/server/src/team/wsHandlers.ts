@@ -3,6 +3,7 @@ import {
   ThreadId,
   type AssetResource,
   type AuthSessionId,
+  type DeviceServiceState,
   type EnvironmentAuthorizationError,
   type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
@@ -353,6 +354,33 @@ export const filterPreviewEventsStreamForSession = <E, R>(
     ),
     Stream.filter((event): event is PreviewEvent => event !== null),
   );
+
+export const filterDeviceStateForSession = Effect.fn("TeamWsHandlers.filterDeviceState")(function* (
+  teamService: TeamService.TeamService["Service"],
+  sessionId: AuthSessionId,
+  state: DeviceServiceState,
+): Effect.fn.Return<DeviceServiceState> {
+  if (!(yield* teamService.isTeamConfigured())) {
+    return state;
+  }
+  const threadIds = [
+    ...state.sessions.map((session) => session.threadId),
+    ...(state.bootingDevices ?? []).map((device) => device.threadId),
+  ];
+  if (threadIds.length === 0) {
+    return state;
+  }
+  const readableIds = yield* teamService.filterReadableThreadIds(sessionId, threadIds);
+  return {
+    ...state,
+    sessions: state.sessions.filter((session) => readableIds.has(session.threadId)),
+    ...(state.bootingDevices === undefined
+      ? {}
+      : {
+          bootingDevices: state.bootingDevices.filter((device) => readableIds.has(device.threadId)),
+        }),
+  };
+});
 
 /**
  * Guards any thread-scoped stream (`subscribeThread`, `subscribeCommandOutput`,

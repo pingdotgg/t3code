@@ -309,6 +309,7 @@ import { requestUrl } from "./requestUrl.ts";
 import * as TeamService from "./team/TeamService.ts";
 import {
   assertCanReadAssetResource,
+  filterDeviceStateForSession,
   filterPreviewEventsStreamForSession,
   filterSearchThreadsResultForSession,
   filterShellSnapshotForSession,
@@ -3927,7 +3928,7 @@ export const layerWsRpc = (
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
         [WS_METHODS.deviceSimlockIdentity]: (input) => deviceService.simlockIdentity(input),
         [WS_METHODS.deviceList]: (input) =>
-          input.inspectOnly && !input.updateTool
+          (input.inspectOnly && !input.updateTool
             ? deviceService.inspect
             : authorizeEffect(
                 requiredScopeForDeviceList(input),
@@ -3936,7 +3937,12 @@ export const layerWsRpc = (
                   : input.retryHostId
                     ? deviceService.retryHost(input.retryHostId)
                     : deviceService.list,
-              ),
+              )
+          ).pipe(
+            Effect.flatMap((state) =>
+              filterDeviceStateForSession(teamService, currentSessionId, state),
+            ),
+          ),
         [WS_METHODS.deviceOpen]: (input) =>
           teamService
             .assertCanPostInThread(currentSessionId, input.threadId)
@@ -3954,7 +3960,12 @@ export const layerWsRpc = (
         [WS_METHODS.deviceShutdown]: (input) => deviceService.shutdown(input),
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
-        [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
+        [WS_METHODS.subscribeDeviceState]: (_input) =>
+          DeviceService.stateStream(deviceService).pipe(
+            Stream.mapEffect((state) =>
+              filterDeviceStateForSession(teamService, currentSessionId, state),
+            ),
+          ),
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>
