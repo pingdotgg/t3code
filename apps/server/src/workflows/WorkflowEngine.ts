@@ -38,6 +38,7 @@ import {
   engineTag,
   engineWorkflow,
   layerDefinition,
+  PLACE_PREFIX,
   text,
   wakeOf,
   type Woke,
@@ -610,7 +611,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   // A place given to a queued step wakes its wait. A place given back to a resumed run, once it
   // has all it gave up, resumes it, apart from whatever handed the place out.
   const placeWake = (runId: string, name: string) =>
-    Effect.ignore(signal({ runId, wait: name }, null, { id: `place:${runId}/${name}` }));
+    Effect.ignore(signalWait({ runId, wait: name }, null, { id: `place:${runId}/${name}` }));
   // Typed, as it and the resume it starts refer to each other.
   const placesTaken: (given: ReadonlyArray<WorkflowStore.PlaceRow>) => Effect.Effect<void> =
     Effect.fnUntraced(function* (given) {
@@ -921,7 +922,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }),
   );
 
-  const signal: Workflows["Service"]["signal"] = Effect.fn("Workflows.signal")(
+  const signalWait: Workflows["Service"]["signal"] = Effect.fn("WorkflowEngine.signalWait")(
     function* (address, value, options) {
       // A sender's retry of a signal that already woke a wait is not a second signal.
       if (yield* store.signalSeen(options.id)) return "delivered" as const;
@@ -968,6 +969,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         // The kept copy went to a wait that opened, or was dropped as already delivered.
         if (outcome === "gone") return "delivered" as const;
       }
+    },
+  );
+  const signal: Workflows["Service"]["signal"] = Effect.fn("Workflows.signal")(
+    function* (address, value, options) {
+      // A step queued for a place goes in when the pool gives it one, never on a signal.
+      if ("wait" in address && address.wait.startsWith(PLACE_PREFIX)) {
+        return yield* new WorkflowInputError({
+          problem: `${address.wait} waits for a place in a pool, and only the pool lets it in.`,
+        });
+      }
+      return yield* signalWait(address, value, options);
     },
   );
   const answer: Workflows["Service"]["answer"] = Effect.fn("Workflows.answer")(

@@ -99,7 +99,7 @@ const { within, agent } = T3;
 yield* within("builders", { limit: 4 }, agent("fix", { ... }));
 ```
 
-When all places are taken, later runs queue in the order they asked and show as **Queued** with their place in line; they count as running, not as needing you. A place is given back when the wrapped part ends, or when its run ends, is cancelled, or pauses. A paused run queues for its place again when it is resumed. `limit: 1` makes it a lock. To cap whole runs, give the workflow `concurrency: 4` in its options: its runs share a pool named after the workflow.
+When all places are taken, later runs queue in the order they asked and show as **Queued** with their place in line; they count as running, not as needing you. A place is given back when the wrapped part ends, or when its run ends, is cancelled, or pauses. A paused run queues for its place again when it is resumed. The place is handed on at once, so a step of a paused or cancelled run that is still finishing can overlap with the next run in. `limit: 1` makes it a lock when every `within` on that pool name also uses `limit: 1`: each call is let in against its own limit. To cap whole runs, give the workflow `concurrency: 4` in its options: its runs share a pool named after the workflow.
 
 ## Triggers
 

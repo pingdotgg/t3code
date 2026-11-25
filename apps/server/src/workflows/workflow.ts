@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
@@ -85,13 +86,20 @@ export type InRun =
   | WorkflowEngine.WorkflowInstance;
 
 /** Takes `name` for one step of the run. Step results and the step list are both kept by name. */
-export const claim = (name: string, cleanup = false) =>
+export const claim = (name: string, internal = false) =>
   Effect.flatMap(RunContext, (run) => {
     // The cleanup step's name is its own, or a body step would take it and cleanup never run.
-    if (name === END_STEP && !cleanup) {
+    if (name === END_STEP && !internal) {
       return Effect.die(
         new Error(
           `"${END_STEP}" is the name of workflow ${run.workflow}'s cleanup step. Name this step something else.`,
+        ),
+      );
+    }
+    if (name.startsWith(PLACE_PREFIX) && !internal) {
+      return Effect.die(
+        new Error(
+          `Step names starting with "${PLACE_PREFIX}" in workflow ${run.workflow} are kept for pools. Name "${name}" something else.`,
         ),
       );
     }
@@ -602,16 +610,20 @@ const holding = Effect.fn("workflow.within")(function* <A, E, R>(
   limit: number,
   body: Effect.Effect<A, E, R>,
 ): Effect.fn.Return<A, E, R | InRun> {
-  const run = yield* claim(name);
+  const run = yield* claim(name, true);
   yield* Effect.orDie(
     waitClaimed(run, "queue", name, {
       returns: Schema.Null,
       pool: { name: pool, size: limit },
     }),
   );
-  const value = yield* body;
-  // A run that pauses or ends inside gives its place back there; this is the body finishing.
-  yield* Activity.make({ name: `${name}/leave`, execute: run.placeLeft(name) });
+  // A run that pauses or ends inside gives its place back there; this is the body finishing,
+  // or failing in a way its caller may catch and carry on from.
+  const leave = Activity.make({ name: `${name}/leave`, execute: run.placeLeft(name) });
+  const value = yield* body.pipe(
+    Effect.tapError((error) => (Predicate.isTagged(error, "StepFailed") ? Effect.void : leave)),
+  );
+  yield* leave;
   return value;
 });
 
@@ -636,8 +648,9 @@ export const within = <A, E, R>(
   return Effect.flatMap(RunContext, (current) => {
     // Numbered by how many came before in the body, which a replay walks the same way.
     let n = 1;
-    while (current.names.has(n === 1 ? `pool:${pool}` : `pool:${pool}#${n}`)) n++;
-    return holding(n === 1 ? `pool:${pool}` : `pool:${pool}#${n}`, pool, options.limit, body);
+    const named = (index: number) => `${PLACE_PREFIX}${pool}${index === 1 ? "" : `#${index}`}`;
+    while (current.names.has(named(n))) n++;
+    return holding(named(n), pool, options.limit, body);
   });
 };
 
@@ -822,10 +835,10 @@ const invokeAs = Effect.fn("workflow.invoke")(function* <P, A>(
   return { outcome: "completed", value: value as A };
 });
 
+/** Starts the name of every step that waits for a place in a pool; only a pool's grant wakes it. */
+export const PLACE_PREFIX = "pool:";
 /** The step `onEnd` runs as. */
 export const END_STEP = "onEnd";
-/** The step a run of a workflow with `concurrency` waits for its place as. */
-const RUN_PLACE = "queue";
 const END_RETRY: StepRetry = { times: 3, schedule: Schedule.exponential("2 seconds") };
 
 const DEFAULT_RESUME_AFTER: ReadonlyArray<Duration.Input> = [
@@ -960,7 +973,12 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
       const outcome = yield* (
         definition.concurrency === undefined
           ? body
-          : holding(RUN_PLACE, definition.name, definition.concurrency, body)
+          : holding(
+              `${PLACE_PREFIX}${definition.name}`,
+              definition.name,
+              definition.concurrency,
+              body,
+            )
       ).pipe(
         Effect.flatMap((value) =>
           definition.returns === ANY_JSON

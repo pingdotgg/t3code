@@ -483,6 +483,13 @@ const pooled = [
     { version: 1, payload: Schema.Struct({ id: Schema.String }), concurrency: 1 },
     (payload) => holdUntilDone(payload.id),
   ),
+  /** Fails inside its lock, carries on outside it, and holds there. */
+  workflow("caught", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
+    Effect.andThen(
+      Effect.ignore(within("c", { limit: 1 }, Effect.fail("unavailable"))),
+      holdUntilDone(payload.id),
+    ),
+  ),
 ];
 
 type Started = Parameters<WorkflowAgents["Service"]["start"]>[0];
@@ -2552,7 +2559,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       entered.length = 0;
-      const { boot, database } = yield* harness();
+      const { boot, database, clock } = yield* harness();
       const holding = (detail: string) => (run: WorkflowRun) =>
         run.status === "waiting" && run.detail === detail;
       const places = Effect.flatMap(
@@ -2589,6 +2596,7 @@ it.effect(
           );
 
           // Ending a holder lets in the next, and cancelling one does too, with no sweep.
+          yield* clock.close;
           yield* workflows.signal({ runId: ids[0]!, wait: "done" }, null, { id: "done-0" });
           yield* workflows.waitFor(ids[0]!, status("completed"));
           yield* workflows.waitFor(ids[2]!, holding("done"));
@@ -2629,7 +2637,30 @@ it.effect("a workflow with a concurrency runs that many at once and queues the r
         const queued = yield* workflows.waitFor(second.runId, (run) => run.status === "waiting");
         assert.equal(queued.detail, "queue solo");
         assert.deepStrictEqual(entered, ["a"]);
+        // Only the pool lets a queued run in; a signal to where it waits is refused.
+        const refused = yield* Effect.flip(
+          workflows.signal({ runId: second.runId, wait: "pool:solo" }, null, { id: "jump" }),
+        );
+        assert.equal(refused._tag, "WorkflowInputError");
+        assert.equal((yield* workflows.get(second.runId)).run.detail, "queue solo");
         yield* workflows.signal({ runId: first.runId, wait: "done" }, null, { id: "done-a" });
+        yield* workflows.waitFor(second.runId, (run) => run.detail === "done");
+        assert.deepStrictEqual(entered, ["a", "b"]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a body that fails in a way its run catches gives its place back", () =>
+  Effect.gen(function* () {
+    entered.length = 0;
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const first = yield* workflows.start("caught", { id: "a" }, { idempotencyKey: "a" });
+        yield* workflows.waitFor(first.runId, (run) => run.detail === "done");
+        const second = yield* workflows.start("caught", { id: "b" }, { idempotencyKey: "b" });
         yield* workflows.waitFor(second.runId, (run) => run.detail === "done");
         assert.deepStrictEqual(entered, ["a", "b"]);
       }),
