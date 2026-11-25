@@ -475,6 +475,20 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
+  it.effect("sends a per-device account hash instead of the account id to 2.4.0+ clients", () => {
+    const h = harness();
+    h.current.target.app_version = "2.4.0";
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process(h.job);
+      expect(h.sent[0]?.data.user_id).toBeUndefined();
+      // SHA-256 of "user:phone", which the Android client recomputes.
+      expect(h.sent[0]?.data.user_hash).toBe(
+        "6d11cb8c16365bd4d82136aef4cf191f7fad3a12047924930a31230fd235adbc",
+      );
+    }).pipe(Effect.provide(h.layer));
+  });
+
   it.effect("drops jobs for rotated tokens, expired jobs, and revoked links", () => {
     const h = harness();
     return Effect.gen(function* () {

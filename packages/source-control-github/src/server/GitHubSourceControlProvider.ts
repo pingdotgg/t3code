@@ -342,6 +342,14 @@ class GitHubFailure extends Schema.TaggedError<GitHubFailure>()("GitHubFailure",
   cause: Schema.Defect(),
 }) {}
 
+class GitHubRepositoryLookupError extends Schema.TaggedError<GitHubRepositoryLookupError>()(
+  "GitHubRepositoryLookupError",
+  {
+    userFacingDetail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail, cause });
 
 // A gh login confirms a GitHub Enterprise Server whose hostname does not identify its provider.
@@ -370,6 +378,7 @@ const refineRepositoryIdentity: NonNullable<
 
 const PULL_REQUEST_NOT_FOUND = "Pull request not found. Check the PR number or URL and try again.";
 const REPOSITORY_NOT_FOUND = "Repository not found. Check the owner and name and try again.";
+const isGitHubApiNotFoundError = Schema.is(GitHubRequestPolicy.GitHubApiNotFoundError);
 
 function fromGitHubApiError(
   error: GitHubRequestPolicy.GitHubApiError,
@@ -646,9 +655,15 @@ export const make = Effect.gen(function* () {
     readonly limit: number;
     readonly context?: SourceControlProvider.SourceControlProviderContext | undefined;
     readonly host?: string | undefined;
+    readonly repository?: string | undefined;
     readonly allowReserve: boolean;
   }) {
-    const locator = yield* resolveRepository(input);
+    const base = yield* resolveRepository(input);
+    const locator =
+      input.repository === undefined
+        ? base
+        : parseGitHubRepositorySelector(input.repository, base.host);
+    if (locator === null) return yield* failure(`${input.repository} is not a GitHub repository.`);
     const limit = Math.min(Math.max(Math.trunc(input.limit), 1), 100);
     const ownerMatch = /^([^:/\s]+):(.+)$/u.exec(input.headSelector.trim());
     const headRefName = ownerMatch?.[2] ?? input.headSelector.trim();
@@ -1083,6 +1098,7 @@ export const make = Effect.gen(function* () {
               limit: input.limit ?? (input.state === "open" ? 1 : 20),
               host: contextHost(input.context),
               context: input.context,
+              repository: input.repository,
               allowReserve,
             }),
           ),
@@ -1101,6 +1117,7 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
+    createsDraftChangeRequests: true,
     createChangeRequest: Effect.fn("GitHubSourceControlProvider.createChangeRequest")(
       function* (input) {
         const locator = yield* resolveRepository(input);
@@ -1124,6 +1141,7 @@ export const make = Effect.gen(function* () {
             title: input.title,
             body,
             maintainer_can_modify: true,
+            ...(input.draft === true ? { draft: true } : {}),
           },
         });
       },
@@ -1153,8 +1171,27 @@ export const make = Effect.gen(function* () {
                 name: bareName,
               }
             : null);
-        if (locator === null) return yield* failure("Repositories are named owner/name.");
-        return repositoryCloneUrls(yield* readRepository(locator));
+        if (locator === null) {
+          const detail = "Repositories are named owner/name.";
+          return yield* failure(
+            detail,
+            new GitHubRepositoryLookupError({ userFacingDetail: detail }),
+          );
+        }
+        return repositoryCloneUrls(
+          yield* readRepository(locator).pipe(
+            Effect.mapError((error) => {
+              if (!isGitHubApiNotFoundError(error.cause)) return error;
+              const detail = SourceControlProvider.repositoryNotFoundDetail(
+                `${locator.owner}/${locator.name}`,
+              );
+              return failure(
+                detail,
+                new GitHubRepositoryLookupError({ userFacingDetail: detail, cause: error.cause }),
+              );
+            }),
+          ),
+        );
       },
       (effect, input) =>
         effect.pipe(

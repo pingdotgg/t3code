@@ -26,6 +26,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { captureLauncher, captureLauncherFor, runLauncher } from "./launcherTestHarness.ts";
@@ -273,6 +274,12 @@ describe("ssh tunnel scripts", () => {
       assert.include(result.failure.stderr, "It wrote nothing to");
       assert.notInclude(result.failure.stderr, "EARLIER_LAUNCH");
       assert.notInclude(result.failure.stderr, "EARLIER_PROCESS");
+      for (const [path, mode] of [
+        [stateDir, 0o700],
+        [NodePath.join(stateDir, "server.log"), 0o600],
+      ] as const) {
+        assert.equal((yield* fs.stat(path)).mode & 0o777, mode, path);
+      }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -832,9 +839,15 @@ describe("ssh tunnel scripts", () => {
     }),
   );
 
-  it.effect("connects and reuses a tunnel whose responses take over a second", () =>
+  it.effect.each([
+    // Over a ~1s RTT link each request through the forward takes a few round trips.
+    { condition: "responses take over a second", reconnectResponseMs: 2_500 },
+    // An alive server whose event loop stalls (e.g. on a blocked fsync) answers late.
+    { condition: "server stalls for 20 seconds", reconnectResponseMs: 20_000 },
+    // ssh closes the forwarded connection when nothing listens on the remote port.
+    { condition: "server is gone", reconnectResponseMs: 0, serverGone: true },
+  ])("connects and reuses a tunnel whose $condition", ({ reconnectResponseMs, serverGone }) =>
     Effect.gen(function* () {
-      // Over a ~1s RTT link each request through the forward takes a few round trips.
       const RESPONSE_MS = 2_500;
       const tunnelSpawned = yield* Deferred.make<void>();
       const reconnectProbed = yield* Deferred.make<void>();
@@ -854,7 +867,15 @@ describe("ssh tunnel scripts", () => {
       const httpClient = HttpClient.make((request) =>
         Effect.gen(function* () {
           if (connected) yield* Deferred.succeed(reconnectProbed, undefined);
-          yield* Effect.sleep(Duration.millis(RESPONSE_MS));
+          yield* Effect.sleep(Duration.millis(connected ? reconnectResponseMs : RESPONSE_MS));
+          if (connected && serverGone) {
+            return yield* new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                request,
+                description: "socket hang up",
+              }),
+            });
+          }
           return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
         }),
       );
@@ -896,7 +917,7 @@ describe("ssh tunnel scripts", () => {
           Fiber.join(reconnect).pipe(Effect.map((environment) => environment.httpBaseUrl)),
           Deferred.await(forwardReplaced).pipe(Effect.as("replaced the forward")),
         );
-        assert.equal(outcome, result.success.httpBaseUrl);
+        assert.equal(outcome, serverGone ? "replaced the forward" : result.success.httpBaseUrl);
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );
@@ -1349,7 +1370,15 @@ const http = require("node:http");
 const path = require("node:path");
 const args = process.argv.slice(2);
 const flag = (name) => args[args.indexOf(name) + 1];
-const server = http.createServer((_request, response) => response.end("ok"));
+const server = http.createServer((request, response) => {
+  // Closes the listener but stays up, like a server stuck in its teardown.
+  if (request.url === "/stop") {
+    server.close();
+    setInterval(() => {}, 1 << 30);
+    response.setHeader("connection", "close");
+  }
+  response.end("ok");
+});
 server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
   const port = server.address().port;
   const base = flag("--base-dir");
@@ -1471,6 +1500,36 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live("a reconnect names the previous server while it is still shutting down", () =>
+    Effect.gen(function* () {
+      const { fs, fakeServer, sshAsLocalShell, stateDir } = yield* prepare("an unrelated process");
+      const launch = SshTunnel.launchOrReuseRemoteServer(target, undefined, {
+        nodeScriptPath: fakeServer,
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell));
+
+      const first = yield* launch;
+      const pid = Number((yield* fs.readFileString(`${stateDir}/pid`)).trim());
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+        }),
+      );
+      yield* HttpClient.get(`http://127.0.0.1:${first.remotePort}/stop`).pipe(
+        Effect.flatMap((response) => response.text),
+        Effect.provide(FetchHttpClient.layer),
+      );
+
+      const error = yield* Effect.flip(launch);
+      assert.include(
+        error.message,
+        `The previous remote T3 server (PID ${pid}) is still shutting down.`,
+      );
+      assert.isTrue(yield* isRunning(pid), "the launcher signalled the stopping server");
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.live("an update replaces the managed server after its connection is renamed", () =>
     Effect.gen(function* () {
       const { fs, home, fakeServer, sshAsLocalShell, stateDir } =
@@ -1551,6 +1610,62 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       assert.equal(final.remoteServerKind, "external");
       assert.isTrue(yield* isRunning(unownedPid), "a stale launcher ID claimed another's server");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live(
+    "another desktop with the same connection details neither owns nor stops the server",
+    () =>
+      Effect.gen(function* () {
+        const { fs, home, fakeServer, sshAsLocalShell, stateDir } =
+          yield* prepare("an unrelated process");
+        const launch = (launcherId: string) =>
+          SshTunnel.launchOrReuseRemoteServer(
+            target,
+            undefined,
+            { nodeScriptPath: fakeServer },
+            launcherId,
+          ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell));
+        const runtimePid = fs
+          .readFileString(`${home}/.t3/userdata/server-runtime.json`)
+          .pipe(Effect.map((runtime) => Number(JSON.parse(runtime).pid)));
+
+        assert.equal((yield* launch("a".repeat(32))).remoteServerKind, "managed");
+        const serverPid = yield* runtimePid;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            try {
+              process.kill(serverPid, "SIGKILL");
+            } catch {}
+          }),
+        );
+
+        const otherDesktop = yield* launch("b".repeat(32));
+        assert.equal(
+          yield* fs.readFileString(`${stateDir}/launcher`),
+          `${"a".repeat(32)}\n`,
+          "the second desktop recorded itself as the server's launcher",
+        );
+        assert.equal(otherDesktop.remoteServerKind, "external");
+
+        const layer = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, sshAsLocalShell),
+          Layer.succeed(HttpClient.HttpClient, testHttpClient),
+          Layer.succeed(NetService.NetService, testNetService),
+          SshAuth.SshPasswordPrompt.disabledLayer,
+          SshTunnel.SshEnvironmentManager.layer({
+            resolveCliRunner: Effect.succeed(ARCHIVE),
+            resolveLauncherId: Effect.succeed("b".repeat(32)),
+          }),
+        );
+        yield* Effect.flatMap(SshTunnel.SshEnvironmentManager, (manager) =>
+          manager.disconnectEnvironment(target),
+        ).pipe(Effect.provide(layer));
+        assert.isTrue(
+          yield* isRunning(serverPid),
+          "the second desktop's disconnect stopped the server the first desktop launched",
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.live.each(staleIds)("disconnecting does not signal %s named by the managed pid file", (kind) =>
@@ -1706,9 +1821,10 @@ const canBind = (port) =>
       for (const version of versions) {
         const runtimeDir = `${home}/.t3/runtime/versions/${version}`;
         yield* fs.makeDirectory(runtimeDir, { recursive: true });
+        // The runner gets only HOME, so `node` would resolve on sh's default PATH, which may not have it.
         yield* fs.writeFileString(
           `${runtimeDir}/t3`,
-          `#!/bin/sh\nexec node '${fakeT3}' '${version}' "$@"\n`,
+          `#!/bin/sh\nexec '${process.execPath}' '${fakeT3}' '${version}' "$@"\n`,
         );
         yield* fs.chmod(`${runtimeDir}/t3`, 0o755);
         yield* fs.writeFileString(`${runtimeDir}/.install-complete`, `${version}\n`);
