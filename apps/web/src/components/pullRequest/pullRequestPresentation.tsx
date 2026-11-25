@@ -29,7 +29,7 @@ import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
 import { InlineButton } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
 import {
@@ -67,12 +67,7 @@ export function PullRequestLabelChip({
     </Badge>
   );
   if (!label.description) return badge;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={badge} />
-      <TooltipPopup>{label.description}</TooltipPopup>
-    </Tooltip>
-  );
+  return <SharedTooltipTrigger render={badge} label={label.description} />;
 }
 
 function reviewDecisionPresentation(decision: PullRequestReviewDecision) {
@@ -106,13 +101,13 @@ export function PullRequestReviewDecisionGlyph({
   const m = useMessages();
   const presentation = reviewDecisionPresentation(decision);
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
-        <span className="sr-only">{m(presentation.label)}</span>
-      </TooltipTrigger>
-      <TooltipPopup>{m(presentation.label)}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={<span className="inline-flex shrink-0" />}
+      label={m(presentation.label)}
+    >
+      <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
+      <span className="sr-only">{m(presentation.label)}</span>
+    </SharedTooltipTrigger>
   );
 }
 
@@ -167,16 +162,16 @@ export function PullRequestStateGlyph({
   const m = useMessages();
   const presentation = resolvePullRequestState({ state, isDraft }, m);
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <presentation.Icon
-          role="img"
-          aria-label={presentation.label}
-          className={cn("size-4 shrink-0", presentation.toneClassName, className)}
-        />
-      </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={<span className="inline-flex shrink-0" />}
+      label={presentation.label}
+    >
+      <presentation.Icon
+        role="img"
+        aria-label={presentation.label}
+        className={cn("size-4 shrink-0", presentation.toneClassName, className)}
+      />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -205,16 +200,16 @@ export function PullRequestConflictGlyph({
   );
   if (presentation === null) return null;
   return (
-    <Tooltip>
-      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-        <presentation.Icon
-          role="img"
-          aria-label={presentation.label}
-          className={cn("size-4 shrink-0", presentation.toneClassName, className)}
-        />
-      </TooltipTrigger>
-      <TooltipPopup>{presentation.label}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={<span className="inline-flex shrink-0" />}
+      label={presentation.label}
+    >
+      <presentation.Icon
+        role="img"
+        aria-label={presentation.label}
+        className={cn("size-4 shrink-0", presentation.toneClassName, className)}
+      />
+    </SharedTooltipTrigger>
   );
 }
 
@@ -521,33 +516,33 @@ export function PullRequestActorLabel({
   const placement = cn("flex min-w-0 shrink", className);
   if (!tooltip) return <span className={placement}>{label}</span>;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          profileUrl ? (
-            <InlineButton
-              className={placement}
-              render={
-                <a
-                  href={profileUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label={gt("Open {login}'s profile", { login })}
-                />
-              }
-            />
-          ) : (
-            <span className={placement} />
-          )
-        }
-      >
-        {label}
-      </TooltipTrigger>
-      <TooltipPopup side="top">
-        {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
-        {profileUrl ? ` · ${gt("Open profile")}` : ""}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        profileUrl ? (
+          <InlineButton
+            className={placement}
+            render={
+              <a
+                href={profileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={gt("Open {login}'s profile", { login })}
+              />
+            }
+          />
+        ) : (
+          <span className={placement} />
+        )
+      }
+      label={
+        <>
+          {actor?.name && actor.name !== login ? `${actor.name} (@${login})` : login}
+          {profileUrl ? ` · ${gt("Open profile")}` : ""}
+        </>
+      }
+    >
+      {label}
+    </SharedTooltipTrigger>
   );
 }
 
