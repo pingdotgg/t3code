@@ -120,6 +120,7 @@ function makeTestAdapter(input: {
   readonly rejectedNativeThreads?: Ref.Ref<ReadonlySet<string>>;
   readonly failedRunOrdinals?: ReadonlySet<number>;
   readonly promptDroppedRunOrdinals?: ReadonlySet<number>;
+  readonly nativeTurnKept?: (nativeTurnId: string) => boolean;
   readonly brokenRunOrdinals?: ReadonlySet<number>;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly cancelledRunOrdinals?: ReadonlySet<number>;
@@ -201,6 +202,12 @@ function makeTestAdapter(input: {
           ...(input.canReuseContextUsage === undefined
             ? {}
             : { canReuseContextUsage: input.canReuseContextUsage }),
+          ...(input.nativeTurnKept === undefined
+            ? {}
+            : {
+                nativeTurnKept: ({ nativeTurnId }) =>
+                  Effect.succeed(input.nativeTurnKept!(nativeTurnId)),
+              }),
           ...(input.backgroundWork === undefined
             ? {}
             : {
@@ -6544,14 +6551,17 @@ describe("orchestration v2 provider switching", () => {
   it.effect.each([
     "same-provider-retry",
     "cancelled-dropped",
+    "cancelled-by-restart",
     "switch-away-and-return",
     "persisted-failure",
   ] as const)("handles an inline context handoff after a failed returning turn (%s)", (variant) =>
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(`dropped-handoff-${variant}`);
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-      const dropped = variant !== "persisted-failure";
-      const cancelled = variant === "cancelled-dropped";
+      // A restart cancels the turn with no adapter left to report the drop.
+      const cutByRestart = variant === "cancelled-by-restart";
+      const dropped = variant !== "persisted-failure" && !cutByRestart;
+      const cancelled = variant === "cancelled-dropped" || cutByRestart;
       const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
         makeTestAdapter({
           instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -6569,6 +6579,9 @@ describe("orchestration v2 provider switching", () => {
             ? { cancelledRunOrdinals: new Set([3]) }
             : { failedRunOrdinals: new Set([3]) }),
           ...(dropped ? { promptDroppedRunOrdinals: new Set([3]) } : {}),
+          ...(cutByRestart
+            ? { nativeTurnKept: (nativeTurnId: string) => !nativeTurnId.endsWith(":3") }
+            : {}),
         }),
         makeTestAdapter({
           instanceId: CLAUDE_MODEL_SELECTION.instanceId,
@@ -6650,7 +6663,7 @@ describe("orchestration v2 provider switching", () => {
           assert.equal(run3Handoff?.delivery?.status, "inline");
         }
 
-        if (variant === "same-provider-retry" || variant === "cancelled-dropped") {
+        if (variant === "same-provider-retry" || variant === "cancelled-dropped" || cutByRestart) {
           // Run 4: stay on Codex; must re-deliver run 2's handoff.
           const afterRun4 = yield* send("Resume", CODEX_MODEL_SELECTION);
           const turns = yield* Ref.get(capturedTurns);
@@ -6662,6 +6675,10 @@ describe("orchestration v2 provider switching", () => {
             (handoff) => handoff.id === run3Handoff!.id,
           );
           assert.equal(updatedHandoff?.delivery?.status, "inline");
+          const run3Turn = afterRun4.providerTurns.find(
+            (turn) => turn.runAttemptId === run3.activeAttemptId,
+          );
+          assert.equal(run3Turn?.promptDropped, true);
         } else if (variant === "switch-away-and-return") {
           // Run 4: bounce back to Claude, then Run 5: return to Codex.
           yield* send("Continue on Claude", CLAUDE_MODEL_SELECTION);
