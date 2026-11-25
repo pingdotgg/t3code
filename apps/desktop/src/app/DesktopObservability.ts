@@ -7,6 +7,7 @@ import {
   type SignalExport,
 } from "@t3tools/shared/observability";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { layerManualRedirects } from "@t3tools/shared/httpRedirects";
 import * as SharedObservability from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
@@ -640,7 +641,7 @@ const layerTelemetry = Layer.unwrap(
       { mergeWithExisting: false },
     ).pipe(
       Layer.provide(OtlpExporter.layerFlusher),
-      Layer.provide(SharedObservability.layerManualRedirects),
+      Layer.provide(layerManualRedirects),
       Layer.provide(
         SharedObservability.layerOtlpSerialization(
           endpoints.logs?.export.protocol ?? environment.otlpProtocol,
@@ -670,7 +671,7 @@ const layerTelemetry = Layer.unwrap(
               }).pipe(
                 Effect.provide(
                   Layer.merge(
-                    SharedObservability.layerManualRedirects,
+                    layerManualRedirects,
                     SharedObservability.layerOtlpSerialization(endpoints.traces.export.protocol),
                   ),
                 ),

@@ -91,6 +91,10 @@
       "types": "./src/releaseResource.ts",
       "import": "./src/releaseResource.ts"
     },
+    "./httpRedirects": {
+      "types": "./src/httpRedirects.ts",
+      "import": "./src/httpRedirects.ts"
+    },
     "./observability": {
       "types": "./src/observability.ts",
       "import": "./src/observability.ts"

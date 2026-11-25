@@ -10,7 +10,7 @@ import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { OtlpSerialization, OtlpTracer } from "effect/observability";
 
-import { layerManualRedirects } from "./observability.ts";
+import { layerManualRedirects } from "./httpRedirects.ts";
 
 export interface RelayClientTracingConfig {
   readonly tracesUrl: string;

@@ -17,11 +17,8 @@ import {
   DESKTOP_READINESS_PROOF_PATH,
   desktopReadinessProof,
 } from "@t3tools/shared/desktopReadinessProof";
-import {
-  decodeOtlpTraceRecords,
-  redactEndpointUrl,
-  withManualRedirects,
-} from "@t3tools/shared/observability";
+import { withManualRedirects } from "@t3tools/shared/httpRedirects";
+import { decodeOtlpTraceRecords, redactEndpointUrl } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
