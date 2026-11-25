@@ -9,6 +9,7 @@ import {
 } from "./pullRequestAnchor.ts";
 
 const gitlab = "https://gitlab.com/group/repo/-/merge_requests/7";
+const gitlabUnscoped = "https://gitlab.com/group/repo/merge_requests/7";
 const forgejo = "https://codeberg.org/owner/repo/pulls/7";
 
 const url = "https://github.com/owner/repo/pull/7";
@@ -111,6 +112,9 @@ it("keeps the commit scope of a PR diff permalink", () => {
   expect(pullRequestLinkCommit(`${forgejo}/commits/${sha}#diff-abcR5`)).toBe(sha);
   expect(pullRequestLinkCommit(`${url}/files#diff-abcR5`)).toBeNull();
   expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=${sha}#${"b".repeat(40)}`)).toBe(sha);
+  expect(pullRequestLinkCommit(`${gitlabUnscoped}/diffs?commit_id=${sha}#${"b".repeat(40)}`)).toBe(
+    sha,
+  );
   expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=main`)).toBeNull();
   expect(pullRequestLinkCommit(`${gitlab}?commit_id=${sha}`)).toBeNull();
 });
@@ -127,6 +131,7 @@ it("reads GitLab file and line anchors, letting a removed old line win", () => {
   expect(parsePullRequestAnchor(`${gitlab}/diffs#${digest}`)).toEqual(diff(null));
   expect(parsePullRequestAnchor(`${gitlab}/diffs#diff-content-${digest}`)).toEqual(diff(null));
   expect(parsePullRequestAnchor(`${gitlab}/diffs?file=${digest}`)).toEqual(diff(null));
+  expect(parsePullRequestAnchor(`${gitlabUnscoped}/diffs?file=${digest}`)).toEqual(diff(null));
   expect(parsePullRequestAnchor(`${gitlab}/diffs?file=${digest}#note_5`)).toEqual({
     kind: "timeline",
     anchor: "note_5",
@@ -159,6 +164,9 @@ it.each([
   [`${gitlab}/diffs`, "code"],
   [`${gitlab}/commits`, "commits"],
   [`${gitlab}/pipelines`, "checks"],
+  [`${gitlabUnscoped}/diffs`, "code"],
+  [`${gitlabUnscoped}/commits`, "commits"],
+  [`${gitlabUnscoped}/pipelines`, "checks"],
 ] as const)("keeps unknown and missing hashes in the tab %s names", (path, kind) => {
   for (const hash of ["", "#unknown", "#diff-abcR0", "#diff-abcR9999999999999999999", "#%ZZ"]) {
     expect(parsePullRequestAnchor(`${path}${hash}`)).toEqual({ kind });

@@ -245,13 +245,15 @@ export const make = Effect.gen(function* () {
     resolveLink: (input) => {
       // Automatic enrichment must not send ambient CLI credentials to a host from message text.
       if (input.url.host !== "gitlab.com") return undefined;
-      const match = /^\/(.+)\/-\/(merge_requests|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
-        input.url.pathname,
-      );
+      const match =
+        /^\/((?!-(?:\/|$))[^/]+(?:\/(?!-(?:\/|$))[^/]+)+)(?:\/-\/(merge_requests|issues)|\/(merge_requests))\/([1-9]\d*)(?:\/.*)?$/.exec(
+          input.url.pathname,
+        );
       if (!match) return undefined;
+      const kind = match[2] ?? match[3]!;
       return readLinkSubject(
         input,
-        `projects/${encodeURIComponent(match[1]!)}/${match[2]}/${match[3]}`,
+        `projects/${encodeURIComponent(match[1]!)}/${kind}/${match[4]}`,
       );
     },
     listChangeRequests: Effect.fn("GitLabSourceControlProvider.listChangeRequests")(

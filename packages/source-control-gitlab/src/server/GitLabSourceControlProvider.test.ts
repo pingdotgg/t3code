@@ -259,12 +259,26 @@ it.effect.each(["merge_requests", "issues"])(
       });
       for (const url of [
         "https://gitlab.com/owner/repo",
+        "https://gitlab.com/t3code/-/merge_requests/1",
+        "https://gitlab.com/t3code/merge_requests/1",
+        "https://gitlab.com/owner/repo/issues/1",
         "https://gitlab.attacker.test/team/project/-/issues/1",
       ]) {
         assert.strictEqual(
           provider.resolveLink?.({ cwd: "/unrelated", url: new URL(url) }),
           undefined,
         );
+      }
+      if (kind === "merge_requests") {
+        const unscoped = provider.resolveLink?.({
+          cwd: "/unrelated",
+          url: new URL("https://gitlab.com/group/subgroup/project/merge_requests/42"),
+        });
+        assert.ok(unscoped);
+        assert.deepStrictEqual(yield* unscoped, {
+          title: "Pairing expiry",
+          body: "Preserve remote access",
+        });
       }
     }),
 );
