@@ -279,6 +279,14 @@ http.createServer((_request, response) => response.end("ok")).listen(Number(args
 });`,
         );
 
+        // Earlier hub runs log multibyte text, such as Apple's curly-quoted CoreDevice errors.
+        await NodeFSP.mkdir(state, { recursive: true });
+        await NodeFSP.writeFile(
+          NodePath.join(state, "hub.log"),
+          "“Get Display Info” is not supported\n".repeat(20),
+          { mode: 0o600 },
+        );
+
         const started = run("start");
         expect(started.stderr).toBe("");
         expect(JSON.parse(started.stdout).hubToken).toBe("printed-token");
