@@ -31,6 +31,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
+import { isAutoModelSelection } from "@t3tools/shared/autoModel";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import {
   resolveProjectFileBackedSetting,
@@ -341,6 +342,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             );
             if (provider === undefined) return requestedSelection;
             yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
+            // Fork: Auto routing replaces an Auto selection's model and options when the thread
+            // runs, and a routed selection carries the `auto` level stamp that no model declares.
+            if (isAutoModelSelection(requestedSelection)) return requestedSelection;
             const options = yield* OrchestrationMcp.validateModelOptions(
               provider,
               model,

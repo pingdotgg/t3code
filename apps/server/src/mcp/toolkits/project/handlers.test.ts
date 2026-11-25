@@ -558,6 +558,75 @@ it.effect(
     }),
 );
 
+it.effect("a launch keeps the auto stamp of an Auto thread's selection", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const providers: ServerProvider[] = [
+      {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        enabled: true,
+        installed: true,
+        status: "ready",
+        version: null,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00Z",
+        models: [
+          {
+            slug: "claude-opus-5-5",
+            name: "Claude Opus 5.5",
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  role: "reasoning",
+                  label: "Effort",
+                  type: "select",
+                  options: [{ id: "xhigh", label: "Extra High" }],
+                },
+              ],
+            },
+          },
+        ],
+        slashCommands: [],
+        skills: [],
+      },
+    ];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      providers,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    // The model Auto routed to, plus the level stamp that keeps the thread on Auto.
+    const modelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+      options: [
+        { id: "effort", value: "xhigh" },
+        { id: "auto", value: "high" },
+      ],
+    };
+
+    const result = yield* toolkit
+      .handle("t3_thread_launch", { title: "Auto launch", projectId, modelSelection })
+      .pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.map((items) => items.at(-1)?.result),
+        Effect.provide(dependencies),
+      );
+
+    expect(result).not.toMatchObject({ code: "invalid_request" });
+    expect(launched.map((launch) => launch.modelSelection)).toEqual([modelSelection]);
+  }),
+);
+
 it.effect("a launch retried with the same clientRequestId replays the first one", () =>
   Effect.gen(function* () {
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
