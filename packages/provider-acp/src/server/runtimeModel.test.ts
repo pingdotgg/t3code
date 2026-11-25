@@ -8,6 +8,8 @@ import {
   acpContentBlockDisplayText,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
+  makeAcpUnreadToolCalls,
+  MAX_UNREAD_TOOL_CALLS,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionModeState,
@@ -18,8 +20,10 @@ import {
   syntheticLoadSessionResponseFromInitialize,
   toolCallProgressLength,
   toolCallVisibleOutputChanged,
+  unreadToolCallUpdate,
   withTrackedChangedPaths,
   withTrackedPermissionToolCall,
+  withUnknownChangedPaths,
   type AcpToolCallState,
 } from "./runtimeModel.ts";
 import { acpChangedPathsOfToolCall } from "./clientPolicy.ts";
@@ -629,6 +633,84 @@ describe("AcpRuntimeModel", () => {
     ).toEqual(["/work/d.ts", "/work/a.ts", "/elsewhere/b.ts", "/elsewhere/c.ts"]);
     expect(withTrackedChangedPaths(idOnlyRequest, undefined)).toBe(idOnlyRequest);
     expect(withTrackedChangedPaths(idOnlyRequest, trackedToolCall({}))).toBe(idOnlyRequest);
+  });
+
+  it("reads the session and tool call of a dropped tool-call notification", () => {
+    const dropped = (update: unknown, sessionId: unknown = "session-1") =>
+      unreadToolCallUpdate("session/update", { sessionId, update });
+    for (const sessionUpdate of ["tool_call", "tool_call_update", "tool_call_content_chunk"]) {
+      expect(dropped({ sessionUpdate, toolCallId: "tool-1", locations: [{ path: 7 }] })).toEqual({
+        sessionId: "session-1",
+        toolCallId: "tool-1",
+      });
+    }
+    // An id or session that is not a non-empty string is not read.
+    expect(dropped({ sessionUpdate: "tool_call_update", toolCallId: 7 })).toEqual({
+      sessionId: "session-1",
+    });
+    expect(dropped({ sessionUpdate: "tool_call", toolCallId: "" }, 7)).toEqual({});
+    // A kind that cannot be read may have been a tool call.
+    expect(dropped({ toolCallId: "tool-1" })).toEqual({
+      sessionId: "session-1",
+      toolCallId: "tool-1",
+    });
+    expect(dropped("not an update")).toEqual({ sessionId: "session-1" });
+    expect(unreadToolCallUpdate("session/update", null)).toEqual({});
+    // Other kinds and other methods are not tool-call notifications.
+    expect(dropped({ sessionUpdate: "usage_update", toolCallId: "tool-1" })).toBeUndefined();
+    expect(dropped({ sessionUpdate: "a_later_kind" })).toBeUndefined();
+    expect(
+      unreadToolCallUpdate("elicitation/complete", {
+        sessionId: "session-1",
+        update: { sessionUpdate: "tool_call", toolCallId: "tool-1" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("records the tool calls a dropped notification may have described", () => {
+    const unread = makeAcpUnreadToolCalls();
+    unread.add({ sessionId: "session-1", toolCallId: "tool-1" }, ["tool-9"]);
+    expect(unread.has("session-1", "tool-1")).toBe(true);
+    expect(unread.has("session-1", "tool-9")).toBe(false);
+    // Tool ids are only unique within a session.
+    expect(unread.has("session-2", "tool-1")).toBe(false);
+
+    // Without a tool call id, every tool call tracked for the session is recorded.
+    unread.add({ sessionId: "session-1" }, ["tool-2", "tool-3"]);
+    expect(unread.has("session-1", "tool-2")).toBe(true);
+    expect(unread.has("session-1", "tool-3")).toBe(true);
+    expect(unread.has("session-1", "tool-4")).toBe(false);
+
+    // Without a session, the tool call is recorded for every session.
+    unread.add({ toolCallId: "tool-5" }, []);
+    expect(unread.has("session-1", "tool-5")).toBe(true);
+    expect(unread.has("session-2", "tool-5")).toBe(true);
+  });
+
+  it("counts every tool call as unread once too many are recorded", () => {
+    const unread = makeAcpUnreadToolCalls();
+    for (let index = 0; index < MAX_UNREAD_TOOL_CALLS; index += 1) {
+      unread.add({ sessionId: "session-1", toolCallId: `tool-${index}` }, []);
+    }
+    unread.add({ sessionId: "session-1", toolCallId: "tool-0" }, []);
+    expect(unread.has("session-1", "never-named")).toBe(false);
+    unread.add({ sessionId: "session-1", toolCallId: "one-more" }, []);
+    expect(unread.has("session-1", "one-more")).toBe(true);
+    expect(unread.has("session-2", "never-named")).toBe(true);
+  });
+
+  it("makes the paths of a tool call with a dropped notification unknown", () => {
+    const tracked = trackedToolCall({ locations: [{ path: "/work/a.ts" }] });
+    expect(changedPathsWith(tracked)).toEqual(["/work/a.ts"]);
+    expect(changedPathsWith(withUnknownChangedPaths(tracked, "tool-1"))).toBe("unknown");
+    // A tool call none of whose notifications was read is unknown too.
+    expect(changedPathsWith(withUnknownChangedPaths(undefined, "tool-1"))).toBe("unknown");
+    expect(
+      changedPathsWith(withUnknownChangedPaths(undefined, "tool-1"), {
+        ...idOnlyRequest,
+        toolCall: { toolCallId: "tool-1", locations: [{ path: "/work/d.ts" }] },
+      }),
+    ).toBe("unknown");
   });
 
   it("keeps a tracked tool call's paths as sent while its card shows them trimmed", () => {

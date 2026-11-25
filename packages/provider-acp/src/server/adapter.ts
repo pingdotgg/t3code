@@ -91,12 +91,15 @@ import {
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
   findModelConfigOption,
+  makeAcpUnreadToolCalls,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionUpdateEvent,
   sessionUpdateIsReplay,
   toolCallVisibleOutputChanged,
+  unreadToolCallUpdate,
   withTrackedChangedPaths,
+  withUnknownChangedPaths,
   withTrackedPermissionToolCall,
   type AcpPlanUpdate,
   type AcpAgentTerminalState,
@@ -272,6 +275,7 @@ export interface AcpAdapterV2RuntimeInput {
   readonly onOutgoingResponseFailure?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponse"];
   readonly onIncomingRequest?: AcpSessionRuntime.AcpSessionRuntimeOptions["onIncomingRequest"];
+  readonly onUndecodableNotification?: AcpSessionRuntime.AcpSessionRuntimeOptions["onUndecodableNotification"];
 }
 
 export type AcpAdapterV2NativeLogging = Pick<
@@ -2346,6 +2350,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             : flavor.extractSubagentUpdate?.(tool);
         let turnAttached = yield* Deferred.make<boolean>();
         const activeSessionId = yield* Ref.make<string | null>(null);
+        const unreadToolCalls = makeAcpUnreadToolCalls();
         // session/load replays history before activeSessionId names the loaded session.
         const loadingSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
@@ -3032,6 +3037,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }),
           ).pipe(Effect.asVoid);
+        // A tool-call notification that was dropped may have named a path, so the calls it
+        // could describe are recorded before the next message is read.
+        const noteUndecodableNotification = Effect.fn("AcpAdapterV2.noteUndecodableNotification")(
+          function* (method: string, payload: unknown) {
+            const unread = unreadToolCallUpdate(method, payload);
+            if (unread === undefined) return;
+            const fromRootSession =
+              unread.sessionId === undefined ||
+              unread.sessionId === (yield* Ref.get(activeSessionId));
+            unreadToolCalls.add(
+              unread,
+              fromRootSession ? ((yield* Ref.get(activeTurn))?.tools.keys() ?? []) : [],
+            );
+          },
+        );
         const makeRuntimeInput = (
           runtimeGeneration: number,
           agentRequests: Set<string>,
@@ -3074,6 +3094,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       agentRequests.add(requestId);
                     }),
                 }),
+            onUndecodableNotification: noteUndecodableNotification,
             onOutgoingResponseFailure: (requestId, error) =>
               Ref.modify(nativeResponseAcknowledgements, (current) => {
                 const entry = current.get(requestId);
@@ -7658,7 +7679,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   params.toolCall.kind == null && knownTool?.kind !== undefined
                     ? { ...params, toolCall: { ...params.toolCall, kind: knownTool.kind } }
                     : params,
-                  knownTool,
+                  unreadToolCalls.has(params.sessionId, params.toolCall.toolCallId)
+                    ? withUnknownChangedPaths(knownTool, params.toolCall.toolCallId)
+                    : knownTool,
                 );
               const arrivalTool =
                 trackedTurn !== null && params.sessionId === (yield* Ref.get(activeSessionId))

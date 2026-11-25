@@ -106,6 +106,9 @@ export function mergeAcpChangedPaths(
   return merged.length > MAX_ACP_CHANGED_PATHS ? "unknown" : merged;
 }
 
+/** The keys of a tool call's raw input that name a file it changes. */
+export const ACP_RAW_INPUT_PATH_KEYS = ["path", "filePath", "file_path"] as const;
+
 /**
  * The one reading of which files a tool call changes, for a permission request and for every
  * notification of the call it names: its locations, its diffs and the path keys of its raw input.
@@ -171,7 +174,8 @@ export function acpChangedPathsOfToolCall(toolCall: {
   }
   const input = unknownRecord(rawInput);
   if (input !== undefined) {
-    for (const value of [input.path, input.filePath, input.file_path]) {
+    for (const key of ACP_RAW_INPUT_PATH_KEYS) {
+      const value = input[key];
       if (value !== undefined && value !== null) requirePath(value);
     }
   }

@@ -1328,6 +1328,82 @@ export function withTrackedChangedPaths(
   return { ...params, toolCall: { ...params.toolCall, locations } };
 }
 
+const TOOL_CALL_SESSION_UPDATES: ReadonlySet<unknown> = new Set([
+  "tool_call",
+  "tool_call_update",
+  "tool_call_content_chunk",
+]);
+
+/**
+ * What can still be read of a dropped notification that may have described a tool call: the
+ * session and tool call it named, each absent when it is not a non-empty string. Undefined for
+ * a notification of another method or of a kind that is not a tool call; a kind that cannot be
+ * read counts, because it may have been one.
+ */
+export function unreadToolCallUpdate(
+  method: string,
+  payload: unknown,
+): { readonly sessionId?: string; readonly toolCallId?: string } | undefined {
+  if (method !== "session/update") return undefined;
+  const update = isRecord(payload) ? payload.update : undefined;
+  const kind = isRecord(update) ? update.sessionUpdate : undefined;
+  if (typeof kind === "string" && !TOOL_CALL_SESSION_UPDATES.has(kind)) return undefined;
+  const sessionId = isRecord(payload) ? payload.sessionId : undefined;
+  const toolCallId = isRecord(update) ? update.toolCallId : undefined;
+  return {
+    ...(typeof sessionId === "string" && sessionId.length > 0 ? { sessionId } : {}),
+    ...(typeof toolCallId === "string" && toolCallId.length > 0 ? { toolCallId } : {}),
+  };
+}
+
+/** Past this many tool calls with an unread notification, every tool call counts as one. */
+export const MAX_UNREAD_TOOL_CALLS = 4096;
+
+/**
+ * The tool calls of one provider session that had a notification dropped before it was read,
+ * so the paths they changed are not all known. Entries are never removed.
+ */
+export interface AcpUnreadToolCalls {
+  /** Records the tool calls a dropped notification may have described. */
+  readonly add: (
+    unread: { readonly sessionId?: string; readonly toolCallId?: string },
+    /** The tool calls tracked for that session, used when the notification names none. */
+    trackedToolCallIds: Iterable<string>,
+  ) => void;
+  readonly has: (sessionId: string, toolCallId: string) => boolean;
+}
+
+export function makeAcpUnreadToolCalls(): AcpUnreadToolCalls {
+  // A notification whose session cannot be read is recorded for every session.
+  const ANY_SESSION = Symbol("any session");
+  const bySession = new Map<string | typeof ANY_SESSION, Set<string>>();
+  let size = 0;
+  return {
+    add: (unread, trackedToolCallIds) => {
+      const session = unread.sessionId ?? ANY_SESSION;
+      const ids = bySession.get(session) ?? new Set<string>();
+      bySession.set(session, ids);
+      for (const id of unread.toolCallId === undefined ? trackedToolCallIds : [unread.toolCallId]) {
+        if (ids.has(id)) continue;
+        if (size < MAX_UNREAD_TOOL_CALLS) ids.add(id);
+        size += 1;
+      }
+    },
+    has: (sessionId, toolCallId) =>
+      size > MAX_UNREAD_TOOL_CALLS ||
+      bySession.get(sessionId)?.has(toolCallId) === true ||
+      bySession.get(ANY_SESSION)?.has(toolCallId) === true,
+  };
+}
+
+/** The tracked tool call as policy should read it when one of its notifications was dropped. */
+export function withUnknownChangedPaths(
+  tracked: AcpToolCallState | undefined,
+  toolCallId: string,
+): AcpToolCallState {
+  return { ...(tracked ?? { toolCallId, data: {} }), changedPaths: "unknown" };
+}
+
 export function parsePermissionRequest(
   params: EffectAcpSchema.RequestPermissionRequest,
 ): AcpPermissionRequest {

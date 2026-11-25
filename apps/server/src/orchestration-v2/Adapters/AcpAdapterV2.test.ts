@@ -7553,7 +7553,13 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  const startAutoAcceptEditsTurn = Effect.fn(function* (name: string) {
+  const startAutoAcceptEditsTurn = Effect.fn(function* (
+    name: string,
+    agentEnvironment?: (folders: {
+      readonly workspace: string;
+      readonly elsewhere: string;
+    }) => Readonly<Record<string, string>>,
+  ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-edit-cwd-" });
@@ -7565,7 +7571,10 @@ describe("AcpAdapterV2", () => {
     const makeRuntime = makeMockRuntime({
       childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
       mockAgentPath: yield* bundledMockAgentPath,
-      environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+      environment: {
+        T3_ACP_HANG_PROMPT_FOREVER: "1",
+        ...agentEnvironment?.({ workspace, elsewhere }),
+      },
       wrapRuntime: (runtime) => ({
         ...runtime,
         handleRequestPermission: (handler) =>
@@ -7694,6 +7703,9 @@ describe("AcpAdapterV2", () => {
       acknowledge,
       requestEdit,
       declinePendingAndStop,
+      runtime,
+      providerThread,
+      turnFiber,
     };
   });
 
@@ -7813,6 +7825,128 @@ describe("AcpAdapterV2", () => {
         content: { type: "diff", changes: [{ operation: "modify", path: outside }] },
       },
     ]),
+  );
+
+  it.effect("auto-accepts an edit named by id whose updates from the agent were all read", () =>
+    Effect.gen(function* () {
+      const turn = yield* startAutoAcceptEditsTurn("edit-read-updates", ({ workspace }) => ({
+        T3_ACP_EMIT_EDIT_UPDATES_THEN_REQUEST: JSON.stringify([
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "edit-tracked",
+            title: "Edit file",
+            kind: "edit",
+            status: "pending",
+            locations: [{ path: `${workspace}/src/a.ts` }],
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "edit-tracked",
+            locations: [{ path: `${workspace}/src/a.ts`, line: 3 }],
+          },
+        ]),
+      }));
+      const answerOrRequest = Option.getOrThrow(
+        yield* turn.runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              (event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "pending") ||
+              (event.type === "turn_item.updated" &&
+                event.turnItem.nativeItemRef?.nativeId?.includes("edit-answered:") === true),
+          ),
+          Stream.runHead,
+        ),
+      );
+      if (
+        answerOrRequest.type !== "turn_item.updated" ||
+        answerOrRequest.turnItem.providerTurnId === null
+      ) {
+        return assert.fail("The edit became an approval request");
+      }
+      assert.include(answerOrRequest.turnItem.nativeItemRef?.nativeId, "edit-answered:allow");
+      yield* turn.runtime.interruptTurn({
+        providerThread: turn.providerThread,
+        providerTurnId: answerOrRequest.turnItem.providerTurnId,
+      });
+      yield* Fiber.join(turn.turnFiber);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      update: "one location is not a path",
+      later: (inside: string) => ({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-tracked",
+        locations: [{ path: inside }, { path: 7 }],
+      }),
+    },
+    {
+      update: "a line number is not a whole number",
+      later: (inside: string) => ({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-tracked",
+        locations: [{ path: inside, line: -1 }],
+      }),
+    },
+    {
+      update: "tool call id cannot be read",
+      later: (inside: string) => ({
+        sessionUpdate: "tool_call_update",
+        toolCallId: 7,
+        locations: [{ path: inside }],
+      }),
+    },
+  ])(
+    "asks about an edit named by id after an update the agent sent could not be read: $update",
+    ({ later }) =>
+      Effect.gen(function* () {
+        // The agent process writes these to its output, so they pass through protocol decoding.
+        const turn = yield* startAutoAcceptEditsTurn("edit-unread-update", ({ workspace }) => {
+          const inside = `${workspace}/src/a.ts`;
+          return {
+            T3_ACP_EMIT_EDIT_UPDATES_THEN_REQUEST: JSON.stringify([
+              {
+                sessionUpdate: "tool_call_update",
+                toolCallId: "edit-tracked",
+                title: "Edit file",
+                kind: "edit",
+                status: "pending",
+                locations: [{ path: inside }],
+              },
+              later(inside),
+            ]),
+          };
+        });
+        const answerOrRequest = Option.getOrThrow(
+          yield* turn.runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                (event.type === "runtime_request.updated" &&
+                  event.runtimeRequest.status === "pending") ||
+                (event.type === "turn_item.updated" &&
+                  event.turnItem.nativeItemRef?.nativeId?.includes("edit-answered:") === true),
+            ),
+            Stream.runHead,
+          ),
+        );
+        if (
+          answerOrRequest.type !== "runtime_request.updated" ||
+          answerOrRequest.runtimeRequest.providerTurnId === null
+        ) {
+          return assert.fail("The edit was answered without an approval request");
+        }
+        yield* turn.runtime.respondToRuntimeRequest({
+          requestId: answerOrRequest.runtimeRequest.id,
+          decision: "decline",
+        });
+        yield* turn.runtime.interruptTurn({
+          providerThread: turn.providerThread,
+          providerTurnId: answerOrRequest.runtimeRequest.providerTurnId,
+        });
+        yield* Fiber.join(turn.turnFiber);
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("replaces the ACP session and clears conversation state on rollback", () =>
