@@ -75,6 +75,10 @@ No. T3 Code is a serious developer tool. Locally runnable models are not capable
 
 No. Your code and prompts go from your machine to your provider (Anthropic, OpenAI, etc.), not to us. With T3 Connect, traffic rides a Cloudflare tunnel (`cloudflared` on your machine). Our relay sets up the link. It does not proxy your HTTP or WebSocket sessions. T3 Code does send basic product usage events (provider, model, token totals, that kind of thing). No prompts, no file contents. That is the same on Tailscale, LAN, or T3 Connect. Set `T3CODE_TELEMETRY_ENABLED=false` or `DO_NOT_TRACK=1` if you want it off. [Product usage data](./telemetry.md)
 
+## Can T3 or Cloudflare read what goes through T3 Connect?
+
+Not your conversations. A tunnel can see inside the HTTPS it carries, so T3 Code encrypts again underneath, between your device and your machine. Prompts, agent output, terminals, files and API requests cross the tunnel as ciphertext, and the tunnel cannot swap in its own key without the app refusing to connect. A few things still rely on HTTPS alone, mostly streams in the mobile app and pages you open through the machine's local servers. Both the app and the machine need to be up to date. [End-to-end encryption](./remote-access.md#end-to-end-encryption)
+
 ## Worktrees are eating my disk. How do I clean them up?
 
 Open **Settings → Worktrees → Cleanup** and turn on automatic worktree cleanup. You can also run it now from there. Worktrees add up fast. One user cleared 500 GB. [Storage cleanup](./project-settings.md#storage-cleanup)

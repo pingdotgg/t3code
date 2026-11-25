@@ -25,12 +25,16 @@ Deployment and Clerk configuration live in the [Connect setup runbook](../operat
   environment ([`CloudLink.ts`](../../apps/server/src/cloud/CloudLink.ts),
   [`EnvironmentConnector.ts`](../../infra/relay/src/environments/EnvironmentConnector.ts)).
 - **Explicit trust assumption & device approval.** DPoP protects an honest exchange, not a
-  compromised relay signing key. Enabling `requireConnectDeviceApproval` shifts trust from the relay
-  to approved DPoP key thumbprints: untrusted keys mint credentials that cannot be spent until
-  someone with `access:write` approves the key, and revoking a key revokes all of its sessions and
-  pending credentials. Approving admits a device already signed in to the owner's cloud account
-  and returns no credential to the approver, so `access:write` alone is enough, as it is for
-  turning the setting off.
+  compromised relay signing key. `requireConnectDeviceApproval`, on unless an environment stored a
+  choice to turn it off, shifts trust from the relay to approved DPoP key thumbprints: untrusted
+  keys mint credentials that cannot be spent until someone with `access:write` approves the key,
+  and revoking a key revokes all of its sessions and pending credentials. Approving admits a
+  device already signed in to the owner's cloud account and returns no credential to the
+  approver, so `access:write` alone is enough, as it is for turning the setting off.
+- **The tunnel is not trusted with content.** The managed tunnel ends TLS at Cloudflare's edge, so
+  the relay's operator and the tunnel provider are both on the path. Clients encrypt to the
+  environment underneath it, and the approval code also authenticates the environment's key to
+  the new device; see [the hop that ends TLS](./04_environment-auth.md#the-hop-that-ends-tls).
 - **Anti-hijack and anti-SSRF rules.** Managed tunnels expose only the server's own loopback HTTP
   origin (ignoring caller-supplied origins). The relay refuses to relink an active environment ID
   under a different key until unlinked, resolves endpoints only from its own managed allocations,

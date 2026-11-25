@@ -62,7 +62,9 @@ through `/api/preview/tunnel` on the environment's own origin:
   falls back directly—a failed or disabled tunnel must error rather than silently load the
   reviewer's own localhost.
 - **Media tickets and local-owner check.** Desktop main holds no environment credentials, so the
-  renderer supplies a media ticket per connection (also tracking route switches). Because Chromium
+  renderer supplies a media ticket per connection (also tracking route switches), with a
+  single-use upgrade proof when the ticket is bound. The tunnel socket itself is not encrypted
+  end to end ([why](./04_environment-auth.md#the-hop-that-ends-tls)). Because Chromium
   cannot authenticate to SOCKS5 and a forwarded port is a plain local port, on Linux and macOS both
   listeners serve only connections the system attributes to the current OS user (`/proc/net/tcp`
   on Linux, `lsof` on macOS), and a connection whose owner cannot be read is refused. On Windows

@@ -26,9 +26,11 @@ model.
   stay stable; T3 Connect, CLI, and desktop sessions never self-renew so revoking/unlinking cuts
   them off.
 - **WebSocket tickets and per-RPC authorization.** Bearer and DPoP clients mint short-lived tickets
-  over authenticated HTTP so long-lived tokens never appear in socket URLs. DPoP RPC tickets stay
-  proof-key bound at upgrade. A successful handshake grants no extra authority: every RPC declares
-  and checks its required scope in [`RpcAuthorization.ts`](../../apps/server/src/auth/RpcAuthorization.ts).
+  over authenticated HTTP so long-lived tokens never appear in socket URLs. A bound ticket opens a
+  socket only with a single-use proof from the client's key; see
+  [the hop that ends TLS](#the-hop-that-ends-tls) for which tickets are bound. A successful
+  handshake grants no extra authority: every RPC declares and checks its required scope in
+  [`RpcAuthorization.ts`](../../apps/server/src/auth/RpcAuthorization.ts).
 - **Secret references need `providers:manage`.** A request that names a secret for the server to
   read needs `providers:manage` on top of its method's scope, whether the reference is saved in
   settings or used once, as in a secret request answered with a reference. Typed values need only
@@ -40,6 +42,51 @@ model.
   pairing grant, dropping retired/unknown names and failing before consuming a link if none remain.
   Stored grants are never expanded when scopes split. Auth responses preserve legacy `scopes`
   alongside exact `permissions` so older clients and servers stay compatible.
+
+## The hop that ends TLS
+
+A Cloudflare tunnel, a reverse proxy, or anything else that ends TLS in front of the environment
+reads and can rewrite what passes through it. A DPoP proof covers the method, URL, and token hash,
+so by itself it protects neither bodies nor socket frames. DPoP clients therefore encrypt again,
+end to end with the environment, using the keys both sides already hold: the client's proof key
+and the environment's identity key.
+
+- **Sockets run the secure channel; HTTP requests are sealed.** A socket does a three-frame
+  handshake after the upgrade and then carries only sealed frames
+  ([`secureChannelSocket.ts`](../../packages/shared/src/secureChannelSocket.ts)). An API request
+  travels as one sealed POST to `/api/secure`, and the routes run on the request inside it
+  ([`secureHttp.ts`](../../apps/server/src/auth/secureHttp.ts)). Cookie and bearer sessions have no
+  proof key and are unchanged.
+- **The client asks inside a signed proof.** The `t3sc` claim rides in the DPoP proof because the
+  hop cannot strip it. A server that verified a proof with the claim never answers in plaintext,
+  and a proof with the claim on anything but a socket upgrade is refused outside the sealed
+  envelope, so a captured proof cannot be replayed in the clear.
+- **Advertised or pinned.** The capability in the environment descriptor is an unauthenticated
+  hint: it lets a new client keep working with an old server. Once a client has pinned an
+  environment's identity key it uses the channel regardless, so hiding the capability cannot
+  downgrade it, and its API requests to that environment are always sealed. A pin that cannot be read
+  must fail the connection rather than look like no pin, or the hop could get its own key pinned.
+- **When the pin is written.** Without device approval the key is pinned on the first sealed frame
+  the environment sends, not at the handshake: the environment seals only after it accepted this
+  device's proof key. With approval, the v2 code covers the environment key the device saw, and
+  the device pins that key when it shows the code, so the human comparison is what authenticates
+  the first contact. A different key later is an identity change the user must accept
+  explicitly; never re-pin silently.
+- **Media tickets are bound only when their request arrived sealed.** RPC tickets are always
+  bound. A media ticket is bound when it was minted through the sealed envelope, which only a
+  client that also signs its socket upgrades does. Binding every media ticket locks out clients
+  that predate sealing: they open device, preview, and voice sockets with the ticket alone.
+- **What a bound media ticket still does not protect.** `<img>`, EventSource, and streamed fetches
+  cannot carry a proof, so plain HTTP media takes the ticket alone and stays readable at the hop.
+  Mobile WebViews and the desktop and mobile preview tunnel proxies hold no key: the app signs
+  single-use upgrade proofs for them, which stops a copied ticket from opening more sockets, but
+  those sockets are plaintext, and a reconnect needs a fresh proof through the existing
+  unauthorized-then-refresh path. The device hub proxy ends the channel at the server and speaks
+  plaintext to the hub on the same host.
+- **New socket routes** upgrade through
+  [`upgradeMediaSocket`](../../apps/server/src/auth/secureSocket.ts), and clients open them with
+  [`makeEnvironmentSocketOpener`](../../packages/client-runtime/src/state/environmentSocket.ts).
+  A bare `request.upgrade` or `new WebSocket` on a DPoP connection is a plaintext socket.
 
 ## Non-standard principals
 

@@ -40,28 +40,68 @@ disconnect an otherwise healthy conversation.
 
 ### Approve new devices
 
-By default, any device signed in to your T3 Connect account can open a linked
-machine. To require approval instead, turn on **Require approval for new
-devices** with the T3 Connect settings in **Settings → Sharing & access** on the
-host, or when you first set up T3 Connect. Then someone who takes over your T3
-Connect account cannot reach the machine from a new device without your
-approval. Review the devices that are already approved, described below.
+A device signed in to your T3 Connect account needs your approval before it can
+open a linked machine. Someone who takes over your T3 Connect account cannot
+reach the machine from a new device without it. To let any signed-in device
+connect instead, turn off **Require approval for new devices** with the T3
+Connect settings in **Settings → Sharing & access** on the host.
 
-A new device waits and shows a code such as `K7QM-2XFD`. Approve it from a
-device that is already connected, using the prompt or **Settings → Sharing &
-access**. Check that the code matches the one on the waiting device. On a
-headless host, run `t3 auth connect-device list` and then
-`t3 auth connect-device approve K7QM-2XFD`. A request expires after 10 minutes,
-and the device asks again when it retries. Deny keeps that device out until its
-request expires.
+A new device waits and shows a code such as `K7QM-2XFD-9RTW-4HJC`. Approve it
+from a device that is already connected, using the prompt or **Settings →
+Sharing & access**. Check that the code matches the one on the waiting device.
+A match also confirms that the new device reached your machine itself and not
+something in between pretending to be it. On a headless host, run
+`t3 auth connect-device list` and then
+`t3 auth connect-device approve K7QM-2XFD-9RTW-4HJC`. A request expires after
+10 minutes, and the device asks again when it retries. Deny keeps that device
+out until its request expires.
 
 Each device is approved once. Revoke it from **T3 Connect devices** in the same
 settings page, or with `t3 auth connect-device revoke <code>`. With approval on,
 it has to ask again. With approval off, it can connect again on its own, so
-revoking in the app offers to turn approval on first. Devices that connected through T3 Connect while approval was off stay
-approved and appear in that list for you to review. A device that has not
-connected since you updated T3 Code asks for approval like a new one. Older apps
-cannot show the code, so update them before you turn approval on.
+revoking in the app offers to turn approval on first. Devices that connected
+through T3 Connect before approval was required stay approved and appear in
+that list for you to review. An older app or machine shows a shorter code such
+as `K7QM-2XFD`, which confirms the device but not the machine. Update both to
+get the longer one.
+
+### End-to-end encryption
+
+A T3 Connect link runs through a Cloudflare tunnel, and a tunnel can see inside
+the HTTPS connections it carries. T3 Code therefore encrypts a second time
+underneath, between your device and your machine. The tunnel and the T3 Connect
+service pass your traffic along without being able to read or change it. The
+same applies to a machine you paired by address.
+
+Open **Settings → Environments**, then **Routes** on the machine. The route in
+use says **Encrypted end to end** or **Not encrypted end to end**. It is
+encrypted when both the app and the machine are up to date.
+
+Encrypted end to end:
+
+- Conversations, prompts, agent output, terminals, files and diffs.
+- Requests the app makes to the machine, such as settings and provider status.
+- Voice input, the Browser panel's stream, and taps and typing in the Device
+  panel, in the web and desktop apps.
+
+Protected by HTTPS only, so the tunnel could read them:
+
+- The Device and Browser panels in the mobile app.
+- Simulator and emulator video, and images and attachments the app loads by
+  link.
+- Pages you open through [local servers](#local-servers) on the machine.
+- Which devices connect to which machine, when, and how much they send.
+
+Your device remembers each machine's identity the first time it connects. The
+approval code above checks that identity on the first connection, so approve
+with the code when you can. If the identity later changes, the app refuses to
+connect and says the machine's identity changed. That is expected after you
+reinstall or reset T3 Code on the machine: open the connection's details and
+choose **Trust new identity**. If you did not reinstall, something may be
+intercepting the connection, so leave it blocked.
+
+In the hosted web app, the page that does the encrypting comes from
+`app.t3.codes`. The desktop and mobile apps do not depend on a web page for it.
 
 ### Scripts and agents
 

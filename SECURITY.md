@@ -65,6 +65,12 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
    origin, the desktop renderer, or with access to preload or IPC.
 9. **Filesystem writes escaping workspace path rules.** Reads are separate:
    `filesystem:read` intentionally covers the whole OS account.
+10. **Content exposed to the hop that ends TLS.** The tunnel, the relay, or a
+    reverse proxy reading or altering an RPC socket or a sealed API request of
+    a DPoP client that has pinned the environment's key; a pinned client
+    downgraded to plaintext; a changed environment key accepted without the
+    user's choice. The traffic that is not covered is listed under
+    [intended](#intended-not-vulnerabilities).
 
 ## Intended, not vulnerabilities
 
@@ -100,6 +106,14 @@ revocation and ceilings hold, not what a full-scope session can do once issued.
   that mode is in scope (see 3).
 - A compromised relay signing key can mint for linked environments. That is
   the stated trust assumption; device approval is the mitigation.
+- Traffic the end-to-end layer does not cover is protected by TLS only, so the
+  hop that ends TLS can read and alter it: media fetched by URL (signed asset
+  URLs, attachment uploads, simulator video), device and preview streams in
+  the mobile app's WebViews, the preview tunnel, any connection from a client
+  or server that predates the layer, and cookie or bearer sessions. So is the
+  first contact of a device that was not approved with the code: its key is
+  trusted on first use. Metadata such as sizes and timing is always visible.
+  The hosted web app's code is served by its origin, which is trusted.
 - `T3CODE_DEV_AUTH_TOKEN` and dev startup URLs are administrative by design and
   ignored outside development servers.
 - A webhook URL is a credential for one task. Unless the task requires a
