@@ -28,11 +28,13 @@ function Controller(props: {
   readonly title: string;
   readonly feed: ReadonlyArray<string>;
   readonly onSendMessage: () => string;
+  readonly threadId?: string;
 }) {
   return (
     <ThreadScreenBinding
       header={<h1>{props.title}</h1>}
       {...({
+        selectedThread: { environmentId: "env", id: props.threadId ?? "a" },
         selectedThreadFeed: props.feed,
         onSendMessage: props.onSendMessage,
       } as unknown as ThreadDetailScreenProps)}
@@ -75,5 +77,28 @@ describe("ThreadScreenHost", () => {
     expect(screen.renders).toBe(2);
     expect(screen.props?.selectedThreadFeed).not.toBe(firstFeed);
     expect(screen.props?.selectedThreadFeed).toEqual(["a", "b", "c"]);
+  });
+
+  it("keeps a handler taken on one thread bound to that thread", () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
+    const root = createRoot(document.createElement("div"));
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    const render = (threadId: string, reply: string) =>
+      act(() =>
+        root.render(
+          <ThreadScreenHost>
+            <Controller title="t" feed={[]} threadId={threadId} onSendMessage={() => reply} />
+          </ThreadScreenHost>,
+        ),
+      );
+
+    render("a", "from a");
+    const sendOnA = screen.props!.onSendMessage as () => string;
+    // A send awaiting input on thread A must not run thread B's handler once B is shown.
+    render("b", "from b");
+    expect(sendOnA()).toBe("from a");
+    const sendOnB = screen.props!.onSendMessage as () => string;
+    expect(sendOnB()).toBe("from b");
   });
 });

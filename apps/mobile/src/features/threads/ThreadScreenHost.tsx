@@ -19,15 +19,20 @@ type Handler = (...args: never[]) => unknown;
 
 function createThreadScreenStore() {
   let current: ThreadScreenContent | null = null;
-  let latest: Record<string, unknown> = {};
   // One function per handler prop that calls the controller's latest handler, so a handler the
-  // controller recreates does not re-render the thread screen.
-  const handlers = new Map<string, Handler>();
+  // controller recreates does not re-render the thread screen. Each thread gets its own set, so a
+  // send that awaits before calling its handler still reaches the thread it started on.
+  let handlers = {
+    thread: null as string | null,
+    latest: {} as Record<string, unknown>,
+    stable: new Map<string, Handler>(),
+  };
   const handler = (key: string) => {
-    let stable = handlers.get(key);
+    const set = handlers;
+    let stable = set.stable.get(key);
     if (stable === undefined) {
-      stable = (...args) => (latest[key] as Handler | undefined)?.(...args);
-      handlers.set(key, stable);
+      stable = (...args) => (set.latest[key] as Handler | undefined)?.(...args);
+      set.stable.set(key, stable);
     }
     return stable;
   };
@@ -43,7 +48,10 @@ function createThreadScreenStore() {
     publish: (content: ThreadScreenContent) => {
       let next = content;
       if ("props" in content) {
-        latest = content.props as unknown as Record<string, unknown>;
+        const latest = content.props as unknown as Record<string, unknown>;
+        const thread = threadKey(content.props);
+        if (thread !== handlers.thread) handlers = { thread, latest, stable: new Map() };
+        else handlers.latest = latest;
         const shown = current !== null && "props" in current ? current : null;
         const shownProps = (shown?.props ?? {}) as Record<string, unknown>;
         // Controllers rebuild arrays and records with the same contents on most renders; the
@@ -67,6 +75,11 @@ function createThreadScreenStore() {
       for (const listener of listeners) listener();
     },
   };
+}
+
+function threadKey(props: ThreadDetailScreenProps): string | null {
+  const thread = props.selectedThread as ThreadDetailScreenProps["selectedThread"] | undefined;
+  return thread === undefined ? null : `${thread.environmentId}:${thread.id}`;
 }
 
 function sameContents(previous: unknown, next: unknown): boolean {
