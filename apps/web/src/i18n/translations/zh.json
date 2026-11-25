@@ -12990,5 +12990,7 @@
   "99451a5d2d40440f": "已由 {by} 撤回。",
   "3ee30a50b70fffab": "已由 {by} 撤回：{reason}",
   "92e129bf413a1220": "已撤回",
-  "09cebe0f0dccd412": "已是最新版本。"
+  "09cebe0f0dccd412": "已是最新版本。",
+  "cfce5d73178d9edb": "{account} 用量：{summary}",
+  "8d7d95fc8f2ba79e": "应用导航"
 }

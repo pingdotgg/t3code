@@ -225,7 +225,8 @@ function SidebarUtilityItem({
   onClick: () => void;
 }) {
   return (
-    <SidebarMenuItem className="shrink-0">
+    // Fork: from md up Kaluwa's navigation strip carries these links.
+    <SidebarMenuItem className="shrink-0 md:hidden">
       <Tooltip>
         <TooltipTrigger
           render={

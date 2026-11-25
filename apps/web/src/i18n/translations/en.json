@@ -12985,5 +12985,7 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "92e129bf413a1220": "withdrawn",
-  "09cebe0f0dccd412": "You're already up to date."
+  "09cebe0f0dccd412": "You're already up to date.",
+  "cfce5d73178d9edb": "{account} usage: {summary}",
+  "8d7d95fc8f2ba79e": "App navigation"
 }

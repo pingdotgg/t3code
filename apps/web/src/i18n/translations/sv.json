@@ -12983,5 +12983,7 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "92e129bf413a1220": "återkallad",
-  "09cebe0f0dccd412": "Du är redan uppdaterad."
+  "09cebe0f0dccd412": "Du är redan uppdaterad.",
+  "cfce5d73178d9edb": "Användning för {account}: {summary}",
+  "8d7d95fc8f2ba79e": "Appnavigering"
 }

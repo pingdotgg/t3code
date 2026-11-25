@@ -12976,5 +12976,7 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "92e129bf413a1220": "retirée",
-  "09cebe0f0dccd412": "Vous êtes déjà à jour."
+  "09cebe0f0dccd412": "Vous êtes déjà à jour.",
+  "cfce5d73178d9edb": "Utilisation de {account} : {summary}",
+  "8d7d95fc8f2ba79e": "Navigation de l’app"
 }
