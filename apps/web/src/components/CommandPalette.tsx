@@ -656,7 +656,6 @@ function OpenCommandPaletteDialog(props: {
       });
       if (project === null || !ownsStep()) return;
       if (await moveDraftToAddedProject(project)) return;
-      if (!ownsStep()) return;
     }
     await handleNewThread(projectRef);
   };
