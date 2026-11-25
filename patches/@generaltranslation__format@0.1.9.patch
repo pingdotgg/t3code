@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 205502bd60b7aec8f2609468986c6b0d010afd61..42d7529db852ea6192db186608daad621335c453 100644
+index 205502bd60b7aec8f2609468986c6b0d010afd61..496c86af28701ebf749d023be7c13a0843ac8ed7 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -246,7 +246,7 @@ const isCustomLanguage = (language) => {
@@ -38,7 +38,7 @@ index 205502bd60b7aec8f2609468986c6b0d010afd61..42d7529db852ea6192db186608daad62
 +// T3 patch: same reasoning as _isValidLocale; the comparison only depends on the locale strings.
 +const sameDialectCache = new Map();
  function _isSameDialect(...locales) {
-+	const key = locales.flat().join("\0");
++	const key = JSON.stringify(locales.flat());
 +	let same = sameDialectCache.get(key);
 +	if (same === void 0) sameDialectCache.set(key, same = _isSameDialectUncached(...locales));
 +	return same;
@@ -48,7 +48,7 @@ index 205502bd60b7aec8f2609468986c6b0d010afd61..42d7529db852ea6192db186608daad62
  		const localeObjects = locales.flat().map((locale) => require_IntlCache.intlCache.get("Locale", _standardizeLocale(locale)));
  		const [firstLocale] = localeObjects;
 diff --git a/dist/index.mjs b/dist/index.mjs
-index e36debccece9da0c1f015a1ffaa8bc3f5f01a055..6016248b8a7bfc4b0bf4a18164670ec6bf1ce07b 100644
+index e36debccece9da0c1f015a1ffaa8bc3f5f01a055..17619a9a9ce46e7bd85da7c5f8461e7377db6dfb 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -245,7 +245,7 @@ const isCustomLanguage = (language) => {
@@ -87,7 +87,7 @@ index e36debccece9da0c1f015a1ffaa8bc3f5f01a055..6016248b8a7bfc4b0bf4a18164670ec6
 +// T3 patch: same reasoning as _isValidLocale; the comparison only depends on the locale strings.
 +const sameDialectCache = new Map();
  function _isSameDialect(...locales) {
-+	const key = locales.flat().join("\0");
++	const key = JSON.stringify(locales.flat());
 +	let same = sameDialectCache.get(key);
 +	if (same === void 0) sameDialectCache.set(key, same = _isSameDialectUncached(...locales));
 +	return same;

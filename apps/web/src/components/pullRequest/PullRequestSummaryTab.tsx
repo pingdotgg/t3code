@@ -725,7 +725,10 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
   // Checkbox ticks and the editor share one draft, so each starts from the other's latest body.
   const saveDescription = async (body: string) => {
     const key = detail.url;
-    setDescriptionDraft((draft) => startDescriptionSave(draft, detail, body));
+    // The shown detail keeps its older stamp across refreshes; the draft must use the live one.
+    setDescriptionDraft((draft) =>
+      startDescriptionSave(draft, { url: detail.url, observedAt }, body),
+    );
     descriptionSavesRunning.current += 1;
     const result = await update({ environmentId, input: { ...reference, body } });
     descriptionSavesRunning.current -= 1;

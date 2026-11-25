@@ -136,3 +136,26 @@ it("opens a shared tooltip in place the first time", async () => {
     .filter((property) => ["top", "left", "right", "bottom", "transform"].includes(property));
   expect(moving).toEqual([]);
 });
+
+it("closes the shared tooltip when its open trigger is removed", async () => {
+  const tree = (showReaction: boolean) => (
+    <SharedTooltipProvider>
+      {showReaction ? (
+        <SharedTooltipTrigger label="Ada reacted" render={<button type="button" />}>
+          Reaction
+        </SharedTooltipTrigger>
+      ) : null}
+      <SharedTooltipTrigger label="Add reaction" render={<button type="button" />}>
+        Add
+      </SharedTooltipTrigger>
+    </SharedTooltipProvider>
+  );
+  await using screen = await render(tree(true));
+  await userEvent.keyboard("{Tab}");
+  await expect.element(screen.getByRole("button", { name: "Reaction" })).toHaveFocus();
+  await expect.element(page.getByText("Ada reacted")).toBeVisible();
+
+  // A refresh drops the reaction under the pointer; a removed trigger fires no pointerleave.
+  await screen.rerender(tree(false));
+  await expect.element(page.getByText("Ada reacted")).not.toBeInTheDocument();
+});
