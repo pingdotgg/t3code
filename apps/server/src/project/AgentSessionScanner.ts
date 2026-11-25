@@ -432,12 +432,16 @@ function leadingBlocksEnd(text: string, block: RegExp): number {
 // Claude Code records its own UI as user turns: slash commands, `!` shell runs and
 // their output, task notifications. Keep what the user typed, as they typed it.
 function claudeUiOutputEnd(text: string): number {
-  // Shell output can end with a literal copy of its wrapper's closing tag.
   return leadingBlocksEnd(
     text,
-    /<(task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>(?:\s*<\/\1>)*\s*/y,
+    /<(task-notification|local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>[\s\S]*?<\/\1>\s*/y,
   );
 }
+
+// Shell payloads can print closing tags verbatim. Only use the outer closing
+// tag for a complete envelope so prose after a quoted block stays visible.
+const CLAUDE_SHELL_OUTPUT =
+  /^(?:<bash-stdout>[\s\S]*<\/bash-stdout>(?:\s*<bash-stderr>[\s\S]*<\/bash-stderr>)?|<bash-stderr>[\s\S]*<\/bash-stderr>)$/;
 
 /**
  * A slash command as typed. Its arguments may name the thread; a bare command
@@ -462,6 +466,7 @@ function claudeUserText(text: string): { readonly text: string; readonly titleTe
   const outputEnd = claudeUiOutputEnd(text);
   if (
     outputEnd === text.length ||
+    CLAUDE_SHELL_OUTPUT.test(text) ||
     /^\[Request interrupted by user(?: for tool use)?\]$/.test(text)
   ) {
     return { text: "", titleText: "" };

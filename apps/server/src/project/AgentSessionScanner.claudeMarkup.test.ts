@@ -17,11 +17,12 @@ function parseClaudeTurns(userTurns: ReadonlyArray<string>) {
   });
 }
 
-it("hides shell output that ends with its own closing tag", () => {
-  const thread = parseClaudeTurns([
-    "<bash-stdout></bash-stdout>\n</bash-stdout><bash-stderr></bash-stderr>",
-    "What happened?",
-  ]);
+it.each([
+  "<bash-stdout></bash-stdout>\n</bash-stdout><bash-stderr></bash-stderr>",
+  "<bash-stdout></bash-stdout>\nfinished\n</bash-stdout><bash-stderr></bash-stderr>",
+  "<bash-stderr></bash-stderr>\nfinished\n</bash-stderr>",
+])("hides shell output that prints its own closing tag (%s)", (output) => {
+  const thread = parseClaudeTurns([output, "What happened?"]);
 
   expect(
     thread?.messages.filter((message) => message.role === "user").map((message) => message.text),
