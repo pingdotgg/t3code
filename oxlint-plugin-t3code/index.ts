@@ -16,10 +16,13 @@ import noMobileUniwindThemeEscapeHatches from "./rules/no-mobile-uniwind-theme-e
 import noAmbiguousDetailNavigation from "./rules/no-ambiguous-detail-navigation.ts";
 import noMobilePullRequestGlyphLiterals from "./rules/no-mobile-pull-request-glyph-literals.ts";
 import noNativeTitleTooltip from "./rules/no-native-title-tooltip.ts";
+import noSparklesIcon from "./rules/no-sparkles-icon.ts";
 import noUnreasonedStateSync from "./rules/no-unreasoned-state-sync.ts";
+import noUntranslatedCopy from "./rules/no-untranslated-copy.ts";
 import requireRegisteredListScroll from "./rules/require-registered-list-scroll.ts";
 import noOutsetStateIndicators from "./rules/no-outset-state-indicators.ts";
 import noPollingLoopInTests from "./rules/no-polling-loop-in-tests.ts";
+import noLayoutCommandApprovalWrites from "./rules/no-layout-command-approval-writes.ts";
 import noRawMcpRegistration from "./rules/no-raw-mcp-registration.ts";
 import noRawResizeObserver from "./rules/no-raw-resize-observer.ts";
 import noRealTimeWaitInTests from "./rules/no-real-time-wait-in-tests.ts";
@@ -55,10 +58,13 @@ export default definePlugin({
     "no-ambiguous-detail-navigation": noAmbiguousDetailNavigation,
     "no-mobile-pull-request-glyph-literals": noMobilePullRequestGlyphLiterals,
     "no-native-title-tooltip": noNativeTitleTooltip,
+    "no-sparkles-icon": noSparklesIcon,
     "no-unreasoned-state-sync": noUnreasonedStateSync,
+    "no-untranslated-copy": noUntranslatedCopy,
     "require-registered-list-scroll": requireRegisteredListScroll,
     "no-outset-state-indicators": noOutsetStateIndicators,
     "no-polling-loop-in-tests": noPollingLoopInTests,
+    "no-layout-command-approval-writes": noLayoutCommandApprovalWrites,
     "no-raw-mcp-registration": noRawMcpRegistration,
     "no-raw-resize-observer": noRawResizeObserver,
     "no-real-time-wait-in-tests": noRealTimeWaitInTests,

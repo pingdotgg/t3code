@@ -170,7 +170,7 @@ export type TypeId = typeof TypeId
  * @category services
  * @since 4.0.0
  */
-export interface MssqlClient extends Client.SqlClient {
+export interface MssqlClient extends Client.Base {
   readonly [TypeId]: TypeId
 
   readonly config: MssqlClientConfig
@@ -207,7 +207,7 @@ export interface MssqlClient extends Client.SqlClient {
  * @category services
  * @since 4.0.0
  */
-export const MssqlClient = Context.Service<MssqlClient>("@effect/sql-mssql/MssqlClient")
+export const MssqlClient = Context.Service<MssqlClient, MssqlClient & Client.SqlClient>("@effect/sql-mssql/MssqlClient")
 
 /**
  * Configuration for a Microsoft SQL Server client, including connection, authentication, pool, parameter type, span attribute, and query/result name transform options.
@@ -290,7 +290,7 @@ let clientIdCounter = 0
  */
 export const make = (
   options: MssqlClientConfig
-): Effect.Effect<MssqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+): Effect.Effect<MssqlClient & Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const parameterTypes = options.parameterTypes ?? defaultParameterTypes
     const compiler = makeCompiler(options.transformQueryNames)
@@ -641,7 +641,7 @@ export const make = (
       Effect.serviceOption(transactionService),
       Option.match({
         onNone: () => acquireConnection,
-        onSome: ([conn]) => Effect.succeed(conn)
+        onSome: Client.activeTransactionConnection
       })
     )
 
@@ -656,7 +656,7 @@ export const make = (
       rollbackSavepoint: (conn, id) => conn.rollback(`effect_sql_${id}`)
     })
 
-    return identity<MssqlClient>(Object.assign(
+    return identity<MssqlClient & Client.SqlClient>(Object.assign(
       yield* Client.make({
         driver: "mssql",
         acquirer: acquireConnection,
@@ -768,7 +768,7 @@ export const makeCompiler = (transform?: (_: string) => string) =>
       return [
         `${returningSql}FROM (values ${placeholders}) AS ${valueAlias}${valueColumns}`,
         returning ?
-          returning[1].concat(values.flat()) :
+          values.flat().concat(returning[1]) :
           values.flat()
       ]
     },
@@ -784,7 +784,7 @@ export const makeCompiler = (transform?: (_: string) => string) =>
       return [
         `(${columns.join(",")})${returningSql} VALUES ${placeholders}`,
         returning ?
-          returning[1].concat(values.flat()) :
+          values.flat().concat(returning[1]) :
           values.flat()
       ]
     }

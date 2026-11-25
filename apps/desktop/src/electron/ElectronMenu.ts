@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, ContextMenuSource } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -17,6 +17,7 @@ export interface ElectronMenuContextInput {
   readonly window: Electron.BrowserWindow;
   readonly items: readonly ContextMenuItem[];
   readonly position: Option.Option<ElectronMenuPosition>;
+  readonly source: Option.Option<ContextMenuSource>;
 }
 
 export interface ElectronMenuTemplateInput {
@@ -53,6 +54,7 @@ export class ElectronMenu extends Context.Service<
     readonly setApplicationMenu: (
       template: readonly Electron.MenuItemConstructorOptions[],
     ) => Effect.Effect<void>;
+    readonly pasteAndMatchStyle: Effect.Effect<void>;
     readonly showContextMenu: (
       input: ElectronMenuContextInput,
     ) => Effect.Effect<Option.Option<string>>;
@@ -75,11 +77,15 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
 
     const normalizedItem: ContextMenuItem = {
       id: sourceItem.id,
-      label: sourceItem.label,
+      label:
+        typeof sourceItem.detail === "string" && sourceItem.detail.length > 0
+          ? `${sourceItem.label} (${sourceItem.detail})`
+          : sourceItem.label,
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
       ...(sourceItem.separatorBefore === true ? { separatorBefore: true } : {}),
       ...(typeof sourceItem.checked === "boolean" ? { checked: sourceItem.checked } : {}),
+      ...(typeof sourceItem.iconImage === "string" ? { iconImage: sourceItem.iconImage } : {}),
     };
 
     if (sourceItem.children) {
@@ -108,6 +114,17 @@ const normalizePosition = (
   ).pipe(
     Option.map(({ x, y }) => ({ x: Math.floor(x * zoomFactor), y: Math.floor(y * zoomFactor) })),
   );
+
+// Renderer icons are 32px PNGs; a 2x representation keeps them 16pt and sharp on Retina.
+function menuIconImage(dataUrl: string): Option.Option<Electron.NativeImage> {
+  try {
+    const image = Electron.nativeImage.createEmpty();
+    image.addRepresentation({ scaleFactor: 2, dataURL: dataUrl });
+    return image.isEmpty() ? Option.none() : Option.some(image);
+  } catch {
+    return Option.none();
+  }
+}
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -164,7 +181,8 @@ export const make = Effect.gen(function* () {
       }
 
       const itemOption: Electron.MenuItemConstructorOptions = {
-        label: item.label,
+        // Electron reads a single & as a mnemonic marker and drops it.
+        label: item.label.replaceAll("&", "&&"),
         enabled: !item.disabled,
         ...(typeof item.checked === "boolean" ? { type: "checkbox", checked: item.checked } : {}),
       };
@@ -172,6 +190,12 @@ export const make = Effect.gen(function* () {
         itemOption.submenu = buildTemplate(item.children, complete);
       } else {
         itemOption.click = () => complete(Option.some(item.id));
+      }
+      if (item.iconImage !== undefined) {
+        const image = menuIconImage(item.iconImage);
+        if (Option.isSome(image)) {
+          itemOption.icon = image.value;
+        }
       }
       if (item.destructive && (!item.children || item.children.length === 0)) {
         const destructiveIcon = getDestructiveMenuIcon();
@@ -187,6 +211,14 @@ export const make = Effect.gen(function* () {
   };
 
   return ElectronMenu.of({
+    pasteAndMatchStyle: Effect.sync(() => {
+      const focused = Electron.webContents.getFocusedWebContents();
+      // A mounted guest can report focus while the host owns the focused frame.
+      const target = focused?.hostWebContents ?? focused;
+      if (target && !target.isDestroyed()) {
+        target.pasteAndMatchStyle();
+      }
+    }),
     setApplicationMenu: Effect.fn("ElectronMenu.setApplicationMenu")(function (template) {
       return Effect.try({
         try: () => {
@@ -256,7 +288,11 @@ export const make = Effect.gen(function* () {
               callback: () => complete(Option.none()),
             }),
           });
-          menu.popup(popupOptions);
+          menu.popup(
+            Option.isSome(input.source)
+              ? { ...popupOptions, sourceType: input.source.value }
+              : popupOptions,
+          );
         } catch (cause) {
           if (completed) {
             return;

@@ -66,6 +66,7 @@ vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
 }));
 
 import { OpenInPicker } from "./OpenInPicker";
+import type { FileManagerAction } from "./OpenInPicker.logic";
 import {
   registerOpenFavoriteEditorCommand,
   useOpenFavoriteEditorShortcut,
@@ -98,7 +99,7 @@ async function setup() {
   async function renderPicker(
     availableEditors: readonly EditorId[] = editors,
     panel = false,
-    { openInCwd = "/work/project", revealFileManager = false } = {},
+    { openInCwd = "/work/project", fileManagerAction = "open" as FileManagerAction } = {},
   ) {
     await act(async () => {
       for (const listener of state.listeners) listener();
@@ -108,7 +109,7 @@ async function setup() {
           keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
           availableEditors={availableEditors}
           openInCwd={openInCwd}
-          revealFileManager={revealFileManager}
+          fileManagerAction={fileManagerAction}
           displayMode={panel ? "panel" : "toolbar"}
           compact={!panel}
         />
@@ -189,6 +190,34 @@ describe("host editor access", () => {
   });
 });
 
+describe("file manager", () => {
+  it("waits for the path's type, then shows a file in its folder", async () => {
+    await using fixture = await setup();
+    const { renderPicker, primaryButton, click, pressOpenFavorite } = fixture;
+    state.allowed.add(selected);
+    const openInCwd = "/work/project/notes.md";
+    await renderPicker(["file-manager"], false, { openInCwd, fileManagerAction: "unavailable" });
+
+    expect(primaryButton().disabled).toBe(true);
+    await click(primaryButton());
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
+    expect(state.run).not.toHaveBeenCalled();
+
+    // A failed open is not announced, so no timer outlives the test.
+    state.run.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("No file manager"))));
+    await renderPicker(["file-manager"], false, { openInCwd, fileManagerAction: "reveal" });
+    await click(primaryButton());
+    expect(state.run.mock.calls).toEqual([
+      [
+        {
+          environmentId: selected,
+          input: { cwd: openInCwd, editor: "file-manager", reveal: true },
+        },
+      ],
+    ]);
+  });
+});
+
 describe("remote editor links", () => {
   it("opens the link from the fallback when the picker is not mounted", async () => {
     await using fixture = await setup();
@@ -202,6 +231,25 @@ describe("remote editor links", () => {
     expect(state.openUrl).toHaveBeenCalledWith(expect.stringContaining("ssh-remote+sol"));
     expect(state.run).not.toHaveBeenCalled();
   });
+
+  it("explains why a phone or tablet browser has no editor to open", async () => {
+    await using fixture = await setup();
+    const { renderPicker, byLabel, primaryButton, menuItems, click, pressOpenFavorite } = fixture;
+    state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } };
+    state.clientEditors = [];
+    await renderPicker();
+
+    expect(primaryButton().disabled).toBe(true);
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
+    await click(byLabel("Choose editor"));
+    await vi.waitFor(() =>
+      expect(menuItems().map((item) => item.textContent)).toEqual([
+        "Open from a computer to edit on Test host",
+      ]),
+    );
+    expect(menuItems()[0]!.getAttribute("aria-disabled")).toBe("true");
+    expect(state.openUrl).not.toHaveBeenCalled();
+  });
 });
 
 describe("open in editor announcement", () => {
@@ -213,7 +261,7 @@ describe("open in editor announcement", () => {
     using _timers = fakeTimers();
     const regions = () => [...document.querySelectorAll('body > [aria-live="polite"]')];
     const spoken = async () => {
-      await act(async () => vi.runAllTimers());
+      await act(async () => vi.advanceTimersByTime(250));
       return regions()
         .map((region) => region.textContent)
         .join("");

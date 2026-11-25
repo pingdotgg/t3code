@@ -1,8 +1,10 @@
 import {
   DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL,
+  HttpQuotaResponse,
   UsageLimitSourceError,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
+  type ProviderDriverKind,
   type ServerSettings,
   UsageLimitSourceConfig,
   settingsSecretLiteral,
@@ -10,6 +12,7 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { antigravityWindowLimitsModel, hubRoutes } from "@t3tools/shared/usageLimits";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -18,15 +21,46 @@ import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as HttpClientError from "effect/http/HttpClientError";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
+import { windowLimitsModel } from "../provider/claudeUsageLimits.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
+
+const decodeHttpQuotaJson = Schema.decodeUnknownEffect(Schema.fromJsonString(HttpQuotaResponse));
+const decodeHttpQuotaResponse = Effect.fn("UsageLimitSources.decodeHttpQuotaResponse")(function* (
+  response: HttpClientResponse.HttpClientResponse,
+) {
+  let bytes = 0;
+  const text = yield* response.stream.pipe(
+    Stream.mapEffect((chunk) => {
+      bytes += chunk.byteLength;
+      return bytes > 1024 * 1024
+        ? Effect.fail(
+            new HttpClientError.DecodeError({
+              request: response.request,
+              response,
+              description: "HTTP quota response exceeds 1 MiB.",
+            }),
+          )
+        : Effect.succeed(chunk);
+    }),
+    Stream.decodeText(),
+    Stream.runFold(
+      () => "",
+      (text, chunk) => text + chunk,
+    ),
+  );
+  return yield* decodeHttpQuotaJson(text);
+});
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -50,6 +84,43 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   }
 }
 
+/**
+ * A refused read of one account keeps its last good reading, as provider probes keep their bars
+ * (see ServerProviderUsageLimits); a reading with none to keep stays listed as unreadable.
+ */
+function keepLastGoodReadings(
+  previous: ReadonlyArray<UsageLimitSourceSnapshot>,
+  next: ReadonlyArray<UsageLimitSourceSnapshot>,
+): ReadonlyArray<UsageLimitSourceSnapshot> {
+  return next.map((source) => {
+    // Auth file names can be reused, so only the same hub and login may lend a reading.
+    const before = previous.find(
+      (candidate) => candidate.id === source.id && candidate.endpoint === source.endpoint,
+    );
+    if (!before) return source;
+    return {
+      ...source,
+      accounts: source.accounts.map((account) => {
+        if (account.usageLimits.unavailable?.reason !== "probeFailed") return account;
+        // Without a listed login, a reused auth file name cannot be told apart from the old one.
+        if (account.email === undefined && account.workspaceId === undefined) return account;
+        const last = before.accounts.find(
+          (candidate) =>
+            candidate.id === account.id &&
+            candidate.driver === account.driver &&
+            // Fingerprinted Antigravity readings omit the listed identity, so they are never lent.
+            candidate.usageLimits.credentialFingerprint === undefined &&
+            candidate.email === account.email &&
+            candidate.workspaceId === account.workspaceId,
+        );
+        if (!last || last.usageLimits.unavailable) return account;
+        // Only the reading is lent; an unread model list stays unknown.
+        return { ...last, models: account.models };
+      }),
+    };
+  });
+}
+
 function missingManagementKey(config: UsageLimitSourceConfig): string {
   return typeof config.managementKey === "string"
     ? "No management key configured."
@@ -59,6 +130,7 @@ function missingManagementKey(config: UsageLimitSourceConfig): string {
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
+  const http = yield* HttpClient.HttpClient;
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -79,8 +151,47 @@ export const make = Effect.gen(function* () {
     config: UsageLimitSourceConfig,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const base = { id, kind: config.kind, label: sourceLabel(id, config), checkedAt } as const;
+    const url = URL.parse(config.url);
+    const base = {
+      id,
+      kind: config.kind,
+      label: sourceLabel(id, config),
+      ...(config.kind === "cliproxy" && url && /^https?:$/.test(url.protocol)
+        ? {
+            origin: url.origin,
+            endpoint: `${url.origin}${url.pathname.replace(/(\/management\.html)?\/*$/i, "")}`,
+          }
+        : {}),
+      checkedAt,
+    } as const;
     const managementKey = yield* readManagementKey(config);
+    if (config.kind === "http") {
+      if (!url || !/^https?:$/.test(url.protocol) || url.username || url.password) {
+        return { ...base, accounts: [], error: "Invalid HTTP quota source URL." };
+      }
+      if (typeof config.managementKey !== "string" && !managementKey) {
+        return { ...base, accounts: [], error: "Could not resolve the quota source token." };
+      }
+      const request = HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeader("Accept", "application/json"),
+      );
+      const result = yield* http
+        .execute(
+          managementKey
+            ? request.pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${managementKey}`))
+            : request,
+        )
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap(decodeHttpQuotaResponse),
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+          Effect.timeout("10 seconds"),
+          Effect.result,
+        );
+      return result._tag === "Success"
+        ? { ...base, accounts: [], quotaAccounts: result.success.accounts }
+        : { ...base, accounts: [], error: "Could not read the HTTP quota source." };
+    }
     if (managementKey.length === 0) {
       return { ...base, accounts: [], error: missingManagementKey(config) };
     }
@@ -117,7 +228,7 @@ export const make = Effect.gen(function* () {
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
     );
-    yield* publish(snapshots);
+    yield* publish(keepLastGoodReadings(yield* Ref.get(stateRef), snapshots));
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
@@ -128,7 +239,7 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
     );
     const config = settings.usageLimitSources[input.sourceId];
-    if (!config?.enabled) {
+    if (!config?.enabled || config.kind !== "cliproxy") {
       return yield* new UsageLimitSourceError({
         detail: "The usage limit source is missing or disabled.",
       });
@@ -142,6 +253,7 @@ export const make = Effect.gen(function* () {
       input.accountId,
       input.creditId,
     );
+    // A redemption changes the reading, so a refused re-read must not bring back the one before it.
     const snapshot = yield* readSource(input.sourceId, config);
     const previous = yield* Ref.get(stateRef);
     yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
@@ -197,4 +309,66 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(UsageLimitSources, make).pipe(
   Layer.provide(SecretResolverLayer.layer),
+);
+
+/** A hub returns a usage limit only when every account it routes the model to is spent. */
+export function hubPoolResetAt(
+  sources: ReadonlyArray<UsageLimitSourceSnapshot>,
+  driver: ProviderDriverKind,
+  model: string | null,
+  now: number,
+): string | null {
+  let earliest: number | null = null;
+  const routes = hubRoutes(sources, driver, model);
+  for (const account of sources.flatMap((source) => source.accounts).filter(routes)) {
+    // An unread account may be the one still blocked, so its refill is unknown.
+    if (account.usageLimits.unavailable) return null;
+    const spent = account.usageLimits.windows.filter(
+      (window) =>
+        window.usedPercent >= 100 &&
+        windowLimitsModel(window, model) &&
+        (account.driver !== "antigravity" || antigravityWindowLimitsModel(window, model)),
+    );
+    if (spent.length === 0) return null;
+    const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));
+    if (resets.some((reset) => !Number.isFinite(reset))) return null;
+    const recoversAt = Math.max(...resets);
+    if (recoversAt <= now) return null;
+    earliest = earliest === null ? recoversAt : Math.min(earliest, recoversAt);
+  }
+  return earliest === null ? null : DateTime.formatIso(DateTime.makeUnsafe(earliest));
+}
+
+export class UsageLimitResetFallback extends Context.Reference<{
+  readonly resetAt: (
+    driver: ProviderDriverKind,
+    endpoint: string,
+    model: string | null,
+  ) => Effect.Effect<string | null>;
+}>("t3/usage/UsageLimitResetFallback", {
+  defaultValue: () => ({ resetAt: () => Effect.succeed(null) }),
+}) {}
+
+export const layerResetFallback = Layer.effect(
+  UsageLimitResetFallback,
+  Effect.gen(function* () {
+    const sources = yield* UsageLimitSources;
+    return {
+      resetAt: Effect.fn("UsageLimitResetFallback.resetAt")(function* (driver, endpoint, model) {
+        // Only the hub at the instance's endpoint serves its turns.
+        const atEndpoint = Effect.map(sources.current, (current) =>
+          current.filter((source) => source.origin === endpoint),
+        );
+        if ((yield* atEndpoint).length === 0) return null;
+        // The pool usually ran out after the last poll, so the cached accounts still show room.
+        yield* sources.refresh.pipe(Effect.timeout("5 seconds"), Effect.ignore);
+        return hubPoolResetAt(
+          yield* atEndpoint,
+          driver,
+          model,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+      }),
+    };
+  }),
 );
