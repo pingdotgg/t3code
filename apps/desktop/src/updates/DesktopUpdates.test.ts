@@ -1,5 +1,8 @@
+import * as NodeModule from "node:module";
+
 import { assert, describe, it } from "@effect/vitest";
-import { DESKTOP_UPDATE_RESTART_MARKER_FILE } from "@t3tools/contracts";
+import { DESKTOP_UPDATE_RESTART_MARKER_FILE, DesktopUpdateStateSchema } from "@t3tools/contracts";
+import { computeReleaseNotes } from "electron-updater/out/providers/GitHubProvider.js";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -10,6 +13,7 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as References from "effect/References";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -22,6 +26,70 @@ import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import { flushCallbacks, makeHarness } from "./updatesTestHarness.ts";
 
+const encodeUpdateState = Schema.encodeEffect(DesktopUpdateStateSchema);
+
+type ReleaseFeed = Parameters<typeof computeReleaseNotes>[2];
+type RunningVersion = Parameters<typeof computeReleaseNotes>[0];
+
+// electron-updater's own dependencies, which apps/desktop does not declare.
+const requireFromUpdater = NodeModule.createRequire(
+  NodeModule.createRequire(import.meta.url).resolve("electron-updater"),
+);
+const { parseXml } = requireFromUpdater("builder-util-runtime") as {
+  parseXml: (xml: string) => ReleaseFeed;
+};
+const semver = requireFromUpdater("semver") as { parse: (version: string) => RunningVersion };
+
+const releaseTitle = (version: string) =>
+  version.includes("-nightly.")
+    ? `T3 Code Nightly ${version} (0123456789ab)`
+    : `T3 Code v${version}`;
+
+const releaseFeed = (...versions: ReadonlyArray<string>) =>
+  parseXml(
+    `<feed xmlns="http://www.w3.org/2005/Atom">${versions
+      .map(
+        (version) =>
+          `<entry><link rel="alternate" type="text/html" href="https://github.com/pingdotgg/t3code/releases/tag/v${version}"/><title>${releaseTitle(version)}</title><content type="html">&lt;ul&gt;&lt;li&gt;${version} change&lt;/li&gt;&lt;/ul&gt;</content></entry>`,
+      )
+      .join("")}</feed>`,
+  );
+
+/** The update info electron-updater's GitHub provider reports when /releases/latest names `version`. */
+const stableUpdateInfo = (
+  feed: ReleaseFeed,
+  version: string,
+  runningVersion: string,
+  fullChangelog: boolean,
+) => {
+  const latestRelease =
+    feed
+      .getElements("entry")
+      .find((entry) => entry.element("link").attribute("href").endsWith(`/tag/v${version}`)) ??
+    feed.element("entry");
+  return {
+    version,
+    releaseName: latestRelease.elementValueOrEmpty("title"),
+    releaseNotes: computeReleaseNotes(
+      semver.parse(runningVersion),
+      fullChangelog,
+      feed,
+      latestRelease,
+    ),
+  };
+};
+
+// Subscribes before emitting, so the state the emit publishes is the one awaited, not a scheduler yield.
+const nextPublishedState = (emit: () => void) =>
+  Effect.gen(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    const { changes } = yield* updates.subscribe;
+    const published = yield* Stream.runHead(changes).pipe(Effect.forkChild);
+    emit();
+    yield* Fiber.join(published);
+    return yield* updates.getState;
+  });
+
 describe("DesktopUpdates", () => {
   it.effect("updates Linux .deb installs and leaves other non-AppImage installs off", () =>
     Effect.gen(function* () {
@@ -29,16 +97,22 @@ describe("DesktopUpdates", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const updates = yield* DesktopUpdates.DesktopUpdates;
+            const desktopState = yield* DesktopState.DesktopState;
             yield* updates.configure;
-            return yield* updates.getState;
+            return {
+              state: yield* updates.getState,
+              canInstallUpdates: yield* Ref.get(desktopState.canInstallUpdates),
+            };
           }),
         ).pipe(Effect.provide(makeHarness({ platform: "linux", packageType }).layer));
 
       const deb = yield* linuxState("deb\n");
-      assert.equal(deb.status, "idle");
+      assert.equal(deb.state.status, "idle");
+      assert.isTrue(deb.canInstallUpdates);
 
       const unmarked = yield* linuxState(undefined);
-      assert.equal(unmarked.status, "disabled");
+      assert.equal(unmarked.state.status, "disabled");
+      assert.isFalse(unmarked.canInstallUpdates);
     }),
   );
 
@@ -65,7 +139,7 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(harness.layer));
   });
 
-  it.effect("checks for newer releases after an update has been downloaded", () => {
+  it.effect("re-checks an offered update without announcing it again", () => {
     const harness = makeHarness();
 
     return Effect.scoped(
@@ -78,14 +152,23 @@ describe("DesktopUpdates", () => {
           releaseNotes: "## What's changed\n- fix: queued update",
         });
         yield* flushCallbacks;
+        const offeredStates = harness.sentStates.length;
+
+        yield* updates.check("poll");
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal(harness.sentStates.length, offeredStates);
+
         harness.emit("update-downloaded", { version: "1.2.4" });
         yield* flushCallbacks;
+        const downloadedStates = harness.sentStates.length;
 
         const result = yield* updates.check("poll");
         assert.isTrue(result.checked);
 
         harness.emit("update-available", { version: "1.2.4" });
         yield* flushCallbacks;
+        assert.equal(harness.sentStates.length, downloadedStates);
 
         const unchangedState = yield* updates.getState;
         assert.equal(unchangedState.status, "downloaded");
@@ -105,6 +188,51 @@ describe("DesktopUpdates", () => {
         assert.equal(state.status, "available");
         assert.equal(state.availableVersion, "1.2.5");
         assert.isNull(state.downloadedVersion);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect.each([
+    {
+      name: "shows no notes for a Stable release missing from the releases feed",
+      runningVersion: "1.2.3",
+      feedVersions: ["1.2.5-nightly.20261102.1", "1.2.5-nightly.20261101.1"],
+      expected: [],
+    },
+    {
+      name: "shows a Stable release's own notes from the releases feed",
+      runningVersion: "1.2.3",
+      feedVersions: ["1.2.5-nightly.20261102.1", "1.2.4", "1.2.4-nightly.20261030.1"],
+      expected: [{ version: "1.2.4", items: ["1.2.4 change"], totalItems: 1 }],
+    },
+    {
+      name: "shows a Stable release's notes when switching down from a newer Nightly",
+      runningVersion: "1.2.5-nightly.20261027.1",
+      feedVersions: ["1.2.5-nightly.20261102.1", "1.2.4"],
+      expected: [{ version: "1.2.4", items: ["1.2.4 change"], totalItems: 1 }],
+    },
+  ])("$name", ({ runningVersion, feedVersions, expected }) => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        harness.emit(
+          "update-available",
+          stableUpdateInfo(
+            releaseFeed(...feedVersions),
+            "1.2.4",
+            runningVersion,
+            harness.fullChangelog(),
+          ),
+        );
+        yield* flushCallbacks;
+
+        const state = yield* updates.getState;
+        assert.equal(state.availableVersion, "1.2.4");
+        assert.deepEqual(state.releaseNotes, expected);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -142,15 +270,46 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect(
-    "rejects install while a refresh check is in progress and releases the reservation",
-    () =>
+  it.effect("checks shortly after startup and then every four hours", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        yield* TestClock.adjust("15 seconds");
+        assert.equal(harness.checkCount(), 1);
+
+        yield* TestClock.adjust("3 hours");
+        assert.equal(harness.checkCount(), 1);
+
+        yield* TestClock.adjust("1 hour");
+        assert.equal(harness.checkCount(), 2);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect.each([
+    { action: "download", offer: "update-available", found: null, accepted: true },
+    { action: "install", offer: "update-downloaded", found: null, accepted: true },
+    { action: "download", offer: "update-available", found: "1.2.5", accepted: true },
+    { action: "install", offer: "update-downloaded", found: "1.2.5", accepted: false },
+  ] as const)(
+    "a $action waiting out a refresh check acts on what it found ($found)",
+    ({ action, offer, found, accepted }) =>
       Effect.gen(function* () {
         const checkStarted = yield* Deferred.make<void>();
         const releaseCheck = yield* Deferred.make<void>();
         const harness = makeHarness({
           checkForUpdates: Deferred.succeed(checkStarted, undefined).pipe(
             Effect.andThen(Deferred.await(releaseCheck)),
+            // electron-updater emits the check's outcome before its promise resolves.
+            Effect.andThen(
+              Effect.sync(() => {
+                if (found !== null) harness.emit("update-available", { version: found });
+              }),
+            ),
           ),
         });
 
@@ -158,22 +317,20 @@ describe("DesktopUpdates", () => {
           Effect.gen(function* () {
             const updates = yield* DesktopUpdates.DesktopUpdates;
             yield* updates.configure;
-            harness.emit("update-downloaded", { version: "1.2.4" });
+            harness.emit(offer, { version: "1.2.4" });
             yield* flushCallbacks;
 
-            const checkFiber = yield* updates.check("manual").pipe(Effect.forkScoped);
+            const checkFiber = yield* updates.check("poll").pipe(Effect.forkScoped);
             yield* Deferred.await(checkStarted);
-
-            const installResult = yield* updates.install;
-            assert.isFalse(installResult.accepted);
+            const actionFiber = yield* updates[action].pipe(Effect.forkScoped);
+            yield* flushCallbacks;
 
             yield* Deferred.succeed(releaseCheck, undefined);
-            const checkResult = yield* Fiber.join(checkFiber);
-            assert.isTrue(checkResult.checked);
-
-            const followUpCheck = yield* updates.check("manual");
-            assert.isTrue(followUpCheck.checked);
-            assert.equal(harness.checkCount(), 2);
+            assert.isTrue((yield* Fiber.join(checkFiber)).checked);
+            assert.equal((yield* Fiber.join(actionFiber)).accepted, accepted);
+            const state = yield* updates.getState;
+            assert.equal(state.availableVersion, found ?? "1.2.4");
+            if (action === "download") assert.equal(state.status, "downloading");
           }),
         ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
       }),
@@ -198,10 +355,11 @@ describe("DesktopUpdates", () => {
 
           const installFiber = yield* updates.install.pipe(Effect.forkScoped);
           yield* Deferred.await(installStarted);
+          const checksBefore = harness.checkCount();
 
           const checkResult = yield* updates.check("manual");
           assert.isFalse(checkResult.checked);
-          assert.equal(harness.checkCount(), 0);
+          assert.equal(harness.checkCount(), checksBefore);
 
           yield* Deferred.succeed(releaseInstall, undefined);
           const installResult = yield* Fiber.join(installFiber);
@@ -212,7 +370,9 @@ describe("DesktopUpdates", () => {
   );
 
   it.effect("preserves a queued installer after a background updater error", () => {
-    const harness = makeHarness();
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => harness.emit("update-not-available")),
+    });
 
     return Effect.scoped(
       Effect.gen(function* () {
@@ -321,6 +481,205 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("shows why a download failed, not only the channel", () => {
+    const harness = makeHarness({
+      downloadUpdate: Effect.fail(
+        new ElectronUpdater.ElectronUpdaterDownloadUpdateError({
+          channel: "nightly",
+          cause: new Error("net::ERR_CONTENT_LENGTH_MISMATCH"),
+        }),
+      ),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        const result = yield* updates.download;
+        assert.isFalse(result.completed);
+
+        const state = yield* updates.getState;
+        assert.equal(state.errorContext, "download");
+        assert.include(state.message ?? "", "ERR_CONTENT_LENGTH_MISMATCH");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("downloads the newest release published since the last check", () => {
+    // electron-updater downloads the release its last checkForUpdates found.
+    let published = "1.2.4";
+    let lastChecked: string | undefined;
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => {
+        lastChecked = published;
+        harness.emit("update-available", { version: published });
+      }),
+      downloadUpdate: Effect.sync(() => {
+        harness.emit("update-downloaded", { version: lastChecked });
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("poll");
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).availableVersion, "1.2.4");
+
+        published = "1.2.5";
+        const result = yield* updates.download;
+        yield* flushCallbacks;
+        assert.isTrue(result.completed);
+        assert.equal((yield* updates.getState).downloadedVersion, "1.2.5");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("installs a release published after the retained download", () => {
+    let published = "1.2.4";
+    let lastChecked: string | undefined;
+    let installedVersion: string | null | undefined;
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => {
+        lastChecked = published;
+        harness.emit("update-available", { version: published });
+      }),
+      downloadUpdate: Effect.sync(() => {
+        harness.emit("update-downloaded", { version: lastChecked });
+      }),
+      quitAndInstall: Effect.sync(() => {
+        installedVersion = harness.sentStates.at(-1)?.downloadedVersion;
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("poll");
+        yield* flushCallbacks;
+        yield* updates.download;
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
+
+        published = "1.2.5";
+        const checksBefore = harness.checkCount();
+        const result = yield* updates.installPrepared("1.2.4");
+        assert.isTrue(result.accepted);
+        // A second check before downloading could find a stale feed's older release.
+        assert.equal(harness.checkCount(), checksBefore + 1);
+        assert.equal(harness.quitAndInstalls(), 1);
+        assert.equal(installedVersion, "1.2.5");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("downloads the known offer when the check before downloading fails", () => {
+    let checks = 0;
+    const harness = makeHarness({
+      checkForUpdates: Effect.suspend(() => {
+        checks += 1;
+        if (checks > 1) {
+          return Effect.fail(
+            new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({
+              channel: null,
+              cause: new Error("offline"),
+            }),
+          );
+        }
+        harness.emit("update-available", { version: "1.2.4" });
+        return Effect.void;
+      }),
+      downloadUpdate: Effect.sync(() => {
+        harness.emit("update-downloaded", { version: "1.2.4" });
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("poll");
+        yield* flushCallbacks;
+
+        const result = yield* updates.download;
+        yield* flushCallbacks;
+        assert.isTrue(result.completed);
+        assert.equal((yield* updates.getState).downloadedVersion, "1.2.4");
+        // Remote requests treat a published error after their own check as final.
+        assert.notInclude(
+          harness.sentStates.map((state) => state.status),
+          "error",
+        );
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("installs the retained download when a stale feed offers an older release", () => {
+    let published = "1.2.5";
+    let installedVersion: string | null | undefined;
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: published })),
+      downloadUpdate: Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.5" })),
+      quitAndInstall: Effect.sync(() => {
+        installedVersion = harness.sentStates.at(-1)?.downloadedVersion;
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("poll");
+        yield* updates.download;
+        yield* flushCallbacks;
+
+        published = "1.2.4";
+        const result = yield* updates.installPrepared("1.2.5");
+        assert.isTrue(result.accepted);
+        assert.equal(harness.downloadCount(), 1);
+        assert.equal(installedVersion, "1.2.5");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("downloads again when the downloaded update file was deleted before install", () => {
+    const downloadedFile = "/cache/pending/T3-Code-1.2.4-arm64.zip";
+    let installedFileExists: boolean | undefined;
+    const harness = makeHarness({
+      checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: "1.2.4" })),
+      downloadUpdate: Effect.sync(() => {
+        harness.deletedFiles.delete(downloadedFile);
+        harness.emit("update-downloaded", { version: "1.2.4", downloadedFile });
+      }),
+      quitAndInstall: Effect.sync(() => {
+        installedFileExists = !harness.deletedFiles.has(downloadedFile);
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("poll");
+        yield* updates.download;
+        yield* flushCallbacks;
+        assert.equal(harness.downloadCount(), 1);
+
+        harness.deletedFiles.add(downloadedFile);
+        const result = yield* updates.installPrepared("1.2.4");
+        assert.isTrue(result.accepted);
+        assert.equal(harness.downloadCount(), 2);
+        assert.equal(harness.quitAndInstalls(), 1);
+        assert.isTrue(installedFileExists);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("restores download state and permits retry after interruption", () =>
     Effect.gen(function* () {
       const actionStarted = yield* Deferred.make<void>();
@@ -392,14 +751,17 @@ describe("DesktopUpdates", () => {
 
   it.effect("marks the backend stop for an install as an update restart", () => {
     let markersAtStop: ReadonlyArray<string> = [];
+    let inProgressAtStop: string | undefined;
     const harness = makeHarness({
       stopBackend: Effect.sync(() => {
         markersAtStop = [...harness.updateRestartMarkers];
+        inProgressAtStop = harness.updateInProgressMarker();
       }),
     });
 
     return Effect.scoped(
       Effect.gen(function* () {
+        yield* TestClock.setTime(1_000);
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
@@ -410,6 +772,12 @@ describe("DesktopUpdates", () => {
         assert.deepEqual(markersAtStop, [
           environment.path.join(environment.baseDir, "runtime", DESKTOP_UPDATE_RESTART_MARKER_FILE),
         ]);
+        // SSH launchers wait on this until the replacement backend publishes its runtime.
+        assert.deepEqual(JSON.parse(inProgressAtStop ?? "null"), {
+          startedAt: 1_000,
+          expiresAt: 61_000,
+        });
+        assert.isDefined(harness.updateInProgressMarker());
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -492,9 +860,11 @@ describe("DesktopUpdates", () => {
           const installFiber = yield* updates.install.pipe(Effect.forkScoped);
           yield* Deferred.await(stopping);
           assert.equal(harness.updateRestartMarkers.size, 1);
+          assert.isDefined(harness.updateInProgressMarker());
 
           yield* Fiber.interrupt(installFiber);
           assert.equal(harness.updateRestartMarkers.size, 0);
+          assert.isUndefined(harness.updateInProgressMarker());
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
@@ -523,8 +893,13 @@ describe("DesktopUpdates", () => {
         const result = yield* updates.install;
         assert.isTrue(result.accepted);
         assert.isFalse(yield* Ref.get(desktopState.quitting));
-        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+        assert.deepEqual(harness.installSteps, [
+          "closeSshTunnels",
+          "quitAndInstall",
+          "startBackend",
+        ]);
         assert.equal(harness.updateRestartMarkers.size, 0);
+        assert.isUndefined(harness.updateInProgressMarker());
         assert.equal(harness.installRecords.size, 0);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
@@ -553,7 +928,7 @@ describe("DesktopUpdates", () => {
 
         const result = yield* updates.install;
         assert.equal(result.state.errorContext, "install");
-        assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+        assert.deepEqual(harness.installSteps, ["closeSshTunnels", "quitAndInstall"]);
         assert.isFalse((yield* (yield* pool.primary).snapshot).desiredRunning);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
@@ -647,7 +1022,11 @@ describe("DesktopUpdates", () => {
         assert.equal(harness.quitAndInstalls(), 1);
         harness.emit("error", new Error("duplicate native installer error"));
         yield* flushCallbacks;
-        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+        assert.deepEqual(harness.installSteps, [
+          "closeSshTunnels",
+          "quitAndInstall",
+          "startBackend",
+        ]);
 
         yield* Deferred.succeed(releaseRecovery, undefined);
         const failedResult = yield* Fiber.join(failedInstall);
@@ -800,6 +1179,32 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("keeps the current track's offers when a track switch fails to save", () => {
+    const harness = makeHarness({
+      setUpdateChannelError: new DesktopAppSettings.DesktopSettingsWriteError({
+        operation: "replace-settings-file",
+        path: "desktop-settings.json",
+        cause: new Error("rename failed"),
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        const error = yield* updates
+          .setChannel("nightly", { minimumVersion: "1.2.5-nightly.20261028.1" })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "DesktopUpdateChannelPersistenceError");
+        assert.equal((yield* updates.getState).channel, "latest");
+
+        harness.emit("update-available", { version: "1.2.4" });
+        yield* flushCallbacks;
+        assert.equal((yield* updates.getState).availableVersion, "1.2.4");
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("keeps a saved Stable track across a restart without offering an older release", () => {
     // A Nightly build whose switch to Stable did not finish before the app quit.
     const harness = makeHarness({ appVersion: "1.2.4-nightly.20261027.1", savedChannel: "latest" });
@@ -830,12 +1235,45 @@ describe("DesktopUpdates", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
         yield* updates.check("startup");
-        harness.emit("update-available", { version: "1.2.4-nightly.20261027.1" });
-        yield* flushCallbacks;
-
-        assert.equal((yield* updates.getState).channel, "nightly");
-        assert.isNull((yield* updates.getState).availableVersion);
+        const state = yield* nextPublishedState(() =>
+          harness.emit("update-available", { version: "1.2.4-nightly.20261027.1" }),
+        );
+        assert.equal(state.channel, "nightly");
+        assert.isNull(state.availableVersion);
+        assert.equal(state.status, "error");
+        assert.equal(state.errorContext, "check");
+        assert.isTrue(state.canRetry);
+        assert.deepEqual(state.trackMismatch, { buildChannel: "latest" });
         assert.deepEqual(harness.checkAllowedDowngrade, [false]);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
+  it.effect("reports a track mismatch when the feed offers no release at all", () => {
+    const harness = makeHarness({ savedChannel: "nightly" });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("startup");
+        const state = yield* nextPublishedState(() => harness.emit("update-not-available"));
+        assert.equal(state.status, "error");
+        assert.equal(state.errorContext, "check");
+        assert.isTrue(state.canRetry);
+        assert.deepEqual(state.trackMismatch, { buildChannel: "latest" });
+
+        // A later failure has its own reason, so the mismatch must not stay attached to it.
+        const failed = yield* nextPublishedState(() =>
+          harness.emit("error", new Error("background updater failure")),
+        );
+        assert.isUndefined(failed.trackMismatch);
+
+        const mismatched = yield* nextPublishedState(() => harness.emit("update-not-available"));
+        assert.isDefined(mismatched.trackMismatch);
+        yield* updates.check("menu");
+        assert.equal((yield* updates.getState).status, "checking");
+        assert.isUndefined((yield* updates.getState).trackMismatch);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
@@ -1028,6 +1466,28 @@ describe("DesktopUpdates under a managed policy", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("does not name a blocked build track as the one to switch back to", () => {
+    const harness = makeHarness({
+      appVersion: "1.2.4-nightly.20261027.1",
+      savedChannel: "latest",
+      policy: managed({ allowNightly: false, feedUrl: "https://updates.example.com/t3code" }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* updates.check("startup");
+        const state = yield* nextPublishedState(() => harness.emit("update-not-available"));
+
+        assert.equal(state.channel, "latest");
+        assert.equal(state.status, "error");
+        assert.equal(state.errorContext, "check");
+        assert.isUndefined(state.trackMismatch);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("does not report the channel as the only block when updates are off anyway", () => {
     const harness = makeHarness({
       appVersion: "1.2.3-nightly.20261028.1",
@@ -1064,6 +1524,7 @@ describe("DesktopUpdates under a managed policy", () => {
         assert.equal(held.status, "disabled");
         assert.include(held.message ?? "", message);
         assert.isTrue(held.channelBlockedByPolicy);
+        assert.isTrue((yield* encodeUpdateState(held)).channelBlockedByPolicy);
         assert.isFalse((yield* updates.check("menu")).checked);
         assert.equal(harness.checkCount(), 0);
 

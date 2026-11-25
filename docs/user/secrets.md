@@ -14,6 +14,10 @@ work everywhere.
 signed in on the machine that runs the T3 Code server. When you use T3 Code on another machine or
 from your phone, that is the remote machine, not the device in front of you.
 
+A desktop sign-in asks for approval on that machine, which a remote user cannot answer. On a remote
+or headless server, sign `op` in with a [service account](./secrets-1password-service-account.md) or a
+[Connect server](./secrets-1password-connect.md) instead.
+
 To add one, open **Settings → Secrets**, select **Add provider**, and enter a name and the
 1Password account: the shorthand, sign-in address (without `https://`), or ID that
 `op account list` shows. Secret providers belong to the environment you are connected to. Each
@@ -25,6 +29,8 @@ Credential fields in Settings, such as provider environment variables and creden
 control tokens, usage limit keys, and device host tokens, show a source picker next to the field.
 Pick **Value** to save the credential itself, or pick a secret provider and enter a reference such
 as `op://vault/item/field`. Copy the reference from 1Password with **Copy Secret Reference**.
+Select the check button next to a reference to read it now. If it reads, providers that use it
+start using the new value.
 
 T3 Code reads the secret when it needs it, for example when a provider starts. Change the
 credential in 1Password and refresh to use the new value.
@@ -49,7 +55,8 @@ you to paste it into the chat. Type or paste the value and select **Save securel
 **Decline**. You can answer from web, desktop, or mobile.
 
 If the environment has a secret provider, the card also lets you pick it and enter a reference
-instead of the value. T3 Code reads the secret once, when you answer. If 1Password is locked, the
+instead of the value. Answering with a reference needs permission to manage providers, as saving a
+reference in Settings does; a session without it sees only the value field. T3 Code reads the secret once, when you answer. If 1Password is locked, the
 card says so and the request stays open: unlock it and try again, or enter the value.
 
 The value never appears in the conversation. Most requests keep it from the agent too: T3 Code

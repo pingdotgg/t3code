@@ -6,10 +6,14 @@ import {
   secretReferencesInSettings,
   type ServerSettings,
   SimlockDeviceHostConfig,
+  TextGeneratorConfig,
   UsageLimitSourceConfig,
 } from "@t3tools/contracts";
 import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import { deriveProviderSettingsFields, type SettingsFormDefinition } from "./ProviderSettingsForm";
 
@@ -18,6 +22,7 @@ type SecretUseSettings = Pick<
   | "providerInstances"
   | "sourceControlHosts"
   | "usageLimitSources"
+  | "textGenerators"
   | "easDeviceHosts"
   | "simlockDeviceHosts"
   | "cloudSpeechCredentials"
@@ -32,6 +37,7 @@ interface SecretProviderUse {
 export function secretProviderUses(
   settings: SecretUseSettings,
   providerId: string,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<SecretProviderUse> {
   const uses = (
     definition: SettingsFormDefinition,
@@ -40,7 +46,9 @@ export function secretProviderUses(
     value: unknown,
   ): ReadonlyArray<SecretProviderUse> => {
     const labels = new Map(
-      deriveProviderSettingsFields(definition).map((field) => [field.key, field.label] as const),
+      deriveProviderSettingsFields(definition, undefined, resolve).map(
+        (field) => [field.key, field.label] as const,
+      ),
     );
     return secretReferencesInSettings(definition.settingsSchema, value).flatMap(
       ({ field, key, reference }) =>
@@ -91,6 +99,14 @@ export function secretProviderUses(
         source,
       ),
     ),
+    ...Object.entries(settings.textGenerators).flatMap(([id, generator]) =>
+      uses(
+        { settingsSchema: TextGeneratorConfig },
+        `text-generator:${id}`,
+        generator.label ?? generator.baseUrl,
+        generator,
+      ),
+    ),
     ...settings.easDeviceHosts.flatMap((host) =>
       uses({ settingsSchema: EasDeviceHostConfig }, `eas:${host.id}`, host.label, host),
     ),
@@ -100,7 +116,14 @@ export function secretProviderUses(
     ...CloudSpeechProvider.literals.flatMap((provider) => {
       const credential = settings.cloudSpeechCredentials[provider];
       return isSecretReference(credential) && credential.provider === providerId
-        ? [{ id: `voice:${provider}`, label: `Voice · ${CLOUD_SPEECH_LABELS[provider]}` }]
+        ? [
+            {
+              id: `voice:${provider}`,
+              label: resolve(
+                msg("Voice · {provider}", { provider: CLOUD_SPEECH_LABELS[provider] }),
+              ),
+            },
+          ]
         : [];
     }),
   ];

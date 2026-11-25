@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { describe, vi } from "vite-plus/test";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -15,17 +16,21 @@ import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
-import { ASSET_ROUTE_PREFIX } from "./assets/AssetAccess.ts";
-import { ATTACHMENT_UPLOAD_ROUTE_PREFIX } from "./assets/AttachmentUpload.ts";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
 import {
   injectMcpAppCsp,
   injectMcpAppCookieBootstrap,
+  injectMcpAppDocumentBootstrap,
   injectMcpAppThemeBootstrap,
   MCP_APP_MAX_HTML_BYTES,
 } from "@t3tools/shared/mcpApp";
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
+import {
+  DESKTOP_READINESS_PROOF_PATH,
+  isValidDesktopReadinessProof,
+} from "@t3tools/shared/desktopReadinessProof";
+import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
 
 import * as ServerConfig from "./config.ts";
 
@@ -55,7 +60,9 @@ describe("MCP app asset responses", () => {
               method,
             ),
           );
-          const expected = injectMcpAppCookieBootstrap(injectMcpAppThemeBootstrap(html));
+          const expected = injectMcpAppDocumentBootstrap(
+            injectMcpAppCookieBootstrap(injectMcpAppThemeBootstrap(html)),
+          );
           expect(response.status).toBe(200);
           expect(response.headers.get("content-length")).toBe(
             String(new TextEncoder().encode(expected).byteLength),
@@ -92,6 +99,39 @@ describe("MCP app asset responses", () => {
       yield* fs.writeFileString(file, "x".repeat(MCP_APP_MAX_HTML_BYTES + 128 * 1024 + 1));
       const response = yield* assetFileResponse({ path: file, renderIntent: "mcp-app" });
       expect(response.status).toBe(413);
+    }).pipe(Effect.provide(layerFileResponse)),
+  );
+});
+
+describe("workspace page preview responses", () => {
+  it.effect("append the scroll script only to inline HTML previews", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-file-preview-" });
+      const page = path.join(directory, "report.html");
+      const style = path.join(directory, "report.css");
+      const html = "<!doctype html><html><body>☃</body></html>";
+      yield* fs.writeFileString(page, html);
+      yield* fs.writeFileString(style, "body{}");
+      const read = (asset: Parameters<typeof assetFileResponse>[0]) =>
+        assetFileResponse(asset).pipe(
+          Effect.flatMap((response) =>
+            Effect.promise(() => HttpServerResponse.toWeb(response).text()),
+          ),
+        );
+      const response = HttpServerResponse.toWeb(
+        yield* assetFileResponse({ path: page, renderIntent: "file-preview" }, "bytes=0-1"),
+      );
+      const expected = html + FILE_PREVIEW_SCROLL_SCRIPT;
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-length")).toBe(
+        String(new TextEncoder().encode(expected).byteLength),
+      );
+      expect(yield* Effect.promise(() => response.text())).toBe(expected);
+      expect(yield* read({ path: page, renderIntent: "file-preview", download: true })).toBe(html);
+      expect(yield* read({ path: page })).toBe(html);
+      expect(yield* read({ path: style, renderIntent: "file-preview" })).toBe("body{}");
     }).pipe(Effect.provide(layerFileResponse)),
   );
 });
@@ -140,64 +180,167 @@ describe("browser API CORS", () => {
       await dispose();
     }
   });
+
+  it("allows originless desktop requests in dev mode while still rejecting disallowed browser origins", async () => {
+    const layerRoute = Layer.effectDiscard(
+      Effect.gen(function* () {
+        const router = yield* HttpRouter.HttpRouter;
+        yield* router.add(
+          "GET",
+          "/api/environment",
+          HttpServerResponse.empty({ headers: { vary: "Accept-Encoding" } }),
+        );
+      }),
+    );
+    const layerDevConfig = Layer.effect(
+      ServerConfig.ServerConfig,
+      Effect.map(ServerConfig.ServerConfig, (config) => ({
+        ...config,
+        devUrl: new URL("http://127.0.0.1:5733"),
+      })),
+    ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "http-dev-cors-test-" })));
+    const layerApp = Layer.merge(layerRoute, ServerHttp.layerBrowserApiCors).pipe(
+      Layer.provide(layerDevConfig),
+      Layer.provide(NodeServices.layer),
+    );
+    const { handler, dispose } = HttpRouter.toWebHandler(layerApp, { disableLogger: true });
+
+    try {
+      const originless = await handler(
+        new Request("https://dev.example/api/environment", { method: "GET" }),
+      );
+      expect(originless.headers.get("access-control-allow-origin")).toBe("*");
+      expect(originless.headers.get("access-control-allow-credentials")).toBeNull();
+      expect(originless.headers.get("vary")).toBe("Accept-Encoding, Origin");
+
+      const originlessPreflight = await handler(
+        new Request("https://dev.example/api/environment", { method: "OPTIONS" }),
+      );
+      expect(originlessPreflight.status).toBe(204);
+      expect(originlessPreflight.headers.get("access-control-allow-origin")).toBe("*");
+      expect(originlessPreflight.headers.get("vary")).toBe("Origin");
+
+      const allowed = await handler(
+        new Request("https://dev.example/api/environment", {
+          method: "GET",
+          headers: { origin: "http://127.0.0.1:5733" },
+        }),
+      );
+      expect(allowed.headers.get("access-control-allow-origin")).toBe("http://127.0.0.1:5733");
+      expect(allowed.headers.get("access-control-allow-credentials")).toBe("true");
+
+      const disallowed = await handler(
+        new Request("https://dev.example/api/environment", {
+          method: "GET",
+          headers: { origin: "https://evil.example" },
+        }),
+      );
+      expect(disallowed.headers.get("access-control-allow-origin")).toBeNull();
+    } finally {
+      await dispose();
+    }
+  });
+});
+
+describe("desktop readiness proof", () => {
+  // Request handlers read these from the app's own context.
+  const serveRoute = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =>
+    Effect.acquireRelease(
+      Effect.sync(() =>
+        HttpRouter.toWebHandler(
+          ServerHttp.layerDesktopReadinessProofRoute.pipe(
+            Layer.provideMerge(
+              Layer.effect(
+                ServerConfig.ServerConfig,
+                Effect.map(ServerConfig.ServerConfig, (config) => ({ ...config, ...overrides })),
+              ).pipe(
+                Layer.provide(
+                  ServerConfig.layerTest(process.cwd(), { prefix: "http-readiness-test-" }),
+                ),
+              ),
+            ),
+            Layer.provideMerge(NodeCrypto.layerMac),
+            Layer.provide(NodeServices.layer),
+          ),
+          { disableLogger: true },
+        ),
+      ),
+      ({ dispose }) => Effect.promise(() => dispose()),
+    ).pipe(
+      Effect.map(
+        ({ handler }) =>
+          (query: string) =>
+            Effect.promise(() =>
+              handler(
+                new Request(`http://172.20.84.98:3773${DESKTOP_READINESS_PROOF_PATH}${query}`),
+              ),
+            ),
+      ),
+    );
+
+  it.effect("answers a challenge with a proof bound to the launch's readiness secret", () =>
+    Effect.gen(function* () {
+      const get = yield* serveRoute({ desktopReadinessSecret: "launch-secret" });
+
+      const response = yield* get("?challenge=abc123");
+      const proof = yield* Effect.promise(() => response.text());
+
+      expect(response.status).toBe(200);
+      expect(yield* isValidDesktopReadinessProof("launch-secret", "abc123", proof)).toBe(true);
+      expect(yield* isValidDesktopReadinessProof("launch-secret", "other", proof)).toBe(false);
+      expect(yield* isValidDesktopReadinessProof("another-launch", "abc123", proof)).toBe(false);
+      expect(proof).not.toContain("launch-secret");
+
+      expect((yield* get("")).status).toBe(404);
+      expect((yield* get(`?challenge=${"a".repeat(129)}`)).status).toBe(404);
+    }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layerMac)),
+  );
+
+  it.effect("does not answer on a server launched without a readiness secret", () =>
+    Effect.gen(function* () {
+      const get = yield* serveRoute({});
+
+      expect((yield* get("?challenge=abc123")).status).toBe(404);
+    }).pipe(Effect.scoped),
+  );
 });
 
 describe("untraced requests", () => {
-  it.effect("keeps signed asset and upload URLs out of HTTP server spans", () =>
+  it.effect("starts a separate trace for each request, not the server's lifetime trace", () =>
     Effect.gen(function* () {
-      const serverSpans: Array<string> = [];
+      const requestSpans: Array<Tracer.NativeSpan> = [];
       const layerTracer = Layer.succeed(
         Tracer.Tracer,
         Tracer.make({
           span: (options) => {
-            if (options.kind === "server") serverSpans.push(options.name);
-            return new Tracer.NativeSpan(options);
+            const span = new Tracer.NativeSpan(options);
+            if (options.kind === "server") requestSpans.push(span);
+            return span;
           },
         }),
       );
       const layerRoutes = Layer.effectDiscard(
         Effect.gen(function* () {
           const router = yield* HttpRouter.HttpRouter;
-          yield* router.add("GET", `${ASSET_ROUTE_PREFIX}/*`, HttpServerResponse.empty());
-          yield* router.add(
-            "POST",
-            `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
-            HttpServerResponse.empty(),
-          );
           yield* router.add("GET", "/api/environment", HttpServerResponse.empty());
         }),
       );
       const services = yield* Layer.build(
         HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
-          ServerHttp.withUntracedRequests,
+          ServerHttp.withRootRequestSpans,
           Layer.provideMerge(NodeHttpServer.layerTest),
-          Layer.provide(layerTracer),
         ),
-      );
+      ).pipe(Effect.withSpan("server.lifetime"), Effect.provide(layerTracer));
+      // Without a traceparent header, the server alone decides each request's parent.
       const client = Context.get(services, HttpClient.HttpClient);
 
-      // Each URL is a bearer credential: url.full and url.path would carry it.
-      for (const request of [
-        HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
-        HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png?v=1`),
-        HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature`),
-        HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature?v=1`),
-        HttpClientRequest.head(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
-      ]) {
-        expect((yield* client.execute(request)).status).toBe(204);
+      for (let i = 0; i < 2; i++) {
+        yield* client
+          .execute(HttpClientRequest.get("/api/environment"))
+          .pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false));
       }
-      expect(serverSpans).toEqual([]);
-
-      expect((yield* client.execute(HttpClientRequest.get("/api/environment"))).status).toBe(204);
-      expect(serverSpans).toEqual(["GET"]);
-
-      for (const path of [
-        `${ASSET_ROUTE_PREFIX}-other/file`,
-        `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}-other/token`,
-      ]) {
-        expect((yield* client.execute(HttpClientRequest.get(path))).status).toBe(404);
-      }
-      expect(serverSpans).toEqual(["GET", "GET", "GET"]);
+      expect(requestSpans.map((span) => span.parent._tag)).toEqual(["None", "None"]);
+      expect(new Set(requestSpans.map((span) => span.traceId)).size).toBe(2);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
@@ -399,6 +542,8 @@ it.layer(
         expect(response.status).toBe(200);
         expect(yield* response.text).toBe(nextHtml);
         expect(response.headers["cache-control"]).toBe("no-cache");
+        expect(response.headers["content-security-policy"]).toBe("frame-ancestors 'none'");
+        expect(response.headers["x-frame-options"]).toBe("DENY");
         expect(response.headers["etag"]).toBeUndefined();
         expect(response.headers["last-modified"]).toBeUndefined();
       }
@@ -768,12 +913,21 @@ describe("video asset byte ranges", () => {
 });
 
 describe("assetResponseHeaders", () => {
-  it("sandboxes SVG assets", () => {
+  it("sandboxes SVG and other XML assets", () => {
     expect(assetResponseHeaders("/attachments/user-image.svg")).toMatchObject({
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
       "X-Content-Type-Options": "nosniff",
     });
     expect(assetResponseHeaders("/attachments/user-image.SVG")).toHaveProperty(
+      "Content-Security-Policy",
+    );
+    for (const name of ["page.xhtml", "page.XHT", "feed.xml", "sheet.xsl", "feed.rss"]) {
+      expect(assetResponseHeaders(`/workspace/${name}`)).toHaveProperty(
+        "Content-Security-Policy",
+        "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      );
+    }
+    expect(assetResponseHeaders("/workspace/photo.png")).not.toHaveProperty(
       "Content-Security-Policy",
     );
   });

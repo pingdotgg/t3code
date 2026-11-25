@@ -175,6 +175,8 @@ export class DesktopTelemetryReceiver extends Context.Service<
       never,
       Scope.Scope
     >;
+    /** Emits when a desktop shell environment changes this process's PATH; replays the last one. */
+    readonly pathChanges: Stream.Stream<void>;
     readonly health: Effect.Effect<DesktopTelemetryReceiverHealth>;
     readonly subscribeHealth: Effect.Effect<
       {
@@ -187,6 +189,8 @@ export class DesktopTelemetryReceiver extends Context.Service<
     readonly setDiagnosticsDemand: (
       enabled: boolean,
     ) => Effect.Effect<void, DesktopTelemetryControlError>;
+    /** Tells the desktop parent that the server accepts requests, so it can skip readiness polling. */
+    readonly announceServerReady: Effect.Effect<void, DesktopTelemetryControlError>;
     readonly requestDesktopUpdate: (
       requestId: string,
       trackSwitch?: DesktopTrackSwitch,
@@ -395,12 +399,31 @@ export function requireDesktopTelemetryWriteProgress(
     : Effect.fail(new DesktopTelemetryControlStalled({ fd, remainingBytes }));
 }
 
+export const makeDesktopShellEnvironmentUpdates = Effect.fn(
+  "DesktopTelemetryReceiver.makeDesktopShellEnvironmentUpdates",
+)(function* (environment: NodeJS.ProcessEnv, platform: NodeJS.Platform) {
+  const applyShellEnvironment = makeApplyDesktopShellEnvironmentSnapshot(environment, platform);
+  // Replayed, because the provider watcher may subscribe after the snapshot arrived.
+  const pathChanges = yield* Effect.acquireRelease(
+    PubSub.sliding<void>({ capacity: 1, replay: 1 }),
+    PubSub.shutdown,
+  );
+  const readPath = () => environment.PATH ?? environment.Path;
+  // Untraced: applyShellEnvironment already carries this operation's span.
+  const apply = Effect.fnUntraced(function* (message: DesktopShellEnvironmentSnapshot) {
+    const before = readPath();
+    yield* applyShellEnvironment(message);
+    if (readPath() !== before) yield* PubSub.publish(pathChanges, undefined);
+  });
+  return { apply, pathChanges: Stream.fromPubSub(pathChanges) };
+});
+
 /** @public */
 export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const environment = yield* HostProcess.Environment;
   const platform = yield* HostProcess.Platform;
-  const applyShellSnapshot = makeApplyDesktopShellEnvironmentSnapshot(environment, platform);
+  const shellEnvironment = yield* makeDesktopShellEnvironmentUpdates(environment, platform);
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const latest = yield* Ref.make(Option.none<DesktopHostTelemetrySnapshot>());
   const receiverStartedAt = yield* DateTime.now;
@@ -597,7 +620,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
         }
 
         if (message.type === "shellEnvironment") {
-          return recordContact.pipe(Effect.andThen(applyShellSnapshot(message)));
+          return recordContact.pipe(Effect.andThen(shellEnvironment.apply(message)));
         }
 
         if (message.type === "desktopUpdateStatus") {
@@ -704,6 +727,7 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
   return DesktopTelemetryReceiver.of({
     latest: Ref.get(latest),
     changes: Stream.fromPubSub(changes),
+    pathChanges: shellEnvironment.pathChanges,
     subscribe: snapshotMutex.withPermits(1)(
       Effect.gen(function* () {
         const initial = yield* Ref.get(latest);
@@ -717,6 +741,9 @@ export const make = Effect.fn("resourceTelemetry.desktopTelemetryReceiver.make")
     health: Ref.get(health),
     subscribeHealth: subscribeBeforeSnapshotWithoutMutex(healthChanges, Ref.get(health)),
     setDiagnosticsDemand,
+    announceServerReady: sendControlMessage({ version: 1, type: "serverReady" }).pipe(
+      Effect.withSpan("DesktopTelemetryReceiver.announceServerReady"),
+    ),
     requestDesktopUpdate: Effect.fn("DesktopTelemetryReceiver.requestDesktopUpdate")(
       function (requestId, trackSwitch) {
         return sendControlMessage({
@@ -767,6 +794,7 @@ export const layerTest = (
     DesktopTelemetryReceiver.of({
       latest,
       changes,
+      pathChanges: overrides.pathChanges ?? Stream.empty,
       subscribe:
         overrides.subscribe ??
         latest.pipe(
@@ -787,6 +815,7 @@ export const layerTest = (
       setDiagnosticsDemand: Effect.fn("DesktopTelemetryReceiver.setDiagnosticsDemand")(function () {
         return Effect.void;
       }),
+      announceServerReady: Effect.void,
       requestDesktopUpdate: Effect.fn("DesktopTelemetryReceiver.requestDesktopUpdate")(function () {
         return Effect.void;
       }),
