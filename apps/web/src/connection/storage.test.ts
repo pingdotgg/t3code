@@ -62,6 +62,37 @@ describe("ConnectionStorage.makeCatalogStore", () => {
       expect(yield* Effect.flip(store.read)).toBe(failure);
     }),
   );
+
+  it.effect("keeps another tab's save when a tab that loaded earlier saves or reads", () =>
+    Effect.gen(function* () {
+      let stored = encodeCatalog(emptyCatalog);
+      const backend = {
+        read: Effect.sync(() => stored),
+        write: (raw: string) => Effect.sync(() => void (stored = raw)),
+      };
+      const tabs = new Set<() => void>();
+      const tab = () => {
+        let own: (() => void) | undefined;
+        return ConnectionStorage.makeCatalogStore(backend, {
+          postMessage: () => tabs.forEach((listener) => listener !== own && listener()),
+          addEventListener: (_type, listener) => void tabs.add((own = listener)),
+        });
+      };
+      const pinning = yield* tab();
+      const earlier = yield* tab();
+      const quiet = yield* ConnectionStorage.makeCatalogStore(backend);
+      const environmentKeys = [{ environmentId: EnvironmentId.make("env"), publicKey: "a2V5" }];
+      yield* earlier.read;
+      yield* quiet.read;
+
+      yield* pinning.update((document) => ({ ...document, environmentKeys }));
+      expect((yield* earlier.read).environmentKeys).toEqual(environmentKeys);
+
+      const disabledEnvironmentIds = [EnvironmentId.make("other")];
+      yield* quiet.update((document) => ({ ...document, disabledEnvironmentIds }));
+      expect(decodeCatalog(stored)).toMatchObject({ disabledEnvironmentIds, environmentKeys });
+    }),
+  );
 });
 
 const fixedHandle = (database: IDBDatabase) => ({

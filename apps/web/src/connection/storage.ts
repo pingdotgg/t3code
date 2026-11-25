@@ -41,7 +41,6 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -565,17 +564,28 @@ interface CatalogStore {
   ) => Effect.Effect<void, ConnectionTransientError>;
 }
 
+/** Tells this origin's other tabs that the stored catalog changed. */
+export interface CatalogChanges {
+  readonly postMessage: (message: null) => void;
+  readonly addEventListener: (type: "message", listener: () => void) => void;
+}
+
+/**
+ * The catalog holds each environment's pinned identity key, so a tab must not save over another
+ * tab's copy from memory or keep answering from its own: every update starts from what is stored,
+ * and a save in one tab drops the others' cached copy.
+ */
 export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStore")(function* (
   backend: CatalogBackend,
+  changes?: CatalogChanges,
 ) {
-  const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
+  let cached = Option.none<ConnectionCatalogDocumentType>();
   const lock = yield* Semaphore.make(1);
+  changes?.addEventListener("message", () => {
+    cached = Option.none();
+  });
 
-  const loadUnlocked = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
-    const cached = yield* Ref.get(state);
-    if (Option.isSome(cached)) {
-      return cached.value;
-    }
+  const loadStored = Effect.fn("web.connectionStorage.loadCatalog")(function* () {
     const raw = yield* backend.read;
     let catalog = EMPTY_CONNECTION_CATALOG_DOCUMENT;
     if (raw !== null && raw.trim() !== "") {
@@ -607,18 +617,22 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
         ),
       );
     }
-    yield* Ref.set(state, Option.some(catalog));
+    cached = Option.some(catalog);
     return catalog;
   });
 
-  const read = lock.withPermits(1)(loadUnlocked());
+  const read = lock.withPermits(1)(
+    Effect.suspend(() => (Option.isSome(cached) ? Effect.succeed(cached.value) : loadStored())),
+  );
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
-          const next = transform(yield* loadUnlocked());
+          const next = transform(yield* loadStored());
           yield* backend.write(yield* encodeCatalog(next));
-          yield* Ref.set(state, Option.some(next));
+          cached = Option.some(next);
+          // oxlint-disable-next-line unicorn/require-post-message-target-origin -- BroadcastChannel is scoped to the origin
+          changes?.postMessage(null);
         }),
       );
     },
@@ -754,7 +768,11 @@ export const layer = Layer.effectContext(
       makeDatabaseHandle(),
       (owned) => owned.close,
     );
-    const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
+    const catalogChanges = yield* Effect.acquireRelease(
+      Effect.sync(() => new BroadcastChannel("t3code:connection-catalog")),
+      (channel) => Effect.sync(() => channel.close()),
+    );
+    const catalog = yield* makeCatalogStore(makeCatalogBackend(database), catalogChanges);
     const pullRequestRoutingPermissions = makeBrowserPullRequestRoutingPermissions();
     // Remembers each thread row's encoding, so a save only encodes rows that changed.
     const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder({
