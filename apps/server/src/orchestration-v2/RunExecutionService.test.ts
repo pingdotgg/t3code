@@ -1,3 +1,5 @@
+import * as NodeUtil from "node:util";
+
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
@@ -39,6 +41,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -1209,6 +1212,10 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
       id: CheckpointScopeId.make("checkpoint-scope:run-execution-baseline-failure"),
     } as OrchestrationV2CheckpointScope;
     const providerStarts = yield* Ref.make(0);
+    const warnings: string[] = [];
+    const logger = Logger.make(({ logLevel, message }) => {
+      if (logLevel === "Warn") warnings.push(NodeUtil.inspect(message, { depth: 8 }));
+    });
     const writes = yield* Ref.make<
       ReadonlyArray<{
         events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -1296,9 +1303,20 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
           },
         },
       });
-    }).pipe(Effect.provide(layerTest));
+    }).pipe(
+      Effect.provide(
+        layerTest.pipe(Layer.provideMerge(Logger.layer([logger], { mergeWithExisting: false }))),
+      ),
+    );
 
     assert.equal(yield* Ref.get(providerStarts), 1);
+    // The warning is the only record of a dropped baseline, so it has to say why.
+    const baselineWarning = warnings.find((warning) =>
+      warning.includes("checkpoint baseline capture failed"),
+    );
+    assert.isDefined(baselineWarning);
+    assert.include(baselineWarning, "CheckpointBaselineCaptureError");
+    assert.include(baselineWarning, "VCS process timed out");
 
     const events = (yield* Ref.get(writes)).flatMap((write) => [...write.events]);
     const failedEvent = events.find(
