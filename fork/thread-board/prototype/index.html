@@ -267,15 +267,13 @@ html.embed #stage { width: 1280px; }
 .thread-bottom { flex: none; padding-bottom: 16px; }
 .thread-bottom .pending-box { margin-bottom: 8px; }
 
-/* ---------- board ---------- */
+/* ---------- board page ---------- */
 .board { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--background); }
 .board-header {
   height: 52px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 16px;
   border-bottom: 1px solid var(--border); min-width: 0;
 }
-.board-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; flex: none; }
-.board-counts { font-size: 12px; color: var(--muted-foreground); white-space: nowrap; }
-.board-counts b { font-weight: 600; }
+.board-title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; flex: none; }
 .filters { display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .chip-btn {
   display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 9px; border-radius: 8px;
@@ -290,26 +288,32 @@ html.embed #stage { width: 1280px; }
 }
 .search input { border: 0; outline: 0; background: transparent; color: var(--foreground); font: inherit; font-size: 13px; width: 100%; }
 .search:focus-within { border-color: var(--ring); }
-.board-body { flex: 1; display: flex; min-height: 0; }
-.lanes { flex: 1; min-width: 0; display: flex; gap: 10px; padding: 12px 16px 16px; overflow-x: auto; }
-.lane {
-  display: flex; flex-direction: column; flex: 1 1 0; min-width: 284px; max-width: 440px; min-height: 0;
-  background: var(--lane-bg); border: 1px solid var(--border); border-radius: 14px;
+.board-body { position: relative; flex: 1; display: flex; min-height: 0; }
+.swim-scroll { flex: 1; min-width: 0; overflow: auto; padding: 0 16px 24px; }
+.swim { --cols: 3; min-width: calc(var(--cols) * 240px + (var(--cols) - 1) * 10px); }
+.swim-grid { display: grid; grid-template-columns: repeat(var(--cols), minmax(240px, 1fr)); gap: 10px; }
+.swim-cols { position: sticky; top: 0; z-index: 2; background: var(--background); padding: 12px 0 6px; }
+.col-head { display: flex; align-items: center; gap: 8px; padding: 0 4px; font-size: 12.5px; font-weight: 600; }
+.col-head .count { font-weight: 500; color: var(--muted-foreground); font-size: 12px; }
+.lane-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone); flex: none; }
+.swim-row { margin-top: 10px; }
+.swim-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 6px; border: 0; border-radius: 8px;
+  background: transparent; cursor: pointer; text-align: left; font-size: 13px; font-weight: 600;
 }
-.lane-head { display: flex; align-items: center; gap: 8px; padding: 11px 12px 7px; font-size: 12.5px; font-weight: 600; flex: none; }
-.lane-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--tone); }
-.lane-head .count { font-weight: 500; color: var(--muted-foreground); font-size: 12px; }
-.lane-head .hint { font-weight: 400; color: var(--muted-foreground); font-size: 11px; margin-left: auto; }
-.lane-list { flex: 1; overflow-y: auto; padding: 4px 8px 10px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-.lane-empty {
-  border: 1px dashed var(--border); border-radius: 10px; padding: 16px 12px; text-align: center;
-  font-size: 12px; color: var(--muted-foreground);
-}
-.lane-foot { font-size: 11px; color: var(--muted-foreground); text-align: center; padding: 2px 0 4px; }
+.swim-head:hover { background: var(--accent); }
+.swim-head:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.swim-head .chev { color: var(--muted-foreground); transition: transform 120ms; }
+.swim-row.collapsed .swim-head .chev { transform: rotate(-90deg); }
+.swim-head .mini { font-weight: 400; font-size: 12px; color: var(--muted-foreground); display: inline-flex; gap: 10px; margin-left: 4px; }
+.swim-head .mini span { display: inline-flex; align-items: center; gap: 5px; }
+.swim-row.collapsed .swim-cells { display: none; }
+.cell { background: var(--lane-bg); border: 1px solid var(--border); border-radius: 12px; padding: 6px; display: flex; flex-direction: column; gap: 6px; min-height: 52px; }
+.cell:empty { background: transparent; border-style: dashed; }
 
 .card {
-  position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 12px;
-  padding: 11px 12px 10px; display: flex; flex-direction: column; gap: 6px; cursor: pointer;
+  position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 11px 10px; display: flex; flex-direction: column; gap: 5px; cursor: pointer;
   box-shadow: var(--shadow-card); transition: border-color 120ms, box-shadow 120ms; flex: none;
 }
 .card:hover { border-color: color-mix(in srgb, var(--foreground) 20%, transparent); }
@@ -320,56 +324,36 @@ html.embed #stage { width: 1280px; }
   0% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 45%, transparent); }
   100% { box-shadow: 0 0 0 0 transparent; }
 }
-.card-top { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted-foreground); min-width: 0; }
-.card-top .project { color: var(--foreground); font-weight: 500; flex: none; }
-.card-top .branch { font-family: var(--font-mono); font-size: 10.5px; }
-.card-top .time { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
-.card-title { font-size: 14px; line-height: 1.35; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; }
+.card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.card-head .time { margin-left: auto; flex: none; font-size: 11.5px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.card-title { font-size: 13.5px; line-height: 1.35; font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; min-width: 0; }
 .status .dur { font-weight: 400; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 .card-now { font-size: 12.5px; line-height: 1.45; color: var(--muted-foreground); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.lane[data-lane="done"] .card-now { -webkit-line-clamp: 1; }
-.lane[data-lane="done"] .card { background: color-mix(in srgb, var(--card) 70%, transparent); }
 .asked {
   font-size: 12.5px; line-height: 1.45; border-radius: 8px; padding: 7px 9px;
   background: color-mix(in srgb, var(--tone) 9%, transparent);
   border: 1px solid color-mix(in srgb, var(--tone) 26%, transparent);
   color: var(--foreground);
 }
-.asked .lbl { font-weight: 600; color: var(--tone-fg); margin-right: 4px; }
-.asked.tone-warning { --tone-fg: var(--warning-foreground); }
-.asked.tone-input { --tone-fg: var(--input-foreground); }
-.asked.tone-error { --tone-fg: var(--error-foreground); }
 .asked .q { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .asked .quick { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
-.card-foot { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 11px; color: var(--muted-foreground); margin-top: 1px; }
-.card-foot .model { margin-left: auto; white-space: nowrap; }
-.card-ghost { pointer-events: none; z-index: 85; box-shadow: var(--shadow-float); }
+.card-foot { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 
-/* ---------- overlay ---------- */
-.overlay { position: fixed; inset: 0; z-index: 60; background: var(--backdrop); display: flex; padding: 20px; }
-.overlay.animate { animation: fade-in 140ms ease-out 1; }
-.overlay-sheet {
-  flex: 1; min-width: 0; border-radius: 16px; overflow: hidden; border: 1px solid var(--border);
-  box-shadow: var(--shadow-float); background: var(--background);
-}
-.overlay.animate .overlay-sheet { animation: sheet-in 200ms var(--ease-drawer) 1; }
-@keyframes fade-in { from { opacity: 0; } }
-@keyframes sheet-in { from { opacity: 0; transform: translateY(8px) scale(0.99); } }
-
-/* ---------- peek ---------- */
-.peek-panel { width: 420px; flex: none; border-left: 1px solid var(--border); background: var(--card); min-height: 0; display: flex; }
-.peek-panel[hidden] { display: none; }
-.popover-peek {
-  position: fixed; z-index: 70; width: 400px; max-height: min(680px, calc(var(--app-h) - 24px)); display: flex;
+/* ---------- peek (side panel, popover look) ---------- */
+.peek-panel {
+  width: 400px; flex: none; margin: 8px 8px 8px 0; display: flex; min-height: 0;
   background: var(--popover); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-float); overflow: hidden;
-  animation: pop-in 140ms var(--ease-drawer) 1;
+  animation: panel-in 160ms var(--ease-drawer) 1;
 }
-@keyframes pop-in { from { opacity: 0; transform: scale(0.98); } }
+.peek-panel.float { position: absolute; right: 0; top: 0; bottom: 0; z-index: 5; }
+.peek-panel[hidden] { display: none; }
+@keyframes panel-in { from { opacity: 0; transform: translateX(12px); } }
+
 .peek { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
 .peek-scroll { flex: 1; overflow-y: auto; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
 .peek-top { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted-foreground); min-width: 0; }
-.peek-top .project { color: var(--foreground); font-weight: 500; }
+.peek-top .project { color: var(--foreground); font-weight: 500; white-space: nowrap; }
 .peek-title { font-size: 16px; font-weight: 600; line-height: 1.35; margin: 6px 0 6px; }
 .peek-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted-foreground); }
 .sec-title { font-size: 11.5px; font-weight: 600; color: var(--muted-foreground); margin: 0 0 6px; display: flex; align-items: center; gap: 6px; }
@@ -425,11 +409,23 @@ html.embed #stage { width: 1280px; }
 }
 .send:hover { background: color-mix(in srgb, var(--primary) 88%, var(--background)); }
 
+
+/* ---------- new thread (stub) ---------- */
+.new-thread { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; }
+.new-thread h2 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+.new-thread .thread-col { width: 100%; }
+.project-pick { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
+.settled-box { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px 8px 12px; margin-bottom: 8px; }
+.toast { display: flex; align-items: center; gap: 10px; pointer-events: auto; }
+.lane-empty { border: 1px dashed var(--border); border-radius: 10px; padding: 16px 12px; text-align: center; font-size: 12px; color: var(--muted-foreground); }
+.sb-folder-head .sb-folder-new { width: 22px; height: 22px; opacity: 0; }
+.sb-folder:hover .sb-folder-new, .sb-folder-new:focus-visible { opacity: 1; }
+
 /* ---------- toasts + prototype controls ---------- */
 .toasts { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 95; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
 .toast { background: var(--popover); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 13px; box-shadow: var(--shadow-float); animation: pop-in 140ms ease-out 1; }
 .proto {
-  position: fixed; right: 16px; bottom: 16px; z-index: 90; width: 292px; max-height: calc(var(--app-h) - 32px); overflow-y: auto;
+  position: fixed; left: 8px; bottom: 52px; z-index: 90; width: 292px; max-height: calc(var(--app-h) - 32px); overflow-y: auto;
   background: var(--popover); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-float); font-size: 12px;
 }
 .proto-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px 8px 12px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--popover); }
@@ -439,7 +435,8 @@ html.embed #stage { width: 1280px; }
 .proto-sim { display: flex; gap: 6px; }
 .proto-sim .btn { flex: 1; }
 .proto-note { font-size: 11px; color: var(--muted-foreground); line-height: 1.45; }
-.proto.collapsed { width: auto; }
+.proto.collapsed { width: 248px; }
+.proto.collapsed .proto-head { gap: 4px; }
 .proto.collapsed .proto-head { border-bottom: 0; padding: 6px 6px 6px 12px; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -458,8 +455,6 @@ html.embed #stage { width: 1280px; }
   <aside class="sidebar" id="sidebar"></aside>
   <main class="main" id="main"></main>
 </div>
-<div id="overlay-root"></div>
-<div id="popover-root"></div>
 <div class="toasts" id="toasts"></div>
 <div id="proto-root"></div>
 </div></div>
@@ -781,50 +776,52 @@ function spawnThread() {
 }
 
 /* ================= settings ================= */
-const DEFAULTS = { theme: "system", boardMode: "overlay", peekMode: "panel", entry: "icon", summary: "state", failedLane: "needs", failingChecks: "ready", cardActions: "off" };
+const DEFAULTS = { theme: "system", peekLayout: "push", entry: "icon", summary: "state" };
 function loadSettings() {
-  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("thread-board-proto") || "{}") }; } catch { return { ...DEFAULTS }; }
+  try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem("thread-board-proto-v2") || "{}") }; } catch { return { ...DEFAULTS }; }
 }
 function saveSettings() {
-  try { localStorage.setItem("thread-board-proto", JSON.stringify(S.set)); } catch {}
+  try { localStorage.setItem("thread-board-proto-v2", JSON.stringify(S.set)); } catch {}
 }
 
 /* ================= state ================= */
 const S = {
   set: loadSettings(),
   threads: seed(),
-  boardOpen: true,
+  view: "board", // "board" | "thread" | "new"
   peekId: null,
   currentId: "t1",
+  newProject: "t3code",
   cameFromBoard: false,
   filter: "all",
   query: "",
+  collapsed: new Set(),
   flash: new Set(),
   ticks: 0,
+  newCount: 0,
   playing: false,
   timer: null,
   drafts: {},
   protoOpen: false,
+  scale: 1,
 };
 const byId = (id) => S.threads.find((t) => t.id === id);
 const NEEDS = new Set(["approval", "input", "failed", "limited"]);
 const RUNNING = new Set(["preparing", "working", "waiting"]);
 
 const LANES = [
-  { id: "needs", name: "Needs you", tone: "tone-warning", empty: "Nothing is waiting on you." },
-  { id: "failed", name: "Failed", tone: "tone-error", empty: "No failed turns." },
-  { id: "working", name: "Working", tone: "tone-info", empty: "No agents running." },
-  { id: "ready", name: "Ready for review", tone: "tone-success", empty: "Nothing to review." },
-  { id: "done", name: "Done", tone: "tone-muted", empty: "Nothing finished yet." },
+  { id: "needs", name: "Needs you", tone: "tone-warning" },
+  { id: "working", name: "Working", tone: "tone-info" },
+  { id: "ready", name: "Ready for review", tone: "tone-success" },
 ];
-const activeLanes = () => LANES.filter((l) => l.id !== "failed" || S.set.failedLane === "own");
+const checksFailing = (t) => t.status === "ready" && t.pr?.state === "open" && t.pr.checks?.status === "failing";
 
+// Done (merged or settled) threads leave the board; the sidebar still lists them.
 function laneOf(t) {
-  if (t.status === "failed") return S.set.failedLane === "own" ? "failed" : "needs";
-  if (NEEDS.has(t.status)) return "needs";
+  if (NEEDS.has(t.status) || checksFailing(t)) return "needs";
   if (RUNNING.has(t.status)) return "working";
-  if (t.status === "ready") return t.pr?.checks?.status === "failing" && S.set.failingChecks === "needs" ? "needs" : "ready";
-  return "done";
+  if (t.status === "ready") return "ready";
+  return null;
 }
 
 function statusMeta(t) {
@@ -837,7 +834,7 @@ function statusMeta(t) {
     case "failed": return { label: "Failed", icon: "alert", tone: "tone-error" };
     case "limited": return { label: "Limited", icon: "alert", tone: "tone-warning" };
     case "ready": {
-      const c = t.pr?.checks?.status;
+      const c = t.pr?.state === "open" ? t.pr.checks?.status : null;
       if (c === "failing") return { label: "Checks failing", icon: "xCircle", tone: "tone-error" };
       if (c === "running") return { label: "Checks running", icon: "dashed", tone: "tone-info" };
       return { label: "Ready", icon: "checkCircle", tone: "tone-success" };
@@ -846,7 +843,13 @@ function statusMeta(t) {
       return t.doneKind === "merged" ? { label: "Merged", icon: "merge", tone: "tone-merged" } : { label: "Settled", icon: "checkCheck", tone: "tone-muted" };
   }
 }
-const nowText = (t) => (S.set.summary === "llm" ? t.now.llm : t.now.state);
+// The grey line only says something the status doesn't: what a running agent is doing,
+// or what a finished turn produced. Waiting cards show the request itself instead.
+function cardLine(t) {
+  if (RUNNING.has(t.status)) return S.set.summary === "llm" ? t.now.llm : t.now.state;
+  if (t.status === "ready" && !checksFailing(t)) return S.set.summary === "llm" ? t.now.llm : t.summary.state || t.now.state;
+  return "";
+}
 
 /* ================= simulation ================= */
 function applyStep(t, step) {
@@ -873,7 +876,7 @@ function tick() {
     update();
     return;
   }
-  const cands = S.threads.filter((t) => t.script.length && !NEEDS.has(t.status));
+  const cands = S.threads.filter((t) => t.script.length && !NEEDS.has(t.status) && !checksFailing(t));
   if (!cands.length) {
     toast("Nothing left to simulate. Act on a card, or reset.");
     setPlaying(false);
@@ -899,25 +902,49 @@ const genericReady = () => ({ status: "ready", now: { state: "Turn finished", ll
 function startFollowUp(t, text, fromQueue = false) {
   t.followups.push(text);
   const short = text.length > 70 ? text.slice(0, 68) + "…" : text;
-  resume(t, { status: "working", pending: null, now: { state: `Working on: “${short}”`, llm: `Following up on your note: ${short}` }, activity: fromQueue ? "Started queued follow-up" : "You sent a follow-up" });
+  resume(t, { status: "working", pending: null, doneKind: null, now: { state: `Working on: “${short}”`, llm: `Following up on your note: ${short}` }, activity: fromQueue ? "Started queued follow-up" : "You sent a follow-up" });
+}
+
+function createThread(project, text) {
+  const n = ++S.newCount;
+  const title = text.length > 56 ? text.slice(0, 54).trimEnd() + "…" : text;
+  const slug = text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 28) || `thread-${n}`;
+  const t = {
+    id: `n${n}`, project, title, branch: `t3/${slug}`, model: "Claude · Opus 5.5", status: "preparing",
+    startedAt: Date.now(), lastAt: Date.now(), prompt: text, source: null,
+    now: { state: `Creating worktree \`t3/${slug}\``, llm: "Setting up a worktree." },
+    summary: { state: "", llm: ["Just started."] }, activity: ["Created worktree"],
+    pending: null, diff: null, pr: null, queued: [], followups: [], doneKind: null, onResume: null,
+    script: [
+      { status: "working", now: { state: "Reading the files your prompt mentions", llm: "Reading the relevant code." }, activity: "Read 6 files" },
+      { status: "ready", now: { state: "Turn finished · 2 files changed", llm: "First pass done. Ready to review." },
+        diff: diffOf([["src/index.ts", 24, 6], ["src/index.test.ts", 31, 0]]),
+        summary: { state: "Done with a first pass. I kept the change small and added a test.", llm: ["First pass done; small change plus a test."] }, activity: "Turn finished" },
+    ],
+  };
+  S.threads.push(t);
+  S.flash.add(t.id);
+  return t;
 }
 
 /* ================= actions ================= */
 const ACTIONS = {
-  "toggle-board": () => setBoard(!S.boardOpen),
-  "close-board": () => setBoard(false),
+  "toggle-board": () => go(S.view === "board" ? "thread" : "board"),
+  back: () => go("thread"),
+  "back-to-board": () => go("board"),
   "close-peek": () => { S.peekId = null; },
   "open-thread": (d) => openThread(d.id),
-  "back-to-board": () => { S.cameFromBoard = false; setBoard(true); },
-  "sidebar-thread": (d) => { S.currentId = d.id; S.cameFromBoard = false; S.peekId = null; S.boardOpen = false; },
+  "sidebar-thread": (d) => { S.currentId = d.id; S.cameFromBoard = false; go("thread"); },
+  "new-thread": (d) => { S.newProject = d.project || byId(S.currentId)?.project || "t3code"; go("new"); requestAnimationFrame(() => document.querySelector('[data-composer="new"]')?.focus()); },
+  "pick-project": (d) => { S.newProject = d.project; },
+  "toggle-row": (d) => { S.collapsed.has(d.project) ? S.collapsed.delete(d.project) : S.collapsed.add(d.project); },
   approve: (d) => {
     const t = byId(d.id);
     const cmd = t.pending.command.split("\n")[0].replace(/\s*\\$/, "");
     resume(t, { status: "working", pending: null, now: { state: `Running \`${cmd}\``, llm: d.mode === "always" ? "Approved for this session; continuing." : "Approved; continuing." }, activity: d.mode === "always" ? "You approved (this session)" : "You approved" });
   },
   deny: (d) => {
-    const t = byId(d.id);
-    resume(t, { status: "working", pending: null, now: { state: "Approval denied · looking for another way", llm: "You declined; the agent is trying another approach." }, activity: "You declined" });
+    resume(byId(d.id), { status: "working", pending: null, now: { state: "Approval denied · looking for another way", llm: "You declined; the agent is trying another approach." }, activity: "You declined" });
   },
   answer: (d) => {
     const t = byId(d.id);
@@ -925,22 +952,28 @@ const ACTIONS = {
     t.followups.push(opt.label);
     resume(t, { status: "working", pending: null, now: { state: `Continuing with “${opt.label}”`, llm: `Going with “${opt.label}”.` }, activity: `You answered: ${opt.label}` });
   },
-  retry: (d) => {
-    const t = byId(d.id);
-    resume(t, { status: "preparing", pending: null, now: { state: "Retrying the turn", llm: "Retrying." }, activity: "You retried" });
-  },
+  retry: (d) => resume(byId(d.id), { status: "preparing", pending: null, now: { state: "Retrying the turn", llm: "Retrying." }, activity: "You retried" }),
   "switch-model": (d) => {
     const t = byId(d.id);
     resume(t, { status: "working", pending: null, model: t.pending.alt, now: { state: `Continuing on ${t.pending.alt}`, llm: `Switched to ${t.pending.alt} and picked up where it stopped.` }, activity: `Switched to ${t.pending.alt}` });
   },
   "wait-limit": (d) => toast(`Resumes automatically at ${byId(d.id).pending.resets} (simulated)`),
+  "fix-checks": (d) => {
+    const t = byId(d.id);
+    startFollowUp(t, `Fix the failing checks: ${t.pr.checks.failed.join(", ")}`);
+  },
   stop: (d) => {
     const t = byId(d.id);
     t.script = [];
     applyStep(t, { status: "ready", now: { state: "Stopped by you", llm: "You stopped this turn." }, activity: "You stopped the turn" });
   },
-  settle: (d) => applyStep(byId(d.id), { status: "done", doneKind: "settled", now: { state: "Settled by you", llm: byId(d.id).now.llm }, activity: "You settled the thread" }),
-  reopen: (d) => applyStep(byId(d.id), { status: "ready", doneKind: null, now: { state: "Reopened by you", llm: byId(d.id).now.llm }, activity: "You reopened the thread" }),
+  settle: (d) => {
+    const t = byId(d.id);
+    if (S.peekId === t.id) S.peekId = null;
+    applyStep(t, { status: "done", doneKind: "settled", activity: "You settled the thread" });
+    toast(`Settled “${t.title}”`, { label: "Undo", action: "reopen", id: t.id });
+  },
+  reopen: (d) => applyStep(byId(d.id), { status: "ready", doneKind: null, activity: "You reopened the thread" }),
   "open-pr": (d) => toast(`Opens PR #${byId(d.id).pr.number} in the browser (simulated)`),
   "create-pr": (d) => {
     const t = byId(d.id);
@@ -960,7 +993,7 @@ const ACTIONS = {
   play: () => setPlaying(!S.playing),
   reset: () => {
     setPlaying(false);
-    Object.assign(S, { threads: seed(), ticks: 0, peekId: null, drafts: {}, currentId: "t1", filter: "all", query: "" });
+    Object.assign(S, { threads: seed(), ticks: 0, newCount: 0, peekId: null, drafts: {}, currentId: "t1", filter: "all", query: "", collapsed: new Set() });
     const q = document.querySelector("#board-search");
     if (q) q.value = "";
     toast("Reset to the starting data");
@@ -968,26 +1001,35 @@ const ACTIONS = {
   "toggle-proto": () => { S.protoOpen = !S.protoOpen; renderProto(); },
   noop: (d) => toast(d.msg || "Not part of this prototype"),
 };
+// These actions render on their own; every other action re-renders after it runs.
+const SELF_UPDATING = new Set(["toggle-board", "back", "back-to-board", "sidebar-thread", "new-thread", "tick", "send", "toggle-proto", "play"]);
 
-function setBoard(open) {
-  S.boardOpen = open;
-  S.animateOpen = open;
-  if (!open) S.peekId = null;
+function go(view) {
+  S.view = view;
+  if (view !== "board") S.peekId = null;
+  if (view === "board") S.cameFromBoard = false;
   update();
-  if (open) requestAnimationFrame(() => document.querySelector('#lanes [data-card]')?.focus({ preventScroll: true }));
+  if (view === "board") requestAnimationFrame(() => document.querySelector("#swim [data-card]")?.focus({ preventScroll: true }));
 }
 function openThread(id) {
   S.currentId = id;
   S.cameFromBoard = true;
   S.peekId = null;
-  S.boardOpen = false;
+  S.view = "thread";
 }
 function send(id) {
-  const t = byId(id);
   const text = (S.drafts[id] ?? "").trim();
   if (!text) return;
   S.drafts[id] = "";
   document.querySelectorAll(`[data-composer="${id}"]`).forEach((el) => (el.value = ""));
+  if (id === "new") {
+    const t = createThread(S.newProject, text);
+    S.currentId = t.id;
+    S.cameFromBoard = false;
+    go("thread");
+    return;
+  }
+  const t = byId(id);
   if (RUNNING.has(t.status)) {
     t.queued.push(text);
     S.flash.add(t.id);
@@ -1002,11 +1044,10 @@ function send(id) {
 // Screen rect → stage coordinates (the stage may be scaled in embed mode).
 function local(r) {
   const k = S.scale || 1;
-  return { left: r.left / k, top: r.top / k, right: r.right / k, width: r.width / k, height: r.height / k };
+  return { left: r.left / k, top: r.top / k };
 }
 function ensure(el, key, build) {
-  if (!el) return false;
-  if (el.dataset.key === key) return false;
+  if (!el || el.dataset.key === key) return false;
   el.dataset.key = key;
   el.innerHTML = build();
   return true;
@@ -1014,182 +1055,182 @@ function ensure(el, key, build) {
 const statusHtml = (t, withDur = true) => {
   const m = statusMeta(t);
   const d = withDur && m.since ? ` <span class="dur" data-since="${m.since}">${dur(Date.now() - m.since)}</span>` : "";
-  return `<span class="status ${m.tone}">${icon(m.icon, "i-sm")}<span>${m.label}</span>${d}</span>`;
+  return `<span class="status ${m.tone}">${icon(m.icon, "i-sm")}<span class="truncate">${m.label}</span>${d}</span>`;
 };
 const favHtml = (p) => `<span class="fav" style="--fav:${p.color}">${p.letter}</span>`;
 
 function prChip(t) {
   if (!t.pr) return "";
   const c = t.pr.checks;
-  const prIcon = t.pr.state === "merged" ? `<span class="tone-merged" style="display:inline-flex">${icon("merge", "i-xs")}</span>` : `<span class="tone-success" style="display:inline-flex">${icon("pr", "i-xs")}</span>`;
+  const merged = t.pr.state === "merged";
+  const prIcon = `<span class="${merged ? "tone-merged" : "tone-success"}" style="display:inline-flex">${icon(merged ? "merge" : "pr", "i-xs")}</span>`;
   let checks = "";
-  if (t.pr.state !== "merged" && c) {
-    checks = c.status === "failing" ? ` <span class="tone-error">${c.failed.length} failing</span>`
+  if (!merged && c) {
+    checks = c.status === "failing" ? ""
       : c.status === "running" ? ` <span class="tone-info">${c.done}/${c.total}</span>`
-      : ` <span class="tone-success">${icon("check", "i-xs")}</span>`;
+      : ` <span class="tone-success" style="display:inline-flex">${icon("check", "i-xs")}</span>`;
   }
   return `<span class="chip">${prIcon}#${t.pr.number}${checks}</span>`;
 }
 const diffChip = (t) => (t.diff ? `<span class="chip"><span class="add">+${t.diff.add}</span><span class="del">−${t.diff.del}</span></span>` : "");
 
-function askedHtml(t, quick) {
+function askedHtml(t) {
   const p = t.pending;
-  if (!p) return "";
-  let tone, label, body, btns = "";
-  if (p.kind === "approval") {
-    tone = "tone-warning"; label = "Asked:";
-    body = `${esc(p.title)}: <code>${esc(p.command.split("\n")[0].replace(/\s*\\$/, ""))}</code>`;
+  let tone, body, btns;
+  if (checksFailing(t)) {
+    tone = "tone-error";
+    body = `${t.pr.checks.failed.map((f) => `<code>${esc(f)}</code>`).join(" ")} failing on #${t.pr.number}`;
+    btns = `<button class="btn btn-sm btn-primary" data-action="fix-checks" data-id="${t.id}">Fix checks</button><button class="btn btn-sm" data-action="open-pr" data-id="${t.id}">Open PR</button>`;
+  } else if (!p) {
+    return "";
+  } else if (p.kind === "approval") {
+    tone = "tone-warning";
+    body = `<code>${esc(p.command.split("\n")[0].replace(/\s*\\$/, ""))}</code>`;
     btns = `<button class="btn btn-sm btn-primary" data-action="approve" data-id="${t.id}">Approve</button><button class="btn btn-sm" data-action="deny" data-id="${t.id}">Deny</button>`;
   } else if (p.kind === "input") {
-    tone = "tone-input"; label = "Asked:"; body = esc(p.question);
+    tone = "tone-input"; body = esc(p.question);
     btns = p.options.map((o, i) => `<button class="btn btn-sm" data-action="answer" data-id="${t.id}" data-idx="${i}">${esc(o.label)}</button>`).join("");
   } else if (p.kind === "failed") {
-    tone = "tone-error"; label = "Error:"; body = fmt(p.message);
+    tone = "tone-error"; body = fmt(p.message);
     btns = `<button class="btn btn-sm" data-action="retry" data-id="${t.id}">${icon("reset", "i-xs")}Retry</button>`;
   } else {
-    tone = "tone-warning"; label = "Limit:"; body = `${esc(p.message)} Resets at ${esc(p.resets)}.`;
+    tone = "tone-warning"; body = `${esc(p.message)} Resets at ${esc(p.resets)}.`;
     btns = `<button class="btn btn-sm" data-action="switch-model" data-id="${t.id}">Continue on ${esc(p.alt)}</button>`;
   }
-  return `<div class="asked ${tone}"><div class="q"><span class="lbl">${label}</span>${body}</div>${quick ? `<div class="quick">${btns}</div>` : ""}</div>`;
+  return `<div class="asked ${tone}"><div class="q">${body}</div><div class="quick">${btns}</div></div>`;
 }
 
 /* ================= sidebar ================= */
 function renderSidebar() {
   const el = document.getElementById("sidebar");
+  const keepScroll = el.querySelector(".sb-scroll")?.scrollTop ?? 0;
+  const onBoard = S.view === "board";
   const needs = S.threads.filter((t) => laneOf(t) === "needs").length;
   const working = S.threads.filter((t) => RUNNING.has(t.status)).length;
   const folders = PROJECT_ORDER.map((pid) => {
     const p = PROJECTS[pid];
     const rows = S.threads.filter((t) => t.project === pid).sort((a, b) => b.lastAt - a.lastAt).map((t) => {
-      const active = !S.boardOpen || S.set.boardMode === "overlay" ? t.id === S.currentId : false;
+      const active = S.view === "thread" && t.id === S.currentId;
       let trail;
       if (t.status === "ready") trail = `<span class="sb-status tone-success">${icon("checkCircle", "i-xs")}Done</span>`;
       else if (t.status === "done") trail = `<span class="sb-time">${rel(t.lastAt)}</span>`;
       else { const m = statusMeta(t); trail = `<span class="sb-status ${m.tone}">${icon(m.icon, "i-xs")}${m.label}</span>`; }
       return `<button class="sb-row ${active ? "active" : ""} ${t.status === "done" ? "recede" : ""}" data-action="sidebar-thread" data-id="${t.id}"><span class="sb-title">${esc(t.title)}</span>${trail}</button>`;
     }).join("");
-    return `<div class="sb-folder"><div class="sb-folder-head">${favHtml(p)}${p.name}</div>${rows}</div>`;
+    return `<div class="sb-folder"><div class="sb-folder-head">${favHtml(p)}<span class="spacer">${p.name}</span><button class="btn btn-ghost btn-icon btn-sm sb-folder-new" data-action="new-thread" data-project="${pid}" title="New thread in ${p.name}">${icon("pen", "i-xs")}</button></div>${rows}</div>`;
   }).join("");
-  const boardBtn = `<button class="sb-util is-new ${S.boardOpen ? "on" : ""}" data-action="toggle-board" title="Board (${MOD}⇧B)" aria-label="Board">${icon("board")}${needs ? `<span class="badge-count">${needs}</span>` : ""}</button>`;
-  const boardRow = `<button class="sb-board-row ${S.boardOpen ? "on" : ""}" data-action="toggle-board" title="Board (${MOD}⇧B)">${icon("board")}<span>Board</span><span class="spacer"></span>${needs ? `<span class="sb-status tone-warning">${needs} need you</span>` : ""}<span class="sb-time">${working} running</span></button>`;
-  const keepScroll = el.querySelector(".sb-scroll")?.scrollTop ?? 0;
-  el.innerHTML = `
-    <div class="sb-header"><span class="sb-brand">T3 Code<small>fork</small></span><span class="spacer"></span>
-      <button class="btn btn-ghost btn-icon btn-sm" data-action="noop" data-msg="New thread isn't part of this prototype" title="New thread">${icon("pen")}</button></div>
-    <div class="sb-scroll">${folders}</div>
-    ${S.set.entry === "row" ? boardRow : ""}
-    <div class="sb-footer">
-      ${S.set.entry === "icon" ? boardBtn : ""}
+  const boardBtn = `<button class="sb-util is-new" data-action="toggle-board" title="Board (${MOD}⇧B)" aria-label="Board">${icon("board")}${needs ? `<span class="badge-count">${needs}</span>` : ""}</button>`;
+  const boardRow = `<button class="sb-board-row ${onBoard ? "on" : ""}" data-action="toggle-board" title="Board (${MOD}⇧B)">${icon("board")}<span>Board</span><span class="spacer"></span>${needs ? `<span class="sb-status tone-warning">${needs} need you</span>` : ""}<span class="sb-time">${working} running</span></button>`;
+  // Like the Pull requests page: on the board, the footer's utility icons become "Back".
+  const footer = onBoard
+    ? `<button class="sb-row" data-action="back">${icon("arrowLeft", "i-sm")}<span class="sb-title">Back</span></button>`
+    : `${S.set.entry === "icon" ? boardBtn : ""}
       <button class="sb-util" data-action="noop" title="Settings">${icon("settings")}</button>
       <button class="sb-util" data-action="noop" title="Pull requests">${icon("pr")}</button>
       <button class="sb-util" data-action="noop" title="Issues">${icon("issue")}</button>
-      <button class="sb-util" data-action="noop" title="Usage">${icon("usage")}</button>
-    </div>`;
+      <button class="sb-util" data-action="noop" title="Usage">${icon("usage")}</button>`;
+  el.innerHTML = `
+    <div class="sb-header"><span class="sb-brand">T3 Code<small>fork</small></span><span class="spacer"></span>
+      <button class="btn btn-ghost btn-icon btn-sm" data-action="new-thread" title="New thread">${icon("pen")}</button></div>
+    <div class="sb-scroll">${folders}</div>
+    ${S.set.entry === "row" ? boardRow : ""}
+    <div class="sb-footer">${footer}</div>`;
   el.querySelector(".sb-scroll").scrollTop = keepScroll;
 }
 
 /* ================= board ================= */
-function boardShellHtml(mode) {
+function boardShellHtml() {
   return `<div class="board">
     <header class="board-header">
       <div class="board-title">${icon("board")}Board</div>
-      <div class="board-counts" id="board-counts"></div>
       <div class="filters" id="board-filters"></div>
       <span class="spacer"></span>
       <label class="search">${icon("search", "i-sm")}<input id="board-search" placeholder="Filter threads" value="${esc(S.query)}" /></label>
-      ${mode === "overlay" ? `<button class="btn btn-ghost btn-sm" data-action="close-board" title="Close (Esc)">${icon("x", "i-sm")}<span class="kbd">Esc</span></button>` : ""}
     </header>
     <div class="board-body">
-      <div class="lanes" id="lanes"></div>
+      <div class="swim-scroll" id="swim-scroll"><div class="swim" id="swim"></div></div>
       <aside class="peek-panel" id="peek-panel" hidden></aside>
     </div>
   </div>`;
 }
-function visibleThreads() {
+function boardThreads() {
   const q = S.query.trim().toLowerCase();
-  return S.threads.filter((t) => (S.filter === "all" || t.project === S.filter) && (!q || `${t.title} ${PROJECTS[t.project].name} ${t.branch}`.toLowerCase().includes(q)));
+  return S.threads.filter((t) => laneOf(t) && (S.filter === "all" || t.project === S.filter) && (!q || `${t.title} ${PROJECTS[t.project].name} ${t.branch}`.toLowerCase().includes(q)));
 }
 function cardHtml(t) {
-  const p = PROJECTS[t.project];
-  const lane = laneOf(t);
-  const quick = S.set.cardActions === "on" && lane === "needs";
+  const line = cardLine(t);
   const queued = t.queued.length ? `<span class="chip"><span class="tone-info">${t.queued.length} queued</span></span>` : "";
   const source = t.source ? `<span class="chip" title="${esc(t.source)}">${icon("calendar", "i-xs")}Scheduled</span>` : "";
+  const foot = prChip(t) + diffChip(t) + queued + source;
   return `<div class="card ${S.peekId === t.id ? "is-active" : ""} ${S.flash.has(t.id) ? "is-changed" : ""}" data-card="${t.id}" tabindex="0" role="button" aria-label="${esc(t.title)}">
-    <div class="card-top">${favHtml(p)}<span class="project">${p.name}</span><span class="branch truncate">${esc(t.branch)}</span><span class="time" data-rel="${t.lastAt}">${rel(t.lastAt)}</span></div>
+    <div class="card-head">${statusHtml(t)}<span class="time" data-rel="${t.lastAt}">${rel(t.lastAt)}</span></div>
     <div class="card-title">${esc(t.title)}</div>
-    ${statusHtml(t)}
-    <div class="card-now">${fmt(nowText(t))}</div>
-    ${askedHtml(t, quick)}
-    <div class="card-foot">${prChip(t)}${diffChip(t)}${queued}${source}<span class="model">${esc(t.model)}</span></div>
+    ${line ? `<div class="card-now">${fmt(line)}</div>` : ""}
+    ${laneOf(t) === "needs" ? askedHtml(t) : ""}
+    ${foot ? `<div class="card-foot">${foot}</div>` : ""}
   </div>`;
 }
-function lanesHtml() {
-  const lanes = activeLanes();
-  const groups = Object.fromEntries(lanes.map((l) => [l.id, []]));
-  for (const t of visibleThreads()) groups[laneOf(t)]?.push(t);
-  // Needs you: oldest wait first (a queue). Other lanes: most recent first.
-  groups.needs.sort((a, b) => a.lastAt - b.lastAt);
-  for (const id of Object.keys(groups)) if (id !== "needs") groups[id].sort((a, b) => b.lastAt - a.lastAt);
-  return lanes.map((l) => {
-    const list = groups[l.id];
-    const body = list.length ? list.map(cardHtml).join("") : `<div class="lane-empty">${l.empty}</div>`;
-    const foot = l.id === "done" && list.length ? `<div class="lane-foot">Last 24 hours</div>` : "";
-    return `<section class="lane" data-lane="${l.id}"><div class="lane-head"><span class="lane-dot ${l.tone}"></span><span>${l.name}</span><span class="count">${list.length}</span></div><div class="lane-list" data-lane="${l.id}">${body}${foot}</div></section>`;
+function swimHtml() {
+  const threads = boardThreads();
+  const byLane = (list, lane) => {
+    const out = list.filter((t) => laneOf(t) === lane);
+    // Needs you: oldest wait first (a queue). Other lanes: most recent first.
+    return out.sort((a, b) => (lane === "needs" ? a.lastAt - b.lastAt : b.lastAt - a.lastAt));
+  };
+  const cols = `<div class="swim-cols swim-grid">${LANES.map((l) => `<div class="col-head"><span class="lane-dot ${l.tone}"></span>${l.name}<span class="count">${threads.filter((t) => laneOf(t) === l.id).length}</span></div>`).join("")}</div>`;
+  const rows = PROJECT_ORDER.map((pid) => {
+    const list = threads.filter((t) => t.project === pid);
+    if (!list.length) return "";
+    const p = PROJECTS[pid];
+    const collapsed = S.collapsed.has(pid);
+    const mini = LANES.map((l) => { const n = byLane(list, l.id).length; return n ? `<span><span class="lane-dot ${l.tone}"></span>${n}</span>` : ""; }).join("");
+    const cells = LANES.map((l) => `<div class="cell" data-lane="${l.id}">${byLane(list, l.id).map(cardHtml).join("")}</div>`).join("");
+    return `<section class="swim-row ${collapsed ? "collapsed" : ""}" data-project="${pid}">
+      <button class="swim-head" data-action="toggle-row" data-project="${pid}" aria-expanded="${!collapsed}">${icon("chevronDown", "i-sm chev")}${favHtml(p)}${p.name}<span class="mini">${mini}</span></button>
+      <div class="swim-cells swim-grid">${cells}</div>
+    </section>`;
   }).join("");
+  return cols + (rows || `<div class="lane-empty" style="margin-top:16px">No threads match.</div>`);
 }
 function updateBoardHeader() {
-  const counts = document.getElementById("board-counts");
-  if (!counts) return;
-  const all = visibleThreads();
-  const n = (lane) => all.filter((t) => laneOf(t) === lane).length;
-  counts.innerHTML = `<b class="tone-warning">${n("needs")}</b> need you · <b>${n("working")}</b> working · <b>${n("ready")}</b> to review`;
-  const live = S.threads.filter((t) => t.status !== "done");
+  const box = document.getElementById("board-filters");
+  if (!box) return;
+  const live = S.threads.filter((t) => laneOf(t));
   const chip = (value, label, count, fav = "") => `<button class="chip-btn ${S.filter === value ? "on" : ""}" data-action="filter" data-value="${value}">${fav}${label}<span class="n">${count}</span></button>`;
-  document.getElementById("board-filters").innerHTML =
-    chip("all", "All projects", live.length) + PROJECT_ORDER.map((pid) => chip(pid, PROJECTS[pid].name, live.filter((t) => t.project === pid).length, favHtml(PROJECTS[pid]))).join("");
+  box.innerHTML = chip("all", "All projects", live.length) + PROJECT_ORDER.map((pid) => chip(pid, PROJECTS[pid].name, live.filter((t) => t.project === pid).length, favHtml(PROJECTS[pid]))).join("");
 }
-function updateLanes() {
-  const lanesEl = document.getElementById("lanes");
-  if (!lanesEl) return;
-  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+function updateSwim() {
+  const swim = document.getElementById("swim");
+  if (!swim) return;
+  const animate = S.flash.size > 0 && !matchMedia("(prefers-reduced-motion: reduce)").matches;
   const before = new Map();
-  lanesEl.querySelectorAll("[data-card]").forEach((el) => before.set(el.dataset.card, { r: local(el.getBoundingClientRect()), lane: el.closest(".lane").dataset.lane }));
-  const scrolls = {};
-  lanesEl.querySelectorAll(".lane-list").forEach((l) => (scrolls[l.dataset.lane] = l.scrollTop));
-  const focused = document.activeElement?.closest?.("#lanes [data-card]")?.dataset.card;
-  lanesEl.innerHTML = lanesHtml();
-  lanesEl.querySelectorAll(".lane-list").forEach((l) => (l.scrollTop = scrolls[l.dataset.lane] ?? 0));
-  if (focused) lanesEl.querySelector(`[data-card="${focused}"]`)?.focus({ preventScroll: true });
-  positionPopover();
+  if (animate) swim.querySelectorAll("[data-card]").forEach((el) => before.set(el.dataset.card, local(el.getBoundingClientRect())));
+  const focused = document.activeElement?.closest?.("#swim [data-card]")?.dataset.card;
+  swim.innerHTML = swimHtml();
+  if (focused) swim.querySelector(`[data-card="${focused}"]`)?.focus({ preventScroll: true });
   S.flash.clear();
-  if (reduce || !before.size) return;
-  // FLIP: cards that change lane fly as a fixed clone, so lane scroll areas don't clip them.
-  lanesEl.querySelectorAll("[data-card]").forEach((el) => {
+  if (!animate || !before.size) return;
+  // FLIP: cards slide from where they were to their new lane, once.
+  swim.querySelectorAll("[data-card]").forEach((el) => {
     const b = before.get(el.dataset.card);
     const a = local(el.getBoundingClientRect());
     if (!b) { el.animate([{ opacity: 0, transform: "scale(0.97)" }, { opacity: 1, transform: "none" }], { duration: 220, easing: "ease-out" }); return; }
-    const dx = b.r.left - a.left, dy = b.r.top - a.top;
+    const dx = b.left - a.left, dy = b.top - a.top;
     if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-    const easing = "cubic-bezier(0.32, 0.72, 0, 1)";
-    if (b.lane !== el.closest(".lane").dataset.lane) {
-      const ghost = el.cloneNode(true);
-      ghost.classList.add("card-ghost");
-      ghost.classList.remove("is-changed");
-      Object.assign(ghost.style, { position: "fixed", left: `${b.r.left}px`, top: `${b.r.top}px`, width: `${a.width}px`, margin: "0" });
-      document.getElementById("stage").appendChild(ghost);
-      el.style.opacity = "0";
-      const anim = ghost.animate([{ transform: "translate(0, 0)" }, { transform: `translate(${a.left - b.r.left}px, ${a.top - b.r.top}px)` }], { duration: 380, easing });
-      anim.onfinish = () => { ghost.remove(); el.style.opacity = ""; };
-    } else {
-      el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 260, easing });
-    }
+    el.style.zIndex = "1";
+    const anim = el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }], { duration: 340, easing: "cubic-bezier(0.32, 0.72, 0, 1)" });
+    anim.onfinish = () => (el.style.zIndex = "");
   });
 }
 
 /* ================= peek ================= */
 function pendingHtml(t) {
   const p = t.pending;
+  if (checksFailing(t)) {
+    return `<div class="pending-box tone-error"><div class="head tone-error">${icon("xCircle", "i-sm")}Checks failing on #${t.pr.number}</div>
+      <div class="body">${t.pr.checks.failed.map((f) => `<code>${esc(f)}</code>`).join(" ")} failed. ${t.pr.checks.total - t.pr.checks.failed.length} other checks passed.</div>
+      <div class="actions"><button class="btn btn-sm btn-primary" data-action="fix-checks" data-id="${t.id}">Ask the agent to fix them</button><button class="btn btn-sm" data-action="open-pr" data-id="${t.id}">Open PR</button></div></div>`;
+  }
   if (!p) return "";
   if (p.kind === "approval") {
     return `<div class="pending-box tone-warning"><div class="head tone-warning">${icon("approval", "i-sm")}${esc(p.title)}</div>
@@ -1212,8 +1253,7 @@ function summaryHtml(t) {
   if (S.set.summary === "llm") {
     return `<div><div class="sec-title">Summary <span class="tag">${icon("sparkle", "i-xs")} generated</span></div><ul class="summary-list">${t.summary.llm.map((s) => `<li>${fmt(s)}</li>`).join("")}</ul></div>`;
   }
-  const last = t.summary.state ? `<div><div class="sec-title">Last message from the agent</div><p class="summary-text">${fmt(t.summary.state)}</p></div>` : "";
-  return last;
+  return t.summary.state ? `<div><div class="sec-title">Last message from the agent</div><p class="summary-text">${fmt(t.summary.state)}</p></div>` : "";
 }
 function activityHtml(t) {
   return `<div><div class="sec-title">Recent activity</div><div class="activity">${t.activity.slice(-4).reverse().map((a) => `<div class="tool-row">${icon(a.startsWith("You") ? "user" : a.startsWith("Ran") || a.startsWith("Asked to run") ? "terminal" : "file", "i-xs")}<span class="truncate">${esc(a)}</span></div>`).join("")}</div></div>`;
@@ -1237,24 +1277,24 @@ function changesHtml(t) {
 function peekActionsHtml(t) {
   const b = [];
   if (RUNNING.has(t.status)) b.push(`<button class="btn btn-sm" data-action="stop" data-id="${t.id}">${icon("stop", "i-xs")}Stop</button>`);
-  if (t.pr && t.pr.state !== "merged") b.push(`<button class="btn btn-sm" data-action="open-pr" data-id="${t.id}">${icon("pr", "i-xs")}Open PR</button>`);
+  if (t.pr && t.pr.state !== "merged" && !checksFailing(t)) b.push(`<button class="btn btn-sm" data-action="open-pr" data-id="${t.id}">${icon("pr", "i-xs")}Open PR</button>`);
   if (t.status === "ready" && t.diff && !t.pr) b.push(`<button class="btn btn-sm" data-action="create-pr" data-id="${t.id}">${icon("pr", "i-xs")}Create PR</button>`);
-  if (t.status === "ready") b.push(`<button class="btn btn-sm" data-action="settle" data-id="${t.id}">${icon("checkCheck", "i-xs")}Settle</button>`);
-  if (t.status === "done") b.push(`<button class="btn btn-sm" data-action="reopen" data-id="${t.id}">${icon("undo", "i-xs")}Reopen</button>`);
+  if (t.status === "ready") b.push(`<button class="btn btn-sm" data-action="settle" data-id="${t.id}" title="Marks it done and takes it off the board">${icon("checkCheck", "i-xs")}Settle</button>`);
   return b.length ? `<div class="peek-actions">${b.join("")}</div>` : "";
 }
 function composerPlaceholder(t) {
+  if (!t) return "Describe what you want done…";
   if (RUNNING.has(t.status)) return "Queue a follow-up…";
   if (t.status === "approval") return "Deny with instructions…";
   if (t.status === "input") return "Type your own answer…";
   if (t.status === "done") return "Reopen with a follow-up…";
   return "Send a follow-up…";
 }
-const composerHtml = (t) => `<div class="composer"><textarea data-composer="${t.id}" rows="2" placeholder="${composerPlaceholder(t)}">${esc(S.drafts[t.id] ?? "")}</textarea>
-  <div class="composer-row"><span class="model-chip">${icon("sparkle", "i-xs")}<span data-model="${t.id}">${esc(t.model)}</span></span><span class="spacer"></span><button class="send" data-action="send" data-id="${t.id}" aria-label="Send">${icon("arrowUp", "i-sm")}</button></div></div>`;
+const composerHtml = (id, t) => `<div class="composer"><textarea data-composer="${id}" rows="2" placeholder="${composerPlaceholder(t)}">${esc(S.drafts[id] ?? "")}</textarea>
+  <div class="composer-row"><span class="model-chip">${icon("sparkle", "i-xs")}<span data-model="${id}">${esc(t?.model ?? "Claude · Opus 5.5")}</span></span><span class="spacer"></span><button class="send" data-action="send" data-id="${id}" aria-label="Send">${icon("arrowUp", "i-sm")}</button></div></div>`;
 
 function peekShellHtml(t) {
-  return `<div class="peek" data-peek="${t.id}"><div class="peek-scroll" id="peek-scroll"></div><div class="peek-composer"><div id="peek-queued"></div>${composerHtml(t)}</div></div>`;
+  return `<div class="peek" data-peek="${t.id}"><div class="peek-scroll" id="peek-scroll"></div><div class="peek-composer"><div id="peek-queued"></div>${composerHtml(t.id, t)}</div></div>`;
 }
 function updatePeekBody(t) {
   const scroll = document.getElementById("peek-scroll");
@@ -1283,40 +1323,21 @@ function updatePeekBody(t) {
 }
 function renderPeek() {
   const panel = document.getElementById("peek-panel");
-  const pop = document.getElementById("popover-root");
-  const t = S.peekId && S.boardOpen ? byId(S.peekId) : null;
-  const usePanel = S.set.peekMode === "panel";
-  if (panel) {
-    panel.hidden = !(t && usePanel);
-    if (t && usePanel) ensure(panel, `peek:${t.id}`, () => peekShellHtml(t));
-    else { panel.dataset.key = ""; panel.innerHTML = ""; }
-  }
-  if (t && !usePanel) ensure(pop, `peek:${t.id}`, () => `<div class="popover-peek">${peekShellHtml(t)}</div>`);
-  else { pop.dataset.key = ""; pop.innerHTML = ""; }
-  if (t) updatePeekBody(t);
-}
-function positionPopover() {
-  const pop = document.querySelector("#popover-root .popover-peek");
-  if (!pop) return;
-  const stage = document.getElementById("stage");
-  const W = stage.offsetWidth, H = stage.offsetHeight, pw = pop.offsetWidth, ph = pop.offsetHeight;
-  const card = document.querySelector(`#lanes [data-card="${S.peekId}"]`);
-  const r = card ? local(card.getBoundingClientRect()) : null;
-  if (!r || !r.width) { pop.style.left = `${(W - pw) / 2}px`; pop.style.top = `${Math.max(12, (H - ph) / 2)}px`; return; }
-  let left = r.right + 10;
-  if (left + pw > W - 12) left = r.left - pw - 10;
-  if (left < 12) left = Math.min(W - pw - 12, Math.max(12, r.left));
-  const top = Math.max(12, Math.min(r.top - 6, H - ph - 12));
-  pop.style.left = `${left}px`;
-  pop.style.top = `${top}px`;
+  if (!panel) return;
+  const t = S.peekId && S.view === "board" ? byId(S.peekId) : null;
+  panel.classList.toggle("float", S.set.peekLayout === "float");
+  panel.hidden = !t;
+  if (!t) { panel.dataset.key = ""; panel.innerHTML = ""; return; }
+  ensure(panel, `peek:${t.id}`, () => peekShellHtml(t));
+  updatePeekBody(t);
 }
 
-/* ================= thread view (stub) ================= */
+/* ================= thread view and new thread (stubs) ================= */
 function threadShellHtml(t) {
   return `<div class="thread-view">
     <header class="topbar" id="thread-top"></header>
     <div class="thread-scroll"><div class="thread-col"><div class="msgs" id="thread-msgs"></div></div></div>
-    <div class="thread-bottom"><div class="thread-col"><div id="thread-pending"></div>${composerHtml(t)}</div></div>
+    <div class="thread-bottom"><div class="thread-col"><div id="thread-pending"></div>${composerHtml(t.id, t)}</div></div>
   </div>`;
 }
 function updateThreadView(t) {
@@ -1333,32 +1354,40 @@ function updateThreadView(t) {
   t.followups.forEach((f) => msgs.push(`<div class="msg-user">${esc(f)}</div>`));
   if (RUNNING.has(t.status)) msgs.push(`<div class="tool-row tone-info">${icon("working", "i-xs")}${fmt(t.now.state)}</div>`);
   document.getElementById("thread-msgs").innerHTML = msgs.join("");
-  document.getElementById("thread-pending").innerHTML = pendingHtml(t);
+  const m = statusMeta(t);
+  document.getElementById("thread-pending").innerHTML = t.status === "done"
+    ? `<div class="settled-box">${icon(m.icon, "i-sm " + m.tone)}<span class="spacer">${m.label}. It's off the board.</span><button class="btn btn-sm" data-action="reopen" data-id="${t.id}">${icon("undo", "i-xs")}Reopen</button></div>`
+    : pendingHtml(t);
   document.querySelectorAll(`[data-composer="${t.id}"]`).forEach((ta) => (ta.placeholder = composerPlaceholder(t)));
+}
+function newThreadHtml() {
+  return `<div class="thread-view">
+    <header class="topbar"><span class="title">New thread</span><span class="spacer"></span><span class="stub-tag">existing flow · stub</span></header>
+    <div class="new-thread"><h2>What should we build?</h2><div class="project-pick" id="project-pick"></div>
+      <div class="thread-col" style="max-width:46rem">${composerHtml("new", null)}</div></div>
+  </div>`;
 }
 
 /* ================= top-level render ================= */
 function renderMain() {
   const main = document.getElementById("main");
-  const pageBoard = S.boardOpen && S.set.boardMode === "page";
-  if (pageBoard) {
-    ensure(main, "board-page", () => boardShellHtml("page"));
+  if (S.view === "board") {
+    ensure(main, "board", boardShellHtml);
+  } else if (S.view === "new") {
+    ensure(main, "new", newThreadHtml);
+    document.getElementById("project-pick").innerHTML = PROJECT_ORDER.map((pid) => `<button class="chip-btn ${S.newProject === pid ? "on" : ""}" data-action="pick-project" data-project="${pid}">${favHtml(PROJECTS[pid])}${PROJECTS[pid].name}</button>`).join("");
   } else {
     const t = byId(S.currentId);
     ensure(main, `thread:${t.id}`, () => threadShellHtml(t));
     updateThreadView(t);
   }
-  const ov = document.getElementById("overlay-root");
-  if (S.boardOpen && S.set.boardMode === "overlay") {
-    ensure(ov, "board-overlay", () => `<div class="overlay ${S.animateOpen ? "animate" : ""}" data-overlay><div class="overlay-sheet">${boardShellHtml("overlay")}</div></div>`);
-  } else { ov.dataset.key = ""; ov.innerHTML = ""; }
 }
 function update() {
   renderSidebar();
   renderMain();
   renderPeek();
   updateBoardHeader();
-  updateLanes();
+  updateSwim();
 }
 function applyTheme() {
   const v = S.set.theme;
@@ -1381,36 +1410,34 @@ function renderProto() {
   root.innerHTML = `<div class="proto"><div class="proto-head">${icon("sliders", "i-sm")}<b>Prototype</b><span class="spacer"></span><button class="btn btn-ghost btn-icon btn-sm" data-action="toggle-proto" title="Collapse">${icon("chevronDown", "i-sm")}</button></div>
     <div class="proto-body">
       <div class="proto-row"><label>Live simulation</label><div class="proto-sim">${sim}<button class="btn btn-sm" data-action="reset" title="Reset data">${icon("reset", "i-xs")}</button></div></div>
-      <div class="proto-row"><label>Board opens as</label>${seg("boardMode", [["overlay", "Overlay"], ["page", "Full page"]])}</div>
-      <div class="proto-row"><label>Peek</label>${seg("peekMode", [["panel", "Side panel"], ["popover", "Popover"]])}</div>
+      <div class="proto-row"><label>Peek panel</label>${seg("peekLayout", [["push", "Pushes lanes"], ["float", "Floats over lanes"]])}</div>
       <div class="proto-row"><label>Entry point</label>${seg("entry", [["icon", "Footer icon"], ["row", "Sidebar row"]])}</div>
-      <div class="proto-row"><label>“Now” line comes from</label>${seg("summary", [["state", "Thread state"], ["llm", "LLM summary"]])}</div>
-      <div class="proto-row"><label>Failed turns</label>${seg("failedLane", [["needs", "In Needs you"], ["own", "Own lane"]])}</div>
-      <div class="proto-row"><label>PR with failing checks</label>${seg("failingChecks", [["ready", "In Ready"], ["needs", "In Needs you"]])}</div>
-      <div class="proto-row"><label>Quick actions on cards</label>${seg("cardActions", [["off", "Off"], ["on", "On"]])}</div>
+      <div class="proto-row"><label>Grey line comes from</label>${seg("summary", [["state", "Thread state"], ["llm", "LLM summary"]])}</div>
       <div class="proto-row"><label>Theme</label>${seg("theme", [["system", "System"], ["light", "Light"], ["dark", "Dark"]])}</div>
-      <div class="proto-note">Click a card to peek. ${MOD}-click opens the thread. Arrow keys move between cards, Enter peeks, ${MOD}+Enter opens, Esc closes. ${MOD}⇧B toggles the board.</div>
+      <div class="proto-note">Click a card to peek. ${MOD}-click opens the thread. Arrow keys move between cards, Enter peeks, ${MOD}+Enter opens, Esc closes the peek. ${MOD}⇧B toggles the board. Start a thread from the sidebar's pen buttons.</div>
     </div></div>`;
 }
 
 /* ================= toasts ================= */
-function toast(msg) {
+function toast(msg, act) {
   const box = document.getElementById("toasts");
   const el = document.createElement("div");
   el.className = "toast";
-  el.textContent = msg;
+  el.innerHTML = `<span>${esc(msg)}</span>${act ? `<button class="btn btn-sm" data-action="${act.action}" data-id="${act.id}">${esc(act.label)}</button>` : ""}`;
   box.appendChild(el);
-  setTimeout(() => el.remove(), 2600);
+  setTimeout(() => el.remove(), act ? 5000 : 2600);
 }
 
 /* ================= events ================= */
-// These actions render on their own; every other action re-renders after it runs.
-const SELF_UPDATING = new Set(["toggle-board", "close-board", "back-to-board", "tick", "send", "toggle-proto", "play"]);
 document.addEventListener("click", (e) => {
   const a = e.target.closest("[data-action]");
   if (a) {
     const fn = ACTIONS[a.dataset.action];
-    if (fn) { fn(a.dataset, e); if (!SELF_UPDATING.has(a.dataset.action)) update(); }
+    if (fn) {
+      fn(a.dataset, e);
+      if (a.closest(".toast")) a.closest(".toast").remove();
+      if (!SELF_UPDATING.has(a.dataset.action)) update();
+    }
     return;
   }
   const card = e.target.closest("[data-card]");
@@ -1419,24 +1446,24 @@ document.addEventListener("click", (e) => {
     if (e.metaKey || e.ctrlKey) openThread(id);
     else S.peekId = S.peekId === id ? null : id;
     update();
-    return;
   }
-  if (S.peekId && S.set.peekMode === "popover" && !e.target.closest(".popover-peek")) { S.peekId = null; update(); return; }
-  if (e.target.matches("[data-overlay]")) setBoard(false);
 });
 document.addEventListener("input", (e) => {
   if (e.target.dataset.composer) S.drafts[e.target.dataset.composer] = e.target.value;
-  if (e.target.id === "board-search") { S.query = e.target.value; updateBoardHeader(); updateLanes(); }
+  if (e.target.id === "board-search") { S.query = e.target.value; updateBoardHeader(); updateSwim(); }
 });
 document.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
-  if (mod && e.shiftKey && e.key.toLowerCase() === "b") { e.preventDefault(); setBoard(!S.boardOpen); return; }
+  if (mod && e.shiftKey && e.key.toLowerCase() === "b") { e.preventDefault(); go(S.view === "board" ? "thread" : "board"); return; }
   if (e.target.dataset?.composer && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(e.target.dataset.composer); return; }
-  if (e.key === "Escape") {
-    if (S.peekId) { const id = S.peekId; S.peekId = null; update(); document.querySelector(`#lanes [data-card="${id}"]`)?.focus({ preventScroll: true }); return; }
-    if (S.boardOpen && S.set.boardMode === "overlay") { setBoard(false); return; }
+  if (e.key === "Escape" && S.peekId) {
+    const id = S.peekId;
+    S.peekId = null;
+    update();
+    document.querySelector(`#swim [data-card="${id}"]`)?.focus({ preventScroll: true });
+    return;
   }
-  const card = e.target.closest?.("#lanes [data-card]");
+  const card = e.target.closest?.("#swim [data-card]");
   if (!card || e.target !== card) return;
   const id = card.dataset.card;
   if (e.key === "Enter" || e.key === " ") {
@@ -1445,15 +1472,23 @@ document.addEventListener("keydown", (e) => {
     update();
     return;
   }
-  const grid = [...document.querySelectorAll("#lanes .lane")].map((l) => [...l.querySelectorAll("[data-card]")]);
-  const col = grid.findIndex((c) => c.includes(card));
-  const row = grid[col].indexOf(card);
+  // Grid of visible swimlane rows × lanes. Up/down walk a lane across projects.
+  const rows = [...document.querySelectorAll("#swim .swim-row:not(.collapsed)")].map((r) => [...r.querySelectorAll(".cell")].map((c) => [...c.querySelectorAll("[data-card]")]));
+  let ri = -1, ci = -1, k = -1;
+  rows.forEach((r, i) => r.forEach((c, j) => { const x = c.indexOf(card); if (x >= 0) { ri = i; ci = j; k = x; } }));
+  if (ri < 0) return;
   let next = null;
-  if (e.key === "ArrowDown") next = grid[col][row + 1];
-  if (e.key === "ArrowUp") next = grid[col][row - 1];
+  if (e.key === "ArrowDown") {
+    next = rows[ri][ci][k + 1];
+    for (let i = ri + 1; !next && i < rows.length; i++) next = rows[i][ci][0];
+  }
+  if (e.key === "ArrowUp") {
+    next = rows[ri][ci][k - 1];
+    for (let i = ri - 1; !next && i >= 0; i--) next = rows[i][ci].at(-1);
+  }
   if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
     const step = e.key === "ArrowRight" ? 1 : -1;
-    for (let c = col + step; c >= 0 && c < grid.length; c += step) if (grid[c].length) { next = grid[c][Math.min(row, grid[c].length - 1)]; break; }
+    for (let j = ci + step; j >= 0 && j < LANES.length; j += step) if (rows[ri][j].length) { next = rows[ri][j][Math.min(k, rows[ri][j].length - 1)]; break; }
   }
   if (next) {
     e.preventDefault();
@@ -1462,7 +1497,6 @@ document.addEventListener("keydown", (e) => {
     if (S.peekId) { S.peekId = next.dataset.card; update(); }
   }
 });
-document.addEventListener("scroll", positionPopover, true);
 setInterval(() => {
   const now = Date.now();
   document.querySelectorAll("[data-since]").forEach((el) => (el.textContent = dur(now - +el.dataset.since)));
@@ -1480,7 +1514,7 @@ function fitStage() {
   root.style.setProperty("--app-h", `${embed ? EMBED_H : innerHeight}px`);
   document.getElementById("frame").style.height = embed ? `${Math.ceil(EMBED_H * S.scale)}px` : "";
 }
-addEventListener("resize", () => { fitStage(); positionPopover(); });
+addEventListener("resize", fitStage);
 fitStage();
 applyTheme();
 update();
