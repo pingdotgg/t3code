@@ -3991,7 +3991,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     switchedTo = yield* forkSessionIntoCwd(
                       sourceFile,
                       boundary,
-                      state.providerThread.createdAt,
+                      rollbackInput.providerThread.createdAt,
                     );
                     const switched = yield* lifecycleRequest({
                       type: "switch_session",
@@ -4008,7 +4008,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   } else {
                     const forkEntryId = yield* piForkEntry(
                       boundary,
-                      state.providerThread.createdAt,
+                      rollbackInput.providerThread.createdAt,
                       request({ type: "get_entries" }),
                     );
                     const forkData = yield* lifecycleRequest({
