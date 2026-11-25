@@ -77,6 +77,7 @@ describe("HtmlRender", () => {
         [
           "<!doctype html><html><head><title>Shots</title></head><body>",
           `${commented}<img src="${png}"><div style="background:url(${svg})"></div>`,
+          `<!--><img src="${png}"><!-- note --!><img src="${png}">`,
           `<script>const marker = '<!--'; const shots = ['${png}', \`${svg}\`];</script>`,
           ...kept.map((src) => `<img src="${src}">`),
           "</body></html>",
@@ -86,6 +87,7 @@ describe("HtmlRender", () => {
       const pngUri = `data:image/png;base64,${Base64.encode(PNG_BYTES)}`;
       const svgUri = `data:image/svg+xml;base64,${Base64.encode("<svg/>")}`;
       expect(prepared).toContain(`${commented}<img src="${pngUri}">`);
+      expect(prepared).toContain(`<!--><img src="${pngUri}"><!-- note --!><img src="${pngUri}">`);
       expect(prepared).toContain(`url(${svgUri})`);
       expect(prepared).toContain(`['${pngUri}', \`${svgUri}\`]`);
       expect(prepared).not.toContain(directory);

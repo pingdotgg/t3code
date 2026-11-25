@@ -199,7 +199,7 @@ const LOCAL_IMAGE_PATTERN = new RegExp(
 );
 const HTML_TAG_END = String.raw`(?:[^"'<>]|"[^"]*(?:"|$)|'[^']*(?:'|$))*(?:>|$)`;
 const HTML_COMMENT_CONTEXT = new RegExp(
-  String.raw`<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title|xmp|iframe|noembed|noframes|noscript)(?=[\s/>])${HTML_TAG_END}[\s\S]*?(?:</\1(?=[\s/>])${HTML_TAG_END}|$)|<plaintext(?=[\s/>])[\s\S]*$|<[a-z!/]${HTML_TAG_END}`,
+  String.raw`<!--(?:-?>|[\s\S]*?(?:--!?>|$))|<(script|style|textarea|title|xmp|iframe|noembed|noframes|noscript)(?=[\s/>])${HTML_TAG_END}[\s\S]*?(?:</\1(?=[\s/>])${HTML_TAG_END}|$)|<plaintext(?=[\s/>])[\s\S]*$|<[a-z!/]${HTML_TAG_END}`,
   "gi",
 );
 
