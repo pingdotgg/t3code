@@ -123,6 +123,74 @@ describe("Pi project trust", () => {
   });
 });
 
+it("offers working T3 tools after a temporary error listing tools at startup", async () => {
+  const source = NodeModule.stripTypeScriptTypes(
+    PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
+      "export default async function",
+      "async function",
+    ),
+  );
+  let failList = true;
+  let sessionId = 0;
+  const tools = new Map<
+    string,
+    { execute: (id: string, args: object) => Promise<{ content: unknown }> }
+  >();
+  let sessionStart: (() => Promise<void>) | undefined;
+  await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
+    process: {
+      env: { T3_MCP_URL: "http://fixture.invalid/mcp", T3_MCP_BEARER_TOKEN: "fixture-token" },
+    },
+    AbortSignal,
+    Type: { Unsafe: (schema: unknown) => schema },
+    pi: {
+      on: (name: string, handler: (event: object, ctx: object) => Promise<void>) => {
+        if (name === "session_start") {
+          sessionStart = () => handler({}, { ui: { notify: () => undefined } });
+        }
+      },
+      registerCommand: () => {},
+      registerTool: (tool: {
+        name: string;
+        execute: (id: string, args: object) => Promise<{ content: unknown }>;
+      }) => tools.set(tool.name, tool),
+    },
+    fetch: async (_url: string, options: { headers: Record<string, string>; body: string }) => {
+      const { id, method } = JSON.parse(options.body) as { id: number; method: string };
+      const session = options.headers["mcp-session-id"];
+      const reply = (result: unknown, headers?: Record<string, string>) =>
+        new Response(JSON.stringify({ jsonrpc: "2.0", id, result }), {
+          headers: { "content-type": "application/json", ...headers },
+        });
+      if (method === "initialize") {
+        // The 2025-06-18 transport rejects an initialize with an existing session ID.
+        if (session !== undefined) return new Response(null, { status: 400 });
+        return reply({}, { "mcp-session-id": String(++sessionId) });
+      }
+      if (session !== String(sessionId)) return new Response(null, { status: 404 });
+      if (method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (method === "tools/list") {
+        if (failList) {
+          failList = false;
+          return new Response(null, { status: 503 });
+        }
+        return reply({
+          tools: [{ name: "orchestrator_capabilities", inputSchema: { type: "object" } }],
+        });
+      }
+      if (method === "tools/call") {
+        return reply({ content: [{ type: "text", text: "Available providers" }] });
+      }
+      throw new Error(`Unexpected MCP method ${method}`);
+    },
+  });
+  if (sessionStart === undefined) throw new Error("Pi session_start hook did not register");
+  await sessionStart();
+
+  const result = await tools.get("mcp__t3-code__orchestrator_capabilities")?.execute("call", {});
+  assert.deepEqual(result?.content, [{ type: "text", text: "Available providers" }]);
+});
+
 describe("Pi MCP tool results", () => {
   it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
     const content = [
