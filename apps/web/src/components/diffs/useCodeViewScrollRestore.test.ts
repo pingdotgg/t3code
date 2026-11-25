@@ -41,7 +41,7 @@ describe("createCodeViewScrollRestore", () => {
     expect(again.scrolls).toEqual([{ type: "position", position: 4032 }]);
   });
 
-  it("loads more files until the position is reachable, then gives up once none remain", () => {
+  it("loads more files until the position is reachable, then gives up once none remain", async () => {
     const first = viewer(10_000);
     mount("thread-c", first).onScroll(4000, first.instance);
 
@@ -53,7 +53,10 @@ describe("createCodeViewScrollRestore", () => {
     restore.onScroll(0, loading.instance);
     restore.flush();
     expect(loading.scrolls).toEqual([]);
-    expect(batches).toBe(2);
+    // Batches load after the commit that asked for them, once per commit.
+    expect(batches).toBe(0);
+    await Promise.resolve();
+    expect(batches).toBe(1);
     loading.instance.scrollHeight = 10_000;
     restore.flush();
     restore.flush();

@@ -26,11 +26,20 @@ export function createCodeViewScrollRestore() {
   let viewer: Viewer | undefined;
   let handle: ScrollRestoreHandle | null = null;
   let pending: number | null = null;
+  let loadQueued = false;
   const flush = () => {
     if (pending === null || !viewer || !handle || viewer.getHeight() === 0) return;
     const maxScrollTop = viewer.getScrollHeight() - viewer.getHeight();
     if (maxScrollTop < pending && !settled) {
-      loadMore?.();
+      // flush runs in the commit phase; loading there nests one update per cached batch, and
+      // React throws past 50 of them.
+      if (!loadQueued) {
+        loadQueued = true;
+        queueMicrotask(() => {
+          loadQueued = false;
+          loadMore?.();
+        });
+      }
       return;
     }
     // Pierre lands an unclamped position target one sticky header (32px) above it.
