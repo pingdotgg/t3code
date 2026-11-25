@@ -1,6 +1,6 @@
 // The weight client-metrics and mobile-metrics seed: a branch changing many files, and its pull
 // request on the fake GitHub with a long body, files, commits and comments.
-import type { FakePullRequestDetail } from "./server-metrics-forge.ts";
+import type { FakePullRequestDetail } from "./forge.ts";
 
 /** Many files with many lines, so the Diff panel and the PR's files have real weight. */
 export const DIFF_FILES = 40;

@@ -1,9 +1,22 @@
-// The pure half of scripts/client-metrics.ts: the JSON it writes, its tables, how two files
+// The pure half of client-metrics.ts: the JSON it writes, its tables, how two files
 // compare, and the noise floors A/A runs suggest.
 import * as Schema from "effect/Schema";
 
-import { CallSite, TraceStep } from "./client-metrics-trace.ts";
-import { bootstrapMedianDifference, MachineState, round } from "./server-metrics-report.ts";
+import {
+  cell,
+  compareSeries,
+  Count,
+  Floors,
+  MachineState,
+  median,
+  noiseOfSeries,
+  percentile,
+  round,
+  slope,
+  SOAK_LEAK,
+  topCounts,
+} from "../core/report.ts";
+import { CallSite, TraceStep } from "./trace.ts";
 
 /** Thread switches: each case is its own thread, switched to from a small hub thread. */
 export const SWITCH_CASES = [
@@ -36,7 +49,6 @@ export type Case = (typeof CASES)[number];
 export const isSwitchCase = (name: Case): name is SwitchCase =>
   (SWITCH_CASES as ReadonlyArray<string>).includes(name);
 
-const Count = Schema.Struct({ name: Schema.String, count: Schema.Number });
 /** What React rendered during one step, from the render probe (`--renders`). */
 const Renders = Schema.Struct({
   commits: Schema.Number,
@@ -141,16 +153,6 @@ export const ClientMetrics = Schema.Struct({
 });
 export type ClientMetrics = typeof ClientMetrics.Type;
 
-/** Per-metric floors from `noise`, which `compare --floors` uses before the defaults. */
-export const Floors = Schema.Struct({
-  platform: Schema.String,
-  floors: Schema.Record(
-    Schema.String,
-    Schema.Struct({ floor: Schema.Number, gate: Schema.Boolean }),
-  ),
-});
-export type Floors = typeof Floors.Type;
-
 /** The cases a `--cases` list names, in benchmark order; an error names unknown ones. */
 export function parseCases(list: string): { cases: ReadonlyArray<Case> } | { error: string } {
   const named = list
@@ -178,34 +180,8 @@ export function parseCases(list: string): { cases: ReadonlyArray<Case> } | { err
   return { cases: CASES.filter((entry) => chosen.has(entry)) };
 }
 
-const sorted = (values: ReadonlyArray<number>) => values.toSorted((a, b) => a - b);
-/** Nearest-rank percentile, so p90 of few samples is a value that was measured. */
-export function percentile(values: ReadonlyArray<number>, p: number) {
-  if (values.length === 0) return null;
-  const ordered = sorted(values);
-  return ordered[
-    Math.min(ordered.length - 1, Math.max(0, Math.ceil((p / 100) * ordered.length) - 1))
-  ]!;
-}
-export function median(values: ReadonlyArray<number>) {
-  if (values.length === 0) return null;
-  const ordered = sorted(values);
-  const middle = Math.floor(ordered.length / 2);
-  return ordered.length % 2 ? ordered[middle]! : (ordered[middle - 1]! + ordered[middle]!) / 2;
-}
-
 const present = (values: ReadonlyArray<number | null>) =>
   values.filter((value): value is number => value !== null);
-
-/** Least-squares slope of y over x; 0 with fewer than two distinct x. */
-export function slope(points: ReadonlyArray<readonly [number, number]>) {
-  if (points.length < 2) return 0;
-  const mx = points.reduce((sum, [x]) => sum + x, 0) / points.length;
-  const my = points.reduce((sum, [, y]) => sum + y, 0) / points.length;
-  const sxx = points.reduce((sum, [x]) => sum + (x - mx) ** 2, 0);
-  if (sxx === 0) return 0;
-  return points.reduce((sum, [x, y]) => sum + (x - mx) * (y - my), 0) / sxx;
-}
 
 /**
  * Growth per iteration over a soak's later half. Warm-up (caches filling, code compiling) slows
@@ -222,8 +198,6 @@ export function soakSlopes(samples: ReadonlyArray<SoakSample>) {
     listeners: fit((sample) => sample.listeners),
   };
 }
-/** Per-iteration growth that reads as a leak rather than noise. */
-export const SOAK_LEAK = { heapMB: 0.05, domNodes: 5, listeners: 1 } as const;
 
 /** The soak measures growing past their leak bars. */
 export function soakLeaks(samples: ReadonlyArray<SoakSample>) {
@@ -319,41 +293,6 @@ export function workloadDifferences(
     }
   }
   return { differ, unrecorded };
-}
-
-/** The absolute change a metric must clear, past the relative threshold, to count. */
-export function floorFor(metric: string) {
-  if (metric.startsWith("soak.")) {
-    if (metric.includes("heapMB")) return SOAK_LEAK.heapMB;
-    if (metric.includes("domNodes")) return SOAK_LEAK.domNodes;
-    return SOAK_LEAK.listeners;
-  }
-  if (metric.endsWith("Ms")) return 8;
-  if (metric.endsWith("MissPct")) return 20;
-  if (metric.endsWith("droppedPct")) return 5;
-  if (metric.endsWith("taskPct")) return 1;
-  if (metric.endsWith("heapMB")) return 3;
-  if (metric.startsWith("panel.")) return 50;
-  if (metric.endsWith("domNodes")) return 500;
-  // Render counts barely move between runs of one commit, so small changes are real.
-  if (metric.endsWith(".renders")) return 5;
-  if (metric.endsWith(".commits")) return 1;
-  return 0;
-}
-
-const cell = (value: number | null, digits = 0) =>
-  value === null ? "–" : `${round(value, digits)}`;
-
-/** Summed counts over samples, per sample, the largest first. */
-export function topCounts(lists: ReadonlyArray<ReadonlyArray<typeof Count.Type>>, count = 5) {
-  const totals = new Map<string, number>();
-  for (const list of lists) {
-    for (const entry of list) totals.set(entry.name, (totals.get(entry.name) ?? 0) + entry.count);
-  }
-  return [...totals]
-    .toSorted((a, b) => b[1] - a[1])
-    .slice(0, count)
-    .map(([name, total]) => ({ name, count: round(total / Math.max(1, lists.length), 1) }));
 }
 
 const listOf = (entries: ReadonlyArray<{ readonly name: string; readonly count: number }>) =>
@@ -536,11 +475,7 @@ export function summaryTable(metrics: ClientMetrics) {
   return lines.join("\n");
 }
 
-/**
- * Two files' medians side by side; a metric counts when its bootstrap interval clears the
- * threshold and its floor: the calibrated one from `floors` when given, else the default. A
- * calibrated metric too noisy to gate on is shown, never counted.
- */
+/** `compareSeries` over two files' per-run medians. */
 export function compareClientMetrics(
   before: ClientMetrics,
   after: ClientMetrics,
@@ -560,77 +495,7 @@ export function compareClientMetrics(
   );
 }
 
-/** `compareClientMetrics` over any two files' per-run metric values, under `header`. */
-export function compareSeries(
-  a: ReadonlyMap<string, ReadonlyArray<number>>,
-  b: ReadonlyMap<string, ReadonlyArray<number>>,
-  header: ReadonlyArray<string>,
-  threshold = 10,
-  floors?: Floors,
-) {
-  const lines = [
-    ...header,
-    "",
-    "| metric | before | after | change | 95% interval | |",
-    "| :-- | --: | --: | --: | --: | :-- |",
-  ];
-  const regressed: string[] = [];
-  const improved: string[] = [];
-  const noisy: string[] = [];
-  let compared = 0;
-  for (const metric of [...new Set([...a.keys(), ...b.keys()])].toSorted()) {
-    const x = a.get(metric);
-    const y = b.get(metric);
-    if (!x || !y) {
-      lines.push(
-        `| ${metric} | ${x ? cell(median(x), 1) : "–"} | ${y ? cell(median(y), 1) : "–"} | n/a | | |`,
-      );
-      continue;
-    }
-    compared++;
-    const calibrated = floors?.floors[metric];
-    const mx = median(x)!;
-    const my = median(y)!;
-    const limit = Math.max(calibrated?.floor ?? floorFor(metric), (Math.abs(mx) * threshold) / 100);
-    // Runs are the independent samples; with one a side there is no interval to gate on.
-    const repeated = x.length > 1 && y.length > 1;
-    const [low, high] = repeated ? bootstrapMedianDifference(x, y) : [my - mx, my - mx];
-    const moved = low > limit ? "worse" : high < -limit ? "better" : "";
-    const gated = repeated && (calibrated?.gate ?? true);
-    const verdict =
-      moved && !gated
-        ? `${moved}, ${repeated ? "too noisy to gate" : "one run, not gated"}`
-        : moved;
-    if (moved && !gated) noisy.push(metric);
-    else if (moved === "worse") regressed.push(metric);
-    else if (moved === "better") improved.push(metric);
-    const percent = mx === 0 ? (my === 0 ? 0 : Infinity) : ((my - mx) / Math.abs(mx)) * 100;
-    const shown = Number.isFinite(percent)
-      ? `${percent > 0 ? "+" : ""}${Math.round(percent)}%`
-      : "new";
-    const interval = repeated ? `${round(low, 1)} to ${round(high, 1)}` : "";
-    lines.push(
-      `| ${metric} | ${round(mx, 1)} | ${round(my, 1)} | ${shown} | ${interval} | ${verdict} |`,
-    );
-  }
-  return { table: lines.join("\n"), regressed, improved, noisy, compared };
-}
-
-/** Two significant digits, rounded up, so a derived floor never sits under what was seen. */
-const ceilSignificant = (value: number) => {
-  if (value <= 0) return 0;
-  const step = 10 ** (Math.floor(Math.log10(value)) - 1);
-  return round(Math.ceil(value / step) * step, 6);
-};
-
-/** An A/A interval wider than this share of a metric's median makes it too noisy to gate on. */
-export const NOISY_SHARE = 0.5;
-
-/**
- * Each metric's spread over A/A pairs (one commit against itself) as `compare` sees it: the 95%
- * interval of the median difference. The floor is half the widest interval or the largest A/A
- * median difference, whichever is larger, and never under the default floor's order of rounding.
- */
+/** `noiseOfSeries` over A/A pairs of files. */
 export function noiseReport(
   pairs: ReadonlyArray<readonly [ClientMetrics, ClientMetrics]>,
   platform: string,
@@ -639,59 +504,4 @@ export function noiseReport(
     pairs.map(([before, after]) => [flatten(before), flatten(after)] as const),
     platform,
   );
-}
-
-/** `noiseReport` over any A/A pairs' per-run metric values. */
-export function noiseOfSeries(
-  pairs: ReadonlyArray<
-    readonly [
-      ReadonlyMap<string, ReadonlyArray<number>>,
-      ReadonlyMap<string, ReadonlyArray<number>>,
-    ]
-  >,
-  platform: string,
-) {
-  const found = new Map<string, { medians: number[]; halfWidth: number; aaDifference: number }>();
-  for (const [a, b] of pairs) {
-    for (const [metric, x] of a) {
-      const y = b.get(metric);
-      if (!y) continue;
-      const [low, high] =
-        x.length > 1 && y.length > 1
-          ? bootstrapMedianDifference(x, y)
-          : [median(y)! - median(x)!, median(y)! - median(x)!];
-      const entry = found.get(metric) ?? { medians: [], halfWidth: 0, aaDifference: 0 };
-      entry.medians.push(median([...x, ...y])!);
-      entry.halfWidth = Math.max(entry.halfWidth, (high - low) / 2);
-      entry.aaDifference = Math.max(entry.aaDifference, Math.abs(median(y)! - median(x)!));
-      found.set(metric, entry);
-    }
-  }
-  const rows = [...found].toSorted().map(([metric, entry]) => {
-    const middle = median(entry.medians)!;
-    return {
-      metric,
-      median: round(middle, 2),
-      halfWidth: round(entry.halfWidth, 2),
-      aaDifference: round(entry.aaDifference, 2),
-      defaultFloor: floorFor(metric),
-      floor: ceilSignificant(Math.max(entry.halfWidth / 2, entry.aaDifference)),
-      gate: entry.halfWidth <= Math.abs(middle) * NOISY_SHARE || entry.halfWidth === 0,
-    };
-  });
-  const floors: Floors = {
-    platform,
-    floors: Object.fromEntries(
-      rows.map((row) => [row.metric, { floor: row.floor, gate: row.gate }]),
-    ),
-  };
-  const table = [
-    "| metric | median | ± A/A interval | A/A diff | default floor | calibrated floor | gate |",
-    "| :-- | --: | --: | --: | --: | --: | :-: |",
-    ...rows.map(
-      (row) =>
-        `| ${row.metric} | ${row.median} | ${row.halfWidth} | ${row.aaDifference} | ${row.defaultFloor} | ${row.floor}${row.floor > row.defaultFloor ? " ⚠" : ""} | ${row.gate ? "yes" : "no"} |`,
-    ),
-  ].join("\n");
-  return { rows, floors, table };
 }
