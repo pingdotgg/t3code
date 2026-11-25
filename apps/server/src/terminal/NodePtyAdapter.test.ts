@@ -143,6 +143,31 @@ it.effect("cancels the Windows connection without waiting for output", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("hands off a POSIX PTY when interrupted immediately after native spawn", () =>
+  Effect.gen(function* () {
+    const nativeProcess = makeNativeProcess();
+    spawn.mockImplementationOnce(() => {
+      Fiber.getCurrent()?.interruptUnsafe();
+      return nativeProcess;
+    });
+
+    const adapter = yield* PtyAdapter.PtyAdapter;
+    let acquired: PtyAdapter.PtyProcess | undefined;
+    const opening = yield* adapter
+      .spawn(spawnInput, (process) => {
+        acquired = process;
+      })
+      .pipe(
+        Effect.onInterrupt(() => Effect.sync(() => acquired?.kill("SIGKILL"))),
+        Effect.forkChild,
+      );
+    yield* Fiber.await(opening);
+
+    assert.equal(acquired?.pid, nativeProcess.pid);
+    assert.deepEqual(nativeProcess.kill.mock.calls, [["SIGKILL"]]);
+  }).pipe(Effect.provide(layerTestFor("linux"))),
+);
+
 it.effect("reports an incompatible Windows readiness API instead of hanging", () =>
   Effect.gen(function* () {
     const nativeProcess = makeNativeProcess(0);
