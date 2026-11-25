@@ -60,8 +60,8 @@ export interface Step<R> {
   readonly serial?: boolean;
 }
 
-// Interrupting a step at its timeout closes the scopes of the processes it
-// spawned, which kills each one's process group.
+// Interrupting a step at its timeout, or when another step fails, closes the
+// scopes of the processes it spawned, which kills each one's process group.
 export const runSteps = Effect.fn("checkChanged.runSteps")(function* <R>(
   steps: ReadonlyArray<Step<R>>,
   options: { readonly concurrency: number; readonly timeoutSeconds: number },
@@ -89,7 +89,9 @@ export const runSteps = Effect.fn("checkChanged.runSteps")(function* <R>(
         yield* Console.log(`\n> vp ${step.name}  ${outcome}  ${time}`);
         const output = Option.getOrUndefined(result)?.output.trimEnd();
         if (output) yield* Console.log(output);
-        return { name: step.name, outcome, time };
+        const report = { name: step.name, outcome, time };
+        if (outcome === "FAIL") return yield* Effect.fail(report);
+        return report;
       });
       const slots = Math.min(step.weight ?? 1, options.concurrency);
       const limited = Effect.acquireUseRelease(
@@ -100,7 +102,7 @@ export const runSteps = Effect.fn("checkChanged.runSteps")(function* <R>(
       return step.serial ? serial.withPermit(limited) : limited;
     },
     { concurrency: "unbounded" },
-  );
+  ).pipe(Effect.catch((failed) => Effect.succeed([failed])));
 });
 
 const CacheEntry = Schema.fromJsonString(

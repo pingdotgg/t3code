@@ -111,7 +111,31 @@ describe("check:changed", () => {
       }),
   );
 
-  it.effect("interrupts a step at its timeout and reports TIMEOUT, apart from FAIL", () =>
+  it.effect("stops the other steps when one fails and reports only the failure", () =>
+    Effect.gen(function* () {
+      let interrupted = false;
+      const results = yield* runSteps(
+        [
+          {
+            name: "hangs",
+            run: Effect.never.pipe(
+              Effect.onInterrupt(() => Effect.sync(() => (interrupted = true))),
+            ),
+          },
+          { name: "fails", run: Effect.succeed({ ok: false, output: "error" }) },
+        ],
+        { concurrency: 3, timeoutSeconds: 10 },
+      );
+
+      assert.isTrue(interrupted);
+      assert.deepStrictEqual(
+        results.map(({ name, outcome, time }) => [name, outcome, time]),
+        [["fails", "FAIL", "0.0s"]],
+      );
+    }),
+  );
+
+  it.effect("interrupts a step at its timeout and reports TIMEOUT", () =>
     Effect.gen(function* () {
       let interrupted = false;
       const fiber = yield* runSteps(
@@ -122,7 +146,6 @@ describe("check:changed", () => {
               Effect.onInterrupt(() => Effect.sync(() => (interrupted = true))),
             ),
           },
-          { name: "fails", run: Effect.succeed({ ok: false, output: "error" }) },
           { name: "passes", run: Effect.succeed({ ok: true, output: "" }) },
         ],
         { concurrency: 3, timeoutSeconds: 10 },
@@ -137,7 +160,6 @@ describe("check:changed", () => {
         results.map(({ name, outcome, time }) => [name, outcome, time]),
         [
           ["hangs", "TIMEOUT", "killed after 10s"],
-          ["fails", "FAIL", "0.0s"],
           ["passes", "pass", "0.0s"],
         ],
       );
@@ -537,17 +559,20 @@ it.each(["install", "lint"])("reports a failing %s step with its output", (step)
   );
   const result = project.run(step);
   expect(result.status, result.stdout + result.stderr).toBe(1);
-  const install = project.calls().find(({ args }) => args[0] === "install");
-  expect(install?.args, result.stdout + result.stderr).toEqual([
-    "install",
-    "--lockfile-only",
-    "--ignore-scripts",
-  ]);
-  expect(install?.cwd).not.toBe(project.root);
+  if (step === "install") {
+    const install = project.calls().find(({ args }) => args[0] === "install");
+    expect(install?.args, result.stdout + result.stderr).toEqual([
+      "install",
+      "--lockfile-only",
+      "--ignore-scripts",
+    ]);
+    expect(install?.cwd).not.toBe(project.root);
+  }
   expect(result.stdout + result.stderr).toContain(`fixture stdout: ${step}`);
   expect(result.stdout + result.stderr).toContain(`fixture stderr: ${step}`);
-  expect(result.stdout).toContain(step === "install" ? "FAIL  unused patches" : "FAIL  lint");
-  if (step === "lint") expect(result.stdout).toContain("pass  unused patches");
+  const summary = result.stdout.slice(result.stdout.indexOf("check:changed summary"));
+  expect(summary).toContain(step === "install" ? "FAIL  unused patches" : "FAIL  lint");
+  expect(summary).not.toContain("pass  ");
   expect(
     NodeFS.existsSync(NodePath.join(project.root, "node_modules/.cache/check-changed.json")),
   ).toBe(false);
