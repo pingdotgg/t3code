@@ -489,50 +489,54 @@ it.effect.each(["interrupt", "timeout"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect("checkpoint staging moves Git LFS objects its clean filter wrote into LFS storage", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-lfs-checkpoint-" });
-    const cwd = path.join(sandbox, "repo");
-    yield* fs.makeDirectory(cwd);
-    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
-    // Like git-lfs clean: hash through <lfs.storage>/tmp, then move the copy into objects.
-    const filter = path.join(sandbox, "lfs-clean.cjs");
-    yield* fs.writeFileString(
-      filter,
-      [
-        "const fs = require('node:fs');",
-        `const storage = require('node:child_process').execSync('git config --default .git/lfs lfs.storage').toString().trim();`,
-        "const content = fs.readFileSync(0);",
-        "const oid = require('node:crypto').createHash('sha256').update(content).digest('hex');",
-        "fs.mkdirSync(storage + '/tmp', { recursive: true });",
-        "const dir = storage + '/objects/' + oid.slice(0, 2) + '/' + oid.slice(2, 4);",
-        "fs.mkdirSync(dir, { recursive: true });",
-        "fs.writeFileSync(storage + '/tmp/' + process.pid, content);",
-        "fs.renameSync(storage + '/tmp/' + process.pid, dir + '/' + oid);",
-        "process.stdout.write('oid sha256:' + oid + '\\n');",
-      ].join("\n"),
-    );
-    // Not "lfs": a machine-wide git-lfs install sets filter.lfs.process, which wins over clean.
-    yield* git(["config", "filter.lfs-standin.clean", `"${process.execPath}" "${filter}"`]);
-    yield* git(["config", "filter.lfs-standin.required", "true"]);
-    yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.npz filter=lfs-standin\n");
-    yield* fs.writeFileString(path.join(cwd, "weights.npz"), "large untracked data\n");
+it.effect.each([undefined, "lfs objects\u00a0"])(
+  "checkpoint staging moves Git LFS objects into configured storage %s",
+  (configuredStorage) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-lfs-checkpoint-" });
+      const cwd = path.join(sandbox, "repo");
+      yield* fs.makeDirectory(cwd);
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      // Like git-lfs clean: hash through <lfs.storage>/tmp, then move the copy into objects.
+      const filter = path.join(sandbox, "lfs-clean.cjs");
+      yield* fs.writeFileString(
+        filter,
+        [
+          "const fs = require('node:fs');",
+          `const storage = require('node:child_process').execSync('git config --default .git/lfs lfs.storage').toString().trim();`,
+          "const content = fs.readFileSync(0);",
+          "const oid = require('node:crypto').createHash('sha256').update(content).digest('hex');",
+          "fs.mkdirSync(storage + '/tmp', { recursive: true });",
+          "const dir = storage + '/objects/' + oid.slice(0, 2) + '/' + oid.slice(2, 4);",
+          "fs.mkdirSync(dir, { recursive: true });",
+          "fs.writeFileSync(storage + '/tmp/' + process.pid, content);",
+          "fs.renameSync(storage + '/tmp/' + process.pid, dir + '/' + oid);",
+          "process.stdout.write('oid sha256:' + oid + '\\n');",
+        ].join("\n"),
+      );
+      // Not "lfs": a machine-wide git-lfs install sets filter.lfs.process, which wins over clean.
+      yield* git(["config", "filter.lfs-standin.clean", `"${process.execPath}" "${filter}"`]);
+      yield* git(["config", "filter.lfs-standin.required", "true"]);
+      if (configuredStorage !== undefined) yield* git(["config", "lfs.storage", configuredStorage]);
+      yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.npz filter=lfs-standin\n");
+      yield* fs.writeFileString(path.join(cwd, "weights.npz"), "large untracked data\n");
 
-    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
-    const pointer = yield* git(["show", `${checkpointRef}:weights.npz`]);
-    const oid = pointer.stdout.trim().slice("oid sha256:".length);
-    assert.strictEqual(
-      yield* fs.readFileString(
-        path.join(cwd, ".git/lfs/objects", oid.slice(0, 2), oid.slice(2, 4), oid),
-      ),
-      "large untracked data\n",
-    );
-    assert.isFalse(yield* fs.exists(path.join(cwd, ".git/lfs/tmp")));
-  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+      const pointer = yield* git(["show", `${checkpointRef}:weights.npz`]);
+      const oid = pointer.stdout.trim().slice("oid sha256:".length);
+      const storage = path.join(cwd, ".git", configuredStorage ?? "lfs");
+      assert.strictEqual(
+        yield* fs.readFileString(
+          path.join(storage, "objects", oid.slice(0, 2), oid.slice(2, 4), oid),
+        ),
+        "large untracked data\n",
+      );
+      assert.isFalse(yield* fs.exists(path.join(storage, "tmp")));
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("checkpoint capture fails instead of dropping Git LFS objects it cannot list", () =>
