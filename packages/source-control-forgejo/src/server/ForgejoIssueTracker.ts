@@ -188,23 +188,21 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         Effect.map((rows) => rows ?? []),
       );
 
-    /**
-     * One page of a listing, and whether another follows. Some endpoints (labels, timelines) send
-     * `X-Total-Count` but no `Link`, and a server may cap pages below `PAGE_SIZE`.
-     */
+    // Forgejo labels and timelines can send a total without a Link.
     const readPage = <A>(
       target: Target,
       operation: string,
       path: string,
       page: number,
       schema: Schema.Codec<A, unknown, never, never>,
+      receivedBefore?: number,
     ): Effect.Effect<
       { readonly rows: ReadonlyArray<A>; readonly nextCursor: string | null },
       IssueTrackerError
-    > =>
-      request(target, operation, {
-        path: `${path}${path.includes("?") ? "&" : "?"}limit=${PAGE_SIZE}&page=${page}`,
-      }).pipe(
+    > => {
+      const pagePath = (number: number) =>
+        `${path}${path.includes("?") ? "&" : "?"}limit=${PAGE_SIZE}&page=${number}`;
+      return request(target, operation, { path: pagePath(page) }).pipe(
         Effect.flatMap((result) => {
           const decoded = decodeJsonResult(Schema.NullOr(Schema.Array(schema)))(result.stdout);
           if (Result.isFailure(decoded)) {
@@ -213,17 +211,40 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
             );
           }
           const rows = decoded.success ?? [];
-          const links = /^link:\s*(.*)$/im.exec(result.stderr)?.[1];
-          const total = /^x-total-count:\s*(\d+)/im.exec(result.stderr)?.[1];
-          const more =
-            links !== undefined
-              ? /rel="?next"?/i.test(links)
-              : total !== undefined
-                ? rows.length > 0 && page * rows.length < Number(total)
-                : rows.length >= PAGE_SIZE;
-          return Effect.succeed({ rows, nextCursor: more ? String(page + 1) : null });
+          const nextCursor = String(page + 1);
+          const resultWithMore = (more: boolean) => ({
+            rows,
+            nextCursor: more ? nextCursor : null,
+          });
+          if (rows.length === 0 || parsePage(nextCursor) === null) {
+            return Effect.succeed(resultWithMore(false));
+          }
+          const links = /^link:[ \t]*(.*)$/im.exec(result.stderr)?.[1];
+          if (links !== undefined) {
+            return Effect.succeed(
+              resultWithMore(/;\s*rel=(?:"next"|next)(?:\s|;|,|$)/i.test(links)),
+            );
+          }
+          const total = Number(/^x-total-count:[ \t]*(\d+)[ \t]*\r?$/im.exec(result.stderr)?.[1]);
+          if (Number.isSafeInteger(total)) {
+            const minimumReceived = (receivedBefore ?? (page - 1) * rows.length) + rows.length;
+            const maximumReceived = (receivedBefore ?? (page - 1) * PAGE_SIZE) + rows.length;
+            if (total <= minimumReceived || total > maximumReceived) {
+              return Effect.succeed(resultWithMore(total > maximumReceived));
+            }
+          } else if (receivedBefore !== undefined || rows.length >= PAGE_SIZE) {
+            return Effect.succeed(resultWithMore(true));
+          }
+          // A capped server and a short final page can look identical.
+          return readArray(target, operation, pagePath(page + 1), schema).pipe(
+            Effect.match({
+              onSuccess: (next) => resultWithMore(next.length > 0),
+              onFailure: () => resultWithMore(true),
+            }),
+          );
         }),
       );
+    };
 
     const write = (
       target: Target,
@@ -266,7 +287,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
     ) {
       const rows: A[] = [];
       for (let page = 1; page <= MAX_PAGES; page++) {
-        const next = yield* readPage(target, operation, path, page, schema);
+        const next = yield* readPage(target, operation, path, page, schema, rows.length);
         rows.push(...next.rows);
         if (next.nextCursor === null) break;
       }
@@ -283,6 +304,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
       names: ReadonlyArray<string>,
     ) {
       const ids = new Map<string, number>();
+      let received = 0;
       for (let page = 1; ids.size < new Set(names).size && page <= MAX_PAGES; page++) {
         const next = yield* readPage(
           target,
@@ -290,7 +312,9 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
           `${repoPath(target.scope)}/labels`,
           page,
           ForgejoLabel,
+          received,
         );
+        received += next.rows.length;
         for (const label of next.rows) {
           if (names.includes(label.name)) ids.set(label.name, label.id);
         }

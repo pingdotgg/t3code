@@ -34,6 +34,7 @@ export interface T3State {
   readonly project: (
     title: string,
     files?: Readonly<Record<string, string | Uint8Array>>,
+    origin?: string,
   ) => Promise<string>;
   /**
    * Starts a thread in a project and plays one replayed turn per message before returning.
@@ -156,6 +157,7 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
   const project = Effect.fn("scenario.project")(function* (
     title: string,
     files: Readonly<Record<string, string | Uint8Array>>,
+    origin: string | undefined,
   ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -177,6 +179,7 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
     yield* git(["init", "--quiet", "--initial-branch=main"]);
     yield* git(["add", "--all"]);
     yield* git([...author, "commit", "--quiet", "--message", "Initial commit"]);
+    if (origin !== undefined) yield* git(["remote", "add", "origin", origin]);
     const created = yield* mutate({
       type: "project.create",
       commandId: CommandId.make(yield* uuid),
@@ -208,7 +211,7 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
   return {
     cli,
     state: {
-      project: (title, files = {}) => runPromise(project(title, files)),
+      project: (title, files = {}, origin?: string) => runPromise(project(title, files, origin)),
       thread: (input) => runPromise(thread(input)),
     } satisfies T3State,
     // The server outlives the test, so the next one must not see this one's projects.

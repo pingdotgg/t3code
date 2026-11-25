@@ -87,7 +87,6 @@ function answer(path: string): { readonly stdout: string; readonly stderr?: stri
           },
           { id: 4, type: "milestone", user: { login: "theo" }, created_at: "2026-07-02T02:00:00Z" },
         ]),
-        stderr: 'link: <https://forgejo.test:3000/api/v1/x?page=2>; rel="next"\n',
       };
     case "repos/acme/web/issues/42/reactions":
       return { stdout: encode([{ content: "eyes", user: { login: "theo" } }]) };
@@ -159,15 +158,15 @@ function tracker(
 describe("ForgejoIssueTracker", () => {
   it.effect("only reports issue candidates truncated when labels have another page", () =>
     Effect.gen(function* () {
-      let labelLinks: string | undefined;
+      let labelHeaders: string | undefined;
       const api = yield* tracker(({ path }) => {
         switch (path.split("?")[0]) {
           case "repos/acme/web/assignees":
             return { stdout: encode([{ login: "theo" }]) };
           case "repos/acme/web/labels":
             return {
-              stdout: encode(ISSUE.labels),
-              ...(labelLinks === undefined ? {} : { stderr: labelLinks }),
+              stdout: encode(path.endsWith("page=1") ? ISSUE.labels : []),
+              ...(labelHeaders === undefined ? {} : { stderr: labelHeaders }),
             };
           default:
             throw new Error(`unexpected path ${path}`);
@@ -181,10 +180,23 @@ describe("ForgejoIssueTracker", () => {
         truncated: false,
       });
 
-      labelLinks =
-        'Link: <https://forgejo.test:3000/api/v1/repos/acme/web/labels?page=2>; rel="next"';
+      labelHeaders = "X-Total-Count: 1\n";
+      expect((yield* api.listCandidates!(target)).truncated).toBe(false);
+
+      labelHeaders = "X-Total-Count: 0\n";
+      expect((yield* api.listCandidates!(target)).truncated).toBe(false);
+
+      labelHeaders = "X-Total-Count: 2\n";
+      expect((yield* api.listCandidates!(target)).truncated).toBe(true);
+
+      labelHeaders =
+        'X-Total-Count: 1\nLink: <https://forgejo.test:3000/api/v1/repos/acme/web/labels?page=2>; rel="next"';
       const partial = yield* api.listCandidates!(target);
       expect(partial.truncated).toBe(true);
+
+      labelHeaders =
+        'Link: <https://forgejo.test:3000/api/v1/repos/acme/web/labels?page=1>; rel="prev"';
+      expect((yield* api.listCandidates!(target)).truncated).toBe(false);
     }),
   );
 
@@ -344,6 +356,9 @@ describe("ForgejoIssueTracker", () => {
         paths.push(input.path);
         return {
           stdout: encode([ISSUE, { ...ISSUE, number: 43, pull_request: { merged: false } }]),
+          stderr: /page=2$/.test(input.path)
+            ? "link: \r\nx-total-count: 100\r\n"
+            : "x-total-count: 2\n",
         };
       });
       const page = yield* api.listIssues({
@@ -392,8 +407,81 @@ describe("ForgejoIssueTracker", () => {
         "repos/acme/web/issues?type=issues&state=open&sort=latest&assigned_by=theo&limit=50&page=1",
       ]);
       expect(page.items.map((item) => item.key)).toEqual(["42"]);
-      // Without a `Link` header, only a full page implies another.
       expect(page.nextCursor).toBeNull();
+    }),
+  );
+
+  it.effect.each([
+    { pageSize: 50, total: 51, header: "51" },
+    { pageSize: 50, total: 50, header: "50" },
+    { pageSize: 2, total: 5, header: "5" },
+    { pageSize: 2, total: 4, header: "4" },
+    { pageSize: 2, total: 5, header: undefined },
+    { pageSize: 2, total: 5, header: "1junk" },
+    { pageSize: 2, total: 5, header: "NaN" },
+    {
+      pageSize: 50,
+      total: 0,
+      header: "1",
+      link: 'Link: <https://forgejo.test:3000/api/v1/x?page=2>; rel="next"',
+    },
+  ])(
+    "pages through $total issues at size $pageSize with total count $header",
+    ({ pageSize, total, header, link }) =>
+      Effect.gen(function* () {
+        const requests: number[] = [];
+        const api = yield* tracker(({ path }) => {
+          const page = Number(new URLSearchParams(path.split("?")[1]).get("page"));
+          requests.push(page);
+          const offset = (page - 1) * pageSize;
+          const length = Math.max(0, Math.min(pageSize, total - offset));
+          return {
+            stdout: encode(
+              Array.from({ length }, (_, index) => ({ ...ISSUE, number: offset + index + 1 })),
+            ),
+            stderr: [header === undefined ? "" : `X-Total-Count: ${header}`, link].join("\r\n"),
+          };
+        });
+        const input = {
+          cwd: "/w",
+          host: "forgejo.test:3000",
+          scope: "acme/web",
+          state: "open",
+          involvement: "all",
+          sort: "created",
+          limit: 50,
+        } as const;
+        const pageCount = Math.max(1, Math.ceil(total / pageSize));
+        for (let page = 1; page <= pageCount; page++) {
+          const result = yield* api.listIssues({
+            ...input,
+            ...(page === 1 ? {} : { cursor: String(page) }),
+          });
+          expect(result.items).toHaveLength(Math.min(pageSize, total - (page - 1) * pageSize));
+          expect(result.nextCursor).toBe(page === pageCount ? null : String(page + 1));
+        }
+        if (header === "50" || header === "4" || link) {
+          expect(requests).toEqual(Array.from({ length: pageCount }, (_, index) => index + 1));
+        }
+      }),
+  );
+
+  it.effect("keeps the current issue page when probing the next page fails", () =>
+    Effect.gen(function* () {
+      const api = yield* tracker(({ path }) =>
+        path.endsWith("page=1") ? { stdout: encode([ISSUE]) } : { stdout: "invalid response" },
+      );
+      const page = yield* api.listIssues({
+        cwd: "/w",
+        host: "forgejo.test:3000",
+        scope: "acme/web",
+        state: "open",
+        involvement: "all",
+        sort: "created",
+        limit: 50,
+      });
+      expect(page.items.map(({ key }) => key)).toEqual(["42"]);
+      expect(page.nextCursor).toBe("2");
     }),
   );
 });

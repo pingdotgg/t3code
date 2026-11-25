@@ -446,7 +446,7 @@ export const make = Effect.gen(function* () {
           `HTTP/1.1 ${status}\n`,
           ...["link", "x-total-count"].flatMap((name) => {
             const value = response.headers[name];
-            return value ? [`${name}: ${value}\n`] : [];
+            return value === undefined ? [] : [`${name}: ${value}\n`];
           }),
         ].join(""),
         stdoutTruncated: false,
