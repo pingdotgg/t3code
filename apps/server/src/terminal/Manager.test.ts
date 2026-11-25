@@ -1924,14 +1924,30 @@ it.layer(
     }),
   );
 
-  it.effect("replays the color and carriage return of an unfinished CSI on attach", () =>
+  it.effect.each([
+    { name: "NUL padding", body: "31" + "\u0000".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "DEL padding", body: "31" + "\u007f".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "non-ASCII padding", body: "31" + "é".repeat(4_096) + "\r", replay: "31\r" },
+    { name: "over-budget parameters", body: "1".repeat(5_000) + "\r", replay: "\r" },
+    {
+      name: "parameters filling the budget",
+      body: "1".repeat(4_094) + "\r",
+      replay: "1".repeat(4_094),
+    },
+    { name: "repeated carriage returns", body: "31" + "\r".repeat(4_094), replay: "31\r" },
+    {
+      name: "over-budget line feeds",
+      body: "31" + "\n".repeat(4_094),
+      replay: "31" + "\n".repeat(4_092),
+    },
+  ])("replays an unfinished CSI with $name on attach", ({ body, replay }) =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
       const input = openInput();
       const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
       yield* live;
       const process = ptyAdapter.processes[0]!;
-      process.emitData(`prompt\u001b[31${"\u0000".repeat(4_096)}\r`);
+      process.emitData("prompt\u001b[" + body);
       yield* live;
 
       const joining = yield* Stream.toPull(manager.attachOutputStream(input, "joining"));
@@ -1941,9 +1957,7 @@ it.layer(
       const [output] = yield* joining;
       if (output?.type !== "output") throw new Error("Expected live terminal output");
 
-      expect((event.snapshot.history + output.data).replaceAll("\u0000", "")).toBe(
-        "prompt\u001b[31\rmX",
-      );
+      expect(event.snapshot.history + output.data).toBe("prompt\u001b[" + replay + "mX");
     }),
   );
 
