@@ -4,18 +4,23 @@ import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { GrokDriver } from "./driver.ts";
+import { GROK_USAGE_URL } from "./usageLimits.ts";
 import { resolveLatestProviderVersion } from "@t3tools/provider-core/server/maintenanceResolver";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -278,5 +283,113 @@ it.layer(layerTest)("GrokDriver", (it) => {
       });
       expect((yield* instance.snapshot.resolveMaintenance()).update).toBeNull();
     }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
+  );
+});
+
+const billedPercents: Array<number> = [];
+const layerUsageTest = TestProviderHost.layer().pipe(
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  Layer.provideMerge(IdAllocator.layer),
+  Layer.provideMerge(McpProviderSessions.layer),
+  Layer.provideMerge(ProviderLatestVersions.layer),
+  Layer.provideMerge(
+    Layer.succeed(
+      ProviderEventLoggers.ProviderEventLoggers,
+      ProviderEventLoggers.NoOpProviderEventLoggers,
+    ),
+  ),
+  Layer.provideMerge(
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.succeed(
+          request.url === GROK_USAGE_URL
+            ? HttpClientResponse.fromWeb(
+                request,
+                Response.json({ config: { creditUsagePercent: billedPercents.shift() } }),
+              )
+            : HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
+  it.effect.skipIf(windowsHost)(
+    "re-reads usage limits on the refresh interval without restarting a ready Grok CLI",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-usage-" });
+        const launches = path.join(home, "launches");
+        yield* fs.writeFileString(launches, "");
+        yield* fs.writeFileString(
+          path.join(home, "auth.json"),
+          JSON.stringify({
+            "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+              key: "session-token",
+              auth_mode: "oidc",
+            },
+          }),
+        );
+        const agentPath = yield* path.fromFileUrl(
+          new URL("./testFixtures/grok-model-selection-agent.mjs", import.meta.url),
+        );
+        const binaryPath = writeFakeCli({
+          directory: home,
+          name: "grok",
+          source: [
+            'import { appendFileSync } from "node:fs";',
+            'import { pathToFileURL } from "node:url";',
+            `appendFileSync(${JSON.stringify(launches)}, ".");`,
+            'if (process.argv[2] === "--version") {',
+            '  process.stdout.write("grok 1.0.13\\n");',
+            "  process.exit(0);",
+            "}",
+            'if (process.argv[2] === "models") {',
+            '  process.stdout.write("You are logged in with grok.com.\\n\\nAvailable models:\\n  * grok-4.6 (default)\\n");',
+            "  process.exit(0);",
+            "}",
+            'if (process.argv[2] !== "agent") process.exit(1);',
+            `await import(pathToFileURL(${JSON.stringify(agentPath)}).href);`,
+          ].join("\n"),
+        });
+        billedPercents.splice(0, billedPercents.length, 97, 9);
+
+        const instance = yield* GrokDriver.create({
+          instanceId: ProviderInstanceId.make("grok-usage"),
+          displayName: "Grok test",
+          enabled: true,
+          environment: [
+            { name: "GROK_HOME", value: home, sensitive: false },
+            { name: "XAI_API_KEY", value: "", sensitive: false },
+          ],
+          config: { ...GrokDriver.defaultConfig(), binaryPath },
+        });
+        const usedPercent = (percent: number) =>
+          instance.snapshot.streamChanges.pipe(
+            Stream.filter(
+              (snapshot) =>
+                snapshot.status === "ready" &&
+                snapshot.usageLimits?.windows[0]?.usedPercent === percent,
+            ),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+
+        const firstCheck = yield* usedPercent(97);
+        yield* Effect.yieldNow;
+        yield* Fiber.join(firstCheck);
+        const launchesAfterCheck = (yield* fs.readFileString(launches)).length;
+
+        const nextReading = yield* usedPercent(9);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("5 minutes");
+        yield* Fiber.join(nextReading);
+
+        expect((yield* fs.readFileString(launches)).length).toBe(launchesAfterCheck);
+      }),
   );
 });

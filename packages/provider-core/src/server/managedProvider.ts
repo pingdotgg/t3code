@@ -63,6 +63,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
   readonly checkUsageLimits?: Effect.Effect<ServerProvider["usageLimits"]>;
+  /** Re-read usage with `checkUsageLimits` on every interval, not only after a failed probe. */
+  readonly pollUsageLimits?: boolean;
   readonly invalidateUsageCache?: Effect.Effect<void>;
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
@@ -334,12 +336,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
   });
 
-  const needsUsageRecovery = (snapshot: ServerProvider) =>
+  const needsUsageCheck = (snapshot: ServerProvider) =>
     input.checkUsageLimits !== undefined &&
     snapshot.installed &&
     snapshot.status === "ready" &&
     snapshot.auth.status === "authenticated" &&
-    snapshot.usageLimits?.unavailable?.reason === "probeFailed";
+    (input.pollUsageLimits === true
+      ? snapshot.usageLimits?.unavailable?.reason !== "unsupported"
+      : snapshot.usageLimits?.unavailable?.reason === "probeFailed");
 
   const needsProviderRefresh = (snapshot: ServerProvider) =>
     input.refreshOnInterval !== false &&
@@ -350,7 +354,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   ) {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
     if (!snapshot.enabled) return;
-    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
+    if (!needsUsageCheck(snapshot) || !input.checkUsageLimits) {
       if (needsProviderRefresh(snapshot)) {
         yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
       }
@@ -374,7 +378,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     // republish a snapshot that differs in checkedAt.
     if (
       !state.snapshot.enabled ||
-      (!needsUsageRecovery(state.snapshot) && !needsProviderRefresh(state.snapshot))
+      (!needsUsageCheck(state.snapshot) && !needsProviderRefresh(state.snapshot))
     ) {
       return false;
     }
