@@ -320,6 +320,28 @@ it("keeps a file opened by hand when the tab remounts", async () => {
   await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
 });
 
+it("keeps the wrap and whitespace toggles when the tab remounts", async () => {
+  setup({ paged: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+  // The menu opens in a portal, outside the rendered container.
+  const whitespace = page.getByRole("menuitemcheckbox", { name: "Hide whitespace changes" });
+  const wrap = page.getByRole("menuitemcheckbox", { name: "Wrap lines" });
+  await screen.getByRole("button", { name: "Diff options", exact: true }).click();
+  // Both settings default to on.
+  await whitespace.click();
+  await wrap.click();
+  await expect.element(wrap).toHaveAttribute("aria-checked", "false");
+  await userEvent.keyboard("{Escape}");
+
+  await screen.rerender(<div />);
+  await screen.rerender(tab(0));
+  await screen.getByRole("button", { name: "Diff options", exact: true }).click();
+  await expect.element(whitespace).toHaveAttribute("aria-checked", "false");
+  await expect.element(wrap).toHaveAttribute("aria-checked", "false");
+});
+
 // regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it
 it("keeps a revealed file open when its Viewed mark loads afterwards", async () => {
   setup({ paged: false });

@@ -197,6 +197,11 @@ const COMMIT_PAGE_SIZE = 10;
 
 // Session-only, like the thread diff's folds: switching right-panel tabs remounts this tab.
 const foldsByScopeKey = new Map<string, PullRequestDiffFolds>();
+// The toggles the reader used, per pull request: a saved position belongs to the layout they give.
+const viewOptionsByPullRequestKey = new Map<
+  string,
+  { readonly wordWrap?: boolean; readonly ignoreWhitespace?: boolean }
+>();
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 
@@ -495,9 +500,6 @@ function PullRequestCodeTab({
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const diffLayout = settings.diffLayout;
-  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
-  const wordWrap = wordWrapOverride ?? settings.wordWrap;
-  const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     PULL_REQUEST_FILE_TREE_STORAGE_KEY,
     false,
@@ -519,6 +521,16 @@ function PullRequestCodeTab({
   }>({ key: "", cursor: null, slices: NO_SLICES });
 
   const referenceKey = pullRequestReviewKey(reference);
+  const viewOptionsKey = JSON.stringify([environmentId, referenceKey]);
+  const [wordWrapOverride, setWordWrapOverride] = useState(
+    () => viewOptionsByPullRequestKey.get(viewOptionsKey)?.wordWrap ?? null,
+  );
+  const wordWrap = wordWrapOverride ?? settings.wordWrap;
+  const [ignoreWhitespace, setIgnoreWhitespace] = useState(
+    () =>
+      viewOptionsByPullRequestKey.get(viewOptionsKey)?.ignoreWhitespace ??
+      settings.diffIgnoreWhitespace,
+  );
   // A commit opened from the timeline or left selected across a force-push may no longer be
   // part of the pull request; read it as "All commits" instead of requesting its diff.
   const commit =
@@ -552,6 +564,9 @@ function PullRequestCodeTab({
     setDraft(null);
     setSelectedLines(null);
     setFolds(foldsByScopeKey.get(scopeKey) ?? EMPTY_PULL_REQUEST_DIFF_FOLDS);
+    const viewOptions = viewOptionsByPullRequestKey.get(viewOptionsKey);
+    setWordWrapOverride(viewOptions?.wordWrap ?? null);
+    setIgnoreWhitespace(viewOptions?.ignoreWhitespace ?? settings.diffIgnoreWhitespace);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
@@ -1497,10 +1512,23 @@ function PullRequestCodeTab({
           count: hiddenTestFileCount,
         })
       : null;
+  const saveViewOption = (option: { wordWrap: boolean } | { ignoreWhitespace: boolean }) => {
+    // The layout changes under the reader, so a position saved in the old one no longer applies.
+    repositionForReader();
+    viewOptionsByPullRequestKey.set(viewOptionsKey, {
+      ...viewOptionsByPullRequestKey.get(viewOptionsKey),
+      ...option,
+    });
+  };
   const changeIgnoreWhitespace = (next: boolean) => {
+    saveViewOption({ ignoreWhitespace: next });
     setIgnoreWhitespace(next);
     setDraft(null);
     setSelectedLines(null);
+  };
+  const changeWordWrap = (next: boolean) => {
+    saveViewOption({ wordWrap: next });
+    setWordWrapOverride(next);
   };
   const toolbar = (
     <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
@@ -1709,7 +1737,7 @@ function PullRequestCodeTab({
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={wordWrap}
-              onCheckedChange={(checked) => setWordWrapOverride(checked)}
+              onCheckedChange={(checked) => changeWordWrap(checked)}
             >
               <T>Wrap lines</T>
             </DropdownMenuCheckboxItem>
@@ -1781,9 +1809,7 @@ function PullRequestCodeTab({
                   variant="ghost"
                   size="sm"
                   pressed={wordWrap}
-                  onPressedChange={(pressed) => {
-                    setWordWrapOverride(Boolean(pressed));
-                  }}
+                  onPressedChange={(pressed) => changeWordWrap(Boolean(pressed))}
                 />
               }
             >
