@@ -105,9 +105,13 @@ it.effect.each([400, 500])(
 );
 
 // regression: #30629 hosts with only Platform-Tools listed no connected phones
-it.effect.each([true, false])(
-  "lists adb-attached physical devices when the hub cannot run avdmanager (emulator tooling: %s)",
-  (emulatorTooling) =>
+it.effect.each([
+  { emulatorTooling: true, adbFails: false },
+  { emulatorTooling: false, adbFails: false },
+  { emulatorTooling: false, adbFails: true },
+])(
+  "lists adb-attached physical devices when the hub cannot run avdmanager (emulator tooling: $emulatorTooling, adb fails: $adbFails)",
+  ({ emulatorTooling, adbFails }) =>
     Effect.gen(function* () {
       // expo-device-hub returns no Android devices at all once `avdmanager list avd` fails.
       const commands: Array<string> = [];
@@ -138,7 +142,7 @@ it.effect.each([true, false])(
             commands.push(command);
             return command === "adb" && args.includes("devices")
               ? {
-                  code: 0,
+                  code: adbFails ? 1 : 0,
                   stdout:
                     "List of devices attached\nR52T10ABCDE            device usb:1-1 product:gts9wifi model:SM_X710 device:gts9wifi transport_id:1\n\n",
                   stderr: "",
@@ -152,9 +156,17 @@ it.effect.each([true, false])(
                   }
                 : { code: 0, stdout: "", stderr: "" };
           }),
-        platformAvailable: (platform) => Effect.succeed(emulatorTooling && platform === "android"),
+        platformAvailable: (platform) => Effect.succeed(platform === "android"),
+        avdsAvailable: Effect.succeed(emulatorTooling),
       });
       const listed = yield* operations.list;
+      expect(commands.includes("emulator")).toBe(emulatorTooling);
+      if (adbFails) {
+        expect(listed.devices).toEqual([]);
+        expect(listed.androidDiscoveryIncomplete).toBe(true);
+        expect(listed.detail).toBe("Could not list Android devices (adb devices -l).");
+        return;
+      }
       expect(listed.devices).toContainEqual(
         expect.objectContaining({
           id: "R52T10ABCDE",
@@ -165,7 +177,6 @@ it.effect.each([true, false])(
       );
       // Without emulator tooling, the failed avdmanager probe is noise.
       if (!emulatorTooling) expect(listed.detail).toBeUndefined();
-      expect(commands.includes("emulator")).toBe(emulatorTooling);
     }),
 );
 

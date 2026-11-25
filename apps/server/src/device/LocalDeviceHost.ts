@@ -940,11 +940,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       http: httpClient,
       run,
       platformAvailable: (platform) =>
-        platform === "android"
-          ? currentSdk.pipe(Effect.map((sdk) => sdk.adb && sdk.emulator))
-          : platformAvailability(platform).pipe(
-              Effect.map((availability) => availability.available),
-            ),
+        platformAvailability(platform).pipe(Effect.map((availability) => availability.available)),
+      avdsAvailable: currentSdk.pipe(Effect.map((sdk) => sdk.emulator)),
     }),
     nodePath: running.hub.nodePath,
     run,

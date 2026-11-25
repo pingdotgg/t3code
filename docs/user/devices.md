@@ -33,9 +33,10 @@ Studio's Device Manager. T3 Code detects standard SDK locations; set
 `ANDROID_HOME` for a custom location. The panel explains missing dependencies.
 After installing SDK tools, restart the environment server and refresh devices.
 
-Physical Android devices need only SDK Platform-Tools. Connect the device over
-USB and approve USB debugging, or run `adb connect <address>:<port>` on the
-device host for wireless debugging, then refresh devices.
+Physical Android devices connected to the machine that hosts the environment
+server need only SDK Platform-Tools. Connect the device over USB and approve USB
+debugging, or run `adb connect <address>:<port>` on that machine for wireless
+debugging, then refresh devices.
 
 Android emulator video also needs `ffmpeg` with the libx264 encoder on the device
 host's PATH, or an executable selected by `SERVE_EMU_FFMPEG` on that host. If
@@ -117,8 +118,9 @@ machine, run T3 Code on that machine and connect to its environment.
 Node 22.12 or newer and npm must be available to non-interactive SSH commands.
 T3 checks common Homebrew and Android SDK locations; custom installations need
 the appropriate PATH and `ANDROID_HOME` or `ANDROID_SDK_ROOT` on the host.
-Android on an SSH host needs the same SDK tools as a local environment; adb on
-the PATH alone does not enable it. Android emulator video needs
+Android on an SSH host needs the SDK Platform-Tools, Android Emulator, and
+Command-line Tools (latest), even for physical devices; adb on the PATH alone
+does not enable it. Android emulator video needs
 `ffmpeg` with libx264 on that host; physical Android devices use scrcpy and do
 not need ffmpeg.
 
