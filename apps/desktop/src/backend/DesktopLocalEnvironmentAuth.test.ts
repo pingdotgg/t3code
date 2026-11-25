@@ -218,6 +218,61 @@ describe("DesktopLocalEnvironmentAuth", () => {
       return { auth, requestCount };
     });
 
+  it.effect("does not retry the exchange while the backend is not ready", () =>
+    Effect.gen(function* () {
+      const stopped = yield* Ref.make(false);
+      const readyAgain = yield* Deferred.make<void>();
+      const requestCount = yield* Ref.make(0);
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Ref.updateAndGet(requestCount, (count) => count + 1).pipe(
+            Effect.tap(() => Ref.set(stopped, true)),
+            Effect.map((count) =>
+              count === 1
+                ? HttpClientResponse.fromWeb(request, new Response(null, { status: 503 }))
+                : tokenResponse(request),
+            ),
+          ),
+        ),
+      );
+      const layerRestartingPool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+        list: Effect.succeed([
+          {
+            id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+            label: Effect.succeed("Windows"),
+            currentConfig: Effect.succeedSome(config),
+            waitForReady: () =>
+              Ref.get(stopped).pipe(
+                Effect.flatMap((isStopped) =>
+                  isStopped ? Deferred.await(readyAgain) : Effect.void,
+                ),
+                Effect.as(true),
+              ),
+          },
+        ]),
+      } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
+      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(layerRestartingPool, layerHttpClient, NodeCrypto.layerMac),
+            ),
+          ),
+        ),
+      );
+
+      const fiber = yield* Effect.forkChild(auth.getBearerToken);
+      yield* TestClock.adjust(Duration.seconds(5));
+      assert.strictEqual(yield* Ref.get(requestCount), 1);
+
+      yield* Ref.set(stopped, false);
+      yield* Deferred.succeed(readyAgain, undefined);
+      assert.strictEqual(yield* Fiber.join(fiber), "desktop-bearer-token");
+      assert.strictEqual(yield* Ref.get(requestCount), 2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not retry a rejected bootstrap credential", () =>
     Effect.gen(function* () {
       const { auth, requestCount } = yield* makeExchange(1, () =>

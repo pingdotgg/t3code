@@ -34,6 +34,30 @@ describe("adding usage limit sources", () => {
     );
   });
 
+  it("gives a gateway its own entry beside a hub at the same URL", () => {
+    const url = "https://proxy.test";
+    const hub = sourceIdFromUrl(url, DEFAULT_SERVER_SETTINGS.usageLimitSources, "cliproxy");
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      usageLimitSources: { [hub]: { kind: "cliproxy", url, managementKey: "key", enabled: true } },
+    });
+    const gateway = sourceIdFromUrl(url, settings.usageLimitSources, "modelproxy");
+    expect([hub, gateway]).toEqual(["cliproxy-proxy.test", "modelproxy-proxy.test"]);
+    const saved = applyServerSettingsPatch(settings, {
+      usageLimitSources: {
+        [gateway]: {
+          kind: "modelproxy",
+          url,
+          issuer: "https://auth.test/realms/main",
+          clientId: "lathe",
+          clientSecret: "",
+          enabled: true,
+        },
+      },
+    });
+    // Adding the gateway again updates it, not the hub.
+    expect(sourceIdFromUrl(url, saved.usageLimitSources, "modelproxy")).toBe(gateway);
+  });
+
   it("updates a saved hub when its URL is added again", () => {
     let settings: ServerSettings = DEFAULT_SERVER_SETTINGS;
     for (const managementKey of ["old-key", "new-key"]) {

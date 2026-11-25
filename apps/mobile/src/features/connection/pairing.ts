@@ -38,6 +38,8 @@ export function buildPairingUrl(host: string, code: string): string {
 
   try {
     const url = new URL(h.includes("://") ? h : `${isIpLiteral(h) ? "http" : "https"}://${h}`);
+    // The code goes to the address shown, so a query cannot name another destination.
+    url.search = "";
     url.hash = new URLSearchParams([["token", c]]).toString();
     return url.toString();
   } catch {

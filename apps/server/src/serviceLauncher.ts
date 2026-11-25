@@ -8,6 +8,8 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 import { acquireServiceSelectionLock } from "./cloud/serviceSelectionLock.ts";
+import { RESTORE_OOMD_WATCH_SCRIPT } from "./cloud/userManagerOom.ts";
+import { windowsSystem32Path } from "@lathe/shared/windowsSystem";
 import { isNoCopyOnWrite, markNoCopyOnWrite } from "./noCopyOnWrite.ts";
 
 import { forkCliExecutablePath } from "@lathe/shared/forkCliArtifacts";
@@ -141,8 +143,10 @@ export interface ServiceUnit {
   readonly reload: () => Promise<void>;
 }
 
+const SCHTASKS = () => windowsSystem32Path(process.env, "schtasks.exe");
+
 const runSchtasks = (...args: ReadonlyArray<string>) =>
-  NodeUtil.promisify(NodeChildProcess.execFile)("schtasks", args, {
+  NodeUtil.promisify(NodeChildProcess.execFile)(SCHTASKS(), args, {
     windowsHide: true,
     timeout: 30_000,
   });
@@ -229,8 +233,8 @@ async function serviceUnitFromEnvironment(
     );
   return {
     path: NodePath.join(unitDir, unitName),
-    reload: () =>
-      new Promise((resolve, reject) => {
+    reload: async () => {
+      await new Promise<void>((resolve, reject) => {
         NodeChildProcess.spawn("systemctl", ["--user", "daemon-reload"], {
           stdio: "ignore",
           timeout: 30_000,
@@ -241,7 +245,16 @@ async function serviceUnitFromEnvironment(
               ? resolve()
               : reject(new Error(`systemctl --user daemon-reload exited with ${code ?? signal}`)),
           );
-      }),
+      });
+      await new Promise<void>((resolve) => {
+        NodeChildProcess.spawn("/bin/sh", ["-c", RESTORE_OOMD_WATCH_SCRIPT], {
+          stdio: "ignore",
+          timeout: 30_000,
+        })
+          .once("error", () => resolve())
+          .once("exit", () => resolve());
+      });
+    },
   };
 }
 
@@ -875,7 +888,7 @@ export async function stateDirOwned(baseDir: string): Promise<boolean> {
   if (!Number.isFinite(recordedAt)) return true;
   // oxlint-disable-next-line lathe/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
-  const { command, args, env } = legacyOwnerStartTimeCommand(pid, platform);
+  const { command, args, env } = legacyOwnerStartTimeCommand(pid, platform, process.env);
   const output = await new Promise<string | undefined>((resolve) =>
     NodeChildProcess.execFile(
       command,
@@ -1384,10 +1397,12 @@ export class Launcher {
     };
     await this.#selectState(next);
     child.role = "active";
-    await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
+    // The commit is already durable, so answer before the cleanup: the trial waits only
+    // 30 seconds for this reply, and dropping the backup can take longer than that.
     try {
       await sendMessage(child.process, { type: "committed", updateId: committed.id });
     } finally {
+      await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
       await this.#repointServiceUnit(committed.targetVersion);
     }
   }
@@ -1411,9 +1426,10 @@ export class Launcher {
         }
         const contents = decodeServiceUnit(await NodeFSP.readFile(unit.path));
         const installedBaseDir = serviceUnitBaseDirOf(contents);
+        const real = (dir: string) => NodeFSP.realpath(dir).catch(() => NodePath.resolve(dir));
         if (
           installedBaseDir === undefined ||
-          NodePath.resolve(installedBaseDir) !== NodePath.resolve(this.#baseDir)
+          (await real(installedBaseDir)) !== (await real(this.#baseDir))
         ) {
           return;
         }
@@ -1650,7 +1666,7 @@ export async function main(options: LauncherOptions = {}): Promise<void> {
     // lets the next repeating trigger start the service again.
     if (windows && options.serviceUnit !== undefined) {
       const taskName = serviceTaskName(process.env.USERDOMAIN ?? "", process.env.USERNAME ?? "");
-      NodeChildProcess.spawnSync("schtasks", ["/End", "/TN", taskName], {
+      NodeChildProcess.spawnSync(SCHTASKS(), ["/End", "/TN", taskName], {
         stdio: "ignore",
         windowsHide: true,
       });

@@ -83,6 +83,8 @@ export const ManagedPolicyLimits = Schema.Struct({
   browserCookieImport: Schema.optionalKey(Schema.Boolean),
   /** `false` turns the preview tunnel off: no client reaches this machine's loopback ports. */
   previewTunnel: Schema.optionalKey(Schema.Boolean),
+  /** `false` turns a project's `worktreeLayout` commands off: none runs, approved or not. */
+  worktreeLayoutCommands: Schema.optionalKey(Schema.Boolean),
   providers: Schema.optionalKey(ManagedProviderLimits),
   updates: Schema.optionalKey(ManagedUpdatesPolicy),
 });
@@ -98,6 +100,7 @@ export const ManagedPolicySummaryLimits = Schema.Struct({
   telemetry: Schema.optionalKey(Schema.Boolean),
   browserCookieImport: Schema.optionalKey(Schema.Boolean),
   previewTunnel: Schema.optionalKey(Schema.Boolean),
+  worktreeLayoutCommands: Schema.optionalKey(Schema.Boolean),
   providers: Schema.optionalKey(
     Schema.Struct({
       /** Absent means every driver is allowed. */
@@ -213,6 +216,7 @@ const CAPABILITY_LABELS = {
   webhookTasks: "webhook tasks",
   browserCookieImport: "importing browser cookies",
   previewTunnel: "opening this machine's local servers on other devices",
+  worktreeLayoutCommands: "project worktree layout commands",
 } as const;
 
 /** Why a capability is unavailable on an environment with `summary`, or undefined when allowed. */

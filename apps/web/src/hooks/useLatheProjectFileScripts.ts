@@ -14,6 +14,7 @@ export interface LatheProjectFileState {
   status: "loading" | "missing" | "invalid" | "valid";
   file: LatheProjectFile | null;
   scripts: ReadonlyArray<LatheProjectFileScript>;
+  refresh: () => void;
 }
 
 export function useLatheProjectFileState(
@@ -28,23 +29,18 @@ export function useLatheProjectFileState(
   );
   const contents = query.data && !query.data.truncated ? query.data.contents : null;
   const isPending = query.isPending;
+  const refresh = query.refresh;
   if (contents === null) {
     return {
       status: isPending ? "loading" : "missing",
       file: null,
       scripts: NO_SCRIPTS,
+      refresh,
     } as const;
   }
   const file = parseLatheProjectFile(contents);
   if (file === null) {
-    return { status: "invalid", file: null, scripts: NO_SCRIPTS } as const;
+    return { status: "invalid", file: null, scripts: NO_SCRIPTS, refresh } as const;
   }
-  return { status: "valid", file, scripts: file.scripts ?? NO_SCRIPTS } as const;
-}
-
-export function useLatheProjectFileScripts(
-  environmentId: EnvironmentId,
-  cwd: string | null,
-): ReadonlyArray<LatheProjectFileScript> {
-  return useLatheProjectFileState(environmentId, cwd).scripts;
+  return { status: "valid", file, scripts: file.scripts ?? NO_SCRIPTS, refresh } as const;
 }

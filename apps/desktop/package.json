@@ -1,6 +1,6 @@
 {
   "name": "@lathe/desktop",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "type": "module",
   "main": "dist-electron/boot.cjs",

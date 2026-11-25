@@ -46,6 +46,7 @@ import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePreview";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { shortcutConflictKey } from "~/keybindings";
+import { useOpenIssueLink } from "~/lib/openIssueLink";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
@@ -85,6 +86,7 @@ function PdfDocument(props: {
   src: string;
   title: string;
   documentKey: string;
+  threadRef: ScopedThreadRef | undefined;
   actions?: ReactNode;
 }) {
   const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
@@ -96,6 +98,7 @@ function PdfDocument(props: {
       positionKey={props.documentKey}
       initialView={view}
       onViewChange={setView}
+      threadRef={props.threadRef}
       actions={props.actions}
     />
   );
@@ -108,9 +111,11 @@ function PdfDocumentRevision(props: {
   positionKey: string;
   initialView: PdfViewState;
   onViewChange: (view: PdfViewState) => void;
+  threadRef: ScopedThreadRef | undefined;
   actions?: ReactNode;
 }) {
   const [src] = useState(props.src);
+  const openLink = useOpenLink(props.threadRef);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
   // expose only the first page, even when pdfViewerEnabled reports support.
   const native =
@@ -133,6 +138,9 @@ function PdfDocumentRevision(props: {
         positionKey={props.positionKey}
         initialView={props.initialView}
         onViewChange={props.onViewChange}
+        onOpenLink={(url, event) => {
+          void openLink(url, { event }).catch((cause: unknown) => console.error(cause));
+        }}
         actions={props.actions}
       />
     </Suspense>
@@ -163,6 +171,7 @@ export function BrowserDocumentFrame(props: {
       documentKey={key}
       src={props.src}
       title={props.title}
+      threadRef={props.threadRef}
       actions={props.pdfActions}
     />
   ) : props.htmlRender ? (
@@ -367,6 +376,7 @@ export function HtmlRenderDocument(props: {
     },
   );
   const openChangeRequestLink = useOpenChangeRequestLink(props.threadRef);
+  const openIssueLink = useOpenIssueLink(props.threadRef);
   const openLink = useOpenLink(props.threadRef);
   const open = useEffectEvent((url: string, modifiers: { metaKey: boolean; ctrlKey: boolean }) => {
     if (modifiers.metaKey || modifiers.ctrlKey) {
@@ -375,14 +385,15 @@ export function HtmlRenderDocument(props: {
         .catch((cause: unknown) => console.error(cause));
       return;
     }
+    const event = {
+      ...modifiers,
+      preventDefault: () => undefined,
+      stopPropagation: () => undefined,
+    };
     if (
       props.threadRef !== undefined &&
-      openChangeRequestLink(
-        { ...modifiers, preventDefault: () => undefined, stopPropagation: () => undefined },
-        url,
-        undefined,
-        props.threadRef.environmentId,
-      )
+      (openChangeRequestLink(event, url, undefined, props.threadRef.environmentId) ||
+        openIssueLink(event, url, props.threadRef.environmentId))
     ) {
       return;
     }

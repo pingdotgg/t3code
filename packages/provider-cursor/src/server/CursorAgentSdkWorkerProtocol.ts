@@ -164,6 +164,11 @@ export type CursorWorkerMessage =
       readonly update: InteractionUpdate;
     }
   | {
+      readonly type: "startupPhase";
+      readonly sendId: number;
+      readonly phase: string;
+    }
+  | {
       readonly type: "runDone";
       readonly sendId: number;
       readonly ok: true;

@@ -27,6 +27,7 @@ const settings = Schema.decodeSync(ServerSettings)({
   },
   usageLimitSources: {
     hub: { kind: "cliproxy", url: "https://hub.test", managementKey: personal("op://hub") },
+    quota: { kind: "http", url: "https://quota.test", managementKey: personal("op://quota") },
   },
   easDeviceHosts: [
     { kind: "eas", id: "eas", label: "Expo Simulators", accessToken: personal("op://expo") },
@@ -51,6 +52,7 @@ it.each([
       "Codex · CODEX_TOKEN",
       "GitHub · github.com",
       "https://hub.test · Management Key",
+      "https://quota.test · Management Key",
       "Expo Simulators · Access Token",
       "Simlock Pool · Agent Token",
       "Voice · OpenAI",

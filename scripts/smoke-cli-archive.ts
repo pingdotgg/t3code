@@ -107,6 +107,7 @@ const smokeCliArchive = Effect.fn("smokeCliArchive")(function* (input: {
     path.join(contentDir, "bin.mjs"),
     path.join(contentDir, "claude-history-worker.mjs"),
     path.join(contentDir, "client/index.html"),
+    path.join(contentDir, "client/.vite/manifest.json"),
     ...(platform === "linux" ? [bundledLibatomic, `${bundledLibatomic}.LICENSE`] : []),
   ]) {
     if (!(yield* fs.exists(required))) {

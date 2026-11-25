@@ -78,6 +78,7 @@ import * as AuthRelayLoopbackHost from "../preview/AuthRelayLoopbackHost.ts";
 import * as DesktopEditionIcon from "./DesktopEditionIcon.ts";
 import * as DesktopMenuBar from "../menuBar/DesktopMenuBar.ts";
 import * as DesktopSshOutputLog from "../ssh/DesktopSshOutputLog.ts";
+import * as AppleSpeech from "../speech/AppleSpeech.ts";
 
 interface StubbedDesktop {
   readonly localEnvironmentEnabled: boolean;
@@ -249,6 +250,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           Layer.mock(ElectronTheme.ElectronTheme, {}),
           Layer.mock(ElectronWindow.ElectronWindow, {}),
           Layer.mock(MacPermissions.MacPermissions, {}),
+          Layer.mock(AppleSpeech.AppleSpeech, {}),
           Layer.mock(LoopbackTunnel.LoopbackTunnel, {}),
           Layer.mock(PreviewManager.PreviewManager, {
             isBrowserPartition: () => {

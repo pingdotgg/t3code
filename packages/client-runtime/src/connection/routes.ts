@@ -478,6 +478,20 @@ export function routesAfterRemoving(
 }
 
 /**
+ * A route is offered for removal only when removing it leaves a route behind.
+ * A learned route would be learned again, and the last route a learned route
+ * borrows from would take the whole environment with it.
+ */
+export function canRemoveRoute(
+  routes: ReadonlyArray<ConnectionRoute>,
+  route: ConnectionRoute,
+): boolean {
+  return (
+    !isLearned(route) && routesAfterRemoving(routes, connectionRouteId(route.target)).length > 0
+  );
+}
+
+/**
  * A dragged route order shows until the saved routes catch up with it. It is
  * stale, and returns null, once the saved order matches it or the saved routes
  * are no longer the same set: kept any longer, it would hide a route added

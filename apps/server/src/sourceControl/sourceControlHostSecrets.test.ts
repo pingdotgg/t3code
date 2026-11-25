@@ -140,6 +140,12 @@ it.effect("reads a collected reference again once it is invalidated", () =>
         managementKey: "plain-key",
         enabled: true,
       },
+      [UsageLimitSourceId.make("quota")]: {
+        kind: "http",
+        url: "https://quota.test",
+        managementKey: source("http#token"),
+        enabled: true,
+      },
     } as const;
     const easDeviceHosts = [
       {
@@ -164,6 +170,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
       },
     ];
     cache.set("cliproxy#key", "stale");
+    cache.set("http#token", "stale");
     cache.set("voice#key", "stale");
     cache.set("expo#token", "stale");
     cache.set("simlock#token", "stale");
@@ -184,6 +191,7 @@ it.effect("reads a collected reference again once it is invalidated", () =>
       }),
     );
     assert.isFalse(cache.has("cliproxy#key"));
+    assert.isFalse(cache.has("http#token"));
     assert.isFalse(cache.has("voice#key"));
     assert.isFalse(cache.has("expo#token"));
     assert.isFalse(cache.has("simlock#token"));

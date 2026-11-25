@@ -318,6 +318,34 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
   Effect.orDie,
 );
 
+// Variables CI services set on their runners. `CI=false` or `CI=0` means not CI.
+const CI_VARIABLES = [
+  "CI",
+  "GITHUB_ACTIONS",
+  "GITLAB_CI",
+  "CIRCLECI",
+  "TRAVIS",
+  "BUILDKITE",
+  "JENKINS_URL",
+  "TEAMCITY_VERSION",
+  "TF_BUILD",
+  "BITBUCKET_BUILD_NUMBER",
+  "CODEBUILD_BUILD_ID",
+  "DRONE",
+  "APPVEYOR",
+] as const;
+
+/** CI runs are not installs, so telemetry is off there unless `LATHE_TELEMETRY_ENABLED` says otherwise. */
+export const isCiEnvironment = (env: Readonly<Record<string, string | undefined>>) =>
+  CI_VARIABLES.some((name) => {
+    const value = env[name]?.trim().toLowerCase();
+    return value !== undefined && value !== "" && value !== "false" && value !== "0";
+  });
+
+/** The cross-tool `DO_NOT_TRACK=1` convention turns off product analytics and relay tracing. */
+export const isDoNotTrackSet = (env: Readonly<Record<string, string | undefined>>) =>
+  LATHE_TRUE.includes(env.DO_NOT_TRACK?.trim().toLowerCase() ?? "");
+
 export const isRelayTracingEnabled = (env: Readonly<Record<string, string | undefined>>) =>
   Config.all({
     ...sdkFlags,
@@ -325,7 +353,9 @@ export const isRelayTracingEnabled = (env: Readonly<Record<string, string | unde
   }).pipe(
     Effect.map(
       ({ telemetry, lathe, spec }) =>
-        telemetry.value !== false && !(lathe.value ?? spec.value ?? false),
+        (telemetry.value ?? !isCiEnvironment(env)) &&
+        !isDoNotTrackSet(env) &&
+        !(lathe.value ?? spec.value ?? false),
     ),
     Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(env))),
     Effect.orDie,

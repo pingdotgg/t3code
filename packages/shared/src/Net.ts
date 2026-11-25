@@ -6,6 +6,8 @@ import * as Context from "effect/Context";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import { listensOnLoopback } from "./hostClassification.ts";
+
 export class NetError extends Schema.TaggedError<NetError>()("NetError", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
@@ -35,7 +37,7 @@ export interface NetServiceShape {
 
   readonly reserveLoopbackPort: (host?: string) => Effect.Effect<number, NetError>;
 
-  readonly findAvailablePort: (preferred: number) => Effect.Effect<number, NetError>;
+  readonly findAvailablePort: (preferred: number, host?: string) => Effect.Effect<number, NetError>;
 }
 
 export class NetService extends Context.Service<NetService, NetServiceShape>()(
@@ -130,6 +132,19 @@ export const make = () => {
     );
   });
 
+  const isPortAvailableForHost = Effect.fn("Net.isPortAvailableForHost")(function* (
+    port: number,
+    host: string | undefined,
+  ): Effect.fn.Return<boolean> {
+    if (host === undefined || listensOnLoopback(host)) {
+      return yield* isPortAvailableOnLoopback(port);
+    }
+    if (yield* hasListenerOnHost(port, host)) {
+      return false;
+    }
+    return yield* canListenOnHost(port, host);
+  });
+
   const reserveLoopbackPort = (host = "127.0.0.1"): Effect.Effect<number, NetError> =>
     Effect.callback<number, NetError>((resume) => {
       const probe = NodeNet.createServer();
@@ -167,11 +182,11 @@ export const make = () => {
     isPortAvailableOnLoopback,
     hasListenerOnHost,
     reserveLoopbackPort,
-    findAvailablePort: Effect.fn("Net.findAvailablePort")(function* (preferred) {
-      if (preferred > 0 && (yield* isPortAvailableOnLoopback(preferred))) {
+    findAvailablePort: Effect.fn("Net.findAvailablePort")(function* (preferred, host) {
+      if (preferred > 0 && (yield* isPortAvailableForHost(preferred, host))) {
         return preferred;
       }
-      return yield* reserveLoopbackPort();
+      return yield* reserveLoopbackPort(listensOnLoopback(host) ? undefined : host);
     }),
   } satisfies NetServiceShape;
 };

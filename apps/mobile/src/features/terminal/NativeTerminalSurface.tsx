@@ -283,7 +283,6 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
   if (NativeTerminalSurfaceView) {
     return (
       <View style={props.style}>
-        {/* oxlint-disable-next-line react/static-components -- The resolver returns a cached native component with stable identity. */}
         <NativeTerminalSurfaceView
           ref={nativeRef}
           appearanceScheme={themeAppearance}

@@ -80,7 +80,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
     }
     setSelectedIndicatorTop(selectedItem.offsetTop + selectedItem.offsetHeight / 2 - 10);
   }, [
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Adding, removing or reordering providers moves the selected item, so the indicator re-measures.
+    // Adding, removing or reordering providers moves the selected item, so the indicator re-measures.
     props.instanceEntries,
     props.selectedInstanceId,
     showFavorites,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   compactDynamicToolOutput,
+  compactLatheMcpToolOutput,
   MAX_TOOL_OUTPUT_IMAGES,
   mcpToolResultOutput,
   SEND_TO_USER_MAX_LENGTH,
@@ -35,6 +36,18 @@ describe("compactDynamicToolOutput", () => {
     // OpenCode 2 Code Mode reports a script's nested send_to_user call as one `execute` item.
     const output = JSON.stringify({ sentMessage: "Draft", message: "Shown to the user." });
     expect(sentMessageFromToolItem({ toolName: "execute", output })).toBe("Draft");
+    expect(compactLatheMcpToolOutput("lathe.send_to_user", output)).toEqual({
+      sentMessage: "Draft",
+    });
+    expect(
+      compactLatheMcpToolOutput("lathe.preview_recording_stop", {
+        structuredContent: { id: "thread-rec-1", path: "/tmp/rec.webm" },
+      }),
+    ).toEqual({ id: "thread-rec-1" });
+    expect(
+      compactLatheMcpToolOutput("lathe.preview_recording_stop", { isError: true, id: "ignored" }),
+    ).toEqual({ isError: true });
+    expect(compactLatheMcpToolOutput("other.send_to_user", output)).toBeUndefined();
   });
 
   it("keeps nested thread identity and scalar task IDs without result bodies", () => {

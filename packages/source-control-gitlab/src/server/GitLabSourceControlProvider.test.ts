@@ -210,6 +210,13 @@ it.effect(
           headSelectors: ["octocat:feature", "feature"],
           state: "open",
         }),
+        { headSelectors: ["octocat:feature"], limit: 100 },
+      );
+      assert.deepStrictEqual(
+        provider.headBranchProbe?.({
+          headSelectors: ["feature", "octocat:feature"],
+          state: "open",
+        }),
         { headSelectors: ["feature"], limit: 100 },
       );
     }),

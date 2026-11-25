@@ -1070,6 +1070,35 @@ describe("FORK_RENAME_RULES", () => {
       '    "create": "(git worktree add \\"$T3_WORKTREE_PROJECT_PATH\\" \\"$T3_WORKTREE_BRANCH\\")"',
       "kept",
     ],
+    // A t3Tools field in a test follows the renamed code; it is not the t3tools repository owner.
+    ["apps/server/src/feedback/FeedbackService.test.ts", "      t3Tools: [],", "identifier"],
+    [
+      "apps/server/src/vcs/remote.test.ts",
+      '      expect(owner).toBe("t3tools");',
+      "upstream-reference",
+    ],
+    // The scrubber skips values under three characters, so its two-letter sample stays t3.
+    [
+      "apps/server/src/feedback/scrubFeedback.test.ts",
+      '      "t3 thread send failed for t3",',
+      "upstream-reference",
+    ],
+    [
+      "apps/server/src/feedback/scrubFeedback.test.ts",
+      '      ["t3", "Bob", "x"],',
+      "upstream-reference",
+    ],
+    [
+      "apps/server/src/feedback/scrubFeedback.test.ts",
+      '      "t3_feedback failed for t3 and [redacted], not bobcat",',
+      "upstream-reference",
+    ],
+    // Rows that name tools without that sample still follow the renamed tools.
+    [
+      "apps/server/src/feedback/scrubFeedback.test.ts",
+      '      "[redacted] t3_environment_preferences_update apps/server/src/persistence/Migrations/088",',
+      "agent-facing",
+    ],
     // The older exported names stay persisted: both spellings are exported.
     ["apps/server/src/x.ts", "      T3CODE_PROJECT_ROOT: root,", "persisted"],
   ])("classifies %s: %s as %s", (path, line, expected) => {

@@ -425,6 +425,8 @@ const LATHE_MCP_TOOLS: Readonly<Record<string, LatheMcpToolDefinition>> = {
     ["Handle", "Handling", "Handled", "pending questions"],
     "question-respond",
   ),
+  lathe_workflow: tool(["Use", "Using", "Used", "workflow runs"], "thread-send"),
+  lathe_submit_output: tool(["Submit", "Submitting", "Submitted", "the result"], "thread-send"),
   lathe_queue_list: tool(["List", "Listing", "Listed", "queued messages"], "queue-list"),
   lathe_queue_read: tool(["Read", "Reading", "Read", "a queued message"], "queue-read"),
   lathe_queue_edit: tool(["Edit", "Editing", "Edited", "a queued message"], "queue-edit"),

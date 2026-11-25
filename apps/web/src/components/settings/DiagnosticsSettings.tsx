@@ -529,13 +529,13 @@ function ProcessResourceHistoryChart({
               <TooltipTrigger
                 render={
                   <div className="flex h-full min-w-1 flex-1 items-end">
-                    <div
-                      className="relative h-full w-full"
-                      aria-label={gt("Average CPU {average}%, peak CPU {peak}%", {
-                        average: bucket.avgCpuPercent.toFixed(1),
-                        peak: bucket.maxCpuPercent.toFixed(1),
-                      })}
-                    >
+                    <div className="relative h-full w-full">
+                      <span className="sr-only">
+                        {gt("Average CPU {average}%, peak CPU {peak}%", {
+                          average: bucket.avgCpuPercent.toFixed(1),
+                          peak: bucket.maxCpuPercent.toFixed(1),
+                        })}
+                      </span>
                       <div
                         className="absolute inset-x-0 bottom-0 rounded-t-sm bg-foreground/15 transition-colors"
                         style={{ height: `${peakHeight}%` }}

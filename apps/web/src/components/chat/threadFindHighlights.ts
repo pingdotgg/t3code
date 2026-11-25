@@ -1,6 +1,6 @@
 import { findThreadSearchOccurrences } from "@lathe/shared/threadSearch";
 import { useEffect, useEffectEvent, useRef } from "react";
-import { THREAD_FIND_BLOCK_TAGS } from "@lathe/shared/threadFindText";
+import { THREAD_FIND_BLOCK_TAGS } from "@lathe/shared/threadFindBlockTags";
 
 import { observeResize } from "~/lib/observeResize";
 

@@ -224,9 +224,12 @@ function scenarioCommands(scenario: OrchestratorV2Scenario): ReadonlyArray<Orche
 const findPendingRuntimeRequest = (projection: OrchestrationV2ThreadProjection) =>
   projection.runtimeRequests.find((request) => request.status === "pending");
 
+// A run completes before its turn-end checkpoint capture; the scenario settles after both.
 const hasActiveRun = (projection: OrchestrationV2ThreadProjection) =>
-  projection.runs.some((run) =>
-    ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+  projection.runs.some(
+    (run) =>
+      ["preparing", "queued", "starting", "running", "waiting"].includes(run.status) ||
+      (run.status === "completed" && run.checkpointId === null),
   );
 
 const SCENARIO_WAIT_ATTEMPTS = 10_000;

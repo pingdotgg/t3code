@@ -844,6 +844,8 @@ LAUNCH_LOCK="$DEFAULT_SERVER_HOME/ssh-launch/.launch.lock"
 LAUNCH_BREAK_LOCK="$LAUNCH_LOCK.break"
 @@LATHE_ENSURE_LATHE_HOME_SCRIPT@@
 mkdir -p "$STATE_DIR"
+# The state directory and log are for their owner only. A umask set here would reach the server.
+chmod 700 "$STATE_DIR"
 cleanup_launch() {
   rm -f "$RUNNER_NEXT"
   for OWNED_LOCK in "$LAUNCH_LOCK" "$LAUNCH_BREAK_LOCK"; do
@@ -919,7 +921,14 @@ if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
   RUNNER_CHANGED=1
 fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
-if [ -n "$LAUNCHER_ID" ]; then
+# Desktops with the same connection details share this record. A server
+# another desktop launched is only borrowed: it is neither replaced nor
+# claimed here, and that desktop's ID stays on record.
+RECORDED_LAUNCHER="$(cat "$STATE_DIR/launcher" 2>/dev/null || true)"
+FOREIGN_LAUNCHER=0
+if [ -n "$LAUNCHER_ID" ] && [ -n "$RECORDED_LAUNCHER" ] && [ "$RECORDED_LAUNCHER" != "$LAUNCHER_ID" ]; then
+  FOREIGN_LAUNCHER=1
+elif [ -n "$LAUNCHER_ID" ]; then
   printf '%s\\n' "$LAUNCHER_ID" >"$STATE_DIR/launcher"
 fi
 pick_port() {
@@ -1150,6 +1159,8 @@ if adopt_default_server && [ -n "$ADOPTED_PID" ] && [ -n "$LAUNCHER_ID" ]; then
     printf 'managed\\n' >"$MANAGED_FILE"
     printf 'external\\n' >"$SIBLING_DIR/managed"
     rm -f "$SIBLING_DIR/pid"
+    printf '%s\\n' "$LAUNCHER_ID" >"$STATE_DIR/launcher"
+    FOREIGN_LAUNCHER=0
     RUNNER_CHANGED=1
     if cmp -s "$RUNNER_FILE" "$SIBLING_DIR/run-lathe.sh"; then
       RUNNER_CHANGED=0
@@ -1173,7 +1184,7 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
 elif [ -n "$REMOTE_PORT" ] && managed_server_running "$REMOTE_PID"; then
   # Reconnect owns the local tunnel, not the lifetime of an already running
   # server. A changed runner is the update path and replaces an older server.
-  if [ "$RUNNER_CHANGED" -eq 1 ] && ! keeps_running_server; then
+  if [ "$RUNNER_CHANGED" -eq 1 ] && [ "$FOREIGN_LAUNCHER" -eq 0 ] && ! keeps_running_server; then
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID" "$RESTART_WAIT_SECONDS"
     if server_running "$REMOTE_PID"; then
@@ -1200,6 +1211,10 @@ elif [ -n "$REMOTE_PORT" ] && managed_server_running "$REMOTE_PID"; then
     wait_server_ready "$REMOTE_PID" "$READY_TIMEOUT_MS" || READY_STATUS=$?
     if [ "$READY_STATUS" -eq 0 ]; then
       LAUNCH_ACTION="reused"
+      # A server another desktop launched is borrowed: never replaced or stopped from here.
+      if [ "$FOREIGN_LAUNCHER" -eq 1 ]; then
+        REMOTE_MANAGED="external"
+      fi
     elif [ "$READY_STATUS" -eq 1 ]; then
       printf 'Remote Lathe server is still starting on 127.0.0.1:%s. A large database can take minutes to migrate. Retry the connection; the server was left running.\\n' "$REMOTE_PORT" >&2
       exit 1
@@ -1290,13 +1305,16 @@ if [ -z "$REMOTE_PORT" ]; then
   # Start this launch's log empty. Unlink rather than truncate: a process from an
   # earlier launch can still hold the old log open and keep writing to it.
   rm -f "$LOG_FILE"
+  (umask 077 && : >"$LOG_FILE")
   nohup env LATHE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
   printf 'managed\\n' >"$MANAGED_FILE"
-  # A stop keeps the launcher file; it must not name this server's owner.
-  if [ -z "$LAUNCHER_ID" ]; then
+  # A stop keeps the launcher file; it must name this server's owner.
+  if [ -n "$LAUNCHER_ID" ]; then
+    printf '%s\\n' "$LAUNCHER_ID" >"$STATE_DIR/launcher"
+  else
     rm -f "$STATE_DIR/launcher"
   fi
   READY_STATUS=0
@@ -1373,6 +1391,13 @@ PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
 MANAGED_FILE="$STATE_DIR/managed"
 STOP_WAIT_SECONDS=@@LATHE_SERVER_STOP_WAIT_SECONDS@@
+LAUNCHER_ID="@@LATHE_LAUNCHER_ID@@"
+RECORDED_LAUNCHER="$(cat "$STATE_DIR/launcher" 2>/dev/null || true)"
+# Another desktop with the same connection details launched this server.
+if [ -n "$LAUNCHER_ID" ] && [ -n "$RECORDED_LAUNCHER" ] && [ "$RECORDED_LAUNCHER" != "$LAUNCHER_ID" ]; then
+  printf '{"stopped":false}\\n'
+  exit 0
+fi
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 @@LATHE_MANAGED_SERVER_RUNNING_SCRIPT@@
@@ -1496,10 +1521,15 @@ export function buildRemotePairingScript(
   });
 }
 
-export function buildRemoteStopScript(stateKey: string): string {
+// Launcher IDs are interpolated into remote shell commands, so only hex passes.
+const validLauncherId = (launcherId: string | null | undefined) =>
+  typeof launcherId === "string" && /^[0-9a-f]{32}$/u.test(launcherId) ? launcherId : null;
+
+export function buildRemoteStopScript(stateKey: string, launcherId: string | null = null): string {
   return applyScriptPlaceholders(REMOTE_STOP_SCRIPT, {
     LATHE_STATE_KEY: stateKey,
     LATHE_SERVER_STOP_WAIT_SECONDS: String(REMOTE_SERVER_STOP_WAIT_SECONDS),
+    LATHE_LAUNCHER_ID: launcherId ?? "",
     LATHE_MANAGED_SERVER_RUNNING_SCRIPT: REMOTE_MANAGED_SERVER_RUNNING_SCRIPT,
   });
 }
@@ -1538,11 +1568,8 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
   > {
     const stateKey = yield* remoteStateKey(target);
     yield* annotateSshTargetSpan(target, { "ssh.stateKey": stateKey });
-    // The launcher ID is interpolated into the remote shell command, so only hex passes.
-    const launchArgs =
-      typeof launcherId === "string" && /^[0-9a-f]{32}$/u.test(launcherId)
-        ? `${stateKey} ${launcherId}`
-        : stateKey;
+    const validId = validLauncherId(launcherId);
+    const launchArgs = validId === null ? stateKey : `${stateKey} ${validId}`;
     yield* Effect.logInfo("ssh.remoteServer.launch.start", {
       ...sshTargetLogFields(target),
       ...sshRunnerLogFields(runner),
@@ -1692,6 +1719,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
 const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
   target: DesktopSshEnvironmentTarget,
   input?: RemoteCommandOptions,
+  launcherId?: string | null,
 ): Effect.fn.Return<
   void,
   SshCommandError | SshInvalidTargetError,
@@ -1705,7 +1733,7 @@ const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(function* (
   });
   yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
-    stdin: buildRemoteStopScript(stateKey),
+    stdin: buildRemoteStopScript(stateKey, validLauncherId(launcherId)),
     purpose: "stop",
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
@@ -2116,6 +2144,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const controlMasters = yield* ControlMaster.make({
     directory: options.controlSocketDirectory,
   });
+  const resolveLauncherId = options.resolveLauncherId ?? Effect.succeed(null);
 
   // Keep one lock per target so reconnect cannot reuse a server while stop is pending.
   const withTargetLock = Effect.fn("ssh/tunnel.withTargetLock")(function* <A, E, R>(
@@ -2376,8 +2405,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshRunnerLogFields(input.runner),
       key: input.key,
     });
-    const launcherId =
-      options.resolveLauncherId === undefined ? null : yield* options.resolveLauncherId;
+    const launcherId = yield* resolveLauncherId;
     const remoteLaunch = yield* input.runOneShot((authOptions) =>
       launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner, launcherId).pipe(
         timePhase(summary, "launchMs"),
@@ -2441,9 +2469,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const pathService = yield* Path.Path;
     // Stops the remote server over its own connection, as shutdown must not
     // depend on the target's master or on the caller's services.
-    const stopRemoteDirect = Effect.suspend(() => {
+    const stopRemoteDirect = Effect.gen(function* () {
       const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
-      return stopRemoteServer(
+      const launcherId = yield* resolveLauncherId;
+      return yield* stopRemoteServer(
         tunnelEntry.target,
         authSecret === null
           ? {
@@ -2457,6 +2486,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
               interactiveAuth: true,
               multiplex: SSH_DIRECT,
             },
+        launcherId,
       );
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawnerService),
@@ -2816,13 +2846,16 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           }).pipe(Effect.uninterruptible, timePhase(summary, "tunnelCloseMs"));
         }
         // The stop rides a healthy master if there is one, then the master goes too.
+        const launcherId = yield* resolveLauncherId;
         yield* makeOneShotRunner(
           key,
           resolvedTarget,
           "reuse",
           summary,
         )((authOptions) =>
-          stopRemoteServer(resolvedTarget, authOptions).pipe(timePhase(summary, "remoteStopMs")),
+          stopRemoteServer(resolvedTarget, authOptions, launcherId).pipe(
+            timePhase(summary, "remoteStopMs"),
+          ),
         ).pipe(Effect.ensuring(controlMasters.close(key)));
       }),
     });

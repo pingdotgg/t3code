@@ -1,5 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, UnifiedSettings, UsageLimitSourceSnapshot } from "@lathe/contracts";
+import type {
+  EnvironmentId,
+  UnifiedSettings,
+  UsageLimitSourceConfig,
+  UsageLimitSourceSnapshot,
+} from "@lathe/contracts";
 import { T, useGT, Var } from "gt-react";
 import { PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -23,7 +28,7 @@ import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 const CLI_PROXY_NAME = "CLI Proxy";
 
-type SourceKind = "cliproxy" | "modelproxy";
+type SourceKind = UsageLimitSourceConfig["kind"];
 
 /** Source management follows the selected device and access rules of provider settings. */
 export function UsageProviderSettings({
@@ -43,7 +48,11 @@ export function UsageProviderSettings({
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const snapshots = serverConfig?.usageLimitSources ?? [];
   const kindName = (kind: SourceKind) =>
-    kind === "cliproxy" ? CLI_PROXY_NAME : gt("modelproxy gateway");
+    kind === "cliproxy"
+      ? CLI_PROXY_NAME
+      : kind === "http"
+        ? gt("HTTP quota source")
+        : gt("modelproxy gateway");
   const [adding, setAdding] = useState(false);
   const entries = Object.entries(sources);
 
@@ -61,7 +70,7 @@ export function UsageProviderSettings({
         }
       >
         {entries.length === 0 ? (
-          <SettingsRow title={gt("No hubs configured.")} />
+          <SettingsRow title={gt("No usage sources configured.")} />
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
@@ -224,12 +233,14 @@ function RemoveUsageProviderButton({
                   Limits view; the hub itself is untouched. Add it again with the URL and key to
                   bring them back.
                 </T>
-              ) : (
+              ) : kind === "modelproxy" ? (
                 <T>
                   The gateway's client secret and your sign-in session are deleted from this server.
                   Its accounts leave the Limits view; the gateway itself is untouched. Add it again
                   to bring them back.
                 </T>
+              ) : (
+                <T>The saved connection and its credentials are removed from this environment.</T>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -244,7 +255,13 @@ function RemoveUsageProviderButton({
                 onConfirm();
               }}
             >
-              {kind === "cliproxy" ? <T>Remove hub</T> : <T>Remove gateway</T>}
+              {kind === "cliproxy" ? (
+                <T>Remove hub</T>
+              ) : kind === "modelproxy" ? (
+                <T>Remove gateway</T>
+              ) : (
+                <T>Remove</T>
+              )}
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>

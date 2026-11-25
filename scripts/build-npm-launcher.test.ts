@@ -128,7 +128,11 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "lathe-npm-launcher-test-" });
+        // macOS temp directories sit under /var, a link to /private/var, and the launcher
+        // reports the resolved path it runs from.
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "lathe-npm-launcher-test-" }),
+        );
         const output = yield* buildNpmLauncher({
           version: VERSION,
           outputDir: path.join(root, "out"),

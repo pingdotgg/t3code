@@ -81,7 +81,7 @@ that is a laptop asleep half the day costs the other environments nothing but a 
 
 The session's subject is `roadmap-link:<environmentId>` and its scopes are `roadmap:read` and
 `roadmap:write`. Every other HTTP and WebSocket path refuses the subject, as they refuse
-`mcp-client` (see [environment auth](./environment-auth.md)). The reason is the actor check: the
+`mcp-client` (see [environment auth](./04_environment-auth.md)). The reason is the actor check: the
 home applies a write only when its actor is an agent or steward of the environment the subject
 names, and refuses user and GitHub actors outright. No other path makes that check, so a link
 session there could act as the user. The roadmap group also refuses when its own environment is not

@@ -15,7 +15,8 @@ export function isSidebarUtilityPage(pathname: string) {
     // Fork: roadmap.
     pathname === "/roadmap" ||
     pathname === "/pull-requests" ||
-    pathname === "/issues"
+    pathname === "/issues" ||
+    pathname === "/workflows"
   );
 }
 

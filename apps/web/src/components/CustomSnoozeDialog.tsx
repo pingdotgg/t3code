@@ -20,6 +20,7 @@ import { CalendarIcon, Settings2Icon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
 import { weekStartsOn } from "../timestampFormat";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useFormattingLocale } from "../i18n/I18nProvider";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -81,6 +82,7 @@ export function CustomSnoozeDialogHost() {
 
 function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
   const gt = useGT();
+  const locale = useFormattingLocale();
   const id = useId();
   const navigate = useNavigate();
   const initialSnoozedUntil = options.snoozedUntil ?? null;
@@ -189,7 +191,7 @@ function CustomSnoozeDialog({ options }: { options: CustomSnoozeOptions }) {
                             />
                           }
                         >
-                          {date.toLocaleDateString(undefined, {
+                          {date.toLocaleDateString(locale, {
                             month: "short",
                             day: "numeric",
                             year: "numeric",

@@ -1057,6 +1057,14 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     path: /^packages\/(?:client-runtime\/src\/state\/filesystem|shared\/src\/speech)\.test\.ts$|^apps\/web\/src\/projectIconOptions\.test\.ts$/,
   },
   {
+    id: "upstream-short-value-sample",
+    class: "upstream-reference",
+    reason:
+      "The feedback scrubber's two-letter known value (t3), in rows that test that values under three characters are left alone; a longer name would be scrubbed and break the case.",
+    path: /^apps\/server\/src\/feedback\/scrubFeedback\.test\.ts$/,
+    line: /failed for t3\b|^\s*\["t3"|two-letter username such as t3/,
+  },
+  {
     id: "kept-upstream-alpha-dir",
     class: "kept",
     reason:
@@ -1207,6 +1215,8 @@ export const FORK_RENAME_RULES: ReadonlyArray<RenameRule> = [
     path: /(?:\.test\.[cm]?[jt]sx?|\.testkit\.ts|__snapshots__\/.*|\.snap)$|\/testkit\/(?!.*\.ndjson$)/,
     test: (o) =>
       /^t3(?:code|tools)$/i.test(stem(o)) &&
+      // A camelCase field (t3Tools) is a code symbol, which follows the renamed code.
+      !/^t3[A-Z]/.test(stem(o)) &&
       // Values tests compare with renamed code: attribution, user agents, DISPLAY,
       // lint rule names, command-line flags, systemd unit names, storage keys, DOM
       // attributes and the preview's certificate approvals file.

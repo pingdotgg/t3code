@@ -88,6 +88,23 @@ describe("git action copy", () => {
     expect(resolveQuickAction({ ...pushed, isDefaultRef: true }, false, true).disabled).toBe(true);
   });
 
+  it.each([
+    { tracking: "with an upstream", hasUpstream: true },
+    { tracking: "without an upstream", hasUpstream: false },
+  ])("pushes existing commits from a clean default branch $tracking", ({ hasUpstream }) => {
+    const cleanDefaultBranch = status({
+      refName: "main",
+      isDefaultRef: true,
+      hasUpstream,
+      aheadCount: 1,
+    });
+    expect(resolveQuickAction(cleanDefaultBranch, false, true)).toMatchObject({
+      disabled: false,
+      kind: "run_action",
+      action: "push",
+    });
+  });
+
   it("names the host's change request in the default-branch dialog", () => {
     const input = { action: "commit_push_pr", branchName: "main", includesCommit: true } as const;
     expect(

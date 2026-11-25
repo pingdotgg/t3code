@@ -51,6 +51,31 @@ export function resolveCompatibleRuntimeMode(
   return { modes, mode: modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
 }
 
+/**
+ * The modes a draft's send can run in. A multi-model send gives every thread the draft's mode
+ * and only that thread's provider narrows it, so the composer offers what any of them supports.
+ */
+export function draftSupportedRuntimeModes(
+  activeProviderModes: ReadonlyArray<RuntimeMode> | undefined,
+  multipleModelSelections: ReadonlyArray<{ readonly instanceId: string }> | null,
+  providers: ReadonlyArray<{
+    readonly instanceId: string;
+    readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode> | undefined;
+  }>,
+) {
+  if (multipleModelSelections === null || multipleModelSelections.length === 0) {
+    return activeProviderModes;
+  }
+  const supported = multipleModelSelections.map(
+    (selection) =>
+      providers.find((provider) => provider.instanceId === selection.instanceId)
+        ?.supportedRuntimeModes ?? [],
+  );
+  // A provider that reports no modes supports them all.
+  if (supported.some((modes) => modes.length === 0)) return undefined;
+  return runtimeModeOptions.filter((mode) => supported.some((modes) => modes.includes(mode)));
+}
+
 export function resolveRuntimeModeOption(
   mode: RuntimeMode,
   resolve: MessageResolver = m,

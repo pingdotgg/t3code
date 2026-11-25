@@ -40,7 +40,12 @@ import type {
   TranscriptUsageFormat,
   UsageRecord,
 } from "@lathe/provider-core/server/usage";
-import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
+import {
+  canonicalModelFilter,
+  resolveModelAliases,
+  usageTimestampFilter,
+  UsageAggregator,
+} from "./usageAggregation.ts";
 import {
   createOverrideRateTable,
   isUnlistedModel,
@@ -422,7 +427,8 @@ export const make = Effect.gen(function* () {
             ([filePath, entry]) =>
               entry.provider === provider &&
               entry.mtimeMs >= retentionCutoffMs &&
-              (entry.records.length + entry.tailRecords.length > 0 || entry.malformedRecords > 0) &&
+              (entry.records.length + entry.tailRecords.length > 0 ||
+                entry.malformedRecords.length > 0) &&
               isWithinDirectory(filePath, dir),
           );
         const volumeId =
@@ -567,7 +573,7 @@ export const make = Effect.gen(function* () {
     format: TranscriptUsageFormat<unknown>,
   ): Effect.fn.Return<{
     readonly records: readonly UsageRecord[];
-    readonly malformedRecords: number;
+    readonly malformedRecords: readonly number[];
     readonly failed?: true;
     readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
   }> {
@@ -602,7 +608,7 @@ export const make = Effect.gen(function* () {
     if (parsed === null)
       return {
         records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
-        malformedRecords: cached?.provider === provider ? cached.malformedRecords : 0,
+        malformedRecords: cached?.provider === provider ? cached.malformedRecords : [],
         failed: true,
       };
 
@@ -690,7 +696,7 @@ export const make = Effect.gen(function* () {
       | readonly {
           readonly path: string;
           readonly records: readonly UsageRecord[];
-          readonly malformedRecords: number;
+          readonly malformedRecords: readonly number[];
         }[]
       | null;
     /** Every transcript path the walk listed, in walk order, whatever its mtime. */
@@ -803,7 +809,7 @@ export const make = Effect.gen(function* () {
                   : Effect.succeed<[string, string | undefined]>([volumeId, undefined]),
                 ([resolved, sourceId]): ScannedDir => ({
                   ...source,
-                  files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
+                  files: source.files?.map((file) => ({ ...file, malformedRecords: [] })) ?? null,
                   provider: reader.provider,
                   volumeId: resolved,
                   ...(sourceId === undefined ? {} : { physicalSourceId: sourceId }),
@@ -879,6 +885,11 @@ export const make = Effect.gen(function* () {
         ? 0
         : Math.max(0, startedAtMs - settings.usageHistoryRetentionDays * 24 * 60 * 60 * 1000);
 
+    const inWindow = usageTimestampFilter({ ...input, ...hourlyWindow });
+    const windowEndMs =
+      hourlyWindow?.untilTimeMs ??
+      Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
+
     const awaitRefresh = input.awaitRefresh === true;
     const collect = Effect.gen(function* () {
       const resolved = yield* resolveTranscriptDirs(settings, retentionCutoffMs, awaitRefresh).pipe(
@@ -923,7 +934,7 @@ export const make = Effect.gen(function* () {
       ...background.sources.map(({ path: dir, records, ...source }) => ({
         ...source,
         dir,
-        files: [{ path: dir, records, malformedRecords: 0 }],
+        files: [{ path: dir, records, malformedRecords: [] }],
       })),
     ];
 
@@ -967,7 +978,16 @@ export const make = Effect.gen(function* () {
           malformedRecords: entry.malformedRecords,
         });
       }
-      return retainedFiles;
+      return retainedFiles.flatMap((file) => {
+        // A keyed copy outside the window still claims its key, so a later copy is not counted.
+        const records = file.records.filter(
+          (record) => record.dedupeKey !== null || inWindow(record.timestampMs),
+        );
+        const malformedRecords = file.malformedRecords.filter(inWindow);
+        return records.length === 0 && malformedRecords.length === 0
+          ? []
+          : [{ ...file, records, malformedRecords }];
+      });
     });
     // Usage two transcripts share counts in the first one, so saved files take the order an exact
     // scan reads them in: walked files in walk order, then the directory's deleted files.
@@ -1025,9 +1045,6 @@ export const make = Effect.gen(function* () {
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     });
 
-    const windowEndMs =
-      hourlyWindow?.untilTimeMs ??
-      Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
     let resolvedAny = false;
     for (const { reader } of transcriptReaders) {
       if (reader.resolveServiceTiers === undefined || fromMemory) continue;
@@ -1094,7 +1111,7 @@ export const make = Effect.gen(function* () {
       const purposes = background.purposes.get(provider);
 
       for (const file of filesByDir[index] ?? []) {
-        malformedRecords += file.malformedRecords;
+        malformedRecords += file.malformedRecords.length;
         if (file.records.length === 0) {
           skippedFiles += 1;
           continue;

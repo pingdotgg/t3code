@@ -105,4 +105,21 @@ describe("preview commands", () => {
 
     expect(dispatch).toHaveBeenCalledWith(action);
   });
+
+  it("preview.find leaves the key unclaimed on non-thread chat routes", () => {
+    using dispatch = vi.spyOn(previewActions, "dispatchPreviewAction").mockImplementation(() => {});
+    using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
+    const router = {
+      state: { matches: [{ routeId: "/_chat/pull-requests", params: {} }] },
+    } as unknown as AnyRouter;
+    using stack = new DisposableStack();
+    stack.defer(installChatRouteCommands(router));
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as KeyboardEvent;
+
+    const result = register.mock.calls[0]![0]["preview.find"]!(event);
+
+    expect(result).toBe(false);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
 });

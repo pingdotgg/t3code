@@ -10,6 +10,7 @@ export const DraftComposerImageAttachmentSchema = Schema.Struct({
   sizeBytes: Schema.Number,
   fileUri: Schema.optional(Schema.String.check(Schema.isNonEmpty())),
   dataUrl: Schema.optional(Schema.String.check(Schema.isNonEmpty())),
+  contentDigest: Schema.optional(Schema.String),
   uploadedAttachmentId: Schema.optional(Schema.String),
   uploadEnvironmentId: Schema.optional(EnvironmentId),
 }).check(

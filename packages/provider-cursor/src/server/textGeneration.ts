@@ -183,7 +183,7 @@ export const runCursorTextGenerationInProcess = Effect.fn("CursorTextGeneration.
     );
     return yield* runCursorTextGenerationWithStore({
       Agent,
-      store: CursorAgentSdk.withNoopCursorRunEvents(store),
+      store: Object.assign(store, { persistRunEvents: false }),
       prompt: input.prompt,
       apiKey: input.apiKey,
       model: input.model,
@@ -308,7 +308,7 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
               } as const;
               return runCursorTextGenerationWithStore({
                 Agent,
-                store: CursorAgentSdk.withNoopCursorRunEvents(store),
+                store: Object.assign(store, { persistRunEvents: false }),
                 prompt,
                 apiKey,
                 model: resolvedModel,

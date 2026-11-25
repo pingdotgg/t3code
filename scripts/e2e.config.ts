@@ -1,4 +1,4 @@
-// Scenarios: e2e tests that run against the real dev stack. See docs/operations/scenarios.md.
+// Scenarios: e2e tests that run against the real dev stack. See docs/internals/15_testing.md#scenarios.
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { mobile, type DeviceProvider } from "@e2e-dev/mobile";

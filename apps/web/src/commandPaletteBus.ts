@@ -4,6 +4,7 @@ import type {
   ScopedThreadRef,
 } from "@lathe/contracts";
 
+import type { DraftId } from "./composerDraftStore";
 import { dispatchCommandPalette, isCommandPaletteMounted } from "./commandPaletteStore";
 
 export interface CommandPaletteLinkedThreads {
@@ -14,6 +15,8 @@ export interface CommandPaletteLinkedThreads {
 export interface CommandPaletteOpenDetail {
   // Fork: roadmap. "roadmap-attach" opens the work item picker for `roadmapThreadRef`.
   readonly open?: "add-project" | "new-thread-in" | "depends-on" | "roadmap-attach";
+  /** With add-project: the draft the new project is picked for. */
+  readonly draftId?: DraftId | null;
   readonly query?: string;
   readonly linkedThreads?: CommandPaletteLinkedThreads;
   /** The waiting thread the "Depends on" picker parks. Required for that mode. */
@@ -48,7 +51,10 @@ export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void 
   } else if (detail.open === "roadmap-attach" && detail.roadmapThreadRef) {
     dispatchCommandPalette({ _tag: "OpenRoadmapAttach", threadRef: detail.roadmapThreadRef });
   } else if (detail.open === "add-project") {
-    dispatchCommandPalette({ _tag: "OpenAddProject" });
+    dispatchCommandPalette({
+      _tag: "OpenAddProject",
+      ...(detail.draftId ? { draftId: detail.draftId } : {}),
+    });
   } else if (detail.query !== undefined) {
     dispatchCommandPalette({
       _tag: "OpenSearch",

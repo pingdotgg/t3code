@@ -3,6 +3,7 @@ import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
+  ScopedThreadRef,
   ThreadId,
   TurnItemId,
 } from "@lathe/contracts";
@@ -17,9 +18,12 @@ import {
 import { formatDiffCount } from "@lathe/client-runtime/diff-count";
 import { isJavaScriptReplTool } from "@lathe/shared/toolActivity";
 import { ExternalLinkIcon } from "lucide-react";
-import { memo, Suspense, use } from "react";
+import { memo, type ReactNode, Suspense, use } from "react";
 
+import { canOpenLinksInApp, resolveLinkTarget } from "../../browser/browserLinkTarget";
+import { useOpenLink } from "../../browser/useOpenLink";
 import { useDiffThemeName } from "../../hooks/useDiffThemeName";
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 import { useTurnItemDetail } from "../../state/queries";
@@ -28,6 +32,7 @@ import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
+import { FileSearchResults } from "./FileSearchResults";
 import {
   CommandOutputPanel,
   useCommandOutputStreaming,
@@ -200,6 +205,41 @@ export function FetchedToolOutput(props: {
   );
 }
 
+function WebSearchResultLink(props: {
+  readonly href: string;
+  readonly threadRef: ScopedThreadRef;
+  readonly children: ReactNode;
+}) {
+  const openLink = useOpenLink(props.threadRef);
+  // Subscribe so the synchronous _blank decision sees hydrated settings, as ChatMarkdown does.
+  const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
+  return (
+    <a
+      href={props.href}
+      target="_blank"
+      rel="noreferrer"
+      className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
+      onClick={(event) => {
+        if (
+          resolveLinkTarget({
+            url: props.href,
+            event,
+            preference: linkTargetPreference,
+            canOpenInApp: canOpenLinksInApp(props.threadRef),
+          }) !== "app"
+        ) {
+          return;
+        }
+        event.preventDefault();
+        void openLink(props.href, { event }).catch(console.error);
+      }}
+    >
+      {props.children}
+      <ExternalLinkIcon className="size-3" />
+    </a>
+  );
+}
+
 /**
  * A tool call's body: the call itself in the foreground, its result muted below.
  * Commands draw as a TerminalCard instead.
@@ -368,7 +408,11 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </div>
       ) : null}
 
-      {item.type === "file_search" && item.pattern?.trim() ? (
+      {/* The row label already shows the pattern unless the provider titled the search itself. */}
+      {item.type === "file_search" &&
+      item.pattern?.trim() &&
+      item.title &&
+      !item.title.includes(item.pattern.trim()) ? (
         <div className={cn("text-foreground/85", monoClassName)}>{item.pattern}</div>
       ) : null}
 
@@ -377,20 +421,11 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "file_search" && item.results?.length ? (
-        <ul className="space-y-1">
-          {item.results.map((result) => (
-            <li key={JSON.stringify(result)}>
-              <span className="font-mono text-foreground/80">
-                {formatWorkspaceRelativePath(result.fileName, props.workspaceRoot)}
-                {result.line === undefined ? "" : `:${result.line}`}
-                {result.column === undefined ? "" : `:${result.column}`}
-              </span>
-              {result.preview ? (
-                <p className="mt-0.5 whitespace-pre-wrap text-muted-foreground">{result.preview}</p>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+        <FileSearchResults
+          pattern={item.pattern}
+          results={item.results}
+          workspaceRoot={props.workspaceRoot}
+        />
       ) : null}
 
       {item.type === "web_search" && item.results?.length ? (
@@ -400,15 +435,15 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             return (
               <li key={JSON.stringify(result)}>
                 {safeHref ? (
-                  <a
+                  <WebSearchResultLink
                     href={safeHref}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 font-medium text-foreground hover:underline"
+                    threadRef={{
+                      environmentId: props.environmentId,
+                      threadId: props.projectedItem.sourceThreadId,
+                    }}
                   >
                     {result.title ?? result.url}
-                    <ExternalLinkIcon className="size-3" />
-                  </a>
+                  </WebSearchResultLink>
                 ) : (
                   <p className="font-medium text-foreground">
                     {result.title ?? result.url ?? gt("Search result")}

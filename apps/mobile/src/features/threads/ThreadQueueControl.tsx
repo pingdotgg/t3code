@@ -39,6 +39,7 @@ import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { assetImageSource } from "../../lib/assetImageSource";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -181,6 +182,11 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           runId,
           messageId: entry.messageId,
           originalText: entry.text,
+          modelSelection: entry.message?.followsThreadSelection
+            ? (appAtomRegistry.get(environmentThreadDetails.quietThreadAtom(target))?.projection
+                .thread.modelSelection ?? entry.run.modelSelection)
+            : entry.run.modelSelection,
+          followsThreadSelection: entry.message?.followsThreadSelection === true,
           existingAttachments: entry.attachments,
           ...(entry.context ? { context: entry.context } : {}),
         },

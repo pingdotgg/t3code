@@ -14,6 +14,7 @@ import {
   setRoutesInCatalog,
   replaceCatalogValue,
   Persistence,
+  ThreadTriageOutboxStore,
   makeStoredShellSnapshotEncoder,
   makeStoredThreadSnapshotEncoder,
   makeThreadCacheWriteOrder,
@@ -45,6 +46,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { m } from "../i18n/messages";
 import { projectFaviconCache } from "../assets/projectFaviconCache";
+import { browserThreadTriageOutboxStore } from "./threadTriageOutboxStore";
 
 const DATABASE_NAME = "t3code:connection-runtime";
 // Fork: the roadmap store already took version 5, so the query store needs its own upgrade.
@@ -1165,6 +1167,7 @@ export const layer = Layer.effectContext(
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
       Context.add(Persistence.EnvironmentCacheStore, cacheStore),
       Context.add(RoadmapCacheStore, roadmapCacheStore),
+      Context.add(ThreadTriageOutboxStore, browserThreadTriageOutboxStore),
       Context.add(EnvironmentQueryStore, queryStore),
     );
   }),

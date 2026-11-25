@@ -108,7 +108,11 @@ function NativeVideoPreview(props: {
         return;
       }
       const current = acquire();
-      if (!current || !(await activateAudioSession(current, true)) || controller.signal.aborted) {
+      if (
+        !current ||
+        !(await activateAudioSession(current, { nativePlayback: true })) ||
+        controller.signal.aborted
+      ) {
         release();
         file?.dispose();
         if (!controller.signal.aborted) onRequestClose();

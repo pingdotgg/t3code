@@ -321,7 +321,9 @@ export function PullRequestReviewersRow(props: RowProps) {
               key={review.id}
               accessibilityLabel={`${review.author?.login ?? gt("Unknown reviewer")}, ${
                 review.reviewState === "APPROVED"
-                  ? gt("Approved", { $context: "review state" })
+                  ? review.outdated
+                    ? gt("Approved before the latest commit")
+                    : gt("Approved", { $context: "review state" })
                   : review.reviewState === "CHANGES_REQUESTED"
                     ? gt("Changes requested")
                     : gt("Commented", { $context: "review state" })
@@ -338,7 +340,7 @@ export function PullRequestReviewersRow(props: RowProps) {
                 }
                 size={18}
                 tintColorClassName={
-                  review.reviewState === "APPROVED"
+                  review.reviewState === "APPROVED" && !review.outdated
                     ? "accent-adaptive-emerald-600-400"
                     : review.reviewState === "CHANGES_REQUESTED"
                       ? "accent-danger-foreground"
@@ -349,6 +351,9 @@ export function PullRequestReviewersRow(props: RowProps) {
               <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
                 {review.author?.login ?? gt("Unknown reviewer")}
               </Text>
+              {review.outdated ? (
+                <Text className="shrink-0 text-sm text-foreground-muted">{gt("Outdated")}</Text>
+              ) : null}
             </View>
           ))}
           {props.pr.reviewers

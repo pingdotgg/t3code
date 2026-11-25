@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens, composerMathRanges } from "./composerInlineTokens.ts";
+import {
+  collectComposerInlineTokens as collectWithoutMath,
+  type CollectComposerInlineTokensOptions,
+  composerFileLinksToPlainText,
+  composerMathRanges,
+} from "./composerInlineTokens.ts";
+import { markdownMathRanges } from "./markdownMath.ts";
 import { serializeComposerFileLink } from "./composerTrigger.ts";
+
+const collectComposerInlineTokens = (
+  text: string,
+  options: CollectComposerInlineTokensOptions = {},
+) => collectWithoutMath(text, { findMath: markdownMathRanges, ...options });
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
@@ -190,6 +201,33 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  // regression: #41223 the composer's `./` is not part of the mention's path
+  it.each([
+    "C#/Program.cs",
+    "docs/R&D/notes.md",
+    "docs/Bob's notes.md",
+    "docs/a,b.ts",
+    "docs/100%.md",
+    "docs/why?.md",
+    "icon@2x.png",
+  ])("reads a link to the punctuated file %s as that file's path", (path) => {
+    const link = serializeComposerFileLink(path);
+    expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
+      { type: "mention", value: path, source: link },
+    ]);
+  });
+
+  // regression: #41223 a `./` the author wrote keeps its meaning, even where the parser rejects the rest
+  it.each([
+    ["[draft:notes.md](./draft:notes.md)", "./draft:notes.md"],
+    ["[scratch](./%2Fscratch)", ".//scratch"],
+    ["[a.ts](./src/a.ts)", "./src/a.ts"],
+  ])("keeps the authored link %s as its own path", (link, value) => {
+    expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
+      { type: "mention", value, source: link },
+    ]);
+  });
+
   it.each(["app/routes/posts.$postId.tsx", "pages/posts/[id].tsx"])(
     "preserves a confirmed TeX-like pill when its trailing delimiter is removed: %s",
     (path) => {
@@ -215,8 +253,21 @@ describe("collectComposerInlineTokens", () => {
 
   it("still finds a formula after a mention that starts the line", () => {
     const link = serializeComposerFileLink("app/routes/posts.$postId.tsx");
-    expect(composerMathRanges(`${link} sets $x_i$`).map((formula) => formula.source)).toEqual([
-      "$x_i$",
-    ]);
+    expect(
+      composerMathRanges(`${link} sets $x_i$`, markdownMathRanges).map((formula) => formula.source),
+    ).toEqual(["$x_i$"]);
+  });
+});
+
+describe("composerFileLinksToPlainText", () => {
+  it("shows file mentions by name and leaves other links as written", () => {
+    const mentions = ["src/foo.ts", ".gitignore", "pkg/__init__.py", "docs/My File (draft).md"]
+      .map(serializeComposerFileLink)
+      .join(" ");
+    expect(composerFileLinksToPlainText(`Review ${mentions}`)).toBe(
+      "Review foo.ts .gitignore __init__.py My File (draft).md",
+    );
+    const links = "See [docs](https://example.com) and [the config](src/config.ts)";
+    expect(composerFileLinksToPlainText(links)).toBe(links);
   });
 });

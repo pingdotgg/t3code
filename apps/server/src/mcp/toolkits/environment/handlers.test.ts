@@ -95,3 +95,17 @@ it.effect("refuses a preferences update when the caller's turn ends while it wai
     );
   }),
 );
+
+it("keeps agent feedback out of the preferences agents read and write", () => {
+  expect(
+    EnvironmentHandlers.preferences({
+      ...DEFAULT_SERVER_SETTINGS,
+      agentFeedback: { mode: "auto" },
+    }),
+  ).not.toHaveProperty("agentFeedback");
+  expect(
+    Object.keys(
+      EnvironmentToolkit.tools.lathe_environment_preferences_update.parametersSchema.fields,
+    ),
+  ).not.toContain("agentFeedback");
+});
