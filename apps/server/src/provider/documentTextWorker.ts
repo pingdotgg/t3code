@@ -1049,6 +1049,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let started = false;
   let space = false;
   let midLine = false;
+  let endsWithWord = false;
   let afterImageDescription = false;
   let truncated = false;
   try {
@@ -1084,25 +1085,38 @@ export async function extractDocumentText(path: string, extension: string): Prom
       // Resolve image boundaries here, after inline markup has been flattened.
       if (
         (isImageDescription || afterImageDescription) &&
-        /[\p{L}\p{M}\p{N}_]$/u.test(result.slice(-2)) &&
-        /^[\p{L}\p{M}\p{N}_]/u.test(raw)
+        endsWithWord &&
+        !(cellDepth && space) &&
+        /^\u00ad*[\p{L}\p{M}\p{N}_]/u.test(raw)
       )
         raw = " " + raw;
-      if (raw) afterImageDescription = isImageDescription;
       let value = raw.slice(0, remaining).replaceAll("\0", "");
       remaining -= Math.min(raw.length, remaining);
       if (cellDepth) {
         value = value.replaceAll(/\s+/g, " ");
         const trimmed = value.trim();
         if (trimmed) {
-          result += (started && (space || value.startsWith(" ")) ? " " : "") + trimmed;
+          const separator = started && (space || value.startsWith(" ")) ? " " : "";
           started = true;
           midLine = true;
+          space = value.endsWith(" ");
+          value = separator + trimmed;
+        } else {
+          space = value.endsWith(" ") || (!value && space);
+          value = "";
         }
-        space = value.endsWith(" ") || (!value && space);
       } else {
-        result += value;
         midLine = endsMidLine(value) ?? midLine;
+      }
+      result += value;
+      if (extension === ".epub") {
+        // Soft hyphens stay in the output but do not decide where a visible word ends.
+        let end = value.length;
+        while (value[end - 1] === "\u00ad") end--;
+        if (end > 0) {
+          endsWithWord = /[\p{L}\p{M}\p{N}_]$/u.test(value.slice(Math.max(0, end - 2), end));
+          afterImageDescription = isImageDescription;
+        }
       }
       if (remaining === 0) throw new Truncation("Output budget");
     }
