@@ -13,6 +13,7 @@
 		12A10ADA099500D133C5F214 /* ConnSpikeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B282DA827183E073EF9A48C6 /* ConnSpikeUITests.swift */; };
 		155A6C09FC940518D0D86F26 /* ConnTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1785EB0CC38B9B367514E3D9 /* ConnTheme.swift */; };
 		17CA94C6E222134A31BF4D14 /* OrbitConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E26EA68AF617A11A6E036C60 /* OrbitConnectView.swift */; };
+		1A542EEDF57194C0E8081457 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2A101A8DA8F4F68706844776 /* Assets.xcassets */; };
 		215CE6E0AD4A4E4588E30A90 /* ConnAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0ABEB932FF5357EF1B48C2F /* ConnAppDelegate.swift */; };
 		2CB7DF35B882E4F49849D0B6 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7425B395B824B6191534A3E /* SettingsView.swift */; };
 		3A296D5A1DBE936247D7E801 /* ProviderIcons.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E5F7BBA19D8EDDBBF83177C7 /* ProviderIcons.xcassets */; };
@@ -61,6 +62,7 @@
 		1B9E5245F4E95FC79202BCF9 /* ConnUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ConnUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1CE3181F6E68461F996404BA /* conn_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = conn_ffi.swift; sourceTree = "<group>"; };
 		293A0DC9F8A7EF5B24D84EC7 /* PushRegistration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistration.swift; sourceTree = "<group>"; };
+		2A101A8DA8F4F68706844776 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2FD75455596219E78B67B80B /* ConnCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = ConnCore.xcframework; path = build/ConnCore.xcframework; sourceTree = "<group>"; };
 		3341300D754CB97F598B98C8 /* NewThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewThreadView.swift; sourceTree = "<group>"; };
 		3D3FE73635BB92AB18553D21 /* ConnSymbolNames.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnSymbolNames.swift; sourceTree = "<group>"; };
@@ -163,6 +165,7 @@
 		F25464DCE8842484FA2143DF /* Conn */ = {
 			isa = PBXGroup;
 			children = (
+				2A101A8DA8F4F68706844776 /* Assets.xcassets */,
 				FB37DF09D3781436727F439A /* Conn.entitlements */,
 				0AF68E89FDEB6E0FCFB1897A /* ConnApp.swift */,
 				F0ABEB932FF5357EF1B48C2F /* ConnAppDelegate.swift */,
@@ -292,6 +295,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1A542EEDF57194C0E8081457 /* Assets.xcassets in Resources */,
 				086E11C4D2557C0F73E0B7FA /* ConnSymbols.xcassets in Resources */,
 				3A296D5A1DBE936247D7E801 /* ProviderIcons.xcassets in Resources */,
 			);
@@ -416,7 +420,7 @@
 		1E0B82D2E0CB90BF5D29FD83 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Conn/Conn.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -437,7 +441,7 @@
 		34E13B12D8F9C816073BD9FD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Conn/Conn.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				FRAMEWORK_SEARCH_PATHS = (
