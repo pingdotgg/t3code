@@ -357,7 +357,7 @@ describe("ForgejoIssueTracker", () => {
         return {
           stdout: encode([ISSUE, { ...ISSUE, number: 43, pull_request: { merged: false } }]),
           stderr: /page=2$/.test(input.path)
-            ? "link: \r\nx-total-count: 100\r\n"
+            ? 'link: <https://forgejo.test:3000/api/v1/x?page=1>; rel="prev"\r\nx-total-count: 100\r\n'
             : "x-total-count: 2\n",
         };
       });
@@ -482,6 +482,159 @@ describe("ForgejoIssueTracker", () => {
       });
       expect(page.items.map(({ key }) => key)).toEqual(["42"]);
       expect(page.nextCursor).toBe("2");
+    }),
+  );
+
+  it.effect("reads repeated Link headers and validates repeated totals", () =>
+    Effect.gen(function* () {
+      let headers = "";
+      let page2Rows: unknown[] = [];
+      const api = yield* tracker(({ path }) =>
+        path.endsWith("page=1")
+          ? { stdout: encode([ISSUE]), stderr: headers }
+          : { stdout: encode(page2Rows) },
+      );
+      const input = {
+        cwd: "/w",
+        host: "forgejo.test:3000",
+        scope: "acme/web",
+        state: "open",
+        involvement: "all",
+        sort: "created",
+        limit: 50,
+      } as const;
+
+      // Repeated Link lines (as tea --include prints) must find rel="next" on later lines.
+      headers = [
+        'Link: <https://forgejo.test:3000/api/v1/x?page=1>; rel="prev"',
+        'Link: <https://forgejo.test:3000/api/v1/x?page=2>; rel="next"',
+      ].join("\n");
+      expect((yield* api.listIssues(input)).nextCursor).toBe("2");
+
+      // A present empty Link header still ends pagination even when X-Total-Count is present.
+      headers = "Link:   \r\nX-Total-Count: 2\r\n";
+      expect((yield* api.listIssues(input)).nextCursor).toBeNull();
+
+      // Agreeing repeated or comma-joined X-Total-Count headers stop cleanly; conflicting ones probe.
+      headers = "X-Total-Count: 1\nX-Total-Count: 1\n";
+      expect((yield* api.listIssues(input)).nextCursor).toBeNull();
+
+      headers = "X-Total-Count: 1, 1\n";
+      expect((yield* api.listIssues(input)).nextCursor).toBeNull();
+
+      headers = "X-Total-Count: 1\nX-Total-Count: 2\n";
+      page2Rows = [{ ...ISSUE, number: 43 }];
+      expect((yield* api.listIssues(input)).nextCursor).toBe("2");
+      page2Rows = [];
+      expect((yield* api.listIssues(input)).nextCursor).toBeNull();
+    }),
+  );
+
+  it.effect(
+    "does not mark a complete 50-label page truncated with no headers or comma-joined totals",
+    () =>
+      Effect.gen(function* () {
+        const fiftyLabels = Array.from({ length: 50 }, (_, index) => ({
+          id: index + 1,
+          name: `label-${index + 1}`,
+          color: "d73a4a",
+        }));
+        let labelHeaders: string | undefined;
+        let labelRequests: string[] = [];
+        const api = yield* tracker(({ path }) => {
+          switch (path.split("?")[0]) {
+            case "repos/acme/web/assignees":
+              return { stdout: encode([{ login: "theo" }]) };
+            case "repos/acme/web/labels":
+              labelRequests.push(path);
+              return {
+                stdout: encode(path.endsWith("page=1") ? fiftyLabels : []),
+                ...(labelHeaders === undefined ? {} : { stderr: labelHeaders }),
+              };
+            default:
+              throw new Error(`unexpected path ${path}`);
+          }
+        });
+        const target = { cwd: "/w", host: "forgejo.test:3000", scope: "acme/web" };
+
+        // No headers on an exact 50-label final page probes page 2 and finds no more labels.
+        expect((yield* api.listCandidates!(target)).truncated).toBe(false);
+        expect(labelRequests).toEqual([
+          "repos/acme/web/labels?limit=50&page=1",
+          "repos/acme/web/labels?limit=50&page=2",
+        ]);
+
+        // Fetch-combined agreeing X-Total-Count: 50, 50 stops on page 1 without probing.
+        labelRequests = [];
+        labelHeaders = "X-Total-Count: 50, 50\n";
+        expect((yield* api.listCandidates!(target)).truncated).toBe(false);
+        expect(labelRequests).toEqual(["repos/acme/web/labels?limit=50&page=1"]);
+      }),
+  );
+
+  it.effect("keeps paging the issue timeline when X-Total-Count reports only the page size", () =>
+    Effect.gen(function* () {
+      const fullPage = Array.from({ length: 50 }, (_, index) => ({
+        id: index + 1,
+        type: "milestone",
+        user: { login: "theo" },
+        created_at: "2026-07-01T01:00:00Z",
+      }));
+      const page2Ref = {
+        id: 51,
+        type: "pull_ref",
+        user: { login: "theo" },
+        created_at: "2026-07-02T03:00:00Z",
+        ref_issue: {
+          number: 50,
+          html_url: "https://forgejo.test:3000/acme/api/pulls/50",
+          repository: { full_name: "acme/api" },
+          pull_request: { merged: true },
+        },
+      };
+
+      const timelinePages: string[] = [];
+      const api = yield* tracker(({ path }) => {
+        if (!path.startsWith("repos/acme/web/issues/42/timeline")) return answer(path);
+        timelinePages.push(path);
+        const rows = path.endsWith("page=1") ? fullPage : path.endsWith("page=2") ? [page2Ref] : [];
+        return { stdout: encode(rows), stderr: `X-Total-Count: ${rows.length}\n` };
+      });
+      const issue = yield* api.getIssue({
+        cwd: "/w",
+        host: "forgejo.test:3000",
+        scope: "acme/web",
+        key: "42",
+      });
+      expect(issue.linkedPullRequests.map((pr) => pr.repository)).toEqual(["acme/api"]);
+      expect(timelinePages).toEqual([
+        "repos/acme/web/issues/42/timeline?limit=50&page=1",
+        "repos/acme/web/issues/42/timeline?limit=50&page=2",
+        "repos/acme/web/issues/42/timeline?limit=50&page=3",
+      ]);
+
+      // A timeline response with Link headers still stops when no rel="next" is present.
+      const linkPages: string[] = [];
+      const linkApi = yield* tracker(({ path }) => {
+        if (!path.startsWith("repos/acme/web/issues/42/timeline")) return answer(path);
+        linkPages.push(path);
+        const rows = path.endsWith("page=1") ? fullPage : [page2Ref];
+        const link = path.endsWith("page=1")
+          ? 'Link: <https://forgejo.test:3000/api/v1/repos/acme/web/issues/42/timeline?page=2>; rel="next"\n'
+          : 'Link: <https://forgejo.test:3000/api/v1/repos/acme/web/issues/42/timeline?page=1>; rel="prev"\n';
+        return { stdout: encode(rows), stderr: `X-Total-Count: ${rows.length}\n${link}` };
+      });
+      const linked = yield* linkApi.getIssue({
+        cwd: "/w",
+        host: "forgejo.test:3000",
+        scope: "acme/web",
+        key: "42",
+      });
+      expect(linked.linkedPullRequests.map((pr) => pr.repository)).toEqual(["acme/api"]);
+      expect(linkPages).toEqual([
+        "repos/acme/web/issues/42/timeline?limit=50&page=1",
+        "repos/acme/web/issues/42/timeline?limit=50&page=2",
+      ]);
     }),
   );
 });

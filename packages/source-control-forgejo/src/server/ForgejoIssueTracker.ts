@@ -188,14 +188,17 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         Effect.map((rows) => rows ?? []),
       );
 
-    // Forgejo labels and timelines can send a total without a Link.
+    // Forgejo labels and issues can send a collection total without a Link.
     const readPage = <A>(
       target: Target,
       operation: string,
       path: string,
       page: number,
       schema: Schema.Codec<A, unknown, never, never>,
-      receivedBefore?: number,
+      options?: {
+        readonly receivedBefore?: number;
+        readonly totalCount?: "collection" | "page-local";
+      },
     ): Effect.Effect<
       { readonly rows: ReadonlyArray<A>; readonly nextCursor: string | null },
       IssueTrackerError
@@ -219,20 +222,35 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
           if (rows.length === 0 || parsePage(nextCursor) === null) {
             return Effect.succeed(resultWithMore(false));
           }
-          const links = /^link:[ \t]*(.*)$/im.exec(result.stderr)?.[1];
-          if (links !== undefined) {
+          const links = [...result.stderr.matchAll(/^link:[ \t]*([^\r\n]*)$/gim)].map(
+            (match) => match[1] ?? "",
+          );
+          if (links.length > 0) {
             return Effect.succeed(
-              resultWithMore(/;\s*rel=(?:"next"|next)(?:\s|;|,|$)/i.test(links)),
+              resultWithMore(
+                links.some((value) => /;\s*rel=(?:"next"|next)(?:\s|;|,|$)/i.test(value)),
+              ),
             );
           }
-          const total = Number(/^x-total-count:[ \t]*(\d+)[ \t]*\r?$/im.exec(result.stderr)?.[1]);
+          if (options?.totalCount === "page-local") {
+            return Effect.succeed(resultWithMore(true));
+          }
+          const totals = [...result.stderr.matchAll(/^x-total-count:[ \t]*([^\r\n]*)$/gim)].flatMap(
+            (match) => (match[1] ?? "").split(",").map((value) => value.trim()),
+          );
+          const total =
+            totals.length > 0 && totals.every((value) => /^\d+$/.test(value) && value === totals[0])
+              ? Number(totals[0])
+              : Number.NaN;
           if (Number.isSafeInteger(total)) {
-            const minimumReceived = (receivedBefore ?? (page - 1) * rows.length) + rows.length;
-            const maximumReceived = (receivedBefore ?? (page - 1) * PAGE_SIZE) + rows.length;
+            const minimumReceived =
+              (options?.receivedBefore ?? (page - 1) * rows.length) + rows.length;
+            const maximumReceived =
+              (options?.receivedBefore ?? (page - 1) * PAGE_SIZE) + rows.length;
             if (total <= minimumReceived || total > maximumReceived) {
               return Effect.succeed(resultWithMore(total > maximumReceived));
             }
-          } else if (receivedBefore !== undefined || rows.length >= PAGE_SIZE) {
+          } else if (options?.receivedBefore !== undefined) {
             return Effect.succeed(resultWithMore(true));
           }
           // A capped server and a short final page can look identical.
@@ -287,7 +305,10 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
     ) {
       const rows: A[] = [];
       for (let page = 1; page <= MAX_PAGES; page++) {
-        const next = yield* readPage(target, operation, path, page, schema, rows.length);
+        // Gitea and older Forgejo timelines set X-Total-Count to the current page length.
+        const next = yield* readPage(target, operation, path, page, schema, {
+          totalCount: "page-local",
+        });
         rows.push(...next.rows);
         if (next.nextCursor === null) break;
       }
@@ -312,7 +333,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
           `${repoPath(target.scope)}/labels`,
           page,
           ForgejoLabel,
-          received,
+          { receivedBefore: received },
         );
         received += next.rows.length;
         for (const label of next.rows) {
