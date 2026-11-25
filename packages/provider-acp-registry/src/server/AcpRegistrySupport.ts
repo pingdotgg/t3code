@@ -572,6 +572,7 @@ export interface AcpRegistryCatalogOptions {
   /** Owns the temp files of agents whose unpacker cannot clean up after a kill. */
   readonly runtimeTempDir?: string;
   readonly registryUrl?: string;
+  readonly maxCommandOutputBytes?: number;
 }
 
 // Unpacks about 140 MB into TEMP on every launch and cannot remove it when the process is killed.
@@ -1210,7 +1211,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         [
           collectUint8StreamText({
             stream: child.stdout,
-            maxBytes: options.maxStdoutBytes ?? MAX_COMMAND_OUTPUT_BYTES,
+            maxBytes:
+              options.maxStdoutBytes ?? input.maxCommandOutputBytes ?? MAX_COMMAND_OUTPUT_BYTES,
           }),
           child.stderr.pipe(
             Stream.decodeText(),

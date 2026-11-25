@@ -1084,25 +1084,23 @@ describe("AcpRegistrySupport", () => {
     },
   );
 
-  it.effect("installs a tar archive with a root entry and a listing larger than 1 MiB", () => {
+  it.effect("installs tar with a root entry and a listing over the command cap", () => {
     const downloadUrl = "https://registry.test/agent.tar.gz";
     const agent = makeAgent({
       binary: { "linux-x86_64": { archive: downloadUrl, cmd: "./agent" } },
     });
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-root-entry-" });
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-root-entry-",
+      });
       const source = `${cacheDir}/source`;
       yield* fileSystem.makeDirectory(source);
       yield* fileSystem.writeFileString(`${source}/agent`, "#!/bin/sh\necho managed\n");
-      // 5,000 long names list past the generic 1 MiB command output cap.
-      const entries = `${source}/entries`;
-      yield* fileSystem.makeDirectory(entries);
-      yield* Effect.forEach(
-        Array.from({ length: 5_000 }, (_, index) => index),
-        (index) => fileSystem.writeFileString(`${entries}/${index}-${"e".repeat(240)}`, ""),
-        { concurrency: 16 },
-      );
+      const maxCommandOutputBytes = 16;
+      const directory = "directory-listed-in-the-archive";
+      yield* fileSystem.makeDirectory(`${source}/${directory}`);
+      expect(directory.length).toBeGreaterThan(maxCommandOutputBytes);
       const archivePath = `${cacheDir}/agent.tar.gz`;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const tar = yield* spawner.spawn(
@@ -1114,6 +1112,7 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
+        maxCommandOutputBytes,
       }).pipe(
         Effect.provideService(
           HttpClient.HttpClient,
