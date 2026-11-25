@@ -410,7 +410,7 @@ export default function FileBrowserPanel({
     const openOnlyChild = (path: string) => {
       const remaining = openingPathsRef.current.get(path);
       if (remaining === undefined) return;
-      childrenByParent ??= onlyChildren(directoryEntries);
+      if (childrenByParent === null) childrenByParent = onlyChildren(directoryEntries);
       const child = childrenByParent.get(path.replace(/\/$/, ""));
       if (child === undefined) return;
       // Like expand all, leave an ignored folder such as `node_modules` to open by hand.
