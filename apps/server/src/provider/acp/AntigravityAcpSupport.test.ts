@@ -427,6 +427,32 @@ it.layer(NodeServices.layer)("buildAntigravityPrompt", (it) => {
     }),
   );
 
+  it.effect("keeps a Shift-JIS CSV as a file path instead of failing the prompt", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeAttachmentFixture();
+      const csv = {
+        ...textAttachment,
+        name: "sample.csv",
+        mimeType: "text/csv",
+      } satisfies ChatAttachment;
+      // "オーダー番号,ステータス\n1001,完了\n" encoded as CP932.
+      const upload = yield* fixture.write(
+        csv,
+        Buffer.from("8349815b835f815b94d48d862c83588365815b835e83580a313030312c8aae97b90a", "hex"),
+      );
+      const input = `How many rows does this CSV have? ${upload.filePath}`;
+
+      const prompt = yield* buildAntigravityPrompt({
+        input,
+        attachments: [csv],
+        resolveAttachmentPath: fixture.resolve,
+        promptCapabilities: { image: true, audio: true, embeddedContext: true },
+      });
+
+      expect(prompt).toEqual([{ type: "text", text: input }]);
+    }),
+  );
+
   it.effect.each([
     { name: "archive.zip", mimeType: "application/zip" },
     { name: "clip.mp4", mimeType: "video/mp4" },
