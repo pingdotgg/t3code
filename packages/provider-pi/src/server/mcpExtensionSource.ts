@@ -220,15 +220,14 @@ function createMcpClient(endpoint: string, token: string) {
   };
 
   return {
-    async connect(signal?: AbortSignal) {
+    async connect(signal: AbortSignal) {
       if (sessionId !== undefined) {
         // Release the previous session if discovery failed after initialize.
-        const cleanupTimeout = AbortSignal.timeout(1_000);
         try {
           const response = await fetch(endpoint, {
             method: "DELETE",
             headers: headers(),
-            signal: signal === undefined ? cleanupTimeout : AbortSignal.any([signal, cleanupTimeout]),
+            signal: AbortSignal.any([signal, AbortSignal.timeout(1_000)]),
           });
           await response.body?.cancel();
         } catch {
