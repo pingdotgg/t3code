@@ -1419,6 +1419,44 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("discovers a Pi project from the valid header after an incomplete line", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const piAgentDir = yield* makeTempDir("t3code-pi-agent-");
+        const projects = yield* makeTempDir("t3code-projects-");
+        const workspace = path.join(projects, "session-workspace");
+        const otherWorkspace = path.join(projects, "other-workspace");
+        yield* fileSystem.makeDirectory(workspace);
+        yield* fileSystem.makeDirectory(otherWorkspace);
+        const header = { type: "session", version: 3, id: "pi-session" };
+
+        yield* writeTranscript({
+          filePath: path.join(piAgentDir, "sessions", "--workspace--", "pi-session.jsonl"),
+          contents: [
+            encodeTranscriptRecord({ ...header, cwd: otherWorkspace }).slice(0, -1),
+            encodeTranscriptRecord({ ...header, cwd: workspace }),
+            encodeTranscriptRecord({
+              type: "message",
+              id: "prompt",
+              parentId: null,
+              timestamp: "2026-01-01T00:00:00.000Z",
+              message: { role: "user", content: "Review this project" },
+            }),
+          ].join("\n"),
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath, piAgentDir });
+
+        expect(
+          result.candidates.map((candidate) => path.relative(projects, candidate.path)),
+        ).toEqual(["session-workspace"]);
+      }),
+    );
+
     it.effect("reads a complete transcript record at the exact chunk boundary", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
