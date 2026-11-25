@@ -24,7 +24,7 @@ struct WorkspaceRootView: View {
     @Bindable var store: CoreStore
     @Environment(\.connTheme) private var theme
 
-    @State private var selectedTab: WorkspaceTab = .threads
+    @AppStorage("workspace.selectedTab") private var selectedTab: WorkspaceTab = .threads
     @State private var navigationPath: [WorkspaceRoute] = []
     @State private var showingSettings = false
     @State private var isSearching = false
@@ -58,6 +58,7 @@ struct WorkspaceRootView: View {
                         )
                     case .pullRequests:
                         PullRequestsTabView(
+                            store: store,
                             searchQuery: isSearching ? searchQuery : ""
                         )
                     }
@@ -66,10 +67,8 @@ struct WorkspaceRootView: View {
                 .background(theme.background.ignoresSafeArea())
 
                 if let status = store.status, status != .connected {
-                    HomeConnectionStatusOverlay(status: status) {
-                        showingSettings = true
-                    }
-                    .padding(.bottom, 12)
+                    OfflinePill()
+                        .padding(.bottom, 12)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -90,13 +89,7 @@ struct WorkspaceRootView: View {
                     onSelectTaskLane: { tasks.lane = $0 },
                     onOpenSettings: { showingSettings = true },
                     onNewChat: {
-                        let defaultProject = store.shell?.projects.first(where: { !isScratchProjectTitle($0.title) })
-                        navigationPath.append(
-                            .newThreadDraft(
-                                projectId: defaultProject?.id,
-                                title: defaultProject?.title ?? "General"
-                            )
-                        )
+                        navigationPath.append(.newThreadDraft(projectId: nil, title: "General"))
                     }
                 )
             }
@@ -346,70 +339,14 @@ private struct WorkspaceFilterMenu: View {
 
 // MARK: - HomeConnectionStatusOverlay
 
-private struct HomeConnectionStatusOverlay: View {
-    let status: FfiConnectionStatus
-    let onTap: () -> Void
-    @Environment(\.connTheme) private var theme
-
+struct OfflinePill: View {
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: 7, height: 7)
-                Text(label)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(theme.foreground)
-            }
+        Label("Not connected", systemImage: "bolt.fill")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(Color(red: 0.16, green: 0.14, blue: 0.055))
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .glassEffect(.regular, in: .capsule)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var dotColor: Color {
-        switch status {
-        case .connected: theme.success
-        case .connecting, .reconnecting: theme.warning
-        case .failed: theme.destructive
-        }
-    }
-
-    private var label: String {
-        switch status {
-        case .connected: "Connected"
-        case .connecting: "Connecting…"
-        case let .reconnecting(attempt): "Reconnecting (\(attempt))…"
-        case .failed: "Connection failed"
-        }
-    }
-}
-
-// MARK: - PullRequestsTabView (1:1 port of PullRequestsScreen.tsx)
-
-struct PullRequestsTabView: View {
-    let searchQuery: String
-    @Environment(\.connTheme) private var theme
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 8) {
-                Text(searchQuery.isEmpty ? "No pull requests" : "No matching pull requests")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(theme.foreground)
-                Text("Pull requests from connected environments will appear here.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(theme.mutedForeground)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 32)
-            .padding(.top, 96)
-        }
-        .background(theme.background)
-        .scrollEdgeEffectStyle(.soft, for: .top)
-        .scrollEdgeEffectHidden(true, for: .bottom)
+            .background(Color(red: 1, green: 0.83, blue: 0.30), in: Capsule())
     }
 }
 

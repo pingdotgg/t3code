@@ -507,6 +507,11 @@ uint64_t uniffi_conn_ffi_fn_method_conncore_pin_thread(uint64_t ptr, RustBuffer 
 uint64_t uniffi_conn_ffi_fn_method_conncore_prepare_offline(uint64_t ptr, RustBuffer directory, RustBuffer identity
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_CONNCORE_PULL_REQUEST
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_CONNCORE_PULL_REQUEST
+uint64_t uniffi_conn_ffi_fn_method_conncore_pull_request(uint64_t ptr, RustBuffer operation, RustBuffer input
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_CONNCORE_RECONNECT
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_CONNCORE_RECONNECT
 void uniffi_conn_ffi_fn_method_conncore_reconnect(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -1451,6 +1456,12 @@ uint16_t uniffi_conn_ffi_checksum_method_conncore_pin_thread(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_CONNCORE_PREPARE_OFFLINE
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_CONNCORE_PREPARE_OFFLINE
 uint16_t uniffi_conn_ffi_checksum_method_conncore_prepare_offline(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_CONNCORE_PULL_REQUEST
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_CONNCORE_PULL_REQUEST
+uint16_t uniffi_conn_ffi_checksum_method_conncore_pull_request(void
     
 );
 #endif

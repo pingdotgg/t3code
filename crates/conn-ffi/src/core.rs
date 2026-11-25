@@ -405,8 +405,34 @@ fn map_build_error(what: &str, err: serde_json::Error) -> FfiError {
     }
 }
 
+#[derive(Debug, uniffi::Enum)]
+pub enum FfiPullRequestOperation {
+    List,
+    Detail,
+    Activity,
+    SubmitReview,
+}
+
 #[uniffi::export]
 impl ConnCore {
+    /// Runs a pull request operation on this environment's authenticated connection.
+    pub async fn pull_request(
+        &self,
+        operation: FfiPullRequestOperation,
+        input: String,
+    ) -> Result<String, FfiError> {
+        let tag = match operation {
+            FfiPullRequestOperation::List => "pullRequests.list",
+            FfiPullRequestOperation::Detail => "pullRequests.detail",
+            FfiPullRequestOperation::Activity => "pullRequests.activity",
+            FfiPullRequestOperation::SubmitReview => "pullRequests.submitReview",
+        };
+        let payload = serde_json::from_str(&input).map_err(|error| FfiError::InvalidInput {
+            message: error.to_string(),
+        })?;
+        Ok(self.call_json(tag, payload).await?.to_string())
+    }
+
     /// Connects to `server_url` with `credential`, subscribes to `orchestration.subscribeShell`,
     /// and starts pumping state snapshots to `listener`.
     ///

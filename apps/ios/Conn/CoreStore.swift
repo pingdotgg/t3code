@@ -35,6 +35,13 @@ final class CoreStore {
     @ObservationIgnored private var session: ConnSession?
     private var core: ConnCore? { session?.core() }
 
+    func pullRequest<T: Decodable>(_ operation: FfiPullRequestOperation, input: [String: Any], as: T.Type) async throws -> T {
+        guard let core else { throw URLError(.notConnectedToInternet) }
+        let data = try JSONSerialization.data(withJSONObject: input)
+        let response = try await core.pullRequest(operation: operation, input: String(decoding: data, as: UTF8.self))
+        return try JSONDecoder().decode(T.self, from: Data(response.utf8))
+    }
+
     let scope: String
     private(set) var linked: [String: CoreStore] = [:]
 

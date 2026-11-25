@@ -8,6 +8,31 @@ struct OrbitConnectView: View {
     let state: OrbitConnectState
 
     var body: some View {
+        if case .connecting = state {
+            VStack {
+                Spacer()
+                Image("LaunchMark")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 96, height: 64)
+                    .accessibilityHidden(true)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay(alignment: .bottom) {
+                Text("Checking connection")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 12)
+                    .accessibilityIdentifier("orbit.connecting")
+            }
+            .background(Color.kitContent.ignoresSafeArea())
+        } else {
+            failure
+        }
+    }
+
+    private var failure: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: Kit.Space.xxl) {
@@ -20,13 +45,7 @@ struct OrbitConnectView: View {
                                 .foregroundStyle(.primary)
                         }
 
-                        switch state {
-                        case .connecting:
-                            Text("Connecting through Orbit…")
-                                .font(.kitHeading)
-                                .accessibilityIdentifier("orbit.connecting")
-                            ProgressView()
-                        case let .failed(message, detail):
+                        if case let .failed(message, detail) = state {
                             Text("Couldn't connect")
                                 .font(.kitHeading)
                             Text(message)

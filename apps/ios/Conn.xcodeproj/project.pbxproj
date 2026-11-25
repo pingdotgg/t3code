@@ -10,6 +10,7 @@
 		065568327293027BBAC6D5A6 /* ConnCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2FD75455596219E78B67B80B /* ConnCore.xcframework */; };
 		086E11C4D2557C0F73E0B7FA /* ConnSymbols.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5E65CBEE5DAA2A531FDBEFB8 /* ConnSymbols.xcassets */; };
 		0874F035E86E2E56F5042390 /* PushExplainerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45F2866A2B7B7C126E7F96F9 /* PushExplainerSheet.swift */; };
+		11F90A4595F8C522E1A4F744 /* PullRequestsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A380BEABDE2E2C5A0D33192E /* PullRequestsTabView.swift */; };
 		12A10ADA099500D133C5F214 /* ConnSpikeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B282DA827183E073EF9A48C6 /* ConnSpikeUITests.swift */; };
 		155A6C09FC940518D0D86F26 /* ConnTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1785EB0CC38B9B367514E3D9 /* ConnTheme.swift */; };
 		17CA94C6E222134A31BF4D14 /* OrbitConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E26EA68AF617A11A6E036C60 /* OrbitConnectView.swift */; };
@@ -75,6 +76,7 @@
 		8CCA06E54355676CFB571582 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
 		953DAB675D1E26DF4D62D777 /* MarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownView.swift; sourceTree = "<group>"; };
 		9801FA3C8411705F36721B72 /* WorkspaceRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceRootView.swift; sourceTree = "<group>"; };
+		A380BEABDE2E2C5A0D33192E /* PullRequestsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PullRequestsTabView.swift; sourceTree = "<group>"; };
 		B282DA827183E073EF9A48C6 /* ConnSpikeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnSpikeUITests.swift; sourceTree = "<group>"; };
 		C9CA7C5134613DD1AAA8BC68 /* PendingApprovalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalCard.swift; sourceTree = "<group>"; };
 		CE790160CB877B8F694F27DE /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
@@ -187,6 +189,7 @@
 				C9CA7C5134613DD1AAA8BC68 /* PendingApprovalCard.swift */,
 				070B85D9B8F0787AF450159A /* PendingUserInputCard.swift */,
 				E5F7BBA19D8EDDBBF83177C7 /* ProviderIcons.xcassets */,
+				A380BEABDE2E2C5A0D33192E /* PullRequestsTabView.swift */,
 				45F2866A2B7B7C126E7F96F9 /* PushExplainerSheet.swift */,
 				293A0DC9F8A7EF5B24D84EC7 /* PushRegistration.swift */,
 				F7425B395B824B6191534A3E /* SettingsView.swift */,
@@ -325,6 +328,7 @@
 				3C02BE75CFA0F738CEEBD65B /* PairingView.swift in Sources */,
 				B41AE3C505014F8382E4184F /* PendingApprovalCard.swift in Sources */,
 				45DA92F4D278DDAA743C2E43 /* PendingUserInputCard.swift in Sources */,
+				11F90A4595F8C522E1A4F744 /* PullRequestsTabView.swift in Sources */,
 				0874F035E86E2E56F5042390 /* PushExplainerSheet.swift in Sources */,
 				51DF3AD000F6B7995E0FCEA7 /* PushRegistration.swift in Sources */,
 				2CB7DF35B882E4F49849D0B6 /* SettingsView.swift in Sources */,

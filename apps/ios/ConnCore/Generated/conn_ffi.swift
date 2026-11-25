@@ -753,6 +753,11 @@ public protocol ConnCoreProtocol: AnyObject, Sendable {
     func prepareOffline(directory: String, identity: String) async throws  -> OfflineReader
     
     /**
+     * Runs a pull request operation on this environment's authenticated connection.
+     */
+    func pullRequest(operation: FfiPullRequestOperation, input: String) async throws  -> String
+    
+    /**
      * Drops the active socket or reconnect backoff and reconnects immediately (e.g. when the
      * iOS app returns to the foreground).
      */
@@ -1191,6 +1196,25 @@ open func prepareOffline(directory: String, identity: String)async throws  -> Of
             completeFunc: ffi_conn_ffi_rust_future_complete_u64,
             freeFunc: ffi_conn_ffi_rust_future_free_u64,
             liftFunc: FfiConverterTypeOfflineReader_lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
+    /**
+     * Runs a pull request operation on this environment's authenticated connection.
+     */
+open func pullRequest(operation: FfiPullRequestOperation, input: String)async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_conncore_pull_request(
+                        self.uniffiCloneHandle(),FfiConverterTypeFfiPullRequestOperation_lower(operation),FfiConverterString.lower(input)
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
             errorHandler: FfiConverterTypeFfiError_lift
         )
 }
@@ -12466,6 +12490,86 @@ public func FfiConverterTypeFfiOrbitThemeSlotSource_lower(_ value: FfiOrbitTheme
 
 
 
+public enum FfiPullRequestOperation: Equatable, Hashable {
+    
+    case list
+    case detail
+    case activity
+    case submitReview
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiPullRequestOperation: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPullRequestOperation: FfiConverterRustBuffer {
+    typealias SwiftType = FfiPullRequestOperation
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPullRequestOperation {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .list
+        
+        case 2: return .detail
+        
+        case 3: return .activity
+        
+        case 4: return .submitReview
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiPullRequestOperation, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .list:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .detail:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .activity:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .submitReview:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPullRequestOperation_lift(_ buf: RustBuffer) throws -> FfiPullRequestOperation {
+    return try FfiConverterTypeFfiPullRequestOperation.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPullRequestOperation_lower(_ value: FfiPullRequestOperation) -> RustBuffer {
+    return FfiConverterTypeFfiPullRequestOperation.lower(value)
+}
+
+
+
+
 public enum FfiPullRequestState: Equatable, Hashable {
     
     case `open`
@@ -16286,6 +16390,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_conncore_prepare_offline() != 26956) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_conncore_pull_request() != 12943) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_conncore_reconnect() != 9304) {

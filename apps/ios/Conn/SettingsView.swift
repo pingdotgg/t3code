@@ -18,32 +18,6 @@ struct SettingsRootSheet: View {
                     }
                 }
 
-                Section {
-                    placeholderLink(icon: "gearshape", label: "General")
-                    placeholderLink(icon: "paintbrush", label: "Appearance")
-                    placeholderLink(icon: "bubble.left.and.bubble.right", label: "Chat")
-                    placeholderLink(icon: "keyboard", label: "Keyboard")
-                    placeholderLink(icon: "mic", label: "Voice")
-                }
-
-                Section("Agents") {
-                    placeholderLink(icon: "person.crop.circle", label: "Providers")
-                    placeholderLink(icon: "text.bubble", label: "Threads")
-                    placeholderLink(icon: "clock", label: "Scheduled tasks")
-                }
-
-                Section("Code") {
-                    placeholderLink(icon: "folder", label: "Projects")
-                    placeholderLink(icon: "arrow.triangle.branch", label: "Source control & issues")
-                    placeholderLink(icon: "square.on.square", label: "Worktrees")
-                }
-
-                Section {
-                    placeholderLink(icon: "arrow.clockwise", label: "Maintenance")
-                    placeholderLink(icon: "flask", label: "Labs")
-                    placeholderLink(icon: "info.circle", label: "About")
-                    placeholderLink(icon: "archivebox", label: "Archive")
-                }
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
@@ -61,14 +35,6 @@ struct SettingsRootSheet: View {
                     .accessibilityIdentifier("settings.closeButton")
                 }
             }
-        }
-    }
-
-    private func placeholderLink(icon: String, label: String) -> some View {
-        NavigationLink {
-            SettingsPlaceholderDetailView(title: label, icon: icon)
-        } label: {
-            settingsRow(icon: icon, label: label, value: nil)
         }
     }
 
@@ -139,30 +105,6 @@ private struct SettingsEnvironmentsDetailView: View {
             Button("Connect") { store.addLinked(pairingURL) }
         }
         .navigationTitle("Environments")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
-private struct SettingsPlaceholderDetailView: View {
-    let title: String
-    let icon: String
-    @Environment(\.connTheme) private var theme
-
-    var body: some View {
-        VStack(spacing: 12) {
-            ConnIcon(icon)
-                .font(.system(size: 28, weight: .light))
-                .foregroundStyle(theme.mutedForeground)
-            Text(title)
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(theme.foreground)
-            Text("Coming in a later wave.")
-                .font(.system(size: 14))
-                .foregroundStyle(theme.mutedForeground)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.background.ignoresSafeArea())
-        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
     }
 }
