@@ -60,17 +60,6 @@ vi.mock(import("../state/server"), async (original) => {
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
-vi.mock(import("../state/environments"), async (original) => {
-  const { EnvironmentId } = await import("@t3tools/contracts");
-  // Rows of an environment that is not connected are hidden; the fixtures live in "local".
-  const connected = [EnvironmentId.make("local")];
-  const actual = await original();
-  return {
-    ...actual,
-    useConnectedEnvironmentIds: vi.fn(() => connected),
-    usePrimaryEnvironmentId: vi.fn(actual.usePrimaryEnvironmentId),
-  };
-});
 vi.mock("../commandPaletteBus", () => ({
   openCommandPalette: vi.fn(),
   isCommandPaletteOpen: () => false,
@@ -93,6 +82,9 @@ function project(id: string): Project {
     scripts: [],
   };
 }
+
+// Rows of an environment that is not connected are hidden; the fixtures live in "local".
+vi.mocked(useConnectedEnvironmentIds).mockReturnValue([EnvironmentId.make("local")]);
 
 describe("sidebar header new thread", () => {
   it.each([

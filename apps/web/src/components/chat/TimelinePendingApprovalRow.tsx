@@ -1,6 +1,8 @@
 import {
   FULL_ACCESS_OVERRIDE_QUESTION,
   fullAccessOverrideExplanation,
+  PUSH_HOOKS_APPROVAL_LABEL,
+  PUSH_HOOKS_APPROVAL_QUESTION,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { msg, T, useMessages } from "gt-react";
 import { ShieldIcon } from "lucide-react";
@@ -9,6 +11,7 @@ import { type PendingApproval } from "../../session-logic";
 import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
+import { PushHooksApprovalDetails } from "./PushHooksApprovalDetails";
 import { ToolActivityIconView, type WorkEntryIconName } from "./TimelineToolActivityIcon";
 import { TimelineRowCtx } from "./timelineRowContext";
 import { WorkLogRow } from "./WorkLog";
@@ -48,33 +51,43 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
   const { respondingRequestIds, canOperateThread, onRespondToApproval } = use(TimelineRowCtx);
   const m = useMessages();
   const presentation = APPROVAL_PRESENTATION[approval.requestKind];
+  // T3 Code's own question reads as the app asking: a plain sentence, then what it names.
+  const { pushHooks } = approval;
+  const label = pushHooks ? PUSH_HOOKS_APPROVAL_LABEL : presentation.label;
   const canRespond = approval.responseCapability === "live";
   return (
     <WorkLogRow
       role="group"
-      aria-label={m(presentation.label)}
+      aria-label={m(label)}
       data-v2-item-type="approval_request"
       wrapLabel
       icon={
         <ToolActivityIconView
           icon={undefined}
-          fallbackName={presentation.icon}
+          fallbackName={pushHooks ? "terminal" : presentation.icon}
           className="block size-4 shrink-0 stroke-2 text-icon-muted"
           muted
         />
       }
       label={
-        <code
-          aria-label={m(presentation.detailLabel)}
-          className="block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-          data-approval-detail="complete"
-          tabIndex={0}
-        >
-          {approval.detail || m(presentation.label)}
-        </code>
+        pushHooks ? (
+          <span className="block min-w-0 text-foreground select-text! wrap-anywhere">
+            {m(PUSH_HOOKS_APPROVAL_QUESTION)}
+          </span>
+        ) : (
+          <code
+            aria-label={m(presentation.detailLabel)}
+            className="block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+            data-approval-detail="complete"
+            tabIndex={0}
+          >
+            {approval.detail || m(presentation.label)}
+          </code>
+        )
       }
     >
       <div className="ms-7.5 flex min-w-0 flex-col gap-1 pb-1 text-xs">
+        {pushHooks ? <PushHooksApprovalDetails pushHooks={pushHooks} /> : null}
         {approval.appName ? (
           <span className="text-muted-foreground wrap-anywhere">{approval.appName}</span>
         ) : null}

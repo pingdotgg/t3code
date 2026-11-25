@@ -1626,7 +1626,7 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   "disable-auto-merge": false,
   revert: false,
   "delete-branch": false,
-  "approve-workflows": true,
+  "approve-workflows": false,
 };
 
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {
@@ -1750,4 +1750,37 @@ export function resolveDisplayedPullRequestDetail(input: {
   return link !== undefined && (link.authority ?? link.host) === input.reference.host.toLowerCase()
     ? input.cached
     : null;
+}
+
+const OBSERVATION_STAMPS = new Set(["observedAt", "readAt"]);
+
+/**
+ * Whether two reads of a pull request differ only in when they were observed. Every refresh
+ * restamps those, so the panel keeps the detail it shows instead of re-rendering its whole tree.
+ */
+export function samePullRequestReadExceptStamps(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
+    return false;
+  }
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((item, index) => samePullRequestReadExceptStamps(item, right[index]))
+    );
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const keys = (record: Record<string, unknown>) =>
+    Object.keys(record).filter((key) => !OBSERVATION_STAMPS.has(key));
+  const leftKeys = keys(leftRecord);
+  return (
+    leftKeys.length === keys(rightRecord).length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) &&
+        samePullRequestReadExceptStamps(leftRecord[key], rightRecord[key]),
+    )
+  );
 }
