@@ -91,6 +91,7 @@ function ThreadBoardRow() {
   return (
     <SettingsRow
       {...searchableSetting("thread-board")}
+      devicePreference
       description={gt(
         "Add a board of every thread to the sidebar footer. Threads move between Needs you, Working and Done on their own, grouped by project.",
       )}
