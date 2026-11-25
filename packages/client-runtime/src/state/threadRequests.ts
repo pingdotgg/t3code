@@ -73,59 +73,82 @@ export interface ApprovalTextPart {
   readonly named?: true;
 }
 
-// A letter, not one of Arabic's already shaped presentation forms.
-const LETTER = String.raw`(?=\p{L})(?![\uFB50-\uFDFF\uFE70-\uFEFF])`;
-const MONGOLIAN_SELECTOR = String.raw`[\u180B-\u180D\u180F]`;
-// Scripts whose letters join or conjoin, where a joiner or a non-joiner picks the letter's form.
-// Each entry is a character of one script, with only that script's marks between it and a joiner,
-// or a non-joiner and a character of the same script.
-const JOINING =
-  "Arab Syrc Nkoo Mand Mong Phag Adlm Rohg Deva Beng Guru Gujr Orya Taml Telu Knda Mlym Sinh Mymr Khmr"
-    .split(" ")
-    .map(
-      (script) =>
-        String.raw`\p{Script=${script}}(?=(?:(?![\u200C\u200D])[\p{Script_Extensions=${script}}\p{Script_Extensions=Zinh}])*(?:\u200D|\u200C\p{Script=${script}}))`,
-    )
-    .join("|");
-const AFTER_MONGOLIAN_LETTER = String.raw`(?<=\p{L})(?<=\p{Script=Mong})`;
-// An emoji that is not a skin tone, which only colours the emoji before it.
-const PICTURE = String.raw`(?!\p{Emoji_Modifier})\p{Extended_Pictographic}`;
-// The places where a character that draws nothing itself changes what is drawn beside it.
-const SHAPING = [
-  // After a joining letter, its drawn marks and a Mongolian selector: a joiner, and a non-joiner
-  // before another letter.
-  String.raw`(?<=${LETTER}(?:${JOINING})(?:(?!\p{Default_Ignorable_Code_Point})\p{M})*${MONGOLIAN_SELECTOR}?)(?:\u200D|\u200C${LETTER})`,
-  // A joiner between two emoji, and a presentation selector after an emoji or in a keycap.
-  String.raw`(?<=${PICTURE}\uFE0F?|\p{Emoji_Modifier_Base}\p{Emoji_Modifier})\u200D${PICTURE}`,
-  String.raw`(?<!\p{Emoji_Modifier})(?<=\p{Extended_Pictographic})[\uFE0E\uFE0F]`,
-  String.raw`(?<=[0-9#*])\uFE0F\u20E3`,
-  // A variation selector after an ideograph that has variants.
-  String.raw`(?<=\p{Unified_Ideograph})[\uFE00-\uFE02\u{E0100}-\u{E01EF}]`,
-  // After a Mongolian letter: a variation selector, and the separator before a final a or e.
-  String.raw`${AFTER_MONGOLIAN_LETTER}${MONGOLIAN_SELECTOR}`,
-  String.raw`${AFTER_MONGOLIAN_LETTER}\u180E(?=[\u1820\u1821])`,
-].join("|");
 // Control, format, separator and ignorable characters draw as nothing or as a blank box, and some
-// reorder the text beside them. A line feed and a tab draw as themselves.
-const UNDRAWN = new RegExp(
-  String.raw`(?![\n\t])[\p{Cc}\p{Zl}\p{Zp}]|(?!${SHAPING})[\p{Cf}\p{Default_Ignorable_Code_Point}]`,
-  "gu",
-);
+// reorder the text beside them. A line feed and a tab draw as themselves and are not in the set.
+const UNDRAWN = /[\0-\x08\x0B-\x1F\x7F-\x9F\p{Zl}\p{Zp}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu;
 const UNDRAWN_NAMES: Readonly<Record<string, string>> = {
   "\r": "\\r",
   "\b": "\\b",
   "\u001B": "\\e",
 };
+const PICTOGRAPH = /^\p{Extended_Pictographic}$/u;
+const SKIN_TONE_BASE = /^\p{Emoji_Modifier_Base}$/u;
+const JOINER = 0x200d;
+const TEXT_SELECTOR = 0xfe0e;
+const EMOJI_SELECTOR = 0xfe0f;
+const KEYCAP = 0x20e3;
 
-/** Approval text in parts, each character a screen would not draw replaced by its name. */
+const isSkinTone = (codePoint: number) => codePoint >= 0x1f3fb && codePoint <= 0x1f3ff;
+// An emoji that is not a skin tone, which only colours the emoji before it.
+const isPicture = (codePoint: number) =>
+  codePoint >= 0 && !isSkinTone(codePoint) && PICTOGRAPH.test(String.fromCodePoint(codePoint));
+// A digit, # or *.
+const isKeycapBase = (codePoint: number) =>
+  (codePoint >= 0x30 && codePoint <= 0x39) || codePoint === 0x23 || codePoint === 0x2a;
+
+/** The code point that ends at `end`, or -1 at the start of the text. */
+function codePointBefore(text: string, end: number): number {
+  if (end <= 0) return -1;
+  const unit = text.charCodeAt(end - 1);
+  if (unit >= 0xdc00 && unit <= 0xdfff && end >= 2) {
+    const lead = text.charCodeAt(end - 2);
+    if (lead >= 0xd800 && lead <= 0xdbff) return text.codePointAt(end - 2) ?? unit;
+  }
+  return unit;
+}
+
+/**
+ * Whether the undrawn character at `index` is part of an emoji: a joiner directly between two
+ * emoji, or a presentation selector directly after an emoji or in a keycap. It reads at most two
+ * code points before the character and one after it.
+ */
+function isInsideEmoji(text: string, index: number, codePoint: number): boolean {
+  if (codePoint !== JOINER && codePoint !== EMOJI_SELECTOR && codePoint !== TEXT_SELECTOR) {
+    return false;
+  }
+  const before = codePointBefore(text, index);
+  const after = text.codePointAt(index + 1) ?? -1;
+  if (codePoint !== JOINER) {
+    return (
+      isPicture(before) ||
+      (codePoint === EMOJI_SELECTOR && isKeycapBase(before) && after === KEYCAP)
+    );
+  }
+  if (!isPicture(after)) return false;
+  if (isPicture(before)) return true;
+  // The emoji before the joiner may end in its emoji selector or its skin tone.
+  const base = codePointBefore(text, index - (before > 0xffff ? 2 : 1));
+  if (before === EMOJI_SELECTOR) return isPicture(base);
+  return isSkinTone(before) && base >= 0 && SKIN_TONE_BASE.test(String.fromCodePoint(base));
+}
+
+/**
+ * Approval text in parts, each character a screen would not draw replaced by its name. One pass
+ * over the text: the work per character does not depend on what surrounds it.
+ */
 export function approvalTextParts(text: string): ReadonlyArray<ApprovalTextPart> {
   const parts: ApprovalTextPart[] = [];
   let end = 0;
   for (const match of text.matchAll(UNDRAWN)) {
     const [character] = match;
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (isInsideEmoji(text, match.index, codePoint)) continue;
     if (match.index > end) parts.push({ text: text.slice(end, match.index) });
-    const code = character.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0");
-    parts.push({ text: UNDRAWN_NAMES[character] ?? `U+${code}`, named: true });
+    parts.push({
+      text:
+        UNDRAWN_NAMES[character] ?? `U+${codePoint.toString(16).toUpperCase().padStart(4, "0")}`,
+      named: true,
+    });
     end = match.index + character.length;
   }
   if (end < text.length) parts.push({ text: text.slice(end) });

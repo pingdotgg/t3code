@@ -713,106 +713,65 @@ it("names the characters of an approval that a screen would not draw", () => {
   expect(named("a b c‮d⁧e​f‍g\u{E0072}")).toBe(
     "a<U+2028>b<U+2029>c<U+202E>d<U+2067>e<U+200B>f<U+200D>g<U+E0072>",
   );
-  // Joiners that shape a letter or an emoji stay, and so does every drawn character.
-  const drawn = "git commit -m 'café 👩‍💻 نمی‌خواهم'\n\tgit push";
+  expect(named("a︀ a\u{E0100} é͏ ㅤ a᠋ ᠎ ؜")).toBe(
+    "a<U+FE00> a<U+E0100> é<U+034F> <U+3164> a<U+180B> <U+180E> <U+061C>",
+  );
+  // Every drawn character stays: plain text, accents, a line feed and a tab.
+  const drawn = "git commit -m 'café é 漢字 نمی'\n\tgit push";
   expect(approvalTextParts(drawn)).toEqual([{ text: drawn }]);
   expect(approvalTextParts("")).toEqual([]);
 });
 
-it("names a joiner or a variation selector that shapes nothing where it stands", () => {
+it("leaves a joiner or a presentation selector alone only inside an emoji", () => {
   const named = (text: string) =>
     approvalTextParts(text)
       .map((part) => (part.named ? `<${part.text}>` : part.text))
       .join("");
   const unchanged = (text: string) => expect(approvalTextParts(text)).toEqual([{ text }]);
 
-  // Punctuation, Latin letters with accents, CJK and a lone emoji have nothing to join.
-  expect(named("cat 'safe\u2014\u200D.txt'")).toBe("cat 'safe\u2014<U+200D>.txt'");
-  expect(named("caf\u00E9\u200D\u00E8 \u00E9\u200C\u00E8")).toBe(
-    "caf\u00E9<U+200D>\u00E8 \u00E9<U+200C>\u00E8",
-  );
-  expect(named("e\u0301\u200Dx")).toBe("e\u0301<U+200D>x");
-  expect(named("\u6F22\u200D\u5B57 \u6F22\u200C\u5B57")).toBe(
-    "\u6F22<U+200D>\u5B57 \u6F22<U+200C>\u5B57",
-  );
-  expect(named("\u{1F469}\u200D.txt \u{1F469}\u200C\u{1F4BB}")).toBe(
-    "\u{1F469}<U+200D>.txt \u{1F469}<U+200C>\u{1F4BB}",
-  );
-  // The start and the end of the text.
-  expect(named("\u200Da\u200D")).toBe("<U+200D>a<U+200D>");
-  expect(named("\u200C\u0646\u0645\u06CC\u200C")).toBe("<U+200C>\u0646\u0645\u06CC<U+200C>");
-  expect(named("\u{1F469}\u200D")).toBe("\u{1F469}<U+200D>");
-  // A non-joiner needs a joining letter on both sides; a joiner needs one before it, not a digit.
-  expect(named("\u0645\u06CC\u200C.txt \u0661\u200D\u0661")).toBe(
-    "\u0645\u06CC<U+200C>.txt \u0661<U+200D>\u0661",
-  );
+  // A joiner directly between two emoji, after the first one's selector or skin tone too.
+  unchanged("\u{1F469}‍\u{1F4BB} \u{1F9D1}\u{1F3FD}‍\u{1F4BB} \u{1F44B}\u{1F3FD}");
+  unchanged("\u{1F3F3}️‍\u{1F308} \u{1F441}️‍\u{1F5E8}️");
+  // A presentation selector directly after an emoji or in a keycap.
+  unchanged("❤️ ❤︎ 1️⃣ #️⃣");
 
-  // Variation selectors and tag characters.
-  expect(named("a\uFE0Fb\uFE0E 1\uFE0F \u6F22\uFE0F")).toBe(
-    "a<U+FE0F>b<U+FE0E> 1<U+FE0F> \u6F22<U+FE0F>",
+  // The same characters anywhere else, in every script.
+  expect(named("نمی‌خواهم ه‍")).toBe("نمی<U+200C>خواهم ه<U+200D>");
+  expect(named("क्‍ष क्‌ष")).toBe("क्<U+200D>ष क्<U+200C>ष");
+  expect(named("ᠮ᠋ 葛\u{E0100} 辻︀")).toBe("ᠮ<U+180B> 葛<U+E0100> 辻<U+FE00>");
+  expect(named("cat 'safe—‍.txt' é‍x ‍a‍")).toBe(
+    "cat 'safe—<U+200D>.txt' é<U+200D>x <U+200D>a<U+200D>",
   );
-  expect(named("a\uFE00 a\u{E0100} \u00E9\u034F \u3164")).toBe(
-    "a<U+FE00> a<U+E0100> \u00E9<U+034F> <U+3164>",
+  expect(named("a️b︎ 1️ 1︎⃣ 漢️ ️")).toBe("a<U+FE0F>b<U+FE0E> 1<U+FE0F> 1<U+FE0E>⃣ 漢<U+FE0F> <U+FE0F>");
+  // An emoji on one side only, a non-joiner, and a second joiner or selector.
+  expect(named("\u{1F469}‍.txt x‍\u{1F4BB} \u{1F469}‌\u{1F4BB} \u{1F469}‍")).toBe(
+    "\u{1F469}<U+200D>.txt x<U+200D>\u{1F4BB} \u{1F469}<U+200C>\u{1F4BB} \u{1F469}<U+200D>",
   );
-  expect(named("\u{1F3F4}\u{E0067}\u{E0062}\u{E007F} a\u{E0041}")).toBe(
-    "\u{1F3F4}<U+E0067><U+E0062><U+E007F> a<U+E0041>",
+  expect(named("\u{1F469}‍‍\u{1F4BB} ❤️️")).toBe("\u{1F469}<U+200D><U+200D>\u{1F4BB} ❤️<U+FE0F>");
+  // A skin tone is a drawn character, not an emoji to join or to select a presentation of.
+  expect(named("a\u{1F3FD}‍\u{1F4BB} \u{1F469}‍\u{1F3FD} \u{1F44B}\u{1F3FD}️")).toBe(
+    "a\u{1F3FD}<U+200D>\u{1F4BB} \u{1F469}<U+200D>\u{1F3FD} \u{1F44B}\u{1F3FD}<U+FE0F>",
   );
-  expect(named("a\u180B \u180E")).toBe("a<U+180B> <U+180E>");
-
-  // Each of these shapes what stands beside it.
-  unchanged("\u0646\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645 \u0647\u200D");
-  unchanged("\u0915\u094D\u200D\u0937 \u0915\u094D\u200C\u0937 \u0DC1\u0DCA\u200D\u0DBB\u0DD3");
-  unchanged("\u{1F469}\u200D\u{1F4BB} \u{1F44B}\u{1F3FD} \u{1F9D1}\u{1F3FD}\u200D\u{1F4BB}");
-  unchanged("\u{1F441}\uFE0F\u200D\u{1F5E8}\uFE0F \u2764\uFE0F \u2764\uFE0E 1\uFE0F\u20E3");
-  unchanged("\u845B\u{E0100} \u8FBB\uFE00 \u182E\u180B \u1820\u180E\u1820");
+  // Tag characters are named, in a flag as well.
+  expect(named("\u{1F3F4}\u{E0067}\u{E0062}\u{E007F}")).toBe(
+    "\u{1F3F4}<U+E0067><U+E0062><U+E007F>",
+  );
 });
 
-it("names a joiner or a selector whose neighbour is of the right script but is not its base", () => {
-  const named = (text: string) =>
-    approvalTextParts(text)
-      .map((part) => (part.named ? `<${part.text}>` : part.text))
-      .join("");
-  const unchanged = (text: string) => expect(approvalTextParts(text)).toEqual([{ text }]);
-
-  // A Mongolian selector after a digit, a punctuation mark or another selector.
-  expect(named("\u1810\u180B \u1800\u180C \u182E\u180B\u180B")).toBe(
-    "\u1810<U+180B> \u1800<U+180C> \u182E\u180B<U+180B>",
-  );
-  expect(named("\u1810\u180E\u1820 \u182E\u180E\u182E \u1820\u180E\u180E\u1820")).toBe(
-    "\u1810<U+180E>\u1820 \u182E<U+180E>\u182E \u1820<U+180E><U+180E>\u1820",
-  );
-  // A joiner after a digit, a sign or a lone mark of a joining script, with or without marks.
-  expect(named("\u0661\u064B\u200D \u066A\u0301\u200D\u0645 \u061C\u064B\u200D")).toBe(
-    "\u0661\u064B<U+200D> \u066A\u0301<U+200D>\u0645 <U+061C>\u064B<U+200D>",
-  );
-  expect(named("\u0967\u094D\u200D\u0937 \u0967\u094D\u200C\u0937 \u094D\u200D")).toBe(
-    "\u0967\u094D<U+200D>\u0937 \u0967\u094D<U+200C>\u0937 \u094D<U+200D>",
-  );
-  // After a letter that is already a fixed form, a mark of another script or an undrawn mark.
-  expect(named("\uFE8D\u200D \u0645\u05B0\u200D \u0645\uFE0F\u200D \u1780\u17B4\u200D")).toBe(
-    "\uFE8D<U+200D> \u0645\u05B0<U+200D> \u0645<U+FE0F><U+200D> \u1780<U+17B4><U+200D>",
-  );
-  // Between letters of two scripts, and a joiner or a non-joiner after another.
-  expect(named("\u0645\u200C\u0915 \u0645\u200D\u200D \u0646\u200C\u200C\u0645")).toBe(
-    "\u0645<U+200C>\u0915 \u0645\u200D<U+200D> \u0646<U+200C><U+200C>\u0645",
-  );
-  // A skin tone is not an emoji to join or to select a presentation of.
-  expect(named("\u{1F44B}\u{1F3FD}\uFE0F \u2764\uFE0F\uFE0F a\u{1F3FD}\u200D\u{1F4BB}")).toBe(
-    "\u{1F44B}\u{1F3FD}<U+FE0F> \u2764\uFE0F<U+FE0F> a\u{1F3FD}<U+200D>\u{1F4BB}",
-  );
-  expect(named("\u00A9\u{1F3FD}\u200D\u{1F4BB} \u{1F469}\u200D\u{1F3FD}")).toBe(
-    "\u00A9\u{1F3FD}<U+200D>\u{1F4BB} \u{1F469}<U+200D>\u{1F3FD}",
-  );
-  expect(named("\u{1F469}\u200D\u200D\u{1F4BB}")).toBe("\u{1F469}<U+200D><U+200D>\u{1F4BB}");
-  // A radical, an iteration mark, a compatibility ideograph, kana and punctuation are not
-  // ideographs with variants, and an ideograph takes one selector.
-  expect(named("\u2F00\u{E0100} \u3005\u{E0100} \uF900\uFE00 \u3042\u{E0100} \u3001\uFE00")).toBe(
-    "\u2F00<U+E0100> \u3005<U+E0100> \uF900<U+FE00> \u3042<U+E0100> \u3001<U+FE00>",
-  );
-  expect(named("\u845B\u{E0100}\u{E0101} \u8FBB\uFE00\uFE01 \u845B\uFE0D")).toBe(
-    "\u845B\u{E0100}<U+E0101> \u8FBB\uFE00<U+FE01> \u845B<U+FE0D>",
-  );
-
-  unchanged("\u182E\u180B\u200D\u1820 \u1820\u180F \u0915\u093C\u094D\u200D\u0937");
-  unchanged("\u0645\u064E\u200C\u0645 \u{1F44B}\u{1F3FD} \u{1F3F3}\uFE0F\u200D\u{1F308}");
+it("splits a megabyte of approval text the same way as a short one", () => {
+  const size = 1 << 20;
+  const fill = (unit: string) => unit.repeat(size / unit.length);
+  const count = (text: string) => {
+    const parts = approvalTextParts(text);
+    return [parts.length, parts.filter((part) => part.named).length];
+  };
+  // A long run of marks before one joiner, and a long run of joined emoji with one left open.
+  expect(count(`1${fill("\u094D")}\u200D`)).toEqual([2, 1]);
+  expect(count(fill("\u{1F469}\u200D"))).toEqual([2, 1]);
+  expect(count(fill("\u{1F469}\u{1F3FD}\u200D\u{1F4BB}"))).toEqual([1, 0]);
+  // Nothing but joiners, selectors or carriage returns: each one is named.
+  expect(count(fill("\u200D"))).toEqual([size, size]);
+  expect(count(fill("\uFE0F"))).toEqual([size, size]);
+  expect(count(fill("\r"))).toEqual([size, size]);
+  expect(count(fill("a"))).toEqual([1, 0]);
 });
