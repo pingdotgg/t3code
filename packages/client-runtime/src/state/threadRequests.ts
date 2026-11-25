@@ -67,6 +67,37 @@ export interface ThreadPendingApproval {
   readonly supportsFeedback?: boolean;
 }
 
+export interface ApprovalTextPart {
+  readonly text: string;
+  /** Set when `text` names a character a screen would not draw. */
+  readonly named?: true;
+}
+
+// Control, format and separator characters draw as nothing or as a blank box, and some reorder the
+// text beside them. A line feed and a tab draw as themselves, and a joiner after a letter or an
+// emoji shapes it.
+const UNDRAWN = /(?![\n\t])[\p{Cc}\p{Zl}\p{Zp}]|(?![‌‍])\p{Cf}|(?<![^\0-\x7F])[‌‍]/gu;
+const UNDRAWN_NAMES: Readonly<Record<string, string>> = {
+  "\r": "\\r",
+  "\b": "\\b",
+  "\u001B": "\\e",
+};
+
+/** Approval text in parts, each character a screen would not draw replaced by its name. */
+export function approvalTextParts(text: string): ReadonlyArray<ApprovalTextPart> {
+  const parts: ApprovalTextPart[] = [];
+  let end = 0;
+  for (const match of text.matchAll(UNDRAWN)) {
+    const [character] = match;
+    if (match.index > end) parts.push({ text: text.slice(end, match.index) });
+    const code = character.codePointAt(0)?.toString(16).toUpperCase().padStart(4, "0");
+    parts.push({ text: UNDRAWN_NAMES[character] ?? `U+${code}`, named: true });
+    end = match.index + character.length;
+  }
+  if (end < text.length) parts.push({ text: text.slice(end) });
+  return parts;
+}
+
 export const PUSH_HOOKS_APPROVAL_LABEL = msg("Push hooks approval");
 export const PUSH_HOOKS_APPROVAL_QUESTION = msg("Run this repository's push hooks?");
 

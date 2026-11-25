@@ -5,6 +5,7 @@ import type {
   RuntimeRequestId,
 } from "@t3tools/contracts";
 import {
+  approvalTextParts,
   FULL_ACCESS_OVERRIDE_QUESTION,
   fullAccessOverrideExplanation,
   PUSH_HOOKS_APPROVAL_QUESTION,
@@ -69,7 +70,16 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         </View>
       ) : props.approval.detail ? (
         <Text className="font-sans text-sm leading-normal text-foreground-secondary">
-          {props.approval.detail}
+          {approvalTextParts(props.approval.detail).map((part, index) =>
+            part.named ? (
+              // oxlint-disable-next-line react/no-array-index-key -- parts never reorder and two may read alike
+              <Text key={index} className="font-mono text-sm text-warning-foreground">
+                {part.text}
+              </Text>
+            ) : (
+              part.text
+            ),
+          )}
         </Text>
       ) : null}
       {props.approval.reason ? (

@@ -2603,6 +2603,50 @@ it("renders automatic compaction as one live divider that finishes with its reas
   expect(container.textContent).not.toContain("Compacting before");
 });
 
+it("shows an approval's characters that a screen would not draw, and says when it runs past the box", async () => {
+  setup();
+  const fixture = makeStreamingTimelineFixture();
+  const approval = (id: string, detail: string): PendingApproval => ({
+    requestId: RuntimeRequestId.make(id),
+    requestKind: "command",
+    createdAt: fixture.time(6),
+    detail,
+    responseCapability: "live",
+  });
+  await using screen = await renderElement(
+    <MessagesTimeline
+      {...baseProps()}
+      timelineEntries={[]}
+      pendingApprovals={[
+        approval("named", "echo one\rtwo\r\nthree\u001b[2K\b ‮ruof‬ five​"),
+        approval("long", `echo first${"\n".repeat(40)}echo last`),
+        approval("plain", "git commit -m 'café 👩‍💻'\n\tgit push"),
+      ]}
+      canOperateThread
+      onRespondToApproval={async () => {}}
+    />,
+  );
+  const [named, long, plain] = [
+    ...screen.container.querySelectorAll<HTMLElement>(
+      '[role="group"][aria-label="Command approval"]',
+    ),
+  ];
+  await expect.element(named!).toBeVisible();
+  const detail = (card: HTMLElement) => card.querySelector('[data-approval-detail="complete"]')!;
+
+  expect(detail(named!).textContent).toBe(
+    "echo one\\rtwo\\r\nthree\\e[2K\\b U+202EruofU+202CU+2028fiveU+200B",
+  );
+  expect(named!.textContent).not.toContain("Scroll to read");
+
+  await expect
+    .element(page.elementLocator(long!).getByText("Scroll to read all of it."))
+    .toBeVisible();
+
+  expect(detail(plain!).textContent).toBe("git commit -m 'café 👩‍💻'\n\tgit push");
+  expect(detail(plain!).querySelector("span")).toBeNull();
+});
+
 it("shows T3 Code's push hooks approval as its own question and another server's as before", async () => {
   setup();
   const fixture = makeStreamingTimelineFixture();

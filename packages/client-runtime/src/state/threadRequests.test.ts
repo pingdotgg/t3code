@@ -22,6 +22,7 @@ import {
   createChildThreadApprovalsAtom,
   type PendingThreadRequests,
   derivePendingThreadRequests,
+  approvalTextParts,
   declinePendingApprovals,
   sendApprovalFeedback,
   pushHooksApprovalRows,
@@ -698,4 +699,22 @@ it("loads only child approvals and retains their destination across environments
   expect(readDetails).not.toHaveBeenCalled();
   unmount();
   registry.dispose();
+});
+
+it("names the characters of an approval that a screen would not draw", () => {
+  const named = (text: string) =>
+    approvalTextParts(text)
+      .map((part) => (part.named ? `<${part.text}>` : part.text))
+      .join("");
+  expect(named("echo one\rtwo\r\n\tthree")).toBe("echo one<\\r>two<\\r>\n\tthree");
+  expect(named("a\b\u001B[2K\u0000\u007F\u0085\u000B\u000C")).toBe(
+    "a<\\b><\\e>[2K<U+0000><U+007F><U+0085><U+000B><U+000C>",
+  );
+  expect(named("a b c‮d⁧e​f‍g\u{E0072}")).toBe(
+    "a<U+2028>b<U+2029>c<U+202E>d<U+2067>e<U+200B>f<U+200D>g<U+E0072>",
+  );
+  // Joiners that shape a letter or an emoji stay, and so does every drawn character.
+  const drawn = "git commit -m 'café 👩‍💻 نمی‌خواهم'\n\tgit push";
+  expect(approvalTextParts(drawn)).toEqual([{ text: drawn }]);
+  expect(approvalTextParts("")).toEqual([]);
 });
