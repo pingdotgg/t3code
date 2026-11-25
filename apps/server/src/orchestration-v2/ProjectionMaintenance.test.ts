@@ -634,3 +634,30 @@ it.effect("a deleted thread's leftover settled request is purged", () =>
     );
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("an interrupted purge leaves a stream that still decodes", () =>
+  Effect.gen(function* () {
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const eventStore = yield* EventStore.EventStoreV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const thread = makeThread(ThreadId.make("thread:purge-interrupted"), now);
+    yield* sink.write({ events: [{ ...threadCreated(thread, now), id: EventId.make("event:i") }] });
+    yield* sink.write({ events: subagentEvents(thread.id, now, 0, "anchor") });
+    yield* deleteThread(thread, now);
+    // A late update borrows the anchor's prompt and becomes the stream head.
+    yield* sink.write({ events: subagentEvents(thread.id, now, 0, "borrower") });
+
+    const failAfterEvents: Statement.Transformer = (statement) =>
+      statement.compile()[0].includes("DELETE FROM orchestration_v2_effect_outbox")
+        ? Effect.die("interrupted")
+        : Effect.succeed(statement);
+    const exit = yield* maintenance
+      .purgeDeletedThread(thread.id)
+      .pipe(Effect.provideService(Statement.CurrentTransformer, failAfterEvents), Effect.exit);
+    assert.isTrue(exit._tag === "Failure");
+
+    const stream = yield* eventStore.read({ threadId: thread.id }).pipe(Stream.runCollect);
+    assert.equal(Array.from(stream).at(-1)?.event.type, "thread.deleted");
+  }).pipe(Effect.provide(layerTest)),
+);

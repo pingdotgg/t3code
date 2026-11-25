@@ -56,8 +56,9 @@ const RETAINED_EVENT_HISTORY = Duration.days(1);
 // Small pages bound work on the reader worker and synchronous fallback.
 const PAGE_SIZE = 50;
 const REFERENCE_SCAN_WINDOW = 1000;
-// Bounds one purge statement, trigger work included.
-const PURGE_BATCH_SIZE = 500;
+// Bounds how long one purge statement holds the writer: on a real database a 500-row batch of
+// turn items took about 400 ms, index and count-trigger work included.
+const PURGE_BATCH_SIZE = 50;
 // Titles default to the first message, so a tombstone cannot keep the real one.
 export const DELETED_THREAD_TITLE = "Deleted thread";
 
@@ -333,14 +334,15 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           SELECT 1 FROM orchestration_v2_effect_outbox AS effect
           WHERE effect.thread_id = thread.thread_id
             AND effect.status IN ('pending', 'running')
-            AND effect.effect_type <> 'thread-content.purge'
+            -- Title generation has its own lane and needs nothing the purge removes.
+            AND effect.effect_type NOT IN ('thread-content.purge', 'thread-title.generate')
         )
         -- A live parent settles its delegated task from this child's runs.
         AND NOT EXISTS (
           SELECT 1 FROM orchestration_v2_projection_subagents AS task
           JOIN orchestration_v2_projection_threads AS parent ON parent.thread_id = task.thread_id
           WHERE task.child_thread_id = thread.thread_id
-            AND task.status IN ('pending', 'running', 'waiting')
+            AND task.status IN ('idle', 'pending', 'running', 'waiting')
             AND parent.deleted_at IS NULL
         )
         -- The delete's own purge always runs; the sweep only takes threads with something left.
@@ -411,6 +413,37 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
         }
       });
       for (const { thread_id: threadId } of threads) {
+        const tombstone = sql`(
+          SELECT json_remove(json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}), '$.guestShare')
+          FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}
+        )`;
+        yield* sql`
+          UPDATE orchestration_events
+          SET payload_json = json_remove(
+            json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}),
+            '$.guestShare'
+          )
+          WHERE application_event_version = 2
+            AND aggregate_kind = 'thread'
+            AND stream_id = ${threadId}
+            AND event_type IN ('thread.created', 'thread.deleted')
+        `;
+        // The head row only holds the stream's position, so any other head becomes the tombstone.
+        // First, so the head never borrows a prompt from an anchor already deleted below.
+        yield* sql`
+          UPDATE orchestration_events
+          SET event_type = 'thread.deleted', payload_json = ${tombstone}, metadata_json = '{}'
+          WHERE sequence = (
+              SELECT MAX(sequence) FROM orchestration_events
+              WHERE application_event_version = 2
+                AND aggregate_kind = 'thread'
+                AND stream_id = ${threadId}
+            )
+            AND event_type NOT IN ('thread.created', 'thread.deleted')
+            AND NOT (
+              event_type = 'run.updated' AND json_extract(payload_json, '$.status') = 'running'
+            )
+        `;
         for (const table of DELETED_THREAD_CONTENT_TABLES) {
           yield* drain(sql`
             DELETE FROM ${sql(table)}
@@ -439,6 +472,8 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
                   AND aggregate_kind = 'thread'
                   AND stream_id = ${threadId}
               )
+            -- Newest first: a row borrowing its prompt goes before the anchor it borrows from.
+            ORDER BY sequence DESC
             LIMIT ${PURGE_BATCH_SIZE}
           )
           RETURNING 1 AS purged
@@ -464,36 +499,6 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
           UPDATE orchestration_v2_legacy_imports
           SET transcript_imported_at = ${now}
           WHERE thread_id = ${threadId} AND transcript_imported_at IS NULL
-        `;
-        const tombstone = sql`(
-          SELECT json_remove(json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}), '$.guestShare')
-          FROM orchestration_v2_projection_threads WHERE thread_id = ${threadId}
-        )`;
-        yield* sql`
-          UPDATE orchestration_events
-          SET payload_json = json_remove(
-            json_set(payload_json, '$.title', ${DELETED_THREAD_TITLE}),
-            '$.guestShare'
-          )
-          WHERE application_event_version = 2
-            AND aggregate_kind = 'thread'
-            AND stream_id = ${threadId}
-            AND event_type IN ('thread.created', 'thread.deleted')
-        `;
-        // The head row only holds the stream's position, so any other head becomes the tombstone.
-        yield* sql`
-          UPDATE orchestration_events
-          SET event_type = 'thread.deleted', payload_json = ${tombstone}
-          WHERE sequence = (
-              SELECT MAX(sequence) FROM orchestration_events
-              WHERE application_event_version = 2
-                AND aggregate_kind = 'thread'
-                AND stream_id = ${threadId}
-            )
-            AND event_type NOT IN ('thread.created', 'thread.deleted')
-            AND NOT (
-              event_type = 'run.updated' AND json_extract(payload_json, '$.status') = 'running'
-            )
         `;
         // Last, because the new title is what marks the purge as done.
         yield* sql`
