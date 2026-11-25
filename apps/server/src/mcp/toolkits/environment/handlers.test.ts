@@ -127,6 +127,10 @@ it.effect("reads an untouched server as unchanged, and a null setting as null", 
     expect(yield* call("t3_settings_read", { keys: ["defaultThreadEnvMode"] })).toMatchObject({
       settings: [{ key: "defaultThreadEnvMode", value: null }],
     });
+    const repeated = (yield* call("t3_settings_read", {
+      keys: ["branchNamePrefix", "branchNamePrefix"],
+    })) as { settings: ReadonlyArray<object> };
+    expect(repeated.settings).toHaveLength(1);
   }).pipe(
     Effect.provide(
       layerCaller(
@@ -208,6 +212,86 @@ describe("t3_settings_update", () => {
       ]);
       expect(refusals[6]).toMatchObject({ message: expect.stringContaining("t3_theme_set") });
       expect(yield* Ref.get(patches)).toEqual([]);
+    }),
+  );
+
+  it.effect("refuses intervals settings.json cannot hold, and oversized patches", () =>
+    Effect.gen(function* () {
+      const patches = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const refusals = yield* Effect.forEach(
+        [
+          { automaticGitFetchInterval: "Infinity" },
+          { providerHealthRefreshInterval: "-Infinity" },
+          { hostPowerMonitorIdleInterval: "NaN" },
+        ],
+        (overrides) =>
+          call("t3_settings_update", {
+            settings: { backgroundActivity: { profile: "custom", overrides } },
+          }),
+      ).pipe(
+        Effect.provide(
+          layerCaller(Effect.succeed(liveThreadShell(threadId)), recordingSettings(patches)),
+        ),
+      );
+      const oversized = yield* call("t3_settings_update", {
+        settings: { branchNamePrefix: "a".repeat(70_000) },
+      }).pipe(
+        Effect.provide(
+          layerCaller(Effect.succeed(liveThreadShell(threadId)), recordingSettings(patches)),
+        ),
+      );
+      expect([...refusals, oversized].map((result) => (result as { code: string }).code)).toEqual(
+        Array(4).fill("invalid_request"),
+      );
+      expect(yield* Ref.get(patches)).toEqual([]);
+    }),
+  );
+
+  it.effect("replaces a per-entry map with the whole new value", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* call("t3_settings_update", {
+          settings: { usageModelAliases: { "qa/c": "qa/e" } },
+        }),
+      ).toMatchObject({
+        settings: [{ key: "usageModelAliases", changed: true, value: { "qa/c": "qa/e" } }],
+      });
+      expect(yield* call("t3_settings_update", { settings: { usageModelAliases: {} } })).toEqual({
+        settings: [{ key: "usageModelAliases", access: "write", changed: false, value: {} }],
+      });
+    }).pipe(
+      Effect.provide(
+        layerCaller(
+          Effect.succeed(liveThreadShell(threadId)),
+          Settings.ServerSettingsService.layerTest({
+            usageModelAliases: { "qa/a": "qa/b", "qa/c": "qa/d" },
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("says why no setting can change when settings.json is unreadable", () =>
+    Effect.gen(function* () {
+      const patches = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const result = yield* call("t3_settings_update", {
+        settings: { keepAwakeWhileAgentsWork: false },
+      }).pipe(
+        Effect.provide(
+          layerCaller(
+            Effect.succeed(liveThreadShell(threadId)),
+            recordingSettings(patches, () =>
+              Effect.fail(
+                new ServerSettingsError({ settingsPath: "settings.json", operation: "read-file" }),
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(result).toMatchObject({
+        code: "orchestration_error",
+        message: expect.stringContaining("settings.json could not be read"),
+      });
     }),
   );
 

@@ -100,7 +100,7 @@ const unknownSetting = (key: string) =>
   invalid(`\`${key}\` is not a setting. Call \`t3_settings_read\` without \`keys\` for the list.`);
 
 const requestedKeys = (keys: ReadonlyArray<string>) =>
-  Effect.forEach(keys, (key) => {
+  Effect.forEach(new Set(keys), (key) => {
     const level = agentSettingAccess(key);
     return level === undefined || level === "hidden"
       ? Effect.fail(unknownSetting(key))
@@ -120,10 +120,51 @@ const refusedWrite = (key: string) => {
   return invalid(`\`${key}\` is maintained by T3 Code and cannot be set.`);
 };
 
-const settingsFailure = (error: ServerSettingsError) =>
-  error.operation === "write-managed-setting" || error.operation === "use-disallowed-provider"
-    ? new OrchestratorMcpFailure({ code: "capability_denied", message: error.message })
-    : unavailable();
+const settingsFailure = (error: ServerSettingsError) => {
+  if (error.operation === "write-managed-setting" || error.operation === "use-disallowed-provider")
+    return new OrchestratorMcpFailure({ code: "capability_denied", message: error.message });
+  if (error.operation === "read-file")
+    return new OrchestratorMcpFailure({
+      code: "orchestration_error",
+      message:
+        "This environment's settings.json could not be read, so no setting can change until the user fixes or removes it.",
+    });
+  return unavailable();
+};
+
+// Every connected client receives the whole settings object on each change.
+const MAX_PATCH_CHARACTERS = 64_000;
+const isOversized = (changes: Readonly<Record<string, Schema.Json>>) =>
+  JSON.stringify(changes).length > MAX_PATCH_CHARACTERS;
+
+/** These maps merge per entry; an entry the agent left out of the whole new map is removed. */
+const withRemovedEntries = <Value>(
+  next: Readonly<Record<string, Value | null>> | undefined,
+  current: Readonly<Record<string, unknown>>,
+) =>
+  next === undefined
+    ? undefined
+    : {
+        ...Object.fromEntries(
+          Object.keys(current)
+            .filter((entry) => !Object.hasOwn(next, entry))
+            .map((entry) => [entry, null]),
+        ),
+        ...next,
+      };
+
+const asReplacement = (patch: typeof AgentSettingsPatch.Type, current: ServerSettings) => {
+  const usagePriceOverrides = withRemovedEntries(
+    patch.usagePriceOverrides,
+    current.usagePriceOverrides,
+  );
+  const usageModelAliases = withRemovedEntries(patch.usageModelAliases, current.usageModelAliases);
+  return {
+    ...patch,
+    ...(usagePriceOverrides === undefined ? {} : { usagePriceOverrides }),
+    ...(usageModelAliases === undefined ? {} : { usageModelAliases }),
+  };
+};
 
 export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
   t3_environment_read: McpToolAccess.reads(() =>
@@ -164,6 +205,10 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
       if (keys.length === 0) return yield* invalid("Give at least one setting in `settings`.");
       const refused = keys.find((key) => agentSettingAccess(key) !== "write");
       if (refused !== undefined) return yield* refusedWrite(refused);
+      if (isOversized(changes))
+        return yield* invalid(
+          `\`settings\` is over ${MAX_PATCH_CHARACTERS} characters as JSON. Settings values are short; send less.`,
+        );
       const patch = yield* decodeAgentPatch(changes).pipe(
         Effect.mapError((error) => invalid(Array.from(error.message).slice(0, 2000).join(""))),
       );
@@ -180,7 +225,10 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         // The turn may have ended, or the thread's modes changed, while this waited for the lock.
         yield* check;
         const { settings } = yield* access;
-        const next = yield* settings.updateSettings(patch).pipe(Effect.mapError(settingsFailure));
+        const current = yield* settings.getSettings.pipe(Effect.mapError(settingsFailure));
+        const next = yield* settings
+          .updateSettings(asReplacement(patch, current))
+          .pipe(Effect.mapError(settingsFailure));
         const encoded = yield* encodedForAgent(next);
         return { settings: entries(settings, next, encoded, keys as AgentSettingKey[], true) };
       });

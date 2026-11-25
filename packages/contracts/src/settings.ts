@@ -1125,6 +1125,11 @@ export interface BranchNamingOptions {
 }
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
+
+// settings.json holds JSON, so an infinite interval would be saved as null and fail every later load.
+const IntervalMillis = Schema.Finite.pipe(
+  Schema.decodeTo(Schema.Duration, SchemaTransformation.durationFromMillis),
+);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
 
 export const BackgroundActivityProfile = Schema.Literals([
@@ -1144,10 +1149,10 @@ export const BackgroundActivityProfileSelection = Schema.Literals([
 export type BackgroundActivityProfileSelection = typeof BackgroundActivityProfileSelection.Type;
 
 export const BackgroundActivityOverrides = Schema.Struct({
-  automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
-  providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
-  hostPowerMonitorActiveInterval: Schema.optionalKey(Schema.DurationFromMillis),
-  hostPowerMonitorIdleInterval: Schema.optionalKey(Schema.DurationFromMillis),
+  automaticGitFetchInterval: Schema.optionalKey(IntervalMillis),
+  providerHealthRefreshInterval: Schema.optionalKey(IntervalMillis),
+  hostPowerMonitorActiveInterval: Schema.optionalKey(IntervalMillis),
+  hostPowerMonitorIdleInterval: Schema.optionalKey(IntervalMillis),
   pauseWhenHostLocked: Schema.optionalKey(Schema.Boolean),
   pauseWhenHostLowPower: Schema.optionalKey(Schema.Boolean),
   pauseWhenClientLowPower: Schema.optionalKey(Schema.Boolean),
@@ -1545,12 +1550,12 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
 
-  automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
+  automaticGitFetchInterval: IntervalMillis.pipe(
     Schema.withDecodingDefault(
       Effect.succeed(Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
     ),
   ),
-  providerHealthRefreshInterval: Schema.DurationFromMillis.pipe(
+  providerHealthRefreshInterval: IntervalMillis.pipe(
     Schema.withDecodingDefault(
       Effect.succeed(Duration.toMillis(DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL)),
     ),
@@ -1985,8 +1990,8 @@ export const ServerSettingsPatch = Schema.Struct({
       overrides: Schema.optionalKey(BackgroundActivityOverrides),
     }),
   ),
-  automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
-  providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
+  automaticGitFetchInterval: Schema.optionalKey(IntervalMillis),
+  providerHealthRefreshInterval: Schema.optionalKey(IntervalMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   defaultTheme: Schema.optionalKey(DefaultThemePreference),
   defaultThemeSetAt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
