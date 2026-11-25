@@ -2431,6 +2431,57 @@ it.effect("a watcher sees a question leave when it is withdrawn while its run is
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a run that pauses while an answer is being delivered is not resumed by it", () =>
+  Effect.gen(function* () {
+    // Between the wake's look at the run and its delivery, `bad` fails and pauses the run.
+    let armed: string | undefined;
+    let failBad: Effect.Effect<void> = Effect.void;
+    const paused = yield* Deferred.make<void>();
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.map(WorkflowStore.make, (real) =>
+        WorkflowStore.WorkflowStore.of({
+          ...real,
+          waitSignalled: (runId, ...rest) =>
+            Effect.tap(real.waitSignalled(runId, ...rest), (taken) =>
+              Effect.sync(() => void (taken ? (armed = runId) : undefined)),
+            ),
+          runPaused: (runId, ...rest) =>
+            Effect.andThen(real.runPaused(runId, ...rest), Deferred.succeed(paused, undefined)),
+          run: (runId) =>
+            Effect.flatMap(real.run(runId), (row) => {
+              if (armed !== runId) return Effect.succeed(row);
+              armed = undefined;
+              return Effect.as(Effect.andThen(failBad, Deferred.await(paused)), row);
+            }),
+        }),
+      ),
+    );
+    const { failures, latch, boot } = yield* harness(store);
+    failBad = Deferred.succeed(latch.bad, undefined).pipe(Effect.asVoid);
+    yield* Ref.set(failures, 1);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start("doubting", {}, { idempotencyKey: "d1" });
+        yield* workflows.waitFor(runId, (run) => run.status === "waiting" && run.detail === "sure");
+        yield* workflows.answer(runId, "sure", { choice: "Yes" });
+        assert.equal((yield* workflows.waitFor(runId, status("paused"))).pauses, 1);
+        // Nobody resumed it, so its failed step does not run again and it does not finish.
+        const unasked = yield* workflows
+          .waitFor(runId, status("completed"))
+          .pipe(Effect.timeoutOption("30 seconds"));
+        assert.isTrue(Option.isNone(unasked));
+        assert.equal((yield* workflows.get(runId)).run.status, "paused");
+        // The resume runs `bad` again and delivers the answer the claim kept.
+        yield* workflows.resume(runId);
+        const done = yield* workflows.waitFor(runId, status("completed"));
+        assert.deepStrictEqual(done.result, "1 Yes");
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it("tags refuses a list with a gap in it", () => {
   // The same list `tags([, "pr"])` makes: a first entry that was never set.
   const gapped = new Array<string>(2);
