@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off globalTimers:off
 // Runs this fork's tests. It skips the upstream tests listed in
 // fork-known-failures.json, refuses a Node major other than package.json's
-// engines, and stops a run that prints nothing for 30 seconds.
+// engines, and stops individual processes that go idle.
 //
 //   node scripts/fork-tests.ts [vitest args]   run tests without the known failures
 //   node scripts/fork-tests.ts --recheck       run only the known failures, to drop fixed ones
@@ -17,7 +17,8 @@ export interface KnownFailure {
 }
 
 const root = NodePath.resolve(import.meta.dirname, "..");
-const IDLE_LIMIT_MS = 30_000;
+const targetedIdleLimitMs = 30_000;
+const fullSuiteIdleLimitMs = 150_000;
 const nodeTestFiles = ".github/scripts/*.test.cjs";
 const vitePlus = NodePath.join(root, "node_modules/.bin/vp");
 const vitestRunArgs = ["test", "run", "--reporter=verbose", "--testTimeout=30000"];
@@ -65,6 +66,19 @@ export function aggregateExitCode(codes: ReadonlyArray<number>): number {
   return codes.find((code) => code !== 0) ?? 0;
 }
 
+export function fullSuiteEnvironment(inherited: Readonly<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
+  const env = { ...inherited };
+  for (const name of [
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_ENTERPRISE_TOKEN",
+    "GITHUB_ENTERPRISE_TOKEN",
+  ]) {
+    delete env[name];
+  }
+  return env;
+}
+
 function escapeRegExp(text: string): string {
   return text.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -106,6 +120,7 @@ function runTests(
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv = process.env,
   name = "test run",
+  idleLimitMs = targetedIdleLimitMs,
 ): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = NodeChildProcess.spawn(command, args, {
@@ -125,11 +140,9 @@ function runTests(
       process.stderr.write(chunk);
     });
     const watchdog = setInterval(() => {
-      if (Date.now() - lastOutput < IDLE_LIMIT_MS || child.pid === undefined) return;
+      if (Date.now() - lastOutput < idleLimitMs || child.pid === undefined) return;
       clearInterval(watchdog);
-      console.error(
-        `fork-tests: ${name}: no output for ${IDLE_LIMIT_MS / 1000}s; stopping the run.`,
-      );
+      console.error(`fork-tests: ${name}: no output for ${idleLimitMs / 1000}s; stopping the run.`);
       try {
         process.kill(-child.pid, "SIGKILL");
       } catch (error) {
@@ -178,6 +191,7 @@ async function discoverProjects(): Promise<ReadonlyArray<string>> {
 async function runFullSuite(filterArgs: ReadonlyArray<string>): Promise<number> {
   const started = performance.now();
   const plan = fullProcessPlan(await discoverProjects(), filterArgs, NodeOS.availableParallelism());
+  const env = fullSuiteEnvironment(process.env);
   const reports = await Promise.all(
     [{ name: "Node.js workflow tests", args: ["--test", nodeTestFiles] }, ...plan].map(
       async ({ name, args }, index) => {
@@ -185,20 +199,21 @@ async function runFullSuite(filterArgs: ReadonlyArray<string>): Promise<number> 
         let code: number;
         try {
           if (index === 0) {
-            code = await runTests(process.execPath, args, process.env, name);
+            code = await runTests(process.execPath, args, env, name);
           } else {
             using directory = NodeFS.mkdtempDisposableSync(NodePath.join(NodeOS.tmpdir(), "t3-"));
             code = await runTests(
               vitePlus,
               [...vitestRunArgs, ...args],
               {
-                ...process.env,
+                ...env,
                 TMPDIR: directory.path,
                 TMP: directory.path,
                 TEMP: directory.path,
                 T3CODE_RENDER_REPORT_DIR: directory.path,
               },
               name,
+              fullSuiteIdleLimitMs,
             );
           }
         } catch (error) {

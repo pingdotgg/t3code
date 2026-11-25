@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   aggregateExitCode,
   fullProcessPlan,
+  fullSuiteEnvironment,
   readKnownFailures,
   skipPattern,
 } from "./fork-tests.ts";
@@ -39,6 +40,21 @@ describe("fullProcessPlan", () => {
 
   it("fails instead of silently omitting the server suite", () => {
     assert.throws(() => fullProcessPlan(["root"], []), "server project");
+  });
+});
+
+describe("fullSuiteEnvironment", () => {
+  it("removes ambient GitHub credentials without changing the parent environment", () => {
+    const token = "fixture-token";
+    const inherited = {
+      PATH: "fixture-path",
+      GH_TOKEN: token,
+      GITHUB_TOKEN: token,
+      GH_ENTERPRISE_TOKEN: token,
+      GITHUB_ENTERPRISE_TOKEN: token,
+    };
+    assert.deepEqual(fullSuiteEnvironment(inherited), { PATH: "fixture-path" });
+    assert.equal(inherited.GITHUB_TOKEN, token);
   });
 });
 
