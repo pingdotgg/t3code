@@ -2,6 +2,7 @@ import * as NetAddress from "effect/net/NetAddress";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { expect } from "vite-plus/test";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import {
   EnvironmentId,
@@ -3705,6 +3706,31 @@ const openSessionWithBackgroundCommand = (fixtureName: string) =>
       cutOffNodeStatus,
     };
   });
+
+it.effect("keeps a running native subagent alive past the idle pin budget", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const { nativeSubagentStatus } = yield* openSessionWithBackgroundCommand("idle-pin-subagent");
+      // The coordinator is idle and Pi still reports pending background work.
+      yield* TestClock.adjust("1 second");
+      expect(yield* nativeSubagentStatus).toBe("running");
+
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* nativeSubagentStatus).toBe("running");
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          capabilities: ExclusiveCapabilities,
+          idleTimeoutMs: 1_000,
+          maxIdlePinMs: 2_000,
+          hasPendingBackgroundWork: Effect.succeed(true),
+        }),
+      ),
+    );
+  }),
+);
 
 // regression: #15993 a worktree handoff left its tool call running, so the thread stayed Waiting
 it.effect.each(["detach", "stream failure", "provider stop", "early close"] as const)(
