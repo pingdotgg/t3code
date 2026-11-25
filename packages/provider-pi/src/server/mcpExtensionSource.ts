@@ -221,6 +221,8 @@ function createMcpClient(endpoint: string, token: string) {
 
   return {
     async connect(signal?: AbortSignal) {
+      // Each initialize starts a new session, including retries after discovery fails.
+      sessionId = undefined;
       await request(
         "initialize",
         {
