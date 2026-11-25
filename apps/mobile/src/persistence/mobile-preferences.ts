@@ -599,6 +599,9 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       (storedPreferences === null ||
         (Option.isSome(storedJson) && fallback.updatedAt > storedJson.value.updatedAt));
 
+    let unreadable =
+      (Option.isSome(storedJson) && storedJson.value.payload.trim() !== "") ||
+      Boolean(fallbackJson?.trim());
     let parsed: Preferences | null = null;
     if (fallbackIsNewer) {
       parsed = fallback.preferences;
@@ -624,6 +627,7 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       const legacyJson = yield* secureStorage.getItem(PREFERENCES_KEY);
       const legacyPreferences = parsePayload(legacyJson);
       parsed = legacyPreferences;
+      unreadable ||= Boolean(legacyJson?.trim());
       if (legacyJson !== null && legacyPreferences !== null && databaseAvailable) {
         yield* saveJson(legacyJson);
         yield* secureStorage
@@ -638,11 +642,28 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       }
     }
 
-    return parsed === null ? {} : sanitizePreferences(parsed);
+    return parsed === null
+      ? { preferences: {}, unreadable }
+      : { preferences: sanitizePreferences(parsed), unreadable: false };
   });
 
+  // Stored settings that exist but can't be read fail the load, so the app lock stays closed.
+  // Saves still start from defaults and overwrite them, which repairs the store.
   const load = lock
-    .withPermits(1)(loadUnlocked)
+    .withPermits(1)(
+      loadUnlocked.pipe(
+        Effect.flatMap(({ preferences, unreadable }) =>
+          unreadable
+            ? Effect.fail(
+                new MobileStorageDecodeError({
+                  key: PREFERENCES_KEY,
+                  cause: "No stored preferences could be read.",
+                }),
+              )
+            : Effect.succeed(preferences),
+        ),
+      ),
+    )
     .pipe(Effect.mapError((cause) => new MobilePreferencesLoadError({ cause })));
 
   const update = Effect.fn("MobilePreferencesStore.update")(
@@ -650,7 +671,7 @@ const make = Effect.fn("MobilePreferencesStore.make")(function* () {
       lock
         .withPermits(1)(
           Effect.gen(function* () {
-            const current = yield* loadUnlocked;
+            const { preferences: current } = yield* loadUnlocked;
             const patch = yield* Effect.try({
               try: () => transform(current),
               catch: (cause) => new MobilePreferencesSaveError({ cause }),
