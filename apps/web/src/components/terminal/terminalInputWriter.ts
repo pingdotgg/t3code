@@ -3,6 +3,8 @@ import { chunkTerminalWrite } from "@t3tools/contracts";
 /** Sends one chunk of terminal input; resolves false when it failed and the rest should drop. */
 type SendTerminalChunk = (chunk: string) => Promise<boolean | "not-dispatched">;
 
+const PASTE_END = "\x1b[201~";
+
 /**
  * Orders one terminal's input into writes that fit `terminal.write`. A split write goes one chunk
  * per round trip and later input waits behind it; other writes go out immediately, like keystrokes.
@@ -20,7 +22,7 @@ export function createTerminalInputWriter(onIdle = () => {}) {
   };
 
   const sendChunks = async (
-    data: string,
+    bracketed: boolean,
     chunks: ReadonlyArray<string>,
     send: SendTerminalChunk,
     recover: () => Promise<boolean>,
@@ -30,8 +32,6 @@ export function createTerminalInputWriter(onIdle = () => {}) {
       interrupted();
       return;
     }
-    const bracketed =
-      chunks.length > 1 && data.startsWith("\x1b[200~") && data.endsWith("\x1b[201~");
     let opened = false;
     try {
       for (const chunk of chunks) {
@@ -55,14 +55,20 @@ export function createTerminalInputWriter(onIdle = () => {}) {
   return (
     data: string,
     send: SendTerminalChunk,
-    recover: () => Promise<boolean> = async () => (await send("\x1b[201~")) === true,
+    recover: () => Promise<boolean> = async () => (await send(PASTE_END)) === true,
     interrupted = () => {},
   ): Promise<void> => {
     const idle = () => {
       if (pending === null && immediate.size === 0 && closeInterruptedPaste === null) onIdle();
     };
-    const chunks = chunkTerminalWrite(data);
-    const run = () => sendChunks(data, chunks, send, recover, interrupted);
+    let chunks = chunkTerminalWrite(data);
+    const bracketed = chunks.length > 1 && data.startsWith("\x1b[200~") && data.endsWith(PASTE_END);
+    const lastChunk = chunks.at(-1);
+    if (bracketed && lastChunk !== undefined && lastChunk.length < PASTE_END.length) {
+      // Recovery sends the whole marker, so an earlier write must never contain just its prefix.
+      chunks = [...chunkTerminalWrite(data.slice(0, -PASTE_END.length)), PASTE_END];
+    }
+    const run = () => sendChunks(bracketed, chunks, send, recover, interrupted);
     if (pending === null && closeInterruptedPaste === null && chunks.length === 1) {
       const current = run();
       immediate.add(current);
