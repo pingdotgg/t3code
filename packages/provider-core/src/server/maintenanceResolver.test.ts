@@ -436,6 +436,83 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  // A killed `npm view` leaves its partial packument in npm's cache tmp dir.
+  it.effect.skipIf(!symlinksSupported || windowsHost)(
+    "neither a refresh nor the probe timeout kills a slow npm version check or starts another download",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-interrupted-npm-view");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath = NodePath.join(tempDir, ".local/bin/native-package-tool");
+        writeExecutable(binaryPath);
+        const spawned = yield* Deferred.make<void>();
+        const download = yield* Deferred.make<void>();
+        let spawns = 0;
+        let downloaded = false;
+        let killedMidDownload = 0;
+        const slowNpmView = ChildProcessSpawner.make(() =>
+          Effect.sync(() => {
+            spawns++;
+            Deferred.doneUnsafe(spawned, Effect.void);
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(spawns),
+              exitCode: Deferred.await(download).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              isRunning: Effect.succeed(true),
+              kill: () =>
+                Effect.sync(() => {
+                  if (!downloaded) killedMidDownload++;
+                }),
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.fromEffect(Deferred.await(download)).pipe(
+                Stream.as('"1.2.0"'),
+                Stream.encodeText,
+              ),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }),
+        );
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          nativePackageToolUpdate,
+          { binaryPath, env: { PATH: "" } },
+        ).pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, slowNpmView),
+        );
+        const check = enrichProviderSnapshotWithVersionAdvisory(
+          installedPackageToolProvider,
+          capabilities,
+        );
+
+        const first = yield* Effect.forkChild(check);
+        yield* Deferred.await(spawned);
+        // A provider refresh interrupts the enrichment still in flight.
+        yield* Fiber.interrupt(first);
+        const second = yield* Effect.forkChild(check);
+        yield* Effect.yieldNow;
+        // A slow registry outlasts the probe timeout.
+        yield* TestClock.adjust("1 minute");
+        downloaded = true;
+        yield* Deferred.succeed(download, undefined);
+        const snapshot = yield* Fiber.join(second);
+
+        expect(snapshot.versionAdvisory?.latestVersion).toBe("1.2.0");
+        expect({ spawns, killedMidDownload }).toEqual({ spawns: 1, killedMidDownload: 0 });
+      }).pipe(
+        Effect.provide(ProviderLatestVersions.layer),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() =>
+            Effect.die("a configured npm lookup must not fall back to public npm"),
+          ),
+        ),
+      ),
+  );
+
   it.effect.skipIf(windowsHost)(
     "does not offer a Vite+ update npm's release-age policy will not install",
     () =>
