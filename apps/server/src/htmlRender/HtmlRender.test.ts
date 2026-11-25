@@ -94,6 +94,42 @@ describe("HtmlRender", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("ignores local images in HTML comments while preserving active references", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-html-images-" });
+      const missing = path.join(directory, "missing.png");
+      const comment = `<!-- <img src="${missing}"> -->`;
+      const result = yield* htmlRender.prepare(`${comment}<p>ok</p>`).pipe(Effect.exit);
+      expect(result._tag).toBe("Success");
+      assert(Exit.isSuccess(result));
+      expect(result.value).toContain(`${comment}<p>ok</p>`);
+      const png = path.join(directory, "shot.png");
+      yield* fileSystem.writeFile(png, PNG_BYTES);
+      const pngUri = `data:image/png;base64,${Base64.encode(PNG_BYTES)}`;
+      const prepared = yield* htmlRender.prepare(
+        `${comment}<!-- 🖼 '${png}' --><img src="${png}"><!-- '${missing}'`,
+      );
+      expect(prepared).toContain(
+        `${comment}<!-- 🖼 '${png}' --><img src="${pngUri}"><!-- '${missing}'`,
+      );
+      const multiline = '"/tmp/<!--\r\n-->.png"';
+      expect(yield* htmlRender.prepare(multiline)).toContain(multiline);
+      for (const source of [
+        `<img src="${missing}">`,
+        `<script>const marker = '<!--'; const image = "${missing}";</script>`,
+        `<style>/* <!-- */ p { background: url(${missing}); }</style>`,
+        `<div title="<!--" style="background:url(${missing})"></div>`,
+      ]) {
+        const error = yield* htmlRender.prepare(source).pipe(Effect.flip);
+        assert(error._tag === "HtmlRenderImagesNotFoundError");
+        expect(error.paths).toEqual([missing]);
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("rejects viewport height units, which make the fitted frame grow without end", () =>
     Effect.gen(function* () {
       const htmlRender = yield* HtmlRender.HtmlRender;
