@@ -163,6 +163,10 @@ interface FakePi {
   readonly emit: (record: PiRpcRecord, chunkBytes?: number) => Effect.Effect<void>;
   readonly takeRequest: (type: string) => Effect.Effect<PiRpcRecord>;
   readonly queueEntries: (data: unknown) => void;
+  readonly setSessionEntries: (
+    entries: ReadonlyArray<ReturnType<typeof sessionMessage>>,
+    forkFile: string,
+  ) => void;
   readonly queueMessages: (data: unknown) => void;
   readonly vetoNextSwitch: () => void;
   readonly failNextFork: () => void;
@@ -229,6 +233,8 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
   const requests = yield* Queue.unbounded<PiRpcRecord>();
   const entriesQueue: Array<unknown> = [];
+  let sessionEntries: ReadonlyArray<ReturnType<typeof sessionMessage>> | undefined;
+  let forkFile: string | undefined;
   const messagesQueue: Array<unknown> = [];
   const stateQueue: Array<Record<string, unknown>> = [];
   const statsQueue: Array<unknown> = [];
@@ -351,7 +357,13 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         return { ...base, data: { cancelled } };
       }
       case "get_entries":
-        return { ...base, data: entriesQueue.shift() ?? { entries: [], leafId: null } };
+        return {
+          ...base,
+          data: entriesQueue.shift() ?? {
+            entries: sessionEntries ?? [],
+            leafId: sessionEntries?.at(-1)?.id ?? null,
+          },
+        };
       case "get_messages":
         return { ...base, data: messagesQueue.shift() ?? { messages: [] } };
       case "get_session_stats":
@@ -360,6 +372,13 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         if (failFork) {
           failFork = false;
           return { ...base, success: false, error: "Invalid entry ID for forking" };
+        }
+        if (sessionEntries !== undefined && forkFile !== undefined) {
+          const index = sessionEntries.findIndex((entry) => entry.id === record["entryId"]);
+          if (index === -1)
+            return { ...base, success: false, error: "Invalid entry ID for forking" };
+          sessionEntries = sessionEntries.slice(0, index);
+          sessionFile = forkFile;
         }
         serviceTier = null;
         return { ...base, data: { text: "Hello pi", cancelled: false } };
@@ -468,6 +487,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     emit,
     takeRequest,
     queueEntries: (data) => entriesQueue.push(data),
+    setSessionEntries: (entries, file) => {
+      sessionEntries = entries;
+      forkFile = file;
+    },
     queueMessages: (data) => messagesQueue.push(data),
     deferNextState: (started) => {
       deferState = true;
@@ -4635,10 +4658,30 @@ describe("PiAdapterV2", () => {
   );
 
   it.effect.each([
-    { checkpoint: "strong", handoff: "command", returnedPrompt: false, discarded: true },
-    { checkpoint: "strong", handoff: "prompt", returnedPrompt: true, discarded: true },
-    { checkpoint: "command", handoff: "prompt", returnedPrompt: false, discarded: false },
-    { checkpoint: "weak", handoff: "prompt", returnedPrompt: false, discarded: false },
+    {
+      checkpoint: "strong",
+      ordinal: 2,
+      handoff: "command",
+      returnedPrompt: false,
+      discarded: true,
+    },
+    { checkpoint: "strong", ordinal: 2, handoff: "prompt", returnedPrompt: true, discarded: true },
+    {
+      checkpoint: "command",
+      ordinal: 2,
+      handoff: "prompt",
+      returnedPrompt: false,
+      discarded: false,
+    },
+    { checkpoint: "weak", ordinal: 2, handoff: "prompt", returnedPrompt: false, discarded: false },
+    {
+      checkpoint: "command",
+      ordinal: 1,
+      handoff: "prompt",
+      returnedPrompt: false,
+      discarded: false,
+    },
+    { checkpoint: "weak", ordinal: 1, handoff: "prompt", returnedPrompt: true, discarded: true },
   ] as const)("restores the Pi checkpoint after a session round trip %j", (scenario) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
@@ -4671,9 +4714,8 @@ describe("PiAdapterV2", () => {
         startedAt: at(ordinal * 50 - 50),
         completedAt: at(ordinal * 50),
       });
-      const previous = turn(1, ref("u1"));
       const target = turn(
-        2,
+        scenario.ordinal,
         scenario.checkpoint === "strong"
           ? ref("u2")
           : scenario.checkpoint === "weak"
@@ -4681,7 +4723,7 @@ describe("PiAdapterV2", () => {
             : null,
       );
       const retained =
-        scenario.checkpoint === "command"
+        scenario.ordinal === 1 || scenario.checkpoint === "command"
           ? TURN_ONE_ENTRIES
           : [
               ...TURN_ONE_ENTRIES,
@@ -4699,9 +4741,7 @@ describe("PiAdapterV2", () => {
           : []),
         ...(scenario.returnedPrompt ? [sessionMessage("u5", "discarded-answer", "user", 210)] : []),
       ];
-      fake.queueEntries({ entries, leafId: entries.at(-1)!.id });
-      fake.queueEntries({ entries: retained, leafId: retainedHead });
-      if (scenario.discarded) fake.queueState({ sessionFile: forkFile });
+      fake.setSessionEntries(entries, forkFile);
       const restored = yield* runtime.rollbackThread({
         providerThread,
         target: {
@@ -4711,11 +4751,16 @@ describe("PiAdapterV2", () => {
           providerTurn: target,
         },
         providerThreadTurns: [
-          previous,
+          ...(target.ordinal === 2 ? [turn(1, ref("u1"))] : []),
           target,
-          turn(3, scenario.handoff === "prompt" ? ref("u3") : null, "/fake/other.jsonl"),
-          turn(4, null),
-          ...(scenario.returnedPrompt ? [turn(5, ref("u5"))] : []),
+          turn(
+            target.ordinal + 1,
+            scenario.handoff === "prompt" ? ref("away") : null,
+            "/fake/other.jsonl",
+          ),
+          turn(target.ordinal + 2, null, "/fake/clone.jsonl"),
+          turn(target.ordinal + 3, null),
+          ...(scenario.returnedPrompt ? [turn(target.ordinal + 4, ref("u5"))] : []),
         ],
       });
       const requests = fake.allRequests();
