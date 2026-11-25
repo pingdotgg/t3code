@@ -447,11 +447,13 @@ export const make = Effect.gen(function* () {
     execute: ({ id, client, connectCodeV2 }) =>
       sql`
         UPDATE auth_pairing_links
-        SET requested_client_json = ${client},
-          connect_code_v2 = ${connectCodeV2 ? 1 : 0}
+        SET requested_client_json = COALESCE(requested_client_json, ${client}),
+          connect_code_v2 = MAX(connect_code_v2, ${connectCodeV2 ? 1 : 0})
         WHERE id = ${id}
           AND requires_connect_approval = 1
-          AND requested_client_json IS NULL
+          -- The first request records the device. A later one only moves the code to v2, as when
+          -- the app updates while it waits; it never moves back, or a replayed older proof could.
+          AND (requested_client_json IS NULL OR (connect_code_v2 = 0 AND ${connectCodeV2 ? 1 : 0} = 1))
         RETURNING id AS "id"
       `,
   });

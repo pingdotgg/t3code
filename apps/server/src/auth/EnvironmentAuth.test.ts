@@ -484,6 +484,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             [v2Code, connectDeviceVerificationCode(oldDevice)].toSorted(),
           );
 
+          // An app that updates while it waits asks again for v2, and the request stays there.
+          const upgraded = yield* ask(oldDevice, true);
+          yield* ask(oldDevice, false);
+          expect(
+            (yield* serverAuth.listPairingLinks()).flatMap((link) =>
+              link.connectDeviceRequest ? [link.connectDeviceRequest.verificationCode] : [],
+            ),
+          ).toContain(
+            connectDeviceVerificationCodeV2({
+              proofKeyThumbprint: oldDevice,
+              environmentPublicKey,
+              nonce: Result.getOrThrow(Base64Url.decode(upgraded.verificationNonce!)),
+            }),
+          );
+
           // The CLI matches the whole code, in any case and grouping, never a prefix.
           expect(
             yield* serverAuth.connectRequestsShowingCode(v2Code.replaceAll("-", "").toLowerCase()),
