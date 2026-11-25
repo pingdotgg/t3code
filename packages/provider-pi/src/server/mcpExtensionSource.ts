@@ -221,8 +221,21 @@ function createMcpClient(endpoint: string, token: string) {
 
   return {
     async connect(signal?: AbortSignal) {
-      // Each initialize starts a new session, including retries after discovery fails.
-      sessionId = undefined;
+      if (sessionId !== undefined) {
+        // Release the previous session if discovery failed after initialize.
+        const cleanupTimeout = AbortSignal.timeout(1_000);
+        try {
+          const response = await fetch(endpoint, {
+            method: "DELETE",
+            headers: headers(),
+            signal: signal === undefined ? cleanupTimeout : AbortSignal.any([signal, cleanupTimeout]),
+          });
+          await response.body?.cancel();
+        } catch {
+          // A failed DELETE must not prevent a fresh handshake.
+        }
+        sessionId = undefined;
+      }
       await request(
         "initialize",
         {
@@ -542,13 +555,13 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   pi.on("session_tree", (_event, ctx) => reconcileDiscovery(ctx));
   pi.on("model_select", (_event, ctx) => reconcileDiscovery(ctx));
   pi.on("session_start", async (_event, ctx) => {
-    reconcileDiscovery(ctx);
     try {
       await ensureStarted();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       ctx.ui.notify(\`t3-code MCP unavailable: \${message}\`, "warning");
     }
+    reconcileDiscovery(ctx);
   });
 
   // Keep guidance in the system prompt so leading slash commands still expand.
