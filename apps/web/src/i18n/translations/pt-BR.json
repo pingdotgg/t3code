@@ -12291,28 +12291,6 @@
   "22f3ae62c7a65e0f": "Consumo, últimas 3 h",
   "737171d0d80cb0d0": "Consumo, média da janela",
   "a16b48709357a5a7": "Gerenciar uso",
-  "0e34c3076c08feb2": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        "↻ +",
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "%"
-      ]
-    },
-    " ",
-    "em ",
-    {
-      "i": 3,
-      "k": "_gt_value_3",
-      "v": "v"
-    }
-  ],
   "e20b23cc4eee52c1": "Dica de renovação:",
   "aca138d5adaa5f69": "Assinaturas",
   "8bd6f07136317c8f": "Nenhum provedor nos ambientes selecionados informa limites de assinatura.",

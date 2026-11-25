@@ -12301,28 +12301,6 @@
   "22f3ae62c7a65e0f": "Burn, last 3h",
   "737171d0d80cb0d0": "Burn, window avg",
   "a16b48709357a5a7": "Manage usage",
-  "0e34c3076c08feb2": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": [
-        "↻ +",
-        {
-          "i": 2,
-          "k": "_gt_value_2",
-          "v": "v"
-        },
-        "%"
-      ]
-    },
-    " ",
-    "in ",
-    {
-      "i": 3,
-      "k": "_gt_value_3",
-      "v": "v"
-    }
-  ],
   "e20b23cc4eee52c1": "Reset advice:",
   "aca138d5adaa5f69": "Subscriptions",
   "8bd6f07136317c8f": "No provider on the selected environments reports subscription limits.",
