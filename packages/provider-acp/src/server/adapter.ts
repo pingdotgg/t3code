@@ -2398,6 +2398,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
         const setActiveSessionSetup = Effect.fnUntraced(function* (
           setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+          setupOptions?: { readonly keepPublishedCatalogKey?: boolean },
         ) {
           followsAgentWorkState =
             flavor.followAgentWorkState === true &&
@@ -2414,8 +2415,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           rootForegroundWork = undefined;
           agentRequests.clear();
           nativeChildren.clear();
-          const previousSetup = yield* Ref.getAndSet(activeSessionSetup, setup);
-          if (previousSetup === null || previousSetup.sessionId !== setup.sessionId) {
+          yield* Ref.set(activeSessionSetup, setup);
+          if (setupOptions?.keepPublishedCatalogKey !== true) {
             yield* resetPublishedCatalogKey;
           }
         });
@@ -9806,7 +9807,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
               yield* Ref.set(activeSessionId, activated.sessionId);
               yield* Ref.set(loadingSessionId, null);
-              yield* setActiveSessionSetup(activated);
+              yield* setActiveSessionSetup(activated, {
+                keepPublishedCatalogKey: mcpReloadRequired,
+              });
               yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
               yield* Ref.set(activeSelection, turnInput.modelSelection);
               yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
@@ -10606,7 +10609,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     );
                     yield* Ref.set(activeSessionId, activated.sessionId);
                     yield* Ref.set(loadingSessionId, null);
-                    yield* setActiveSessionSetup(activated);
+                    yield* setActiveSessionSetup(activated, {
+                      keepPublishedCatalogKey: mcpReloadRequired,
+                    });
                     yield* configureSession(activated, nextSelection, nextRuntimePolicy);
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);

@@ -7292,6 +7292,103 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live(
+    "resets lastCatalogKey across a replacement runtime that reuses the same session id",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const protocolEvents = yield* Queue.bounded<EffectAcpProtocol.AcpProtocolLogEvent>(256);
+        const instanceId = ProviderInstanceId.make("acp-test-replace-same-id-catalog-key");
+        const threadId = ThreadId.make("thread-acp-replace-same-id-catalog-key");
+        const publications: Array<{
+          readonly catalogKey: string;
+          readonly lastCatalogKey: string | null | undefined;
+        }> = [];
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            onSessionConfigurationUpdate: (configOptions, modeState, modelState, updateOptions) =>
+              Effect.sync(() => {
+                const catalogKey = JSON.stringify({ configOptions, modeState, modelState });
+                publications.push({
+                  catalogKey,
+                  lastCatalogKey: updateOptions?.lastCatalogKey,
+                });
+                return catalogKey;
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              protocolEvents,
+            }),
+          },
+          selfInvocation,
+          clientTerminals: {},
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-acp-replace-same-id-catalog-key",
+          ),
+          modelSelection,
+          runtimePolicy,
+        });
+        const original = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.isAbove(publications.length, 0);
+        assert.isNull(publications[0]!.lastCatalogKey);
+        const preReplaceCount = publications.length;
+
+        yield* pollProtocolMethods(protocolEvents);
+        const replacement = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          existingProviderThread: { ...original, nativeThreadRef: null },
+          forceNewNativeThread: true,
+        });
+        assert.equal(replacement.nativeThreadRef?.nativeId, original.nativeThreadRef?.nativeId);
+
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: replacement,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+
+        const methodsAfterReplace = yield* pollProtocolMethods(protocolEvents);
+        assert.isTrue(
+          methodsAfterReplace.includes("session/new"),
+          `expected session/new for replacement runtime, got ${JSON.stringify(methodsAfterReplace)}`,
+        );
+
+        const postReplacePublications = publications.slice(preReplaceCount);
+        assert.isAbove(postReplacePublications.length, 0);
+        assert.isNull(postReplacePublications[0]!.lastCatalogKey);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live("a snapshot load records its MCP credential, so the next turn does not reload", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
