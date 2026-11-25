@@ -49,6 +49,15 @@ function resetPromptStashStore() {
   removeLocalStorageItem(PROMPT_STASH_STORAGE_KEY);
 }
 
+function notifyStorage(
+  target: EventTarget,
+  storageArea: ReturnType<typeof createMemoryStorage>,
+  key: string | null = PROMPT_STASH_STORAGE_KEY,
+  newValue?: string,
+) {
+  target.dispatchEvent(Object.assign(new Event("storage"), { key, storageArea, newValue }));
+}
+
 describe("partitionStashAttachments", () => {
   it("keeps attachments within the budget and reports dropped names in order", () => {
     const small = {
@@ -207,7 +216,7 @@ describe("promptStashStore", () => {
   it("finalizeEntryImages reports false when the entry was already taken", () => {
     const store = usePromptStashStore.getState();
     store.stashEntry({ ...makeEntry({ id: "racing" }), pendingImageCount: 1 });
-    store.takeEntry("racing");
+    store.takeEntry("racing", "delete");
 
     const { attached } = store.finalizeEntryImages("racing", {
       attachments: [],
@@ -231,6 +240,7 @@ describe("promptStashStore", () => {
     const entry = usePromptStashStore.getState().entries[0];
     expect(entry?.pendingImageCount).toBe(0);
     expect(entry?.unreadableImageNames).toHaveLength(2);
+    expect(usePromptStashStore.getState().takeEntry("orphan").entry).toEqual(entry);
   });
 
   it("ignores an unreadable v1 payload seeded under the current key", () => {
@@ -247,7 +257,9 @@ describe("promptStashStore", () => {
   it("keeps an entry another tab stashed after this tab loaded", async () => {
     const sharedStorage = createMemoryStorage();
     vi.stubGlobal("localStorage", sharedStorage);
-    vi.stubGlobal("window", new EventTarget());
+    const reader = new EventTarget();
+    const writer = new EventTarget();
+    vi.stubGlobal("window", reader);
     vi.resetModules();
     try {
       const thisTab = await import("./promptStashStore");
@@ -255,7 +267,13 @@ describe("promptStashStore", () => {
         PROMPT_STASH_STORAGE_KEY,
         JSON.stringify({ version: 2, state: { entries: [makeEntry({ id: "other-tab" })] } }),
       );
-      window.dispatchEvent(Object.assign(new Event("storage"), { key: PROMPT_STASH_STORAGE_KEY }));
+      notifyStorage(reader, sharedStorage, "another-key");
+      notifyStorage(reader, createMemoryStorage());
+      expect(thisTab.usePromptStashStore.getState().entries).toEqual([]);
+      notifyStorage(reader, sharedStorage, PROMPT_STASH_STORAGE_KEY, '{"state":{"entries":[]}}');
+      expect(thisTab.usePromptStashStore.getState().entries.map((entry) => entry.id)).toEqual([
+        "other-tab",
+      ]);
 
       thisTab.usePromptStashStore.getState().stashEntry(makeEntry({ id: "this-tab" }));
 
@@ -269,14 +287,30 @@ describe("promptStashStore", () => {
         ...makeEntry({ id: "encoding-image" }),
         pendingImageCount: 1,
       });
+      vi.stubGlobal("window", writer);
       vi.resetModules();
       const secondTab = await import("./promptStashStore");
+      secondTab.usePromptStashStore.getState().stashEntry(makeEntry({ id: "while-encoding" }));
+      notifyStorage(reader, sharedStorage);
+      expect(thisTab.usePromptStashStore.getState().entries).toMatchObject([
+        { id: "while-encoding" },
+        { id: "encoding-image", pendingImageCount: 1 },
+        { id: "this-tab" },
+        { id: "other-tab" },
+      ]);
+
       const finalized = makeEntry({ id: "encoding-image", attachmentChars: 12 }).attachments;
       thisTab.usePromptStashStore.getState().finalizeEntryImages("encoding-image", {
         attachments: finalized,
         droppedImageNames: [],
         unreadableImageNames: [],
       });
+      notifyStorage(writer, sharedStorage);
+      expect(
+        secondTab.usePromptStashStore
+          .getState()
+          .entries.find((entry) => entry.id === "encoding-image")?.attachments,
+      ).toEqual(finalized);
       secondTab.usePromptStashStore.getState().stashEntry(makeEntry({ id: "second-tab-new" }));
       const afterFinalization = JSON.parse(
         sharedStorage.getItem(PROMPT_STASH_STORAGE_KEY) as string,
@@ -292,21 +326,126 @@ describe("promptStashStore", () => {
     }
   });
 
+  it("keeps images pending in an open tab until the other tab finishes saving them", async () => {
+    const storage = createMemoryStorage();
+    const readerWindow = new EventTarget();
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("window", readerWindow);
+    vi.resetModules();
+    try {
+      const { usePromptStashStore: reader } = await import("./promptStashStore");
+      vi.stubGlobal("window", new EventTarget());
+      vi.resetModules();
+      const { usePromptStashStore: writer } = await import("./promptStashStore");
+      const entry = makeEntry({ id: "encoding-in-other-tab" });
+      writer.getState().stashEntry({ ...entry, pendingImageCount: 1 });
+      expect(reader.getState().takeEntry(entry.id).entry).toBeNull();
+      notifyStorage(readerWindow, storage);
+
+      expect(reader.getState().entries).toEqual([{ ...entry, pendingImageCount: 1 }]);
+
+      vi.stubGlobal("window", new EventTarget());
+      vi.resetModules();
+      const { usePromptStashStore: reloaded } = await import("./promptStashStore");
+      expect(reloaded.getState().entries[0]).toMatchObject({
+        pendingImageCount: 0,
+        unreadableImageNames: ["image 1 (not saved before reload)"],
+      });
+      reloaded.getState().stashEntry(makeEntry({ id: "unrelated" }));
+      notifyStorage(readerWindow, storage);
+      expect(reader.getState().entries[1]).toEqual({ ...entry, pendingImageCount: 1 });
+
+      const { attachments } = makeEntry({ id: entry.id, attachmentChars: 12 });
+      const images = { attachments, droppedImageNames: [], unreadableImageNames: [] };
+      expect(writer.getState().finalizeEntryImages(entry.id, images)).toEqual({
+        attached: true,
+        durable: true,
+      });
+      notifyStorage(readerWindow, storage);
+      const finalizedEntry = { ...entry, ...images, pendingImageCount: 0 };
+      expect(reader.getState().entries[1]).toEqual(finalizedEntry);
+      expect(reader.getState().takeEntry(entry.id).entry).toEqual(finalizedEntry);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
+  it("lets open tabs restore an entry whose encoding tab closed mid-encode", async () => {
+    const storage = createMemoryStorage();
+    const readerWindow = new EventTarget();
+    const writerWindow = new EventTarget();
+    vi.stubGlobal("localStorage", storage);
+    vi.stubGlobal("window", readerWindow);
+    vi.resetModules();
+    try {
+      const { usePromptStashStore: reader } = await import("./promptStashStore");
+      vi.stubGlobal("window", writerWindow);
+      vi.resetModules();
+      const { usePromptStashStore: writer } = await import("./promptStashStore");
+      const entry = makeEntry({ id: "closed-mid-encode" });
+      writer.getState().stashEntry({ ...entry, pendingImageCount: 1 });
+      writer.getState().stashEntry(makeEntry({ id: "settled" }));
+
+      writerWindow.dispatchEvent(new Event("pagehide"));
+      notifyStorage(readerWindow, storage);
+
+      expect(reader.getState().takeEntry(entry.id).entry).toMatchObject({
+        pendingImageCount: 0,
+        unreadableImageNames: ["image 1 (not saved before reload)"],
+      });
+      expect(reader.getState().entries.map((candidate) => candidate.id)).toEqual(["settled"]);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
+  it.each([PROMPT_STASH_STORAGE_KEY, null])(
+    "empties the stash when another tab removes its storage (event key %s)",
+    async (key) => {
+      const storage = createMemoryStorage();
+      vi.stubGlobal("localStorage", storage);
+      const reader = new EventTarget();
+      vi.stubGlobal("window", reader);
+      vi.resetModules();
+      try {
+        const { usePromptStashStore: store } = await import("./promptStashStore");
+        store.getState().stashEntry(makeEntry({ id: "stored" }));
+
+        storage.setItem(PROMPT_STASH_STORAGE_KEY, "{");
+        notifyStorage(reader, storage);
+        expect(store.getState().entries.map((entry) => entry.id)).toEqual(["stored"]);
+
+        storage.removeItem(PROMPT_STASH_STORAGE_KEY);
+        notifyStorage(reader, storage, key);
+        expect(store.getState().entries).toEqual([]);
+      } finally {
+        vi.unstubAllGlobals();
+        vi.resetModules();
+      }
+    },
+  );
+
   it.each(["restore", "take"] as const)(
     "keeps a failed finalize after another tab stashes, then handles %s",
     async (action) => {
       const storage = createMemoryStorage();
-      vi.stubGlobal("localStorage", {
+      const sharedStorage = {
         ...storage,
         setItem: (key: string, value: string) => {
           if (value.includes("rejected-image")) throw new Error("QuotaExceededError");
           storage.setItem(key, value);
         },
-      });
+      };
+      vi.stubGlobal("localStorage", sharedStorage);
+      const reader = new EventTarget();
+      vi.stubGlobal("window", reader);
       vi.resetModules();
       try {
         const { usePromptStashStore: store } = await import("./promptStashStore");
         store.getState().stashEntry({ ...makeEntry({ id: "too-big" }), pendingImageCount: 1 });
+        vi.stubGlobal("window", new EventTarget());
         vi.resetModules();
         const { usePromptStashStore: otherTab } = await import("./promptStashStore");
         const { attachments } = makeEntry({ id: "rejected-image", attachmentChars: 4 });
@@ -316,9 +455,13 @@ describe("promptStashStore", () => {
           durable: false,
         });
         otherTab.getState().stashEntry(makeEntry({ id: "unrelated" }));
+        notifyStorage(reader, sharedStorage);
+        expect(store.getState().entries).toMatchObject([{ id: "unrelated" }, { attachments }]);
 
         if (action === "take") {
           otherTab.getState().takeEntry("too-big");
+          notifyStorage(reader, sharedStorage);
+          expect(store.getState().entries.map((entry) => entry.id)).toEqual(["unrelated"]);
           expect(store.getState().finalizeEntryImages("too-big", images)).toEqual({
             attached: false,
             durable: true,
