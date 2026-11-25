@@ -5209,7 +5209,7 @@
   "0b363b02a7e17bcb": "Rohe Token-Kosten",
   "ea4beda46b22b8b0": "Verarbeitete Tokens",
   "212d974007cacf3f": "* bei Abrechnung zum vollen API-Preis",
-  "82bc7f1cc5a039fc": "{count, plural, one {Über {sessions} Sitzung} other {Über {sessions} Sitzungen}}",
+  "45340a7dc1f89d51": "{count, plural, one {Über {sessions} Sitzung} other {Über {sessions} Sitzungen}}",
   "2a57181a9d128463": "{share} der Kosten · {tokens} Tokens",
   "d8a6a99fbdda0d3e": "{share} der Tokens · {cost}",
   "19a3f4f2ba09e787": "Summen",

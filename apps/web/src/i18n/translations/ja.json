@@ -12290,7 +12290,6 @@
   "d2d071e45a2d6b89": "上限を表示するには環境を選択してください。",
   "c9180daea905a0a6": "使用量を表示するには環境を選択してください。",
   "f0297ec79e896a13": "{environment}: {error}",
-  "6dcbf651d51d4023": "{count, plural, other {{formatted} セッション}}",
   "b01bf98dd90ee819": "API の推定額",
   "bab34b28e9ee8e88": "価格不明の使用量の詳細",
   "61571f4542da9903": "{count, plural, other {{formatted} セッション}}",
