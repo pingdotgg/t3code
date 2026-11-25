@@ -1033,11 +1033,23 @@ export const layer: Layer.Layer<
       const runUserMessage = projection.messages.find(
         (candidate) => candidate.id === run.userMessageId,
       );
+      const priorExecutedRunId =
+        runUserMessage?.notification !== undefined
+          ? projection.runs
+              .filter(
+                (candidate) =>
+                  candidate.id !== run.id &&
+                  candidate.ordinal < run.ordinal &&
+                  candidate.startedAt !== null,
+              )
+              .toSorted((left, right) => right.ordinal - left.ordinal)[0]?.id
+          : undefined;
       const continuedFromRunId =
         run.restartContinuationOfRunId ??
         run.usageLimitContinuationOfRunId ??
         run.manualContinuationOfRunId ??
-        runUserMessage?.delegatedCompletion?.parentRunId;
+        runUserMessage?.delegatedCompletion?.parentRunId ??
+        priorExecutedRunId;
       let actingMemberId: TeamMemberId | undefined;
       if (Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured())) {
         const resolvedAuthor = yield* teamServiceOption.value.resolveTurnAuthorMemberId({
@@ -1055,6 +1067,23 @@ export const layer: Layer.Layer<
             ),
             message:
               "Cannot start this turn because its team author attribution could not be verified.",
+          });
+          return;
+        }
+        // Persist resolved attribution onto run.id so multi-hop continuations and active-turn checks stay authoritative.
+        const persisted = yield* Effect.result(
+          teamServiceOption.value.requireTurnAuthoredByMember({
+            memberId: resolvedAuthor.value,
+            threadId: projection.thread.id,
+            turnId: run.id,
+          }),
+        );
+        if (persisted._tag === "Failure") {
+          yield* settleStartFailure({
+            signal: "team-turn-attribution-persist-failed",
+            title: "Unable to persist team turn attribution",
+            error: persisted.failure,
+            message: persisted.failure.message,
           });
           return;
         }
@@ -1096,6 +1125,7 @@ export const layer: Layer.Layer<
         return;
       }
       const session = sessionResult.success;
+      const activeProviderSessionId = session.providerSessionId ?? providerSessionId;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const loadFromProvider = Effect.fn("ProviderTurnStartService.loadFromProvider")(function* (
         load: Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapter.ProviderAdapterV2Error>,
@@ -1584,7 +1614,7 @@ export const layer: Layer.Layer<
               title: projection.thread.title,
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
-              providerSessionId,
+              providerSessionId: activeProviderSessionId,
               existingProviderThread: nativeForkFailed
                 ? { ...providerThread, nativeThreadRef: null, forkedFrom: null }
                 : { ...providerThread, forkedFrom: null },
@@ -1673,7 +1703,7 @@ export const layer: Layer.Layer<
               title: projection.thread.title,
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
-              providerSessionId,
+              providerSessionId: activeProviderSessionId,
               existingProviderThread: providerThread,
             }),
           );
@@ -1856,7 +1886,7 @@ export const layer: Layer.Layer<
             title: projection.thread.title,
             modelSelection: run.modelSelection,
             runtimePolicy: resolvedRuntimePolicy,
-            providerSessionId,
+            providerSessionId: activeProviderSessionId,
             // Clear the native ref to force a fresh session while preserving row identity.
             existingProviderThread: { ...providerThread, nativeThreadRef: null },
             // A fresh session that never loaded the broken history needs no replacement.
@@ -2031,7 +2061,7 @@ export const layer: Layer.Layer<
         id: providerThread.id,
         driver: session.driver,
         providerInstanceId: run.providerInstanceId,
-        providerSessionId,
+        providerSessionId: activeProviderSessionId,
         appThreadId: projection.thread.id,
         ownerNodeId: providerThread.ownerNodeId,
         firstRunOrdinal: providerThread.firstRunOrdinal ?? run.ordinal,
@@ -2071,7 +2101,7 @@ export const layer: Layer.Layer<
         {
           id: yield* idAllocator.allocate.event({
             threadId: projection.thread.id,
-            providerSessionId,
+            providerSessionId: activeProviderSessionId,
           }),
           type: "provider-session.updated",
           threadId: projection.thread.id,
@@ -2346,7 +2376,7 @@ export const layer: Layer.Layer<
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
-        providerSessionId,
+        providerSessionId: activeProviderSessionId,
         session: deliverySession,
         run: runningRun,
         rootNode: runningRootNode,

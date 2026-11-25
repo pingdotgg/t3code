@@ -1121,7 +1121,10 @@ const make = Effect.gen(function* () {
             detail: "Pass title, body, ready, state, addLabels, removeLabels, or requestReviewers.",
           });
         }
-        const { target, ref } = yield* locate(input);
+        const { thread, target, ref } = yield* locate(input);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         if (input.title !== undefined || input.body !== undefined) {
           yield* pullRequests
             .update({
@@ -1177,7 +1180,10 @@ const make = Effect.gen(function* () {
             detail: "resolved needs reviewThreadId.",
           });
         }
-        const { target, ref } = yield* locate(input);
+        const { thread, target, ref } = yield* locate(input);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         const reviewThreadId = input.reviewThreadId;
         if (input.body !== undefined) {
           yield* (
@@ -1216,7 +1222,10 @@ const make = Effect.gen(function* () {
               "Approving needs expectedHeadSha: the headSha pull_request_read reported for the commits you reviewed.",
           });
         }
-        const { target, ref } = yield* locate(input);
+        const { thread, target, ref } = yield* locate(input);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         const comments = yield* reviewComments(ref, input.comments ?? []);
         yield* pullRequests
           .submitReview({
@@ -1234,7 +1243,10 @@ const make = Effect.gen(function* () {
     ),
     pull_request_merge: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
-        const { target, ref } = yield* locate(input);
+        const { thread, target, ref } = yield* locate(input);
+        yield* TeamMcpAccess.assertCanPostInThread(thread.id).pipe(
+          Effect.mapError((error) => new PullRequestForgeError({ detail: error.message })),
+        );
         const stack = input.stack === true ? yield* stackMergeScope(ref, input) : {};
         yield* pullRequests
           .runAction({

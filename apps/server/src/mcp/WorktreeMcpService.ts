@@ -28,6 +28,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { assertLocalAgentMcpExecutionAllowed } from "../team/hubOnly.ts";
 import * as TeamMcpAccess from "../team/mcpAccess.ts";
 import * as TeamService from "../team/TeamService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
@@ -367,6 +368,9 @@ const make = Effect.gen(function* () {
             );
           }
           if (input.continuationPrompt !== undefined) {
+            yield* assertLocalAgentMcpExecutionAllowed.pipe(
+              Effect.mapError((error) => failure("operation_failed", error.message)),
+            );
             const recordAttribution = TeamMcpAccess.recordTurnAuthoredByCaller({
               threadId: scope.thread.threadId,
               turnId: `msg:${ids.continuationMessageId}`,

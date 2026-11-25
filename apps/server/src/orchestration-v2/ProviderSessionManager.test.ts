@@ -6336,6 +6336,39 @@ it.effect(
         assert.isDefined(bobToken);
         assert.strictEqual((yield* mcpRegistry.resolve(bobToken!))?.thread.actingMemberId, bobId);
 
+        // Post-switch turn controls (get, otherWorkingThreads, releaseUnlessBusy) must target Bob's
+        // isolated session without touching Alice's busy sibling session.
+        assert.strictEqual(
+          Option.getOrUndefined(yield* manager.get(bobRuntime.providerSessionId)),
+          bobRuntime,
+        );
+        assert.strictEqual(
+          Option.getOrUndefined(yield* manager.get(providerSessionId, thread1)),
+          bobRuntime,
+        );
+        assert.strictEqual(
+          Option.getOrUndefined(yield* manager.get(providerSessionId, thread2)),
+          aliceRuntime1,
+        );
+        assert.deepStrictEqual(
+          yield* manager.otherWorkingThreads({ providerSessionId, threadId: thread1 }),
+          [],
+        );
+        const releasedBob = yield* manager.releaseUnlessBusy({
+          providerSessionId,
+          threadId: thread1,
+          ownProviderThreadIds: [],
+          throughRunOrdinal: 1,
+          reason: "manual_shutdown",
+        });
+        assert.isTrue(releasedBob);
+        assert.strictEqual((yield* Ref.get(state)).closeCount, 1);
+        assert.isTrue(Option.isNone(yield* manager.get(bobRuntime.providerSessionId)));
+        assert.strictEqual(
+          Option.getOrUndefined(yield* manager.get(providerSessionId, thread2)),
+          aliceRuntime1,
+        );
+
         yield* Deferred.succeed(turnHold, undefined);
         yield* Fiber.join(busyTurnFiber);
       }).pipe(

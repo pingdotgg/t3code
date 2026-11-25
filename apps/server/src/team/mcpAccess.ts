@@ -263,9 +263,10 @@ export const authorizeChildThreadCreation = Effect.fn("TeamMcpAccess.authorizeCh
 );
 
 export const canUseWorkflows = Effect.fn("TeamMcpAccess.canUseWorkflows")(function* () {
-  const caller = yield* resolveTeamMcpCaller().pipe(
-    Effect.orElseSucceed(() => Option.none<ResolvedTeamMcpCaller>()),
-  );
+  const callerResult = yield* Effect.result(resolveTeamMcpCaller());
+  // Fail closed when a team is configured and the caller is unbound/revoked; allow personal mode.
+  if (callerResult._tag === "Failure") return false;
+  const caller = callerResult.success;
   if (Option.isNone(caller)) return true;
   return yield* caller.value.teamService.assertActorCanUseWorkflows(caller.value.actor).pipe(
     Effect.as(true),

@@ -1,5 +1,6 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous SHA-256 digest for invite token hashing.
 import * as NodeCrypto from "node:crypto";
+import { derive as deriveOrchestrationId } from "@t3tools/provider-core/server/IdAllocator";
 import {
   ALL_TEAM_ROLES,
   AuthAccessReadScope,
@@ -2763,6 +2764,7 @@ const make = Effect.gen(function* () {
         return command;
       }
       case "queued-message.promote-to-steer":
+      case "queued-run.start":
         yield* assertActorCanPromoteQueuedRun(actor, command.threadId);
         return command;
       case "run.interrupt":
@@ -3808,6 +3810,22 @@ const make = Effect.gen(function* () {
         sessionId,
         threadId: command.threadId,
         turnId: `msg:${command.messageId}`,
+      });
+      return;
+    }
+    if (command.type === "delegated_task.request") {
+      yield* requireTurnAuthoredBySession({
+        sessionId,
+        threadId: deriveOrchestrationId.delegatedTaskThread({ commandId: command.commandId }),
+        turnId: `msg:${deriveOrchestrationId.delegatedTaskMessage({ commandId: command.commandId })}`,
+      });
+      return;
+    }
+    if (command.type === "thread.metadata.update" && command.continuation !== undefined) {
+      yield* requireTurnAuthoredBySession({
+        sessionId,
+        threadId: command.threadId,
+        turnId: `msg:${command.continuation.messageId}`,
       });
     }
   });

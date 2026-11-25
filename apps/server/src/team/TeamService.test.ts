@@ -1836,8 +1836,23 @@ describe("TeamService", () => {
             team.assertAndNormalizeDispatchCommand(actorSession, promoteCmd),
           );
           expect(exit._tag).toBe("Failure");
+          const startQueuedExit = yield* Effect.exit(
+            team.assertAndNormalizeDispatchCommand(actorSession, {
+              type: "queued-run.start",
+              commandId: CommandId.make("cmd-start-queued"),
+              threadId: bobThreadId,
+              runId: charlieQueuedRunId,
+            }),
+          );
+          expect(startQueuedExit._tag).toBe("Failure");
         }
         yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, promoteCmd);
+        yield* team.assertAndNormalizeDispatchCommand(bob.sessionId, {
+          type: "queued-run.start",
+          commandId: CommandId.make("cmd-start-queued-bob"),
+          threadId: bobThreadId,
+          runId: charlieQueuedRunId,
+        });
 
         // 4. Interrupt matrix: Charlie (modo non-creator) rejected; Alice (owner), Dana (admin), Bob (creator) allowed.
         const interruptCmd = {

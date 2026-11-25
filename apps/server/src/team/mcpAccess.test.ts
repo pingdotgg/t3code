@@ -397,10 +397,16 @@ describe("Team MCP containment (Plane 1) and hub-only isolation (Plane 2)", () =
             ),
           ))._tag,
         ).toBe("Failure");
+        expect(yield* withThreadCaller(unboundThreadCaller!, TeamMcpAccess.canUseWorkflows())).toBe(
+          false,
+        );
         expect(yield* withThreadCaller(bobCaller!, TeamMcpAccess.canUseWorkflows())).toBe(false);
         expect(yield* withThreadCaller(aliceCaller!, TeamMcpAccess.canUseWorkflows())).toBe(true);
 
         const unboundSession = yield* sessions.issue({ subject: "unbound-oauth" });
+        expect(
+          yield* withClientCaller(unboundSession.sessionId, TeamMcpAccess.canUseWorkflows()),
+        ).toBe(false);
         expect(
           (yield* Effect.exit(
             withClientCaller(

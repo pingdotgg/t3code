@@ -266,6 +266,7 @@ export interface ProviderSessionManagerV2Shape {
   >;
   readonly get: (
     providerSessionId: ProviderSessionId,
+    threadId?: ThreadId,
   ) => Effect.Effect<
     Option.Option<ProviderAdapter.ProviderAdapterV2SessionRuntime>,
     ProviderSessionManagerV2Error
@@ -295,6 +296,7 @@ export interface ProviderSessionManagerV2Shape {
    */
   readonly releaseUnlessBusy: (input: {
     readonly providerSessionId: ProviderSessionId;
+    readonly threadId?: ThreadId;
     readonly ownProviderThreadIds: ReadonlyArray<ProviderThreadId>;
     readonly throughRunOrdinal: number;
     /** Keeps the session when it succeeds with true, checked atomically with the removal. */
@@ -586,6 +588,16 @@ export const layerWithOptions = (
         base: ProviderSessionId,
         actingMemberId: TeamMemberId,
       ): ProviderSessionId => ProviderSessionId.make(`${base}::member:${actingMemberId}`);
+      const resolveThreadSessionId = (
+        byThread: ReadonlyMap<ThreadId, ProviderSessionId>,
+        base: ProviderSessionId,
+        threadId: ThreadId,
+      ): ProviderSessionId => {
+        const activeForThread = byThread.get(threadId);
+        return activeForThread !== undefined && activeForThread.startsWith(`${base}::member:`)
+          ? activeForThread
+          : base;
+      };
       const matchingSessionIds = (
         current: ReadonlyMap<string, LiveSessionEntry>,
         base: ProviderSessionId,
@@ -1508,6 +1520,19 @@ export const layerWithOptions = (
             candidate.requestEventPermit.withPermits(1),
           );
           if (outcome === "changed") return yield* removeLiveEntry(input);
+          if (outcome === "removed") {
+            yield* Ref.update(activeSessionIdByThread, (current) => {
+              let changed = false;
+              const next = new Map(current);
+              for (const [tid, sid] of current) {
+                if (sid === candidate.runtime.providerSessionId) {
+                  next.delete(tid);
+                  changed = true;
+                }
+              }
+              return changed ? next : current;
+            });
+          }
           return [
             outcome === "removed" ? Option.some(candidate) : Option.none<LiveSessionEntry>(),
             releasedAt,
@@ -3368,7 +3393,7 @@ export const layerWithOptions = (
                 input.actingMemberId !== null &&
                 baseEntry !== undefined &&
                 [...baseEntry.actingMemberIdByThread.values()].some(
-                  (member) => member !== null && member !== input.actingMemberId,
+                  (member) => member !== input.actingMemberId,
                 );
               // Isolate multi-thread sessions by acting member so an author switch never reuses
               // another member's warm process even when sibling threads remain attached or busy.
@@ -3561,12 +3586,20 @@ export const layerWithOptions = (
             Effect.map((current) => matchingSessionIds(current, providerSessionId).length > 0),
           ),
         get: Effect.fn("ProviderSessionManager.get")(
-          function* (providerSessionId) {
-            const entry = (yield* Ref.get(sessions)).get(sessionKey(providerSessionId));
+          function* (providerSessionId, threadId) {
+            const effectiveSessionId =
+              threadId === undefined
+                ? providerSessionId
+                : resolveThreadSessionId(
+                    yield* Ref.get(activeSessionIdByThread),
+                    providerSessionId,
+                    threadId,
+                  );
+            const entry = (yield* Ref.get(sessions)).get(sessionKey(effectiveSessionId));
             if (entry === undefined) {
               return Option.none<ProviderAdapter.ProviderAdapterV2SessionRuntime>();
             }
-            yield* touchActivity(providerSessionId);
+            yield* touchActivity(effectiveSessionId);
             return Option.some(entry.exposedRuntime);
           },
           (effect, providerSessionId) =>
@@ -3645,10 +3678,18 @@ export const layerWithOptions = (
           );
         }),
         releaseUnlessBusy: Effect.fn("ProviderSessionManager.releaseUnlessBusy")(function* (input) {
-          const key = sessionKey(input.providerSessionId);
+          const effectiveSessionId =
+            input.threadId === undefined
+              ? input.providerSessionId
+              : resolveThreadSessionId(
+                  yield* Ref.get(activeSessionIdByThread),
+                  input.providerSessionId,
+                  input.threadId,
+                );
+          const key = sessionKey(effectiveSessionId);
           const before = (yield* Ref.get(sessions)).get(key);
           yield* releaseEntry({
-            providerSessionId: input.providerSessionId,
+            providerSessionId: effectiveSessionId,
             reason: input.reason,
             ...(input.detail === undefined ? {} : { detail: input.detail }),
             keepIfBusyOtherThan: {
@@ -3662,12 +3703,17 @@ export const layerWithOptions = (
           const released =
             before !== undefined && (yield* Ref.get(sessions)).get(key)?.scope !== before.scope;
           // The stopped turn's markBusy cancelled the idle timer and its markIdle may never come.
-          if (!released) yield* scheduleIdleReleaseInternal(input.providerSessionId);
+          if (!released) yield* scheduleIdleReleaseInternal(effectiveSessionId);
           return released;
         }),
         otherWorkingThreads: Effect.fn("ProviderSessionManager.otherWorkingThreads")(
           function* (input) {
-            const entry = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
+            const effectiveSessionId = resolveThreadSessionId(
+              yield* Ref.get(activeSessionIdByThread),
+              input.providerSessionId,
+              input.threadId,
+            );
+            const entry = (yield* Ref.get(sessions)).get(sessionKey(effectiveSessionId));
             if (entry === undefined || !entry.supportsMultipleProviderThreads) return [];
             return yield* Effect.filter(
               [...entry.attachedThreadIds].filter((threadId) => threadId !== input.threadId),

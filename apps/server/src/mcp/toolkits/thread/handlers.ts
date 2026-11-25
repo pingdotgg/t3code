@@ -26,6 +26,7 @@ import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageInt
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as TeamService from "../../../team/TeamService.ts";
+import { assertLocalAgentMcpExecutionAllowed } from "../../../team/hubOnly.ts";
 import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
@@ -113,6 +114,7 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      yield* assertLocalAgentMcpExecutionAllowed;
       yield* TeamMcpAccess.assertCanUseScheduledTasks();
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
@@ -440,6 +442,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           case "promote_to_steer": {
             const targetRunId = yield* required(input.targetRunId, "targetRunId");
             const { projection } = yield* readThread(input.threadId);
+            yield* assertLocalAgentMcpExecutionAllowed;
             yield* TeamMcpAccess.assertCanPromoteQueuedRun(projection.thread.id);
             const dispatched = yield* dispatch(projection.thread.id, (common) => ({
               ...common,

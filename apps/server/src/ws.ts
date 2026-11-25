@@ -2818,6 +2818,7 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
+            Effect.andThen(assertLocalAgentRpcExecutionAllowed),
             Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
             Effect.andThen(scheduledTasks.runNow(input)),
           ),
