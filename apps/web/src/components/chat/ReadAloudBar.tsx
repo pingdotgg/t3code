@@ -51,8 +51,8 @@ export function ReadAloudBar() {
                 <PauseIcon className="fill-current" />
               )}
             </BarButton>
-            {/* The font sits high in its line box; this centers the words on the icon beside them. */}
-            <span className="min-w-0 translate-y-[0.5px] truncate font-medium">
+            {/* Trimmed to its capitals, so centering lines the letters up with the icon, not the line box. */}
+            <span className="min-w-0 truncate py-1 font-medium [text-box:trim-both_cap_alphabetic]">
               {state.status === "loading"
                 ? gt("Preparing to read")
                 : paused
