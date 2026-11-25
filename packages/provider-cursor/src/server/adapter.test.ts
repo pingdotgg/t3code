@@ -10,6 +10,7 @@ import {
   EnvironmentId,
   MessageId,
   NodeId,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2ProviderTurn,
   ProjectId,
   ProviderInstanceId,
@@ -1530,6 +1531,156 @@ describe("CursorAdapterV2", () => {
         Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
       ),
     ),
+  );
+
+  it.effect(
+    "a restart continuation carries the request of a run Cursor dropped before it checkpointed",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "cursor-v2-restart-",
+        });
+        const sentMessages: Array<string> = [];
+        const instanceId = ProviderInstanceId.make("cursor");
+        const threadId = ThreadId.make("cursor-restart-thread");
+        const modelSelection = { instanceId, model: "composer-2.5" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        // Each adapter is one server process; both reach the same Cursor agent on disk.
+        const makeAdapter = makeCursorAdapterV2({
+          instanceId,
+          environment: { HOME: workspace },
+        }).pipe(
+          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+            assertComplete: Effect.void,
+            open: () =>
+              Effect.succeed({
+                agentId: "native-cursor-restart",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                // The interrupted run was cancelled before its first checkpoint.
+                runCheckpointed: () => Effect.succeed(false),
+                send: (input) =>
+                  Effect.gen(function* () {
+                    sentMessages.push(
+                      typeof input.message === "string" ? input.message : input.message.text,
+                    );
+                    const runId = `native-cursor-run-${sentMessages.length}`;
+                    const ended = yield* Deferred.make<"finished" | "cancelled">();
+                    return {
+                      agentId: "native-cursor-restart",
+                      runId,
+                      wait: Deferred.await(ended).pipe(
+                        Effect.map((status) => ({
+                          id: runId,
+                          requestId: `native-request-${sentMessages.length}`,
+                          status,
+                          model: { id: "composer-2.5" },
+                          durationMs: 1,
+                        })),
+                      ),
+                      cancel: Deferred.succeed(ended, "cancelled"),
+                    };
+                  }),
+              }),
+          }),
+          Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+        );
+        const now = yield* DateTime.now;
+        const appThread = {
+          id: threadId,
+          projectId: ProjectId.make("cursor-restart-project"),
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          title: "Cursor restart",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        };
+        const turnInput = (
+          providerThread: OrchestrationV2ProviderThread,
+          runOrdinal: number,
+          text: string,
+        ) => ({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make(`cursor-restart-run-${runOrdinal}`),
+          runOrdinal,
+          providerTurnOrdinal: runOrdinal,
+          attemptId: RunAttemptId.make(`cursor-restart-attempt-${runOrdinal}`),
+          rootNodeId: NodeId.make(`cursor-restart-root-${runOrdinal}`),
+          appThread: { ...appThread, activeProviderThreadId: providerThread.id },
+          message: {
+            messageId: MessageId.make(`cursor-restart-message-${runOrdinal}`),
+            createdBy: "user" as const,
+            creationSource: "web" as const,
+            text,
+            attachments: [],
+          },
+        });
+        const question = "How many integers below 100000 are divisible by exactly two of 3, 5, 7?";
+
+        // Before the restart: the question is still thinking when the server process dies.
+        const before = yield* makeAdapter;
+        const beforeRuntime = yield* before.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-restart-session-1"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* beforeRuntime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* beforeRuntime.startTurn(turnInput(providerThread, 1, question));
+        assert.lengthOf(sentMessages, 1);
+
+        // After the restart: a new process resumes the agent and sends the continuation.
+        const after = yield* makeAdapter;
+        const afterRuntime = yield* after.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cursor-restart-session-2"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const resumedThread = yield* afterRuntime.resumeThread!({ providerThread });
+        yield* afterRuntime.startTurn({
+          ...turnInput(resumedThread, 2, "Continue where you left off."),
+          restartContinuationOfRunId: RunId.make("cursor-restart-run-1"),
+        });
+
+        assert.lengthOf(sentMessages, 2);
+        assert.include(
+          sentMessages[1]!,
+          question,
+          "Cursor dropped the interrupted request, and the restart continuation did not resend it",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+        ),
+      ),
   );
 
   it.effect("projects Cursor directory trees and lint diagnostics as file search results", () =>
