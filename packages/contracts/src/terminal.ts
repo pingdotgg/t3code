@@ -117,11 +117,8 @@ export function skipTerminalSnapshotContinuation(state: number, data: string) {
   let replay = "";
   const replayC1 = (byte: number, remainingBytes: number) => {
     // IND, NEL and RI move the cursor after ending the omitted sequence.
-    switch (byte) {
-      case 0x84:
-      case 0x85:
-      case 0x8d:
-        replay = "\u001b" + String.fromCharCode(byte - 0x40) + "\ufffd".repeat(remainingBytes);
+    if (byte === 0x84 || byte === 0x85 || byte === 0x8d) {
+      replay = "\u001b" + String.fromCharCode(byte - 0x40) + "\ufffd".repeat(remainingBytes);
     }
   };
   let end = 0;
