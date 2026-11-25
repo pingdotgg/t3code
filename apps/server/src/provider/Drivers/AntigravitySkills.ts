@@ -310,7 +310,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 
     const sortedEntries = entries.toSorted();
     const skillFileName = sortedEntries.find((entry) => entry.toLowerCase() === "skill.md");
-    if (skillFileName !== undefined && (mode !== "agent-root" || skillFileName.endsWith(".md"))) {
+    // agy treats the automatic .agent(s)/skills roots as collections.
+    if (skillFileName !== undefined && mode !== "agent-root") {
       if (matchesSkillFilter(path.basename(directory), filter)) {
         yield* addSkillFile(path.join(directory, skillFileName), scope, pluginName);
       }

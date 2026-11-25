@@ -873,6 +873,10 @@
   "05b16c85cb1e18bd": "Keine Repositorys",
   "04ea9e0e663983fd": "Alle Repositorys",
   "c07bd24ff49e85d9": "{count, plural, one {{count} Repository} other {{count} Repositorys}}",
+  "1b799ebfa94c2408": "Genehmigung für Push-Hooks",
+  "81d703184fe5112e": "Push-Hooks dieses Repositorys ausführen?",
+  "027b0d65c7a67af6": "Hook-Datei",
+  "ade585910165bb52": "Konfigurierter Hook",
   "e94aa66471dae6aa": "Warum werde ich das gefragt?",
   "228a325b5708e675": "Vollzugriff überspringt Genehmigungen, aber eine Nachfrageregel in den Einstellungen des Agenten trifft auf diese Aktion zu, daher fragt er trotzdem. Entferne diese Regel oder schränke sie ein, um diese Nachfragen zu beenden.",
   "3f9101f696c738a8": "Vollzugriff überspringt Genehmigungen, aber der Agent hält trotzdem für einige eigene Sicherheitsprüfungen an, die keine Einstellung überspringen kann, etwa beim Löschen eines Pfads, den er nicht prüfen kann. T3 Code kann diese nicht abschalten. Prüfe also die Anfrage und genehmige sie, wenn sie deinen Erwartungen entspricht.",
@@ -1298,7 +1302,7 @@
   "c13753167634f7aa": "Datei gelesen",
   "5ce648cd03020fd9": "{path} gelesen +{count} weitere",
   "5d6c2898401c94e6": "{path} gelesen",
-  "612170d804b03320": "{count, plural, one {{count} fehlerhafter oder inkonsistenter Nutzungseintrag wurde übersprungen; die Nutzung ist möglicherweise unvollständig.} other {{count} fehlerhafte oder inkonsistente Nutzungseinträge wurden übersprungen; die Nutzung ist möglicherweise unvollständig.}}",
+  "69150fe436b3a0c2": "{count, plural, one {{count} fehlerhafter oder inkonsistenter Nutzungseintrag wurde übersprungen; die Nutzung ist möglicherweise unvollständig.} other {{count} fehlerhafte oder inkonsistente Nutzungseinträge wurden übersprungen; die Nutzung ist möglicherweise unvollständig.}}",
   "ee448ceb6820ce2f": "{environment} verwendet eine ältere Serverversion und wird nicht in die Summen einbezogen.",
   "732708950237004e": "Dieser Client ist älter als der Server auf {environment}; seine Nutzung wird nicht in die Summen einbezogen.",
   "9758c2ede06aa19b": "heute {hour}",
@@ -5698,5 +5702,6 @@
   "1a1beecff68a6e61": "Google-Konto bestätigen",
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
-  "201490988858b511": "zurückgezogen von {by}"
+  "201490988858b511": "zurückgezogen von {by}",
+  "46d614fa7b4bf1e5": "Workflow-Ausführungen"
 }

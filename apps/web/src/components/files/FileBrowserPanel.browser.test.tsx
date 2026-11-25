@@ -373,10 +373,68 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
 
     // Refresh revalidates the folders behind the rows on screen: the open one and the root.
+    // The tree can render its rows again at any time, so compare folders, not calls.
     revalidate.mockClear();
     await userEvent.click(page.getByRole("button", { name: "Refresh workspace files" }));
-    expect(revalidate.mock.calls).toEqual([["src"], [""]]);
+    expect(new Set(revalidate.mock.calls.flat())).toEqual(new Set(["src", ""]));
   });
+
+  it("opens a chain of single folders from one click and keeps it closed once closed", async () => {
+    const chain: readonly ProjectEntry[] = [
+      { path: "tests", kind: "directory" },
+      { path: "tests/edit", kind: "directory" },
+      { path: "tests/edit/unit", kind: "directory" },
+      { path: "tests/edit/unit/a.ts", kind: "file" },
+    ];
+    const panel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-single-folder-chain"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    using _listing = withDirectoryListing(chain.slice(0, 1));
+    {
+      await using screen = await render(panel());
+      await vi.waitFor(() => expect(findTreeRow("tests/")).not.toBeNull());
+      findTreeRow("tests/")!.click();
+      await vi.waitFor(() =>
+        expect(findTreeRow("tests/")!.getAttribute("aria-expanded")).toBe("true"),
+      );
+      for (const listed of [2, 3, 4]) {
+        directory.entries = chain.slice(0, listed);
+        await screen.rerender(panel());
+      }
+      await vi.waitFor(() => expect(findTreeRow("tests/edit/unit/a.ts")).not.toBeNull());
+
+      findTreeRow("tests/edit/unit/")!.click();
+      await vi.waitFor(() => expect(findTreeRow("tests/edit/unit/a.ts")).toBeNull());
+      directory.entries = [...chain, { path: "tests/edit/unit/b.ts", kind: "file" }];
+      await screen.rerender(panel());
+      expect(findTreeRow("tests/edit/unit/")!.getAttribute("aria-expanded")).toBe("false");
+    }
+
+    directory.entries = [...chain, { path: "pkg", kind: "directory" }];
+    await using remounted = await render(panel());
+    await vi.waitFor(() => expect(findTreeRow("tests/edit/unit/")).not.toBeNull());
+    expect(findTreeRow("tests/edit/unit/")!.getAttribute("aria-expanded")).toBe("false");
+
+    // An ignored folder can hold tens of thousands of entries, so it still opens by hand.
+    findTreeRow("pkg/")!.click();
+    await vi.waitFor(() => expect(findTreeRow("pkg/")!.getAttribute("aria-expanded")).toBe("true"));
+    directory.entries = [
+      ...directory.entries,
+      { path: "pkg/node_modules", kind: "directory", ignored: true },
+    ];
+    await remounted.rerender(panel());
+    await vi.waitFor(() => expect(findTreeRow("pkg/node_modules/")).not.toBeNull());
+    expect(findTreeRow("pkg/node_modules/")!.getAttribute("aria-expanded")).toBe("false");
+  });
+
   describe("revealing a folder while folders above it are still loading", () => {
     const roots = Array.from({ length: 12 }, (_, index): ProjectEntry => {
       return { path: `d${String(index).padStart(2, "0")}`, kind: "directory" };

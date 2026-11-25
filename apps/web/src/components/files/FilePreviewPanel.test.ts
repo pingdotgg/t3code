@@ -557,6 +557,22 @@ Third}`;
     expect(result.sheets[0]!.rows).toEqual([["PT03H30M00S"]]);
   });
 
+  it("reports zero columns for an empty ODS sheet", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:spreadsheet>' +
+        '<table:table table:name="Empty"><table:table-row table:number-rows-repeated="1048576"><table:table-cell table:number-columns-repeated="1024"/></table:table-row></table:table>' +
+        '<table:table table:name="Data"><table:table-row><table:table-cell><text:p>A</text:p></table:table-cell><table:table-cell><text:p>B</text:p></table:table-cell><table:table-cell><text:p>C</text:p></table:table-cell></table:table-row></table:table>' +
+        '<table:table table:name="Late"><table:table-row table:number-rows-repeated="500"><table:table-cell/></table:table-row><table:table-row><table:table-cell><text:p>Z</text:p></table:table-cell></table:table-row></table:table>' +
+        "</office:spreadsheet></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "ods");
+    if (result.type !== "ods") throw new Error("Expected workbook");
+    expect(result.sheets[0]).toMatchObject({ rowCount: 0, columns: 0 });
+    expect(result.sheets[1]).toMatchObject({ rowCount: 1, columns: 3 });
+    expect(result.sheets[2]).toMatchObject({ rowCount: 500, columns: 1, truncated: true });
+  });
+
   it.each([1, 500])("ignores styled ODS filler after %s populated rows", async (count) => {
     const archive = new JSZip().file(
       "content.xml",

@@ -71,6 +71,7 @@ import {
 import { IssueCommentComposer } from "./IssueCommentComposer";
 import { IssueDetailGhost } from "./IssueDetailGhost";
 import { IssueThreadLinks } from "./IssueThreadLinks";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
@@ -732,6 +733,14 @@ export function IssueDetailPanel({
             )}
           </PullRequestMetaLine>
 
+          <WorkflowRunsAbout
+            environmentId={environmentId}
+            item={{
+              subject: detail.url,
+              issue: { ...reference, host: reference.host ?? detail.host },
+            }}
+          />
+
           <div className="mt-4 space-y-2">
             <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label={gt("Labels")}>
               <span className="flex min-w-0 flex-wrap items-center gap-1">
@@ -902,6 +911,10 @@ export function IssueDetailPanel({
                           render={
                             <a href={item.comment.url} target="_blank" rel="noopener noreferrer" />
                           }
+                          onClick={(event) => {
+                            event.preventDefault();
+                            void openLink(item.comment.url!, { event }).catch(console.error);
+                          }}
                         >
                           {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
                         </InlineButton>
