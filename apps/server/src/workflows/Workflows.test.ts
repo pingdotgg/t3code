@@ -2472,7 +2472,7 @@ it.effect(
           );
           yield* workflows.answer(runId, "sure", { choice: "Yes" });
           assert.equal((yield* workflows.waitFor(runId, status("paused"))).pauses, 1);
-          // That the wake leaves the run parked is engineSuspension.test.ts's to prove.
+          // The engine replays it for the wake, but its failed step waits for the resume.
           // The resume runs `bad` again and delivers the answer the claim kept.
           yield* workflows.resume(runId);
           const done = yield* workflows.waitFor(runId, status("completed"));
@@ -2480,6 +2480,56 @@ it.effect(
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a step of a paused run waits for the resume, even when the engine replays it", () =>
+  Effect.gen(function* () {
+    // The row is paused while the engine still runs, as when a wake preempts a failing step.
+    let real: WorkflowStore.WorkflowStore["Service"] | undefined;
+    let workEnded = false;
+    const next = yield* Deferred.make<"looked" | "took">();
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.map(WorkflowStore.make, (made) => {
+        real = made;
+        return WorkflowStore.WorkflowStore.of({
+          ...made,
+          stepEnded: (runId, name, ...rest) =>
+            Effect.tap(made.stepEnded(runId, name, ...rest), () =>
+              Effect.sync(() => void (name === "work" ? (workEnded = true) : undefined)),
+            ),
+          run: (runId) =>
+            Effect.tap(made.run(runId), () =>
+              workEnded ? Deferred.succeed(next, "looked") : Effect.void,
+            ),
+          stepStarted: (runId, name, ...rest) =>
+            Effect.andThen(
+              name === "take" ? Deferred.succeed(next, "took") : Effect.void,
+              made.stepStarted(runId, name, ...rest),
+            ),
+        });
+      }),
+    );
+    const { counts, latch, boot } = yield* harness(store);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const { runId } = yield* workflows.start(
+          "owned",
+          { mode: "busy" },
+          { idempotencyKey: "p" },
+        );
+        yield* Deferred.await(latch.entered);
+        yield* real!.runPaused(runId, "work: a sibling failed");
+        yield* Deferred.succeed(latch.release, undefined);
+        // The next step looks at the run before it starts, and finds it paused.
+        assert.equal(yield* Deferred.await(next), "looked");
+        yield* workflows.resume(runId);
+        assert.equal((yield* workflows.waitFor(runId, status("completed"))).status, "completed");
+        assert.equal((yield* Ref.get(counts)).take, 1);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it("tags refuses a list with a gap in it", () => {

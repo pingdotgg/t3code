@@ -4138,39 +4138,3 @@ diff --git a/src/sql/SqlClient.ts b/src/sql/SqlClient.ts
                          services.pipe(
                            Context.add(options.transactionService, level),
                            Context.add(CurrentTransactionService, options.transactionService),
-diff --git a/dist/workflow/Activity.js b/dist/workflow/Activity.js
---- a/dist/workflow/Activity.js
-+++ b/dist/workflow/Activity.js
-@@ -142,7 +142,12 @@ const makeExecute = /*#__PURE__*/Effect.fnUntraced(function* (activity) {
-   yield* Effect.annotateCurrentSpan({
-     executionId: instance.executionId
-   });
--  const result = yield* Workflow.wrapActivityResult(engine.activityExecute(activity, attempt), _ => _._tag === "Suspended");
-+  const result = yield* Workflow.wrapActivityResult(
-+  // Recorded as the activity ends: suspension then waits on sibling activities, and a deferred
-+  // wake can interrupt that wait before the result below is read.
-+  Effect.onExit(engine.activityExecute(activity, attempt), exit => Effect.sync(() => {
-+    if (exit._tag === "Success" && exit.value._tag === "Suspended" && exit.value.failed) instance.failed = true;
-+  })), _ => _._tag === "Suspended");
-   if (result._tag === "Suspended") {
-     if (result.failed) instance.failed = true;
-     return yield* Workflow.suspend(instance);
-diff --git a/src/workflow/Activity.ts b/src/workflow/Activity.ts
---- a/src/workflow/Activity.ts
-+++ b/src/workflow/Activity.ts
-@@ -343,7 +343,14 @@ const makeExecute = Effect.fnUntraced(function*<
-   const attempt = yield* CurrentAttempt
-   yield* Effect.annotateCurrentSpan({ executionId: instance.executionId })
-   const result = yield* Workflow.wrapActivityResult(
--    engine.activityExecute(activity, attempt),
-+    // Recorded as the activity ends: suspension then waits on sibling activities, and a deferred
-+    // wake can interrupt that wait before the result below is read.
-+    Effect.onExit(engine.activityExecute(activity, attempt), (exit) =>
-+      Effect.sync(() => {
-+        if (exit._tag === "Success" && exit.value._tag === "Suspended" && exit.value.failed) {
-+          instance.failed = true
-+        }
-+      })),
-     (_) => _._tag === "Suspended"
-   )
-   if (result._tag === "Suspended") {
