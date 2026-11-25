@@ -5,6 +5,7 @@ import {
   getPromptControlledTraits,
 } from "@t3tools/client-runtime/model-traits";
 import type { ModelOption } from "../lib/modelOptions";
+import { getJcodeModelRoute } from "@t3tools/client-runtime/providerSubProviders";
 import { resolveProviderOptionDescriptors } from "../lib/providerOptions";
 import { AppText as Text } from "./ui/AppText";
 import { ComposerInlineControl } from "./ComposerToolbar";
@@ -51,7 +52,12 @@ export function ComposerModelControl(props: {
         showBadge: badge.showBadge,
       })
     : null;
-  const shortLabel = props.modelOption?.shortName ?? label;
+  const route = props.modelOption
+    ? getJcodeModelRoute({ slug: props.modelOption.selection.model, name: label })
+    : null;
+  const shortLabel = route
+    ? `${route.name} · ${route.provider}`
+    : (props.modelOption?.shortName ?? label);
   return (
     <ComposerInlineControl
       accessibilityLabel={[

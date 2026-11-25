@@ -16,6 +16,102 @@ import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 
+it.each([false, true])(
+  "picks a JCode model before its provider and preserves the exact route (additive=%s)",
+  async (additive) => {
+    const instanceId = ProviderInstanceId.make("jcode");
+    const entries = deriveProviderInstanceEntries([
+      {
+        instanceId,
+        driver: ProviderDriverKind.make("acpRegistry"),
+        displayName: "JCode",
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      },
+    ]);
+    const options = new Map([
+      [
+        instanceId,
+        [
+          { slug: "jcode-route:openai", name: "gpt-5 (OpenAI, responses)" },
+          { slug: "jcode-route:gateway", name: "gpt-5 (Gateway (EU), chat_completions)" },
+          { slug: "jcode-route:single", name: "gpt-5-mini (OpenAI, responses)" },
+        ],
+      ],
+    ]);
+    const onChange = vi.fn();
+    const onToggle = vi.fn();
+    function Picker() {
+      const [model, setModel] = useState("jcode-route:openai");
+      return (
+        <ProviderModelPicker
+          environmentId={null}
+          activeInstanceId={instanceId}
+          model={model}
+          lockedProvider={null}
+          instanceEntries={entries}
+          modelOptionsByInstance={options}
+          {...(additive
+            ? {
+                onToggleModel: (instance: ProviderInstanceId, selected: string) => {
+                  onToggle(instance, selected);
+                  setModel(selected);
+                },
+              }
+            : {})}
+          onInstanceModelChange={(instance, selected) => {
+            onChange(instance, selected);
+            setModel(selected);
+          }}
+        />
+      );
+    }
+    await using screen = await render(<Picker />);
+    await screen.getByRole("button", { name: "gpt-5 (OpenAI, responses)", exact: true }).click();
+    await expect.element(page.getByRole("option")).toHaveLength(2);
+    if (additive) await userEvent.keyboard("{Shift>}");
+    try {
+      await page.getByRole("option", { name: /gpt-5.*Choose provider/ }).click();
+    } finally {
+      if (additive) await userEvent.keyboard("{/Shift}");
+    }
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onToggle).not.toHaveBeenCalled();
+    await expect.element(page.getByText("Choose provider for gpt-5")).toBeVisible();
+    await expect
+      .element(page.getByRole("option", { name: /Gateway \(EU\).*chat_completions/ }))
+      .toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByRole("option")).toHaveLength(2);
+    await page.getByPlaceholder("Search models...").fill("gpt-5");
+    await userEvent.keyboard(additive ? "{Shift>}{Enter}{/Shift}" : "{Enter}");
+    await expect.element(page.getByText("Choose provider for gpt-5")).toBeVisible();
+    await page.getByRole("option", { name: /Gateway \(EU\).*chat_completions/ }).click();
+    expect(additive ? onToggle : onChange).toHaveBeenLastCalledWith(
+      instanceId,
+      "jcode-route:gateway",
+    );
+    await expect
+      .element(
+        screen.getByRole("button", { name: "gpt-5 (Gateway (EU), chat_completions)", exact: true }),
+      )
+      .toHaveTextContent("gpt-5 · Gateway (EU)");
+    if (additive) await userEvent.keyboard("{Escape}");
+    await screen
+      .getByRole("button", { name: "gpt-5 (Gateway (EU), chat_completions)", exact: true })
+      .click();
+    await page.getByRole("option", { name: /gpt-5-mini/ }).click();
+    expect(onChange).toHaveBeenLastCalledWith(instanceId, "jcode-route:single");
+  },
+);
+
 it("keeps each registry image when adding a model from another ACP agent", async () => {
   const icons = [
     "https://cdn.agentclientprotocol.com/registry/icons/picker-explicit.svg",

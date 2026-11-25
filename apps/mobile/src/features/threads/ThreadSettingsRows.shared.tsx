@@ -17,6 +17,7 @@ export type ModelRowProps = {
   readonly hiddenUpdatePending?: boolean;
   readonly isFirst: boolean;
   readonly isLast: boolean;
+  readonly hasProviderChoices?: boolean;
 };
 
 export type ChoiceRowProps = {
@@ -54,9 +55,10 @@ export function ModelRowContent(
     >
       <Pressable
         accessibilityLabel={[props.option.label, props.option.subtitle].filter(Boolean).join(", ")}
-        accessibilityRole="radio"
+        accessibilityRole={props.hasProviderChoices ? "button" : "radio"}
         accessibilityState={{
-          checked: props.selected,
+          checked: props.hasProviderChoices ? undefined : props.selected,
+          selected: props.hasProviderChoices ? props.selected : undefined,
           disabled: props.option.isUnavailable === true || props.option.isHidden === true,
         }}
         className="min-h-[44px] min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70 android:min-h-[48px]"
@@ -108,7 +110,7 @@ export function ModelRowContent(
         </View>
         {props.trailingSelection}
       </Pressable>
-      {props.onToggleHidden ? (
+      {props.onToggleHidden && !props.hasProviderChoices ? (
         <Pressable
           accessibilityLabel={
             props.option.isHidden
@@ -135,31 +137,40 @@ export function ModelRowContent(
           />
         </Pressable>
       ) : null}
-      <Pressable
-        accessibilityLabel={
-          props.isFavorite
-            ? gt("Remove from favorites: {provider}, {model}", {
-                provider: props.option.providerLabel,
-                model: props.option.label,
-              })
-            : gt("Add to favorites: {provider}, {model}", {
-                provider: props.option.providerLabel,
-                model: props.option.label,
-              })
-        }
-        accessibilityRole="button"
-        accessibilityState={{ disabled: !props.favoritesLoaded, selected: props.isFavorite }}
-        className="min-h-[44px] min-w-[44px] items-center justify-center android:min-h-[48px] android:min-w-[48px]"
-        disabled={!props.favoritesLoaded}
-        onPress={props.onToggleFavorite}
-      >
+      {props.hasProviderChoices ? (
         <SymbolView
-          name={props.isFavorite ? "star.fill" : "star"}
-          size={18}
-          tintColorClassName={props.isFavorite ? "accent-icon" : "accent-icon-subtle"}
+          name="chevron.right"
+          size={16}
+          tintColorClassName="accent-icon-subtle"
           type="monochrome"
         />
-      </Pressable>
+      ) : (
+        <Pressable
+          accessibilityLabel={
+            props.isFavorite
+              ? gt("Remove from favorites: {provider}, {model}", {
+                  provider: props.option.providerLabel,
+                  model: props.option.label,
+                })
+              : gt("Add to favorites: {provider}, {model}", {
+                  provider: props.option.providerLabel,
+                  model: props.option.label,
+                })
+          }
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !props.favoritesLoaded, selected: props.isFavorite }}
+          className="min-h-[44px] min-w-[44px] items-center justify-center android:min-h-[48px] android:min-w-[48px]"
+          disabled={!props.favoritesLoaded}
+          onPress={props.onToggleFavorite}
+        >
+          <SymbolView
+            name={props.isFavorite ? "star.fill" : "star"}
+            size={18}
+            tintColorClassName={props.isFavorite ? "accent-icon" : "accent-icon-subtle"}
+            type="monochrome"
+          />
+        </Pressable>
+      )}
     </View>
   );
 }

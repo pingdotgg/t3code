@@ -4797,6 +4797,8 @@
   "cbc2606e931511dd": "{provider}, {count, plural, one {{count} modelo} other {{count} modelos}}",
   "15033b76c4b20e76": "Modelo indisponível",
   "ed063bb30064ac7e": "Configure este provedor pela web ou pelo desktop, ou selecione outro modelo.",
+  "f4c0219fb2e70f5a": "Escolher provedor para {model}",
+  "64ab5a9dfbdb67ec": "Escolher provedor",
   "440285ac659c7832": "Runtime",
   "a83559c38e1cd470": "Catálogo",
   "16839051320ad525": "Gerenciar modelos ocultos",

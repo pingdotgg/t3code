@@ -14,7 +14,11 @@ import {
   formatProviderUpdateRequiredNotice,
   providerUpdateChannelLags,
 } from "@t3tools/client-runtime/providerUpdateRequiredModels";
-import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
+import {
+  getJcodeModelRoute,
+  groupJcodeModelRoutes,
+  groupModelsBySubProvider,
+} from "@t3tools/client-runtime/providerSubProviders";
 import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import {
@@ -385,6 +389,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     onOpenProviderSetup,
   } = props;
   const [searchQuery, setSearchQuery] = useState("");
+  const [providerChoice, setProviderChoice] = useState<{
+    instanceId: ProviderInstanceId;
+    name: string;
+    additive: boolean;
+  } | null>(null);
   const modelListRef = useRef<LegendListRef | null>(null);
   const pickerContentRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes this picker's mount to global keydown handlers
@@ -496,6 +505,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   };
 
   const handleSelectInstance = (instanceId: ProviderInstanceId | "favorites") => {
+    setProviderChoice(null);
     setSelectedInstanceId(instanceId);
     // Focusing the search on touch raises the on-screen keyboard on every provider tap.
     if (window.matchMedia("(pointer: coarse)").matches) return;
@@ -529,6 +539,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     instanceId: ProviderInstanceId,
     additive = false,
   ): string | null => {
+    const routes = jcodeRoutesByKey.get(modelPickerModelKey(instanceId, modelSlug));
+    if (!providerChoice && routes && routes.length > 1) {
+      setProviderChoice({ instanceId, name: getJcodeModelRoute(routes[0]!)!.name, additive });
+      setSearchQuery("");
+      return null;
+    }
     if (getModelDisabledReason?.(instanceId, modelSlug)) {
       return null;
     }
@@ -542,7 +558,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     const resolvedModel = resolveSelectableModel(entry.driverKind, modelSlug, options);
     if (!resolvedModel) return null;
-    if (additive && onToggleModel) {
+    setProviderChoice(null);
+    if ((providerChoice?.additive || additive) && onToggleModel) {
       onToggleModel(instanceId, resolvedModel);
     } else {
       onInstanceModelChange(instanceId, resolvedModel);
@@ -695,11 +712,26 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return [...available, ...disabled];
   })();
-  const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const showSidebar = !providerChoice && !isSearching && sidebarInstanceEntries.length > 0;
   const instanceOrder = instanceEntries.map((entry) => entry.instanceId);
 
-  const filteredModels = (() => {
+  const matchingModels = (() => {
     let result = flatModels;
+
+    if (providerChoice) {
+      result = result.filter(
+        (model) =>
+          model.instanceId === providerChoice.instanceId &&
+          getJcodeModelRoute(model)?.name === providerChoice.name &&
+          matchesLockedProvider(model),
+      );
+      return rankModelPickerSearch(result, searchQuery, (model) => ({
+        name: model.name,
+        slug: model.slug,
+        driverKind: model.driverKind,
+        providerDisplayName: model.instanceDisplayName,
+      }));
+    }
 
     if (searchQuery.trim()) {
       const candidates =
@@ -735,8 +767,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     });
   })();
 
+  const jcodeRoutesByKey = new Map<string, ReadonlyArray<ModelPickerItem>>();
+  const filteredModels = providerChoice
+    ? matchingModels
+    : groupJcodeModelRoutes(matchingModels, (model) => model).map((routes) => {
+        const model =
+          routes.find((route) =>
+            selectedModelKeySet.has(modelPickerModelKey(route.instanceId, route.slug)),
+          ) ?? routes[0]!;
+        if (routes.length > 1) {
+          jcodeRoutesByKey.set(modelPickerModelKey(model.instanceId, model.slug), routes);
+        }
+        return model;
+      });
+
   const legacySection = (() => {
-    if (isSearching || selectedInstanceId === "favorites") {
+    if (providerChoice || isSearching || selectedInstanceId === "favorites") {
       return null;
     }
     const currentModels: ModelPickerItem[] = [];
@@ -761,7 +807,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // backend as a collapsible heading. Search and Favorites stay flat.
   const subProviderSections = (() => {
     const subProviders =
-      isSearching || selectedInstanceId === "favorites"
+      providerChoice || isSearching || selectedInstanceId === "favorites"
         ? undefined
         : subProvidersByInstance.get(selectedInstanceId);
     if (!subProviders || selectedInstanceId === "favorites") return null;
@@ -896,6 +942,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     modelJumpLabelByKey,
     activeModelKey,
     selectedModelKeySet,
+    providerChoice,
+    jcodeRoutesByKey,
   };
 
   const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -1087,7 +1135,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 if (e.key === "Escape") {
                   e.preventDefault();
                   e.stopPropagation();
-                  onRequestClose?.();
+                  if (providerChoice) {
+                    setProviderChoice(null);
+                    setSearchQuery("");
+                  } else {
+                    onRequestClose?.();
+                  }
                   return;
                 }
                 if (
@@ -1110,7 +1163,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     highlighted !== null &&
                     highlightedModelKeyRef.current !== activeModelKey &&
                     handleModelSelect(highlighted.slug, highlighted.instanceId) !== null;
-                  if (!pickedNew) props.onFocusEffort();
+                  if (!pickedNew && !jcodeRoutesByKey.has(highlightedModelKeyRef.current ?? ""))
+                    props.onFocusEffort();
                   return;
                 }
                 if (e.key === "Enter" && highlightedModelKeyRef.current) {
@@ -1139,6 +1193,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onMouseDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             />
+
+            {providerChoice ? (
+              <div className="flex items-center gap-2 border-b border-border/70 px-3 py-2">
+                <InlineButton
+                  onClick={() => {
+                    setProviderChoice(null);
+                    setSearchQuery("");
+                    focusSearchInput();
+                  }}
+                >
+                  {gt("Back")}
+                </InlineButton>
+                <span className="min-w-0 text-xs text-muted-foreground">
+                  {gt("Choose provider for {model}", { model: providerChoice.name })}
+                </span>
+              </div>
+            ) : null}
 
             <ModelPickerList
               listRef={modelListRef}
@@ -1207,15 +1278,31 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 if (!model) {
                   return null;
                 }
-                const disabledReason =
-                  getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                const route = getJcodeModelRoute(model);
+                const hasProviderChoices = jcodeRoutesByKey.has(modelKey);
+                const disabledReason = hasProviderChoices
+                  ? jcodeRoutesByKey
+                      .get(modelKey)!
+                      .every((choice) => getModelDisabledReason?.(choice.instanceId, choice.slug))
+                    ? (getModelDisabledReason?.(model.instanceId, model.slug) ?? null)
+                    : null
+                  : (getModelDisabledReason?.(model.instanceId, model.slug) ?? null);
                 return (
                   <ModelListRow
                     key={modelKey}
                     index={index}
                     slug={model.slug}
-                    name={model.name}
-                    subProvider={model.subProvider}
+                    name={route ? (providerChoice ? route.provider : route.name) : model.name}
+                    subProvider={
+                      route
+                        ? providerChoice
+                          ? route.apiMethod
+                          : hasProviderChoices
+                            ? gt("Choose provider")
+                            : route.provider
+                        : model.subProvider
+                    }
+                    hasProviderChoices={hasProviderChoices}
                     instanceId={model.instanceId}
                     driverKind={model.driverKind}
                     providerDisplayName={model.instanceDisplayName}

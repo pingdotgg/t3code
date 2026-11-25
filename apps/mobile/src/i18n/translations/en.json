@@ -4805,6 +4805,8 @@
   "cbc2606e931511dd": "{provider}, {count, plural, one {{count} model} other {{count} models}}",
   "15033b76c4b20e76": "Model unavailable",
   "ed063bb30064ac7e": "Set up this provider on web or desktop, or select another model.",
+  "f4c0219fb2e70f5a": "Choose provider for {model}",
+  "64ab5a9dfbdb67ec": "Choose provider",
   "440285ac659c7832": "Runtime",
   "a83559c38e1cd470": "Catalog",
   "16839051320ad525": "Manage hidden models",

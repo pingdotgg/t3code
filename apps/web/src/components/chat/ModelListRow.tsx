@@ -1,7 +1,7 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
-import { CheckIcon, StarIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
@@ -17,6 +17,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   slug: string;
   name: string;
   subProvider?: string | undefined;
+  hasProviderChoices?: boolean;
   instanceId: ProviderInstanceId;
   driverKind: ProviderDriverKind;
   providerDisplayName: string;
@@ -103,34 +104,38 @@ export const ModelListRow = memo(function ModelListRow(props: {
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">
-        <SharedTooltipTrigger
-          render={
-            <Button
-              size="icon-xs"
-              variant="ghost-muted"
-              onClick={(event) => {
-                event.stopPropagation();
-                props.onToggleFavorite(props.instanceId, props.slug);
-              }}
-              onKeyDown={(event) => {
-                event.stopPropagation();
-              }}
-              disabled={Boolean(props.disabledReason)}
-              aria-label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
-            >
-              <StarIcon
-                className={cn(
-                  "size-3.5 sm:size-3",
-                  props.isFavorite && "fill-current text-warning",
-                  (!props.isFavorite || props.favoriteStarOnHover) &&
-                    "opacity-0 group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100",
-                )}
-              />
-            </Button>
-          }
-          label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
-          align="center"
-        />
+        {props.hasProviderChoices ? (
+          <ChevronRightIcon className="size-4" aria-hidden="true" />
+        ) : (
+          <SharedTooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost-muted"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onToggleFavorite(props.instanceId, props.slug);
+                }}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                }}
+                disabled={Boolean(props.disabledReason)}
+                aria-label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
+              >
+                <StarIcon
+                  className={cn(
+                    "size-3.5 sm:size-3",
+                    props.isFavorite && "fill-current text-warning",
+                    (!props.isFavorite || props.favoriteStarOnHover) &&
+                      "opacity-0 group-hover:opacity-100 group-data-highlighted:opacity-100 in-focus-visible:opacity-100 pointer-coarse:opacity-100",
+                  )}
+                />
+              </Button>
+            }
+            label={props.isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
+            align="center"
+          />
+        )}
         {props.jumpLabel ? <Kbd>{props.jumpLabel}</Kbd> : null}
       </div>
     </ComboboxItem>

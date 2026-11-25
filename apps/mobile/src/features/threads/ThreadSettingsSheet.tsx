@@ -72,7 +72,11 @@ import {
   type ProviderGroup,
   withStoredThreadModelOptions,
 } from "../../lib/modelOptions";
-import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
+import {
+  getJcodeModelRoute,
+  groupJcodeModelRoutes,
+  groupModelsBySubProvider,
+} from "@t3tools/client-runtime/providerSubProviders";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import {
@@ -284,7 +288,8 @@ function SwitchRow(props: {
 
 type ThreadSettingsSubmenuPage =
   | { readonly kind: "descriptor"; readonly id: string }
-  | { readonly kind: "runtime" };
+  | { readonly kind: "runtime" }
+  | { readonly kind: "provider"; readonly providerKey: string; readonly modelName: string };
 
 type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
@@ -751,6 +756,7 @@ type ThreadSettingsCatalogItem =
       readonly kind: "model";
       readonly key: string;
       readonly option: ModelOption;
+      readonly routes: ReadonlyArray<ModelOption>;
       readonly isFirst: boolean;
       readonly isLast: boolean;
     }
@@ -770,11 +776,33 @@ type ThreadSettingsCatalogItem =
 
 function ThreadSettingsModelListRow(props: {
   readonly option: ModelOption;
+  readonly routes?: ReadonlyArray<ModelOption>;
+  readonly providerChoice?: boolean;
+  readonly onSelected?: () => void;
   readonly isFirst: boolean;
   readonly isLast: boolean;
 }) {
   const session = useThreadSettingsSession();
-  const onPress = () => session.pressModel(props.option);
+  const gt = useGT();
+  const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
+  const route = getJcodeModelRoute({
+    slug: props.option.selection.model,
+    name: props.option.label,
+  });
+  const hasProviderChoices = (props.routes?.length ?? 0) > 1;
+  const onPress = () => {
+    if (hasProviderChoices && route) {
+      navigation.navigate("ThreadSettingsChoice", {
+        kind: "provider",
+        providerKey: props.option.providerKey,
+        modelName: route.name,
+        title: gt("Choose provider for {model}", { model: route.name }),
+      });
+    } else {
+      session.pressModel(props.option);
+      props.onSelected?.();
+    }
+  };
 
   return (
     <ModelRow
@@ -790,7 +818,26 @@ function ThreadSettingsModelListRow(props: {
           : undefined
       }
       hiddenUpdatePending={session.pendingHiddenKeys.has(props.option.key)}
-      option={props.option}
+      option={
+        route
+          ? {
+              ...props.option,
+              ...(hasProviderChoices
+                ? {
+                    isUnavailable: props.routes!.every((option) => option.isUnavailable),
+                    isHidden: props.routes!.every((option) => option.isHidden),
+                  }
+                : {}),
+              label: props.providerChoice ? route.provider : route.name,
+              subtitle: props.providerChoice
+                ? route.apiMethod
+                : hasProviderChoices
+                  ? gt("Choose provider")
+                  : route.provider,
+            }
+          : props.option
+      }
+      hasProviderChoices={hasProviderChoices}
       selected={session.isDisplayed(props.option)}
     />
   );
@@ -836,14 +883,22 @@ function ThreadSettingsSubProviderListHeader(props: {
   );
 }
 
-const modelItems = (models: ReadonlyArray<ModelOption>) =>
-  models.map((option, index) => ({
-    kind: "model" as const,
-    key: `model:${option.key}`,
-    option,
-    isFirst: index === 0,
-    isLast: index === models.length - 1,
-  }));
+const modelItems = (models: ReadonlyArray<ModelOption>, session: ThreadSettingsSessionValue) =>
+  groupJcodeModelRoutes(models, (option) => ({
+    instanceId: option.selection.instanceId,
+    slug: option.selection.model,
+    name: option.label,
+  })).map((routes, index, groups) => {
+    const option = routes.find(session.isDisplayed) ?? routes[0]!;
+    return {
+      kind: "model" as const,
+      key: `model:${option.key}`,
+      option,
+      routes,
+      isFirst: index === 0,
+      isLast: index === groups.length - 1,
+    };
+  });
 
 /**
  * A provider whose models run on several backends, such as fx, lists each
@@ -857,6 +912,9 @@ function subProviderCatalogItems(
 ): ReadonlyArray<ThreadSettingsCatalogItem> | null {
   if (
     !group.subProviders?.length ||
+    models.some((option) =>
+      getJcodeModelRoute({ slug: option.selection.model, name: option.label }),
+    ) ||
     session.searchQuery.trim().length > 0 ||
     session.favoritesOnly
   ) {
@@ -868,7 +926,7 @@ function subProviderCatalogItems(
     (option) => option.subtitle,
   );
   return [
-    ...modelItems(ungrouped),
+    ...modelItems(ungrouped, session),
     ...groups.flatMap(({ subProvider, models: backendModels }) => {
       const expansionKey = `${group.providerKey}:sub-provider:${subProvider.name}`;
       const collapsed =
@@ -891,7 +949,10 @@ function subProviderCatalogItems(
         // The heading names the backend, so rows drop it.
         ...(collapsed
           ? []
-          : modelItems(backendModels.map((option) => ({ ...option, subtitle: "" })))),
+          : modelItems(
+              backendModels.map((option) => ({ ...option, subtitle: "" })),
+              session,
+            )),
       ];
     }),
   ];
@@ -957,7 +1018,7 @@ function buildThreadSettingsCatalogItems(
         provider,
       },
       ...((collapsed ? null : subProviderCatalogItems(session, group, provider.models)) ??
-        modelItems(provider.models)),
+        modelItems(provider.models, session)),
       ...(!collapsed && updateRequiredNotice
         ? [
             {
@@ -1147,6 +1208,7 @@ function ThreadSettingsMainContent(props: {
           isFirst={item.isFirst}
           isLast={item.isLast}
           option={item.option}
+          routes={item.routes}
         />
       );
     } else if (item.kind === "notice") {
@@ -1226,6 +1288,17 @@ function ThreadSettingsChoiceContent(props: {
   const m = useMessages();
   const session = useThreadSettingsSession();
   const descriptorId = props.submenu.kind === "descriptor" ? props.submenu.id : null;
+  const submenu = props.submenu;
+  const providerRoutes =
+    submenu.kind === "provider"
+      ? (session.providerGroups
+          .find((group) => group.providerKey === submenu.providerKey)
+          ?.models.filter(
+            (option) =>
+              getJcodeModelRoute({ slug: option.selection.model, name: option.label })?.name ===
+              submenu.modelName,
+          ) ?? [])
+      : null;
 
   const activeDescriptor =
     descriptorId !== null
@@ -1288,7 +1361,7 @@ function ThreadSettingsChoiceContent(props: {
           }
         : null;
 
-  if (!submenuContent) {
+  if (!submenuContent && !providerRoutes) {
     return <View className="flex-1 bg-sheet" />;
   }
 
@@ -1298,24 +1371,35 @@ function ThreadSettingsChoiceContent(props: {
       style={READABLE_WIDTH_STYLE}
       contentContainerStyle={{
         paddingBottom: insets.bottom + 12,
-        paddingHorizontal: 16,
+        paddingHorizontal: providerRoutes ? 0 : 16,
         paddingTop: 16,
       }}
       contentInsetAdjustmentBehavior="automatic"
       showsVerticalScrollIndicator={false}
     >
-      <View className="overflow-hidden rounded-2xl bg-grouped-card">
-        {submenuContent.rows.map((row, index) => (
-          <ChoiceRow
-            key={row.id}
-            description={row.description}
-            isLast={index === submenuContent.rows.length - 1}
-            label={row.label}
-            selected={row.selected}
-            disabled={row.disabled}
-            onPress={row.onPress}
-          />
-        ))}
+      <View className={providerRoutes ? undefined : "overflow-hidden rounded-2xl bg-grouped-card"}>
+        {providerRoutes
+          ? providerRoutes.map((option, index) => (
+              <ThreadSettingsModelListRow
+                key={option.key}
+                option={option}
+                providerChoice
+                onSelected={props.onSelected}
+                isFirst={index === 0}
+                isLast={index === providerRoutes.length - 1}
+              />
+            ))
+          : submenuContent?.rows.map((row, index) => (
+              <ChoiceRow
+                key={row.id}
+                description={row.description}
+                isLast={index === submenuContent.rows.length - 1}
+                label={row.label}
+                selected={row.selected}
+                disabled={row.disabled}
+                onPress={row.onPress}
+              />
+            ))}
       </View>
     </ScrollView>
   );
@@ -1436,11 +1520,13 @@ function ThreadSettingsModelsScreen() {
           bottomInset={searchToolbarInset}
           onOpenSubmenu={(submenu) => {
             const title =
-              submenu.kind === "runtime"
-                ? gt("Runtime", { $context: "agent permission mode setting" })
-                : (session.displayedDescriptors.find(
-                    (descriptor) => descriptor.type === "select" && descriptor.id === submenu.id,
-                  )?.label ?? gt("Option"));
+              submenu.kind === "provider"
+                ? gt("Choose provider for {model}", { model: submenu.modelName })
+                : submenu.kind === "runtime"
+                  ? gt("Runtime", { $context: "agent permission mode setting" })
+                  : (session.displayedDescriptors.find(
+                      (descriptor) => descriptor.type === "select" && descriptor.id === submenu.id,
+                    )?.label ?? gt("Option"));
             navigation.navigate("ThreadSettingsChoice", { ...submenu, title });
           }}
         />

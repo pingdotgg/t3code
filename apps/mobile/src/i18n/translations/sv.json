@@ -4803,6 +4803,8 @@
   "cbc2606e931511dd": "{provider}, {count, plural, one {{count} modell} other {{count} modeller}}",
   "15033b76c4b20e76": "Modellen är inte tillgänglig",
   "ed063bb30064ac7e": "Konfigurera leverantören på webben eller skrivbordet, eller välj en annan modell.",
+  "f4c0219fb2e70f5a": "Välj leverantör för {model}",
+  "64ab5a9dfbdb67ec": "Välj leverantör",
   "440285ac659c7832": "Körläge",
   "a83559c38e1cd470": "Katalog",
   "16839051320ad525": "Hantera dolda modeller",

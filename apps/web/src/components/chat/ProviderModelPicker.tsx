@@ -23,6 +23,7 @@ import { cn } from "~/lib/utils";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import { retainedModelWhileProviderLocked } from "./ProviderModelPicker.logic";
+import { getJcodeModelRoute } from "@t3tools/client-runtime/providerSubProviders";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
@@ -172,11 +173,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
       ? undefined
       : selectedInstanceOptions[0]);
-  const triggerTitle = selectedModel
-    ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
-    : props.model === ANTIGRAVITY_DEFAULT_MODEL
-      ? gt("Choose model")
-      : props.model || gt("Choose model");
+  const selectedJcodeRoute = selectedModel ? getJcodeModelRoute(selectedModel) : null;
+  const triggerTitle = selectedJcodeRoute
+    ? `${selectedJcodeRoute.name} · ${selectedJcodeRoute.provider}`
+    : selectedModel
+      ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
+      : props.model === ANTIGRAVITY_DEFAULT_MODEL
+        ? gt("Choose model")
+        : props.model || gt("Choose model");
   const withUnavailable = (model: string, isUnavailable: boolean | undefined) =>
     isUnavailable ? gt("{model} (Unavailable)", { model }) : model;
   const triggerLabel = selectedModel

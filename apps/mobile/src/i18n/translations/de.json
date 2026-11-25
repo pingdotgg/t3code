@@ -4803,6 +4803,8 @@
   "cbc2606e931511dd": "{provider}, {count, plural, one {{count} Modell} other {{count} Modelle}}",
   "15033b76c4b20e76": "Modell nicht verfügbar",
   "ed063bb30064ac7e": "Richte diesen Anbieter im Web oder auf dem Desktop ein oder wähle ein anderes Modell.",
+  "f4c0219fb2e70f5a": "Anbieter für {model} auswählen",
+  "64ab5a9dfbdb67ec": "Anbieter auswählen",
   "440285ac659c7832": "Laufzeit",
   "a83559c38e1cd470": "Katalog",
   "16839051320ad525": "Ausgeblendete Modelle verwalten",
