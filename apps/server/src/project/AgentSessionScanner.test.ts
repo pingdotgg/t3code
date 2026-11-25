@@ -4223,6 +4223,20 @@ describe("parseAgentSessionTranscript", () => {
       expected: null,
     },
     {
+      name: "a shell command with output and no model reply",
+      records: [
+        { type: "user", message: { role: "user", content: "<bash-input>pwd</bash-input>" } },
+        {
+          type: "user",
+          message: {
+            role: "user",
+            content: "<bash-stdout>/home/me/project</bash-stdout><bash-stderr></bash-stderr>",
+          },
+        },
+      ],
+      expected: { title: "!pwd", texts: ["!pwd"] },
+    },
+    {
       name: "a bare command the agent answered",
       records: [
         { type: "user", message: { content: "<command-name>/review</command-name>" } },
