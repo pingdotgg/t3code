@@ -178,6 +178,40 @@ it.effect("keeps glab's own sign-out detail when glab predates --all", () =>
   }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
 
+it.effect("warns when the GitLab account list is truncated and keeps the primary account", () =>
+  Effect.gen(function* () {
+    const item = yield* probeSourceControlProvider({
+      spec: GitLabSourceControlProvider.discovery,
+      cwd: "/repo",
+      process: {
+        run: ({ args }) =>
+          Effect.succeed(
+            args[0] === "--version"
+              ? processOutput("glab 1.124.0\n")
+              : args.includes("--all")
+                ? {
+                    ...processOutput("", {
+                      stderr: "gitlab.example.test\n  ✓ Logged in to gitlab.example.test as cut",
+                    }),
+                    stderrTruncated: true,
+                  }
+                : processOutput("gitlab.com\n  ✓ Logged in to gitlab.com as gitlab-user\n"),
+          ),
+      },
+    });
+    assert.strictEqual(item.auth.status, "authenticated");
+    assert.deepStrictEqual(item.auth.account, Option.some("gitlab-user"));
+    assert.deepStrictEqual(
+      item.auth.accounts?.map((entry) => entry.host),
+      ["gitlab.com"],
+    );
+    assert.deepStrictEqual(
+      item.auth.detail,
+      Option.some("The GitLab account list is incomplete because glab output was truncated."),
+    );
+  }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
+);
+
 it.effect("sends the environment token only to glab's default host while probing", () =>
   Effect.gen(function* () {
     const withheld = { GITLAB_TOKEN: "", GITLAB_ACCESS_TOKEN: "", OAUTH_TOKEN: "" };

@@ -56,7 +56,13 @@ function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRe
   };
 }
 
+const INCOMPLETE_AUTH_DETAIL =
+  "The GitLab account list is incomplete because glab output was truncated.";
+
 function parseGitLabAuth(input: SourceControlAuthProbeInput) {
+  if (input.stdoutTruncated || input.stderrTruncated) {
+    return providerAuth({ status: "unknown", detail: INCOMPLETE_AUTH_DETAIL });
+  }
   const output = combinedAuthOutput(input);
   const accounts = parseGitLabAuthStatusHosts(output).flatMap(({ host, account }) =>
     account === null ? [] : [{ host, account, active: true, authenticated: true }],
@@ -151,13 +157,16 @@ export const discovery = {
   executable: "glab",
   versionArgs: ["--version"],
   authArgs: ["auth", "status", "--all"],
+  authMaxOutputBytes: 64_000,
   completeAuthProbe: Effect.fn("GitLabSourceControlProvider.completeAuthProbe")(
     function* (all, run, environment) {
       if (all.accounts?.length === 1) return all;
 
       // Check the current host for the primary account, or when older glab rejects --all.
       const current = yield* run(["auth", "status"]);
+      const allIncomplete = Option.getOrUndefined(all.detail) === INCOMPLETE_AUTH_DETAIL;
       if (current.status === "authenticated") {
+        if (allIncomplete) return { ...current, detail: all.detail };
         const accounts = current.accounts ?? [];
         const additional = all.accounts?.filter(
           (account) => !accounts.some((entry) => entry.host === account.host),
@@ -174,9 +183,14 @@ export const discovery = {
           "--hostname",
           GitLabCli.defaultHost(environment),
         ]);
-        if (named.status === "authenticated") return named;
+        if (named.status === "authenticated") {
+          const detail = allIncomplete ? all.detail : current.detail;
+          return Option.getOrUndefined(detail) === INCOMPLETE_AUTH_DETAIL
+            ? { ...named, detail }
+            : named;
+        }
       }
-      return current;
+      return allIncomplete ? all : current;
     },
   ),
   probeEnv: (args, environment) => {

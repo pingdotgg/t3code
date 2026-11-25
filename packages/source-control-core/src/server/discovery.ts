@@ -23,6 +23,8 @@ import type * as SourceControlHost from "./SourceControlHost.ts";
 export interface SourceControlAuthProbeInput {
   readonly stdout: string;
   readonly stderr: string;
+  readonly stdoutTruncated?: boolean;
+  readonly stderrTruncated?: boolean;
   readonly exitCode: SourceControlHost.SourceControlProcessOutput["exitCode"];
 }
 
@@ -58,6 +60,7 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
     context: SourceControlProvider.SourceControlProviderContext,
   ) => ReadonlyArray<string>;
   readonly probeTimeoutMs?: number;
+  readonly authMaxOutputBytes?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
   /** `null` when the CLI holds nothing for the remote; `undefined` when its output cannot say. */
   readonly refineUnknownRemote?: (
@@ -299,7 +302,7 @@ export function probeSourceControlProvider(input: {
         ...(spec.probeEnv ? { env: spec.probeEnv(args, environment) } : {}),
         allowNonZeroExit: true,
         timeoutMs: probeTimeoutMs(spec),
-        maxOutputBytes: 8_000,
+        maxOutputBytes: spec.authMaxOutputBytes ?? 8_000,
         appendTruncationMarker: true,
       })
       .pipe(
