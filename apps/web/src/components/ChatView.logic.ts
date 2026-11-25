@@ -1564,15 +1564,12 @@ export function deriveComposerSendTitle(
       terminalContextDisplayLabel(context, resolve),
     ]),
   );
-  const text =
-    terminalLabels.size === 0
-      ? snapshot.messageText
-      : replaceComposerContextReferences(snapshot.messageText, (reference) => {
-          const label = terminalLabels.get(reference.contextId);
-          return reference.kind === "terminal" && label !== undefined
-            ? formatInlineContextReference({ ...reference, label })
-            : reference.source;
-        });
+  const text = replaceComposerContextReferences(snapshot.messageText, (reference) => {
+    const label = terminalLabels.get(reference.contextId);
+    return reference.kind === "terminal" && label !== undefined
+      ? formatInlineContextReference({ ...reference, label })
+      : reference.source;
+  });
   const reviewComment = snapshot.reviewComments[0];
   const previewAnnotation = snapshot.previewAnnotations[0];
   const fallbackLabels = [
