@@ -29,7 +29,6 @@ import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
-  TERMINAL_BRACKETED_PASTE_END,
   type TerminalWriteInput,
   type ContextMenuItem,
   type ProviderInstanceId,
@@ -1029,7 +1028,7 @@ function TerminalSessionViewport({
             if (currentPid === null) return false;
             if (pid !== null && currentPid !== pid) return true;
             if (writableSessionGeneration(current, canWriteInput()) === null) return false;
-            const result = await writeInputChunk(TERMINAL_BRACKETED_PASTE_END, undefined, "abort");
+            const result = await writeInputChunk("\x1b[201~", undefined, "abort");
             if (result._tag === "Success") return true;
             if (!isAtomCommandInterrupted(result)) {
               const error = squashAtomCommandFailure(result);

@@ -1,9 +1,4 @@
-import {
-  chunkTerminalWrite,
-  TERMINAL_BRACKETED_PASTE_END,
-  TERMINAL_BRACKETED_PASTE_START,
-  type TerminalWriteInput,
-} from "@t3tools/contracts";
+import { chunkTerminalWrite, type TerminalWriteInput } from "@t3tools/contracts";
 
 /** Sends one chunk of terminal input; resolves false when it failed and the rest should drop. */
 type SendTerminalChunk = (
@@ -39,9 +34,7 @@ export function createTerminalInputWriter(onIdle = () => {}) {
       return;
     }
     const bracketed =
-      chunks.length > 1 &&
-      data.startsWith(TERMINAL_BRACKETED_PASTE_START) &&
-      data.endsWith(TERMINAL_BRACKETED_PASTE_END);
+      chunks.length > 1 && data.startsWith("\x1b[200~") && data.endsWith("\x1b[201~");
     let opened = false;
     try {
       for (const [index, chunk] of chunks.entries()) {
@@ -66,8 +59,7 @@ export function createTerminalInputWriter(onIdle = () => {}) {
   return (
     data: string,
     send: SendTerminalChunk,
-    recover: () => Promise<boolean> = async () =>
-      (await send(TERMINAL_BRACKETED_PASTE_END, "abort")) === true,
+    recover: () => Promise<boolean> = async () => (await send("\x1b[201~", "abort")) === true,
     interrupted = () => {},
   ): Promise<void> => {
     const idle = () => {
