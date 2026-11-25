@@ -729,6 +729,16 @@ export const layerWithOptions = (
           ),
         );
 
+      const releaseLiveOutput = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "command_execution" &&
+        !isOrchestrationV2WorkActive(event.turnItem.status)
+          ? commandOutput.finish({
+              threadId: event.turnItem.threadId,
+              itemId: event.turnItem.id,
+            })
+          : Effect.void;
+
       const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
         entry: LiveSessionEntry,
         detail: string,
@@ -1544,6 +1554,12 @@ export const layerWithOptions = (
                   });
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
+                  }
+                  for (const event of yield* (
+                    entry.runtime.retireBackgroundWork ?? Effect.succeed([])
+                  )) {
+                    yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
+                    yield* releaseLiveOutput(event);
                   }
                   // Queued events can persist tool calls after the release-time scan.
                   const afterDrain = Effect.forEach(
@@ -3061,15 +3077,6 @@ export const layerWithOptions = (
             const tracked = retryStalls.track(nativeEvent);
             const event = tracked.event;
             const armRetryStall = retryStalls.update(tracked);
-            const releaseLiveOutput =
-              event.type === "turn_item.updated" &&
-              event.turnItem.type === "command_execution" &&
-              !isOrchestrationV2WorkActive(event.turnItem.status)
-                ? commandOutput.finish({
-                    threadId: event.turnItem.threadId,
-                    itemId: event.turnItem.id,
-                  })
-                : Effect.void;
             // Metadata can change while idle without extending the runtime's lifetime.
             const metadataOnly =
               event.type === "provider_session.updated" &&
@@ -3151,11 +3158,11 @@ export const layerWithOptions = (
                           ),
                         );
                     }).pipe(entry.requestEventPermit.withPermits(1));
-                    yield* releaseLiveOutput;
+                    yield* releaseLiveOutput(event);
                     return;
                   }
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
-                  yield* releaseLiveOutput;
+                  yield* releaseLiveOutput(event);
                 }),
               ),
             );

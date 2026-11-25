@@ -6,6 +6,7 @@ import {
 import {
   normalizeDevinSessionUpdate,
   normalizeDevinToolCall,
+  extractDevinBackgroundShellId,
   extractDevinSubagentUpdate,
   devinAnswerablePermissionOptions,
 } from "./devinAcp.ts";
@@ -325,6 +326,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
+          extractBackgroundTaskId: extractDevinBackgroundShellId,
+          // Later meta-only updates drop the background flag; keep the shell id per tool call.
+          isBackgroundCommandTool: (tool) => extractDevinBackgroundShellId(tool) !== undefined,
           answerablePermissionOptions: devinAnswerablePermissionOptions,
         }
       : {}),
