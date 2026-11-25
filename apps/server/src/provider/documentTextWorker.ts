@@ -59,6 +59,7 @@ interface XmlNode {
   name: string;
   attrs: Record<string, string>;
   children: Array<XmlNode | string>;
+  xhtmlTable?: boolean;
   spaceCount?: number;
   hasText?: boolean;
   hasTextChoice?: boolean;
@@ -124,13 +125,18 @@ function xml(source: string, extension: string): XmlNode {
     const node: XmlNode = {
       name: tag.name.split(":").at(-1)!,
       attrs: Object.fromEntries(
-        Object.entries(tag.attributes).flatMap(([key, value]) => [
-          [key, String(value)],
-          [key.split(":").at(-1)!, String(value)],
-        ]),
+        Object.entries(tag.attributes).flatMap(([key, value]) => {
+          const local = key.split(":").at(-1)!;
+          const attribute = [key, String(value)];
+          // XHTML span attributes are unqualified.
+          return extension === ".epub" && (local === "colspan" || local === "rowspan")
+            ? [attribute]
+            : [attribute, [local, String(value)]];
+        }),
       ),
       children: [],
     };
+    if (extension === ".epub" && node.name === "table") node.xhtmlTable = true;
     if (odf && node.name === "s") node.spaceCount = repeatCount(node.attrs.c);
     stack.at(-1)!.children.push(node);
     stack.push(node);
@@ -388,6 +394,10 @@ function* table(node: XmlNode): Generator<TextPart, void> {
     yield* paragraphs(caption);
     yield LINE_START;
   }
+  if (node.xhtmlTable) {
+    yield* xhtmlTableRows(node);
+    return;
+  }
   let rowCount = 0;
   for (const row of all(node, ["tr", "table-row"], ["caption"])) {
     // Word nests a cell inside w:sdt when a content control wraps the whole cell.
@@ -402,11 +412,9 @@ function* table(node: XmlNode): Generator<TextPart, void> {
       let gap = 0;
       for (const cell of cells) {
         const count = repeatCount(cell.attrs["number-columns-repeated"]);
-        // Word and XHTML omit the cells covered by a horizontal span.
+        // Word emits no cell for columns covered by w:gridSpan; pad before the next cell.
         const tcPr = cell.name === "tc" ? children(cell).find((c) => c.name === "tcPr") : undefined;
-        const val =
-          cell.attrs.colspan ??
-          (tcPr && children(tcPr).find((c) => c.name === "gridSpan")?.attrs.val);
+        const val = tcPr && children(tcPr).find((c) => c.name === "gridSpan")?.attrs.val;
         const span = val ? Math.max(1, Number.parseInt(val, 10) || 1) : 1;
         for (let i = 0; i < count; i++) {
           column += span;
@@ -422,6 +430,60 @@ function* table(node: XmlNode): Generator<TextPart, void> {
         }
       }
       yield "\n";
+    }
+  }
+}
+
+function* xhtmlTableRows(table: XmlNode): Generator<TextPart, void> {
+  const groups: XmlNode[][] = [];
+  let implicit: XmlNode[] | undefined;
+  for (const child of children(table)) {
+    if (child.name === "tr") {
+      if (!implicit) {
+        implicit = [];
+        groups.push(implicit);
+      }
+      implicit.push(child);
+    } else if (["thead", "tbody", "tfoot"].includes(child.name)) {
+      implicit = undefined;
+      groups.push(children(child).filter((row) => row.name === "tr"));
+    }
+  }
+  const columnLimit = 512;
+  let rowCount = 0;
+  for (const rows of groups) {
+    const occupiedUntil: number[] = [];
+    for (const [rowIndex, row] of rows.entries()) {
+      const cells = children(row).filter((cell) => cell.name === "td" || cell.name === "th");
+      const lastTextCell = cells.findLastIndex(hasCellText);
+      if (lastTextCell >= 0 && ++rowCount > 10_000) throw new Truncation("Row limit");
+      let column = 0;
+      let lastEmittedColumn = 0;
+      for (const [index, cell] of cells.entries()) {
+        while ((occupiedUntil[column] ?? 0) > rowIndex) column++;
+        if (column >= columnLimit) {
+          if (index <= lastTextCell) throw new Truncation("Column limit");
+          break;
+        }
+        const width = Math.max(1, Number.parseInt(cell.attrs.colspan ?? "", 10) || 1);
+        const end = column + width;
+        const height = Number.parseInt(cell.attrs.rowspan ?? "", 10);
+        const until = height === 0 ? rows.length : rowIndex + height;
+        if (until > rowIndex + 1) {
+          for (let i = column; i < Math.min(end, columnLimit); i++)
+            occupiedUntil[i] = Math.max(occupiedUntil[i] ?? 0, until);
+        }
+        if (index <= lastTextCell) {
+          yield "\t".repeat(column - lastEmittedColumn);
+          yield CELL_START;
+          yield* paragraphs(cell);
+          yield { fallback: odfValue(cell) };
+          yield CELL_END;
+          lastEmittedColumn = column;
+        }
+        column = end;
+      }
+      if (lastTextCell >= 0) yield "\n";
     }
   }
 }
