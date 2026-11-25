@@ -369,7 +369,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       const checkedVersion = version && version !== "unknown" ? version : undefined;
       const nextVersion = checkedVersion ?? draft.version;
       const versionFromCheck =
-        checkedVersion !== undefined ? true : missingInstallation ? false : state.versionFromCheck;
+        checkedVersion !== undefined
+          ? true
+          : initialized !== undefined || missingInstallation
+            ? false
+            : state.versionFromCheck;
       const keepVersionAdvisory =
         previousVersionAdvisory !== undefined &&
         nextInstalled &&
@@ -509,14 +513,13 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           compareSemverVersions(handshakeVersion, draft.version) >= 0)
           ? handshakeVersion
           : draft.version;
-      const nextVersionFromCheck = state.versionFromCheck && nextVersion === draft.version;
       const keepVersionAdvisory =
         previousVersionAdvisory !== undefined && nextVersion === draft.version;
       const workspaces = draft.workspaceSnapshots ?? [];
       const workspace = cwd ? workspaces.find((entry) => entry.cwd === cwd) : undefined;
       const next = {
         authRevision: state.authRevision + 1,
-        versionFromCheck: nextVersionFromCheck,
+        versionFromCheck: state.versionFromCheck,
         draft: {
           ...draft,
           installed: true,

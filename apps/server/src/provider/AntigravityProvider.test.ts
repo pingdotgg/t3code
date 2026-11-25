@@ -646,6 +646,23 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         },
       });
       expect((yield* harness.provider.snapshot.getSnapshot).version).toBe("1.5.15");
+      // Advancing a check-established version via a newer handshake keeps downgrade protection.
+      yield* harness.provider.onSessionStarted({
+        ...started,
+        initializeResult: {
+          ...initializeResult,
+          agentInfo: { ...initializeResult.agentInfo, version: "1.5.16" },
+        },
+      });
+      expect((yield* harness.provider.snapshot.getSnapshot).version).toBe("1.5.16");
+      yield* harness.provider.onSessionStarted({
+        ...started,
+        initializeResult: {
+          ...initializeResult,
+          agentInfo: { ...initializeResult.agentInfo, version: "1.5.14" },
+        },
+      });
+      expect((yield* harness.provider.snapshot.getSnapshot).version).toBe("1.5.16");
     }),
   );
 
