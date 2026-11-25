@@ -308,6 +308,8 @@ const projectFaviconAsset = Effect.fn("AssetAccess.projectFaviconAsset")(functio
 const resolveRealPathOrSelf = Effect.fn("AssetAccess.resolveRealPathOrSelf")(function* (
   filePath: string,
 ) {
+  // Resolving a network path signs in to its host before containment is checked.
+  if (isNetworkPath(filePath)) return filePath;
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.realPath(filePath).pipe(Effect.orElseSucceed(() => filePath));
 });

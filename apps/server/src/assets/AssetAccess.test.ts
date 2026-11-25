@@ -707,6 +707,30 @@ describe("AssetAccess", () => {
         expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
       }
       expect(resolved).toEqual([path.resolve(`${share}/a.png`)]);
+
+      const localRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-asset-network-page-" });
+      const pageError = yield* issueAssetUrl({
+        resource: {
+          _tag: "workspace-file",
+          threadId: ThreadId.make("thread-1"),
+          path: "//attacker.test/s/a.html",
+        },
+        workspaceRoot: localRoot,
+      }).pipe(
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            realPath: (requestedPath) => {
+              resolved.push(requestedPath);
+              return fs.realPath(requestedPath);
+            },
+          }),
+        ),
+        Effect.flip,
+      );
+      expect(pageError._tag).toBe("AssetWorkspacePathValidationError");
+      expect(resolved.filter((entry) => entry.includes("attacker.test"))).toEqual([]);
     }).pipe(Effect.provide(layerTest)),
   );
 
