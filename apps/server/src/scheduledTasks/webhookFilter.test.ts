@@ -89,6 +89,12 @@ describe("findFailedWebhookFilter", () => {
         issueComment,
       ),
     );
+    assert.isNull(
+      findFailedWebhookFilter(
+        [{ path: "body.issue.assignees[].login", op: "notEquals", value: "anyone" }],
+        { ...issueComment, bodyText: JSON.stringify({ issue: { assignees: null } }) },
+      ),
+    );
     assert.deepEqual(
       findFailedWebhookFilter([{ path: "body.issue.number[].x", op: "exists" }], issueComment),
       { index: 0, path: "body.issue.number[].x" },

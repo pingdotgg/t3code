@@ -1,12 +1,13 @@
 import remarkParse from "remark-parse";
 import { unified } from "unified";
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
   detectComposerTrigger,
   parseSideChatCommand,
   serializeComposerFileLink,
 } from "./composerTrigger.ts";
+import { resolveMarkdownFileLinkTarget } from "./markdownLinks.ts";
 
 interface MarkdownNode {
   readonly type: string;
@@ -143,6 +144,16 @@ describe("serializeComposerFileLink", () => {
     expect(serializeComposerFileLink("docs/My File (draft).md")).toBe(
       "[My File (draft).md](docs/My%20File%20%28draft%29.md)",
     );
+  });
+
+  it("preserves literal HTML entities in the file label and destination", () => {
+    const path = "docs/R&copy;.md";
+    const paragraph = unified().use(remarkParse).parse(serializeComposerFileLink(path)).children[0];
+    assert(paragraph?.type === "paragraph");
+    const link = paragraph.children[0];
+    assert(link?.type === "link");
+    expect(link.children).toMatchObject([{ type: "text", value: "R&copy;.md" }]);
+    expect(resolveMarkdownFileLinkTarget(link.url, "/workspace")).toBe(`/workspace/${path}`);
   });
 
   it("supports windows paths", () => {

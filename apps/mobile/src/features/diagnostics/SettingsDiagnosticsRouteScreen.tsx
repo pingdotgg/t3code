@@ -17,6 +17,10 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  ConnectionTracesSwitch,
+  connectionTracesAvailable,
+} from "../observability/ConnectionTracesSwitch";
 import { crashReportingAvailable, setCrashReportsEnabled } from "../observability/observe";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
@@ -104,6 +108,7 @@ export function SettingsDiagnosticsRouteScreen() {
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
         {crashReportingAvailable ? <CrashReportsSetting /> : null}
+        {connectionTracesAvailable ? <ConnectionTracesSetting /> : null}
 
         <SettingsSection title={gt("Startup crashes")}>
           {state.status === "loading" ? (
@@ -200,6 +205,23 @@ function CrashReportsSetting() {
           app version, and the device model and OS version to the T3 Code team. Each launch also
           sends startup timings. Reports carry a random ID for this install.
         </T>
+      </Text>
+    </View>
+  );
+}
+
+function ConnectionTracesSetting() {
+  const gt = useGT();
+  return (
+    <View className="gap-3">
+      <SettingsSection title={gt("Connection diagnostics")}>
+        <ConnectionTracesSwitch />
+      </SettingsSection>
+      <Text className="px-2 text-sm leading-normal text-foreground-muted">
+        {gt(
+          "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code.",
+          { product: "T3 Connect" },
+        )}
       </Text>
     </View>
   );

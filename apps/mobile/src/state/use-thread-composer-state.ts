@@ -7,7 +7,6 @@ import { readEnvironmentScope } from "./session";
 import { useAtomValue } from "@effect/atom-react";
 import { compactBeforeSendTokens } from "@t3tools/client-runtime/state/context-window";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
-import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { threadSteersDuringCompaction } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import {
@@ -154,7 +153,6 @@ function setKeepFullHistory(threadKey: string, keep: boolean) {
   appAtomRegistry.set(fullHistoryThreadKeysAtom, keep ? { ...rest, [threadKey]: true } : rest);
 }
 
-const EMPTY_CHECKPOINT_SUMMARIES_ATOM = Atom.make<ReadonlyArray<ThreadCheckpointSummary>>([]);
 const EMPTY_THREAD_SEQUENCE_ATOM = Atom.make(0);
 
 export function appendReviewCommentToDraft(input: {
@@ -294,11 +292,6 @@ export function useThreadComposerState(input: {
       messages: selectedThreadMessages,
     });
   }, [acknowledgedMessages, selectedThreadKey, selectedThreadSequence, selectedThreadMessages]);
-  const checkpointSummaries = useAtomValue(
-    selectedThreadDetailRef === null
-      ? EMPTY_CHECKPOINT_SUMMARIES_ATOM
-      : environmentThreadDetails.checkpointSummariesAtom(selectedThreadDetailRef),
-  );
   // A thread whose creation has not delivered its turn yet: the prompt only
   // exists in the outbox, so it is appended to whatever the server has. The
   // detail is usually present but empty during a worktree checkout, so this
@@ -315,7 +308,6 @@ export function useThreadComposerState(input: {
       anchoredMessages: pendingCreation,
       attempts: selectedThreadAttempts,
       nodes: selectedThreadNodes,
-      checkpointSummaries,
       cache: feedCache,
       resolve,
       locale,
@@ -349,7 +341,8 @@ export function useThreadComposerState(input: {
       : queuedRunEdit === null
         ? selectedThreadKey
         : queuedEditDraftKey(selectedThreadKey, queuedRunEdit.runId);
-  const selectedDraft = useComposerDraftSettings(selectedThreadKey);
+  const selectedDraft = useComposerDraftSettings(composerDraftKey);
+  const threadDraftSettings = useComposerDraftSettings(selectedThreadKey);
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
   const modelSelection = selectedDraft.modelSelection ?? selectedThread?.modelSelection ?? null;
@@ -361,7 +354,7 @@ export function useThreadComposerState(input: {
       : modelSelection,
     serverConfig?.providers ?? [],
   );
-  const runtimeMode = selectedDraft.runtimeMode ?? selectedThread?.runtimeMode ?? null;
+  const runtimeMode = threadDraftSettings.runtimeMode ?? selectedThread?.runtimeMode ?? null;
   // Plan mode is not offered to users; every send runs in build mode.
   const interactionMode = selectedThread ? DEFAULT_PROVIDER_INTERACTION_MODE : null;
   const canSwitchThreadProvider = threadAllowsProviderSwitch({
@@ -372,7 +365,7 @@ export function useThreadComposerState(input: {
     ? deriveThreadRuntime(selectedThreadProjection.projection)
     : (selectedThreadShell?.runtime ?? null);
   const selectedThreadActivityRun = selectedThreadProjection
-    ? deriveThreadActivityRun(selectedThreadProjection.projection)
+    ? deriveThreadActivityRun(selectedThreadProjection.projection, serverConfig?.providers)
     : (selectedThreadShell?.latestRun ?? null);
   const selectedThreadAnnouncedRun = announcedRun(
     selectedThreadActivityRun,
@@ -590,6 +583,9 @@ export function useThreadComposerState(input: {
         threadId: thread.id,
         runId: edit.runId,
         text: restoreAttachmentOnlyBootstrapPrompt(text, payload.attachments.length > 0),
+        ...(!edit.followsThreadSelection || draft.modelSelection
+          ? { modelSelection: draft.modelSelection ?? thread.modelSelection }
+          : {}),
         edit: {
           messageId: edit.messageId,
           attachments: payload.attachments,
@@ -870,7 +866,6 @@ export function useThreadComposerState(input: {
     }
 
     // Resolve at send time because outbox delivery may be delayed.
-    // Steering uses "auto" so an ended turn queues a run instead of restoring the draft.
     // An approval redirect must steer the waiting turn instead of queueing behind it.
     const activeTurnDefault = beforeDispatch !== undefined ? "steer" : followUpBehavior;
     const followUpAction = resolveComposerDispatchMode({
@@ -885,9 +880,7 @@ export function useThreadComposerState(input: {
       ? "queue"
       : followUpAction === "auto"
         ? null
-        : followUpAction === "queue"
-          ? "queue"
-          : "auto";
+        : followUpAction;
 
     // A redirect belongs to the approval it answers; the armed session waits for the next message.
     const freshContext = beforeDispatch === undefined && isFreshSessionPending(threadKey);

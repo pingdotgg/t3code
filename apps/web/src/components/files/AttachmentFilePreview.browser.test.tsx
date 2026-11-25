@@ -238,37 +238,52 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("can leave an archive folder with a repeated separator", async () => {
+  it("names archive folders whose paths have leading or repeated slashes", async () => {
     const bytes = new Uint8Array(2048);
     const write = (offset: number, value: string) =>
       bytes.set(new TextEncoder().encode(value), offset);
-    write(0, "a//hello.txt");
-    write(124, "00000000014\0");
-    bytes.fill(32, 148, 156);
-    write(156, "0");
-    write(
-      148,
-      bytes
-        .subarray(0, 512)
-        .reduce((sum, byte) => sum + byte, 0)
-        .toString(8)
-        .padStart(6, "0") + "\0 ",
-    );
-    write(512, "nested hello");
+    const member = (offset: number, name: string, content: string) => {
+      write(offset, name);
+      write(offset + 124, content.length.toString(8).padStart(11, "0") + "\0");
+      bytes.fill(32, offset + 148, offset + 156);
+      write(offset + 156, "0");
+      write(
+        offset + 148,
+        bytes
+          .subarray(offset, offset + 512)
+          .reduce((sum, byte) => sum + byte, 0)
+          .toString(8)
+          .padStart(6, "0") + "\0 ",
+      );
+      write(offset + 512, content);
+    };
+    member(0, "/a//hello.txt", "nested hello");
+    member(1024, "a/hello.txt", "plain hello");
     const src = URL.createObjectURL(new Blob([bytes]));
     try {
       await using screen = await render(<BinaryViewer src={src} name="paths.tar" kind="archive" />);
-      const child = () => screen.container.querySelector<HTMLButtonElement>("tbody button");
-      await vi.waitFor(() => expect(child()?.textContent).toBe("a"), 10_000);
-      await act(() => child()!.click());
-      await act(() => child()!.click());
-      await vi.waitFor(() => expect(child()?.textContent).toBe("hello.txt"));
+      const buttons = () => [
+        ...screen.container.querySelectorAll<HTMLButtonElement>("tbody button"),
+      ];
+      const rows = () => buttons().map((button) => button.textContent);
+      const back = () =>
+        screen.container.querySelector<HTMLButtonElement>('[aria-label="Back to archive"]')!;
+      const preview = () => screen.container.querySelector("pre")?.textContent;
+      await vi.waitFor(() => expect(rows()).toEqual(["a"]), 10_000);
+      await act(() => buttons()[0]!.click());
+      await vi.waitFor(() => expect(rows()).toEqual(["hello.txt", "hello.txt"]));
+      await act(() => buttons()[0]!.click());
+      await vi.waitFor(() => expect(preview()).toContain("nested hello"), 10_000);
+      await act(() => back().click());
+      await act(() => buttons()[1]!.click());
+      await vi.waitFor(() => expect(preview()).toContain("plain hello"), 10_000);
+      await act(() => back().click());
+      await vi.waitFor(() => expect(rows()).toEqual(["hello.txt", "hello.txt"]));
       const parent = () =>
         screen.container.querySelector<HTMLButtonElement>('[aria-label="Parent folder"]')!;
       await act(() => parent().click());
-      await act(() => parent().click());
       expect(parent().disabled).toBe(true);
-      expect(child()?.textContent).toBe("a");
+      expect(rows()).toEqual(["a"]);
     } finally {
       URL.revokeObjectURL(src);
     }
@@ -499,55 +514,83 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("keeps WhiteIsZero TIFF brightness and rejects oversized metadata before decoding", async () => {
-    const tags = [
-      [256, 2],
-      [257, 1],
-      [258, 8],
-      [259, 1],
-      [262, 0],
-      [273, 134],
-      [277, 1],
-      [278, 1],
-      [279, 2],
-      [284, 1],
-    ];
-    const bytes = new ArrayBuffer(136);
-    const view = new DataView(bytes);
-    view.setUint16(0, 0x4949);
-    view.setUint16(2, 42, true);
-    view.setUint32(4, 8, true);
-    view.setUint16(8, tags.length, true);
-    tags.forEach(([tag, value], index) => {
-      const offset = 10 + index * 12;
-      view.setUint16(offset, tag!, true);
-      view.setUint16(offset + 2, 4, true);
-      view.setUint32(offset + 4, 1, true);
-      view.setUint32(offset + 8, value!, true);
-    });
-    view.setUint8(135, 255);
-    const src = URL.createObjectURL(new Blob([bytes]));
-    try {
-      const blob = await decodeImagePreview(src, false, new AbortController().signal);
-      const bitmap = await createImageBitmap(blob);
-      const canvas = new OffscreenCanvas(2, 1);
-      const context = canvas.getContext("2d")!;
-      context.drawImage(bitmap, 0, 0);
-      expect([...context.getImageData(0, 0, 2, 1).data]).toEqual([
-        255, 255, 255, 255, 0, 0, 0, 255,
-      ]);
-      bitmap.close();
-    } finally {
-      URL.revokeObjectURL(src);
+  it("keeps WhiteIsZero TIFF brightness and alpha with SubIFDs and type-13 ExifIFD pointers and rejects invalid metadata before decoding", async () => {
+    let bytes = new ArrayBuffer(0);
+    let exifEntry = 0;
+    for (const { pixels, expected } of [
+      { pixels: [0, 255], expected: [255, 255, 255, 255, 0, 0, 0, 255] },
+      { pixels: [0, 255, 255, 0], expected: [255, 255, 255, 255, 0, 0, 0, 0] },
+    ]) {
+      const samples = pixels.length / 2;
+      const start = samples === 2 ? 170 : 158;
+      const exif = start + pixels.length;
+      const tags = [
+        [256, 2],
+        [257, 1],
+        [258, 8],
+        [259, 1],
+        [262, 0],
+        [273, start],
+        [277, samples],
+        [278, 1],
+        [279, pixels.length],
+        [284, 1],
+        [330, 0, 13],
+        ...(samples === 2 ? [[338, 2]] : []),
+        [34665, exif, 13],
+      ];
+      exifEntry = 10 + (tags.length - 1) * 12;
+      bytes = new ArrayBuffer(exif + 8);
+      const view = new DataView(bytes);
+      view.setUint16(0, 0x4949);
+      view.setUint16(2, 42, true);
+      view.setUint32(4, 8, true);
+      view.setUint16(8, tags.length, true);
+      tags.forEach(([tag, value, type = 4], index) => {
+        const offset = 10 + index * 12;
+        view.setUint16(offset, tag!, true);
+        view.setUint16(offset + 2, type, true);
+        view.setUint32(offset + 4, 1, true);
+        view.setUint32(offset + 8, value!, true);
+      });
+      new Uint8Array(bytes, start).set(pixels);
+      const src = URL.createObjectURL(new Blob([bytes]));
+      try {
+        const blob = await decodeImagePreview(src, false, new AbortController().signal);
+        const bitmap = await createImageBitmap(blob);
+        const canvas = new OffscreenCanvas(2, 1);
+        const context = canvas.getContext("2d")!;
+        context.drawImage(bitmap, 0, 0);
+        expect([...context.getImageData(0, 0, 2, 1).data]).toEqual(expected);
+        bitmap.close();
+      } finally {
+        URL.revokeObjectURL(src);
+      }
     }
-    view.setUint32(14, 1_000_000, true);
-    const invalid = URL.createObjectURL(new Blob([bytes]));
-    try {
-      await expect(
-        decodeImagePreview(invalid, false, new AbortController().signal),
-      ).rejects.toThrow("metadata");
-    } finally {
-      URL.revokeObjectURL(invalid);
+    for (const [mutate, message] of [
+      [
+        (view: DataView) => view.setUint16(exifEntry + 2, 3, true),
+        "Invalid TIFF metadata pointer.",
+      ],
+      [
+        (view: DataView) => view.setUint32(exifEntry + 4, 2, true),
+        "Invalid TIFF metadata pointer.",
+      ],
+      [
+        (view: DataView) => view.setUint32(14, 1_000_000, true),
+        "This TIFF has too much or truncated metadata.",
+      ],
+    ] as const) {
+      const copy = bytes.slice(0);
+      mutate(new DataView(copy));
+      const invalid = URL.createObjectURL(new Blob([copy]));
+      try {
+        await expect(
+          decodeImagePreview(invalid, false, new AbortController().signal),
+        ).rejects.toThrow(message);
+      } finally {
+        URL.revokeObjectURL(invalid);
+      }
     }
   });
 });
@@ -582,8 +625,14 @@ describe("large text preview recovery", () => {
           environmentId={EnvironmentId.make("test")}
           threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
           absolutePath="/repo/large.txt"
+          draftCwd={null}
           name="large.txt"
           delimiter={null}
+          markdownCwd={null}
+          copyContents={{ current: null }}
+          preview=""
+          // Past the highlighted-source cap, so the worker-backed viewer under test renders.
+          sizeBytes={128 * 1024 * 1024}
           workspaceMutationId={mutation}
           revealLine={null}
           revealRequestId={0}
@@ -1614,7 +1663,7 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
     expect(image?.alt).toBe("Mermaid diagram");
     expect(image?.naturalWidth).toBeGreaterThan(0);
   });
-  await page.getByRole("button", { name: "Back, close image preview" }).click();
+  await page.getByRole("button", { name: "Close image preview" }).click();
   await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
   await screen.getByRole("button", { name: "Show Mermaid source" }).click();
   await vi.waitFor(() => expect(screen.container.querySelector("pre")?.textContent).toBe(text));
@@ -1951,7 +2000,9 @@ it("mounts a bounded set of saved notebook outputs as the reader scrolls", async
   );
   expect(screen.container.querySelectorAll("iframe").length).toBeLessThanOrEqual(16);
   const first = screen.container.querySelector("iframe")!;
+  const firstOutput = first.parentElement!;
   expect(first.srcdoc).toContain("saved 0-0");
+  await vi.waitFor(() => expect(first.clientHeight).toBeGreaterThan(0));
   const viewport = screen.container.querySelector<HTMLElement>(".scrollbar-gutter-both")!;
   await act(() => {
     viewport.scrollTop = viewport.scrollHeight;
@@ -1965,12 +2016,27 @@ it("mounts a bounded set of saved notebook outputs as the reader scrolls", async
     expect(first.isConnected).toBe(false);
   });
   expect(screen.container.querySelectorAll("iframe").length).toBeLessThanOrEqual(16);
+  const reservedHeight = firstOutput.getBoundingClientRect().height;
+  using cleanup = new DisposableStack();
+  const pending = new AbortController();
+  cleanup.defer(() => pending.abort());
+  // Hold the remounted frame in its loading state until it scrolls away again.
+  firstOutput.addEventListener("load", (event) => event.stopPropagation(), {
+    capture: true,
+    signal: pending.signal,
+  });
   await act(() => {
     viewport.scrollTop = 0;
   });
-  await vi.waitFor(() =>
-    expect(screen.container.querySelector("iframe")?.srcdoc).toContain("saved 0-0"),
-  );
+  await vi.waitFor(() => {
+    expect(firstOutput.querySelector("iframe")?.srcdoc).toContain("saved 0-0");
+    expect(firstOutput.getBoundingClientRect().height).toBe(reservedHeight);
+  });
+  await act(() => {
+    viewport.scrollTop = viewport.scrollHeight;
+  });
+  await vi.waitFor(() => expect(firstOutput.querySelector("iframe")).toBeNull());
+  expect(firstOutput.getBoundingClientRect().height).toBe(reservedHeight);
 });
 
 it.each([
