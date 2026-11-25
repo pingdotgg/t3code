@@ -310,24 +310,14 @@ it.live("answers content searches with git grep while a slow content index build
       cwd: repoRoot,
     });
     // User git config must not change git grep's records or make it refuse --untracked.
-    yield* vcsProcess.run({
-      operation: "test.gitConfig",
-      command: "git",
-      args: ["config", "grep.column", "true"],
-      cwd: repoRoot,
-    });
-    yield* vcsProcess.run({
-      operation: "test.gitConfig",
-      command: "git",
-      args: ["config", "grep.fullName", "true"],
-      cwd: repoRoot,
-    });
-    yield* vcsProcess.run({
-      operation: "test.gitConfig",
-      command: "git",
-      args: ["config", "submodule.recurse", "true"],
-      cwd: repoRoot,
-    });
+    for (const setting of ["grep.column", "grep.fullName", "submodule.recurse"]) {
+      yield* vcsProcess.run({
+        operation: "test.gitConfig",
+        command: "git",
+        args: ["config", setting, "true"],
+        cwd: repoRoot,
+      });
+    }
     const cwd = path.join(repoRoot, "project");
     yield* fileSystem.makeDirectory(cwd);
     yield* fileSystem.writeFileString(path.join(cwd, ".gitignore"), "ignored.txt\n");
