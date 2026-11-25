@@ -3,6 +3,7 @@ import {
   ProviderDriverKind,
   type ModelCapabilities,
   type ProviderOptionDescriptor,
+  type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
@@ -14,7 +15,11 @@ import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
+import type * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { createModelCapabilities, DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 import {
@@ -642,6 +647,164 @@ export const readSettledOpenCode2Catalog = <E>(
     Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
   );
 
+// The registry keeps this many per-directory snapshots; older directories need no watch.
+const WATCHED_DIRECTORIES = 16;
+
+interface WatchedCatalog {
+  readonly read: Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError>;
+  previous: string | undefined;
+}
+
+/**
+ * OpenCode serves a startup snapshot until discovery ends and only `model.updated` says when, so
+ * no wait proves a catalog complete. The watch re-reads after each followed read and each change
+ * while the server's event stream lasts, borrowing nothing so a managed server still idles out.
+ */
+export const makeOpenCode2CatalogWatch = Effect.fn(
+  "OpencodeProviderStatus.makeOpenCode2CatalogWatch",
+)(function* (environment?: NodeJS.ProcessEnv) {
+  const scope = yield* Effect.scope;
+  const latest = yield* SubscriptionRef.make<ReadonlyArray<OpenCode2Model> | undefined>(undefined);
+  const rescans = yield* Queue.unbounded<string, Cause.Done>();
+  yield* Effect.addFinalizer(() => Queue.end(rescans));
+  const reads = yield* Queue.sliding<void>(1);
+  let following:
+    | {
+        readonly server: string;
+        machine: WatchedCatalog | undefined;
+        readonly directories: Map<string, WatchedCatalog>;
+      }
+    | undefined;
+  const reread = (
+    watched: WatchedCatalog,
+    changed: (catalog: ReadonlyArray<OpenCode2Model>) => Effect.Effect<unknown>,
+    read: Effect.Effect<
+      ReadonlyArray<OpenCode2Model>,
+      OpenCodeRuntime.OpenCodeRuntimeError
+    > = watched.read,
+  ) =>
+    read.pipe(
+      Effect.flatMap((catalog) => {
+        const fingerprint = catalog.length > 0 ? catalogFingerprint(catalog) : undefined;
+        if (fingerprint === undefined || fingerprint === watched.previous) return Effect.void;
+        watched.previous = fingerprint;
+        return changed(catalog);
+      }),
+      // A stopped server fails every read; that must not discard the catalog it had listed.
+      Effect.retry({ times: 3, schedule: Schedule.spaced("1 second") }),
+      // Nothing else bounds this read, and one that hangs would hold every later change.
+      Effect.timeout("30 seconds"),
+      Effect.ignore,
+    );
+  return {
+    /** The newest machine catalog the watch read; undefined when the last check knows better. */
+    changes: SubscriptionRef.changes(latest),
+    /** Directories whose catalog no longer matches the one their scan was given. */
+    rescans: Stream.fromQueue(rescans),
+    /**
+     * Call beside each catalog read. `read` must not borrow the server. A `directory` read
+     * reports the catalog its scan settled on, if any, and is rescanned once that changes.
+     */
+    follow: <E, SE>(
+      server: string,
+      subscribe: Effect.Effect<Stream.Stream<{ readonly type: string }, SE>, E, Scope.Scope>,
+      read: Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError>,
+      directory?: { readonly cwd: string; readonly settled?: ReadonlyArray<OpenCode2Model> },
+    ) =>
+      Effect.suspend(() => {
+        const started = following?.server !== server;
+        const watching = started
+          ? { server, machine: undefined, directories: new Map<string, WatchedCatalog>() }
+          : following!;
+        following = watching;
+        if (directory === undefined) {
+          watching.machine = { read, previous: watching.machine?.previous };
+        } else {
+          const { cwd, settled } = directory;
+          const previous = settled?.length
+            ? catalogFingerprint(settled)
+            : watching.directories.get(cwd)?.previous;
+          watching.directories.delete(cwd);
+          watching.directories.set(cwd, { read, previous });
+          for (const oldest of watching.directories.keys()) {
+            if (watching.directories.size <= WATCHED_DIRECTORIES) break;
+            watching.directories.delete(oldest);
+          }
+        }
+        const requested = Queue.offer(reads, undefined).pipe(Effect.asVoid);
+        if (!started) return requested;
+        const rereadAll = Effect.suspend(() =>
+          Effect.forEach(
+            [
+              ...(watching.machine
+                ? [reread(watching.machine, (catalog) => SubscriptionRef.set(latest, catalog))]
+                : []),
+              ...Array.from(watching.directories, ([cwd, watched]) =>
+                reread(watched, () => Queue.offer(rescans, cwd)),
+              ),
+            ],
+            (effect) => effect,
+            { concurrency: 4, discard: true },
+          ),
+        );
+        // A new server lists its startup snapshot first; nothing else reads it unless a check did.
+        const settleMachine = Effect.suspend(() => {
+          const machine = watching.machine;
+          return machine === undefined
+            ? Effect.void
+            : reread(
+                machine,
+                (catalog) => SubscriptionRef.set(latest, catalog),
+                readSettledOpenCode2Catalog(machine.read, environment).pipe(
+                  Effect.map(Option.getOrElse((): ReadonlyArray<OpenCode2Model> => [])),
+                ),
+              );
+        });
+        const watch = subscribe.pipe(
+          Effect.tap(() => settleMachine),
+          Effect.flatMap((events) =>
+            events.pipe(
+              Stream.filter((event) => event.type === "model.updated"),
+              Stream.merge(Stream.fromQueue(reads), { haltStrategy: "left" }),
+              // OpenCode announces one change as a burst of events.
+              Stream.debounce("250 millis"),
+              Stream.runForEach(() => rereadAll),
+              Effect.ignore,
+            ),
+          ),
+          // Unwatched, a catalog kept from an earlier server would override every later check.
+          Effect.catch(() => SubscriptionRef.set(latest, undefined)),
+          Effect.scoped,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (following === watching) following = undefined;
+            }),
+          ),
+        );
+        return requested.pipe(Effect.andThen(Effect.forkIn(watch, scope)), Effect.asVoid);
+      }),
+  };
+});
+
+const openCode2ReadyMessage = (version: string, count: number) =>
+  `OpenCode ${version} lists ${count} model${count === 1 ? "" : "s"}.`;
+
+/** A catalog read after the check reports the same health the check would have. */
+export const withOpenCode2Catalog = (
+  snapshot: ServerProvider,
+  settings: Pick<OpenCodeSettings, "customModels">,
+  catalog: ReadonlyArray<OpenCode2Model>,
+): ServerProvider =>
+  snapshot.version === null || snapshot.status === "error" || snapshot.status === "disabled"
+    ? snapshot
+    : {
+        ...snapshot,
+        status: "ready",
+        auth: { ...snapshot.auth, status: "authenticated" },
+        message: openCode2ReadyMessage(snapshot.version, catalog.length),
+        models: openCode2ProviderModels(settings, catalog),
+      };
+
 export interface OpenCode2Workspace {
   readonly skills: ReadonlyArray<{
     readonly id: string;
@@ -656,23 +819,46 @@ export interface OpenCode2Workspace {
 }
 
 /**
- * Reading a location the server has not loaded boots its scan, and only reads after the scan's
- * `command.updated` plus `skill.updated` are complete; `scanned` must listen before `read`. A
- * loaded location listing no commands is still scanning. A location another caller booted
- * moments earlier lists as loaded with only built-ins, so `settled` waits out its scan first.
+ * Runs `onScanned` for each location whose scan ends, which OpenCode announces once, after loading
+ * the location, as `command.updated` plus `skill.updated`.
+ */
+export const followOpenCode2Scans = <E>(
+  events: Stream.Stream<
+    { readonly type: string; readonly location?: { readonly directory?: string } | undefined },
+    E
+  >,
+  onScanned: (directory: string) => Effect.Effect<void>,
+) => {
+  const pending = new Map<string, Set<string>>();
+  return events.pipe(
+    Stream.runForEach((event) => {
+      const directory = event.location?.directory;
+      if (directory === undefined) return Effect.void;
+      if (event.type !== "command.updated" && event.type !== "skill.updated") return Effect.void;
+      const seen = pending.get(directory) ?? new Set<string>();
+      pending.set(directory, seen.add(event.type));
+      if (seen.size < 2) return Effect.void;
+      pending.delete(directory);
+      return onScanned(directory);
+    }),
+    Effect.ignore,
+  );
+};
+
+/**
+ * Until its scan ends a location lists only built-ins, even once the server lists it as loaded,
+ * and nothing but the scan's end tells the two apart. Unless the caller saw that scan end, read to
+ * boot the location, wait for its scan (`scanned` must listen before `read`), and read again.
  */
 export const loadOpenCode2Workspace = Effect.fn("OpencodeProviderStatus.loadOpenCode2Workspace")(
   function* <E>(
     read: Effect.Effect<OpenCode2Workspace, E>,
     scanned: Effect.Effect<void>,
-    loaded: Effect.Effect<boolean>,
-    settled: Effect.Effect<void> = Effect.void,
+    sawScan: boolean,
     environment?: NodeJS.ProcessEnv,
   ) {
-    const wasLoaded = yield* loaded;
-    yield* settled;
     const first = yield* read;
-    if (wasLoaded && first.commands.length > 0) return first;
+    if (sawScan) return first;
     yield* scanned.pipe(
       Effect.timeoutOption(resolveProviderProbeTimeoutMs("opencode", 10_000, environment)),
     );
@@ -802,10 +988,7 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
     slashCommands: [COMPACT_SLASH_COMMAND],
     probe:
       result.value.length > 0
-        ? probe(
-            "ready",
-            `OpenCode ${version} lists ${result.value.length} model${result.value.length === 1 ? "" : "s"}.`,
-          )
+        ? probe("ready", openCode2ReadyMessage(version, result.value.length))
         : probe("warning", "OpenCode 2 is running, but it did not list any models yet."),
   });
 });

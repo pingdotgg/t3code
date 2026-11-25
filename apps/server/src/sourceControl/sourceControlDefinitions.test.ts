@@ -33,6 +33,7 @@ it.each([
     "group/sub/web",
     "7",
   ],
+  ["https://gitlab.com/acme/web/-/issues/incident/12", "gitlab", "gitlab.com", "acme/web", "12"],
   ["https://codeberg.org/acme/web/issues/3", "forgejo", "codeberg.org", "acme/web", "3"],
   [
     "https://dev.azure.com/acme/Web%20App/_workitems/edit/9",
@@ -51,6 +52,7 @@ it.each([
   "https://github.com/acme/web/pull/42",
   "https://example.test/acme/web/issues/42",
   "https://github.com/acme/web/issues/0",
+  "https://gitlab.com/groups/acme/-/work_items/12",
 ])("does not read %s as an issue", (url) => {
   expect(sourceControlDefinitions.parseIssueUrl(url)).toBeNull();
 });

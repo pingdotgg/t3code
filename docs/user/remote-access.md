@@ -235,7 +235,8 @@ If that port is already in use, choose another with
 
 [app.t3.codes](https://app.t3.codes) needs an HTTPS endpoint. It connects directly
 to your server; a hosted pairing link does not make an unreachable backend
-reachable or convert HTTP to HTTPS.
+reachable or convert HTTP to HTTPS. Opening a hosted pairing link shows the
+server address and asks you to confirm before adding it.
 
 For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. On mobile, an IP address entered without a
@@ -349,9 +350,9 @@ continue. Read-only connections can watch without changing the page.
 
 While you have control, the tab works with your device: text the page copies or
 cuts goes to your clipboard, a file picker on the page opens your device's
-picker, and a finished download is offered for you to save. Popups such as
-sign-in windows open as their own tabs. Downloads stay on the host until the
-tab closes. Audio does not play on your device.
+picker, a dropdown on the page shows its options on your device, and a finished
+download is offered for you to save. Popups such as sign-in windows open as
+their own tabs. Downloads stay on the host until the tab closes. Audio does not play on your device.
 
 On a phone, tap the floating preview's corner dot to show its controls, then
 **Pop into separate window** to keep watching in picture-in-picture over other
@@ -488,7 +489,8 @@ it needs no pairing code.
 A machine this app is not connected to, shown only because another environment
 links to it, can still be linked without a code when that link has full access:
 drop the plus on it and the environment holding the link gets the pairing code
-from it. Your session on that environment must manage access there. The result
+from it. Your session on that environment must manage access there and already
+have the access you pick. The result
 is a separate link with the access you pick, listed and revocable on the linked
 machine like any other. Links still do not chain.
 
@@ -603,7 +605,13 @@ checkout use that checkout's permissions.
 client: pushing, switching or creating branches, cloning, and removing
 worktrees. It does not restrict what a task does. Starting a task in a new
 worktree still creates that branch and worktree with `orchestration:operate`,
-and the agent it runs can use Git however the environment allows.
+and the agent it runs can use Git however the environment allows. A project
+that [lays out its worktrees with its own command](multi-repo-projects.md#lay-the-folder-out-yourself)
+runs that command on the host, so creating a worktree there from the client also
+needs `orchestration:operate` or `terminal:operate`; without one of them,
+removing a worktree skips the project's `remove` command. The command also has
+to be [approved](multi-repo-projects.md#approve-the-commands) first, from a
+client with `terminal:operate`.
 
 Settings changes, provider management, environment maintenance, access
 management, and T3 Connect preferences can each be granted separately. Setting

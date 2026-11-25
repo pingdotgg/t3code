@@ -966,7 +966,11 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
 
     const input = yield* Deferred.await(started);
     assert.deepEqual(input.appContext, [
-      { key: "mcp_app_turn-item_provider_codex_native-item_call-1", text: "2 overdue" },
+      {
+        key: "mcp_app_turn-item_provider_codex_native-item_call-1",
+        text: "2 overdue",
+        updatedAt: "2026-11-23T14:02:17.000Z",
+      },
     ]);
   }).pipe(
     Effect.provide(
@@ -982,6 +986,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
                     server: "my tools>",
                     tool: "list",
                     text: "2 overdue",
+                    updatedAt: "2026-11-23T14:02:17.000Z",
                   },
                 ]),
             }),
@@ -3050,7 +3055,7 @@ it.effect("settles native subagents when a workspace handoff completes the root 
     assert.deepEqual(statusOf("turn-item.updated", runningTurnItem.id), ["interrupted"]);
     assert.deepEqual(statusOf("node.updated", runningNode.id), ["interrupted"]);
     assert.deepEqual(statusOf("node.updated", runningChildNode.id), ["interrupted"]);
-    assert.deepEqual(statusOf("run.updated", ids.runId), ["waiting"]);
+    assert.deepEqual(statusOf("run.updated", ids.runId), ["completed"]);
     assert.deepEqual(statusOf("run-attempt.updated", ids.attemptId), ["completed"]);
     assert.isFalse(
       events.some(
@@ -3739,8 +3744,8 @@ it.effect.each([
             : [],
         ),
         ended
-          ? ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"]
-          : ["run.updated:waiting"],
+          ? ["run.updated:completed", "subagent.updated:failed", "turn-item.updated:failed"]
+          : ["run.updated:completed"],
       );
     }),
 );
@@ -4013,7 +4018,7 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
       events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
       refreshAfterTurn: Effect.die("refresh failed"),
     });
-    assert.deepEqual(observed, ["run:waiting", "pull-requests-refreshed"]);
+    assert.deepEqual(observed, ["run:completed", "pull-requests-refreshed"]);
   }),
 );
 

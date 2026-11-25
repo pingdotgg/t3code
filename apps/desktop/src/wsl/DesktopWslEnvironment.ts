@@ -1157,13 +1157,16 @@ const WSL_SERVICE_KEYS = [
   "HKLM\\SYSTEM\\CurrentControlSet\\Services\\WSLService",
   "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LxssManager",
 ] as const;
+// Always present; when reg.exe cannot read it (e.g. "Prevent access to registry editing tools"),
+// a failed service query says nothing about WSL, so fall back to trusting wsl.exe.
+const SERVICES_ROOT_KEY = "HKLM\\SYSTEM\\CurrentControlSet\\Services";
 const SERVICE_QUERY_TIMEOUT = Duration.seconds(5);
 
 const wslServiceRegistered = Effect.scoped(
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const registered = yield* Effect.forEach(
-      WSL_SERVICE_KEYS,
+    const [rootReadable, ...servicesFound] = yield* Effect.forEach(
+      [SERVICES_ROOT_KEY, ...WSL_SERVICE_KEYS],
       (key) =>
         spawner
           .spawn(
@@ -1175,10 +1178,13 @@ const wslServiceRegistered = Effect.scoped(
               forceKillAfter: PROCESS_TERMINATE_GRACE,
             }),
           )
-          .pipe(Effect.flatMap((handle) => handle.exitCode)),
+          .pipe(
+            Effect.flatMap((handle) => handle.exitCode),
+            Effect.map((exitCode) => (exitCode as unknown as number) === 0),
+          ),
       { concurrency: "unbounded" },
     );
-    return registered.some((exitCode) => (exitCode as unknown as number) === 0);
+    return rootReadable === false || servicesFound.includes(true);
   }),
 ).pipe(
   Effect.timeoutOption(SERVICE_QUERY_TIMEOUT),

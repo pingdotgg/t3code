@@ -38,6 +38,8 @@ import {
   ModelSelection,
   type OrchestrationV2TurnItem,
   type ProjectId,
+  PROVIDER_DISPLAY_NAMES,
+  ProviderDriverKind,
   SourceControlProviderError,
   type SourceControlWritingStyleSettings,
   type ThreadId,
@@ -66,7 +68,11 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
-import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
+import {
+  GitManagerError,
+  GitPullRequestMaterializationError,
+  trimAsciiWhitespace,
+} from "@t3tools/contracts";
 import {
   historicalMessage,
   renderHistory,
@@ -128,6 +134,23 @@ interface SourceControlTextGenerationSettings {
   readonly projectId: ProjectId | null;
   readonly style: SourceControlWritingStyleSettings;
 }
+
+/** A push would run hooks nobody approved as they are now. Nothing was pushed. */
+export class GitPushHooksUnapprovedError extends Schema.TaggedError<GitPushHooksUnapprovedError>()(
+  "GitPushHooksUnapprovedError",
+  {
+    branch: Schema.String,
+    files: Schema.Array(Schema.String),
+    commands: Schema.Array(Schema.Struct({ name: Schema.String, command: Schema.String })),
+    digest: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Pushing ${this.branch} would run repository hooks that were not approved.`;
+  }
+}
+
+const isPushHooksUnapproved = Schema.is(GitVcsDriver.PushHooksUnapprovedError);
 
 export interface GitCreatePullRequestResult {
   readonly status: "created" | "opened_existing";
@@ -205,7 +228,16 @@ export class GitManager extends Context.Service<
        * without private pull requests.
        */
       readonly private?: boolean | undefined;
-    }) => Effect.Effect<GitCreatePullRequestResult, GitManagerServiceError>;
+      /**
+       * For a caller whose own commands wait for a person: the push runs the repository's hooks
+       * only when `approvedDigest` is the digest of what it would run, and otherwise fails with
+       * `GitPushHooksUnapprovedError` before pushing. "off", or no hook to run, pushes with none.
+       */
+      readonly pushHooks?: { readonly approvedDigest: string | null } | "off" | undefined;
+    }) => Effect.Effect<
+      GitCreatePullRequestResult,
+      GitManagerServiceError | GitPushHooksUnapprovedError
+    >;
     readonly subscribePullRequestStateChanges: Effect.Effect<
       Stream.Stream<ThreadPullRequestKey>,
       never,
@@ -233,6 +265,7 @@ const SETTLED_PR_LOOKUP_RECHECK_INTERVAL = Duration.minutes(15);
 // cannot fill the git and forge process slots that foreground work also needs.
 const BRANCH_PR_LOOKUP_CONCURRENCY = 4;
 const PR_THREAD_CONTEXT_BYTES = 16_000;
+const NO_THREAD_CONTEXT = { history: undefined, producedBy: undefined };
 const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
@@ -278,7 +311,7 @@ const prLookupGitReads = Context.Reference<SharedPrLookupGitReads | null>(
 function parseRemoteNames(stdout: string): ReadonlyArray<string> {
   return stdout
     .split("\n")
-    .map((name) => name.trim())
+    .map(trimAsciiWhitespace)
     .filter((name) => name.length > 0);
 }
 
@@ -838,8 +871,8 @@ export const make = Effect.gen(function* () {
   });
   const readThreadContext = Effect.fnUntraced(
     function* (threadId: ThreadId | undefined) {
-      if (threadId === undefined) return undefined;
-      const { visibleTurnItems } = yield* threads.getThreadProjection(threadId);
+      if (threadId === undefined) return NO_THREAD_CONTEXT;
+      const { thread, runs, visibleTurnItems } = yield* threads.getThreadProjection(threadId);
       const selected = selectHistory({
         messages: visibleTurnItems.flatMap(
           ({ item }) => historicalMessage(limitCommandOutput(item)) ?? [],
@@ -847,9 +880,47 @@ export const make = Effect.gen(function* () {
         coverage: "Digest of the thread that made this change, oldest first.",
         budget: PR_THREAD_CONTEXT_BYTES,
       });
-      return selected.messages.length === 0
-        ? undefined
-        : renderHistory(selected.messages, selected.context);
+      // A thread can switch models mid-way, and a fork inherits its ancestors' history; credit
+      // every model behind a turn still visible here. Ancestor runs are best-effort.
+      const visibleRunIds = new Set(visibleTurnItems.flatMap(({ item }) => item.runId ?? []));
+      const ancestorRuns = yield* Effect.forEach(
+        new Set(
+          visibleTurnItems.flatMap(({ item }) => (item.threadId === threadId ? [] : item.threadId)),
+        ),
+        (ancestorId) =>
+          threads.getThreadRecords(ancestorId, ["runs"]).pipe(
+            Effect.map((records) => records.runs),
+            Effect.orElseSucceed(() => []),
+          ),
+      );
+      // Visibility already hides local rollbacks; an ancestor's later rollback leaves the fork's
+      // inherited work in place. A queued run shows its message before it starts.
+      const runSelections = [...runs, ...ancestorRuns.flat()]
+        .filter((run) => visibleRunIds.has(run.id) && run.startedAt !== null)
+        .map((run) => run.modelSelection);
+      const providers = yield* providerRegistry.getProviders;
+      const producedBy = Arr.dedupeWith(
+        (runSelections.length > 0 ? runSelections : [thread.modelSelection]).map(
+          ({ instanceId, model }) => {
+            // The instance's displayName is a user label (often an account), not the harness.
+            // Default instances are named after their driver; a removed custom one names nothing.
+            const harness =
+              PROVIDER_DISPLAY_NAMES[
+                providers.find((provider) => provider.instanceId === instanceId)?.driver ??
+                  ProviderDriverKind.make(instanceId)
+              ];
+            return harness === undefined ? { model } : { model, harness };
+          },
+        ),
+        (left, right) => left.model === right.model && left.harness === right.harness,
+      );
+      return {
+        producedBy,
+        history:
+          selected.messages.length === 0
+            ? undefined
+            : renderHistory(selected.messages, selected.context),
+      };
     },
     (effect, threadId) =>
       effect.pipe(
@@ -857,7 +928,7 @@ export const make = Effect.gen(function* () {
           Effect.logWarning("GitManager.readThreadContext failed", {
             threadId,
             errorTag: error._tag,
-          }).pipe(Effect.as(undefined)),
+          }).pipe(Effect.as(NO_THREAD_CONTEXT)),
         ),
       ),
   );
@@ -886,6 +957,41 @@ export const make = Effect.gen(function* () {
     }
     return result;
   });
+  /**
+   * Before a push's first side effect: a caller that needs approval learns which hooks to ask
+   * about. The driver reads them again as it starts the push, so this is only the early answer.
+   */
+  const requireApprovedPushHooks = Effect.fn("GitManager.requireApprovedPushHooks")(function* (
+    cwd: string,
+    branch: string,
+  ) {
+    const policy = yield* GitVcsDriver.RepositoryHooks;
+    if (policy._tag !== "approved-push") return;
+    const hooks = yield* gitCore.pushHooks(cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new GitManagerError({
+            operation: "createPullRequest",
+            cwd,
+            detail: "Could not read the repository's push hooks. Nothing was pushed.",
+            cause,
+          }),
+      ),
+    );
+    if (hooks !== null && hooks.digest !== policy.digest) {
+      return yield* new GitPushHooksUnapprovedError({ branch, ...hooks });
+    }
+  });
+  /** The driver's refusal to start a push whose hooks changed, as the caller's cue to ask again. */
+  const pushHooksUnapproved = (branch: string, cause: GitCommandError) =>
+    isPushHooksUnapproved(cause.cause)
+      ? new GitPushHooksUnapprovedError({
+          branch,
+          files: cause.cause.files,
+          commands: cause.cause.commands,
+          digest: cause.cause.digest,
+        })
+      : undefined;
   const createPrNeedsPush = Effect.fn("GitManager.createPrNeedsPush")(function* (
     cwd: string,
     status: {
@@ -2012,7 +2118,7 @@ export const make = Effect.gen(function* () {
           timeoutMs: 5_000,
         })).stdout
           .split("\n")
-          .map((ref) => ref.trim())
+          .map(trimAsciiWhitespace)
           .filter((ref) => ref.length > 0),
       );
       const matching = remoteNames.filter((name) => refs.has(`refs/remotes/${name}/${branch}`));
@@ -2049,7 +2155,7 @@ export const make = Effect.gen(function* () {
     const oidByRef = new Map(
       refs.stdout
         .split("\n")
-        .map((line) => line.trim().split("\u0000"))
+        .map((line) => trimAsciiWhitespace(line).split("\u0000"))
         .filter((entry): entry is [string, string] => entry.length === 2),
     );
     const localOid = oidByRef.get(localRef);
@@ -2869,7 +2975,7 @@ export const make = Effect.gen(function* () {
                   yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
                 )
               : undefined;
-          const threadContext = yield* readThreadContext(threadId);
+          const { history: threadContext, producedBy } = yield* readThreadContext(threadId);
 
           return yield* textGeneration.generatePrContent({
             cwd,
@@ -2880,6 +2986,7 @@ export const make = Effect.gen(function* () {
             diffPatch: limitContext(rangeContext.diffPatch, 60_000),
             ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
             ...(threadContext ? { threadContext } : {}),
+            producedBy,
             ...(policy ? { policy } : {}),
             modelSelection: settings.modelSelection,
             projectId: settings.projectId,
@@ -2921,6 +3028,7 @@ export const make = Effect.gen(function* () {
         `${branch} is the base branch. Check out a feature branch to create ${terms.shortLabelWithArticle}.`,
       );
     }
+    yield* requireApprovedPushHooks(cwd, branch);
     const companion = yield* provider.privateChangeRequestRemote({ cwd });
     const remoteName = yield* gitCore.ensureRemote({
       cwd,
@@ -2929,21 +3037,40 @@ export const make = Effect.gen(function* () {
     });
     // Recorded before the push, so a later push of this branch, by T3 or by plain `git push`,
     // goes to the companion too and never publishes the branch.
-    yield* gitCore.writeConfigValue({
-      cwd,
-      key: `branch.${branch}.pushRemote`,
-      value: remoteName,
-    });
+    const pushRemoteKey = `branch.${branch}.pushRemote`;
+    const readPushRemote = gitCore
+      .readConfigValue(cwd, pushRemoteKey)
+      .pipe(Effect.orElseSucceed(() => null));
+    const previousPushRemote = yield* readPushRemote;
+    yield* gitCore.writeConfigValue({ cwd, key: pushRemoteKey, value: remoteName });
+    // A push refused for its hooks never started, so the branch goes back to pushing where it
+    // did, unless something else has set that since.
+    const restorePushRemote = Effect.gen(function* () {
+      if (previousPushRemote === remoteName || (yield* readPushRemote) !== remoteName) return;
+      yield* previousPushRemote === null
+        ? gitCore.execute({
+            operation: "GitManager.openPrivatePullRequest.restorePushRemote",
+            cwd,
+            args: ["config", "--unset", pushRemoteKey],
+          })
+        : gitCore.writeConfigValue({ cwd, key: pushRemoteKey, value: previousPushRemote });
+    }).pipe(Effect.ignore);
     yield* gitCore
       .execute({
         operation: "GitManager.openPrivatePullRequest.push",
         cwd,
         args: ["push", "--", remoteName, `refs/heads/${branch}:refs/heads/${branch}`],
         timeoutMs: null,
+        pushes: true,
       })
       .pipe(
-        Effect.mapError((cause) =>
-          fail(`Could not push ${branch} to ${companion.repository}: ${cause.detail}`, cause),
+        Effect.mapError(
+          (cause) =>
+            pushHooksUnapproved(branch, cause) ??
+            fail(`Could not push ${branch} to ${companion.repository}: ${cause.detail}`, cause),
+        ),
+        Effect.tapError((error) =>
+          error._tag === "GitPushHooksUnapprovedError" ? restorePushRemote : Effect.void,
         ),
         Effect.tapError(() => invalidateStatus(cwd)),
       );
@@ -3020,11 +3147,13 @@ export const make = Effect.gen(function* () {
         { ...status, branch: status.branch },
         (yield* changeRequestTermsFor(input.cwd)).shortLabelWithArticle,
       );
+      yield* requireApprovedPushHooks(input.cwd, status.branch);
     }
     const push = needsPush
       ? yield* pushCurrentBranch(input.cwd, status.branch).pipe(
           Effect.mapError(
             (cause) =>
+              pushHooksUnapproved(status.branch ?? "HEAD", cause) ??
               new GitManagerError({
                 operation: "createPullRequest",
                 cwd: input.cwd,
@@ -3069,10 +3198,18 @@ export const make = Effect.gen(function* () {
   const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
     "GitManager.createPullRequest",
   )(function* (input) {
-    const result =
-      input.private === true
-        ? yield* openPrivatePullRequest(input)
-        : yield* pushAndOpenPullRequest(input);
+    const opening =
+      input.private === true ? openPrivatePullRequest(input) : pushAndOpenPullRequest(input);
+    const result = yield* input.pushHooks === undefined
+      ? opening
+      : opening.pipe(
+          Effect.provideService(
+            GitVcsDriver.RepositoryHooks,
+            input.pushHooks === "off"
+              ? { _tag: "none" }
+              : { _tag: "approved-push", digest: input.pushHooks.approvedDigest },
+          ),
+        );
     const openedAsDraft =
       result.status === "created" &&
       (yield* sourceControlProvider(input.cwd)).createsDraftChangeRequests === true;
@@ -3354,7 +3491,7 @@ export const make = Effect.gen(function* () {
               const refNames = new Set(
                 trackingRefs.stdout
                   .split("\n")
-                  .map((remoteRef) => remoteRef.trim())
+                  .map(trimAsciiWhitespace)
                   .filter((remoteRef) => remoteRef.length > 0),
               );
               return remoteNames

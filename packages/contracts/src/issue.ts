@@ -332,7 +332,7 @@ export const IssueListResult = Schema.Struct({
   /** The signed-in account per host that involvement compared against. Empty for `all`. */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   trackers: Schema.Array(IssueTrackerSummary),
-  /** By update, newest first, across every scope this answer covers. */
+  /** Newest first by the requested `sort` (`updated` when absent), across every scope this answer covers. */
   entries: Schema.Array(IssueListEntry),
   errors: Schema.Array(IssueListProjectError),
   /** Where each scope carries on, sent straight back as `cursors`. Absent once a scope is done. */
@@ -503,10 +503,11 @@ export class IssueOperationError extends Schema.TaggedError<IssueOperationError>
     retryAt: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
-  { httpApiStatus: 502 },
+  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(IssueOperationError)(this, { status: 502 });
+    return HttpServerResponse.schemaJson(IssueOperationError)(this, { status: 503 });
   }
 
   override get message(): string {
@@ -692,10 +693,11 @@ export class IssueTrackerConnectionError extends Schema.TaggedError<IssueTracker
     detail: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
-  { httpApiStatus: 502 },
+  // Not 502: Cloudflare, in front of T3 Connect, swaps an origin 502 for its own page.
+  { httpApiStatus: 503 },
 ) {
   [HttpServerRespondable.symbol]() {
-    return HttpServerResponse.schemaJson(IssueTrackerConnectionError)(this, { status: 502 });
+    return HttpServerResponse.schemaJson(IssueTrackerConnectionError)(this, { status: 503 });
   }
 
   override get message(): string {
