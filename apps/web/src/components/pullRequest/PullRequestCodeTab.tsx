@@ -120,7 +120,7 @@ import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
@@ -1447,6 +1447,12 @@ function PullRequestCodeTab({
 
   const selectedCommit = orderedCommits.find((entry) => entry.oid === commit);
   const scopeLabel = selectedCommit ? selectedCommit.messageHeadline : gt("All commits");
+  const hiddenTestFilesLabel =
+    hiddenTestFileCount > 0
+      ? gt("{count, plural, one {{count} test file hidden} other {{count} test files hidden}}", {
+          count: hiddenTestFileCount,
+        })
+      : null;
   const changeIgnoreWhitespace = (next: boolean) => {
     setIgnoreWhitespace(next);
     setDraft(null);
@@ -1522,7 +1528,7 @@ function PullRequestCodeTab({
               })}
               {nextCursor === null ? "" : "+"}
             </span>
-            {hiddenTestFileCount > 0 ? (
+            {hiddenTestFilesLabel !== null && (files.length > 0 || nextCursor !== null) ? (
               <span className="hidden items-center gap-1.5 @2xl:flex">
                 <span aria-hidden className="text-muted-foreground/50">
                   ·
@@ -1533,10 +1539,7 @@ function PullRequestCodeTab({
                   variant="link"
                   onClick={() => setHideTestFiles(false)}
                 >
-                  {gt(
-                    "{count, plural, one {{count} test file hidden} other {{count} test files hidden}}",
-                    { count: hiddenTestFileCount },
-                  )}
+                  {hiddenTestFilesLabel}
                 </Button>
               </span>
             ) : null}
@@ -1928,6 +1931,16 @@ function PullRequestCodeTab({
   }
 
   if (items.length === 0 && nextCursor === null) {
+    if (hiddenTestFilesLabel !== null && files.length === 0) {
+      return withToolbar(
+        <div className="flex flex-wrap items-center gap-2 px-4 py-5 text-sm text-muted-foreground">
+          <p>{hiddenTestFilesLabel}</p>
+          <InlineButton onClick={() => setHideTestFiles(false)}>
+            {gt("Show test files")}
+          </InlineButton>
+        </div>,
+      );
+    }
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
         {commit === null
