@@ -28,8 +28,8 @@ vp run check:changed
 ```
 
 Open the PR with "Keep this change out of patched nightlies" ticked and merge it with a **merge commit**. If the merge changed
-`agentContextBudget.json`, open the PR as a draft, add the `agent-context-increase` label, then mark it ready; a label added
-to an open PR leaves the first budget check red until you rerun it. While a
+`agentContextBudget.json`, add the `agent-context-increase` label as soon as the PR opens, then remove and re-add it: the
+check that ran on open stays red, and rerunning it replays the unlabeled event. The fresh `labeled` run passes. While a
 `chore/upstream-sync-*` PR is open the workflow does nothing, so close or merge it first.
 
 ## Sending a change upstream
