@@ -113,6 +113,8 @@ export const make = Effect.gen(function* () {
   const finished = new Map<string, TerminalOutputState>();
   const subscribers = new Map<string, Set<Subscriber>>();
   const held = new Set<string>();
+  /** Released background output; its settled row holds only the launch acknowledgement. */
+  const released = new Map<string, TerminalOutputState>();
 
   const wakeAll = (key: string, chunk: string) =>
     Effect.forEach(
@@ -135,8 +137,7 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => {
       if (chunk.length === 0) return Effect.void;
       const key = commandKey(target);
-      const previous = tails.get(key) ?? (held.has(key) ? finished.get(key) : undefined);
-      const tail = appendTerminalOutput(previous ?? EMPTY_TERMINAL_OUTPUT, chunk);
+      const tail = appendTerminalOutput(tails.get(key) ?? EMPTY_TERMINAL_OUTPUT, chunk);
       setBounded(tails, key, tail, MAX_LIVE_COMMANDS, (oldest) => {
         // Eviction invalidates viewers' state; resync on their next frame.
         for (const subscriber of subscribers.get(oldest) ?? []) {
@@ -172,6 +173,10 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => {
       const key = commandKey(target);
       held.add(key);
+      // The held command's tail rereads its output from the start.
+      tails.delete(key);
+      finished.delete(key);
+      released.delete(key);
       return resync(key);
     });
 
@@ -179,7 +184,11 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => {
       const key = commandKey(target);
       if (!held.delete(key)) return Effect.void;
-      return finish(target).pipe(Effect.andThen(resync(key)));
+      const tail = tails.get(key) ?? finished.get(key);
+      tails.delete(key);
+      finished.delete(key);
+      if (tail !== undefined) setBounded(released, key, tail, MAX_FINISHED_COMMANDS);
+      return resync(key);
     });
 
   const subscribe: CommandOutputHubShape["subscribe"] = (target) =>
@@ -257,8 +266,6 @@ export const make = Effect.gen(function* () {
 
         let lastFrameAt: number | undefined;
         let throttle = COMMAND_OUTPUT_FRAME_INTERVAL_MS;
-        // A released background command's settled row holds only its launch acknowledgement.
-        let wasHeld = false;
         const nextFrame = Effect.gen(function* (): Effect.fn.Return<
           OrchestrationV2CommandOutputFrame,
           OrchestrationV2CommandOutputError
@@ -278,13 +285,13 @@ export const make = Effect.gen(function* () {
           lastFrameAt = yield* Clock.currentTimeMillis;
           throttle = COMMAND_OUTPUT_FRAME_INTERVAL_MS;
           const tail = tails.get(key) ?? finished.get(key);
-          if (held.has(key)) wasHeld = true;
           if (settled !== undefined && !held.has(key)) {
-            if ((settled.output === undefined || wasHeld) && tail !== undefined) {
+            const final = released.get(key) ?? (settled.output === undefined ? tail : undefined);
+            if (final !== undefined) {
               return {
                 kind: "replace",
-                text: tail.text,
-                truncated: tail.truncated,
+                text: final.text,
+                truncated: final.truncated,
                 running: false,
               };
             }

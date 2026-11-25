@@ -392,6 +392,10 @@ layer("CommandOutputHub", (it) => {
         running: false,
       });
       assert.equal(yield* Queue.take(frames), "ended");
+
+      // Opening it again after release shows the output, not the acknowledgement.
+      const reopened = yield* subscribeFrames(threadId);
+      assert.deepEqual(yield* takeFrame(reopened), final);
     }),
   );
 });
