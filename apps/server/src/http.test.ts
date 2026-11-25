@@ -1097,17 +1097,18 @@ describe("OTLP traces proxy", () => {
         if (!NetAddress.isInetAddress(collector.address)) {
           return yield* Effect.die(new Error("Expected a TCP address"));
         }
-        const collectorUrl = `http://127.0.0.1:${collector.address.port}/v1/traces`;
+        const collectorOrigin = `http://127.0.0.1:${collector.address.port}`;
 
         const { status, logs } = yield* exportThroughOtlpProxy(
-          `${collectorUrl}?api_key=query-secret`,
+          `${collectorOrigin}/v1/traces?api_key=query-secret`,
         );
 
         expect(status).toBe(502);
         expect(collectorRequests).toEqual([
           { url: "/v1/traces?api_key=query-secret", apiKey: "header-secret" },
         ]);
-        expect(logs).toContain(collectorUrl);
+        expect(logs).toContain(`"otlpTracesUrl":"${collectorOrigin}"`);
+        expect(logs).not.toContain("/v1/traces");
         expect(logs).not.toContain("query-secret");
         expect(logs).not.toContain("header-secret");
       }),
@@ -1121,14 +1122,15 @@ describe("OTLP traces proxy", () => {
     ),
   );
 
-  it.effect("redacts userinfo from OTLP proxy failure logs", () =>
+  it.effect("logs only the endpoint origin on OTLP proxy failure", () =>
     Effect.gen(function* () {
       const { status, logs } = yield* exportThroughOtlpProxy(
-        "http://collector-user:secret-pass@127.0.0.1:1/v1/traces",
+        "http://collector-user:secret-pass@127.0.0.1:1/ingest/path-secret/v1/traces",
       );
 
       expect(status).toBe(502);
-      expect(logs).toContain("http://127.0.0.1:1/v1/traces");
+      expect(logs).toContain('"otlpTracesUrl":"http://127.0.0.1:1"');
+      expect(logs).not.toContain("path-secret");
       expect(logs).not.toContain("collector-user");
       expect(logs).not.toContain("secret-pass");
     }).pipe(

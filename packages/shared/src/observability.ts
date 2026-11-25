@@ -36,7 +36,7 @@ export const layerManualRedirects = Layer.effect(
 export function redactEndpointUrl(rawUrl: string): string {
   try {
     const parsed = new URL(rawUrl);
-    return `${parsed.origin}${parsed.pathname}`;
+    return parsed.origin === "null" ? "<invalid-url>" : parsed.origin;
   } catch {
     return "<invalid-url>";
   }
