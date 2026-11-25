@@ -41,6 +41,31 @@ export function rowPhasesChanged(
   return nextAggregate.activities.some((row) => previousPhases.get(rowKey(row)) !== row.phase);
 }
 
+// Mirrors what the Dynamic Island's compact and minimal views show: the hero row
+// (first attention row, else first failed row, else the first row) and whether
+// all work is done. Starting and running share one working glyph family.
+function islandSummary(aggregate: RelayAgentActivityAggregateState): string {
+  if (aggregate.activeCount === 0) {
+    const failed = aggregate.activities.some((row) => row.phase === "failed");
+    return failed ? "failed" : "done";
+  }
+  const hero =
+    aggregate.activities.find((row) => isAttentionPhase(row.phase)) ??
+    aggregate.activities.find((row) => row.phase === "failed") ??
+    aggregate.activities[0];
+  if (hero === undefined || hero.phase === "starting" || hero.phase === "running") {
+    return "working";
+  }
+  return hero.phase === "completed" ? "done" : hero.phase;
+}
+
+export function islandSummaryChanged(
+  previousAggregate: RelayAgentActivityAggregateState | null,
+  nextAggregate: RelayAgentActivityAggregateState,
+): boolean {
+  return previousAggregate === null || islandSummary(previousAggregate) !== islandSummary(nextAggregate);
+}
+
 function isAttentionPhase(phase: string): boolean {
   return phase === "waiting_for_approval" || phase === "waiting_for_input";
 }

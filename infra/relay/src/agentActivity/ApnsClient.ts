@@ -102,6 +102,7 @@ type MakeLiveActivityRequestInput =
       readonly event: "update";
       readonly state: RelayAgentActivityAggregateState;
       readonly alert?: ApnsLiveActivityAlert | null;
+      readonly urgent?: boolean;
     });
 
 // Alert dictionaries wake the iOS screen and trigger haptics instead of silently refreshing.
@@ -192,7 +193,9 @@ function buildLiveActivityRequest(input: MakeLiveActivityRequestInput): ApnsLive
   return {
     token: input.token,
     event: input.event,
-    priority: input.event === "update" && !input.alert ? "5" : "10",
+    // iOS holds priority 5 Live Activity updates until the screen changes state
+    // (Lock Screen or Notification Center), so the Dynamic Island goes stale.
+    priority: input.event === "update" && !input.alert && !input.urgent ? "5" : "10",
     payload: {
       aps: {
         timestamp,
