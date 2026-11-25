@@ -1210,6 +1210,7 @@ process.exit(0);
       const statePath = path.join(root, "runtime", "service-state.json");
       const databasePath = path.join(root, "userdata", "state.sqlite");
       const activatedPath = path.join(root, "activated");
+      const backupAtCommitPath = path.join(root, "backup-at-commit");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, "before trial");
       const unit = yield* fakeServiceUnit(fs, path, root, "1.0.0", render);
@@ -1235,6 +1236,10 @@ if (context.update?.status === "pending") {
       assert.equal(state.activeVersion, "1.1.0");
       assert.equal(state.update.status, "committed");
       writeFileSync(${JSON.stringify(activatedPath)}, message.updateId);
+      writeFileSync(
+        ${JSON.stringify(backupAtCommitPath)},
+        String(existsSync(${JSON.stringify(path.join(root, "runtime", "db-backup"))} + "/" + message.updateId)),
+      );
       process.exit(0);
     }
   });
@@ -1293,8 +1298,16 @@ if (context.update?.status === "pending") {
           yield* Effect.promise(() => fresh.stop("SIGTERM"));
           yield* Effect.promise(() => running);
         });
-      return { fs, root, unit, recover };
+      return { fs, root, unit, recover, backupAtCommitPath };
     });
+
+  // The trial waits only 30 seconds for "committed"; backup cleanup can take minutes on a full disk.
+  it.effect("tells the trial it is committed before discarding the database backup", () =>
+    Effect.gen(function* () {
+      const { fs, backupAtCommitPath } = yield* commitUpdate();
+      assert.equal(yield* fs.readFileString(backupAtCommitPath), "true");
+    }),
+  );
 
   it.effect.each([
     {
