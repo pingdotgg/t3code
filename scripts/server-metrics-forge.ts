@@ -509,6 +509,8 @@ export const serveFakeGitHub = Effect.fn("serverMetrics.serveFakeGitHub")(functi
   });
   proxy.on("connect", (request: NodeHttp.IncomingMessage, client: NodeNet.Socket) => {
     if (request.url !== `${HOST}:443`) {
+      // A refused client may reset before the 403 lands; unhandled, that crashes the harness.
+      client.on("error", () => client.destroy());
       client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;
     }
