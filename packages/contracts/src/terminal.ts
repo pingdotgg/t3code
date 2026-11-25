@@ -19,7 +19,11 @@ const SEQUENCE_SOS_PM_APC = 5;
 const SEQUENCE_OSC = 6;
 
 // Bits above the low three hold a high surrogate until its other half arrives.
-function nextTerminalSequenceState(state: number, unit: number): number {
+function nextTerminalSequenceState(
+  state: number,
+  unit: number,
+  onC1ReturnToGround?: (byte: number, remainingBytes: number) => void,
+): number {
   if (unit === 0x1b) return SEQUENCE_ESCAPE;
   if (state === TERMINAL_SEQUENCE_GROUND || unit === 0x18 || unit === 0x1a) {
     return TERMINAL_SEQUENCE_GROUND;
@@ -62,7 +66,10 @@ function nextTerminalSequenceState(state: number, unit: number): number {
     if (byte === 0x90) mode = SEQUENCE_DCS;
     else if (byte === 0x9b) mode = SEQUENCE_CSI;
     else if (byte === 0x98 || byte >= 0x9e) mode = SEQUENCE_SOS_PM_APC;
-    else return TERMINAL_SEQUENCE_GROUND;
+    else {
+      onC1ReturnToGround?.(byte, shift / 6);
+      return TERMINAL_SEQUENCE_GROUND;
+    }
   }
   return mode;
 }
@@ -107,18 +114,26 @@ export function skipTerminalSnapshotContinuation(state: number, data: string) {
     };
   }
 
-  const escape = data.indexOf("\u001b");
-  const prefix = escape < 0 ? data : data.slice(0, escape);
-  const end = terminalSequenceEnd(state, prefix);
-  const next = terminalSequenceStateAfter(state, prefix, 0, end);
-  if (next === TERMINAL_SEQUENCE_GROUND || escape < 0) {
-    return { state: next, data: data.slice(end) };
+  let replay = "";
+  const replayC1 = (byte: number, remainingBytes: number) => {
+    // Replay the ESC form from ground. DECID would generate a reply and ST has no effect.
+    const control =
+      byte === 0x9a || byte === 0x9c ? "" : "\u001b" + String.fromCharCode(byte - 0x40);
+    replay = control + "\ufffd".repeat(remainingBytes);
+  };
+  let end = 0;
+  while (state !== TERMINAL_SEQUENCE_GROUND && end < data.length && data[end] !== "\u001b") {
+    state = nextTerminalSequenceState(state, data.charCodeAt(end), replayC1);
+    end += 1;
+  }
+  if (state === TERMINAL_SEQUENCE_GROUND || end === data.length) {
+    return { state, data: replay + data.slice(end) };
   }
   // Hold a final ESC until we know whether it starts a new sequence or completes ST.
-  if (escape + 1 === data.length) return { state: SEQUENCE_ESCAPE, data: "" };
+  if (end + 1 === data.length) return { state: SEQUENCE_ESCAPE, data: "" };
   return {
     state: TERMINAL_SEQUENCE_GROUND,
-    data: data.slice(data[escape + 1] === "\\" ? escape + 2 : escape),
+    data: data.slice(data[end + 1] === "\\" ? end + 2 : end),
   };
 }
 
