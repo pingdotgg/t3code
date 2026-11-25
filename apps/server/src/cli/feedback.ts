@@ -124,7 +124,7 @@ export const feedbackCommand = Command.make("feedback", {
     Flag.withDescription("What went wrong."),
   ),
   subject: Flag.String("subject").pipe(
-    Flag.withDescription("The T3 tool name, t3 command such as `t3 thread send`, or `general`."),
+    Flag.withDescription("The T3 tool name, tix command such as `tix thread send`, or `general`."),
   ),
   expected: Flag.String("expected").pipe(Flag.withDescription("What you expected.")),
   actual: Flag.String("actual").pipe(Flag.withDescription("What happened instead.")),

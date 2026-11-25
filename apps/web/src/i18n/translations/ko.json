@@ -3253,15 +3253,15 @@
   ],
   "c54cc9c75db9dc58": "방금 시작한 로그인만 승인하세요.",
   "e9f4b93c4ec30453": "로그인 코드",
-  "33194f3e1b80f838": [
-    "다른 앱에서 T3 Code 사용(MCP), 설정 → 공유 및 액세스, 또는 이 머신의",
+  "0db526724bfb6842": [
+    "Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or",
     " ",
     {
       "t": "code",
       "i": 1,
-      "c": "t3 auth pairing create"
+      "c": "tix auth pairing create"
     },
-    "에서 받으세요."
+    " on this machine."
   ],
   "49e3cf16b3ac3e5f": "액세스",
   "9699d255b374e215": "허용할 작업",
@@ -5192,7 +5192,7 @@
   "c246e33dafd359cc": "추가",
   "b0c1beb79a87d97b": "인증 요청",
   "0311d7ed2b7eb2f6": "이 연결 링크가 불완전합니다",
-  "09e69d04f7e588eb": "링크에 인증 요청이 없습니다. 터미널에서 `t3 connect`를 다시 실행하고 새로 출력된 URL을 여세요.",
+  "6253d3dc5bc28dd1": "The link is missing its authorization request. Re-run `tix connect` in your terminal and open the freshly printed URL.",
   "55ee748307f0cd6a": "브라우저 인증",
   "1ccae6b48df9cf15": "터미널 연결 중",
   "b3e7da67bc047933": "CLI용 T3 Connect를 인증하도록 이동하는 중…",
@@ -7461,7 +7461,7 @@
   "8a333daf9b7fd03f": "{environment}에 연결",
   "7662025844bf543f": "환경 추가",
   "65b1d784a5e84254": "Tailscale 이름 같은 다른 주소로 이 머신을 다시 페어링하세요. 두 번째 머신을 추가하는 대신 기존 경로에 합쳐집니다.",
-  "e1cb1c8599e84e26": "{environment}의 설정 → 공유 및 액세스에서 또는 `t3 auth pairing create`로 페어링 코드를 만든 다음 여기에 입력하세요.",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "1bea4864d46d70d0": "이 클라이언트에 다른 환경을 페어링합니다.",
   "090064823c4e6045": "Connect via Tailscale, LAN, or pairing URL.",
   "3e20f17f71edf0ad": "백엔드에 로컬 SSH 구성, 에이전트, 터널을 사용합니다.",
@@ -9024,7 +9024,7 @@
   "ca4e4015b89ed9a8": "{target}에서 {source}(으)로 반대 방향 연결을 할 수 없습니다",
   "64ac3d1579ca9f5b": "{source}을(를) {target}에 연결",
   "5f2e20c62a4fece3": "{via}이(가) {target}에 전체 액세스로 연결되어 있어 페어링 코드를 가져옵니다. 붙여 넣을 코드가 없습니다.",
-  "fb71127e5746a6bc": "그곳의 공유 및 액세스 또는 t3 pair에서",
+  "a5f865cf243f51a4": "From Sharing & access there, or tix pair",
   "1e3fee7084791773": "{target}에서 {source}(으)로도 반대 방향 연결",
   "ea34a190b0bd804c": "그러면 {target}의 에이전트도 {source}에서 작업할 수 있습니다.",
   "974f8c65e8b5f492": "{label}을(를) 잊을까요? 여기의 에이전트는 그곳에서 더 이상 작업하지 않으며, {label}이(가) 응답하면 그곳의 세션도 종료됩니다.",
@@ -9801,8 +9801,8 @@
   "ae3971c4379c262f": "T3 Connect가 켜져 있지만 다른 기기에서 이 환경에 연결할 수 없습니다.",
   "8fddf21c28c34154": "T3 Connect가 켜져 있습니다. 연결 가능 여부는 아직 확인하지 않았습니다.",
   "b2cf3dccd52f02ec": "T3 Connect가 동기화되지 않았습니다. 이 환경은 에이전트 활동 게시용으로만 연결되어 있어 다른 기기에서 연결할 수 없습니다. 복구하려면 T3 Connect를 켜세요.",
-  "bf1a82ceb6a864f5": "이 환경은 T3 Connect에서 제거되었습니다. 다시 연결하려면 호스트에서 `t3 connect link`를 실행하세요.",
-  "818e1ff39ebdf4a6": "호스트에서 `t3 connect link`를 실행한 뒤 그곳에서 T3 Code를 다시 시작하세요.",
+  "18262d01dcff2d3d": "This environment was removed from T3 Connect. Run `tix connect link` on the host to link it again.",
+  "fd169df3c65c61d0": "Run `tix connect link` on the host, then restart T3 Code there.",
   "0a3123a6ce981075": "모바일 알림과 실시간 활동으로 활동을 보내려면 로그인하세요.",
   "c42a0de969f4133f": "T3 Connect 없이 모바일 알림과 실시간 활동으로 활동을 보냅니다.",
   "5f8ca828eca1ce1a": "모바일 클라이언트에 에이전트 활동 게시",

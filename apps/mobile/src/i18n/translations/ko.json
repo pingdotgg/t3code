@@ -2055,7 +2055,7 @@
   "44bbcfd33b751bd6": "주소",
   "42fd195574793f9e": "코드",
   "51b31345c7bed6f0": "페어링 코드",
-  "e1cb1c8599e84e26": "{environment}의 설정 → 공유 및 액세스에서 또는 `t3 auth pairing create`로 페어링 코드를 만든 다음 여기에 입력하세요.",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "c77f8253dcf5077d": "Connect directly via Tailscale (https://host.tailnet.ts.net or http://100.x.y.z:3773) or your local network. You can also paste a full pairing URL.",
   "36f32bd159bdc0d1": "QR 코드 스캔",
   "11fd02455d938901": "{command} 또는 데스크톱 연결 설정의 코드를 스캔하세요",

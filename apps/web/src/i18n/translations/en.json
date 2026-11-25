@@ -3254,13 +3254,13 @@
   ],
   "c54cc9c75db9dc58": "Only approve a sign-in you just started.",
   "e9f4b93c4ec30453": "Sign-in code",
-  "33194f3e1b80f838": [
+  "0db526724bfb6842": [
     "Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or",
     " ",
     {
       "t": "code",
       "i": 1,
-      "c": "t3 auth pairing create"
+      "c": "tix auth pairing create"
     },
     " on this machine."
   ],
@@ -5211,7 +5211,7 @@
   "c246e33dafd359cc": "Add",
   "b0c1beb79a87d97b": "Authorization request",
   "0311d7ed2b7eb2f6": "This connect link is incomplete",
-  "09e69d04f7e588eb": "The link is missing its authorization request. Re-run `t3 connect` in your terminal and open the freshly printed URL.",
+  "6253d3dc5bc28dd1": "The link is missing its authorization request. Re-run `tix connect` in your terminal and open the freshly printed URL.",
   "55ee748307f0cd6a": "Browser authorization",
   "1ccae6b48df9cf15": "Connecting your terminal",
   "b3e7da67bc047933": "Redirecting to authorize T3 Connect for your CLI…",
@@ -7499,7 +7499,7 @@
   "8a333daf9b7fd03f": "Connect to {environment}",
   "7662025844bf543f": "Add Environment",
   "65b1d784a5e84254": "Pair this machine again over another address, such as its Tailscale name. It joins the existing routes instead of adding a second machine.",
-  "e1cb1c8599e84e26": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `t3 auth pairing create`, and enter it here.",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "1bea4864d46d70d0": "Pair another environment to this client.",
   "090064823c4e6045": "Connect via Tailscale, LAN, or pairing URL.",
   "3e20f17f71edf0ad": "Use local SSH config, agent, and tunnels for the backend.",
@@ -9074,7 +9074,7 @@
   "ca4e4015b89ed9a8": "Could not link {target} back to {source}",
   "64ac3d1579ca9f5b": "Link {source} to {target}",
   "5f2e20c62a4fece3": "{via} links to {target} at full access, so it gets the pairing code. No code to paste.",
-  "fb71127e5746a6bc": "From Sharing & access there, or t3 pair",
+  "a5f865cf243f51a4": "From Sharing & access there, or tix pair",
   "1e3fee7084791773": "Also link {target} back to {source}",
   "ea34a190b0bd804c": "Agents on {target} can then work on {source} too.",
   "974f8c65e8b5f492": "Forget {label}? Agents here stop working there, and their session on {label} ends too if it answers.",
@@ -9854,8 +9854,8 @@
   "ae3971c4379c262f": "T3 Connect is on, but other devices cannot reach this environment.",
   "8fddf21c28c34154": "T3 Connect is on. Reachability has not been checked yet.",
   "b2cf3dccd52f02ec": "T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it.",
-  "bf1a82ceb6a864f5": "This environment was removed from T3 Connect. Run `t3 connect link` on the host to link it again.",
-  "818e1ff39ebdf4a6": "Run `t3 connect link` on the host, then restart T3 Code there.",
+  "18262d01dcff2d3d": "This environment was removed from T3 Connect. Run `tix connect link` on the host to link it again.",
+  "fd169df3c65c61d0": "Run `tix connect link` on the host, then restart T3 Code there.",
   "0a3123a6ce981075": "Sign in to send activity to mobile notifications and Live Activities.",
   "c42a0de969f4133f": "Send activity to mobile notifications and Live Activities without T3 Connect.",
   "5f8ca828eca1ce1a": "Publish agent activity to mobile clients",

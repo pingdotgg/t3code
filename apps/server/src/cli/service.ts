@@ -170,8 +170,8 @@ function formatProtection(
     !protection.memoryControllerAvailable
       ? `  Memory protection: unavailable, ${MEMORY_CONTROLLER_DISABLED}`
       : protection.unprotected === undefined
-        ? `  Memory protection: on${protection.setByProtect ? " (t3 service protect)" : ""}`
-        : `  Memory protection: off, ${protection.unprotected} grants none. Run \`t3 service protect\`.`,
+        ? `  Memory protection: on${protection.setByProtect ? " (tix service protect)" : ""}`
+        : `  Memory protection: off, ${protection.unprotected} grants none. Run \`tix service protect\`.`,
     ...(protection.oomScoreAdj === undefined ? [] : [`  OOM score: ${protection.oomScoreAdj}`]),
   ];
 }
@@ -245,7 +245,7 @@ const serviceReconcileFlags = {
 
 const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pipe(
   Command.withDescription(
-    "Install T3 Code as a background service for this user. `t3 up` also chooses how your other devices reach it.",
+    "Install T3 Code as a background service for this user. `tix up` also chooses how your other devices reach it.",
   ),
   Command.withHandler((flags) =>
     runServiceCommand(
@@ -269,14 +269,14 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
 );
 
 const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
-  Command.withDescription("Deprecated. Run `t3 update` to move to a newer release."),
+  Command.withDescription("Deprecated. Run `tix update` to move to a newer release."),
   Command.unlisted,
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,
       Effect.gen(function* () {
         yield* Console.log(
-          "`t3 service update` is deprecated: run `t3 update` to move to a newer release, or `t3 service install` to repair the service. Repairing now.",
+          "`tix service update` is deprecated: run `tix update` to move to a newer release, or `tix service install` to repair the service. Repairing now.",
         );
         const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
         if (!result.changed) {
@@ -293,7 +293,7 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
 
 const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe(
   Command.withDescription(
-    "Restart the background service. Picks up a version installed by `t3 update` that was not restarted at the time.",
+    "Restart the background service. Picks up a version installed by `tix update` that was not restarted at the time.",
   ),
   Command.withHandler((flags) =>
     runServiceCommand(
@@ -402,7 +402,7 @@ const serviceProtectCommand = Command.make("protect", {
       // Before resolving config, which creates T3 directories that root would then own.
       if ((yield* HostProcess.UserId) === 0) {
         return yield* Console.log(
-          "Run `t3 service protect` as the user that runs T3 Code, without sudo. It asks for sudo when it needs root.",
+          "Run `tix service protect` as the user that runs T3 Code, without sudo. It asks for sudo when it needs root.",
         );
       }
       return yield* runServiceCommand(
@@ -439,7 +439,7 @@ const serviceProtectCommand = Command.make("protect", {
             if (!(yield* confirm(flags.yes, "Remove T3 Code service protection?"))) return;
             yield* ServiceProtection.removeProtection(installed);
             return yield* Console.log(
-              "Removed T3 Code service protection. The server's OOM score returns to normal after `t3 service restart`.",
+              "Removed T3 Code service protection. The server's OOM score returns to normal after `tix service restart`.",
             );
           }
 
@@ -448,7 +448,7 @@ const serviceProtectCommand = Command.make("protect", {
               "Keeps T3 Code running when agents fill this machine's memory:",
               "  - reserves memory for the T3 Code server, so the kernel takes memory from agents first",
               "  - makes the out-of-memory killer pick agents before the server",
-              "It adds systemd drop-in files and changes nothing else. Undo with `t3 service protect --undo`.",
+              "It adds systemd drop-in files and changes nothing else. Undo with `tix service protect --undo`.",
             ].join("\n"),
           );
           const names = remote.map((unit) => unit.replace(/\.service$/, "")).join(" and ");
@@ -479,8 +479,8 @@ const serviceProtectCommand = Command.make("protect", {
           yield* ServiceProtection.applyProtection(plan);
           yield* Console.log(
             memoryController
-              ? "Protected T3 Code. Memory protection applies now; the server takes its OOM score after `t3 service restart`. Undo with `t3 service protect --undo`."
-              : "Protected T3 Code's OOM score; the server takes it after `t3 service restart`. Memory protection applies once the kernel's memory controller is enabled. Undo with `t3 service protect --undo`.",
+              ? "Protected T3 Code. Memory protection applies now; the server takes its OOM score after `tix service restart`. Undo with `tix service protect --undo`."
+              : "Protected T3 Code's OOM score; the server takes it after `tix service restart`. Memory protection applies once the kernel's memory controller is enabled. Undo with `tix service protect --undo`.",
           );
         }).pipe(Effect.provide(ProcessRunner.layer)),
       );

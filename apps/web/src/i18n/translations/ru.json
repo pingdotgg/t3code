@@ -3254,15 +3254,15 @@
   ],
   "c54cc9c75db9dc58": "Подтверждайте только тот вход, который вы только что начали.",
   "e9f4b93c4ec30453": "Код входа",
-  "33194f3e1b80f838": [
-    "Получите его в «Использовать T3 Code в другом приложении (MCP)», «Настройки → Общий доступ» или командой",
+  "0db526724bfb6842": [
+    "Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or",
     " ",
     {
       "t": "code",
       "i": 1,
-      "c": "t3 auth pairing create"
+      "c": "tix auth pairing create"
     },
-    " на этой машине."
+    " on this machine."
   ],
   "49e3cf16b3ac3e5f": "Доступ",
   "9699d255b374e215": "Что ему разрешено",
@@ -5209,7 +5209,7 @@
   "c246e33dafd359cc": "Добавить",
   "b0c1beb79a87d97b": "Запрос авторизации",
   "0311d7ed2b7eb2f6": "Ссылка для подключения неполная",
-  "09e69d04f7e588eb": "В ссылке нет запроса авторизации. Снова выполните `t3 connect` в терминале и откройте новый URL.",
+  "6253d3dc5bc28dd1": "The link is missing its authorization request. Re-run `tix connect` in your terminal and open the freshly printed URL.",
   "55ee748307f0cd6a": "Авторизация в браузере",
   "1ccae6b48df9cf15": "Подключение терминала",
   "b3e7da67bc047933": "Переход к авторизации T3 Connect для CLI…",
@@ -7492,7 +7492,7 @@
   "8a333daf9b7fd03f": "Подключиться к {environment}",
   "7662025844bf543f": "Добавить окружение",
   "65b1d784a5e84254": "Выполните сопряжение с этой машиной заново по другому адресу, например по имени в Tailscale. Он добавится к существующим маршрутам, а не создаст вторую машину.",
-  "e1cb1c8599e84e26": "Создайте код сопряжения на {environment} в разделе «Настройки → Общий доступ» или командой `t3 auth pairing create` и введите его здесь.",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "1bea4864d46d70d0": "Выполните сопряжение этого клиента с другим окружением.",
   "090064823c4e6045": "Connect via Tailscale, LAN, or pairing URL.",
   "3e20f17f71edf0ad": "Использовать локальные конфигурацию SSH, агент и туннели для бэкенда.",
@@ -9066,7 +9066,7 @@
   "ca4e4015b89ed9a8": "Не удалось привязать {target} в ответ к {source}",
   "64ac3d1579ca9f5b": "Привязать {source} к {target}",
   "5f2e20c62a4fece3": "{via} связан с {target} с полным доступом и поэтому получает код сопряжения. Вставлять код не нужно.",
-  "fb71127e5746a6bc": "Из раздела «Общий доступ» там или через t3 pair",
+  "a5f865cf243f51a4": "From Sharing & access there, or tix pair",
   "1e3fee7084791773": "Также привязать {target} в ответ к {source}",
   "ea34a190b0bd804c": "Тогда агенты на {target} смогут работать и на {source}.",
   "974f8c65e8b5f492": "Забыть {label}? Агенты отсюда перестанут там работать, а их сеанс на {label} тоже завершится, если он ответит.",
@@ -9847,8 +9847,8 @@
   "ae3971c4379c262f": "T3 Connect включён, но другие устройства не могут достучаться до этого окружения.",
   "8fddf21c28c34154": "T3 Connect включён. Доступность ещё не проверена.",
   "b2cf3dccd52f02ec": "T3 Connect рассинхронизирован. Это окружение привязано только для публикации активности агентов, поэтому другие устройства не могут подключиться. Включите T3 Connect, чтобы это исправить.",
-  "bf1a82ceb6a864f5": "Это окружение удалено из T3 Connect. Выполните `t3 connect link` на хосте, чтобы привязать его снова.",
-  "818e1ff39ebdf4a6": "Выполните `t3 connect link` на хосте, затем перезапустите там T3 Code.",
+  "18262d01dcff2d3d": "This environment was removed from T3 Connect. Run `tix connect link` on the host to link it again.",
+  "fd169df3c65c61d0": "Run `tix connect link` on the host, then restart T3 Code there.",
   "0a3123a6ce981075": "Войдите, чтобы отправлять активность в мобильные уведомления и Live Activities.",
   "c42a0de969f4133f": "Отправлять активность в мобильные уведомления и Live Activities без T3 Connect.",
   "5f8ca828eca1ce1a": "Публиковать активность агентов в мобильные клиенты",

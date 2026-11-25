@@ -260,7 +260,7 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
     ...(isLoopbackHost(hostname)
       ? []
       : isTailscaleAddress
-        ? ["", "Reachable over Tailscale. For HTTPS via MagicDNS, run `t3 pair --tailscale`."]
+        ? ["", "Reachable over Tailscale. For HTTPS via MagicDNS, run `tix pair --tailscale`."]
         : [
             "",
             "Warning: this address uses plain HTTP. Anyone on the same network can read the",

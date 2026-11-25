@@ -51,9 +51,9 @@ const listedPaths = (command: Command.Command.Any, path: string): ReadonlyArray<
   ),
 ];
 
-it("feedback subjects name every listed t3 command", () => {
+it("feedback subjects name every listed tix command", () => {
   expect([...T3_CLI_COMMANDS].sort()).toEqual(
-    [...listedPaths(makeCli({ cloudEnabled: true }), "t3")].sort(),
+    [...listedPaths(makeCli({ cloudEnabled: true }), "tix")].sort(),
   );
 });
 

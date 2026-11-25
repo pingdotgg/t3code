@@ -2056,7 +2056,7 @@
   "44bbcfd33b751bd6": "地址",
   "42fd195574793f9e": "配对码",
   "51b31345c7bed6f0": "配对码",
-  "e1cb1c8599e84e26": "在 {environment} 的设置 → 共享与访问中或使用 `t3 auth pairing create` 创建配对码，然后在此输入。",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "c77f8253dcf5077d": "支持通过 Tailscale（https://host.tailnet.ts.net 或 http://100.x.y.z:3773）或局域网直连，也可以直接粘贴完整配对链接。",
   "36f32bd159bdc0d1": "扫描二维码",
   "11fd02455d938901": "扫描 {command} 或桌面端“连接”设置中的二维码",

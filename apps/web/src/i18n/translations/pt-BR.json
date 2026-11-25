@@ -3254,15 +3254,15 @@
   ],
   "c54cc9c75db9dc58": "Aprove apenas um login que você acabou de iniciar.",
   "e9f4b93c4ec30453": "Código de login",
-  "33194f3e1b80f838": [
-    "Obtenha um em Usar o T3 Code em outro app (MCP), Configurações → Compartilhamento ou com",
+  "0db526724bfb6842": [
+    "Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or",
     " ",
     {
       "t": "code",
       "i": 1,
-      "c": "t3 auth pairing create"
+      "c": "tix auth pairing create"
     },
-    " nesta máquina."
+    " on this machine."
   ],
   "49e3cf16b3ac3e5f": "Acesso",
   "9699d255b374e215": "O que ele pode fazer",
@@ -5209,7 +5209,7 @@
   "c246e33dafd359cc": "Adicionar",
   "b0c1beb79a87d97b": "Pedido de autorização",
   "0311d7ed2b7eb2f6": "Este link de conexão está incompleto",
-  "09e69d04f7e588eb": "Falta o pedido de autorização no link. Execute `t3 connect` de novo no terminal e abra a URL recém-exibida.",
+  "6253d3dc5bc28dd1": "The link is missing its authorization request. Re-run `tix connect` in your terminal and open the freshly printed URL.",
   "55ee748307f0cd6a": "Autorização pelo navegador",
   "1ccae6b48df9cf15": "Conectando seu terminal",
   "b3e7da67bc047933": "Redirecionando para autorizar o T3 Connect no seu CLI…",
@@ -7492,7 +7492,7 @@
   "8a333daf9b7fd03f": "Conectar a {environment}",
   "7662025844bf543f": "Adicionar ambiente",
   "65b1d784a5e84254": "Pareie esta máquina novamente por outro endereço, como o nome dela no Tailscale. Ele se junta às rotas existentes em vez de adicionar uma segunda máquina.",
-  "e1cb1c8599e84e26": "Crie um código de pareamento em {environment}, em Configurações → Compartilhamento e acesso ou com `t3 auth pairing create`, e insira-o aqui.",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "1bea4864d46d70d0": "Parear outro ambiente com este cliente.",
   "090064823c4e6045": "Connect via Tailscale, LAN, or pairing URL.",
   "3e20f17f71edf0ad": "Usa a configuração SSH local, o agent e túneis para o backend.",
@@ -9065,7 +9065,7 @@
   "ca4e4015b89ed9a8": "Não foi possível vincular {target} de volta a {source}",
   "64ac3d1579ca9f5b": "Vincular {source} a {target}",
   "5f2e20c62a4fece3": "{via} está vinculado a {target} com acesso total, então obtém o código de pareamento. Nenhum código para colar.",
-  "fb71127e5746a6bc": "Em Compartilhamento e acesso de lá, ou t3 pair",
+  "a5f865cf243f51a4": "From Sharing & access there, or tix pair",
   "1e3fee7084791773": "Vincular também {target} de volta a {source}",
   "ea34a190b0bd804c": "Os agentes de {target} poderão trabalhar também em {source}.",
   "974f8c65e8b5f492": "Esquecer {label}? Os agentes daqui param de trabalhar lá, e a sessão deles em {label} também termina se ele responder.",
@@ -9844,8 +9844,8 @@
   "ae3971c4379c262f": "O T3 Connect está ativado, mas outros dispositivos não conseguem acessar este ambiente.",
   "8fddf21c28c34154": "O T3 Connect está ativado. A acessibilidade ainda não foi verificada.",
   "b2cf3dccd52f02ec": "O T3 Connect está dessincronizado. Este ambiente está vinculado só para publicar a atividade dos agentes, então outros dispositivos não podem se conectar. Ative o T3 Connect para corrigir.",
-  "bf1a82ceb6a864f5": "Este ambiente foi removido do T3 Connect. Execute `t3 connect link` no host para vinculá-lo novamente.",
-  "818e1ff39ebdf4a6": "Execute `t3 connect link` no host e depois reinicie o T3 Code lá.",
+  "18262d01dcff2d3d": "This environment was removed from T3 Connect. Run `tix connect link` on the host to link it again.",
+  "fd169df3c65c61d0": "Run `tix connect link` on the host, then restart T3 Code there.",
   "0a3123a6ce981075": "Entre para enviar a atividade às notificações móveis e às Live Activities.",
   "c42a0de969f4133f": "Envia a atividade às notificações móveis e às Live Activities sem o T3 Connect.",
   "5f8ca828eca1ce1a": "Publicar a atividade dos agentes nos clientes móveis",

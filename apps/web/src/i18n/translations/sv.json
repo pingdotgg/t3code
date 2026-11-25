@@ -3254,15 +3254,15 @@
   ],
   "c54cc9c75db9dc58": "Godkänn bara en inloggning som du själv precis har startat.",
   "e9f4b93c4ec30453": "Inloggningskod",
-  "33194f3e1b80f838": [
-    "Hämta en från Använd T3 Code i en annan app (MCP), Inställningar → Delning och åtkomst eller",
+  "0db526724bfb6842": [
+    "Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or",
     " ",
     {
       "t": "code",
       "i": 1,
-      "c": "t3 auth pairing create"
+      "c": "tix auth pairing create"
     },
-    " på den här datorn."
+    " on this machine."
   ],
   "49e3cf16b3ac3e5f": "Åtkomst",
   "9699d255b374e215": "Vad den får göra",
@@ -5210,7 +5210,7 @@
   "c246e33dafd359cc": "Lägg till",
   "b0c1beb79a87d97b": "Auktoriseringsbegäran",
   "0311d7ed2b7eb2f6": "Den här anslutningslänken är ofullständig",
-  "09e69d04f7e588eb": "Länken saknar sin auktoriseringsbegäran. Kör `t3 connect` igen i terminalen och öppna den nyutskrivna URL:en.",
+  "6253d3dc5bc28dd1": "The link is missing its authorization request. Re-run `tix connect` in your terminal and open the freshly printed URL.",
   "55ee748307f0cd6a": "Auktorisering i webbläsaren",
   "1ccae6b48df9cf15": "Ansluter din terminal",
   "b3e7da67bc047933": "Omdirigerar för att auktorisera T3 Connect för ditt CLI…",
@@ -7498,7 +7498,7 @@
   "8a333daf9b7fd03f": "Anslut till {environment}",
   "7662025844bf543f": "Lägg till miljö",
   "65b1d784a5e84254": "Parkoppla den här datorn igen via en annan adress, till exempel dess Tailscale-namn. Den ansluter till de befintliga rutterna i stället för att lägga till en andra dator.",
-  "e1cb1c8599e84e26": "Skapa en parkopplingskod på {environment}, i dess Inställningar → Delning och åtkomst eller med `t3 auth pairing create`, och ange den här.",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "1bea4864d46d70d0": "Parkoppla en annan miljö med den här klienten.",
   "090064823c4e6045": "Connect via Tailscale, LAN, or pairing URL.",
   "3e20f17f71edf0ad": "Använd lokal SSH-konfiguration, agent och tunnlar för backenden.",
@@ -9072,7 +9072,7 @@
   "ca4e4015b89ed9a8": "Kunde inte länka {target} tillbaka till {source}",
   "64ac3d1579ca9f5b": "Länka {source} till {target}",
   "5f2e20c62a4fece3": "{via} är länkad till {target} med full åtkomst och hämtar därför parkopplingskoden. Ingen kod att klistra in.",
-  "fb71127e5746a6bc": "Från Delning och åtkomst där, eller t3 pair",
+  "a5f865cf243f51a4": "From Sharing & access there, or tix pair",
   "1e3fee7084791773": "Länka även {target} tillbaka till {source}",
   "ea34a190b0bd804c": "Agenter på {target} kan då också arbeta på {source}.",
   "974f8c65e8b5f492": "Glöm {label}? Agenter här slutar arbeta där, och deras session på {label} avslutas också om den svarar.",
@@ -9852,8 +9852,8 @@
   "ae3971c4379c262f": "T3 Connect är på, men andra enheter kan inte nå den här miljön.",
   "8fddf21c28c34154": "T3 Connect är på. Nåbarheten har inte kontrollerats än.",
   "b2cf3dccd52f02ec": "T3 Connect är inte synkroniserat. Miljön är bara länkad för att publicera agentaktivitet, så andra enheter kan inte ansluta. Slå på T3 Connect för att reparera det.",
-  "bf1a82ceb6a864f5": "Miljön togs bort från T3 Connect. Kör `t3 connect link` på värden för att länka den igen.",
-  "818e1ff39ebdf4a6": "Kör `t3 connect link` på värden och starta sedan om T3 Code där.",
+  "18262d01dcff2d3d": "This environment was removed from T3 Connect. Run `tix connect link` on the host to link it again.",
+  "fd169df3c65c61d0": "Run `tix connect link` on the host, then restart T3 Code there.",
   "0a3123a6ce981075": "Logga in för att skicka aktivitet till mobilaviseringar och liveaktiviteter.",
   "c42a0de969f4133f": "Skicka aktivitet till mobilaviseringar och liveaktiviteter utan T3 Connect.",
   "5f8ca828eca1ce1a": "Publicera agentaktivitet till mobilklienter",

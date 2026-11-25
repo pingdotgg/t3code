@@ -2054,7 +2054,7 @@
   "44bbcfd33b751bd6": "Endereço",
   "42fd195574793f9e": "Código",
   "51b31345c7bed6f0": "Código de pareamento",
-  "e1cb1c8599e84e26": "Crie um código de pareamento em {environment}, em Configurações → Compartilhamento e acesso ou com `t3 auth pairing create`, e insira-o aqui.",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "c77f8253dcf5077d": "Connect directly via Tailscale (https://host.tailnet.ts.net or http://100.x.y.z:3773) or your local network. You can also paste a full pairing URL.",
   "36f32bd159bdc0d1": "Escanear QR code",
   "11fd02455d938901": "Escaneie o código de {command} ou das configurações de Conexões do desktop",

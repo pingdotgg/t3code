@@ -496,7 +496,7 @@ const mintPairingLink = Effect.fn("pair.mintPairingLink")(function* (input: {
     return yield* environmentAuth.createPairingLink({
       scopes: input.scopes,
       subject: "one-time-token",
-      label: Option.getOrElse(input.label, () => "t3 pair"),
+      label: Option.getOrElse(input.label, () => "tix pair"),
       ...(Option.isSome(input.ttl) ? { ttl: input.ttl.value } : {}),
     });
   }).pipe(
@@ -592,7 +592,7 @@ export const pairCommand = Command.make("pair", {
         const pairingHostname = new URL(pairingBaseUrl).hostname;
         if (isLoopbackHost(pairingHostname)) {
           notes.push(
-            "This URL is only reachable from this machine. To reach it from your other devices, run `t3 up`, or re-run with --tailscale.",
+            "This URL is only reachable from this machine. To reach it from your other devices, run `tix up`, or re-run with --tailscale.",
           );
         } else if (isSharedAddressSpaceHost(pairingHostname)) {
           notes.push(

@@ -3252,15 +3252,15 @@
   ],
   "c54cc9c75db9dc58": "自分で開始したばかりのサインインだけを承認してください。",
   "e9f4b93c4ec30453": "サインインコード",
-  "33194f3e1b80f838": [
-    "[他のアプリで T3 Code を使用 (MCP)]、[設定] → [共有とアクセス]、またはこのマシンで",
+  "0db526724bfb6842": [
+    "Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or",
     " ",
     {
       "t": "code",
       "i": 1,
-      "c": "t3 auth pairing create"
+      "c": "tix auth pairing create"
     },
-    " を実行して取得します。"
+    " on this machine."
   ],
   "49e3cf16b3ac3e5f": "アクセス",
   "9699d255b374e215": "許可する操作",
@@ -5195,7 +5195,7 @@
   "c246e33dafd359cc": "追加",
   "b0c1beb79a87d97b": "承認リクエスト",
   "0311d7ed2b7eb2f6": "この接続リンクは不完全です",
-  "09e69d04f7e588eb": "リンクに承認リクエストがありません。ターミナルで `t3 connect` を再実行し、新しく表示された URL を開いてください。",
+  "6253d3dc5bc28dd1": "The link is missing its authorization request. Re-run `tix connect` in your terminal and open the freshly printed URL.",
   "55ee748307f0cd6a": "ブラウザーでの承認",
   "1ccae6b48df9cf15": "ターミナルを接続しています",
   "b3e7da67bc047933": "CLI 用の T3 Connect を承認するためにリダイレクトしています…",
@@ -7458,7 +7458,7 @@
   "8a333daf9b7fd03f": "{environment} に接続",
   "7662025844bf543f": "環境を追加",
   "65b1d784a5e84254": "このマシンを別のアドレス (Tailscale の名前など) でもう一度ペアリングします。2 台目のマシンとして追加されるのではなく、既存のルートに加わります。",
-  "e1cb1c8599e84e26": "{environment} の設定 → 共有とアクセス、または `t3 auth pairing create` でペアリングコードを作成し、ここに入力してください。",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "1bea4864d46d70d0": "このクライアントに別の環境をペアリングします。",
   "090064823c4e6045": "Connect via Tailscale, LAN, or pairing URL.",
   "3e20f17f71edf0ad": "バックエンドにはローカルの SSH 構成、エージェント、トンネルを使用します。",
@@ -9021,7 +9021,7 @@
   "ca4e4015b89ed9a8": "{target} から {source} へ逆方向にリンクできませんでした",
   "64ac3d1579ca9f5b": "{source} を {target} にリンク",
   "5f2e20c62a4fece3": "{via} は {target} にフルアクセスでリンクしているため、ペアリングコードを取得します。コードの貼り付けは不要です。",
-  "fb71127e5746a6bc": "リンク先の「共有とアクセス」、または t3 pair から",
+  "a5f865cf243f51a4": "From Sharing & access there, or tix pair",
   "1e3fee7084791773": "{target} から {source} へも逆方向にリンクする",
   "ea34a190b0bd804c": "{target} のエージェントも {source} で作業できるようになります。",
   "974f8c65e8b5f492": "{label} を削除しますか？ここのエージェントはそこで作業できなくなり、{label} が応答すればそこでのセッションも終了します。",
@@ -9799,8 +9799,8 @@
   "ae3971c4379c262f": "T3 Connect はオンですが、他のデバイスからこの環境に到達できません。",
   "8fddf21c28c34154": "T3 Connect はオンです。到達可能性はまだ確認されていません。",
   "b2cf3dccd52f02ec": "T3 Connect が同期していません。この環境はエージェントのアクティビティを公開するためだけにリンクされているため、他のデバイスは接続できません。修復するには T3 Connect をオンにしてください。",
-  "bf1a82ceb6a864f5": "この環境は T3 Connect から削除されました。再度リンクするには、ホストで `t3 connect link` を実行してください。",
-  "818e1ff39ebdf4a6": "ホストで `t3 connect link` を実行してから、そこで T3 Code を再起動してください。",
+  "18262d01dcff2d3d": "This environment was removed from T3 Connect. Run `tix connect link` on the host to link it again.",
+  "fd169df3c65c61d0": "Run `tix connect link` on the host, then restart T3 Code there.",
   "0a3123a6ce981075": "モバイルの通知とライブアクティビティにアクティビティを送信するには、サインインしてください。",
   "c42a0de969f4133f": "T3 Connect を使わずに、モバイルの通知とライブアクティビティにアクティビティを送信します。",
   "5f8ca828eca1ce1a": "エージェントのアクティビティをモバイルクライアントに公開",

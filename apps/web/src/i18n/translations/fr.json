@@ -3254,15 +3254,15 @@
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
   "e9f4b93c4ec30453": "Code de connexion",
-  "33194f3e1b80f838": [
-    "Obtenez-en un via Utiliser T3 Code dans une autre app (MCP), Paramètres → Partage et accès, ou",
+  "0db526724bfb6842": [
+    "Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or",
     " ",
     {
       "t": "code",
       "i": 1,
-      "c": "t3 auth pairing create"
+      "c": "tix auth pairing create"
     },
-    " sur cette machine."
+    " on this machine."
   ],
   "49e3cf16b3ac3e5f": "Accès",
   "9699d255b374e215": "Ce qu’il peut faire",
@@ -5210,7 +5210,7 @@
   "c246e33dafd359cc": "Ajouter",
   "b0c1beb79a87d97b": "Demande d’autorisation",
   "0311d7ed2b7eb2f6": "Ce lien de connexion est incomplet",
-  "09e69d04f7e588eb": "Il manque la demande d’autorisation dans le lien. Relancez `t3 connect` dans votre terminal et ouvrez l’URL qui vient d’être affichée.",
+  "6253d3dc5bc28dd1": "The link is missing its authorization request. Re-run `tix connect` in your terminal and open the freshly printed URL.",
   "55ee748307f0cd6a": "Autorisation dans le navigateur",
   "1ccae6b48df9cf15": "Connexion de votre terminal",
   "b3e7da67bc047933": "Redirection pour autoriser T3 Connect pour votre CLI…",
@@ -7493,7 +7493,7 @@
   "8a333daf9b7fd03f": "Se connecter à {environment}",
   "7662025844bf543f": "Ajouter un environnement",
   "65b1d784a5e84254": "Appairez à nouveau cette machine via une autre adresse, comme son nom Tailscale. Elle rejoint les routes existantes au lieu d’ajouter une deuxième machine.",
-  "e1cb1c8599e84e26": "Créez un code d’appairage sur {environment}, dans ses Paramètres → Partage et accès ou avec `t3 auth pairing create`, puis saisissez-le ici.",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "1bea4864d46d70d0": "Appairez un autre environnement à ce client.",
   "090064823c4e6045": "Connect via Tailscale, LAN, or pairing URL.",
   "3e20f17f71edf0ad": "Utiliser la configuration SSH locale, l’agent et les tunnels pour le backend.",
@@ -9066,7 +9066,7 @@
   "ca4e4015b89ed9a8": "Impossible d’associer {target} en retour à {source}",
   "64ac3d1579ca9f5b": "Associer {source} à {target}",
   "5f2e20c62a4fece3": "{via} est lié à {target} en accès complet et récupère donc le code d’appairage. Aucun code à coller.",
-  "fb71127e5746a6bc": "Depuis Partage et accès sur cette machine, ou t3 pair",
+  "a5f865cf243f51a4": "From Sharing & access there, or tix pair",
   "1e3fee7084791773": "Associer aussi {target} en retour à {source}",
   "ea34a190b0bd804c": "Les agents de {target} pourront alors aussi travailler sur {source}.",
   "974f8c65e8b5f492": "Oublier {label} ? Les agents d’ici cessent d’y travailler, et leur session sur {label} prend fin aussi s’il répond.",
@@ -9844,8 +9844,8 @@
   "ae3971c4379c262f": "T3 Connect est activé, mais les autres appareils ne peuvent pas joindre cet environnement.",
   "8fddf21c28c34154": "T3 Connect est activé. L’accessibilité n’a pas encore été vérifiée.",
   "b2cf3dccd52f02ec": "T3 Connect est désynchronisé. Cet environnement est associé uniquement pour publier l’activité des agents, les autres appareils ne peuvent donc pas se connecter. Activez T3 Connect pour le réparer.",
-  "bf1a82ceb6a864f5": "Cet environnement a été retiré de T3 Connect. Lancez `t3 connect link` sur l’hôte pour l’associer à nouveau.",
-  "818e1ff39ebdf4a6": "Lancez `t3 connect link` sur l’hôte, puis redémarrez T3 Code sur cette machine.",
+  "18262d01dcff2d3d": "This environment was removed from T3 Connect. Run `tix connect link` on the host to link it again.",
+  "fd169df3c65c61d0": "Run `tix connect link` on the host, then restart T3 Code there.",
   "0a3123a6ce981075": "Connectez-vous pour envoyer l’activité vers les notifications mobiles et les Live Activities.",
   "c42a0de969f4133f": "Envoie l’activité vers les notifications mobiles et les Live Activities sans T3 Connect.",
   "5f8ca828eca1ce1a": "Publier l’activité des agents sur les clients mobiles",

@@ -3254,15 +3254,15 @@
   ],
   "c54cc9c75db9dc58": "Aprueba solo un inicio de sesión que acabes de iniciar.",
   "e9f4b93c4ec30453": "Código de inicio de sesión",
-  "33194f3e1b80f838": [
-    "Obtén uno en Usar T3 Code en otra app (MCP), Ajustes → Compartir y acceso, o con",
+  "0db526724bfb6842": [
+    "Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or",
     " ",
     {
       "t": "code",
       "i": 1,
-      "c": "t3 auth pairing create"
+      "c": "tix auth pairing create"
     },
-    " en esta máquina."
+    " on this machine."
   ],
   "49e3cf16b3ac3e5f": "Acceso",
   "9699d255b374e215": "Lo que puede hacer",
@@ -5209,7 +5209,7 @@
   "c246e33dafd359cc": "Añadir",
   "b0c1beb79a87d97b": "Solicitud de autorización",
   "0311d7ed2b7eb2f6": "Este enlace de conexión está incompleto",
-  "09e69d04f7e588eb": "Al enlace le falta su solicitud de autorización. Vuelve a ejecutar `t3 connect` en tu terminal y abre la URL que se acaba de imprimir.",
+  "6253d3dc5bc28dd1": "The link is missing its authorization request. Re-run `tix connect` in your terminal and open the freshly printed URL.",
   "55ee748307f0cd6a": "Autorización del navegador",
   "1ccae6b48df9cf15": "Conectando tu terminal",
   "b3e7da67bc047933": "Redirigiendo para autorizar T3 Connect para tu CLI…",
@@ -7492,7 +7492,7 @@
   "8a333daf9b7fd03f": "Conectar con {environment}",
   "7662025844bf543f": "Añadir entorno",
   "65b1d784a5e84254": "Vuelve a emparejar esta máquina con otra dirección, como su nombre de Tailscale. Se une a las rutas existentes en lugar de añadir una segunda máquina.",
-  "e1cb1c8599e84e26": "Crea un código de emparejamiento en {environment}, en sus Ajustes → Compartir y acceso o con `t3 auth pairing create`, e introdúcelo aquí.",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "1bea4864d46d70d0": "Empareja otro entorno con este cliente.",
   "090064823c4e6045": "Connect via Tailscale, LAN, or pairing URL.",
   "3e20f17f71edf0ad": "Usa la configuración SSH local, el agente y los túneles para el backend.",
@@ -9064,7 +9064,7 @@
   "ca4e4015b89ed9a8": "No se pudo vincular {target} de vuelta a {source}",
   "64ac3d1579ca9f5b": "Vincular {source} con {target}",
   "5f2e20c62a4fece3": "{via} está vinculado a {target} con acceso total, así que obtiene el código de emparejamiento. No hay que pegar ningún código.",
-  "fb71127e5746a6bc": "Desde Compartir y acceso allí, o t3 pair",
+  "a5f865cf243f51a4": "From Sharing & access there, or tix pair",
   "1e3fee7084791773": "Vincular también {target} de vuelta a {source}",
   "ea34a190b0bd804c": "Los agentes de {target} podrán trabajar también en {source}.",
   "974f8c65e8b5f492": "¿Olvidar {label}? Los agentes de aquí dejan de trabajar allí, y su sesión en {label} también termina si responde.",
@@ -9842,8 +9842,8 @@
   "ae3971c4379c262f": "T3 Connect está activado, pero otros dispositivos no pueden llegar a este entorno.",
   "8fddf21c28c34154": "T3 Connect está activado. Aún no se ha comprobado la accesibilidad.",
   "b2cf3dccd52f02ec": "T3 Connect no está sincronizado. Este entorno solo está vinculado para publicar la actividad de agentes, así que otros dispositivos no pueden conectarse. Activa T3 Connect para repararlo.",
-  "bf1a82ceb6a864f5": "Este entorno se quitó de T3 Connect. Ejecuta `t3 connect link` en el host para volver a vincularlo.",
-  "818e1ff39ebdf4a6": "Ejecuta `t3 connect link` en el host y después reinicia T3 Code allí.",
+  "18262d01dcff2d3d": "This environment was removed from T3 Connect. Run `tix connect link` on the host to link it again.",
+  "fd169df3c65c61d0": "Run `tix connect link` on the host, then restart T3 Code there.",
   "0a3123a6ce981075": "Inicia sesión para enviar la actividad a las notificaciones móviles y a las Actividades en directo.",
   "c42a0de969f4133f": "Envía la actividad a las notificaciones móviles y a las Actividades en directo sin T3 Connect.",
   "5f8ca828eca1ce1a": "Publicar la actividad de agentes en los clientes móviles",

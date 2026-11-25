@@ -2078,7 +2078,7 @@
   "44bbcfd33b751bd6": "Адрес",
   "42fd195574793f9e": "Код",
   "51b31345c7bed6f0": "Код сопряжения",
-  "e1cb1c8599e84e26": "Создайте код сопряжения на {environment} в разделе «Настройки → Общий доступ» или командой `t3 auth pairing create` и введите его здесь.",
+  "8514e227bbd1c037": "Create a pairing code on {environment}, in its Settings → Sharing & access or with `tix auth pairing create`, and enter it here.",
   "c77f8253dcf5077d": "Connect directly via Tailscale (https://host.tailnet.ts.net or http://100.x.y.z:3773) or your local network. You can also paste a full pairing URL.",
   "36f32bd159bdc0d1": "Сканировать QR-код",
   "11fd02455d938901": "Отсканируйте код из {command} или из настроек подключений в десктопном приложении",
