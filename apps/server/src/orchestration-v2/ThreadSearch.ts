@@ -451,7 +451,7 @@ export const make = Effect.gen(function* () {
         COALESCE(json_extract(threads.payload_json, '$.worktreePath'), projects.workspace_root) AS cwd,
         ${latestUserMessageAt(sql)} AS "latestUserMessageAt"
       FROM orchestration_v2_projection_threads AS threads
-      INNER JOIN projection_projects AS projects ON projects.project_id = threads.project_id
+      LEFT JOIN projection_projects AS projects ON projects.project_id = threads.project_id
       WHERE threads.thread_id IN (SELECT value FROM json_each(${threadIds}))
     `,
   });

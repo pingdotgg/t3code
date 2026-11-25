@@ -5,7 +5,7 @@ import { test, WEB } from "./t3.ts";
 test(
   "Quoted thread search selects the complete phrase across rendered line breaks",
   WEB,
-  async ({ t3, screen, browser }) => {
+  async ({ t3, app, screen, browser }) => {
     const project = await t3.project("demo");
     const thread = await t3.thread({ project, title: "Weekly notes", messages: ["Start"] });
     await t3.open(thread);
@@ -31,6 +31,8 @@ test(
     for (const phrase of ["canary migration", "soft break", "hard break"]) {
       await query.fill(`"${phrase}"`);
       await screen.getByRole("option").filter({ hasText: phrase }).tap();
+      await browser.locator('[data-thread-find-bar] [aria-busy="false"]').waitFor();
+      if (phrase === "canary migration") await app.screenshot("quoted-search-in-thread");
       await expect(find).toContainText("1/1");
       const active = await browser.evaluate(() =>
         [...(CSS.highlights.get("t3-thread-find-active") ?? [])].flatMap((range) =>
