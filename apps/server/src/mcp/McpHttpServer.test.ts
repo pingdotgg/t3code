@@ -192,6 +192,11 @@ const callTool = (name: string, args: Record<string, unknown>) =>
       );
   });
 
+const invalidArgumentText = (result: McpSchema.CallToolResult) => {
+  expect(result.isError).toBe(true);
+  return result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+};
+
 const callSnapshot = (args: Record<string, unknown>) => callTool("preview_snapshot", args);
 
 it.effect.each([
@@ -687,8 +692,10 @@ it.effect("decodes a JSON-stringified delegate target as the same object", () =>
     yield* callTool("delegate_task", { task, target: JSON.stringify(target) });
 
     for (const invalidTarget of ["{model:", '{"model":42}']) {
-      const error = yield* Effect.flip(callTool("delegate_task", { task, target: invalidTarget }));
-      expect(error).toBeInstanceOf(McpSchema.InvalidParams);
+      const rejected = yield* callTool("delegate_task", { task, target: invalidTarget });
+      expect(invalidArgumentText(rejected)).toContain(
+        "Invalid parameters for tool 'delegate_task'",
+      );
     }
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual({
@@ -705,16 +712,20 @@ it.effect("decodes a JSON-stringified delegate target as the same object", () =>
 it.effect("rejects arguments a tool does not declare instead of dropping them", () => {
   const calls: Array<unknown> = [];
   return Effect.gen(function* () {
-    const launch = yield* Effect.flip(
-      callTool("t3_thread_launch", { title: "Repro", scratch: true, prompt: "say hi" }),
-    );
-    const wait = yield* Effect.flip(
-      callTool("t3_thread_wait", { threadId: "thread-excess-arguments", timeout: 5_000 }),
-    );
+    // A protocol error here reaches claude.ai only as "the tool failed (unavailable)".
+    const launch = yield* callTool("t3_thread_launch", {
+      title: "Repro",
+      scratch: true,
+      prompt: "say hi",
+    });
+    const wait = yield* callTool("t3_thread_wait", {
+      threadId: "thread-excess-arguments",
+      timeout: 5_000,
+    });
 
     expect(calls).toEqual([]);
-    expect(launch.message).toContain('Unknown argument "prompt"');
-    expect(wait.message).toContain('Unknown argument "timeout"');
+    expect(invalidArgumentText(launch)).toContain('Unknown argument "prompt"');
+    expect(invalidArgumentText(wait)).toContain('Unknown argument "timeout"');
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
@@ -773,9 +784,9 @@ it.effect.each(["limit", "runLimit", "maxCharsPerItem"])(
       const rejected = yield* callTool("t3_thread_read", {
         threadId: "thread-below-minimum",
         [field]: 0,
-      }).pipe(Effect.flip);
+      });
 
-      expect(String(rejected)).toContain("greater than or equal to 1");
+      expect(invalidArgumentText(rejected)).toContain("greater than or equal to 1");
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(layerRecordingTools(calls)));
   },

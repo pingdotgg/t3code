@@ -440,9 +440,8 @@ it.effect("captures send_to_user results for providers that drop MCP outputs", (
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
-        Effect.flip,
       );
-    expect(invalid).toMatchObject({ _tag: "InvalidParams" });
+    expect(invalid.isError).toBe(true);
     expect(yield* mcpSessions.takeToolResult(threadId, "send_to_user", { message: "" })).toEqual({
       isError: true,
     });
@@ -647,12 +646,11 @@ it.effect("rejects an unknown organize target instead of archiving the calling t
       .pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
-        Effect.result,
       );
     expect(dispatched).toEqual([]);
     expect(outcome).toMatchObject({
-      _tag: "Failure",
-      failure: { message: expect.stringContaining('Unknown argument "threadIds"') },
+      isError: true,
+      content: [{ type: "text", text: expect.stringContaining('Unknown argument "threadIds"') }],
     });
   }).pipe(
     Effect.provide(
