@@ -2412,12 +2412,28 @@ export const layerWsRpc = (
         [WS_METHODS.workflowsGet]: (input) =>
           workflows.get(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsAnswer]: (input) =>
-          workflows
-            .answer(input.runId, input.name, {
-              choice: input.choice,
-              ...(input.reason === undefined ? {} : { reason: input.reason }),
-            })
-            .pipe(Effect.mapError(toWorkflowRequestError)),
+          serverAuth.listClientSessions(currentSessionId).pipe(
+            Effect.map((sessions) =>
+              EnvironmentAuth.clientSessionLabel(
+                sessions.find((session) => session.current)?.client,
+              ),
+            ),
+            Effect.orElseSucceed(() => EnvironmentAuth.clientSessionLabel(undefined)),
+            // The label names it to others; the session tells its own client the answer is its own.
+            Effect.map((label) => ({ label, sessionId: currentSessionId })),
+            Effect.flatMap((answeredBy) =>
+              workflows.answer(
+                input.runId,
+                input.name,
+                {
+                  choice: input.choice,
+                  ...(input.reason === undefined ? {} : { reason: input.reason }),
+                },
+                answeredBy,
+              ),
+            ),
+            Effect.mapError(toWorkflowRequestError),
+          ),
         [WS_METHODS.workflowsResume]: (input) =>
           workflows.resume(input.runId).pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsCancel]: (input) =>

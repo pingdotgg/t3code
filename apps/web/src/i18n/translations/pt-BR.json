@@ -12892,5 +12892,66 @@
   "f6a91589456cca50": "Aprovado",
   "c92657bb7f2293ff": "Precisa de aprovação",
   "f1e5c1be1ac92361": "Aprovar",
-  "fcb5f3c4d4753326": "Esta conexão não pode aprovar comandos. Use um cliente que possa usar o terminal."
+  "fcb5f3c4d4753326": "Esta conexão não pode aprovar comandos. Use um cliente que possa usar o terminal.",
+  "4e96712d839ccbff": "{who} disse {choice}",
+  "19097cfb8f5a79cf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " disse",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    "."
+  ],
+  "e7bbf693910057bf": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " disse",
+    " ",
+    {
+      "t": "span",
+      "i": 2,
+      "c": {
+        "i": 3,
+        "k": "_gt_value_3",
+        "v": "v"
+      }
+    },
+    ": ",
+    {
+      "i": 4,
+      "k": "_gt_value_4",
+      "v": "v"
+    }
+  ],
+  "3759768c5d342c22": [
+    "respondida",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " precisa de um motivo."
+  ]
 }
