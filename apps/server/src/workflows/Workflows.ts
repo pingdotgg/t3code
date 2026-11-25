@@ -122,6 +122,15 @@ export class Workflows extends Context.Service<
     /** Run a paused run's failed step again. */
     readonly resume: (runId: string) => Effect.Effect<void, WorkflowError>;
     readonly cancel: (runId: string, reason?: string) => Effect.Effect<void, WorkflowError>;
+    /**
+     * End a run's open question unanswered, as its timeout would: its `ask` returns `None` and the
+     * run goes on. `not_open` when the question was answered, timed out or never asked.
+     */
+    readonly withdraw: (
+      runId: string,
+      name: string,
+      options: { readonly by: string; readonly reason?: string | undefined },
+    ) => Effect.Effect<"withdrawn" | "not_open", WorkflowError>;
     readonly get: (runId: string) => Effect.Effect<
       {
         readonly run: WorkflowStore.WorkflowRun;
@@ -209,6 +218,7 @@ export const disabled = Workflows.of({
   answer: refuse,
   resume: refuse,
   cancel: refuse,
+  withdraw: refuse,
   get: Effect.fn("Workflows.get")(function* (runId) {
     return yield* new WorkflowRunNotFoundError({ runId });
   }),
@@ -268,6 +278,7 @@ export const off = Workflows.of({
   answer: refuseOff,
   resume: refuseOff,
   cancel: refuseOff,
+  withdraw: refuseOff,
   get: refuseOff,
   list: refuseOff,
   about: refuseOff,
