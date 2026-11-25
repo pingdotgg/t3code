@@ -500,8 +500,9 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  // Whoever asked first gets a free place, within the size it asked for; the rest keep their
-  // turn. A paused run is passed over until it is resumed. Run inside a transaction.
+  // Whoever asked first gets a free place; the rest keep their turn. A pool is as big as the
+  // smallest limit anyone in it asked for, so a lock stays one. A paused run is passed over until
+  // it is resumed. Run inside a transaction.
   const give = Effect.fn("WorkflowStore.give")(function* (pool: string | undefined) {
     const waiting = yield* sql<PlaceRow & { readonly size: number | bigint }>`
         SELECT p.seq, p.pool, p.size, p.run_id, p.name, p.state
@@ -511,16 +512,22 @@ export const make = Effect.gen(function* () {
         ORDER BY p.seq
       `;
     if (waiting.length === 0) return [];
-    const holders = yield* sql<{ readonly pool: string; readonly n: number | bigint }>`
-        SELECT pool, COUNT(*) AS n FROM workflow_pool_places WHERE state = 'held' GROUP BY pool
+    const pools = yield* sql<{
+      readonly pool: string;
+      readonly n: number | bigint;
+      readonly size: number | bigint;
+    }>`
+        SELECT pool, SUM(state = 'held') AS n, MIN(size) AS size
+        FROM workflow_pool_places GROUP BY pool
       `;
-    const held = new Map(holders.map((row) => [row.pool, Number(row.n)] as const));
+    const held = new Map(pools.map((row) => [row.pool, Number(row.n)] as const));
+    const sizes = new Map(pools.map((row) => [row.pool, Number(row.size)] as const));
     const full = new Set<string>();
     const given: Array<PlaceRow> = [];
     for (const place of waiting) {
       if (full.has(place.pool)) continue;
       const holding = held.get(place.pool) ?? 0;
-      if (holding >= Number(place.size)) {
+      if (holding >= (sizes.get(place.pool) ?? Number(place.size))) {
         full.add(place.pool);
         continue;
       }
@@ -544,7 +551,8 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* sql`
               INSERT INTO workflow_pool_places (pool, size, run_id, name, state)
-              VALUES (${place.pool}, ${place.size}, ${place.runId}, ${place.name}, 'queued')
+              SELECT ${place.pool}, ${place.size}, ${place.runId}, ${place.name}, 'queued'
+              FROM workflow_runs WHERE run_id = ${place.runId} AND ended_at IS NULL
               ON CONFLICT (run_id, name) DO NOTHING
             `;
             const given = yield* give(place.pool);

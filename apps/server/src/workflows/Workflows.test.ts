@@ -483,6 +483,13 @@ const pooled = [
     { version: 1, payload: Schema.Struct({ id: Schema.String }), concurrency: 1 },
     (payload) => holdUntilDone(payload.id),
   ),
+  /** Two workflows that share a pool and ask for different limits. */
+  workflow("narrow", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
+    within("m", { limit: 1 }, holdUntilDone(payload.id)),
+  ),
+  workflow("wide", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
+    within("m", { limit: 2 }, holdUntilDone(payload.id)),
+  ),
   /** Fails inside its lock, carries on outside it, and holds there. */
   workflow("caught", { version: 1, payload: Schema.Struct({ id: Schema.String }) }, (payload) =>
     Effect.andThen(
@@ -2645,6 +2652,37 @@ it.effect("a workflow with a concurrency runs that many at once and queues the r
         assert.equal((yield* workflows.get(second.runId)).run.detail, "queue solo");
         yield* workflows.signal({ runId: first.runId, wait: "done" }, null, { id: "done-a" });
         yield* workflows.waitFor(second.runId, (run) => run.detail === "done");
+        assert.deepStrictEqual(entered, ["a", "b"]);
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a pool is as big as the smallest limit asked for in it, so a lock stays one", () =>
+  Effect.gen(function* () {
+    entered.length = 0;
+    const { boot, database } = yield* harness();
+    const states = Effect.flatMap(
+      SqlClient.SqlClient,
+      (sql) => sql<{ readonly state: string }>`
+        SELECT state FROM workflow_pool_places ORDER BY seq
+      `,
+    ).pipe(
+      Effect.map((rows) => rows.map((row) => row.state)),
+      Effect.provide(database),
+    );
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const lock = yield* workflows.start("narrow", { id: "a" }, { idempotencyKey: "a" });
+        yield* workflows.waitFor(lock.runId, (run) => run.detail === "done");
+        const other = yield* workflows.start("wide", { id: "b" }, { idempotencyKey: "b" });
+        const queued = yield* workflows.waitFor(other.runId, (run) => run.status === "waiting");
+        assert.equal(queued.detail, "queue m");
+        // Shown as queued only once its place is settled, given or not.
+        assert.deepStrictEqual(yield* states, ["held", "queued"]);
+        yield* workflows.signal({ runId: lock.runId, wait: "done" }, null, { id: "done-a" });
+        yield* workflows.waitFor(other.runId, (run) => run.detail === "done");
         assert.deepStrictEqual(entered, ["a", "b"]);
       }),
     );
