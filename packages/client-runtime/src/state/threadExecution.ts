@@ -62,6 +62,7 @@ const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "wait
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
 // Preparing runs show their workspace setup instead.
 const PROVIDER_STARTING_RUN_STATUSES = new Set(["starting", "running"]);
+const LIVE_PROVIDER_SESSION_STATUSES = new Set(["ready", "running", "waiting"]);
 
 const EMPTY_EXTENSION_STATUSES: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]> =
   [];
@@ -216,11 +217,14 @@ function summarizeThreadRun(
       projection.messages.findLast(
         (message) => message.runId === run.id && message.role === "assistant",
       )?.id ?? null,
-    // A run counts as running before its provider opens; until a turn appears,
-    // the provider can still be launching for minutes. Some providers keep
+    // A run counts as running before its provider opens; until a turn appears, a provider
+    // without a live session can still be launching for minutes. Some providers keep
     // preparing after their turn opens and report that step until the first output.
     ...(turnStatus === undefined
-      ? PROVIDER_STARTING_RUN_STATUSES.has(run.status)
+      ? PROVIDER_STARTING_RUN_STATUSES.has(run.status) &&
+        (phase !== undefined ||
+          session === undefined ||
+          !LIVE_PROVIDER_SESSION_STATUSES.has(session.status))
         ? providerStarting(run, session, phase, providers)
         : {}
       : turnStatus === "pending" || turnStatus === "running"
