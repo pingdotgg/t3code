@@ -203,5 +203,15 @@
     "file": "apps/web/test/appScenarios.renders.tsx",
     "test": "app-open-thread-from-draft",
     "reason": "Upstream v0.1.12 also measures five sidebar row renders instead of one."
+  },
+  {
+    "file": "apps/server/src/environmentTheme.test.ts",
+    "test": "publishes themes when a linked theme directory's original grandparent is restored between probes",
+    "reason": "Also times out on clean v0.1.12 on this macOS runner."
+  },
+  {
+    "file": "apps/server/src/watchDirectoryReplacements.test.ts",
+    "test": "backs off stopped watches for an unchanged plain directory",
+    "reason": "Clean v0.1.12 also observes probes and refreshes in a different order on this macOS runner."
   }
 ]
