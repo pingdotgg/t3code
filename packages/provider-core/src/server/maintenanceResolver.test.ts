@@ -582,7 +582,7 @@ it.layer(
   );
 
   it.effect.skipIf(windowsHost)(
-    "removes the partial packument an interrupted npm view leaves in the npm cache",
+    "gives npm view T3's own lasting npm cache and drops its partial download on interrupt",
     () =>
       Effect.gen(function* () {
         const tempDir = yield* makeTempDir("t3-npm-view-cache");
@@ -593,34 +593,34 @@ it.layer(
         writeExecutable(NodePath.join(npmBinDir, "npm"));
         const binaryPath = NodePath.join(tempDir, ".local/bin/native-package-tool");
         writeExecutable(binaryPath);
-        const cacheTmpDir = NodePath.join(tempDir, "npm-cache", "_cacache", "tmp");
-        NodeFS.mkdirSync(cacheTmpDir, { recursive: true });
-        const otherRunEntry = NodePath.join(cacheTmpDir, "other-npm-run");
-        NodeFS.writeFileSync(otherRunEntry, "");
-        NodeFS.utimesSync(otherRunEntry, 0, 0);
-        // The probe starts after that entry was written and before npm writes its partial packument.
-        yield* TestClock.setTime(1_000_000_000_000);
-        const partialPackument = NodePath.join(cacheTmpDir, "partial-packument");
+        const npmCacheDir = NodePath.join(tempDir, "t3-caches", "npm");
+        const cacheDirs: Array<unknown> = [];
         const viewStarted = yield* Deferred.make<void>();
         const spawner = ChildProcessSpawner.make((command) => {
-          const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
-          const isView = args[0] === "view";
-          if (isView) {
-            NodeFS.writeFileSync(partialPackument, '{"name":"@example/native-package-tool"');
+          const { options } = command as unknown as {
+            readonly options: { readonly env: Record<string, unknown> };
+          };
+          const cacheDir = options.env.npm_config_cache;
+          cacheDirs.push(cacheDir);
+          if (typeof cacheDir === "string") {
+            NodeFS.mkdirSync(NodePath.join(cacheDir, "_cacache", "tmp"), { recursive: true });
+            NodeFS.writeFileSync(NodePath.join(cacheDir, "_cacache", "index"), "");
+            NodeFS.writeFileSync(
+              NodePath.join(cacheDir, "_cacache", "tmp", "partial-packument"),
+              '{"name":"@example/native-package-tool"',
+            );
           }
           return Effect.succeed(
             ChildProcessSpawner.makeHandle({
               pid: ChildProcessSpawner.ProcessId(1),
-              exitCode: isView ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-              isRunning: Effect.succeed(isView),
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
               kill: () => Effect.void,
               unref: Effect.succeed(Effect.void),
               stdin: Sink.drain,
-              stdout: isView
-                ? Stream.fromEffect(Deferred.succeed(viewStarted, undefined)).pipe(
-                    Stream.flatMap(() => Stream.never),
-                  )
-                : Stream.encodeText(Stream.make(`${NodePath.join(tempDir, "npm-cache")}\n`)),
+              stdout: Stream.fromEffect(Deferred.succeed(viewStarted, undefined)).pipe(
+                Stream.flatMap(() => Stream.never),
+              ),
               stderr: Stream.empty,
               all: Stream.empty,
               getInputFd: () => Sink.drain,
@@ -630,7 +630,7 @@ it.layer(
         });
         const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
           nativePackageToolUpdate,
-          { binaryPath, env: { PATH: "" } },
+          { binaryPath, env: { PATH: "" }, npmCacheDir },
         ).pipe(
           Effect.provideService(HostProcess.Environment, { PATH: npmBinDir }),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -638,8 +638,11 @@ it.layer(
         const fiber = yield* Effect.forkChild(capabilities.lookupLatestVersion!);
         yield* Deferred.await(viewStarted);
         yield* Fiber.interrupt(fiber);
-        expect(NodeFS.existsSync(partialPackument)).toBe(false);
-        expect(NodeFS.existsSync(otherRunEntry)).toBe(true);
+        expect(cacheDirs).toHaveLength(1);
+        const cacheDir = cacheDirs[0] as string;
+        expect(cacheDir.startsWith(npmCacheDir)).toBe(true);
+        expect(NodeFS.existsSync(NodePath.join(cacheDir, "_cacache", "tmp"))).toBe(false);
+        expect(NodeFS.existsSync(NodePath.join(cacheDir, "_cacache", "index"))).toBe(true);
       }),
   );
 
