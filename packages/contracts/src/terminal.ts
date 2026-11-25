@@ -116,10 +116,13 @@ export function skipTerminalSnapshotContinuation(state: number, data: string) {
 
   let replay = "";
   const replayC1 = (byte: number, remainingBytes: number) => {
-    // Replay the ESC form from ground. DECID would generate a reply and ST has no effect.
-    const control =
-      byte === 0x9a || byte === 0x9c ? "" : "\u001b" + String.fromCharCode(byte - 0x40);
-    replay = control + "\ufffd".repeat(remainingBytes);
+    // IND, NEL and RI move the cursor after ending the omitted sequence.
+    switch (byte) {
+      case 0x84:
+      case 0x85:
+      case 0x8d:
+        replay = "\u001b" + String.fromCharCode(byte - 0x40) + "\ufffd".repeat(remainingBytes);
+    }
   };
   let end = 0;
   while (state !== TERMINAL_SEQUENCE_GROUND && end < data.length && data[end] !== "\u001b") {
