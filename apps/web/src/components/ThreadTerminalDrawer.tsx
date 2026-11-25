@@ -1025,6 +1025,7 @@ function TerminalSessionViewport({
             if (kind) return true;
             const pid = session.summary?.pid ?? null;
             const current = readInputSession();
+            if (!bracketed && current.lifecycleVersion !== lifecycleVersion) return true;
             const currentPid = current.summary?.pid ?? null;
             if (currentPid === null) return false;
             if (pid !== null && currentPid !== pid) return true;

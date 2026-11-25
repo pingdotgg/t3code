@@ -162,9 +162,11 @@ describe("createTerminalInputWriter", () => {
     const pasted = write("q".repeat(140_000), send);
     void write("next", send);
     sent[0]!.settle(false);
-    await pasted;
     await sends(2);
+    sent[1]!.settle(true);
+    await pasted;
+    await sends(3);
 
-    expect(chunks()).toEqual(["q".repeat(65_536), "next"]);
+    expect(chunks()).toEqual(["q".repeat(65_536), "", "next"]);
   });
 });
