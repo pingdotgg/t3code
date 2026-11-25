@@ -2515,19 +2515,23 @@ it.effect("one run moving sends a watcher an update about that run, not the whol
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
+        // Half the other runs wait at a gate, half wait on a question to a person.
         const park = (from: number, to: number) =>
           Effect.forEach(
             Array.from({ length: to - from }, (_, i) => from + i),
-            (i) => workflows.start("gate", { gate: "south" }, { idempotencyKey: `visit/${i}` }),
+            (i) =>
+              i % 2 === 0
+                ? workflows.start("gate", { gate: "south" }, { idempotencyKey: `visit/${i}` })
+                : workflows.start("sorter", { tags: [] }, { idempotencyKey: `asked/${i}` }),
             { discard: true },
           );
-        // The size of the first update a watcher gets after `mover` ends.
-        const updateWhen = Effect.fnUntraced(function* (mover: string) {
-          const { runId } = yield* workflows.start(
-            "gate",
-            { gate: mover },
-            { idempotencyKey: mover },
-          );
+        // The size of the first update a watcher gets after `mover` ends, let through a gate or
+        // by its question being answered.
+        const updateWhen = Effect.fnUntraced(function* (mover: string, by: "signal" | "answer") {
+          const { runId } =
+            by === "signal"
+              ? yield* workflows.start("gate", { gate: mover }, { idempotencyKey: mover })
+              : yield* workflows.start("sorter", { tags: [] }, { idempotencyKey: mover });
           yield* workflows.waitFor(runId, status("waiting"));
           const subscribed = yield* Deferred.make<void>();
           const update = yield* workflows.watch.pipe(
@@ -2540,19 +2544,26 @@ it.effect("one run moving sends a watcher an update about that run, not the whol
             Effect.forkScoped,
           );
           yield* Deferred.await(subscribed);
-          yield* workflows.signal({ runId, wait: "through" }, "go on", { id: mover });
+          yield* by === "signal"
+            ? workflows.signal({ runId, wait: "through" }, "go on", { id: mover })
+            : Effect.asVoid(workflows.answer(runId, "sort", { choice: "No" }));
           return Option.getOrThrow(yield* Fiber.join(update));
         });
 
         yield* park(0, 10);
-        const fewOthers = yield* updateWhen("north-1");
+        const fewOthers = [
+          yield* updateWhen("north-1", "signal"),
+          yield* updateWhen("asked-1", "answer"),
+        ];
         yield* park(10, 300);
-        const manyOthers = yield* updateWhen("north-2");
-        assert.isBelow(
-          manyOthers,
-          fewOthers * 2,
-          `${fewOthers} bytes beside 10 runs, ${manyOthers} beside 300`,
-        );
+        const manyOthers = [
+          yield* updateWhen("north-2", "signal"),
+          yield* updateWhen("asked-2", "answer"),
+        ];
+        for (const [index, few] of fewOthers.entries()) {
+          const many = manyOthers[index] ?? 0;
+          assert.isBelow(many, few * 2, `${few} bytes beside 10 runs, ${many} beside 300`);
+        }
       }).pipe(Effect.scoped),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

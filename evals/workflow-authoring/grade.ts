@@ -126,9 +126,9 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
         .pipe(Effect.timeoutOption("10 seconds")),
     asks: (workflows, runId) =>
       workflows.watch.pipe(
-        // Questions come whole, and only in an update where they changed.
+        // A question comes in the first list, or in the update where it is asked.
         Stream.filterMap((update) => {
-          const question = update.questions?.find((asked) => asked.runId === runId);
+          const question = update.questions.find((asked) => asked.runId === runId);
           return question === undefined ? Result.failVoid : Result.succeed(question.name);
         }),
         Stream.runHead,

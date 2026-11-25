@@ -354,28 +354,26 @@ describe("the list of runs", () => {
 });
 
 describe("applyWorkflowRunsUpdate", () => {
-  it("keeps the list a fresh snapshot would show, newest first", () => {
-    const asked = question("b");
+  it("keeps the list a fresh snapshot would show, newest run and oldest question first", () => {
     const first = applyWorkflowRunsUpdate(undefined, {
       workflows: [],
       runs: [run("c", { startedAt: at(3) }), run("b", { startedAt: at(2) }), run("a")],
-      questions: [asked],
+      questions: [question("b"), question("c")],
     });
+    const later = { ...question("d"), askedAt: at(2) };
     const next = applyWorkflowRunsUpdate(first, {
       _tag: "changed",
       runs: [run("b", { startedAt: at(2), status: "completed" }), run("d", { startedAt: at(4) })],
       removed: ["a"],
+      questions: [later, question("c", { title: "Ship now?" })],
+      closed: [{ runId: "b", name: "approve" }],
     });
     expect(next.runs.map((entry) => [entry.runId, entry.status])).toEqual([
       ["d", "running"],
       ["c", "running"],
       ["b", "completed"],
     ]);
-    expect(next.questions).toEqual([asked]);
-    expect(
-      applyWorkflowRunsUpdate(next, { _tag: "changed", runs: [], removed: [], questions: [] })
-        .questions,
-    ).toEqual([]);
+    expect(next.questions).toEqual([question("c", { title: "Ship now?" }), later]);
   });
 });
 

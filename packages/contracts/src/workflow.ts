@@ -177,8 +177,10 @@ export const WorkflowRunsChange = Schema.TaggedStruct("changed", {
   runs: Schema.Array(WorkflowRun),
   /** Runs that left the list. */
   removed: Schema.Array(Schema.String),
-  /** All open questions, when any of them changed. */
-  questions: Schema.optional(Schema.Array(WorkflowQuestion)),
+  /** Questions newly asked or different from what was last sent. */
+  questions: Schema.Array(WorkflowQuestion),
+  /** Questions no longer open, by run and question name. */
+  closed: Schema.Array(Schema.Struct({ runId: Schema.String, name: Schema.String })),
 });
 
 /**
@@ -195,19 +197,43 @@ export function applyWorkflowRunsUpdate(
 ): WorkflowRunsSnapshot {
   if (!("_tag" in update)) return update;
   const base = snapshot ?? { workflows: [], runs: [], questions: [] };
-  const changed = new Map(update.runs.map((run) => [run.runId, run]));
-  const gone = new Set(update.removed);
-  const kept = base.runs.flatMap((run) => {
-    if (gone.has(run.runId)) return [];
-    const next = changed.get(run.runId);
-    changed.delete(run.runId);
-    return [next ?? run];
-  });
-  // Stable, so runs that started at the same moment keep the order they were sent in.
-  const runs = [...changed.values(), ...kept].sort((left, right) =>
-    left.startedAt === right.startedAt ? 0 : left.startedAt < right.startedAt ? 1 : -1,
+  // Stable sorts, so entries of the same moment keep the order they were sent in.
+  const runs = merged(base.runs, update.runs, update.removed, (run) => run.runId).sort(
+    (left, right) =>
+      left.startedAt === right.startedAt ? 0 : left.startedAt < right.startedAt ? 1 : -1,
   );
-  return { ...base, runs, questions: update.questions ?? base.questions };
+  const questions = merged(
+    base.questions,
+    update.questions,
+    update.closed.map(workflowQuestionKey),
+    workflowQuestionKey,
+  ).sort((left, right) =>
+    left.askedAt === right.askedAt ? 0 : left.askedAt < right.askedAt ? -1 : 1,
+  );
+  return { ...base, runs, questions };
+}
+
+/** What names an open question: one run asks one question of a name at a time. */
+export const workflowQuestionKey = (question: { readonly runId: string; readonly name: string }) =>
+  JSON.stringify([question.runId, question.name]);
+
+/** `held` with `changed` put in place of their earlier versions and `gone` left out. */
+function merged<A>(
+  held: ReadonlyArray<A>,
+  changed: ReadonlyArray<A>,
+  gone: ReadonlyArray<string>,
+  key: (entry: A) => string,
+): Array<A> {
+  const fresh = new Map(changed.map((entry) => [key(entry), entry]));
+  const left = new Set(gone);
+  const kept = held.flatMap((entry) => {
+    const id = key(entry);
+    if (left.has(id)) return [];
+    const next = fresh.get(id);
+    fresh.delete(id);
+    return [next ?? entry];
+  });
+  return [...fresh.values(), ...kept];
 }
 
 export const WorkflowRunsSubscribeInput = Schema.Struct({
