@@ -6,6 +6,7 @@ import {
   DEFAULT_TERMINAL_ID,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   retainTerminalSnapshotHistory,
+  skipTerminalSnapshotContinuation,
   TERMINAL_SEQUENCE_GROUND,
   terminalSequenceEnd,
   terminalSequenceStateAfter,
@@ -3762,20 +3763,31 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     viewerId,
   ) => {
     const { maxHistoryBytes, supportsSnapshotSequenceState } = input;
-    const retained = (listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>) =>
-      maxHistoryBytes === undefined
-        ? listener
-        : (event: TerminalAttachStreamEvent) => {
-            if (!("snapshot" in event)) return listener(event);
-            const retained = retainTerminalSnapshotHistory(event.snapshot.history, maxHistoryBytes);
-            return listener({
-              ...event,
-              snapshot: {
-                ...event.snapshot,
-                ...(supportsSnapshotSequenceState ? retained : { history: retained.history }),
-              },
-            });
-          };
+    const retained = (listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>) => {
+      if (maxHistoryBytes === undefined) return listener;
+      // Legacy viewers cannot resume a clipped sequence from snapshot metadata.
+      let pending = TERMINAL_SEQUENCE_GROUND;
+      return (event: TerminalAttachStreamEvent) => {
+        if ("snapshot" in event) {
+          const retained = retainTerminalSnapshotHistory(event.snapshot.history, maxHistoryBytes);
+          pending = supportsSnapshotSequenceState
+            ? TERMINAL_SEQUENCE_GROUND
+            : (retained.historySequenceState ?? TERMINAL_SEQUENCE_GROUND);
+          return listener({
+            ...event,
+            snapshot: {
+              ...event.snapshot,
+              ...(supportsSnapshotSequenceState ? retained : { history: retained.history }),
+            },
+          });
+        }
+        if (event.type === "cleared") pending = TERMINAL_SEQUENCE_GROUND;
+        if (event.type !== "output" || pending === TERMINAL_SEQUENCE_GROUND) return listener(event);
+        const continuation = skipTerminalSnapshotContinuation(pending, event.data);
+        pending = continuation.state;
+        return listener({ ...event, data: continuation.data });
+      };
+    };
     return Stream.unwrap(
       Effect.acquireRelease(
         Effect.sync(() => retainViewerOnce(input, viewerId, null)),
