@@ -177,9 +177,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           next.set(tokenHash, { ...record, expired: true });
           return [undefined, { records: next }] as const;
         }
-        const next = new Map(records);
-        next.set(tokenHash, { ...record, lastAlive: alive });
-        return [record.scope, { records: next }] as const;
+        return [record.scope, { records }] as const;
       });
     },
   );
