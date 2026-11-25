@@ -22,7 +22,8 @@ on this device only, so every computer and browser you use asks for it once.
 Set it back to **Off** at any time; a recording in progress is discarded.
 
 If the chosen environment goes offline, voice input waits for it. T3 Code never
-substitutes another environment.
+substitutes another environment. A recording in progress keeps going; if you stop
+before it reconnects, choose retry once it is back to transcribe what you recorded.
 
 In the desktop app on macOS 26 or later, you can instead choose **Apple Speech**
 under **On this Mac**. Audio stays on the Mac and macOS transcribes it. The first

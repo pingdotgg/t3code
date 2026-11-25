@@ -22,7 +22,7 @@ import type {
 import { DEFAULT_CLIENT_SETTINGS, EnvironmentInternalError } from "@t3tools/contracts";
 import { resolveSpeechVocabulary } from "@t3tools/shared/speech";
 import * as Schema from "effect/Schema";
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 import { toastManager } from "../components/ui/toast";
 import { chooseRecordingMicrophone } from "./browserMicrophones";
@@ -80,7 +80,7 @@ export type VoiceInputSessionActivity = {
 
 type SessionKey = {
   /** Null is Apple Speech, which transcribes on this Mac without an environment. */
-  readonly prepared: PreparedConnection | null;
+  readonly environmentId: EnvironmentId | null;
   readonly grantId: string;
   readonly cloudProvider: CloudSpeechProvider | undefined;
   readonly cloudModel: CloudSpeechModelId | undefined;
@@ -106,6 +106,7 @@ function cleanupContext({ text, selection }: DraftInput): DraftInput {
  */
 export class VoiceInputSession {
   readonly key: SessionKey;
+  private prepared: PreparedConnection | null;
   private readonly controller: VoiceInputController;
   private target: VoiceInputTarget | null = null;
   private pendingSubmission: {
@@ -124,8 +125,9 @@ export class VoiceInputSession {
   private disposed = false;
   private onSpeechStatus: ((status: EnvironmentSpeechStatus) => void) | undefined;
 
-  constructor(key: SessionKey) {
+  constructor(key: SessionKey, prepared: PreparedConnection | null) {
     this.key = key;
+    this.prepared = prepared;
     const hasAudioConsent = bindAudioGrant(key.grantId);
     let recordingPreferences:
       | {
@@ -180,10 +182,10 @@ export class VoiceInputSession {
         if (!this.disposed) void this.controller.interruptRecording(message, null, code);
       },
     };
-    const platform = key.prepared
+    const platform = key.environmentId
       ? createBrowserVoiceInputPlatform({
           ...platformInput,
-          prepared: key.prepared,
+          getPrepared: () => this.prepared,
           cloudProvider: key.cloudProvider,
           cloudModel: key.cloudModel,
           onText: (preview) => {
@@ -271,6 +273,11 @@ export class VoiceInputSession {
 
   get state(): VoiceInputState {
     return this.controller.currentState;
+  }
+
+  /** A reconnect to the same destination replaces the transport; null while it is down. */
+  updatePrepared(prepared: PreparedConnection | null): void {
+    this.prepared = prepared;
   }
 
   get ownerKey(): string | null {
@@ -379,7 +386,7 @@ const registryListeners = new Set<() => void>();
 
 function sameKey(session: VoiceInputSession, key: SessionKey): boolean {
   return (
-    session.key.prepared === key.prepared &&
+    session.key.environmentId === key.environmentId &&
     session.key.grantId === key.grantId &&
     session.key.cloudProvider === key.cloudProvider &&
     session.key.cloudModel === key.cloudModel
@@ -391,23 +398,33 @@ function findSession(key: SessionKey): VoiceInputSession | null {
   return null;
 }
 
-/** Every holder of a destination shares one session; the last release disposes it. */
-function retainVoiceInputSession(key: SessionKey): () => void {
-  const session = findSession(key) ?? new VoiceInputSession(key);
+/**
+ * Every holder of a destination shares one session; the last release disposes it. Offline,
+ * a holder joins an existing session but never creates one.
+ */
+function retainVoiceInputSession(key: SessionKey, prepared: PreparedConnection | null) {
+  const session =
+    findSession(key) ??
+    (prepared || key.environmentId === null ? new VoiceInputSession(key, prepared) : null);
+  if (!session) return null;
+  session.updatePrepared(prepared);
   sessions.set(session, (sessions.get(session) ?? 0) + 1);
   for (const listener of registryListeners) listener();
   let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    const count = (sessions.get(session) ?? 1) - 1;
-    if (count > 0) {
-      sessions.set(session, count);
-      return;
-    }
-    sessions.delete(session);
-    session.dispose();
-    for (const listener of registryListeners) listener();
+  return {
+    session,
+    release: () => {
+      if (released) return;
+      released = true;
+      const count = (sessions.get(session) ?? 1) - 1;
+      if (count > 0) {
+        sessions.set(session, count);
+        return;
+      }
+      sessions.delete(session);
+      session.dispose();
+      for (const listener of registryListeners) listener();
+    },
   };
 }
 
@@ -416,24 +433,49 @@ function subscribeRegistry(listener: () => void): () => void {
   return () => registryListeners.delete(listener);
 }
 
-/** Holds the destination's shared session while mounted; null until it is retained. */
+/**
+ * Holds the destination's shared session while mounted; null until it is retained. The
+ * session is first retained on a live connection and then survives it dropping for as long
+ * as `retainOnDisconnect` holds, so a reconnect resumes the same recording.
+ */
 export function useRetainedVoiceInputSession(input: {
+  readonly environmentId: EnvironmentId | null;
   readonly prepared: PreparedConnection | null;
   readonly grantId: string | null;
+  readonly retainOnDisconnect: boolean;
   readonly onDevice?: boolean | undefined;
   readonly cloudProvider?: CloudSpeechProvider | undefined;
   readonly cloudModel?: CloudSpeechModelId | undefined;
 }): VoiceInputSession | null {
   const { grantId, cloudProvider, cloudModel } = input;
-  const prepared = input.onDevice ? null : input.prepared;
-  const ready = (input.onDevice === true || prepared !== null) && grantId !== null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- retains the shared recording session for this destination while mounted
+  const onDevice = input.onDevice === true;
+  const environmentId = onDevice ? null : input.environmentId;
+  const prepared = onDevice ? null : input.prepared;
+  const retain = onDevice || input.retainOnDisconnect;
+  const keyed = grantId !== null && (onDevice || environmentId !== null);
+  const leaseRef = useRef<ReturnType<typeof retainVoiceInputSession>>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the shared recording session on unmount
+  useEffect(
+    () => () => {
+      leaseRef.current?.release();
+      leaseRef.current = null;
+    },
+    [],
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- acquires, refreshes, or releases the shared recording session as the destination and its transport change
   useEffect(() => {
-    if (!ready || !grantId || typeof navigator === "undefined") return;
-    return retainVoiceInputSession({ prepared, grantId, cloudProvider, cloudModel });
-  }, [ready, prepared, grantId, cloudProvider, cloudModel]);
+    const key = keyed && grantId ? { environmentId, grantId, cloudProvider, cloudModel } : null;
+    const lease = leaseRef.current;
+    if (lease && (!key || !retain || !sameKey(lease.session, key))) {
+      lease.release();
+      leaseRef.current = null;
+    }
+    if (leaseRef.current) leaseRef.current.session.updatePrepared(prepared);
+    else if (key && retain && typeof navigator !== "undefined")
+      leaseRef.current = retainVoiceInputSession(key, prepared);
+  }, [keyed, environmentId, grantId, cloudProvider, cloudModel, prepared, retain]);
   return useSyncExternalStore(subscribeRegistry, () =>
-    ready && grantId ? findSession({ prepared, grantId, cloudProvider, cloudModel }) : null,
+    keyed && grantId ? findSession({ environmentId, grantId, cloudProvider, cloudModel }) : null,
   );
 }
 

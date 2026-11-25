@@ -130,7 +130,7 @@ it("retains all PCM until stop, retries batch audio, and captures preferences be
   });
   const onError = vi.fn();
   const platform = createBrowserVoiceInputPlatform({
-    prepared,
+    getPrepared: () => prepared,
     hasAudioConsent: () => true,
     getStreamingEnabled: () => streaming,
     getTranscriptionOptions: () => options,
@@ -289,7 +289,7 @@ it("streams the opening audio in order when the destination becomes ready during
   microphone.feed(continuing);
   await platform.recorder.stop();
   expect(feed.mock.calls).toEqual([[opening], [continuing]]);
-  expect(platform.recorder.uri).toBeNull();
+  expect(platform.recorder.uri).not.toBeNull();
   await expect(transcription.streaming?.finish({ signal: abort.signal })).resolves.toBe("hello");
 });
 
@@ -328,7 +328,7 @@ it.each([
     const abort = new AbortController();
     using _abort = { [Symbol.dispose]: () => abort.abort() };
     const platform = createBrowserVoiceInputPlatform({
-      prepared,
+      getPrepared: () => prepared,
       hasAudioConsent: () => true,
       getStreamingEnabled: () => enabled,
       getTranscriptionOptions: () => ({
@@ -350,3 +350,135 @@ it.each([
     );
   },
 );
+
+it.each(["lost", "replaced"] as const)(
+  "does not open a stream with a ticket fetched before its connection was %s",
+  async (change) => {
+    const sockets: string[] = [];
+    using _socket = stubGlobal(
+      "WebSocket",
+      class extends EventTarget {
+        constructor(url: string) {
+          super();
+          sockets.push(url);
+        }
+        close() {}
+      },
+    );
+    let currentPrepared: typeof prepared | null = prepared;
+    let resolveTicket!: (response: Response) => void;
+    const pendingTicket = new Promise<Response>((resolve) => {
+      resolveTicket = resolve;
+    });
+    using _network = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/api/voice/status")) return Response.json(status);
+      if (request.url.includes("/api/auth/websocket-ticket/")) return (await pendingTicket).clone();
+      throw new Error(`Unexpected request: ${request.url}`);
+    });
+    const abort = new AbortController();
+    using _abort = { [Symbol.dispose]: () => abort.abort() };
+    const platform = createBrowserVoiceInputPlatform({
+      getPrepared: () => currentPrepared,
+      hasAudioConsent: () => true,
+      getStreamingEnabled: () => true,
+      getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      getMicrophoneId: () => "",
+      onLevel() {},
+      onDurationLimit() {},
+      onText() {},
+      onError() {},
+    });
+    const preparation = platform.transcriber.prepare({ signal: abort.signal });
+    await vi.waitFor(() =>
+      expect(
+        _network.mock.calls.some(([input]) => String(input).includes("websocket-ticket")),
+      ).toBe(true),
+    );
+    currentPrepared =
+      change === "lost" ? null : { ...prepared, httpBaseUrl: "https://reconnected.example.test" };
+    resolveTicket(Response.json({ ticket: "stale-ticket", expiresAt: "2030-01-01T00:00:00.000Z" }));
+    const transcription = await preparation;
+    expect(transcription.streaming).toBeUndefined();
+    expect(sockets).toEqual([]);
+  },
+);
+
+it("keeps a streamed recording when its stream drops and uploads it after reconnecting", async () => {
+  using microphone = capture();
+  const sockets: EventTarget[] = [];
+  using _socket = stubGlobal(
+    "WebSocket",
+    class extends EventTarget {
+      constructor() {
+        super();
+        sockets.push(this);
+      }
+      send() {}
+      close() {}
+    },
+  );
+  const uploads: Uint8Array[] = [];
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = new Request(input, init);
+    if (request.url.endsWith("/api/voice/status")) return Response.json(status);
+    if (request.url.includes("/api/auth/websocket-ticket/"))
+      return Response.json({ ticket: "stream-ticket", expiresAt: "2030-01-01T00:00:00.000Z" });
+    if (request.url.endsWith("/api/voice/transcribe")) {
+      uploads.push(decodeSpeechPcmRequest(new Uint8Array(await request.arrayBuffer())).pcm);
+      return Response.json({ text: "recovered" });
+    }
+    return fetch(input, init);
+  });
+  let currentPrepared: typeof prepared | null = prepared;
+  const onError = vi.fn();
+  const platform = createBrowserVoiceInputPlatform({
+    getPrepared: () => currentPrepared,
+    hasAudioConsent: () => true,
+    getStreamingEnabled: () => true,
+    getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    onError,
+  });
+  const commitDraft = vi.fn();
+  const controller = new VoiceInputController({
+    recorder: platform.recorder,
+    retryFailedRecording: true,
+    getTranscriber: () => platform.transcriber,
+    requestPermission: async () => ({ granted: true, canAskAgain: true }),
+    configureRecording: async () => {},
+    releaseRecording: async () => platform.cancelRecording(),
+    deleteRecording: platform.deleteRecording,
+    readDraft: () => ({
+      ownerKey: "draft",
+      text: "",
+      selection: { start: 0, end: 0 },
+      revision: 0,
+    }),
+    commitDraft,
+    onStateChange() {},
+  });
+  using _controller = { [Symbol.dispose]: () => controller.dispose() };
+  await controller.start();
+  await vi.waitFor(() => expect(sockets).toHaveLength(1));
+  microphone.feed(new Float32Array([0.1]));
+  currentPrepared = null;
+  sockets[0]!.dispatchEvent(new Event("close"));
+  microphone.feed(new Float32Array([0.2]));
+  expect(controller.currentState.phase).toBe("recording");
+  expect(onError).not.toHaveBeenCalled();
+
+  await controller.stop();
+  expect(controller.currentState).toMatchObject({ phase: "error", errorAction: "retry" });
+  currentPrepared = prepared;
+  await controller.start();
+  expect(commitDraft).toHaveBeenCalledWith("recovered", expect.anything());
+  expect(uploads.map((pcm) => [...new Float32Array(pcm.slice().buffer)])).toEqual([
+    [Math.fround(0.1), Math.fround(0.2)],
+  ]);
+  expect(sockets).toHaveLength(1);
+});

@@ -29,7 +29,8 @@ import { m } from "../i18n/messages";
 const isVoiceTranscriptionError = Schema.is(VoiceTranscriptionError);
 
 export function createBrowserVoiceInputPlatform(input: {
-  readonly prepared: PreparedConnection;
+  /** The destination's current connection; null while it reconnects. */
+  readonly getPrepared: () => PreparedConnection | null;
   readonly cloudProvider?: CloudSpeechProvider | undefined;
   /** The exact OpenRouter model the grant names; required with that provider. */
   readonly cloudModel?: CloudSpeechModelId | undefined;
@@ -43,6 +44,14 @@ export function createBrowserVoiceInputPlatform(input: {
   readonly onText: (text: SpeechStreamText) => void;
   readonly onError: (message: string, code?: VoiceInputErrorCode) => void;
 }) {
+  const requirePrepared = () => {
+    const prepared = input.getPrepared();
+    if (prepared) return prepared;
+    throw new VoiceTranscriptionError({
+      code: "unavailable",
+      message: m(msg("Voice transcription failed. Check the destination in Settings → Voice.")),
+    });
+  };
   return createBrowserPcmCapture(input, async (options, canStream) => {
     const onStatus = input.getStatusListener?.();
     const recordingOptions = input.getTranscriptionOptions();
@@ -54,22 +63,18 @@ export function createBrowserVoiceInputPlatform(input: {
       try {
         const response = await fetch(uri, { signal: transcriptionSignal });
         const pcm = new Uint8Array(await response.arrayBuffer());
+        const prepared = requirePrepared();
         const result = await runEnvironmentSpeech(
           input.cloudProvider
             ? transcribeCloudPcm(
-                input.prepared,
+                prepared,
                 input.cloudProvider,
                 pcm,
                 recordingOptions,
                 input.hasAudioConsent,
                 input.cloudModel,
               )
-            : transcribeEnvironmentPcm(
-                input.prepared,
-                pcm,
-                recordingOptions,
-                input.hasAudioConsent,
-              ),
+            : transcribeEnvironmentPcm(prepared, pcm, recordingOptions, input.hasAudioConsent),
           { signal: transcriptionSignal },
         );
         throwIfVoiceTranscriptionAborted(transcriptionSignal);
@@ -91,7 +96,7 @@ export function createBrowserVoiceInputPlatform(input: {
           message: m(msg("Choose an OpenRouter model in Settings → Voice.")),
         });
       await runEnvironmentSpeech(
-        requireCloudSpeechKey(input.prepared, input.cloudProvider),
+        requireCloudSpeechKey(requirePrepared(), input.cloudProvider),
         options,
       );
       throwIfVoiceTranscriptionAborted(options.signal);
@@ -100,7 +105,8 @@ export function createBrowserVoiceInputPlatform(input: {
         transcribe: transcribeRecording,
       };
     }
-    const status = await runEnvironmentSpeech(getEnvironmentSpeechStatus(input.prepared), options);
+    const prepared = requirePrepared();
+    const status = await runEnvironmentSpeech(getEnvironmentSpeechStatus(prepared), options);
     throwIfVoiceTranscriptionAborted(options.signal);
     onStatus?.(status);
     throwIfVoiceTranscriptionAborted(options.signal);
@@ -130,20 +136,28 @@ export function createBrowserVoiceInputPlatform(input: {
     ) {
       return batch;
     }
-    const url = await runEnvironmentSpeech(getEnvironmentSpeechStreamUrl(input.prepared), options);
-    if (!canStream()) return batch;
-    return {
-      locale: nativeStreaming ? language : batchLocale,
-      transcribe: transcribeRecording,
-      streaming: openSpeechStream({
-        url,
-        canSend: input.hasAudioConsent,
-        options: recordingOptions,
-        signal: options.signal,
-        onText: input.onText,
-        onError: (error) => input.onError(error.message),
-      }),
-    };
+    const streamPrepared = requirePrepared();
+    const url = await runEnvironmentSpeech(getEnvironmentSpeechStreamUrl(streamPrepared), options);
+    // A reconnect while the URL was fetched invalidates it; the recording uploads at stop instead.
+    if (!canStream() || input.getPrepared() !== streamPrepared) return batch;
+    const transcription: {
+      readonly locale: string;
+      readonly transcribe: typeof transcribeRecording;
+      streaming?: ReturnType<typeof openSpeechStream>;
+    } = { locale: nativeStreaming ? language : batchLocale, transcribe: transcribeRecording };
+    transcription.streaming = openSpeechStream({
+      url,
+      canSend: input.hasAudioConsent,
+      options: recordingOptions,
+      signal: options.signal,
+      onText: input.onText,
+      onError: (error) => {
+        // A dropped stream keeps recording; the controller then uploads the local recording.
+        if (input.hasAudioConsent()) delete transcription.streaming;
+        else input.onError(error.message);
+      },
+    });
+    return transcription;
   });
 }
 

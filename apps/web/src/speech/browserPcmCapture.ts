@@ -119,8 +119,9 @@ export function createBrowserPcmCapture(
             input.onLevel(data);
             return;
           }
-          if (feed) feed(data);
-          else chunks.push(data);
+          // Kept even while streaming, so a dropped stream can still upload the recording.
+          chunks.push(data);
+          feed?.(data);
         };
         node.onprocessorerror = () => {
           stopped?.reject(new Error(m(msg("Microphone processing failed."))));
@@ -166,7 +167,7 @@ export function createBrowserPcmCapture(
       worklet.port.postMessage("stop");
       try {
         await pending;
-        if (!feed && chunks.length) {
+        if (chunks.length) {
           const blob = new Blob(chunks, { type: "application/octet-stream" });
           recordingUri = URL.createObjectURL(blob);
         }
@@ -202,7 +203,6 @@ export function createBrowserPcmCapture(
               streaming = prepared.streaming;
               feed = prepared.streaming.feed;
               for (const chunk of chunks) feed(chunk);
-              chunks = [];
             }
             return prepared;
           })
@@ -222,8 +222,9 @@ export function createBrowserPcmCapture(
           get locale() {
             return destination?.locale ?? "auto";
           },
+          // A destination drops `streaming` when its stream fails, so the recording uploads instead.
           get streaming() {
-            return streaming;
+            return destination?.streaming ? streaming : undefined;
           },
           async transcribe(uri, transcriptionOptions) {
             const prepared = await pending;

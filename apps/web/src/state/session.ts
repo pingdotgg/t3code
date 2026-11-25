@@ -38,6 +38,18 @@ export function useEnvironmentScope(
   );
 }
 
+export function useEnvironmentScopeDenied(
+  environmentId: EnvironmentId | null,
+  scope: AuthEnvironmentScope,
+): boolean {
+  return useAtomValue(
+    environmentId === null
+      ? EMPTY_SESSION_STATE_ATOM
+      : environmentSession.sessionStateAtom(environmentId),
+    (result) => sessionDeniesScope(result, scope),
+  );
+}
+
 export function useEnvironmentCanConfigureRelay(environmentId: EnvironmentId | null): boolean {
   return useAtomValue(
     environmentId === null
