@@ -12524,7 +12524,7 @@
   "7755500a4cde5066": "Bereich schließen",
   "b8dcbc93a2ca1861": "Diese Ausführung führt es nicht mehr auf.",
   "115c69de3202f664": "Öffnen",
-  "644eafa9048b62df": "{count, plural, =1 {1. Versuch} =2 {2. Versuch} =3 {3. Versuch} other {{count}. Versuch}}",
+  "a2bbf464a3be4882": "{count, plural, =1 {1. Versuch} =2 {2. Versuch} =3 {3. Versuch} other {{count}. Versuch}}",
   "e39f89c909df4db0": "Die Ausführung konnte nicht fortgesetzt werden",
   "865f034346b82f47": "{title} abbrechen? Die Agenten stoppen und die Ausführung kann nicht fortgesetzt werden.",
   "6bc75632fd9c9136": "Die Ausführung konnte nicht abgebrochen werden",

@@ -12517,7 +12517,7 @@
   "7755500a4cde5066": "Cerrar el panel",
   "b8dcbc93a2ca1861": "Esta ejecución ya no lo incluye.",
   "115c69de3202f664": "Abrir",
-  "644eafa9048b62df": "{count, plural, =1 {1.er intento} =2 {2.º intento} =3 {3.er intento} other {{count}.º intento}}",
+  "a2bbf464a3be4882": "{count, plural, =1 {1.er intento} =2 {2.º intento} =3 {3.er intento} other {{count}.º intento}}",
   "e39f89c909df4db0": "No se pudo reanudar la ejecución",
   "865f034346b82f47": "¿Cancelar {title}? Sus agentes se detienen y la ejecución no se podrá reanudar.",
   "6bc75632fd9c9136": "No se pudo cancelar la ejecución",

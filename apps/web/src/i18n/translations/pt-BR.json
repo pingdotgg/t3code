@@ -12522,7 +12522,7 @@
   "7755500a4cde5066": "Fechar o painel",
   "b8dcbc93a2ca1861": "Esta execução não o lista mais.",
   "115c69de3202f664": "Abrir",
-  "644eafa9048b62df": "{count, plural, =1 {1ª tentativa} =2 {2ª tentativa} =3 {3ª tentativa} other {{count}ª tentativa}}",
+  "a2bbf464a3be4882": "{count, plural, =1 {1ª tentativa} =2 {2ª tentativa} =3 {3ª tentativa} other {{count}ª tentativa}}",
   "e39f89c909df4db0": "Não foi possível retomar a execução",
   "865f034346b82f47": "Cancelar {title}? Os agentes param e a execução não pode ser retomada.",
   "6bc75632fd9c9136": "Não foi possível cancelar a execução",
