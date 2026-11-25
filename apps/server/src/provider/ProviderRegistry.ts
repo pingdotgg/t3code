@@ -187,7 +187,9 @@ export function upsertProviderWorkspaceSnapshot(
       ? (previousSnapshot?.slashCommands ?? scopedSnapshot.slashCommands)
       : scopedSnapshot.slashCommands,
     ...(scopedSnapshot.slashCommandsPending ? { slashCommandsPending: true } : {}),
-    skills: scopedSnapshot.skills,
+    skills: scopedSnapshot.workspaceSkillsPending
+      ? (previousSnapshot?.skills ?? scopedSnapshot.skills)
+      : scopedSnapshot.skills,
     ...(optionDescriptors === undefined ? {} : { optionDescriptors }),
     ...(models === undefined ? {} : { models }),
     ...(scopedSnapshot.workspaceModelsPending ? { modelsPending: true } : {}),

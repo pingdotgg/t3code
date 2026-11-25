@@ -145,6 +145,44 @@ describe("workspace provider snapshots", () => {
     expect(resolveProvidersForCwd(providers, "/workspace/project-a")[0]).toBe(provider);
     expect(resolveProvidersForCwd(providers, "/workspace/project-b")).toBe(providers);
   });
+
+  it.each([
+    { name: "project model", slug: "fixture/model", authenticated: true },
+    { name: "default model", slug: "default", authenticated: false },
+    { name: "custom model", slug: "fixture/custom", isCustom: true, authenticated: false },
+    { name: "disabled Pi", slug: "fixture/model", enabled: false, authenticated: false },
+    { name: "missing Pi", slug: "fixture/model", installed: false, authenticated: false },
+    {
+      name: "unavailable Pi",
+      slug: "fixture/model",
+      availability: "unavailable",
+      authenticated: false,
+    },
+  ] as const)(
+    "scopes Pi sign-in confirmed by $name to the project",
+    ({ slug, authenticated, ...testCase }) => {
+      const pi = {
+        ...provider,
+        driver: ProviderDriverKind.make("pi"),
+        instanceId: ProviderInstanceId.make("pi"),
+        status: "warning",
+        auth: { status: "unauthenticated" },
+        enabled: "enabled" in testCase ? testCase.enabled : true,
+        installed: "installed" in testCase ? testCase.installed : true,
+        ...("availability" in testCase ? { availability: testCase.availability } : {}),
+        workspaceSnapshots: [
+          {
+            ...provider.workspaceSnapshots[0]!,
+            models: [{ slug, name: slug, isCustom: "isCustom" in testCase, capabilities: null }],
+          },
+        ],
+      } satisfies ServerProvider;
+      expect(resolveProvidersForCwd([pi], "/workspace/project-a")[0]?.auth.status).toBe(
+        authenticated ? "authenticated" : "unauthenticated",
+      );
+      expect(resolveProvidersForCwd([pi], "/workspace/project-b")[0]).toBe(pi);
+    },
+  );
 });
 
 describe("provider workspace snapshot refresh atom", () => {

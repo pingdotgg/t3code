@@ -2,8 +2,10 @@
 import { ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { PiSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -217,11 +219,29 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
                 ),
               ),
             ]).pipe(
-              Effect.map(([machineSnapshot, inventory]) => ({
-                ...machineSnapshot,
-                ...inventory,
-                slashCommandsPending: false,
-              })),
+              Effect.map(([machineSnapshot, { models, commands }]) => {
+                const machineModels = new Map(
+                  machineSnapshot.models.map((model) => [model.slug, model]),
+                );
+                const workspaceModels = Result.map(models, (catalog) =>
+                  catalog.map((model) =>
+                    machineModels.get(model.slug)?.supportsTextGeneration === false
+                      ? { ...model, supportsTextGeneration: false }
+                      : model,
+                  ),
+                );
+                return {
+                  ...machineSnapshot,
+                  ...(Result.isFailure(workspaceModels)
+                    ? { workspaceModelsPending: true }
+                    : Equal.equals(workspaceModels.success, machineSnapshot.models)
+                      ? {}
+                      : { workspaceModels: workspaceModels.success }),
+                  ...(Result.isFailure(commands)
+                    ? { slashCommandsPending: true, workspaceSkillsPending: true }
+                    : { ...commands.success, slashCommandsPending: false }),
+                };
+              }),
             ),
       orchestrationAdapter,
       textGeneration,

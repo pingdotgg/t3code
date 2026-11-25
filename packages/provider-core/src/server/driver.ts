@@ -36,6 +36,8 @@ export type ProviderWorkspaceSnapshot = ServerProvider &
     readonly workspaceModels?: ServerProviderWorkspaceSnapshot["models"];
     /** The directory's catalog could not be read, so keep the models found before. */
     readonly workspaceModelsPending?: boolean;
+    /** Skill discovery failed together with command discovery, so keep the skills found before. */
+    readonly workspaceSkillsPending?: boolean;
   };
 
 export interface ProviderInstance {
