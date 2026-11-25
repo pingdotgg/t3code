@@ -1876,7 +1876,9 @@ it.effect("a watcher is sent the runs again when one changes", () =>
     yield* boot(
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
-        const first = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        const first = Option.getOrThrow(
+          yield* Stream.runHead(Workflows.wholeLists(workflows.watch)),
+        );
         assert.deepStrictEqual([first.runs, first.questions], [[], []]);
         // What exists is listed before anything has run, with what starts it.
         assert.deepInclude(first.workflows, {
@@ -1889,7 +1891,7 @@ it.effect("a watcher is sent the runs again when one changes", () =>
           { change: "c9", timeout: "1 hour" },
           { idempotencyKey: "c9" },
         );
-        const seen = yield* workflows.watch.pipe(
+        const seen = yield* Workflows.wholeLists(workflows.watch).pipe(
           Stream.filter((snapshot) => snapshot.runs.some((run) => run.status === "waiting")),
           Stream.runHead,
         );
@@ -2282,7 +2284,9 @@ it.effect("questions carry their kind and runs their tags, and both can be filte
         for (const run of [feature, intended, plain]) {
           yield* workflows.waitFor(run.runId, status("waiting"));
         }
-        const snapshot = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        const snapshot = Option.getOrThrow(
+          yield* Stream.runHead(Workflows.wholeLists(workflows.watch)),
+        );
         // The page reads the labels and their order from what the workflow declares.
         assert.deepStrictEqual(
           snapshot.workflows.find((workflow) => workflow.name === "sorter")?.asks,
@@ -2330,7 +2334,9 @@ it.effect("questions carry their kind and runs their tags, and both can be filte
         // A kind the workflow does not declare is asked all the same, and kept as it was written.
         const typo = yield* sort("d", [], "feture");
         yield* workflows.waitFor(typo.runId, status("waiting"));
-        const after = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+        const after = Option.getOrThrow(
+          yield* Stream.runHead(Workflows.wholeLists(workflows.watch)),
+        );
         assert.equal(
           after.questions.find((question) => question.runId === typo.runId)?.kind,
           "feture",
@@ -2502,3 +2508,63 @@ it("error text cuts at 2,000 units without leaving half an emoji", () => {
     `outer: ${"a".repeat(1_992)}`,
   );
 });
+
+it.effect("one run moving sends a watcher an update about that run, not the whole list", () =>
+  Effect.gen(function* () {
+    const { boot } = yield* harness();
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        // Half the other runs wait at a gate, half wait on a question to a person.
+        const park = (from: number, to: number) =>
+          Effect.forEach(
+            Array.from({ length: to - from }, (_, i) => from + i),
+            (i) =>
+              i % 2 === 0
+                ? workflows.start("gate", { gate: "south" }, { idempotencyKey: `visit/${i}` })
+                : workflows.start("sorter", { tags: [] }, { idempotencyKey: `asked/${i}` }),
+            { discard: true },
+          );
+        // The size of the first update a watcher gets after `mover` ends, let through a gate or
+        // by its question being answered.
+        const updateWhen = Effect.fnUntraced(function* (mover: string, by: "signal" | "answer") {
+          const { runId } =
+            by === "signal"
+              ? yield* workflows.start("gate", { gate: mover }, { idempotencyKey: mover })
+              : yield* workflows.start("sorter", { tags: [] }, { idempotencyKey: mover });
+          yield* workflows.waitFor(runId, status("waiting"));
+          const subscribed = yield* Deferred.make<void>();
+          const update = yield* workflows.watch.pipe(
+            Stream.tap(() => Deferred.succeed(subscribed, undefined)),
+            Stream.drop(1),
+            Stream.map((sent) => JSON.stringify(sent)),
+            Stream.filter((text) => text.includes(runId) && text.includes('"completed"')),
+            Stream.map((text) => text.length),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          yield* Deferred.await(subscribed);
+          yield* by === "signal"
+            ? workflows.signal({ runId, wait: "through" }, "go on", { id: mover })
+            : Effect.asVoid(workflows.answer(runId, "sort", { choice: "No" }));
+          return Option.getOrThrow(yield* Fiber.join(update));
+        });
+
+        yield* park(0, 10);
+        const fewOthers = [
+          yield* updateWhen("north-1", "signal"),
+          yield* updateWhen("asked-1", "answer"),
+        ];
+        yield* park(10, 300);
+        const manyOthers = [
+          yield* updateWhen("north-2", "signal"),
+          yield* updateWhen("asked-2", "answer"),
+        ];
+        for (const [index, few] of fewOthers.entries()) {
+          const many = manyOthers[index] ?? 0;
+          assert.isBelow(many, few * 2, `${few} bytes beside 10 runs, ${many} beside 300`);
+        }
+      }).pipe(Effect.scoped),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
