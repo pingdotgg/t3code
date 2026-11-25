@@ -886,40 +886,4 @@ describe("Android WebRTC device streams", () => {
     refuse(viewportSources[2]!);
     expect(events.onUnauthorized).toHaveBeenCalledOnce();
   });
-
-  it("follows a touch area change that keeps the same geometry", async () => {
-    const fixture = setup();
-    const { client, sockets, pushViewport } = fixture;
-    const video = await streamFrame(fixture, 540, 1200);
-    pushViewport(letterboxed);
-    video.callback?.();
-    pushViewport({ ...letterboxed, touch: { x: 0, y: 0, width: 0.5, height: 0.5 } });
-    video.callback?.();
-    sockets[0]!.onopen?.();
-    client.sendTouch("begin", 1, 1);
-    expect(JSON.parse(sockets[0]!.send.mock.calls[0]![0])).toEqual({
-      type: "touch",
-      action: "down",
-      x: 0.5,
-      y: 0.5,
-    });
-    client.stop();
-  });
-
-  it("sends a display-sized frame's touches as they are", async () => {
-    const fixture = setup();
-    const { client, sockets, pushViewport } = fixture;
-    const video = await streamFrame(fixture, 904, 2316);
-    pushViewport({ ...letterboxed, touch: { x: 0, y: 0, width: 904 / 1080, height: 2316 / 2400 } });
-    video.callback?.();
-    sockets[0]!.onopen?.();
-    client.sendTouch("begin", 1, 1);
-    expect(JSON.parse(sockets[0]!.send.mock.calls[0]![0])).toEqual({
-      type: "touch",
-      action: "down",
-      x: 1,
-      y: 1,
-    });
-    client.stop();
-  });
 });

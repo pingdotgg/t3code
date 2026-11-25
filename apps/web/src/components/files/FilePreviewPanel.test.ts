@@ -324,6 +324,14 @@ Third}`;
         String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl{\f0\fnil\fcharset0\cpg1251 Arial;}{\f1\fnil\fcharset204 Arial{\*\fontfile\cpg1252 arial.ttf};}}\f0 \'cf\'f0\'e8\f1\'e2\'e5\'f2}`,
         "<p>Привет</p>",
       ],
+      [
+        String.raw`{\rtf1\ansi\ansicpg54936 Quarterly notes: \'d6\'d0\'ce\'c4 \'95\'32\'82\'36 \'82\'35\'8f\'33 \uc2\u20320\'c4\'e3 done\par}`,
+        "<p>Quarterly notes: 中文 𠀀 龦 你 done<br></p>",
+      ],
+      [
+        String.raw`{\rtf1\ansi{\fonttbl{\f0\fnil\fcharset0\cpg54936 SimSun;}}\f0 \'d6\'d0\'ce\'c4}`,
+        "<p>中文</p>",
+      ],
     ] as const) {
       const decoded = openRtf(bytes(rtf));
       if (decoded.type !== "document") throw new Error("Expected document");
