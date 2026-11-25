@@ -170,6 +170,7 @@ async function workbookFile(
   sheetPath: string,
   extraRels = "",
   targetMode = "Internal",
+  sheetData = `<row r="1"><c r="A1"><v>42</v></c></row>`,
 ) {
   const zip = new JSZip();
   zip.file(
@@ -190,7 +191,7 @@ async function workbookFile(
   );
   zip.file(
     sheetPath,
-    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1"><v>42</v></c></row></sheetData></worksheet>`,
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetData}</sheetData></worksheet>`,
   );
   return zip.generateAsync({ type: "arraybuffer" });
 }
@@ -230,5 +231,26 @@ describe("Workbook relationship targets", () => {
     const zip = await JSZip.loadAsync(result.bytes);
     expect(result.truncated).toBe(false);
     expect(await zip.file("xl/worksheets/sheet1.xml")?.async("string")).toContain("42");
+  });
+});
+
+describe("Workbook preview limits", () => {
+  it("does not split a surrogate pair when truncating cell text", async () => {
+    const prefix = "a".repeat(4095);
+    const result = await prepareOffice(
+      await workbookFile(
+        "worksheets/sheet1.xml",
+        "xl/worksheets/sheet1.xml",
+        "",
+        "Internal",
+        `<row r="1"><c r="A1" t="inlineStr"><is><t>${prefix}🚀tail</t></is></c></row>`,
+      ),
+      "xlsx",
+    );
+    const zip = await JSZip.loadAsync(result.bytes);
+    const sheet = await zip.file("xl/worksheets/sheet1.xml")?.async("string");
+    expect(result.truncated).toBe(true);
+    expect(sheet).toContain(`<t>${prefix}</t>`);
+    expect(sheet).not.toContain("\ufffd");
   });
 });
