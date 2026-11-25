@@ -17,9 +17,9 @@ export function InstallT3Commands({
   return (
     <div className={cn("space-y-2", className)}>
       <p className="text-xs text-muted-foreground">macOS, Linux</p>
-      <CommandBlock command="curl -fsSL https://t3.codes/install.sh | sh" />
+      <CommandBlock command="curl -fsSL https://raw.githubusercontent.com/penouc/tix/main/scripts/install.sh | sh" />
       <p className="text-xs text-muted-foreground">Windows (PowerShell)</p>
-      <CommandBlock command="irm https://t3.codes/install.ps1 | iex" />
+      <CommandBlock command="irm https://raw.githubusercontent.com/penouc/tix/main/scripts/install.ps1 | iex" />
       <p className="text-xs text-muted-foreground">
         <T>Then</T>
       </p>

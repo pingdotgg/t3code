@@ -1,5 +1,9 @@
 import { isLoopbackHost } from "./preview.ts";
 
+function isTailnetHost(hostname: string): boolean {
+  return hostname.toLowerCase().endsWith(".ts.net");
+}
+
 export function providerAuthReturnUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
@@ -7,7 +11,7 @@ export function providerAuthReturnUrl(value: string | undefined): string | undef
     const desktop = ["tix:", "tix-dev:"].includes(url.protocol) && url.host === "app";
     const web =
       ["http:", "https:"].includes(url.protocol) &&
-      (isLoopbackHost(url.hostname) || url.origin === "https://app.t3.codes");
+      (isLoopbackHost(url.hostname) || isTailnetHost(url.hostname));
     if (
       url.username ||
       url.password ||

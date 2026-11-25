@@ -17,5 +17,12 @@ describe("provider auth return destinations", () => {
     "tix://attacker/welcome",
     "tix://app/welcome/../evil",
     "https://attacker.example/welcome",
+    "https://app.t3.codes/welcome",
   ])("rejects %s", (url) => expect(providerAuthReturnUrl(url)).toBeUndefined());
+
+  it("allows tailnet web return destinations", () => {
+    expect(
+      providerAuthReturnUrl("https://my-mac.tailnet.ts.net/welcome?code=secret#agents:m1"),
+    ).toBe("https://my-mac.tailnet.ts.net/welcome#agents:m1");
+  });
 });
