@@ -133,7 +133,7 @@ export function retainedTerminalHistory(history: string, maxBytes: number): stri
 /** Keep a whole unfinished prefix when possible, or skip its continuation during replay. */
 export function retainTerminalSnapshotHistory(history: string, maxBytes: number) {
   const retained = retainedTerminalHistory(history, maxBytes);
-  if (retained.length > 0 || history.length === 0) return { history: retained };
+  if (retained.length > 0) return { history: retained };
 
   // The last ESC starts a sequence independently of the discarded prefix.
   const start = history.lastIndexOf("\u001b");
