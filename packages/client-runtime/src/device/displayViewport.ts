@@ -1,3 +1,4 @@
+// @effect-diagnostics globalTimers:off - This browser and WebView transport runs without an Effect runtime.
 import type { DeviceDisplayViewport } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -99,6 +100,10 @@ const sameViewport = (a: DeviceDisplayViewport | null, b: DeviceDisplayViewport 
     sameRegion(a.content, b.content) &&
     sameRegion(a.touch, b.touch));
 
+// EventSource reports no status code, so a refusal is only treated as lost access when a fresh
+// connection is refused too: a one-off proxy error must not tear down healthy video.
+const RECONNECT_DELAY_MS = 1_000;
+
 /**
  * Follows where an Android emulator draws its display inside the streamed framebuffer. The
  * server pushes it, so the stream keeps updating after a media ticket expires.
@@ -107,34 +112,55 @@ export function watchDisplayViewport(options: {
   readonly url: string;
   readonly credentials: boolean;
   readonly onChange: (viewport: DeviceDisplayViewport | null) => void;
-  /** A stream that had connected was refused on reconnect, as when its media ticket expired. */
+  /** A stream that had connected is refused twice in a row, as when its media ticket expired. */
   readonly onRefused: () => void;
 }) {
   // Undefined until the first event, which always applies: a watch started for a reconnect
   // must clear a viewport left from before.
   let current: DeviceDisplayViewport | null | undefined;
-  const source = new EventSource(options.url, { withCredentials: options.credentials });
-  let opened = false;
-  source.onopen = () => {
-    opened = true;
+  let source: EventSource | null = null;
+  let retry: ReturnType<typeof setTimeout> | null = null;
+  const connect = (retrying: boolean) => {
+    const next = new EventSource(options.url, { withCredentials: options.credentials });
+    source = next;
+    let opened = false;
+    next.onopen = () => {
+      opened = true;
+    };
+    next.onerror = () => {
+      if (source !== next || next.readyState !== EventSource.CLOSED) return;
+      if (opened) {
+        retry = setTimeout(() => {
+          retry = null;
+          connect(true);
+        }, RECONNECT_DELAY_MS);
+      } else if (retrying) {
+        options.onRefused();
+      }
+      // A first connection refused (a server without the route) leaves the frame uncropped.
+    };
+    next.onmessage = (event: MessageEvent<string>) => {
+      let payload: unknown;
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      const decoded = decodeResponse(payload);
+      if (Option.isNone(decoded)) return;
+      const viewport = decoded.value.viewport;
+      if (current !== undefined && sameViewport(viewport, current)) return;
+      current = viewport;
+      options.onChange(viewport);
+    };
   };
-  // A server without the route refuses the first connection; that leaves the frame uncropped.
-  source.onerror = () => {
-    if (opened && source.readyState === EventSource.CLOSED) options.onRefused();
+  connect(false);
+  return {
+    stop: () => {
+      if (retry !== null) clearTimeout(retry);
+      retry = null;
+      source?.close();
+      source = null;
+    },
   };
-  source.onmessage = (event: MessageEvent<string>) => {
-    let payload: unknown;
-    try {
-      payload = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-    const decoded = decodeResponse(payload);
-    if (Option.isNone(decoded)) return;
-    const next = decoded.value.viewport;
-    if (current !== undefined && sameViewport(next, current)) return;
-    current = next;
-    options.onChange(next);
-  };
-  return { stop: () => source.close() };
 }

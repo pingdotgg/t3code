@@ -826,16 +826,33 @@ describe("Android WebRTC device streams", () => {
     client.stop();
   });
 
-  it("renews access when a viewport stream that had connected is refused", async () => {
+  it("renews access only when a viewport stream that had connected is refused twice", async () => {
     const fixture = setup();
     const { events, viewportSources } = fixture;
     await streamFrame(fixture, 540, 1200);
-    const source = viewportSources[0]!;
-    source.readyState = 2;
-    source.onerror?.();
+    const refuse = (source: (typeof viewportSources)[number]) => {
+      source.readyState = 2;
+      source.onerror?.();
+    };
+    // A server without the route refuses the first connection; video stays up.
+    refuse(viewportSources[0]!);
     expect(events.onUnauthorized).not.toHaveBeenCalled();
-    source.onopen?.();
-    source.onerror?.();
+    expect(viewportSources).toHaveLength(1);
+
+    fixture.client.stop();
+    await streamFrame(fixture, 540, 1200);
+    viewportSources[1]!.onopen?.();
+    // A one-off refusal after the stream worked reconnects the viewport alone.
+    refuse(viewportSources[1]!);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(viewportSources).toHaveLength(3);
+    viewportSources[2]!.onopen?.();
+    refuse(viewportSources[2]!);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(events.onUnauthorized).not.toHaveBeenCalled();
+
+    // Refused again before connecting: the media ticket has expired.
+    refuse(viewportSources[3]!);
     expect(events.onUnauthorized).toHaveBeenCalledOnce();
   });
 
