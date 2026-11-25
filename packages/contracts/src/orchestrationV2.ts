@@ -77,6 +77,7 @@ import {
 import {
   ProviderApprovalDecision,
   ProviderApprovalFullAccessOverride,
+  ProviderApprovalPushHooks,
   ProviderApprovalOption,
   ProviderInteractionMode,
   ProviderRequestKind,
@@ -2015,6 +2016,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     reason: Schema.optional(Schema.String),
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
+    pushHooks: Schema.optional(ProviderApprovalPushHooks),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
@@ -2916,6 +2918,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     reason: Schema.optional(Schema.String),
     fullAccessOverride: Schema.optional(ProviderApprovalFullAccessOverride),
     appName: Schema.optional(Schema.String),
+    pushHooks: Schema.optional(ProviderApprovalPushHooks),
     options: Schema.optional(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
