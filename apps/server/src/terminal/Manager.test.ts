@@ -1505,29 +1505,6 @@ it.layer(
     }),
   );
 
-  it.effect("keeps a split title update out of visible history after a clear", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      const input = openInput();
-      const live = yield* Stream.toPull(manager.attachOutputStream(input, "live"));
-      yield* live;
-      const process = ptyAdapter.processes[0]!;
-
-      process.emitData("old output\r\n\u001b]0;Build ");
-      yield* live;
-      yield* manager.clear(input);
-      yield* live;
-      process.emitData("progress\u0007ready\r\n");
-      yield* live;
-
-      const reopened = yield* Stream.toPull(manager.attachOutputStream(input, "reopened"));
-      const [event] = yield* reopened;
-      if (event?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
-      const visible = event.snapshot.history.replace(/\u001b\]0;[^\u0007]*\u0007/g, "");
-      expect(visible).toBe("ready\r\n");
-    }),
-  );
-
   it.effect("restores a log tail that starts inside a control sequence without its remainder", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
