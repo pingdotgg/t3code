@@ -341,7 +341,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             if (stopPhase === "landed") event.preventDefault();
           }}
           disabled={
-            isSendHeld ||
             !canOperateThread ||
             isEnvironmentUnavailable ||
             isSendDisabled ||
@@ -351,21 +350,15 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 ? !pendingAction.isComplete
                 : !pendingAction.canAdvance))
           }
-          aria-label={isSendHeld ? gt("Sending when ready") : undefined}
-          aria-busy={isSendHeld || undefined}
         >
-          {isSendHeld ? (
-            <Spinner size="sm" aria-hidden="true" />
-          ) : (
-            formatPendingPrimaryActionLabel(
-              {
-                compact,
-                isLastQuestion: pendingAction.isLastQuestion,
-                isResponding: pendingAction.isResponding,
-                questionIndex: pendingAction.questionIndex,
-              },
-              m,
-            )
+          {formatPendingPrimaryActionLabel(
+            {
+              compact,
+              isLastQuestion: pendingAction.isLastQuestion,
+              isResponding: pendingAction.isResponding,
+              questionIndex: pendingAction.questionIndex,
+            },
+            m,
           )}
         </button>
         {canInterrupt || stopPhase === "pending" || stopPhase === "timedOut"
