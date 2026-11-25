@@ -18,6 +18,8 @@ const SILENT_LEVELS: ReadonlyArray<number> = Array<number>(VOICE_WAVEFORM_SAMPLE
 export type VoiceInputTarget = {
   readonly ownerKey: string;
   readonly label?: string;
+  /** Drafts persisted to disk can recover a finalized recording after an OS kill. */
+  readonly persistent?: boolean;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: VoiceInputControllerDependencies["commitDraft"];
 };
@@ -107,6 +109,10 @@ export class VoiceInputSession {
     return this.target?.label ?? null;
   }
 
+  get persistent(): boolean {
+    return this.target?.persistent === true;
+  }
+
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -135,6 +141,15 @@ export class VoiceInputSession {
     this.target = target;
     this.startText = target.readDraft()?.text ?? null;
     return this.controller.start();
+  }
+
+  recover(target: VoiceInputTarget, uri: string): Promise<void> {
+    if (this.controller.currentState.phase !== "idle") return Promise.resolve();
+    const draft = target.readDraft();
+    if (!draft) return Promise.resolve();
+    this.target = target;
+    this.startText = draft.text;
+    return this.controller.recoverRecording(uri);
   }
 
   dispose(): void {

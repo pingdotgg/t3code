@@ -908,4 +908,221 @@ describe("VoiceInputController", () => {
     expect(harness.recorder.record).not.toHaveBeenCalled();
     expect(harness.controller.currentState.error).toContain("background");
   });
+
+  it("finishes recording on background and transcribes when returning to the foreground", async () => {
+    const events: string[] = [];
+    const pendingChanges: Array<string | null> = [];
+    const transcribe = vi.fn(async (uri: string) => {
+      events.push(`transcribe:${uri}`);
+      return "captured before switching apps";
+    });
+    const harness = createHarness({
+      releaseRecording: async () => {
+        events.push("release");
+      },
+      onPendingRecordingChange: (pending) => pendingChanges.push(pending?.uri ?? null),
+      getTranscriber: () => ({
+        prepare: async () => ({
+          locale: "en-US",
+          start: async () => null,
+          transcribe,
+        }),
+      }),
+    });
+    harness.recorder.stop.mockImplementation(async () => {
+      events.push("stop");
+    });
+
+    await harness.controller.start();
+    const backgrounded = harness.controller.appMovedToBackground();
+    await vi.waitFor(() => expect(events).toEqual(["stop", "release"]));
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(pendingChanges).toEqual(["file:///voice.m4a"]);
+    expect(harness.deleted).toEqual([]);
+    expect(harness.controller.currentState.phase).toBe("transcribing");
+
+    harness.controller.appReturnedToForeground();
+    await backgrounded;
+
+    expect(events).toEqual(["stop", "release", "transcribe:file:///voice.m4a"]);
+    expect(harness.commits).toEqual([
+      { text: "hello captured before switching apps", selection: { start: 36, end: 36 } },
+    ]);
+    expect(pendingChanges).toEqual(["file:///voice.m4a", null]);
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+    expect(harness.controller.currentState.phase).toBe("idle");
+  });
+
+  it("retries transcription on foreground when an in-flight upload fails in the background", async () => {
+    const firstAttempt = deferred<string>();
+    const transcribe = vi
+      .fn<PreparedVoiceTranscription["transcribe"]>()
+      .mockImplementationOnce(() => firstAttempt.promise)
+      .mockResolvedValueOnce("recovered after background");
+    const harness = createHarness({
+      retryFailedRecording: true,
+      getTranscriber: () => ({
+        prepare: async () => ({ locale: "en-US", start: async () => null, transcribe }),
+      }),
+    });
+
+    await harness.controller.start();
+    const stopping = harness.controller.stop();
+    await vi.waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1));
+
+    harness.controller.appMovedToBackground();
+    firstAttempt.reject(new Error("network suspended"));
+    await Promise.resolve();
+    expect(transcribe).toHaveBeenCalledTimes(1);
+    expect(harness.controller.currentState.phase).toBe("transcribing");
+
+    harness.controller.appReturnedToForeground();
+    await stopping;
+
+    expect(transcribe).toHaveBeenCalledTimes(2);
+    expect(harness.commits[0]?.text).toBe("hello recovered after background");
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+  });
+
+  it("refreshes a stale transcriber after returning from background and keeps failed file audio for retry", async () => {
+    const staleTranscribe = vi.fn(async () => {
+      throw new VoiceTranscriptionError({
+        code: "cancelled",
+        message: "Connection refreshed.",
+      });
+    });
+    const freshTranscribe = vi
+      .fn<PreparedVoiceTranscription["transcribe"]>()
+      .mockRejectedValueOnce(new Error("server temporarily unreachable"))
+      .mockResolvedValueOnce("transcribed on retry");
+    let useFresh = false;
+    const harness = createHarness({
+      retryFailedRecording: true,
+      getTranscriber: () => ({
+        prepare: async () => ({
+          locale: "en-US",
+          start: async () => null,
+          transcribe: useFresh ? freshTranscribe : staleTranscribe,
+        }),
+      }),
+      waitForTranscriber: async () => ({
+        prepare: async () => ({ locale: "en-US", transcribe: freshTranscribe }),
+      }),
+    });
+
+    await harness.controller.start();
+    const backgrounded = harness.controller.appMovedToBackground();
+    await vi.waitFor(() => expect(harness.recorder.stop).toHaveBeenCalledOnce());
+    useFresh = true;
+    harness.controller.appReturnedToForeground();
+    await backgrounded;
+
+    expect(staleTranscribe).toHaveBeenCalledOnce();
+    expect(freshTranscribe).toHaveBeenCalledOnce();
+    expect(harness.controller.currentState.phase).toBe("error");
+    expect(harness.deleted).toEqual([]);
+
+    await harness.controller.start();
+    expect(harness.recorder.record).toHaveBeenCalledOnce();
+    expect(harness.commits[0]?.text).toBe("hello transcribed on retry");
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+  });
+
+  it("cancels and deletes a recording waiting in the background", async () => {
+    const transcribe = vi.fn(async () => "unused");
+    const harness = createHarness({
+      getTranscriber: () => ({ prepare: async () => preparedTranscription(transcribe) }),
+    });
+    await harness.controller.start();
+    const backgrounded = harness.controller.appMovedToBackground();
+    await vi.waitFor(() => expect(harness.recorder.stop).toHaveBeenCalledOnce());
+
+    harness.controller.cancel();
+    await backgrounded;
+
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(harness.commits).toEqual([]);
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+    expect(harness.controller.currentState.phase).toBe("idle");
+  });
+
+  it("recovers a finalized recording saved from a previous session", async () => {
+    const transcribe = vi.fn(async () => "from before restart");
+    const pendingChanges: Array<string | null> = [];
+    const harness = createHarness({
+      retryFailedRecording: true,
+      onPendingRecordingChange: (pending) => pendingChanges.push(pending?.uri ?? null),
+      waitForTranscriber: async () => ({
+        prepare: async () => preparedTranscription(transcribe),
+      }),
+    });
+
+    await harness.controller.recoverRecording("file:///saved.m4a");
+
+    expect(transcribe).toHaveBeenCalledWith("file:///saved.m4a", {
+      signal: expect.any(AbortSignal),
+    });
+    expect(harness.commits[0]?.text).toBe("hello from before restart");
+    expect(harness.deleted).toEqual(["file:///saved.m4a"]);
+    expect(pendingChanges.at(-1)).toBeNull();
+    expect(harness.controller.currentState.phase).toBe("idle");
+  });
+
+  it("recovers on foreground when prewarm start() rejects during backgrounding", async () => {
+    const prewarm = deferred<string | null>();
+    const freshTranscribe = vi.fn(async () => "recovered after prewarm failure");
+    const harness = createHarness({
+      retryFailedRecording: true,
+      canRetryRecording: (uri) => !uri.endsWith(".pcm"),
+      getTranscriber: () => ({
+        prepare: async () => ({
+          locale: "en-US",
+          start: () => prewarm.promise,
+          transcribe: async () => "stale",
+        }),
+      }),
+      waitForTranscriber: async () => ({
+        prepare: async () => preparedTranscription(freshTranscribe),
+      }),
+    });
+
+    await harness.controller.start();
+    const backgrounded = harness.controller.appMovedToBackground();
+    await vi.waitFor(() => expect(harness.recorder.stop).toHaveBeenCalledOnce());
+    prewarm.reject(new Error("network lost in background"));
+
+    harness.controller.appReturnedToForeground();
+    await backgrounded;
+
+    expect(freshTranscribe).toHaveBeenCalledWith("file:///voice.m4a", {
+      signal: expect.any(AbortSignal),
+    });
+    expect(harness.commits[0]?.text).toBe("hello recovered after prewarm failure");
+    expect(harness.deleted).toEqual(["file:///voice.m4a"]);
+  });
+
+  it("defers transcription until foreground if backgrounded while stop() awaits recorder.stop()", async () => {
+    const stopFinished = deferred<undefined>();
+    const transcribe = vi.fn(async () => "after slow stop");
+    const harness = createHarness({
+      getTranscriber: () => ({ prepare: async () => preparedTranscription(transcribe) }),
+    });
+    harness.recorder.stop.mockImplementationOnce(() => stopFinished.promise);
+
+    await harness.controller.start();
+    const stopping = harness.controller.stop();
+    harness.controller.appMovedToBackground();
+    stopFinished.resolve(undefined);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(harness.controller.currentState.phase).toBe("transcribing");
+
+    harness.controller.appReturnedToForeground();
+    await stopping;
+
+    expect(transcribe).toHaveBeenCalledOnce();
+    expect(harness.commits[0]?.text).toBe("hello after slow stop");
+  });
 });

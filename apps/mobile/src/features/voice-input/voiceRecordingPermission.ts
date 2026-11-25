@@ -1,12 +1,18 @@
 import { requestRecordingPermissionsAsync } from "expo-audio";
 import { AppState, Platform } from "react-native";
 
-export function createVoiceRecordingPermission(onBackground: () => void) {
+export function createVoiceRecordingPermission(
+  onBackground: () => void,
+  onForeground?: () => void,
+) {
   let requesting = false;
   let disposed = false;
   let resume: (() => void) | null = null;
   const subscription = AppState.addEventListener("change", (state) => {
-    if (state === "active") resume?.();
+    if (state === "active") {
+      resume?.();
+      if (!requesting) onForeground?.();
+    }
     if (state === "background" && !requesting) onBackground();
   });
   return {

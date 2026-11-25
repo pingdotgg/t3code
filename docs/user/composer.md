@@ -246,10 +246,11 @@ first of your preferred languages (**Settings → General → Language & Region*
 that Apple’s speech model supports. If none is supported, it tries the app’s
 language. Android transcribes on the device while you
 record and finishes after you stop. Recordings can be up to five
-minutes long. Canceling or an audio interruption discards the recording and
-preserves your existing draft. Navigating to another screen keeps dictation active;
-use the floating controls to finish or cancel. While recording, the screen stays
-awake; it can sleep normally once recording stops.
+minutes long. Leaving T3 Code while recording finishes and saves what you said
+so it transcribes when you return; canceling or a recorder error discards the
+recording and preserves your existing draft. Navigating to another screen keeps
+dictation active; use the floating controls to finish or cancel. While recording,
+the screen stays awake; it can sleep normally once recording stops.
 
 Choose a preferred order in **Settings → Voice**. Voice input requests the first
 connected microphone in the list. The list mixes kinds (built-in, other wired, other
