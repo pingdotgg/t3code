@@ -1972,6 +1972,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.rebaseRequired === undefined
               ? {}
               : { rebaseRequired: changeRequest.rebaseRequired }),
+            ...(changeRequest.reviewDecision === undefined
+              ? {}
+              : { reviewDecision: changeRequest.reviewDecision }),
             additions: changeRequest.additions,
             deletions: changeRequest.deletions,
             changedFiles: changeRequest.changedFiles,
