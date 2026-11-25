@@ -3,9 +3,11 @@ import type { PromptUltrathink } from "./TraitsPicker";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { type AppModelOption } from "../../modelSelection";
 import { useGT, useMessages } from "gt-react";
-import { CircleAlertIcon } from "lucide-react";
+import { formatModelSelectionEffort } from "@t3tools/client-runtime/state/thread-execution";
+import { CircleAlertIcon, RotateCcwIcon } from "lucide-react";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerControl } from "./ComposerControl";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   ComposerFooterModeControls,
   ComposerModelPicker,
@@ -75,6 +77,9 @@ export function ComposerControlsBar(props: {
   onMultipleModelSelectionsChange: ChatComposerProps["onMultipleModelSelectionsChange"];
   selectedModelSelection: ModelSelection;
   onProviderModelSelect: ChatComposerProps["onProviderModelSelect"];
+  /** The last turn's selection, while the composer would send something else. */
+  modelResetTarget: ModelSelection | null;
+  onModelSelectionReset: ChatComposerProps["onModelSelectionReset"];
   activeThreadModelSelection: ChatComposerProps["activeThreadModelSelection"];
   selectedModelForPickerWithCustomFallback: string;
   lockedProvider: ChatComposerProps["lockedProvider"];
@@ -119,6 +124,8 @@ export function ComposerControlsBar(props: {
     onMultipleModelSelectionsChange,
     selectedModelSelection,
     onProviderModelSelect,
+    modelResetTarget,
+    onModelSelectionReset,
     activeThreadModelSelection,
     selectedModelForPickerWithCustomFallback,
     lockedProvider,
@@ -248,6 +255,42 @@ export function ComposerControlsBar(props: {
       onOpenProviderSetup={onOpenProviderSetup}
     />
   );
+  const modelReset = (() => {
+    if (!modelResetTarget) return null;
+    const target = modelResetTarget;
+    const modelName =
+      modelOptionsByInstance.get(target.instanceId)?.find((option) => option.slug === target.model)
+        ?.name ?? target.model;
+    const targetModels =
+      providerInstanceEntries.find((entry) => entry.instanceId === target.instanceId)?.models ?? [];
+    const effortLabel = formatModelSelectionEffort(target, targetModels);
+    const label = effortLabel
+      ? gt("Back to {model} · {effort}", { model: modelName, effort: effortLabel })
+      : gt("Back to {model}", { model: modelName });
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ComposerControl
+              size={controlSize}
+              aria-label={label}
+              disabled={isSendBusy}
+              data-composer-model-reset
+              onClick={() => onModelSelectionReset(target)}
+            />
+          }
+        >
+          <RotateCcwIcon aria-hidden="true" />
+        </TooltipTrigger>
+        <TooltipPopup side="top" className="max-w-64">
+          {label}
+          <div className="text-muted-foreground text-xs">
+            {gt("The last turn ran on it, so its prompt cache still applies.")}
+          </div>
+        </TooltipPopup>
+      </Tooltip>
+    );
+  })();
   return showProviderUnavailable ? (
     <ComposerControl
       type="button"
@@ -265,6 +308,7 @@ export function ComposerControlsBar(props: {
     </ComposerControl>
   ) : (
     <>
+      {modelReset}
       {composerModelPicker}
 
       <>

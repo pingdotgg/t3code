@@ -12984,5 +12984,8 @@
   "201490988858b511": "withdrawn by {by}",
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
-  "92e129bf413a1220": "withdrawn"
+  "92e129bf413a1220": "withdrawn",
+  "384d0c30da9f9f2b": "Back to {model} · {effort}",
+  "e898114f94a79aee": "Back to {model}",
+  "fcef94b45227b775": "The last turn ran on it, so its prompt cache still applies."
 }

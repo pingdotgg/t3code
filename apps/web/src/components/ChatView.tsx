@@ -94,6 +94,7 @@ import {
   deriveProviderExtensionStatuses,
   deriveReportedModelSelection,
   deriveResumableRunId,
+  deriveLastProviderTurnModelSelection,
   formatModelSelectionEffort,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
@@ -892,6 +893,19 @@ export default function ChatView(props: ChatViewProps) {
     sideThreadKind !== null && sideThreadComposer(sideThreadKind) === "read-only";
   const supportsProviderSwitchingViaHandoff = threadSupportsProviderHandoff(serverProjection);
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
+  const lastTurnModelSelection =
+    serverProjection === null ? null : deriveLastProviderTurnModelSelection(serverProjection);
+  // Only a provider-reported expiry or TTL can say the cache is gone; without one it may hold.
+  const promptCacheExpiresAt = (() => {
+    const usage = activeThreadLiveTokenUsage;
+    if (!usage) return null;
+    if (usage.promptCacheExpiresAt) return Date.parse(usage.promptCacheExpiresAt);
+    return usage.promptCacheTtlMs ? Date.parse(usage.updatedAt) + usage.promptCacheTtlMs : null;
+  })();
+  const promptCacheExpired =
+    promptCacheExpiresAt !== null &&
+    Number.isFinite(promptCacheExpiresAt) &&
+    Date.parse(`${nowMinute}:00.000Z`) >= promptCacheExpiresAt;
   const activeActivityRun = isServerThread ? serverActivityRun : (activeThread?.latestRun ?? null);
   const activeRuntime = isServerThread ? serverRuntime : (activeThread?.runtime ?? null);
   const hasHeldQueuedRuns =
@@ -3084,6 +3098,7 @@ export default function ChatView(props: ChatViewProps) {
     getModelDisabledReason,
     handleRuntimeModeChangeStable,
     onEnvModeChangeStable,
+    onModelSelectionResetStable,
     onProviderModelSelectStable,
     onStartFromOriginChange,
     openProviderSetupStable,
@@ -3944,6 +3959,9 @@ export default function ChatView(props: ChatViewProps) {
                                   activeProjectDefaultModelSelection
                                 }
                                 activeThreadModelSelection={activeThread?.modelSelection}
+                                lastTurnModelSelection={
+                                  promptCacheExpired ? null : lastTurnModelSelection
+                                }
                                 activeProjectId={activeProject?.id ?? null}
                                 projectName={activeProject?.title}
                                 compactThreadUnavailable={compactThreadUnavailable}
@@ -3993,6 +4011,7 @@ export default function ChatView(props: ChatViewProps) {
                                   onChangeActivePendingUserInputCustomAnswer
                                 }
                                 onProviderModelSelect={onProviderModelSelectStable}
+                                onModelSelectionReset={onModelSelectionResetStable}
                                 onOpenProviderSetup={openProviderSetupStable}
                                 getModelDisabledReason={getModelDisabledReason}
                                 handleRuntimeModeChange={handleRuntimeModeChangeStable}

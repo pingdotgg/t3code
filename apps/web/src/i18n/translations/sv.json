@@ -12982,5 +12982,8 @@
   "201490988858b511": "återkallad av {by}",
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
-  "92e129bf413a1220": "återkallad"
+  "92e129bf413a1220": "återkallad",
+  "384d0c30da9f9f2b": "Tillbaka till {model} · {effort}",
+  "e898114f94a79aee": "Tillbaka till {model}",
+  "fcef94b45227b775": "Den senaste omgången körde på den, så dess promptcache gäller fortfarande."
 }

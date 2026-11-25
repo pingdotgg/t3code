@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  type ModelSelection,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { getComposerProviderState, getComposerReasoningStep } from "./composerProviderState";
+import {
+  getComposerProviderState,
+  getComposerReasoningStep,
+  resolveComposerModelResetTarget,
+} from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
 
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
@@ -397,5 +402,131 @@ describe("getComposerReasoningStep", () => {
         selections(["reasoningEffort", to]),
       );
     }
+  });
+});
+
+describe("resolveComposerModelResetTarget", () => {
+  const instanceId = ProviderInstanceId.make("claudeAgent");
+  const lastTurn = {
+    instanceId,
+    model: "claude-opus-5-5",
+    options: [{ id: "effort", value: "xhigh" }],
+  };
+  const base = {
+    routeKind: "server" as const,
+    multipleModels: false,
+    catalogPending: false,
+    lastTurn,
+    lastTurnDescriptors: [
+      selectDescriptor("effort", [
+        { id: "high", label: "High" },
+        { id: "xhigh", label: "Extra High" },
+      ]),
+      booleanDescriptor("ultracode"),
+    ],
+    sendForPick: (pick: ModelSelection) => pick,
+  };
+  const changed = { ...lastTurn, model: "claude-sonnet-5-5" };
+
+  it("offers the last turn's selection only while the composer would send something else", () => {
+    for (const { label, input, offered } of [
+      { label: "unchanged", input: { ...base, selected: lastTurn }, offered: false },
+      {
+        label: "fast mode off is unset",
+        input: {
+          ...base,
+          selected: {
+            ...lastTurn,
+            options: [...lastTurn.options, { id: "fastMode", value: false }],
+          },
+        },
+        offered: false,
+      },
+      { label: "other model", input: { ...base, selected: changed }, offered: true },
+      {
+        label: "other effort",
+        input: { ...base, selected: { ...lastTurn, options: [{ id: "effort", value: "low" }] } },
+        offered: true,
+      },
+      {
+        label: "other instance",
+        input: { ...base, selected: { ...lastTurn, instanceId: ProviderInstanceId.make("codex") } },
+        offered: true,
+      },
+      {
+        label: "no turn yet",
+        input: { ...base, lastTurn: null, selected: changed },
+        offered: false,
+      },
+      {
+        label: "new thread draft",
+        input: { ...base, routeKind: "draft" as const, selected: changed },
+        offered: false,
+      },
+      {
+        label: "several models",
+        input: { ...base, multipleModels: true, selected: changed },
+        offered: false,
+      },
+      {
+        label: "catalog loading",
+        input: { ...base, catalogPending: true, selected: changed },
+        offered: false,
+      },
+    ]) {
+      expect(resolveComposerModelResetTarget(input), label).toStrictEqual(
+        offered ? lastTurn : null,
+      );
+    }
+  });
+
+  it("abstains when picking the last turn would send something else", () => {
+    for (const { label, sendForPick } of [
+      { label: "picker refuses it", sendForPick: () => null },
+      {
+        label: "hidden model falls back",
+        sendForPick: (pick: ModelSelection) => ({ ...pick, model: "claude-haiku-5-5" }),
+      },
+      {
+        label: "obsolete effort normalizes",
+        sendForPick: (pick: ModelSelection) => ({
+          ...pick,
+          options: [{ id: "effort", value: "high" }],
+        }),
+      },
+      {
+        label: "unavailable instance falls back",
+        sendForPick: (pick: ModelSelection) => ({
+          ...pick,
+          instanceId: ProviderInstanceId.make("codex"),
+        }),
+      },
+    ]) {
+      expect(
+        resolveComposerModelResetTarget({ ...base, selected: changed, sendForPick }),
+        label,
+      ).toBeNull();
+    }
+  });
+
+  it("compares a legacy Ultracode effort in the form the composer sends", () => {
+    const legacy = { ...lastTurn, options: [{ id: "effort", value: "ultracode" }] };
+    const sent = {
+      ...lastTurn,
+      options: [
+        { id: "effort", value: "xhigh" },
+        { id: "ultracode", value: true },
+      ],
+    };
+    expect(
+      resolveComposerModelResetTarget({ ...base, lastTurn: legacy, selected: sent }),
+    ).toBeNull();
+    expect(
+      resolveComposerModelResetTarget({
+        ...base,
+        lastTurn: legacy,
+        selected: { ...lastTurn, options: [{ id: "effort", value: "high" }] },
+      }),
+    ).toStrictEqual(sent);
   });
 });

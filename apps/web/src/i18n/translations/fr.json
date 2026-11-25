@@ -12975,5 +12975,8 @@
   "201490988858b511": "retirée par {by}",
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
-  "92e129bf413a1220": "retirée"
+  "92e129bf413a1220": "retirée",
+  "384d0c30da9f9f2b": "Revenir à {model} · {effort}",
+  "e898114f94a79aee": "Revenir à {model}",
+  "fcef94b45227b775": "Le dernier tour l’a utilisé, donc son cache de prompt s’applique encore."
 }
