@@ -1,4 +1,10 @@
-# Trademark and Branding Policy
+# tix Branding and Upstream Attribution
+
+**tix** is the name of this unofficial fork. Its blue-and-white mammoth is the fork's visual mark. tix is not affiliated with, endorsed by, or maintained by T3 Tools, Inc.
+
+The following upstream trademark policy applies to the original T3 Code identity. The original source-code license remains in [LICENSE](./LICENSE).
+
+## Upstream Trademark and Branding Policy
 
 The [MIT License](./LICENSE) in this repository applies **only to the source code**. It does not grant any rights to T3 Tools, Inc.'s trademarks, service marks, trade names, trade dress, or branding.
 

@@ -1,15 +1,15 @@
 {
   "fill": {
-    "solid": "display-p3:0.00000,0.00000,0.00000,1.00000"
+    "solid": "display-p3:0.90000,0.95000,1.00000,1.00000"
   },
   "groups": [
     {
       "layers": [
         {
-          "image-name": "text.svg",
-          "name": "Text",
+          "image-name": "mammoth.svg",
+          "name": "Mammoth",
           "position": {
-            "scale": 8.5,
+            "scale": 7.2,
             "translation-in-points": [0, 0]
           }
         }

@@ -1,12 +1,14 @@
 <p align="center">
-  <a href="https://t3.codes">
-    <img src="./assets/prod/t3-black-web-icon-192x192.png" width="80" height="80" alt="T3 Code logo" />
-  </a>
+  <img src="./assets/prod/t3-black-web-icon-192x192.png" width="80" height="80" alt="tix mammoth" />
 </p>
 
-<h1 align="center">T3 Code</h1>
+<h1 align="center">tix</h1>
 
 <p align="center">The open-source control plane for coding agents.</p>
+
+**tix is an unofficial fork of T3 Code. It is not affiliated with, endorsed by, or maintained by T3 Tools, Inc.**
+
+The download and community links below refer to the upstream project.
 
 <p align="center">
   <a href="https://t3.codes/download"><strong>Download</strong></a> ·
