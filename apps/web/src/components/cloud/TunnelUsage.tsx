@@ -41,7 +41,6 @@ export function tunnelUpgradeCopy(
   }
 }
 
-/** "2 of 3 tunnels in use" with one bar slot per tunnel. */
 /** Holds the meter's height while usage loads, so the rows below it stay put. */
 export function TunnelUsageMeterSkeleton() {
   return (
@@ -54,6 +53,7 @@ export function TunnelUsageMeterSkeleton() {
   );
 }
 
+/** "2 of 3 tunnels in use" with one bar slot per tunnel. */
 export function TunnelUsageMeter({
   used,
   limit,

@@ -51,7 +51,10 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   const { environments } = useEnvironments();
   const gt = useGT();
   const m = useMessages();
-  const hash = useLocation({ select: (location) => location.hash });
+  // A pending navigation's hash targets the page still loading, not the one on screen.
+  const hash = useLocation({
+    select: (location) => (location.pathname === pathname ? location.hash : ""),
+  });
   const searchTarget = getSettingsSearchTargetScope(hash);
   const agentFeedbackAvailability = searchTarget?.agentFeedbackOnly
     ? {
@@ -184,6 +187,8 @@ function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
   const pathname = useRenderedSettingsPathname();
+  // A scope change during a pending navigation keeps going to the page that was clicked.
+  const targetPathname = useLocation({ select: (location) => location.pathname });
   return (
     <SettingsScopeProvider
       search={rawSearch}
@@ -192,7 +197,7 @@ function SettingsRouteLayout() {
       onChange={(next) => {
         // Send every axis so retain middleware recognizes "all" as an explicit target.
         void navigate({
-          to: pathname,
+          to: targetPathname,
           search: () => ({
             project: next.project,
             machine: next.machine,
