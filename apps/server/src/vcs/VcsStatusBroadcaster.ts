@@ -552,7 +552,7 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const latest = yield* getCachedStatus(cwd);
         const refreshUpstream = !Duration.isZero(yield* automaticFetchInterval);
-        const remote = latest?.remote ?? (yield* readRemoteStatus(cwd, { refreshUpstream }));
+        const remote = latest?.remote ?? (yield* readRemoteStatus(cwd, { refreshUpstream })).remote;
         yield* updateCachedRemoteStatus(cwd, remote);
         const parts = yield* getStatusParts(cwd);
         return mergeGitStatusParts(parts.local, parts.remote);
@@ -621,15 +621,24 @@ export const make = Effect.gen(function* () {
   const readRemoteStatus = Effect.fn("VcsStatusBroadcaster.readRemoteStatus")(function* (
     cwd: string,
     options?: Parameters<GitWorkflowService.GitWorkflowService["Service"]["remoteStatus"]>[1],
+    readPollInputs = false,
   ) {
     const branch = yield* workflow.currentBranch(cwd);
     // GitManager's remote TTL cache is keyed by cwd, not the checked-out branch.
     yield* workflow.invalidateRemoteStatus(cwd);
     const previousRemote = (yield* getCachedStatus(cwd))?.remote;
     const { statusDetails, ...remoteOptions } = options ?? {};
+    const poll = readPollInputs
+      ? yield* workflow.readStatusPoll(cwd, branch, remoteOptions.refreshUpstream !== false)
+      : null;
+    const details = poll?.details ?? statusDetails;
     const remote = yield* workflow.remoteStatus(
       { cwd },
-      statusDetails?.branch === branch ? { ...remoteOptions, statusDetails } : remoteOptions,
+      {
+        ...remoteOptions,
+        ...(readPollInputs ? { refreshUpstream: false } : {}),
+        ...(details?.branch === branch ? { statusDetails: details } : {}),
+      },
     );
     const latest = yield* getCachedStatus(cwd);
     // An overlapping turn refresh and fetch can both move divergence during the forge lookup.
@@ -643,12 +652,19 @@ export const make = Effect.gen(function* () {
         : remote;
     const currentBranch = yield* workflow.currentBranch(cwd);
     const cached = yield* getCachedStatus(cwd);
-    if (branch !== currentBranch || cached?.local?.value.refName !== currentBranch) {
+    const refreshedLocal =
+      branch !== currentBranch || cached?.local?.value.refName !== currentBranch;
+    if (refreshedLocal) {
       yield* refreshLocalStatusCore(cwd);
     }
-    return branch === currentBranch
-      ? { branch, value, fingerprint: fingerprintStatusPart(value) }
-      : null;
+    return {
+      remote:
+        branch === currentBranch
+          ? { branch, value, fingerprint: fingerprintStatusPart(value) }
+          : null,
+      inputStamp: branch === currentBranch ? (poll?.inputStamp ?? null) : null,
+      refreshedLocal,
+    };
   });
 
   const maybeAutoPull = Effect.fn("VcsStatusBroadcaster.maybeAutoPull")(function* (
@@ -686,7 +702,7 @@ export const make = Effect.gen(function* () {
       yield* workflow.pullCurrentBranch(cwd);
       yield* workflow.invalidateStatus(cwd);
       yield* refreshLocalStatusCore(cwd);
-      const refreshedRemote = yield* readRemoteStatus(cwd, { refreshUpstream: false });
+      const { remote: refreshedRemote } = yield* readRemoteStatus(cwd, { refreshUpstream: false });
       yield* updateCachedRemoteStatus(cwd, refreshedRemote, { publish: true });
       return yield* getStatusParts(cwd);
     }).pipe(
@@ -712,30 +728,34 @@ export const make = Effect.gen(function* () {
     options?: {
       readonly refreshUpstream?: boolean;
       readonly policyCwds?: ReadonlyArray<string>;
-      /** Refs seen by this caller's last local read; skips the re-read while they hold. */
-      readonly refsAtLocalRead?: Ref.Ref<string | null>;
+      /** Git inputs seen before this poller's last full local read. */
+      readonly inputsAtLocalRead?: Ref.Ref<string | null>;
     },
   ) {
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
-        const remoteRead = yield* readRemoteStatus(cwd, options);
+        const inputsAtLocalRead = options?.inputsAtLocalRead;
+        const {
+          remote: remoteRead,
+          inputStamp,
+          refreshedLocal,
+        } = yield* readRemoteStatus(cwd, options, inputsAtLocalRead !== undefined);
         const pulled =
           options?.refreshUpstream === false
             ? null
             : yield* maybeAutoPull(cwd, remoteRead, options?.policyCwds ?? [cwd]);
-        if (pulled !== null) return pulled.remote;
+        if (pulled !== null) {
+          if (inputsAtLocalRead !== undefined) yield* Ref.set(inputsAtLocalRead, null);
+          return pulled.remote;
+        }
         // Base refs and merge bases can move without changing divergence counts.
-        const refsAtLocalRead = options?.refsAtLocalRead;
-        if (refsAtLocalRead === undefined) {
-          yield* refreshLocalStatusCore(cwd);
-        } else {
-          const refs = yield* workflow.readLocalStatusRefSnapshot(cwd);
-          if (refs === null || refs !== (yield* Ref.get(refsAtLocalRead))) {
-            yield* Ref.set(refsAtLocalRead, null);
-            yield* refreshLocalStatusCore(cwd);
-            yield* Ref.set(refsAtLocalRead, refs);
-          }
+        if (inputsAtLocalRead === undefined) {
+          if (!refreshedLocal) yield* refreshLocalStatusCore(cwd);
+        } else if (inputStamp === null || inputStamp !== (yield* Ref.get(inputsAtLocalRead))) {
+          yield* Ref.set(inputsAtLocalRead, null);
+          if (!refreshedLocal) yield* refreshLocalStatusCore(cwd);
+          yield* Ref.set(inputsAtLocalRead, inputStamp);
         }
         return yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
       }),
@@ -743,30 +763,30 @@ export const make = Effect.gen(function* () {
   });
 
   const refreshRemoteAndLocalTotals = Effect.fn("VcsStatusBroadcaster.refreshRemoteAndLocalTotals")(
-    function* (cwd: string, policyCwd: string, refsBeforeLocalRead: string | null) {
+    function* (cwd: string, policyCwd: string, inputsBeforeLocalRead: string | null) {
       return yield* withRemoteWriteLock(
         cwd,
         Effect.gen(function* () {
           const refreshUpstream = !Duration.isZero(yield* automaticFetchInterval);
           // Bump the PR lookup epoch after earlier remote writers have finished.
           yield* workflow.invalidateStatus(cwd);
-          const remoteRead = yield* readRemoteStatus(cwd, { refreshUpstream });
+          const { remote: remoteRead } = yield* readRemoteStatus(cwd, { refreshUpstream });
           // Without a fetch, the cached behind count cannot justify an automatic pull.
           const pulled = refreshUpstream
             ? yield* maybeAutoPull(cwd, remoteRead, [policyCwd])
             : null;
           if (pulled !== null) {
-            return { status: mergeGitStatusParts(pulled.local, pulled.remote), refs: null };
+            return mergeGitStatusParts(pulled.local, pulled.remote);
           }
           yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
           // A fetch, ours or not, can move the base used for local Changes totals.
-          const refs =
-            refsBeforeLocalRead === null ? null : yield* workflow.readLocalStatusRefSnapshot(cwd);
-          if (refs === null || refs !== refsBeforeLocalRead) {
+          const inputStamp =
+            inputsBeforeLocalRead === null ? null : yield* workflow.readLocalStatusInputStamp(cwd);
+          if (inputStamp === null || inputStamp !== inputsBeforeLocalRead) {
             yield* refreshLocalStatusCore(cwd);
           }
           const parts = yield* getStatusParts(cwd);
-          return { status: mergeGitStatusParts(parts.local, parts.remote), refs };
+          return mergeGitStatusParts(parts.local, parts.remote);
         }),
       );
     },
@@ -794,13 +814,10 @@ export const make = Effect.gen(function* () {
       const parts = yield* getStatusParts(cwd);
       return withRefsDigest(mergeGitStatusParts(parts.local, parts.remote), refs);
     }
-    const refsBeforeLocalRead = yield* workflow.readLocalStatusRefSnapshot(cwd);
+    const inputsBeforeLocalRead = yield* workflow.readLocalStatusInputStamp(cwd);
     yield* refreshLocalStatusCore(cwd);
-    const { status, refs } = yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refsBeforeLocalRead);
-    return withRefsDigest(
-      status,
-      refs === null ? null : yield* workflow.readRefSnapshot(cwd, refs),
-    );
+    const status = yield* refreshRemoteAndLocalTotals(cwd, rawCwd, inputsBeforeLocalRead);
+    return withRefsDigest(status, yield* workflow.readRefSnapshot(cwd));
   }, Effect.scoped);
 
   const refreshAfterCheckout: VcsStatusBroadcaster["Service"]["refreshAfterCheckout"] = Effect.fn(
@@ -829,7 +846,7 @@ export const make = Effect.gen(function* () {
           // Turn completion must update divergence even when background polling is paused.
           const statusDetails = upstreamReads.get(cwd);
           upstreamReads.delete(cwd);
-          const remoteRead = yield* readRemoteStatus(cwd, {
+          const { remote: remoteRead } = yield* readRemoteStatus(cwd, {
             refreshUpstream: false,
             refreshMissingPullRequest: true,
             ...(statusDetails ? { statusDetails } : {}),
@@ -847,7 +864,7 @@ export const make = Effect.gen(function* () {
   ) {
     const consecutiveFailuresRef = yield* Ref.make(0);
     const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
-    const refsAtLocalReadRef = yield* Ref.make<string | null>(null);
+    const inputsAtLocalReadRef = yield* Ref.make<string | null>(null);
     const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
       const configuredInterval = yield* automaticFetchInterval;
       const activeInterval = Duration.isZero(configuredInterval)
@@ -877,7 +894,7 @@ export const make = Effect.gen(function* () {
       const exit = yield* refreshRemoteStatus(cwd, {
         refreshUpstream: !Duration.isZero(configuredInterval),
         policyCwds: [...demandCwds.keys()],
-        refsAtLocalRead: refsAtLocalReadRef,
+        inputsAtLocalRead: inputsAtLocalReadRef,
       }).pipe(Effect.exit);
       if (Exit.isSuccess(exit)) {
         yield* Ref.set(needsInitialRefreshRef, false);
