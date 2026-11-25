@@ -3079,7 +3079,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         ...(startedShell ? { shell: startedShell } : {}),
       });
     }
-  });
+  }, Effect.uninterruptible);
 
   const closeSession = Effect.fn("terminal.closeSession")(function* (
     threadId: string,
@@ -3402,24 +3402,27 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         startupError: null,
       };
 
-      const createdSession = session;
+      // Once the session is visible as starting, finish startup even if the opener disconnects.
       yield* modifyManagerState((state) => {
         const sessions = new Map(state.sessions);
-        sessions.set(sessionKey, createdSession);
+        sessions.set(sessionKey, session);
         closedSessionKeys.delete(sessionKey);
         return [undefined, { ...state, sessions }] as const;
-      });
-
-      yield* evictInactiveSessionsIfNeeded();
-      yield* startSession(
-        session,
-        {
-          cwd: input.cwd,
-          ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
-          cols,
-          rows,
-        },
-        "started",
+      }).pipe(
+        Effect.andThen(() => evictInactiveSessionsIfNeeded()),
+        Effect.andThen(() =>
+          startSession(
+            session,
+            {
+              cwd: input.cwd,
+              ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
+              cols,
+              rows,
+            },
+            "started",
+          ),
+        ),
+        Effect.uninterruptible,
       );
       return session;
     }
