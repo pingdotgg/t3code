@@ -1353,17 +1353,24 @@ export const make = Effect.gen(function* () {
       return rows.length > 0;
     }),
     steps: Effect.fn("WorkflowStore.steps")(function* (runId) {
+      // A resumed run waiting to take back a place it held is queued at that step again.
       return yield* sql<StepRow>`
-        SELECT name, kind, status, attempts, detail, thread_id, environment_id, result_json,
-               said, started_at, ended_at,
-               CASE WHEN kind = 'queue' AND status = 'running' THEN (
+        SELECT s.name, s.kind,
+               CASE WHEN back.seq IS NULL THEN s.status ELSE 'running' END AS status,
+               s.attempts, s.detail, s.thread_id, s.environment_id, s.result_json, s.said,
+               s.started_at, CASE WHEN back.seq IS NULL THEN s.ended_at END AS ended_at,
+               CASE WHEN s.kind = 'queue' AND (s.status = 'running' OR back.seq IS NOT NULL) THEN (
                  SELECT COUNT(*) FROM workflow_pool_places me
                  JOIN workflow_pool_places other
                    ON other.pool = me.pool AND other.seq < me.seq
                    AND other.state IN ('queued', 'returning')
-                 WHERE me.run_id = workflow_steps.run_id AND me.name = workflow_steps.name
+                 WHERE me.run_id = s.run_id AND me.name = s.name
                ) END AS ahead
-        FROM workflow_steps WHERE run_id = ${runId} ORDER BY started_at, rowid
+        FROM workflow_steps s
+        LEFT JOIN workflow_pool_places back
+          ON s.kind = 'queue' AND back.run_id = s.run_id AND back.name = s.name
+          AND back.state = 'returning'
+        WHERE s.run_id = ${runId} ORDER BY s.started_at, s.rowid
       `.pipe(Effect.orDie);
     }),
     referenceNoted: Effect.fn("WorkflowStore.referenceNoted")(function* (runId, step, reference) {

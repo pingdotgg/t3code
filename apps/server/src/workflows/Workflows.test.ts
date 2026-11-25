@@ -2803,6 +2803,9 @@ it.effect("a run that pauses gives its place back, and once resumed queues for i
         const queued = yield* workflows.waitFor(first.runId, (run) => run.status === "waiting");
         assert.equal(queued.detail, "queue q");
         assert.deepStrictEqual(entered, ["b"]);
+        // Its timeline shows it queued again at the step that holds the place, first in line.
+        const step = (yield* workflows.get(first.runId)).steps.find((one) => one.name === "pool:q");
+        assert.deepStrictEqual([step?.status, step?.ahead], ["running", 0]);
         yield* workflows.signal({ runId: second.runId, wait: "done" }, null, { id: "done-b" });
         yield* workflows.waitFor(first.runId, (run) => run.detail === "done");
         assert.deepStrictEqual(entered, ["b", "a"]);
