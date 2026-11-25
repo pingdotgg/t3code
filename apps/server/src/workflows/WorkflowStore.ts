@@ -1108,7 +1108,8 @@ export const make = Effect.gen(function* () {
       return yield* (
         status === undefined
           ? // Skipped runs are counted apart, so a trigger that skips most of what it brings does
-            // not push the runs that did something out of the list.
+            // not push the runs that did something out of the list. A run with a question open is
+            // listed however old, since what waits on a person is built from this list.
             sql<RunSummaryRow>`
               SELECT ${summaryColumns} FROM (
                 SELECT ${summaryColumns} FROM workflow_runs
@@ -1120,6 +1121,12 @@ export const make = Effect.gen(function* () {
                 SELECT ${summaryColumns} FROM workflow_runs
                 WHERE status = 'skipped' AND parent_run_id IS NULL
                 ORDER BY started_at DESC LIMIT 500
+              )
+              UNION
+              SELECT ${summaryColumns} FROM workflow_runs
+              WHERE run_id IN (
+                SELECT run_id FROM workflow_waits
+                WHERE request_json IS NOT NULL AND signalled_at IS NULL
               )
               ORDER BY started_at DESC
             `

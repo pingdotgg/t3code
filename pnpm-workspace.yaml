@@ -59,6 +59,7 @@ catalog:
   "@noble/hashes": 1.8.0
   "@pierre/diffs": 1.7.0-beta.4
   "@pierre/highlights": 0.5.0
+  "@pierre/trees": 1.0.0
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
@@ -80,8 +81,8 @@ catalog:
   tailwindcss: 4.3.3
   tldts: 7.4.2
   undici: 8.12.4
-  vite: npm:@voidzero-dev/vite-plus-core@1.4.0
-  vite-plus: 1.4.0
+  vite: npm:@voidzero-dev/vite-plus-core@8.3.8001
+  vite-plus: 1.8.0
   ws: 8.22.0
   yaml: ^2.9.0
   # Markdown pipeline: the server counts find matches with the same parser the
@@ -108,12 +109,12 @@ overrides:
   micromark: 4.0.2
   mdast-util-to-hast: 13.2.1
   alchemy: "catalog:"
-  expo-audio: 58.0.11
-  expo-network: 58.0.4
+  expo-audio: 58.0.12
+  expo-network: 58.0.5
   "@clerk/expo-native-components": 0.4.4
   "@cursor/sdk": 1.5.0
-  expo-sharing: 58.0.22
-  expo-widgets: 58.0.27
+  expo-sharing: 58.0.23
+  expo-widgets: 58.0.29
   "@ff-labs/fff-node": 0.11.0
   "@legendapp/list": 3.7.3
   "@pierre/diffs": 1.7.0-beta.4
@@ -131,7 +132,7 @@ overrides:
   gt-react-native: 11.4.18
   app-builder-lib: 26.16.1
   electron-updater: 6.8.9
-  expo-modules-core: 58.0.30
+  expo-modules-core: 58.1.0
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
@@ -171,11 +172,9 @@ overrides:
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
   "@expo/dom-webview": 58.0.2
-  expo-constants: 58.0.15
-  "expo-sharing>@expo/config-plugins": 58.0.12
+  expo-constants: 58.0.16
+  "expo-sharing>@expo/config-plugins": 58.0.13
   "expo-sharing>@expo/config-types": 58.0.3
-  # @pierre/trees pins @pierre/theming 1.0.0, whose peer range predates @pierre/theme 2.
-  "@pierre/trees>@pierre/theming": 1.0.2
   # Resolve below remark-math so Vite, Metro and Node use the same tokenizer.
   "remark-math>micromark-extension-math": npm:micromark-extension-llm-math@3.1.0
   micromark-extension-gfm-table: 2.1.1
@@ -219,10 +218,10 @@ overrides:
 packageExtensions:
   "@clerk/expo@*":
     dependencies:
-      "@expo/config-plugins": 58.0.12
+      "@expo/config-plugins": 58.0.13
   "@clerk/expo-native-components@*":
     dependencies:
-      "@expo/config-plugins": 58.0.12
+      "@expo/config-plugins": 58.0.13
   # Our patch makes @effect/vitest import vite-plus/test. A catalog: spec here
   # resolves through the vite-plus override above.
   "@effect/vitest@*":
@@ -237,17 +236,17 @@ patchedDependencies:
   micromark-extension-gfm-table@2.1.1: patches/micromark-extension-gfm-table@2.1.1.patch
   micromark@4.0.2: patches/micromark@4.0.2.patch
   mdast-util-to-hast@13.2.1: patches/mdast-util-to-hast@13.2.1.patch
-  expo-audio@58.0.11: patches/expo-audio@58.0.11.patch
-  expo-video@58.0.13: patches/expo-video@58.0.13.patch
-  expo-network@58.0.4: patches/expo-network@58.0.4.patch
+  expo-audio@58.0.12: patches/expo-audio@58.0.12.patch
+  expo-video@58.0.14: patches/expo-video@58.0.14.patch
+  expo-network@58.0.5: patches/expo-network@58.0.5.patch
   "@clerk/expo-native-components@0.4.4": patches/@clerk__expo-native-components@0.4.4.patch
   "@alchemy.run/test@2.0.0-beta.85": patches/@alchemy.run__test@2.0.0-beta.85.patch
   "@effect/vitest@4.1.5": patches/@effect__vitest@4.1.5.patch
-  expo-sharing@58.0.22: patches/expo-sharing@58.0.22.patch
-  expo-widgets@58.0.27: patches/expo-widgets@58.0.27.patch
+  expo-sharing@58.0.23: patches/expo-sharing@58.0.23.patch
+  expo-widgets@58.0.29: patches/expo-widgets@58.0.29.patch
   # Android: an RNHostView without a scrolling descendant (an app bar's buttons) is no longer the
   # scroll target a Material bottom sheet picks, so sheet content can sit below its header.
-  "@expo/ui@58.0.27": patches/@expo__ui@58.0.27.patch
+  "@expo/ui@58.0.29": patches/@expo__ui@58.0.29.patch
   "@ff-labs/fff-node@0.11.0": patches/@ff-labs__fff-node@0.11.0.patch
   # Exports the dependency-light subpaths mobile and the web diff parser import, re-measures
   # editor carets when the code font changes, stops the find bar reclaiming focus from the file,
@@ -266,7 +265,7 @@ patchedDependencies:
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
   # Android: a Compose host that requests layout in a mount (a new screen's app bar) is laid out
   # before that frame is drawn, instead of a frame later.
-  expo-modules-core@58.0.30: patches/expo-modules-core@58.0.30.patch
+  expo-modules-core@58.1.0: patches/expo-modules-core@58.1.0.patch
   # Observe the owned host exit independently of descendants retaining its stdio.
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
@@ -351,3 +350,13 @@ minimumReleaseAgeExclude:
   - "@effect/sql-sqlite-do@4.1.5"
   - "@effect/vitest@4.1.5"
   - effect@4.1.5
+  - "@voidzero-dev/vite-plus-core@8.3.8001"
+  - "@voidzero-dev/vite-plus-darwin-arm64@1.8.0"
+  - "@voidzero-dev/vite-plus-darwin-x64@1.8.0"
+  - "@voidzero-dev/vite-plus-linux-arm64-gnu@1.8.0"
+  - "@voidzero-dev/vite-plus-linux-arm64-musl@1.8.0"
+  - "@voidzero-dev/vite-plus-linux-x64-gnu@1.8.0"
+  - "@voidzero-dev/vite-plus-linux-x64-musl@1.8.0"
+  - "@voidzero-dev/vite-plus-win32-arm64-msvc@1.8.0"
+  - "@voidzero-dev/vite-plus-win32-x64-msvc@1.8.0"
+  - vite-plus@1.8.0

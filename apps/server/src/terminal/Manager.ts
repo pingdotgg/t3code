@@ -2790,10 +2790,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (!candidate) {
       return yield* (
         lastError ??
-          new PtyAdapter.PtySpawnError({
-            adapter: "terminal-manager",
-            attemptedShells: [],
-          })
+        new PtyAdapter.PtySpawnError({
+          adapter: "terminal-manager",
+          attemptedShells: [],
+        })
       );
     }
 
