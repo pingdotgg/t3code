@@ -933,22 +933,40 @@ describe("OpenCodeAdapterV2", () => {
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
+  const assistantPart = (part: Record<string, unknown>) => ({
+    type: "message.part.updated",
+    properties: { sessionID: "root", part: { ...part, sessionID: "root", messageID: "assistant" } },
+  });
+
   it.effect.each([
     {
       output: "an empty text part",
-      part: { id: "text-2", type: "text", text: "", time: { start: 3 } },
+      event: assistantPart({ id: "text-2", type: "text", text: "", time: { start: 3 } }),
     },
     {
       output: "a pending tool call",
-      part: {
+      event: assistantPart({
         id: "tool",
         type: "tool",
         tool: "read",
         callID: "call_read",
         state: { status: "pending", input: {}, raw: "" },
+      }),
+    },
+    {
+      output: "an empty text delta",
+      event: {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "root",
+          messageID: "assistant",
+          partID: "text",
+          field: "text",
+          delta: "",
+        },
       },
     },
-  ])("keeps the retry budget when an attempt opens $output", ({ part }) =>
+  ])("keeps the retry budget when an attempt opens $output", ({ event }) =>
     Effect.gen(function* () {
       const aborted: Array<string> = [];
       const { push, received } = yield* startRetryingTurn({
@@ -957,13 +975,7 @@ describe("OpenCodeAdapterV2", () => {
           return { data: true };
         },
       });
-      yield* push({
-        type: "message.part.updated",
-        properties: {
-          sessionID: "root",
-          part: { ...part, sessionID: "root", messageID: "assistant" },
-        },
-      } as never);
+      yield* push(event as never);
       yield* TestClock.adjust(PROVIDER_RETRY_BUDGET_MS);
       const terminal = (yield* Fiber.join(received)).find(
         (event) => event.type === "turn.terminal",

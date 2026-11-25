@@ -2850,6 +2850,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           ) {
             return;
           }
+          if (event.properties.delta.length > 0) yield* completeRetry(event.properties.sessionID);
           const updated = { ...current, text: current.text + event.properties.delta };
           turn.parts.set(updated.id, updated);
           yield* emitTextPart(state, turn, updated);
@@ -3187,7 +3188,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               yield* handlePartUpdated(event);
               return;
             case "message.part.delta":
-              yield* completeRetry(event.properties.sessionID);
               yield* handlePartDelta(event);
               return;
             case "todo.updated": {
