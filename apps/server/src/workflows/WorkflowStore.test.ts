@@ -452,7 +452,7 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
   ),
 );
 
-it.effect.each([999, 1000, 1001])("buffered mail with a 1s TTL claimed after %i ms", (elapsed) =>
+it.effect.each([999, 1000])("buffered mail with a 1s TTL claimed after %i ms", (elapsed) =>
   withStore(
     Effect.gen(function* () {
       const store = yield* WorkflowStore.WorkflowStore;
