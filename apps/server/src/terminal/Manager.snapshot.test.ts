@@ -101,6 +101,7 @@ it.layer(Layer.mergeAll(platform, ProcessRunner.layer.pipe(Layer.provide(platfor
               ),
         );
         const [snapshot] = yield* joining;
+        if (snapshot?.type !== "snapshot") throw new Error("Expected a terminal snapshot");
         const encoded = yield* Schema.encodeEffect(wireEvent)(snapshot);
         const decoded = yield* Schema.decodeEffect(wireEvent)(encoded);
         if (decoded.type !== "snapshot") throw new Error("Expected a terminal snapshot");
