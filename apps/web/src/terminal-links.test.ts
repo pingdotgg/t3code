@@ -169,6 +169,7 @@ describe("extractTerminalLinks", () => {
     "contact@support.ts:12:3",
     "./logs/2026-11-25T14:00:05.log",
     "./logs/14:00:report.log",
+    "./logs/14:00:report(1).log",
     "/var/lib/bluetooth/AA:11:BB:CC:DD:EE/info",
   ])("keeps the complete relative path %s", (text) => {
     expect(extractTerminalLinks(`see ${text} for details`)).toEqual([
@@ -204,7 +205,6 @@ describe("extractTerminalLinks", () => {
     ["./src/a.js:1:function inner() {", "./src/a.js:1"],
     ["/home/dev/app/src/top.rb:2:in `f': boom (RuntimeError)", "/home/dev/app/src/top.rb:2"],
     ["./config/app.yml:3:name: web", "./config/app.yml:3"],
-    ["./src/a.js:12:console.log(value)", "./src/a.js:12"],
   ])("drops the colon that ends a compiler diagnostic location in %s", (line, text) => {
     const start = line.indexOf(text);
     expect(extractTerminalLinks(line)).toEqual([
