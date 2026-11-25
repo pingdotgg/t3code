@@ -2830,7 +2830,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
+          replayDelegatedTask: () => Effect.succeedNone,
           getThreadRecords: (threadId) =>
             Effect.succeed(
               threadId === parentThreadId
