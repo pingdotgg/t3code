@@ -28,13 +28,14 @@ describe("ProviderLatestVersions", () => {
     }),
   );
 
-  it.effect("a waiting caller looks up again when the shared lookup is interrupted", () =>
+  it.effect("interrupting the owner leaves the shared lookup running for its waiters", () =>
     Effect.gen(function* () {
       const latestVersions = yield* ProviderLatestVersions.make();
+      const release = yield* Deferred.make<void>();
       let lookups = 0;
       const lookup = Effect.suspend(() => {
         lookups += 1;
-        return lookups === 1 ? Effect.never : Effect.succeed("2.0.0");
+        return Deferred.await(release).pipe(Effect.as("2.0.0"));
       });
 
       const owner = yield* Effect.forkChild(latestVersions.cached("@example/cli", lookup), {
@@ -43,15 +44,15 @@ describe("ProviderLatestVersions", () => {
       const waiter = yield* Effect.forkChild(latestVersions.cached("@example/cli", lookup), {
         startImmediately: true,
       });
-      expect(lookups).toBe(1);
       yield* Fiber.interrupt(owner);
+      yield* Deferred.succeed(release, undefined);
       expect(yield* Fiber.join(waiter)).toBe("2.0.0");
       expect(yield* latestVersions.cached("@example/cli", lookup)).toBe("2.0.0");
-      expect(lookups).toBe(2);
+      expect(lookups).toBe(1);
     }),
   );
 
-  it.effect("a caller interrupted while it claims the lookup frees the key", () =>
+  it.effect("a caller interrupted while it claims the lookup still starts it", () =>
     Effect.gen(function* () {
       const latestVersions = yield* ProviderLatestVersions.make();
       let lookups = 0;
@@ -73,12 +74,8 @@ describe("ProviderLatestVersions", () => {
         { startImmediately: true },
       );
       expect(Exit.hasInterrupts(yield* Fiber.await(owner))).toBe(true);
-      expect(lookups).toBe(0);
-      const next = yield* Effect.forkChild(latestVersions.cached("@example/cli", lookup), {
-        startImmediately: true,
-      });
+      expect(yield* latestVersions.cached("@example/cli", lookup)).toBe("2.0.0");
       expect(lookups).toBe(1);
-      expect(yield* Fiber.join(next)).toBe("2.0.0");
     }),
   );
   it.effect("a waiting caller retries with its own lookup after the owner fails", () =>

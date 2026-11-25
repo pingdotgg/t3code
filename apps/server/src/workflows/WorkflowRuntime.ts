@@ -613,6 +613,9 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     cancel: Effect.fn("Workflows.cancel")(function* (...input) {
       return yield* (yield* current).cancel(...input);
     }),
+    withdraw: Effect.fn("Workflows.withdraw")(function* (...input) {
+      return yield* (yield* current).withdraw(...input);
+    }),
     get: Effect.fn("Workflows.get")(function* (...input) {
       return yield* (yield* current).get(...input);
     }),
@@ -874,6 +877,9 @@ export const gate = Effect.fn("WorkflowRuntime.gate")(function* <E, R>(
     }),
     cancel: Effect.fn("Workflows.cancel")(function* (...input) {
       return yield* (yield* current).cancel(...input);
+    }),
+    withdraw: Effect.fn("Workflows.withdraw")(function* (...input) {
+      return yield* (yield* current).withdraw(...input);
     }),
     get: Effect.fn("Workflows.get")(function* (...input) {
       return yield* (yield* current).get(...input);

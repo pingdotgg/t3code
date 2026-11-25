@@ -16141,6 +16141,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return {
           events: plans.flatMap((plan) => plan.events),
           effects: plans.flatMap((plan) => plan.effects),
+          // A continuation would hold off the purge, and a late title would bring text back.
+          cancelUnsettledEffects: {
+            effectTypes: ["provider-runtime.continue", "thread-title.generate"],
+            reason: "Thread deleted.",
+          },
         };
       }
       case "thread.archive":
