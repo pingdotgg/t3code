@@ -253,6 +253,41 @@ it.effect("sends the environment token only to glab's default host while probing
   ),
 );
 
+it.effect("adds the default host's token sign-in alongside a stored glab login", () =>
+  Effect.gen(function* () {
+    const probes: Array<readonly [string, unknown]> = [];
+    const item = yield* probeSourceControlProvider({
+      spec: GitLabSourceControlProvider.discovery,
+      cwd: "/repo",
+      process: {
+        run: ({ args, env }) => {
+          if (args[0] === "--version") return Effect.succeed(processOutput("glab 1.124.0\n"));
+          probes.push([args.join(" "), env]);
+          const output = args.includes("--hostname")
+            ? "gitlab.com\n  ✓ Logged in to gitlab.com as token-user\n"
+            : "gitlab.example.test\n  ✓ Logged in to gitlab.example.test as stored-user\n";
+          return Effect.succeed(processOutput(output));
+        },
+      },
+    });
+    assert.deepStrictEqual(item.auth.account, Option.some("stored-user"));
+    assert.deepStrictEqual(
+      item.auth.accounts?.map(({ host, account }) => [host, account]),
+      [
+        ["gitlab.example.test", "stored-user"],
+        ["gitlab.com", "token-user"],
+      ],
+    );
+    assert.deepStrictEqual(probes, [
+      ["auth status --all", { GITLAB_TOKEN: "", GITLAB_ACCESS_TOKEN: "", OAUTH_TOKEN: "" }],
+      ["auth status --hostname gitlab.com", {}],
+    ]);
+  }).pipe(
+    Effect.provideService(HostProcess.Environment, { GITLAB_TOKEN: "default-host-token" }),
+    Effect.provideService(SpawnExecutableResolution, onPath),
+  ),
+);
+
 it.effect.each([
   {
     name: "without relying on host naming",

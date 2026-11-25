@@ -160,37 +160,43 @@ export const discovery = {
   authMaxOutputBytes: 64_000,
   completeAuthProbe: Effect.fn("GitLabSourceControlProvider.completeAuthProbe")(
     function* (all, run, environment) {
-      if (all.accounts?.length === 1) return all;
-
-      // Check the current host for the primary account, or when older glab rejects --all.
-      const current = yield* run(["auth", "status"]);
-      const allIncomplete = Option.getOrUndefined(all.detail) === INCOMPLETE_AUTH_DETAIL;
-      if (current.status === "authenticated") {
-        if (allIncomplete) return { ...current, detail: all.detail };
-        const accounts = current.accounts ?? [];
-        const additional = all.accounts?.filter(
-          (account) => !accounts.some((entry) => entry.host === account.host),
-        );
-        return additional?.length
-          ? { ...current, accounts: [...accounts, ...additional] }
-          : current;
-      }
-      if (all.status === "authenticated") return all;
-      if (GitLabCli.hasEnvironmentToken(environment)) {
-        const named = yield* run([
-          "auth",
-          "status",
-          "--hostname",
-          GitLabCli.defaultHost(environment),
-        ]);
-        if (named.status === "authenticated") {
-          const detail = allIncomplete ? all.detail : current.detail;
-          return Option.getOrUndefined(detail) === INCOMPLETE_AUTH_DETAIL
-            ? { ...named, detail }
-            : named;
+      let auth = all;
+      if (all.accounts?.length !== 1) {
+        // Check the current host for the primary account, or when older glab rejects --all.
+        const current = yield* run(["auth", "status"]);
+        const allIncomplete = Option.getOrUndefined(all.detail) === INCOMPLETE_AUTH_DETAIL;
+        if (current.status === "authenticated") {
+          const accounts = current.accounts ?? [];
+          const additional = all.accounts?.filter(
+            (account) => !accounts.some((entry) => entry.host === account.host),
+          );
+          auth = {
+            ...current,
+            ...(additional?.length ? { accounts: [...accounts, ...additional] } : {}),
+            ...(allIncomplete ? { detail: all.detail } : {}),
+          };
+        } else if (all.status !== "authenticated" && !allIncomplete) {
+          auth = current;
         }
       }
-      return allIncomplete ? all : current;
+
+      const host = GitLabCli.defaultHost(environment);
+      if (
+        !GitLabCli.hasEnvironmentToken(environment) ||
+        auth.accounts?.some((account) => account.host === host)
+      ) {
+        return auth;
+      }
+
+      const named = yield* run(["auth", "status", "--hostname", host]);
+      if (named.status !== "authenticated") return auth;
+      if (auth.status === "authenticated") {
+        const account = named.accounts?.find((entry) => entry.host === host);
+        return account ? { ...auth, accounts: [...(auth.accounts ?? []), account] } : auth;
+      }
+      return Option.getOrUndefined(auth.detail) === INCOMPLETE_AUTH_DETAIL
+        ? { ...named, detail: auth.detail }
+        : named;
     },
   ),
   probeEnv: (args, environment) => {
