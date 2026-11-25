@@ -233,6 +233,8 @@ function terminalColumnOffset(row: GhosttySnapshot["rowData"][number], column: n
 export interface TerminalLinkWithRange {
   readonly text: string;
   readonly range: GhosttyCellRange;
+  /** The link to use when `text` is no file; absent unless the pointer is on it. */
+  readonly fallback?: TerminalLinkWithRange;
 }
 
 function isSameTerminalLink(
@@ -241,6 +243,7 @@ function isSameTerminalLink(
 ): boolean {
   return (
     right?.text === left.text &&
+    right.fallback?.text === left.fallback?.text &&
     right.range.start.x === left.range.start.x &&
     right.range.start.y === left.range.start.y &&
     right.range.end.x === left.range.end.x &&
@@ -283,34 +286,46 @@ export function terminalLinkAtPositionWithRange(
   const continuesBelowViewport = lastRow !== undefined && lastRow.wrapsToNext;
   const hitColumn = row.cells[column]?.wide === GHOSTTY_CELL_WIDE.spacerTail ? column - 1 : column;
   const offset = segment.startIndex + terminalColumnOffset(row, hitColumn);
+  const rangeOf = (start: number, end: number): GhosttyCellRange | null => {
+    const startSegment = wrappedLine.segments.find(
+      (value) => start >= value.startIndex && start < value.endIndex,
+    );
+    const endSegment = wrappedLine.segments.find(
+      (value) => end - 1 >= value.startIndex && end - 1 < value.endIndex,
+    );
+    const startRow = startSegment ? rows[startSegment.bufferLineNumber - 1] : undefined;
+    const endRow = endSegment ? rows[endSegment.bufferLineNumber - 1] : undefined;
+    if (!startSegment || !endSegment || !startRow || !endRow) return null;
+    const endColumn = terminalColumnAtOffset(endRow, end - 1 - endSegment.startIndex);
+    return {
+      start: {
+        x: terminalColumnAtOffset(startRow, start - startSegment.startIndex),
+        y: startSegment.bufferLineNumber - 1,
+      },
+      end: {
+        x:
+          endRow.cells[endColumn + 1]?.wide === GHOSTTY_CELL_WIDE.spacerTail
+            ? endColumn + 1
+            : endColumn,
+        y: endSegment.bufferLineNumber - 1,
+      },
+    };
+  };
   for (const match of extractTerminalLinks(wrappedLine.text)) {
     if (offset >= match.start && offset < match.end) {
       if (match.end === wrappedLine.text.length && continuesBelowViewport) return null;
-      const startSegment = wrappedLine.segments.find(
-        (value) => match.start >= value.startIndex && match.start < value.endIndex,
-      );
-      const endSegment = wrappedLine.segments.find(
-        (value) => match.end - 1 >= value.startIndex && match.end - 1 < value.endIndex,
-      );
-      const startRow = startSegment ? rows[startSegment.bufferLineNumber - 1] : undefined;
-      const endRow = endSegment ? rows[endSegment.bufferLineNumber - 1] : undefined;
-      if (!startSegment || !endSegment || !startRow || !endRow) return null;
-      const endColumn = terminalColumnAtOffset(endRow, match.end - 1 - endSegment.startIndex);
+      const range = rangeOf(match.start, match.end);
+      if (!range) return null;
+      const fallbackRange =
+        match.fallback && offset < match.fallback.end
+          ? rangeOf(match.start, match.fallback.end)
+          : null;
       return {
         text: match.text,
-        range: {
-          start: {
-            x: terminalColumnAtOffset(startRow, match.start - startSegment.startIndex),
-            y: startSegment.bufferLineNumber - 1,
-          },
-          end: {
-            x:
-              endRow.cells[endColumn + 1]?.wide === GHOSTTY_CELL_WIDE.spacerTail
-                ? endColumn + 1
-                : endColumn,
-            y: endSegment.bufferLineNumber - 1,
-          },
-        },
+        range,
+        ...(match.fallback && fallbackRange
+          ? { fallback: { text: match.fallback.text, range: fallbackRange } }
+          : {}),
       };
     }
   }
@@ -546,8 +561,11 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onLinkActivate: (text: string, event: MouseEvent) => void;
   readonly canActivateLink?: (text: string) => boolean;
   readonly validateLink?: (text: string) => Promise<boolean>;
-  /** Reports hovered candidates once their rendered text is stable for 250 ms; null cancels. */
-  readonly onLinkHover?: (text: string | null) => void;
+  /**
+   * Reports hovered candidates once their rendered text is stable for 250 ms; null cancels.
+   * `fallbackText` is the candidate's shorter reading, used when `text` is no file.
+   */
+  readonly onLinkHover?: (text: string | null, fallbackText?: string) => void;
   /** The host must prevent the default menu; native Paste cannot reach a canvas terminal. */
   readonly onContextMenu?: (event: MouseEvent) => void;
 }
@@ -1648,7 +1666,7 @@ export class GhosttyTerminalSurface {
     const pointer = this.hoverPointer;
     const link = pointer ? this.findLinkAt(pointer.x, pointer.y) : null;
     this.updateLinkHover(link);
-    this.setHoveredLink(link && this.options.canActivateLink?.(link.text) !== false ? link : null);
+    this.setHoveredLink(link && this.activatableLink(link));
   }
 
   private updateLinkHover(link: TerminalLinkWithRange | null): void {
@@ -1668,13 +1686,17 @@ export class GhosttyTerminalSurface {
         changedAt = Math.max(changedAt, this.linkRowStability[y]?.changedAt ?? now);
       }
       const delay = Math.max(0, TERMINAL_LINK_HOVER_DELAY_MS - (now - changedAt));
+      const report = () =>
+        link.fallback
+          ? this.options.onLinkHover?.(link.text, link.fallback.text)
+          : this.options.onLinkHover?.(link.text);
       if (delay === 0) {
-        this.options.onLinkHover(link.text);
+        report();
         return;
       }
       this.linkHoverTimer = window.setTimeout(() => {
         this.linkHoverTimer = null;
-        this.options.onLinkHover?.(link.text);
+        report();
       }, delay);
     }
   }
@@ -2202,6 +2224,12 @@ export class GhosttyTerminalSurface {
     };
   }
 
+  private activatableLink(link: TerminalLinkWithRange): TerminalLinkWithRange | null {
+    const canActivate = this.options.canActivateLink;
+    if (!canActivate || canActivate(link.text)) return link;
+    return link.fallback && canActivate(link.fallback.text) ? link.fallback : null;
+  }
+
   private validateLink(text: string): Promise<boolean> | undefined {
     if (this.options.canActivateLink?.(text) !== false) return;
     const validation = this.options.validateLink?.(text);
@@ -2220,20 +2248,25 @@ export class GhosttyTerminalSurface {
       return;
     }
     const requestId = this.linkActivationRequestId;
-    void validation.then(
-      (valid) => {
-        if (
-          this.disposed ||
-          !this.visible ||
-          requestId !== this.linkActivationRequestId ||
-          !isSameTerminalLink(link, this.findLinkAt(event.clientX, event.clientY))
-        )
-          return;
-        if (valid) this.options.onLinkActivate(link.text, event);
-        else this.clearSelection();
-      },
-      () => {},
-    );
+    const settle = (candidate: TerminalLinkWithRange, pending: Promise<boolean>) =>
+      void pending.then(
+        (valid) => {
+          if (
+            this.disposed ||
+            !this.visible ||
+            requestId !== this.linkActivationRequestId ||
+            !isSameTerminalLink(link, this.findLinkAt(event.clientX, event.clientY))
+          )
+            return;
+          if (valid) return this.options.onLinkActivate(candidate.text, event);
+          const fallback = candidate.fallback;
+          const fallbackValidation = fallback && this.options.validateLink?.(fallback.text);
+          if (fallback && fallbackValidation) settle(fallback, fallbackValidation);
+          else this.clearSelection();
+        },
+        () => {},
+      );
+    settle(link, validation);
   }
 
   private linkAt(
@@ -2242,11 +2275,8 @@ export class GhosttyTerminalSurface {
     allowValidation = false,
   ): TerminalLinkWithRange | null {
     const link = this.findLinkAt(clientX, clientY);
-    return link &&
-      ((allowValidation && this.options.validateLink) ||
-        this.options.canActivateLink?.(link.text) !== false)
-      ? link
-      : null;
+    if (!link) return null;
+    return allowValidation && this.options.validateLink ? link : this.activatableLink(link);
   }
 
   private findLinkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
