@@ -4099,8 +4099,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     const data = yield* readEntries;
                     readEntries = Effect.succeed(data);
                     const listing = piSessionListing(data);
-                    // Pi stores no per-turn head. For a command-only or uncaptured checkpoint,
-                    // anchor the walk at the nearest earlier captured turn in the same file.
+                    // Without a captured checkpoint prompt, verify back to an earlier retained
+                    // prompt in the same file or to the root if none was captured.
                     const anchorId =
                       targetId ??
                       piTurnEntryId(
@@ -4113,9 +4113,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                               piTurnEntryId(turn) !== undefined,
                           )
                           .sort((a, b) => b.ordinal - a.ordinal)[0],
-                      );
+                      ) ??
+                      null;
                     const walk =
-                      listing !== null && anchorId !== undefined && listing.entries.has(anchorId)
+                      listing !== null && (anchorId === null || listing.entries.has(anchorId))
                         ? walkPiBranch(listing.entries, listing.leafId, anchorId)
                         : null;
                     if (listing === null || walk?.reachedStop !== true)
