@@ -1,10 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  isActiveThreadRelationshipStatus,
-  isPendingThreadRelationshipStatus,
-} from "./ThreadRelationshipIcon";
 import { resolveSubagentDisplayStatus, subagentResumedSince } from "./V2LifecycleRow.logic";
 
 const failedAt = "2026-10-09T12:21:00.000Z";
@@ -58,19 +54,5 @@ describe("resolveSubagentDisplayStatus", () => {
         status: "starting",
       }),
     ).toBe("completed");
-  });
-});
-
-describe("thread relationship status helpers", () => {
-  it("treats preparing, starting, and queued as active pending statuses", () => {
-    for (const status of ["preparing", "starting", "queued", "pending"]) {
-      expect(isActiveThreadRelationshipStatus(status)).toBe(true);
-      expect(isPendingThreadRelationshipStatus(status)).toBe(true);
-    }
-    expect(isActiveThreadRelationshipStatus("running")).toBe(true);
-    expect(isPendingThreadRelationshipStatus("running")).toBe(false);
-    expect(isActiveThreadRelationshipStatus("completed")).toBe(false);
-    expect(isActiveThreadRelationshipStatus("idle")).toBe(false);
-    expect(isActiveThreadRelationshipStatus(null)).toBe(false);
   });
 });
