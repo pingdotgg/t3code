@@ -2024,12 +2024,13 @@ describe("SSH launch during desktop update", () => {
 
   it.effect("starts a server when the marker expires without a replacement becoming ready", () =>
     Effect.gen(function* () {
+      const expiresAt = 3_000;
       const result = runLauncher(yield* captureLauncher, {
-        marker: { startedAt: 0, expiresAt: 60_000 },
+        marker: { startedAt: 0, expiresAt },
       });
       assert.deepEqual(result.output, { remotePort: 5999, serverKind: "managed" });
-      assert.isAtLeast(result.now, 60_000);
-      assert.isAtMost(result.now, 61_000);
+      assert.isAtLeast(result.now, expiresAt);
+      assert.isAtMost(result.now, expiresAt + 1_000);
       assert.isTrue(result.markerExists, "an expired marker is ignored, not deleted");
       assert.equal(result.events.filter((event) => event.startsWith("start ")).length, 1);
     }),
