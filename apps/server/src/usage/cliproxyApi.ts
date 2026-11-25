@@ -5,7 +5,6 @@ import {
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -23,15 +22,7 @@ import {
 import { codexPlanLabel } from "../provider/CodexProvider.ts";
 import { codexRateLimitsToLimits } from "../provider/codexUsageLimits.ts";
 import { claudeUsageResponseToLimits } from "../provider/claudeUsageLimits.ts";
-import {
-  antigravityAccountFingerprint,
-  antigravitySummaryWindows,
-  antigravityUserAgent,
-} from "../provider/antigravityUsageLimits.ts";
-import {
-  makeUnavailableUsageLimits,
-  makeUsageLimits,
-} from "@t3tools/provider-core/server/usageLimits";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 
 /** A hub with its management key already read from wherever the setting keeps it. */
 export interface CliproxyHub {
@@ -45,7 +36,6 @@ const AuthFile = Schema.Struct({
   provider: Schema.String,
   email: Schema.optional(Schema.String),
   disabled: Schema.optional(Schema.Boolean),
-  project_id: Schema.optional(Schema.String),
   id_token: Schema.optional(
     Schema.Struct({
       chatgpt_account_id: Schema.optional(Schema.String),
@@ -128,7 +118,6 @@ const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(Credit
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsageResponse));
-const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
 // Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
@@ -206,16 +195,12 @@ type HubCall = (
 type HubReading = Omit<UsageLimitSourceAccount, "id" | "driver">;
 interface HubProvider {
   readonly driver: ProviderDriverKind;
-  readonly header: (
-    account: AuthFile,
-    platform: NodeJS.Platform,
-    architecture: NodeJS.Architecture,
-  ) => Record<string, string>;
+  readonly header: (account: AuthFile) => Record<string, string>;
   readonly read: (input: {
     readonly account: AuthFile;
     readonly call: HubCall;
     readonly checkedAt: string;
-  }) => Effect.Effect<HubReading, UsageLimitSourceError | Schema.SchemaError, Digest.Digest>;
+  }) => Effect.Effect<HubReading, UsageLimitSourceError | Schema.SchemaError>;
 }
 
 const listedIdentity = (account: AuthFile) => ({
@@ -296,8 +281,6 @@ const CODEX_HUB: HubProvider = {
 };
 
 const GROK_CLI_VERSION = "1.0.77";
-const ANTIGRAVITY_SUMMARY_URL =
-  "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary";
 
 // Keyed by the auth-files `provider`; accounts of any other provider are skipped.
 const HUB_PROVIDERS = new Map<string, HubProvider>([
@@ -364,49 +347,11 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
       }),
     },
   ],
-  [
-    "antigravity",
-    {
-      driver: ProviderDriverKind.make("antigravity"),
-      header: (_account, platform, architecture) => ({
-        Authorization: "Bearer $TOKEN$",
-        "Content-Type": "application/json",
-        "User-Agent": antigravityUserAgent(platform, architecture),
-      }),
-      read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
-        const project = account.project_id?.trim();
-        if (!project) {
-          return yield* new UsageLimitSourceError({ detail: "No Antigravity project reported." });
-        }
-        const requestedAt = DateTime.toEpochMillis(yield* DateTime.now);
-        const summary = yield* call(ANTIGRAVITY_SUMMARY_URL, { project });
-        const windows = yield* antigravitySummaryWindows(yield* decodeJson(summary), requestedAt);
-        if (windows.length === 0) {
-          return yield* new UsageLimitSourceError({ detail: "No Antigravity quota reported." });
-        }
-        // Local Antigravity reports no e-mail, so the Google account fingerprint is what pools the two.
-        const fingerprint = yield* call("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
-          Effect.flatMap(decodeJson),
-          Effect.flatMap(antigravityAccountFingerprint),
-          Effect.option,
-        );
-        const usageLimits = makeUsageLimits({ checkedAt, windows });
-        return Option.match(fingerprint, {
-          onNone: () => ({ ...listedIdentity(account), usageLimits }),
-          onSome: (credentialFingerprint) => ({
-            usageLimits: { ...usageLimits, credentialFingerprint },
-          }),
-        });
-      }),
-    },
-  ],
 ]);
 
 export const makeCliproxyApi = Effect.gen(function* () {
   const client = yield* HttpClient.HttpClient;
   const digest = yield* Digest.Digest;
-  const platform = yield* HostProcess.Platform;
-  const architecture = yield* HostProcess.Architecture;
 
   const management = Effect.fn("CliproxyApi.management")(function* (
     hub: CliproxyHub,
@@ -486,10 +431,8 @@ export const makeCliproxyApi = Effect.gen(function* () {
     provider: HubProvider,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const call: HubCall = (url, data) =>
-      apiCall(hub, account, provider.header(account, platform, architecture), url, data);
+    const call: HubCall = (url, data) => apiCall(hub, account, provider.header(account), url, data);
     const reading = yield* provider.read({ account, call, checkedAt }).pipe(
-      Effect.provideService(Digest.Digest, digest),
       Effect.catch((error) =>
         Effect.succeed({
           ...listedIdentity(account),
@@ -561,7 +504,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
       const body = yield* apiCall(
         hub,
         account,
-        CODEX_HUB.header(account, platform, architecture),
+        CODEX_HUB.header(account),
         `${CREDIT_URL}/consume`,
         {
           redeem_request_id: yield* creditRedeemRequestId(
