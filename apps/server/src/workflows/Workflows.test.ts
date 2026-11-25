@@ -652,7 +652,7 @@ const aboutFinder = workflow(
   "aboutFinder",
   {
     version: 1,
-    payload: Schema.Struct({ threadId: Schema.String }),
+    payload: Schema.Struct({ threadId: Schema.String, url: Schema.String }),
     returns: Schema.Array(Schema.String),
   },
   (payload) =>
@@ -660,8 +660,16 @@ const aboutFinder = workflow(
       "find",
       { returns: Schema.Array(Schema.String) },
       Effect.gen(function* () {
-        yield* start(about, { subjects: [] }, { key: "started", subject: payload });
-        const found = yield* runs({ workflow: about, subject: payload });
+        yield* start(
+          about,
+          { subjects: [] },
+          { key: "started", subject: { threadId: payload.threadId } },
+        );
+        const found = [
+          ...(yield* runs({ workflow: about, subject: { threadId: payload.threadId } })),
+          // An issue's web address finds the run about that issue, as the CLI's does.
+          ...(yield* runs({ workflow: about, subject: payload.url })),
+        ];
         return found.map((run) => `${run.key} ${run.subject?.kind}`);
       }),
     ),
@@ -2445,11 +2453,11 @@ it.effect("a run says what it is about, and is found by it", () =>
 
         const finder = yield* workflows.start(
           "aboutFinder",
-          { threadId: "thread-1" },
+          { threadId: "thread-1", url: issue.url },
           { idempotencyKey: "f" },
         );
         const found = yield* workflows.waitFor(finder.runId, status("completed", "paused"));
-        assert.deepStrictEqual(found.result, ["started thread", "b thread"]);
+        assert.deepStrictEqual(found.result, ["started thread", "b thread", "a issue"]);
         assert.throws(() => subject("not an address"), /is not a web address/);
         assert.throws(() => subject({ project: "/x", url: "https://x" } as never), /subject takes/);
         // Nothing can open a bare project, so it is no subject.

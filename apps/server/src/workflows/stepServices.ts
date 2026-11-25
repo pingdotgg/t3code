@@ -71,7 +71,8 @@ export interface RunFilter {
   readonly keyPrefix?: string | undefined;
   readonly kind?: string | undefined;
   readonly tag?: string | undefined;
-  readonly subject?: { readonly kind: string; readonly key: string } | undefined;
+  /** A subject's kind and key, or a web address matched as `t3 workflow list --subject` does. */
+  readonly subject?: { readonly kind: string; readonly key: string } | string | undefined;
 }
 
 /** Signals from the step that is running. Its signals are numbered, so a retry sends the same ones. */
@@ -472,7 +473,13 @@ export const runs = (filter?: {
     const about =
       filter?.subject === undefined ? undefined : subjectReference("runs' subject", filter.subject);
     return all.list({
-      subject: about === undefined ? undefined : { kind: about.kind, key: about.key },
+      // A web address also names an issue or pull request, which are kept under their own kind.
+      subject:
+        about === undefined
+          ? undefined
+          : typeof filter?.subject === "string"
+            ? filter.subject
+            : { kind: about.kind, key: about.key },
       workflow: filter?.workflow === undefined ? undefined : nameOf(filter.workflow),
       status: filter?.status,
       keyPrefix: filter?.keyPrefix,
