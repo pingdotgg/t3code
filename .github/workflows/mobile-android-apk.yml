@@ -1,53 +1,166 @@
 name: Mobile Android APK
 
-# Checks closed testing hourly. Each new beta gets one versioned prerelease.
-# Unchanged checks publish nothing.
+# Builds a standalone Android release APK without EAS or Google Play and
+# optionally attaches it to a GitHub Release.
 on:
-  schedule:
-    # Avoid minute zero, when GitHub scheduled jobs are busiest.
-    - cron: "23 * * * *"
+  push:
+    tags:
+      - "mobile-v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "App version override (defaults to tag without mobile-v prefix or app.config.ts version)"
+        required: false
+        type: string
+      publish_release:
+        description: "Create or update a GitHub Release with the built APK"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: mobile-android-apk
+  group: mobile-android-apk-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  mirror:
-    name: Mirror beta APK
-    if: github.repository == 'penouc/tix'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 10
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
     env:
-      PACKAGE_NAME: com.penouc.tix
+      APP_VARIANT: production
+      EXPO_NO_GIT_STATUS: "1"
+      T3CODE_MOBILE_UPDATES_ENABLED: "0"
+      NODE_OPTIONS: --max-old-space-size=6144
+      ORG_GRADLE_PROJECT_reactNativeArchitectures: armeabi-v7a,arm64-v8a
     steps:
-      - id: credentials
-        name: Check for Play credentials
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - id: meta
+        name: Resolve release metadata
+        shell: bash
         env:
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
-          if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          if [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"
+          elif [ "$REF_TYPE" = "tag" ] && [[ "$REF_NAME" == mobile-v* ]]; then
+            version="${REF_NAME#mobile-v}"
           else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON is not available; skipping APK mirror."
+            version="$(sed -n 's/.*T3CODE_MOBILE_VERSION ?? "\([^"]*\)".*/\1/p' apps/mobile/app.config.ts | head -n 1)"
+          fi
+          version="${version:-2.3.0}"
+          tag="mobile-v${version}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "apk_name=tix-android-${version}.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: package.json
+
+      - name: Enable corepack
+        shell: bash
+        run: |
+          npm install --global corepack@latest
+          corepack enable
+          pnpm --version
+
+      - name: Install mobile dependencies
+        shell: bash
+        run: pnpm install --frozen-lockfile --filter=@t3tools/mobile...
+
+      - name: Setup Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Prebuild Android project
+        working-directory: apps/mobile
+        env:
+          T3CODE_MOBILE_VERSION: ${{ steps.meta.outputs.version }}
+        run: pnpm exec expo prebuild --clean --platform android
+
+      - name: Build release APK
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleRelease --no-daemon -x lintVitalAnalyzeRelease -x lintVitalRelease
+
+      - name: Prepare and optionally sign APK
+        shell: bash
+        env:
+          APK_NAME: ${{ steps.meta.outputs.apk_name }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          raw_apk="apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
+          out_dir="$RUNNER_TEMP/apk-release"
+          mkdir -p "$out_dir"
+          out_apk="$out_dir/$APK_NAME"
+          cp "$raw_apk" "$out_apk"
+
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ]; then
+            keystore="$RUNNER_TEMP/release.keystore"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore"
+            build_tools_dir="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+            "$build_tools_dir/zipalign" -f -p 4 "$out_apk" "$out_dir/aligned.apk"
+            mv "$out_dir/aligned.apk" "$out_apk"
+            "$build_tools_dir/apksigner" sign \
+              --ks "$keystore" \
+              --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --key-pass "pass:${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}" \
+              "$out_apk"
+            "$build_tools_dir/apksigner" verify "$out_apk"
+            rm -f "$keystore"
+            echo "Signed APK with release keystore."
+          else
+            echo "No ANDROID_KEYSTORE_BASE64 configured; using default debug-signed release APK."
           fi
 
-      - name: Checkout
-        if: steps.credentials.outputs.present == 'true'
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          sparse-checkout: .github/scripts
+          (cd "$out_dir" && sha256sum "$APK_NAME" > "${APK_NAME}.sha256")
 
-      - name: Mirror the newest APK
-        if: steps.credentials.outputs.present == 'true'
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.meta.outputs.apk_name }}
+          path: ${{ runner.temp }}/apk-release/*
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' || inputs.publish_release == true
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-        run: node .github/scripts/mirror-play-apk.cjs
+          RELEASE_TAG: ${{ steps.meta.outputs.tag }}
+          APP_VERSION: ${{ steps.meta.outputs.version }}
+          APK_NAME: ${{ steps.meta.outputs.apk_name }}
+        run: |
+          set -euo pipefail
+          out_dir="$RUNNER_TEMP/apk-release"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              "$out_dir/$APK_NAME" \
+              "$out_dir/${APK_NAME}.sha256" \
+              --clobber
+          else
+            gh release create "$RELEASE_TAG" \
+              "$out_dir/$APK_NAME" \
+              "$out_dir/${APK_NAME}.sha256" \
+              --title "tix Android ${APP_VERSION}" \
+              --generate-notes
+          fi
