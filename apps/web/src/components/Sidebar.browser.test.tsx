@@ -306,7 +306,7 @@ describe("sidebar render isolation", () => {
       </SidebarProvider>,
     );
     await expect.element(screen.getByText("Thread 4").first()).toBeInTheDocument();
-    const rowRenders = () => vi.mocked(SortableThreadRow).mock.calls.length;
+    const rowRenders = () => vi.mocked(SortableThreadRow.type).mock.calls.length;
 
     using _timers = fakeTimers();
     const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
@@ -323,7 +323,7 @@ describe("sidebar render isolation", () => {
 
     const jumpLabelsSince = (start: number) =>
       vi
-        .mocked(SortableThreadRow)
+        .mocked(SortableThreadRow.type)
         .mock.calls.slice(start)
         .map(([props]) => props.jumpLabel)
         .filter((label) => label !== null);
@@ -337,7 +337,7 @@ describe("sidebar render isolation", () => {
     expect(jumpLabelsSince(beforeRelease)).toEqual([]);
   });
 
-  it("switching threads changes props only on the rows being left and opened", async () => {
+  it("switching threads re-renders only the rows being left and opened", async () => {
     const activeProject = project("active");
     const threads = Array.from({ length: 5 }, (_, index) => threadShell(activeProject.id, index));
     const routeTo = (index: number) => {
@@ -379,26 +379,16 @@ describe("sidebar render isolation", () => {
       </SidebarProvider>,
     );
     await expect.element(screen.getByText("Thread 4").first()).toBeInTheDocument();
-    const rowProps = () =>
-      vi.mocked(SortableThreadRow).mock.calls.map(([props]) => props as Record<string, unknown>);
-    const before = new Map(rowProps().map((props) => [props.sortableId, props]));
-    const start = rowProps().length;
+    const rowRenders = vi.mocked(SortableThreadRow.type).mock.calls;
+    const start = rowRenders.length;
 
     await act(() => {
       routeTarget = routeTo(1);
       for (const listener of routeListeners) listener();
     });
 
-    const changedRows = new Set(
-      rowProps()
-        .slice(start)
-        .filter((props) => {
-          const previous = before.get(props.sortableId)!;
-          return Object.keys(props).some((key) => !Object.is(props[key], previous[key]));
-        })
-        .map((props) => props.sortableId),
-    );
-    expect([...changedRows].toSorted()).toEqual(["local:thread-0", "local:thread-1"]);
+    const renderedRows = new Set(rowRenders.slice(start).map(([props]) => props.sortableId));
+    expect([...renderedRows].toSorted()).toEqual(["local:thread-0", "local:thread-1"]);
   });
 });
 

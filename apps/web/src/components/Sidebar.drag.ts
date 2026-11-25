@@ -11,6 +11,7 @@ import {
 
 const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 const hidden = { ...stationary, scaleY: 0 };
+export const stationarySortingStrategy: SortingStrategy = () => stationary;
 type ThreadItem = Extract<SidebarListItem, { kind: "thread" }>;
 type Layout = Parameters<SortingStrategy>[0];
 const isShelfHeader = (item: SidebarListItem | undefined) =>
@@ -102,7 +103,7 @@ export function createSidebarSortingStrategy(input: {
   slimHeight?: number;
   boundaryLabelHeight?: number;
 }): SortingStrategy {
-  if (input.enabled === false) return () => stationary;
+  if (input.enabled === false) return stationarySortingStrategy;
   const { items } = input;
   const indices = new Map(items.map((item, index) => [sidebarListItemId(item), index]));
   let previous: Pick<Layout, "rects" | "activeIndex" | "overIndex"> | undefined;
