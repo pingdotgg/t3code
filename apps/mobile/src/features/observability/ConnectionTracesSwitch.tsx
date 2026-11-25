@@ -41,8 +41,8 @@ export function ConnectionTracesSwitch() {
   const gt = useGT();
   const ready = AsyncResult.isSuccess(preferences) && !preferences.waiting;
   const enabled = AsyncResult.isSuccess(preferences)
-    ? preferences.value.connectionTracesEnabled !== false
-    : true;
+    ? preferences.value.connectionTracesEnabled === true
+    : false;
 
   const change = (value: boolean) => {
     setSaving(true);

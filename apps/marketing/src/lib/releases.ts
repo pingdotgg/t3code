@@ -1,4 +1,5 @@
 import { CDN_ORIGIN } from "./site";
+import type { Platform } from "./platform";
 
 const REPO = "penouc/tix";
 
@@ -23,7 +24,7 @@ export interface Release {
 }
 
 function cacheKey(channel: ReleaseChannel) {
-  return `t3code-${channel}-release`;
+  return `tix-${channel}-release`;
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -57,4 +58,58 @@ export async function fetchLatestRelease(channel: ReleaseChannel = "stable"): Pr
   }
 
   return data;
+}
+
+export async function fetchLatestReleaseAtBuild(): Promise<Release | null> {
+  try {
+    const response = await fetch(LATEST_API_URL, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as Release;
+    return Array.isArray(data?.assets) ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+export function pickAssetByPattern(
+  assets: ReadonlyArray<ReleaseAsset>,
+  suffixes: ReadonlyArray<string>,
+): ReleaseAsset | null {
+  for (const suffix of suffixes) {
+    const found = assets.find((asset) => asset.name.endsWith(suffix));
+    if (found) return found;
+  }
+  return null;
+}
+
+export function pickAsset(assets: ReadonlyArray<ReleaseAsset>, platform: Platform): string | null {
+  if (platform.os === "mac") {
+    return (
+      assets.find((asset) => asset.name.endsWith("arm64.dmg"))?.browser_download_url ??
+      assets.find((asset) => asset.name.endsWith(".dmg"))?.browser_download_url ??
+      null
+    );
+  }
+  if (platform.os === "win") {
+    return (
+      assets.find((asset) => asset.name.endsWith("-x64.exe"))?.browser_download_url ??
+      assets.find((asset) => asset.name.endsWith(".exe"))?.browser_download_url ??
+      null
+    );
+  }
+  if (platform.os === "linux") {
+    return (
+      assets.find((asset) => asset.name.endsWith("x86_64.AppImage"))?.browser_download_url ??
+      assets.find((asset) => asset.name.endsWith(".AppImage"))?.browser_download_url ??
+      assets.find((asset) => asset.name.endsWith(".tar.gz"))?.browser_download_url ??
+      null
+    );
+  }
+  if (platform.os === "android") {
+    return assets.find((asset) => asset.name.endsWith(".apk"))?.browser_download_url ?? null;
+  }
+  return null;
 }

@@ -5,8 +5,6 @@ import {
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Schema from "effect/Schema";
 
-import { isHostedStaticApp } from "../hostedPairing";
-
 export class CloudPublicConfigMissingError extends Schema.TaggedError<CloudPublicConfigMissingError>()(
   "CloudPublicConfigMissingError",
   {
@@ -71,17 +69,17 @@ export function setServerRelayTelemetry(allowed: boolean | null): void {
 }
 
 export function relayTelemetryEnabled(): boolean | null {
-  if (typeof window === "undefined") return true;
+  if (typeof window === "undefined") return false;
   if (window.desktopBridge) {
     desktopRelayTelemetry ??= window.desktopBridge.getRelayTelemetryEnabled();
     return desktopRelayTelemetry;
   }
-  return serverRelayTelemetry ?? (isHostedStaticApp() ? true : null);
+  return serverRelayTelemetry ?? false;
 }
 
 export function resolveRelayTracingConfig() {
   // The relay exporter is created during module initialization, so this must be synchronous.
-  if (relayTelemetryEnabled() === false) {
+  if (relayTelemetryEnabled() !== true) {
     return null;
   }
   const { relayTracing } = resolveCloudPublicConfig();

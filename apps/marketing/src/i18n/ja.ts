@@ -2,13 +2,13 @@ import type { Messages } from "./en";
 
 export const ja: Messages = {
   layout: {
-    defaultTitle: "T3 Code",
-    defaultDescription: "T3 Code。オープンソースのコーディングエージェント制御プレーン。",
+    defaultTitle: "tix",
+    defaultDescription: "tix。オープンソースのコーディングエージェント制御プレーン。",
     socialImageAlt:
-      "T3 Code：オープンソースのコーディングエージェント制御プレーン。Claude Code、Codex、Cursor、OpenCode、Grok、Antigravity に対応。",
-    homeLabel: "T3 Code ホーム",
+      "tix：オープンソースのコーディングエージェント制御プレーン。Claude Code、Codex、Cursor、OpenCode、Grok、Antigravity に対応。",
+    homeLabel: "tix ホーム",
     download: "ダウンロード",
-    starsLabel: "GitHub で T3 Code にスターを付ける（{stars} スター）",
+    starsLabel: "GitHub で tix にスターを付ける（{stars} スター）",
     githubStars: "GitHub スター {stars}",
     language: "言語",
     mitLicensed: "MIT ライセンス",
@@ -19,8 +19,8 @@ export const ja: Messages = {
     security: "セキュリティ",
   },
   home: {
-    title: "T3 Code | オープンソースのコーディングエージェント制御プレーン",
-    description: "T3 Code。オープンソースのコーディングエージェント制御プレーン。",
+    title: "tix | オープンソースのコーディングエージェント制御プレーン",
+    description: "tix。オープンソースのコーディングエージェント制御プレーン。",
     heroTitle: ["オープンソースの", "コーディングエージェント", "制御プレーン。"],
     heroSub:
       "Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok をひとつの画面からオーケストレーション。サブスクリプションは手持ちのものをそのまま。まるごとフォークも自由です。",
@@ -31,15 +31,14 @@ export const ja: Messages = {
     downloadForAndroid: "Android 版をダウンロード",
     sourceLink: "コードを盗もう（合法的に）",
     alsoOnPhone: "スマホでも使えます：",
-    screenshotAlt:
-      "ひとつのスレッドで Claude、Codex、Muse、Gemini のサブエージェントを動かす T3 Code",
+    screenshotAlt: "ひとつのスレッドで Claude、Codex、Muse、Gemini のサブエージェントを動かす tix",
     endorsementsTitle: "{users}人以上の開発者たちが「悪くない」と言っています",
     endorsementsSub: "温かいツイートまでいただいています。",
     endorsementsLabel: "開発者の声",
     readPost: "X で {handle} の投稿を読む",
     harnessTitle: "サブスクは持ち込みで",
     harnessBody:
-      "T3 Code はトークンの上乗せ販売を行いません。すでにお持ちの認証情報で、Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok をつなぐだけ。T3 Code は制御プレーンのみを提供。プランは今のままで。",
+      "tix はトークンの上乗せ販売を行いません。すでにお持ちの認証情報で、Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok をつなぐだけ。tix は制御プレーンのみを提供。プランは今のままで。",
     googleSignIn: "Google でサインイン",
     harnessPoints: [
       "キーの再販なし。使用量の上限なし。",
@@ -47,7 +46,7 @@ export const ja: Messages = {
       "対応エージェントは毎週追加。",
     ],
     gitVisualLabel:
-      "T3 Code の Git ワークフローの図：diff を確認し、変更をコミットしてプッシュし、プルリクエストを作成する。",
+      "tix の Git ワークフローの図：diff を確認し、変更をコミットしてプッシュし、プルリクエストを作成する。",
     prReady: "準備完了",
     prCommits: "3 コミット",
     viewDiff: "diff を表示",
@@ -76,15 +75,15 @@ export const ja: Messages = {
     browseSource: "ソースを見る",
     ctaTitle: "あなたのエージェントに、ターミナルよりふさわしい場所を。",
     ctaSub:
-      "T3 Code は無料、オープンソースで、高速です。インストールしたら、お使いのハーネスをつなぐだけ。すぐに仕事に取り掛かれます。",
+      "tix は無料、オープンソースで、高速です。インストールしたら、お使いのハーネスをつなぐだけ。すぐに仕事に取り掛かれます。",
     otherPlatforms: "ほかのプラットフォーム",
   },
   download: {
-    title: "T3 Code をダウンロード（macOS、Windows、Linux）| T3 Code",
+    title: "tix をダウンロード（macOS、Windows、Linux）| tix",
     description:
-      "公式の T3 Code デスクトップアプリ（macOS、Windows、Linux）や、iOS・Android アプリをダウンロードできます。公式のダウンロードサイトは t3.codes だけです。",
+      "公式の tix デスクトップアプリ（macOS、Windows、Linux）や、iOS・Android アプリをダウンロードできます。公式のダウンロードサイトは tix.penglei.dev だけです。",
     breadcrumb: "ダウンロード",
-    heading: "T3 Code をダウンロード",
+    heading: "tix をダウンロード",
     channelLabel: "リリースチャンネル",
     stable: "安定版",
     nightly: "Nightly",
