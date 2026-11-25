@@ -613,13 +613,19 @@ export const prepareAntigravityHelperProfile = Effect.fn("prepareAntigravityHelp
     // Migrate any earlier directory symlink to a real directory so helper runs never touch real plugin_data/ or mcp/.
     const existingAcpStat = yield* lstatOrUndefined(helperAcpDirectory);
     if (existingAcpStat?.isSymbolicLink()) {
-      yield* fs
-        .remove(helperAcpDirectory, { force: true })
-        .pipe(
-          Effect.mapError(() =>
-            authSupportError("The legacy Antigravity helper auth link could not be replaced."),
-          ),
-        );
+      yield* fs.remove(helperAcpDirectory, { force: true }).pipe(
+        Effect.catch(() =>
+          Effect.gen(function* () {
+            const currentAcpStat = yield* lstatOrUndefined(helperAcpDirectory);
+            if (currentAcpStat === undefined || currentAcpStat.isDirectory()) {
+              return;
+            }
+            return yield* authSupportError(
+              "The legacy Antigravity helper auth link could not be replaced.",
+            );
+          }),
+        ),
+      );
     }
 
     for (const directory of [helperDirectory, helperConfigDirectory, helperAcpDirectory]) {
