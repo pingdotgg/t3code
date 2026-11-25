@@ -82,7 +82,11 @@ export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
   | { readonly kind: "new-thread-in" | "change-theme" }
-  | { readonly kind: "add-project"; readonly draftId?: DraftId }
+  | {
+      readonly kind: "add-project";
+      /** The draft a project is being picked for; one with user content moves to it. */
+      readonly draftId?: DraftId;
+    }
   | {
       readonly kind: "search";
       readonly query: string;

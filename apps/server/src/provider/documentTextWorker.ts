@@ -12,7 +12,13 @@ const MAX_EXPANDED = 32 * 1024 * 1024;
 const MAX_OUTPUT = 1_000_000;
 const CELL_START = Symbol("cell-start");
 const CELL_END = Symbol("cell-end");
-type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: string };
+const LINE_START = Symbol("line-start");
+type TextPart =
+  | string
+  | typeof CELL_START
+  | typeof CELL_END
+  | typeof LINE_START
+  | { fallback: string };
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
 // Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
@@ -110,11 +116,15 @@ function xml(source: string, extension: string): XmlNode {
     stack.at(-1)!.children.push(node);
     stack.push(node);
   });
-  parser.on("closetag", () => {
+  parser.on("closetag", (tag) => {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
+      (extension === ".epub" &&
+        (stack[1] ?? node).name === "html" &&
+        Object.hasOwn(tag.attributes, "hidden") &&
+        !/^until-found$/i.test(String(tag.attributes.hidden))) ||
       (extension === ".docx" && node.name === "del") ||
       (extension === ".docx" &&
         node.name === "r" &&
@@ -253,6 +263,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield "\n";
     } else {
+      if (node.name === "li" && ["ol", "ul"].includes(child.name)) yield LINE_START;
       yield* paragraphs(child);
       if (["li", "div", "section", "dt", "dd"].includes(child.name)) yield "\n";
     }
@@ -942,16 +953,24 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
   }
 }
 
+// Undefined when the text holds only spaces and tabs, so the line state carries over.
+function endsMidLine(text: string) {
+  let index = text.length - 1;
+  while (text[index] === " " || text[index] === "\t") index--;
+  return index < 0 ? undefined : text[index] !== "\n";
+}
+
 export async function extractDocumentText(path: string, extension: string): Promise<string> {
   let result = "";
   let remaining = MAX_OUTPUT;
   let cellDepth = 0;
   let started = false;
   let space = false;
+  let midLine = false;
   let truncated = false;
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
-    for await (const part of document(path, extension)) {
+    for await (let part of document(path, extension)) {
       if (part === CELL_START) {
         if (cellDepth++ === 0) {
           started = false;
@@ -964,6 +983,11 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (cellDepth > 0 && started) space = true;
         continue;
       }
+      if (part === LINE_START) {
+        // A nested list starts its own line unless its parent item's text already ended one.
+        if (!midLine) continue;
+        part = "\n";
+      }
       if (typeof part !== "string" && started) continue;
       const raw = typeof part === "string" ? part : part.fallback;
       let value = raw.slice(0, remaining).replaceAll("\0", "");
@@ -974,9 +998,13 @@ export async function extractDocumentText(path: string, extension: string): Prom
         if (trimmed) {
           result += (started && (space || value.startsWith(" ")) ? " " : "") + trimmed;
           started = true;
+          midLine = true;
         }
         space = value.endsWith(" ") || (!value && space);
-      } else result += value;
+      } else {
+        result += value;
+        midLine = endsMidLine(value) ?? midLine;
+      }
       if (remaining === 0) throw new Truncation("Output budget");
     }
   } catch (error) {

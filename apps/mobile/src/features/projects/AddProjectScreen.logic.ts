@@ -50,12 +50,12 @@ interface StackRoute {
   readonly params?: object;
 }
 
-const firstParam = (value: string | readonly string[] | undefined) =>
-  typeof value === "string" ? value : value?.[0];
+const firstParam = (value: string | string[] | undefined) =>
+  Array.isArray(value) ? value[0] : value;
 
 /**
- * The draft whose project chooser opened Add project, so the added project is chosen for it the
- * way picking a listed project is. Null when Add project opened from anywhere else.
+ * The draft whose project chooser opened Add project, so the added project is picked for it as
+ * choosing one in the chooser is. Null when Add project opened from anywhere else.
  */
 export function chooserDraftKey(
   routes: ReadonlyArray<StackRoute>,
@@ -70,5 +70,5 @@ export function chooserDraftKey(
   if (draftRoute === undefined || !isDraftThreadRoute(draftRoute)) return null;
   const flowKey = newTaskFlowKey(draftRoute);
   const draft = (draftRoute.params as { draft: NewTaskDraftRouteParams }).draft;
-  return (flowKey && readFlowDraftKey(flowKey)) || firstParam(draft.draftId) || null;
+  return (flowKey && readFlowDraftKey(flowKey)) ?? firstParam(draft.draftId) ?? null;
 }

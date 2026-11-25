@@ -24,7 +24,7 @@ function errorMessage(error: unknown): string {
     : m(msg("An error occurred."));
 }
 
-export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Promise<unknown>) {
+export function useNewProject(openProject: (projectRef: ScopedProjectRef) => Promise<void>) {
   const createNew = useAtomCommand(projectEnvironment.createNew, { reportFailure: false });
   const publishRepository = useAtomCommand(sourceControlEnvironment.publishRepository, {
     reportFailure: false,

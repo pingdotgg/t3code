@@ -10,10 +10,10 @@ export interface CommandPaletteLinkedThreads {
 
 export interface CommandPaletteOpenDetail {
   readonly open?: "add-project" | "new-thread-in";
+  /** With add-project: the draft the new project is picked for. */
+  readonly draftId?: DraftId | null;
   readonly query?: string;
   readonly linkedThreads?: CommandPaletteLinkedThreads;
-  /** With add-project: the draft the added project is picked for. */
-  readonly draftId?: DraftId | null;
 }
 
 export function openCommandPalette(detail: CommandPaletteOpenDetail = {}): void {

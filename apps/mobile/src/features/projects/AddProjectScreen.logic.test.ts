@@ -34,7 +34,7 @@ describe("chooserDraftKey", () => {
   const flowDraftKeys = new Map([[newTaskFlowKey(draftRoute), "new-task:typed"]]);
   const readFlowDraftKey = (flowKey: string) => flowDraftKeys.get(flowKey) ?? null;
 
-  it("picks the draft whose project chooser opened Add project", () => {
+  it("picks the added project for the draft whose chooser opened Add project", () => {
     expect(chooserDraftKey([home, draftRoute, chooser, ...addProject], readFlowDraftKey)).toBe(
       "new-task:typed",
     );

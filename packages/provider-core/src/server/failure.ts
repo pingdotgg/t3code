@@ -87,6 +87,10 @@ export function providerProcessExitGuidance(output: unknown): string {
 const CODEX_GOAL_VALIDATION_MESSAGE =
   /^goal objective must (?:not be empty|be at most \d{1,6} characters)$/u;
 
+// OpenCode's /goal command rejecting an objective longer than it accepts.
+const OPENCODE_GOAL_LENGTH_REJECTION =
+  /^A goal objective is limited to \d{1,6} characters \(got \d{1,9}\)\.$/u;
+
 // codex_config::ConstraintError::InvalidValue for a managed requirements.toml or cloud policy.
 const CODEX_ACCESS_REQUIREMENT_REJECTION =
   /invalid value for `(approval_policy|sandbox_mode)`: `([A-Za-z]{1,32})` is not in the allowed set /u;
@@ -164,6 +168,21 @@ function curatedCauseMessages(cause: unknown): {
           if (access !== null) {
             return {
               known: `Codex's managed requirements do not allow \`${access[1]}\` \`${access[2]}\`, which this thread's access mode uses. Switch the thread to an access mode the policy allows.`,
+              category: categoryMessage(),
+            };
+          }
+          break;
+        }
+        case "CommandExecutionError": {
+          // Only OpenCode's fixed-shape goal length text is shown; other command output stays hidden.
+          const rejection = stringField(cause, "message");
+          if (
+            (cause as Record<string, unknown>).command === "goal" &&
+            rejection !== undefined &&
+            OPENCODE_GOAL_LENGTH_REJECTION.test(rejection)
+          ) {
+            return {
+              known: `OpenCode rejected the goal: ${rejection} Shorten it and send /goal again.`,
               category: categoryMessage(),
             };
           }

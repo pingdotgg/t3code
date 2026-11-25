@@ -13,7 +13,11 @@ import {
 import { getClientSettings } from "../hooks/useSettings";
 import { seedDraftModelSelection } from "./seedDraftModelSelection";
 
-/** Moves an unsent draft with user content to `project`; false when there is nothing to move. */
+/**
+ * Moves an unsent draft the user wrote in to `project`, keeping its content. Returns false for an
+ * empty draft, which the caller should leave alone and open the project's own draft instead:
+ * moving it would replace that draft and strand browser tabs on it.
+ */
 export function moveDraftToProject(draftId: DraftId, project: EnvironmentProject): boolean {
   const store = useComposerDraftStore.getState();
   const session = store.getDraftSession(draftId);

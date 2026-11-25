@@ -586,7 +586,7 @@ function OpenCommandPaletteDialog(props: {
   const [isCreatingNewProject, setIsCreatingNewProject] = useState(false);
   // State lags a render behind, so a repeated Enter could start a second create.
   const newProjectSubmittingRef = useRef(false);
-  // Add project from a draft's project picker picks the added project for that draft.
+  // "Add project" from a draft's project picker picks the new project for that draft.
   const [addProjectDraftId] = useState(() =>
     props.openIntent?.kind === "add-project" ? (props.openIntent.draftId ?? null) : null,
   );
@@ -598,7 +598,7 @@ function OpenCommandPaletteDialog(props: {
     return true;
   };
   const openAddedProject = async (projectRef: ScopedProjectRef): Promise<void> => {
-    // The draft's key comes from the project record, so wait for it to reach this client.
+    // A moved draft is keyed from the project record, so wait for it to reach this client.
     const project =
       addProjectDraftId === null ? null : await waitForProject(projectRef, 3_000).catch(() => null);
     if (project !== null && (await moveDraftToAddedProject(project))) return;
@@ -1601,7 +1601,7 @@ function OpenCommandPaletteDialog(props: {
         toastManager.add({
           type: "success",
           title: gt("Agent session will restart"),
-          description: gt("Your next message starts a fresh session."),
+          description: gt("Your next message restarts the agent. This conversation is kept."),
         });
         const project = projectByKey.get(`${environmentId}:${thread.projectId}`);
         if (!project) return;
