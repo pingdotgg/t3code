@@ -31,6 +31,26 @@ const REPOSITORY_PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/-\//u;
 
 const KIND = SourceControlProviderKind.make("gitlab");
 
+// GitLab.com also serves SSH on port 443 from this host but names every project on `gitlab.com`.
+const ALT_SSH_HOST_KEY = /^altssh\.gitlab\.com\/(.+)$/u;
+
+function canonicalRepositoryKey(key: string): string | null {
+  const repository = ALT_SSH_HOST_KEY.exec(key)?.[1];
+  return repository === undefined ? null : `gitlab.com/${repository}`;
+}
+
+function repositoryKeyFromRemote(key: string): string | null {
+  return canonicalRepositoryKey(key)?.replace(/\.git$/u, "") ?? null;
+}
+
+// Saved identities reach the predicates as written, so a key from before this mapping still matches.
+function withCanonicalKey<Identity extends { readonly canonicalKey: string }>(
+  identity: Identity,
+): Identity {
+  const canonicalKey = canonicalRepositoryKey(identity.canonicalKey);
+  return canonicalKey === null ? identity : { ...identity, canonicalKey };
+}
+
 export const definition = defineSourceControl({
   kind: KIND,
   label: "GitLab",
@@ -87,15 +107,27 @@ export const definition = defineSourceControl({
   checkoutChangeRequestHost: () => null,
   changeRequestHeadRef: (number) => `refs/merge-requests/${number}/head`,
   recognizeRemote: ({ host, hostname }) =>
-    hostname === "gitlab.com" || hostname.split(".").includes("gitlab")
-      ? {
-          kind: KIND,
-          name: hostname === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
-          baseUrl: `https://${host}`,
-        }
-      : null,
-  isChangeRequestInRepository: (identity, link) =>
-    isChangeRequestInProjectRepository(projectChangeRequestHost(identity, KIND), identity, link),
-  canReadChangeRequestOnHost: (identity, link) =>
-    isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link),
+    hostname === "altssh.gitlab.com"
+      ? { kind: KIND, name: "GitLab", baseUrl: "https://gitlab.com" }
+      : hostname === "gitlab.com" || hostname.split(".").includes("gitlab")
+        ? {
+            kind: KIND,
+            name: hostname === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
+            baseUrl: `https://${host}`,
+          }
+        : null,
+  repositoryKeyFromRemote,
+  canonicalRepositoryKey,
+  isChangeRequestInRepository: (saved, link) => {
+    const identity = withCanonicalKey(saved);
+    return isChangeRequestInProjectRepository(
+      projectChangeRequestHost(identity, KIND),
+      identity,
+      link,
+    );
+  },
+  canReadChangeRequestOnHost: (saved, link) => {
+    const identity = withCanonicalKey(saved);
+    return isChangeRequestOnProjectHost(projectChangeRequestHost(identity, KIND), identity, link);
+  },
 });
