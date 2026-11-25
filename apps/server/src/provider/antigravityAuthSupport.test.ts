@@ -969,4 +969,39 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(spawn.env?.GEMINI_HOME).toBe(expectedHelper);
       }),
   );
+
+  it.effect("accepts concurrent helper preparations sharing the same profile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+      const profileDirectory = path.join(temporaryDirectory, "profile");
+      const realAcpDir = path.join(profileDirectory, "antigravity-acp");
+      yield* fs.makeDirectory(realAcpDir, { recursive: true });
+      for (const fileName of ["antigravity-oauth-token", "acp_token.json", "installation_id"]) {
+        yield* fs.writeFileString(path.join(realAcpDir, fileName), fileName);
+      }
+
+      const expectedHelper = resolveAntigravityHelperProfileDirectory(path, profileDirectory);
+      yield* fs.makeDirectory(expectedHelper, { recursive: true });
+      yield* fs.symlink(realAcpDir, path.join(expectedHelper, "antigravity-acp"));
+
+      const profiles = yield* Effect.all(
+        Array.from({ length: 6 }, () =>
+          prepareAntigravityHelperProfile({
+            profileDirectory,
+            runtimeExecutablePath: process.execPath,
+          }),
+        ),
+        { concurrency: "unbounded" },
+      );
+
+      expect(profiles).toHaveLength(6);
+      for (const fileName of ["antigravity-oauth-token", "acp_token.json", "installation_id"]) {
+        expect(yield* fs.readLink(path.join(expectedHelper, "antigravity-acp", fileName))).toBe(
+          path.join(realAcpDir, fileName),
+        );
+      }
+    }),
+  );
 });
