@@ -180,6 +180,9 @@ export function upsertProviderWorkspaceSnapshot(
   const models = scopedSnapshot.workspaceModelsPending
     ? previousSnapshot?.models
     : scopedSnapshot.workspaceModels;
+  const auth = scopedSnapshot.workspaceModelsPending
+    ? previousSnapshot?.auth
+    : scopedSnapshot.workspaceAuth;
   const workspaceSnapshot = {
     cwd,
     checkedAt: scopedSnapshot.checkedAt,
@@ -193,6 +196,7 @@ export function upsertProviderWorkspaceSnapshot(
     ...(optionDescriptors === undefined ? {} : { optionDescriptors }),
     ...(models === undefined ? {} : { models }),
     ...(scopedSnapshot.workspaceModelsPending ? { modelsPending: true } : {}),
+    ...(auth === undefined ? {} : { auth }),
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
   return {
     ...provider,

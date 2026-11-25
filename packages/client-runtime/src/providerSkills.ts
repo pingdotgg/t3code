@@ -139,25 +139,24 @@ export function resolveProvidersForCwd<P extends ServerProvider>(
   cwd: string | null | undefined,
 ): ReadonlyArray<P> {
   const resolved = providers.map((provider) => {
-    const models = resolveProviderWorkspaceSnapshot(provider, cwd)?.models;
-    if (models === undefined || models === provider.models) return provider;
-    // Pi only lists discovered models for providers it has credentials for in this directory.
-    const projectAuthenticated =
-      provider.driver === "pi" &&
+    const workspace = resolveProviderWorkspaceSnapshot(provider, cwd);
+    const models = workspace?.models ?? provider.models;
+    const signedIn =
+      workspace?.auth?.status === "authenticated" &&
+      provider.auth.status === "unauthenticated" &&
       provider.enabled &&
       provider.installed &&
-      provider.availability !== "unavailable" &&
-      provider.status === "warning" &&
-      provider.auth.status === "unauthenticated" &&
-      models.some((model) => !model.isCustom && model.slug !== "default");
+      provider.availability !== "unavailable";
+    if (models === provider.models && !signedIn) return provider;
     return {
       ...provider,
       models,
-      ...(projectAuthenticated
+      ...(signedIn
         ? {
-            auth: { status: "authenticated", type: "pi" } as const,
-            status: "ready" as const,
-            message: undefined,
+            auth: workspace.auth,
+            ...(provider.status === "warning"
+              ? { status: "ready" as const, message: undefined }
+              : {}),
           }
         : {}),
     };

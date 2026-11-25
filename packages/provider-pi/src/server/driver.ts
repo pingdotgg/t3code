@@ -223,7 +223,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
                 const machineModels = new Map(
                   machineSnapshot.models.map((model) => [model.slug, model]),
                 );
-                const workspaceModels = Result.map(models, (catalog) =>
+                const workspaceModels = Result.map(models, ({ catalog }) =>
                   catalog.map((model) =>
                     machineModels.get(model.slug)?.supportsTextGeneration === false
                       ? { ...model, supportsTextGeneration: false }
@@ -237,6 +237,12 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
                     : Equal.equals(workspaceModels.success, machineSnapshot.models)
                       ? {}
                       : { workspaceModels: workspaceModels.success }),
+                  // Pi lists models only for providers it holds credentials for in this directory.
+                  ...(Result.isSuccess(models) &&
+                  models.success.authenticated &&
+                  machineSnapshot.auth.status === "unauthenticated"
+                    ? { workspaceAuth: { status: "authenticated", type: "pi" } as const }
+                    : {}),
                   ...(Result.isFailure(commands)
                     ? { slashCommandsPending: true, workspaceSkillsPending: true }
                     : { ...commands.success, slashCommandsPending: false }),

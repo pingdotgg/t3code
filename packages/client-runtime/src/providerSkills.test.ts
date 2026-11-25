@@ -147,54 +147,33 @@ describe("workspace provider snapshots", () => {
   });
 
   it.each([
-    { name: "project model", slug: "fixture/model", authenticated: true },
-    { name: "default model", slug: "default", authenticated: false },
-    { name: "custom model", slug: "fixture/custom", isCustom: true, authenticated: false },
-    { name: "disabled Pi", slug: "fixture/model", enabled: false, authenticated: false },
-    { name: "missing Pi", slug: "fixture/model", installed: false, authenticated: false },
-    {
-      name: "unavailable Pi",
-      slug: "fixture/model",
-      availability: "unavailable",
-      authenticated: false,
-    },
-  ] as const)(
-    "scopes Pi sign-in confirmed by $name to the project",
-    ({ slug, authenticated, ...testCase }) => {
-      const pi = {
-        ...provider,
-        driver: ProviderDriverKind.make("pi"),
-        instanceId: ProviderInstanceId.make("pi"),
-        status: "warning",
-        message: "Pi has no usable models.",
-        auth: { status: "unauthenticated" },
-        versionAdvisory: {
-          status: "behind_latest",
-          currentVersion: "1.0.0",
-          latestVersion: "1.1.0",
-          updateCommand: null,
-          canUpdate: false,
-          checkedAt: null,
-          message: null,
+    { name: "the project signs it in", signedIn: true },
+    { name: "the project has no sign-in", workspaceAuth: false, signedIn: false },
+    { name: "it is disabled", enabled: false, signedIn: false },
+    { name: "it is missing", installed: false, signedIn: false },
+    { name: "it is unavailable", availability: "unavailable", signedIn: false },
+  ] as const)("scopes sign-in to the project when $name", ({ signedIn, ...testCase }) => {
+    const signedOut = {
+      ...provider,
+      status: "warning",
+      message: "No usable models.",
+      auth: { status: "unauthenticated" },
+      enabled: "enabled" in testCase ? testCase.enabled : true,
+      installed: "installed" in testCase ? testCase.installed : true,
+      ...("availability" in testCase ? { availability: testCase.availability } : {}),
+      workspaceSnapshots: [
+        {
+          ...provider.workspaceSnapshots[0]!,
+          ...("workspaceAuth" in testCase ? {} : { auth: { status: "authenticated" } }),
         },
-        enabled: "enabled" in testCase ? testCase.enabled : true,
-        installed: "installed" in testCase ? testCase.installed : true,
-        ...("availability" in testCase ? { availability: testCase.availability } : {}),
-        workspaceSnapshots: [
-          {
-            ...provider.workspaceSnapshots[0]!,
-            models: [{ slug, name: slug, isCustom: "isCustom" in testCase, capabilities: null }],
-          },
-        ],
-      } satisfies ServerProvider;
-      const scoped = resolveProvidersForCwd([pi], "/workspace/project-a")[0];
-      expect(scoped?.auth.status).toBe(authenticated ? "authenticated" : "unauthenticated");
-      expect(scoped?.status).toBe(authenticated ? "ready" : "warning");
-      expect(scoped?.message).toBe(authenticated ? undefined : pi.message);
-      expect(scoped?.versionAdvisory).toBe(pi.versionAdvisory);
-      expect(resolveProvidersForCwd([pi], "/workspace/project-b")[0]).toBe(pi);
-    },
-  );
+      ],
+    } satisfies ServerProvider;
+    const scoped = resolveProvidersForCwd([signedOut], "/workspace/project-a")[0];
+    expect(scoped?.auth.status).toBe(signedIn ? "authenticated" : "unauthenticated");
+    expect(scoped?.status).toBe(signedIn ? "ready" : "warning");
+    expect(scoped?.message).toBe(signedIn ? undefined : signedOut.message);
+    expect(resolveProvidersForCwd([signedOut], "/workspace/project-b")[0]).toBe(signedOut);
+  });
 });
 
 describe("provider workspace snapshot refresh atom", () => {

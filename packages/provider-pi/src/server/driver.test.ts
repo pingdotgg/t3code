@@ -45,13 +45,13 @@ const personalSkill = {
   sourceInfo: { scope: "user", path: "/home/.pi/agent/skills/personal/SKILL.md" },
 };
 
-const makePiSpawner = Effect.fnUntraced(function* (
+const makePiSpawner = (
   discovery: {
     readonly state?: unknown;
     readonly models?: ReadonlyArray<unknown>;
     readonly workspaceModels?: Record<string, ReadonlyArray<unknown>>;
   } = {},
-) {
+) => {
   const launches: Array<ChildProcess.StandardCommand> = [];
   const spawner = ChildProcessSpawner.make((command) =>
     Effect.gen(function* () {
@@ -130,8 +130,8 @@ const makePiSpawner = Effect.fnUntraced(function* (
       });
     }),
   );
-  return { spawner, launches };
-});
+  return Effect.succeed({ spawner, launches });
+};
 
 const create = (config: Partial<PiSettings> = {}, enabled = true) =>
   PiDriver.create({
@@ -281,6 +281,25 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
           ],
         );
       }),
+  );
+
+  it.effect("signs Pi in for a project whose own config lists models", () =>
+    Effect.gen(function* () {
+      const { spawner } = yield* makePiSpawner({
+        models: [],
+        workspaceModels: { "/project": [{ provider: "test", id: "project" }] },
+      });
+      const instance = yield* create().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      yield* instance.snapshot.refresh;
+      assert.equal((yield* instance.snapshot.getSnapshot).auth.status, "unauthenticated");
+      assert.equal(
+        (yield* instance.snapshotForCwd!("/project")).workspaceAuth?.status,
+        "authenticated",
+      );
+      assert.isUndefined((yield* instance.snapshotForCwd!("/empty")).workspaceAuth);
+    }),
   );
 
   it.effect.each([

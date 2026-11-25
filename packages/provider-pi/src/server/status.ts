@@ -369,9 +369,10 @@ export const discoverPiWorkspaceInventory = Effect.fn("discoverPiWorkspaceInvent
     return yield* Result.isFailure(models) ? models.failure : commands.failure;
   }
   return {
-    models: Result.map(catalog, (discovered) =>
-      piModelsFromSettings(piSettings.customModels, discovered),
-    ),
+    models: Result.map(catalog, (discovered) => ({
+      catalog: piModelsFromSettings(piSettings.customModels, discovered),
+      authenticated: discovered.length > 0,
+    })),
     commands: Result.map(commands, (data) => {
       const { slashCommands, skills } = parsePiDiscoveredCommands(data);
       return { slashCommands: withPiBuiltinSlashCommands(slashCommands), skills };

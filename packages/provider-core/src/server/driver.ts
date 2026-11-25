@@ -38,6 +38,8 @@ export type ProviderWorkspaceSnapshot = ServerProvider &
     readonly workspaceModelsPending?: boolean;
     /** Skill discovery failed together with command discovery, so keep the skills found before. */
     readonly workspaceSkillsPending?: boolean;
+    /** The directory's own sign-in, when it differs from the machine's. */
+    readonly workspaceAuth?: ServerProviderWorkspaceSnapshot["auth"];
   };
 
 export interface ProviderInstance {
