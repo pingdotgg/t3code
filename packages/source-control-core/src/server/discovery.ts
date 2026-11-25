@@ -43,8 +43,12 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
-  /** Asked in order while the answer is signed out; one counts only when it finds a sign-in. */
-  readonly authRetryArgs?: (environment: NodeJS.ProcessEnv) => ReadonlyArray<ReadonlyArray<string>>;
+  /** May add accounts or fall back to another auth command. */
+  readonly completeAuthProbe?: (
+    first: SourceControlProviderAuth,
+    run: (args: ReadonlyArray<string>) => Effect.Effect<SourceControlProviderAuth>,
+    environment: NodeJS.ProcessEnv,
+  ) => Effect.Effect<SourceControlProviderAuth>;
   /** Environment overrides for one auth or remote probe. */
   readonly probeEnv?: (
     args: ReadonlyArray<string>,
@@ -307,12 +311,9 @@ export function probeSourceControlProvider(input: {
   const auth = Effect.gen(function* () {
     const environment = yield* HostProcess.Environment;
     const first = yield* runAuth(spec.authArgs, environment);
-    if (first.status !== "unauthenticated") return first;
-    for (const retryArgs of spec.authRetryArgs?.(environment) ?? []) {
-      const retry = yield* runAuth(retryArgs, environment);
-      if (retry.status === "authenticated") return retry;
-    }
-    return first;
+    return spec.completeAuthProbe
+      ? yield* spec.completeAuthProbe(first, (args) => runAuth(args, environment), environment)
+      : first;
   });
 
   // A CLI that is not installed is never spawned, and auth waits until the version probe answers.

@@ -109,27 +109,42 @@ it.effect("spawns nothing for a glab that is not on PATH", () =>
   }).pipe(Effect.provideService(SpawnExecutableResolution, () => undefined)),
 );
 
-it.effect("skips --all when the current glab host is signed in", () =>
+it.effect("discovers other signed-in hosts while keeping the current glab host primary", () =>
   Effect.gen(function* () {
-    const asked: Array<ReadonlyArray<string>> = [];
+    const currentHost = `gitlab.com
+  ✓ Logged in to gitlab.com as gitlab-user
+`;
+    const allHosts = `gitlab.example.test:8443
+  ✓ Logged in to gitlab.example.test:8443 as self-hosted-user
+gitlab.signed-out.test
+  x gitlab.signed-out.test: API call failed: 401 Unauthorized
+${currentHost}`;
     const item = yield* probeSourceControlProvider({
       spec: GitLabSourceControlProvider.discovery,
       cwd: "/repo",
       process: {
-        run: ({ args }) => {
-          asked.push(args);
-          return Effect.succeed(
+        run: ({ args }) =>
+          Effect.succeed(
             args[0] === "--version"
               ? processOutput("glab 1.124.0\n")
-              : processOutput(`gitlab.example.test
-  ✓ Logged in to gitlab.example.test as gitlab-user
-`),
-          );
-        },
+              : args.includes("--all")
+                ? processOutput(allHosts, { exitCode: ChildProcessSpawner.ExitCode(1) })
+                : processOutput(currentHost),
+          ),
       },
     });
     assert.strictEqual(item.auth.status, "authenticated");
-    assert.isFalse(asked.some((args) => args.includes("--all")));
+    assert.deepStrictEqual(item.auth.host, Option.some("gitlab.com"));
+    assert.deepStrictEqual(item.auth.account, Option.some("gitlab-user"));
+    assert.deepStrictEqual(item.auth.accounts, [
+      { host: "gitlab.com", account: "gitlab-user", active: true, authenticated: true },
+      {
+        host: "gitlab.example.test:8443",
+        account: "self-hosted-user",
+        active: true,
+        authenticated: true,
+      },
+    ]);
   }).pipe(Effect.provideService(SpawnExecutableResolution, onPath)),
 );
 
@@ -193,8 +208,8 @@ it.effect("sends the environment token only to glab's default host while probing
       process,
     });
     assert.deepStrictEqual(probes, [
-      ["auth status", withheld],
       ["auth status --all", withheld],
+      ["auth status", withheld],
       ["auth status --hostname gitlab.com", {}],
       ["auth status --hostname self-hosted.example.test", withheld],
     ]);
