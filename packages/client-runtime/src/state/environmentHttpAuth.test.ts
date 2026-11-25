@@ -327,9 +327,10 @@ describe("authenticated environment HTTP requests", () => {
   );
 
   it.effect.each([
-    { pinned: true, sealed: true },
-    { pinned: false, sealed: false },
-  ])("seals requests only to an environment with a pinned key (pinned: $pinned)", (scenario) =>
+    { pinned: true, cookie: false, sealed: true },
+    { pinned: false, cookie: false, sealed: false },
+    { pinned: true, cookie: true, sealed: false },
+  ])("seals only proof-key requests to an environment with a pinned key (%o)", (scenario) =>
     Effect.gen(function* () {
       const harness = makeHarness(() => Response.json(SESSION));
       const signer = Option.getOrThrow(harness.input.signer);
@@ -345,9 +346,11 @@ describe("authenticated environment HTTP requests", () => {
         environmentKey: () =>
           Effect.succeed(scenario.pinned ? Option.some(new Uint8Array(32)) : Option.none()),
       });
-      yield* fetchEnvironmentSessionState({ ...harness.input, signer: Option.some(sealing) }).pipe(
-        Effect.provide(Layer.merge(harness.httpLayer, registrations)),
-      );
+      yield* fetchEnvironmentSessionState({
+        ...harness.input,
+        ...(scenario.cookie ? { prepared: { ...PREPARED, httpAuthorization: null } } : {}),
+        signer: Option.some(sealing),
+      }).pipe(Effect.provide(Layer.merge(harness.httpLayer, registrations)));
       expect(new Headers(harness.calls[0]!.init.headers).get("x-sealed-for")).toBe(
         scenario.sealed ? TARGET.environmentId : null,
       );

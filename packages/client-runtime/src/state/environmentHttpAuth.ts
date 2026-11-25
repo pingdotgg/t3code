@@ -193,18 +193,23 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   const requestUrlFor = (baseUrl: string) =>
     input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group]);
   return yield* Effect.gen(function* () {
-    const sealedClient = yield* sealedEnvironmentHttpClient(input.prepared.environmentId, {
-      signer: input.signer,
-      registrations: yield* Effect.serviceOption(Persistence.ConnectionRegistrationStore),
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new RemoteEnvironmentAuthFetchError({
-            ...translatableMessage(msg("Could not authorize the environment request.")),
-            cause,
-          }),
-      ),
-    );
+    // A cookie or bearer route to an environment whose key another route pinned stays as it is:
+    // the envelope drops cookies, and those sessions have no proof key for their sockets either.
+    const sealedClient =
+      input.prepared.httpAuthorization?._tag !== "Dpop"
+        ? Option.none<HttpClient.HttpClient>()
+        : yield* sealedEnvironmentHttpClient(input.prepared.environmentId, {
+            signer: input.signer,
+            registrations: yield* Effect.serviceOption(Persistence.ConnectionRegistrationStore),
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new RemoteEnvironmentAuthFetchError({
+                  ...translatableMessage(msg("Could not authorize the environment request.")),
+                  cause,
+                }),
+            ),
+          );
     let rejectedAccessToken: string | undefined;
     for (;;) {
       let authorization = input.prepared.httpAuthorization;
