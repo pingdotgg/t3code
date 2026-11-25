@@ -4,6 +4,7 @@ import {
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
+  providerInstanceTabMetrics,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
@@ -86,6 +87,16 @@ export function resolveProviderInstanceAcpRegistryIconUrl(input: {
   );
 }
 
+/**
+ * An "overlap" tab sits on the logo, so it is smaller than the shared tab and reaches past the
+ * slot's right edge. `overhang` stays inside the gap that follows the icon.
+ */
+const OVERLAP_TAB = {
+  compact: { height: 11, fontSize: 8, paddingHorizontal: 2.5, overhang: 5 },
+  default: { height: 13, fontSize: 10, paddingHorizontal: 3, overhang: 2 },
+} as const;
+const OVERLAP_TAB_DROP = 4;
+
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
@@ -94,6 +105,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   acpRegistryIconUrl?: string | undefined;
   showBadge?: boolean;
   badgeContent?: "initials" | "none";
+  /**
+   * The logo always keeps its slot, so rows with and without a tab line up. "overlap" (default)
+   * sets the tab on the logo's corner; "corner" hangs it outside, for round avatar slots.
+   */
+  badgePlacement?: "overlap" | "corner";
   size?: "default" | "compact";
   className?: string;
   iconClassName?: string;
@@ -120,6 +136,40 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     agentId: props.acpRegistryAgentId,
     iconUrl: props.acpRegistryIconUrl,
   });
+
+  const tab = providerInstanceTabMetrics(props.size === "compact" ? 14 : 20);
+  const rem = (px: number) => `${px / 16}rem`;
+  const corner = props.badgePlacement === "corner";
+  const overlapTab = OVERLAP_TAB[props.size === "compact" ? "compact" : "default"];
+  const initialsTab =
+    !isCustomEndpoint && props.showBadge && badgeContent === "initials" ? (
+      <span
+        className={cn(
+          "pointer-events-none absolute z-30 flex shrink-0 items-center justify-center font-bold leading-none tracking-wide",
+          accentColor
+            ? "bg-(--provider-accent) text-(--provider-accent-foreground)"
+            : "text-foreground",
+        )}
+        style={{
+          height: rem(corner ? tab.height : overlapTab.height),
+          ...(corner
+            ? { width: rem(tab.cornerWidth) }
+            : { padding: `0 ${rem(overlapTab.paddingHorizontal)}` }),
+          borderRadius: rem(tab.borderRadius),
+          fontSize: rem(corner ? tab.fontSize : overlapTab.fontSize),
+          boxShadow: `0 0 0 ${rem(tab.ring)} ${indicatorBackground}`,
+          ...(accentColor
+            ? {}
+            : { background: "color-mix(in srgb, var(--foreground) 24%, var(--background))" }),
+          ...(corner
+            ? { left: `calc(100% - ${rem(tab.overlap)})`, bottom: rem(-tab.drop) }
+            : { right: rem(-overlapTab.overhang), bottom: rem(-OVERLAP_TAB_DROP) }),
+        }}
+        aria-hidden
+      >
+        {providerInstanceInitials(props.displayName)}
+      </span>
+    ) : null;
 
   return (
     <span
@@ -172,22 +222,18 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
-      {isCustomEndpoint ? null : props.showBadge ? (
+      {initialsTab}
+      {!isCustomEndpoint && props.showBadge && badgeContent === "none" ? (
         <span
           className={cn(
-            "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-4xs font-semibold leading-none shadow-sm",
-            accentColor
-              ? "bg-(--provider-accent) text-(--provider-accent-foreground)"
-              : "bg-card text-muted-foreground",
-            props.size === "compact" &&
-              "right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs",
+            "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 rounded-full border shadow-sm",
+            accentColor ? "bg-(--provider-accent)" : "bg-card",
+            props.size === "compact" && "right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3",
             props.badgeClassName,
           )}
           style={{ borderColor: indicatorBackground }}
           aria-hidden
-        >
-          {badgeContent === "initials" ? providerInstanceInitials(props.displayName) : null}
-        </span>
+        />
       ) : null}
     </span>
   );
