@@ -5678,5 +5678,15 @@
       "k": "_gt_value_2",
       "v": "v"
     }
+  ],
+  "0f93532dd76391fc": "Du hast {choice} geantwortet",
+  "235902a19e95833b": [
+    "von dir,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
   ]
 }

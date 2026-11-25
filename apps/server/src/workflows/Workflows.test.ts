@@ -1318,10 +1318,11 @@ it.effect(
           assert.include(refused.message, "merge waits for");
           // Clicked twice: one answer, and nothing kept to answer it again.
           const answeredAt = yield* DateTime.now;
+          const laptop = { label: "Laptop", sessionId: "session-laptop" };
           yield* Effect.all(
             [
-              workflows.answer(runId, "merge", { choice: "Merge" }, "Laptop"),
-              workflows.answer(runId, "merge", { choice: "Merge" }, "Laptop"),
+              workflows.answer(runId, "merge", { choice: "Merge" }, laptop),
+              workflows.answer(runId, "merge", { choice: "Merge" }, laptop),
             ],
             { concurrency: "unbounded" },
           );
@@ -1346,6 +1347,8 @@ it.effect(
                 {
                   choice: "Merge",
                   answeredBy: "Laptop",
+                  // Another Laptop is told from this one by its session, not its name.
+                  answeredBySession: "session-laptop",
                   answeredAt: DateTime.formatIso(answeredAt),
                 },
               ],
@@ -2415,6 +2418,7 @@ it.effect(
               choice: "No",
               reason: "Out of scope",
               answeredBy: "someone else",
+              answeredBySession: "someone-elses-session",
               answeredAt: "never",
             },
             { id: "d0", answeredBy: "t3 workflow signal" },

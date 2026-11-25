@@ -3154,9 +3154,13 @@ it.effect("workflow RPCs read a run and pass an answer, a resume and a cancel to
       {
         answer: ["run-1", "approve"],
         value: { choice: "yes", reason: "Looks good" },
-        answeredBy: "Pixel 9",
+        answeredBy: { label: "Pixel 9", sessionId: "workflow-test" },
       },
-      { answer: ["run-1", "approve"], value: { choice: "no" }, answeredBy: "Pixel 9" },
+      {
+        answer: ["run-1", "approve"],
+        value: { choice: "no" },
+        answeredBy: { label: "Pixel 9", sessionId: "workflow-test" },
+      },
       { resume: "run-1" },
       { cancel: "run-1", reason: undefined },
       { cancel: "run-1", reason: "Wrong branch" },

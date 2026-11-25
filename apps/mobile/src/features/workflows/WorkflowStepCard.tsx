@@ -2,6 +2,7 @@ import {
   buildWorkflowFeed,
   buildWorkflowTimeline,
   workflowAgentSummary,
+  isOwnWorkflowAnswer,
   workflowAnswer,
   type WorkflowBeat,
   type WorkflowRunNode,
@@ -109,6 +110,8 @@ export function useWorkflowThreadOpener(
 /** All of one step, as its sheet shows it: what it said, its facts, and where to read more. */
 export function BeatCard(props: {
   readonly beat: WorkflowBeat;
+  /** This device's session on the run's environment: an answer it gave reads as yours. */
+  readonly sessionId: string | null;
   /** Null where this device cannot open the step's thread. */
   readonly onOpenThread: ((thread: NonNullable<WorkflowBeat["thread"]>) => void) | null;
   readonly onOpenRun: (runId: string) => void;
@@ -148,7 +151,14 @@ export function BeatCard(props: {
       )}
       {answer?.answeredAt == null ? null : (
         <Text className="text-xs text-foreground-muted">
-          {answer.answeredBy === null ? (
+          {isOwnWorkflowAnswer(answer, props.sessionId) ? (
+            <T>
+              by you,{" "}
+              <Var>
+                <RelativeTime timestamp={answer.answeredAt} />
+              </Var>
+            </T>
+          ) : answer.answeredBy === null ? (
             <T>
               answered{" "}
               <Var>

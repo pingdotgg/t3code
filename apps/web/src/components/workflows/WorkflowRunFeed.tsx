@@ -45,6 +45,7 @@ import { useEnvironmentProviders } from "../../state/environments";
 import { type MessageResolver } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentSessionId } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import ChatMarkdown from "../ChatMarkdown";
@@ -57,6 +58,7 @@ import {
   buildWorkflowTimeline,
   readWorkflowQuestion,
   workflowAgentSummary,
+  isOwnWorkflowAnswer,
   workflowAnswer,
   workflowChip,
   workflowFlowFocus,
@@ -1230,6 +1232,7 @@ function WorkflowBeatRow({
   const failed = beat.status === "failed";
   const said = workflowAgentSummary(beat).said;
   const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
+  const sessionId = useEnvironmentSessionId(environmentId);
   const wakes = beat.detail === null ? Number.NaN : Date.parse(beat.detail);
   // An agent's own approval or question needs a person as much as the workflow's does.
   const agentAsks =
@@ -1278,7 +1281,7 @@ function WorkflowBeatRow({
       case "ask":
         return answer === null
           ? gt("nobody answered")
-          : answer.answeredBy === null
+          : answer.answeredBy === null || isOwnWorkflowAnswer(answer, sessionId)
             ? gt("You said {choice}", { choice: answer.choice })
             : gt("{who} said {choice}", { who: answer.answeredBy, choice: answer.choice });
       case "sleep":
@@ -1492,6 +1495,7 @@ function WorkflowBeatCard({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const sessionId = useEnvironmentSessionId(environmentId);
   const under = beat.status === "running";
   const length = formatDuration(elapsedOf(beat));
   const tries = beat.attempts > 1 ? ` · ${nthTry(beat.attempts, m)}` : "";
@@ -1509,21 +1513,23 @@ function WorkflowBeatCard({
       const answer = workflowAnswer(beat.result);
       if (answer === null)
         return <Note label={beat.name}>{`${gt("nobody answered")} · ${length}`}</Note>;
+      // This client's own answer reads "You"; anyone else's, another device of yours too, its name.
+      const who = isOwnWorkflowAnswer(answer, sessionId) ? null : answer.answeredBy;
       return (
         <FeedCard label={beat.name}>
           <CardHead mark={null} name={beat.name} sub={length} />
           <p className="mt-3 text-sm">
-            {answer.answeredBy !== null && answer.reason === null ? (
+            {who !== null && answer.reason === null ? (
               <T>
-                <Var>{answer.answeredBy}</Var> said{" "}
+                <Var>{who}</Var> said{" "}
                 <span className="font-semibold">
                   <Var>{answer.choice}</Var>
                 </span>
                 .
               </T>
-            ) : answer.answeredBy !== null ? (
+            ) : who !== null ? (
               <T>
-                <Var>{answer.answeredBy}</Var> said{" "}
+                <Var>{who}</Var> said{" "}
                 <span className="font-semibold">
                   <Var>{answer.choice}</Var>
                 </span>

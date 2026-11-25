@@ -659,8 +659,10 @@ const openEnd = (beat: WorkflowBeat) =>
 export function workflowAnswer(result: WorkflowStep["result"]): {
   readonly choice: string;
   readonly reason: string | null;
-  /** The tool or CLI that answered; null for an answer given in the app, or kept before this. */
+  /** The client, tool or agent thread that answered, by name; null on an answer kept before this. */
   readonly answeredBy: string | null;
+  /** The client session that answered; null for a tool, an agent, or an answer kept before this. */
+  readonly answeredBySession: string | null;
   readonly answeredAt: string | null;
 } | null {
   const choice = field(result, "choice");
@@ -669,10 +671,20 @@ export function workflowAnswer(result: WorkflowStep["result"]): {
         choice,
         reason: text(field(result, "reason")),
         answeredBy: text(field(result, "answeredBy")),
+        answeredBySession: text(field(result, "answeredBySession")),
         answeredAt: text(field(result, "answeredAt")),
       }
     : null;
 }
+
+/**
+ * Whether the client whose session on the run's environment is `sessionId` gave `answer`. Decided
+ * by session, never by name: two browsers share "Chrome on Linux" and every phone its app's name.
+ */
+export const isOwnWorkflowAnswer = (
+  answer: { readonly answeredBySession: string | null },
+  sessionId: string | null | undefined,
+): boolean => answer.answeredBySession !== null && answer.answeredBySession === sessionId;
 
 /** Steps that were under way at the same time, shown side by side. */
 export interface WorkflowTogether {

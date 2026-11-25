@@ -526,8 +526,10 @@ type ChoiceValue<C> = C extends string ? C : C extends AskChoice<infer Value> ? 
 export type AskAnswer<Choice extends string> = {
   readonly choice: Choice;
   readonly reason?: string;
-  /** The tool or CLI that sent the answer; absent for one given in the app. */
+  /** The name of the client, tool or agent thread that sent the answer. */
   readonly answeredBy?: string;
+  /** The client session that sent it, for an answer given in the app. */
+  readonly answeredBySession?: string;
   readonly answeredAt?: string;
 };
 
@@ -537,6 +539,7 @@ const ASK_LINK_OPTIONS = ["label", "url"];
 
 const answeredFields = {
   answeredBy: Schema.optional(Schema.String),
+  answeredBySession: Schema.optional(Schema.String),
   answeredAt: Schema.optional(Schema.String),
 };
 const givenReason = Schema.String.check(Schema.isPattern(/\S/));

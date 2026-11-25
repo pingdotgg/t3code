@@ -17,6 +17,7 @@ import {
   listedWorkflowRuns,
   readWorkflowQuestion,
   workflowAgentSummary,
+  isOwnWorkflowAnswer,
   workflowAnswer,
   workflowChip,
   workflowFlowFocus,
@@ -605,6 +606,7 @@ describe("workflowAnswer", () => {
       choice: "Ship",
       reason: null,
       answeredBy: null,
+      answeredBySession: null,
       answeredAt: null,
     });
     expect(
@@ -618,10 +620,27 @@ describe("workflowAnswer", () => {
       choice: "Hold",
       reason: "Too risky",
       answeredBy: "t3 workflow signal",
+      answeredBySession: null,
       answeredAt: "2026-11-24T10:00:00.000Z",
     });
     expect(workflowAnswer("done")).toBeNull();
     expect(workflowAnswer(null)).toBeNull();
+  });
+
+  it("calls an answer the viewer's own by its session, never by its name", () => {
+    const own = (result: Record<string, string>, sessionId: string | null | undefined) =>
+      isOwnWorkflowAnswer(workflowAnswer({ choice: "Yes", ...result })!, sessionId);
+    const fromBrowser = { answeredBy: "Chrome on Linux", answeredBySession: "session-a" };
+    expect(own(fromBrowser, "session-a")).toBe(true);
+    // Another browser the server gives the same name.
+    expect(own(fromBrowser, "session-b")).toBe(false);
+    // An agent and the CLI answer as a thread or a tool, which no viewer is.
+    expect(own({ answeredBy: "Fix the login bug" }, "session-a")).toBe(false);
+    expect(own({ answeredBy: "t3 workflow signal" }, "session-a")).toBe(false);
+    // An answer kept before answers recorded a session, and a viewer whose own is not known.
+    expect(own({ answeredBy: "Chrome on Linux" }, "session-a")).toBe(false);
+    expect(own({}, undefined)).toBe(false);
+    expect(own(fromBrowser, null)).toBe(false);
   });
 });
 

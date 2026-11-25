@@ -940,19 +940,31 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const answerOf = Effect.fn("WorkflowEngine.answerOf")(function* (
     wait: { readonly request_json: string | null; readonly schema_json: string },
     value: Schema.Json,
-    answeredBy: string | undefined,
+    by: {
+      readonly answeredBy?: string | undefined;
+      readonly answeredBySession?: string | undefined;
+    },
   ) {
     if (wait.request_json === null || typeof value !== "object" || value === null) return undefined;
     if (Array.isArray(value)) return undefined;
     const problem = answerProblem(WorkflowStore.jsonValue(wait.request_json), value);
     if (problem !== undefined) return yield* new WorkflowInputError({ problem });
     if (!wait.schema_json.includes('"answeredAt"')) return undefined;
-    const { answeredBy: _by, answeredAt: _at, ...given } = value as Schema.JsonObject;
+    const {
+      answeredBy: _by,
+      answeredBySession: _session,
+      answeredAt: _at,
+      ...given
+    } = value as Schema.JsonObject;
     return {
       expired: false,
       value: {
         ...given,
-        ...(answeredBy === undefined ? {} : { answeredBy }),
+        ...(by.answeredBy === undefined ? {} : { answeredBy: by.answeredBy }),
+        // A question asked before answers kept the session has a closed schema without it.
+        ...(by.answeredBySession === undefined || !wait.schema_json.includes('"answeredBySession"')
+          ? {}
+          : { answeredBySession: by.answeredBySession }),
         answeredAt: DateTime.formatIso(yield* DateTime.now),
       },
     };
@@ -967,7 +979,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       while (true) {
         const wait = yield* store.waitAt(address);
         if (wait === undefined) break;
-        const answered = yield* answerOf(wait, value, options.answeredBy);
+        const answered = yield* answerOf(wait, value, options);
         const schema = WorkflowStore.jsonValue(wait.schema_json) as Record<string, Schema.Json>;
         const checked = yield* checkOutput(
           schema,
@@ -1018,7 +1030,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       // Named by this asking of the question, so every answer to it is one signal.
       yield* signal({ runId, wait: name }, value, {
         id: `answer:${wait.token}`,
-        ...(answeredBy === undefined ? {} : { answeredBy }),
+        ...(answeredBy === undefined
+          ? {}
+          : { answeredBy: answeredBy.label, answeredBySession: answeredBy.sessionId }),
       });
     },
   );

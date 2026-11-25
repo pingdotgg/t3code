@@ -29,6 +29,7 @@ import { cn } from "../../lib/cn";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentSessionId } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   Card,
@@ -176,6 +177,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   const insets = useSafeAreaInsets();
   const gt = useGT();
   const m = useMessages();
+  const sessionId = useEnvironmentSessionId(environmentId);
   const detail = useEnvironmentQuery(
     serverEnvironment.workflowRun({ environmentId, input: { runId: run.runId } }),
   );
@@ -335,6 +337,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
           <WorkflowTimeline
             rows={feed}
             node={node}
+            sessionId={sessionId}
             question={questionOf}
             loose={loose}
             renderQuestion={(asked) => question(asked, true)}

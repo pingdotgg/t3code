@@ -2419,6 +2419,8 @@ export const layerWsRpc = (
               ),
             ),
             Effect.orElseSucceed(() => EnvironmentAuth.clientSessionLabel(undefined)),
+            // The label names it to others; the session tells its own client the answer is its own.
+            Effect.map((label) => ({ label, sessionId: currentSessionId })),
             Effect.flatMap((answeredBy) =>
               workflows.answer(
                 input.runId,

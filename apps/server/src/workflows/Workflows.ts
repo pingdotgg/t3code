@@ -101,6 +101,8 @@ export class Workflows extends Context.Service<
         readonly ttl?: Duration.Input;
         /** Who sent it, kept with an answer to a question. */
         readonly answeredBy?: string | undefined;
+        /** The client session that sent it, where one did. A name is shared; this is not. */
+        readonly answeredBySession?: string | undefined;
       },
     ) => Effect.Effect<"delivered" | "buffered", WorkflowInputError>;
     /**
@@ -112,7 +114,7 @@ export class Workflows extends Context.Service<
       name: string,
       value: Schema.Json,
       /** Who answered, as the server knows them; kept with the answer. */
-      answeredBy?: string,
+      answeredBy?: { readonly label: string; readonly sessionId?: string | undefined },
     ) => Effect.Effect<void, WorkflowInputError>;
     /** Run a paused run's failed step again. */
     readonly resume: (runId: string) => Effect.Effect<void, WorkflowError>;
