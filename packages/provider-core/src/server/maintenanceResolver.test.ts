@@ -597,7 +597,9 @@ it.layer(
         NodeFS.mkdirSync(cacheTmpDir, { recursive: true });
         const otherRunEntry = NodePath.join(cacheTmpDir, "other-npm-run");
         NodeFS.writeFileSync(otherRunEntry, "");
-        NodeFS.utimesSync(otherRunEntry, new Date(0), new Date(0));
+        NodeFS.utimesSync(otherRunEntry, 0, 0);
+        // The probe starts after that entry was written and before npm writes its partial packument.
+        yield* TestClock.setTime(1_000_000_000_000);
         const partialPackument = NodePath.join(cacheTmpDir, "partial-packument");
         const viewStarted = yield* Deferred.make<void>();
         const spawner = ChildProcessSpawner.make((command) => {

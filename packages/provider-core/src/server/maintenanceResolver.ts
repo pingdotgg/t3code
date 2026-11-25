@@ -18,6 +18,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -1331,7 +1332,7 @@ const removeNpmCacheTmpSince = Effect.fn("removeNpmCacheTmpSince")(function* (
       yield* fileSystem.remove(entryPath, { recursive: true, force: true });
     }
   }
-}, Effect.ignore);
+});
 
 const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup")(function* (
   capabilities: ProviderMaintenanceCapabilities,
@@ -1344,15 +1345,17 @@ const withConfiguredNpmVersionLookup = Effect.fn("withConfiguredNpmVersionLookup
   const npmPath = yield* resolveCommandPath("npm", { env });
   if (!npmPath) return capabilities;
   const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
-  const lookup = Effect.suspend(() => {
-    const startedAt = Date.now();
-    return runProbe(
+  const lookup = Effect.gen(function* () {
+    const startedAt = yield* Clock.currentTimeMillis;
+    return yield* runProbe(
       npmPath,
       ["view", "--global", "--json", `${packageName}@latest`, "version"],
       env,
       [0],
       NPM_REGISTRY_PROBE_TIMEOUT,
-    ).pipe(Effect.onInterrupt(() => removeNpmCacheTmpSince(npmPath, env, startedAt)));
+    ).pipe(
+      Effect.onInterrupt(() => Effect.ignore(removeNpmCacheTmpSince(npmPath, env, startedAt))),
+    );
   }).pipe(
     Effect.map((stdout) => {
       const value = stdout ? Option.getOrNull(decodeNpmViewVersion(stdout.trim())) : null;
