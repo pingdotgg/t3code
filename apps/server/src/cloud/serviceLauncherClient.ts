@@ -21,7 +21,9 @@ import {
 import {
   decodeServiceLauncherContext,
   decodeServiceLauncherParentMessage,
+  parseServiceState,
   SERVICE_LAUNCHER_CONTEXT_ENV,
+  SERVICE_STATE_FILE,
   type ServiceLauncherChildMessage,
   type ServiceLauncherParentMessage,
   type SupportedLauncherProtocol,
@@ -368,24 +370,36 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
             { type: "prepared", updateId: pending.id },
             (reply) => reply.type === "committed" && reply.updateId === pending.id,
           ).pipe(
-            Effect.flatMap((reply) =>
-              reply.type !== "committed"
-                ? Effect.die("service launcher returned an impossible prepared response")
-                : repointLaunchers({
-                    baseDir: input.baseDir,
-                    targetVersion: pending.targetVersion,
-                  }).pipe(
-                    Effect.provideService(FileSystem.FileSystem, fs),
-                    Effect.provideService(Path.Path, path),
-                    Effect.provideService(HostProcess.Environment, environment),
-                    Effect.provideService(HostProcess.Platform, platform),
-                    Effect.as({
-                      id: pending.id,
-                      fromVersion: pending.fromVersion,
-                      targetVersion: pending.targetVersion,
-                      status: "committed" as const,
-                    }),
+            // An older launcher may finish slow cleanup before it replies; its durable commit is the decision.
+            Effect.catchIf(
+              (error) => error.operation === "timeout",
+              (error) =>
+                fs.readFileString(path.join(input.baseDir, "runtime", SERVICE_STATE_FILE)).pipe(
+                  Effect.map(parseServiceState),
+                  Effect.orElseSucceed(() => undefined),
+                  Effect.flatMap((state) =>
+                    state?.update?.id === pending.id && state.update.status === "committed"
+                      ? Effect.void
+                      : Effect.fail(error),
                   ),
+                ),
+            ),
+            Effect.andThen(
+              repointLaunchers({
+                baseDir: input.baseDir,
+                targetVersion: pending.targetVersion,
+              }).pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.provideService(Path.Path, path),
+                Effect.provideService(HostProcess.Environment, environment),
+                Effect.provideService(HostProcess.Platform, platform),
+                Effect.as({
+                  id: pending.id,
+                  fromVersion: pending.fromVersion,
+                  targetVersion: pending.targetVersion,
+                  status: "committed" as const,
+                }),
+              ),
             ),
           ),
         )

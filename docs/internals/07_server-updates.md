@@ -24,8 +24,10 @@ restarts never depend on npm cache eviction or a moving tag.
 3. Start the new runtime as a trial. It must finish migrations, acquire fallible dependencies, bind
    HTTP, and hold long-running roots at the activation gate before reporting `prepared`.
 4. Only after the launcher commits the new version durably and replies `committed` may the child
-   release activation gates and accept work. A failed or timed-out trial stops and restores the
-   snapshot before booting the old version.
+   release activation gates and accept work. The launcher replies before slow cleanup, but a remote
+   update keeps the old launcher, so a trial whose wait times out also accepts this update's commit
+   from the state file. A failed or timed-out trial stops and restores the snapshot before booting
+   the old version.
 
 ## Client acknowledgement
 

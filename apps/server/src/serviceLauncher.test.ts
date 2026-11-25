@@ -52,13 +52,18 @@ const spawnHook = vi.hoisted(() => ({
 }));
 
 const failRm = vi.hoisted(() => ({ path: undefined as string | undefined }));
+const holdRm = vi.hoisted(() => ({
+  current: undefined as ((path: unknown) => Promise<void>) | undefined,
+}));
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
   const rm: typeof actual.rm = (path, options) =>
     path === failRm.path
       ? Promise.reject(Object.assign(new Error("EACCES"), { code: "EACCES" }))
-      : actual.rm(path, options);
+      : holdRm.current === undefined
+        ? actual.rm(path, options)
+        : holdRm.current(path).then(() => actual.rm(path, options));
   return { ...actual, rm };
 });
 
@@ -405,6 +410,9 @@ setInterval(() => {}, 1_000);
         }[scenario],
       );
       assert.equal(yield* fs.readFileString(databasePath), "before trial");
+      // The child can answer "committed" before the launcher discards the backup; let it finish.
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
       assert.isFalse(yield* fs.exists(backupPath));
     }),
   );
@@ -1210,6 +1218,7 @@ process.exit(0);
       const statePath = path.join(root, "runtime", "service-state.json");
       const databasePath = path.join(root, "userdata", "state.sqlite");
       const activatedPath = path.join(root, "activated");
+      const backupAtCommitPath = path.join(root, "backup-at-commit");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, "before trial");
       const unit = yield* fakeServiceUnit(fs, path, root, "1.0.0", render);
@@ -1235,6 +1244,10 @@ if (context.update?.status === "pending") {
       assert.equal(state.activeVersion, "1.1.0");
       assert.equal(state.update.status, "committed");
       writeFileSync(${JSON.stringify(activatedPath)}, message.updateId);
+      writeFileSync(
+        ${JSON.stringify(backupAtCommitPath)},
+        String(existsSync(${JSON.stringify(path.join(root, "runtime", "db-backup"))} + "/" + message.updateId)),
+      );
       process.exit(0);
     }
   });
@@ -1293,8 +1306,42 @@ if (context.update?.status === "pending") {
           yield* Effect.promise(() => fresh.stop("SIGTERM"));
           yield* Effect.promise(() => running);
         });
-      return { fs, root, unit, recover };
+      return { fs, root, unit, recover, backupAtCommitPath };
     });
+
+  // The trial waits only 30 seconds for "committed"; backup cleanup can take minutes on a full disk.
+  it.effect("tells the trial it is committed before discarding the database backup", () =>
+    Effect.gen(function* () {
+      // Once "committed" is sent, hold the backup removal until the trial has read it and exited.
+      let committedSent = false;
+      const trialExited = Promise.withResolvers<void>();
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          spawnHook.current = (child) => {
+            child.send = new Proxy(child.send, {
+              apply(send, self, args: Parameters<typeof child.send>) {
+                if ((args[0] as { type?: unknown } | null)?.type === "committed") {
+                  committedSent = true;
+                  child.once("exit", () => trialExited.resolve());
+                }
+                return Reflect.apply(send, self, args);
+              },
+            });
+          };
+          holdRm.current = async (target) => {
+            if (committedSent && String(target).includes("db-backup")) await trialExited.promise;
+          };
+        }),
+        () =>
+          Effect.sync(() => {
+            spawnHook.current = undefined;
+            holdRm.current = undefined;
+          }),
+      );
+      const { fs, backupAtCommitPath } = yield* commitUpdate();
+      assert.equal(yield* fs.readFileString(backupAtCommitPath), "true");
+    }),
+  );
 
   it.effect.each([
     {

@@ -1392,10 +1392,10 @@ export class Launcher {
     };
     await this.#selectState(next);
     child.role = "active";
-    await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
     try {
       await sendMessage(child.process, { type: "committed", updateId: committed.id });
     } finally {
+      await discardDatabaseBackup(this.#baseDir, committed.id).catch(() => undefined);
       await this.#repointServiceUnit(committed.targetVersion);
     }
   }
