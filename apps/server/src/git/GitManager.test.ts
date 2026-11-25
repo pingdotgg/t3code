@@ -887,7 +887,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             options.name === "runGitCommand" &&
             Option.isSome(parent) &&
             parent.value._tag === "Span" &&
-            parent.value.name === "GitVcsDriver.readLocalStatusRefSnapshot"
+            parent.value.name === "GitVcsDriver.readBranchPickerRefs"
           ) {
             refCommands += 1;
           }
