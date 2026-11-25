@@ -251,6 +251,9 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
       Effect.provideService(HostProcess.Platform, platform),
       Effect.provideService(HostProcess.Architecture, architecture),
       Effect.orElseSucceed(() => undefined),
+      // Terminal startup runs uninterruptibly; a stalled helper check must not hold its locks.
+      Effect.interruptible,
+      Effect.timeoutOrElse({ duration: "5 seconds", orElse: () => Effect.void }),
     ),
   );
 
