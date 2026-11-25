@@ -104,7 +104,7 @@ export function buildAntigravityModelsFromSession(
   thinkingLevels: AntigravityThinkingLevels = new Map(),
   options?: {
     readonly defaultModel?: string | undefined;
-    readonly observeCurrentThinking?: boolean;
+    readonly authoritative?: boolean;
   },
 ): ReadonlyArray<ServerProviderModel> {
   const config = setup.configOptions?.find(
@@ -121,12 +121,15 @@ export function buildAntigravityModelsFromSession(
             name: model.name,
           })) ?? [])
         : [];
+  const authoritative = options?.authoritative ?? true;
   const defaultModel =
-    options?.defaultModel !== undefined &&
-    entries.some((entry) => entry.value === options.defaultModel)
-      ? options.defaultModel
-      : currentValue;
-  const observeCurrentThinking = options?.observeCurrentThinking ?? true;
+    options?.defaultModel !== undefined
+      ? entries.some((entry) => entry.value === options.defaultModel)
+        ? options.defaultModel
+        : currentValue
+      : authoritative
+        ? currentValue
+        : undefined;
   const currentThinking = antigravityThinkingConfig(setup.configOptions);
   const seen = new Set<string>();
   // The agent can list two IDs under one name; label the later ones so the picker tells them apart.
@@ -138,7 +141,7 @@ export function buildAntigravityModelsFromSession(
     const name = names.has(baseName) ? `${baseName} (${entry.value})` : baseName;
     names.add(baseName);
     const observed =
-      observeCurrentThinking && entry.value === currentValue
+      authoritative && entry.value === currentValue
         ? (currentThinking ?? null)
         : thinkingLevels.get(entry.value);
     return [
@@ -486,7 +489,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           checkedAt: updatedAt,
           models: buildAntigravityModelsFromSession(started.sessionSetupResult, thinkingLevels, {
             defaultModel: defaultModelSlug,
-            observeCurrentThinking: authoritative,
+            authoritative,
           }),
           supportedRuntimeModes,
           supportsTextGeneration,
@@ -520,7 +523,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     observeThinkingLevels(configOptions, authoritative);
     const models = buildAntigravityModelsFromSession({ configOptions }, thinkingLevels, {
       defaultModel: defaultModelSlug,
-      observeCurrentThinking: authoritative,
+      authoritative,
     });
     yield* SubscriptionRef.updateSome(metadata, (state) => {
       if (state.draft.auth.status !== "authenticated" || Equal.equals(state.draft.models, models)) {
