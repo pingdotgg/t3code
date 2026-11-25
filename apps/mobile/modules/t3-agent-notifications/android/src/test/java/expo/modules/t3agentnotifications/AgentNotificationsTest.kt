@@ -148,7 +148,8 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     )
 
     val alert = manager.activeNotifications.single().notification
-    assertEquals("Done: Test project", alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    val text = alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+    assertEquals("Done: Test project", text)
   }
 
   @Test
@@ -166,7 +167,8 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     val alert = manager.activeNotifications.single().notification
     assertEquals("thread-group", alert.group)
     assertEquals("Renamed thread", alert.extras.getString(Notification.EXTRA_TITLE))
-    assertEquals("Failed: Test project", alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    val text = alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+    assertEquals("Failed: Test project", text)
 
     AgentNotifications.clear(context)
     assertTrue(manager.activeNotifications.isEmpty())
@@ -191,13 +193,17 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     )
 
     val alert = manager.activeNotifications.single { it.tag == "t3-agent-alert" }.notification
-    assertEquals("Failed: Test project", alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+    val text = alert.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+    assertEquals("Failed: Test project", text)
   }
 
   @Test
   fun differentThreadsKeepTheirOwnAlerts() {
     AgentNotifications.receive(context, update("first", false) + ("alert_group" to "environment/a"))
-    AgentNotifications.receive(context, update("second", false) + ("alert_group" to "environment/b"))
+    AgentNotifications.receive(
+      context,
+      update("second", false) + ("alert_group" to "environment/b")
+    )
 
     assertEquals(
       setOf("environment/a", "environment/b"),
