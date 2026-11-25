@@ -262,34 +262,41 @@ const make = Effect.fn("NodePtyAdapter.make")(function* () {
         platform === "win32" && input.env["TERM"] === undefined
           ? { ...input.env, TERM: "xterm-256color" }
           : input.env;
-      const ptyProcess = yield* Effect.try({
-        try: () => {
-          const nativeProcess = nodePty.spawn(input.shell, input.args ?? [], {
-            cwd: input.cwd,
-            cols: input.cols,
-            rows: input.rows,
-            env,
-            name: "xterm-256color",
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const ptyProcess = yield* Effect.try({
+            try: () => {
+              const nativeProcess = nodePty.spawn(input.shell, input.args ?? [], {
+                cwd: input.cwd,
+                cols: input.cols,
+                rows: input.rows,
+                env,
+                name: "xterm-256color",
+              });
+              return { nativeProcess, process: new NodePtyProcess(nativeProcess, platform) };
+            },
+            catch: (cause) =>
+              new PtyAdapter.PtySpawnError({
+                adapter: "node-pty",
+                shell: input.shell,
+                cause,
+              }),
           });
-          return { nativeProcess, process: new NodePtyProcess(nativeProcess, platform) };
-        },
-        catch: (cause) =>
-          new PtyAdapter.PtySpawnError({
-            adapter: "node-pty",
-            shell: input.shell,
-            cause,
-          }),
-      });
-      if (platform === "win32") {
-        yield* waitForWindowsPid(ptyProcess.nativeProcess, ptyProcess.process, input.shell).pipe(
-          Effect.onError(() =>
-            Effect.sync(() => ptyProcess.process.disposeExitSubscription()).pipe(
-              Effect.andThen(killStartingWindowsPty(ptyProcess.nativeProcess)),
-            ),
-          ),
-        );
-      }
-      return ptyProcess.process;
+          if (platform === "win32") {
+            yield* restore(
+              waitForWindowsPid(ptyProcess.nativeProcess, ptyProcess.process, input.shell),
+            ).pipe(
+              Effect.onError(() =>
+                Effect.sync(() => ptyProcess.process.disposeExitSubscription()).pipe(
+                  Effect.andThen(killStartingWindowsPty(ptyProcess.nativeProcess)),
+                ),
+              ),
+            );
+          }
+          input.onSpawned?.(ptyProcess.process);
+          return ptyProcess.process;
+        }),
+      );
     }),
   });
 });

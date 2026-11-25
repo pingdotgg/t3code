@@ -3075,6 +3075,38 @@ it.layer(
       }
     }),
   );
+  it.effect("keeps a terminal attachable when another workspace opens during its startup", () =>
+    Effect.gen(function* () {
+      const ptyAdapter = new GatedPtyAdapter();
+      const { baseDir, manager } = yield* createManager(5, {
+        ptyAdapter,
+        maxRetainedInactiveSessions: 1,
+      });
+      const first = openInput();
+      const gate = {
+        spawning: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      ptyAdapter.gate = gate;
+      const pending = yield* manager.open(first).pipe(Effect.forkChild());
+      yield* Deferred.await(gate.spawning);
+      yield* manager.open(openInput({ threadId: "thread-2", cwd: baseDir }));
+      yield* Deferred.succeed(gate.release, undefined);
+      const opened = yield* Fiber.join(pending);
+
+      const events: TerminalAttachStreamEvent[] = [];
+      const stop = yield* manager.attachStream({ ...first, resume: true }, (event) =>
+        Effect.sync(() => {
+          events.push(event);
+        }),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(stop));
+      expect(events).toMatchObject([
+        { type: "snapshot", snapshot: { status: "running", pid: opened.pid } },
+      ]);
+    }),
+  );
+
   it.effect("removes terminal metadata subscriptions when initial delivery fails", () =>
     Effect.gen(function* () {
       const { manager } = yield* createManager();

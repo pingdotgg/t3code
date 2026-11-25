@@ -76,8 +76,9 @@ it.effect("waits for the Windows PID without requiring output", () =>
   Effect.gen(function* () {
     const { nativeProcess, subscribed } = preparePendingProcess();
     const adapter = yield* PtyAdapter.PtyAdapter;
+    const onSpawned = vi.fn<(process: PtyAdapter.PtyProcess) => void>();
     let completed = false;
-    const fiber = yield* adapter.spawn(spawnInput).pipe(
+    const fiber = yield* adapter.spawn({ ...spawnInput, onSpawned }).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
           completed = true;
@@ -87,10 +88,12 @@ it.effect("waits for the Windows PID without requiring output", () =>
     );
     yield* subscribed;
     assert.isFalse(completed);
+    assert.equal(onSpawned.mock.calls.length, 0);
     nativeProcess.pid = 12345;
     nativeProcess._socket.emit("ready_datapipe");
     const process = yield* Fiber.join(fiber);
     assert.equal(process.pid, 12345);
+    assert.deepEqual(onSpawned.mock.calls, [[process]]);
     assert.equal(nativeProcess._socket.listenerCount("ready_datapipe"), 0);
     assert.equal(nativeProcess.events.listenerCount("exit"), 1);
 
