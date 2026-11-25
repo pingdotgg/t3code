@@ -1107,15 +1107,23 @@ export const layer: Layer.Layer<
       if (
         cutTurn !== undefined &&
         session.nativeTurnKept !== undefined &&
-        !(yield* session
-          .nativeTurnKept({ providerThread, nativeTurnId: cutTurn.nativeTurnId })
-          .pipe(Effect.orElseSucceed(() => true)))
+        !(yield* (
+          session
+            .nativeTurnKept({ providerThread, nativeTurnId: cutTurn.nativeTurnId })
+            // As when the turn ends: an unknown answer resends the request rather than losing it.
+            .pipe(Effect.orElseSucceed(() => false))
+        ))
       ) {
         // Settle it as a Stop would: mark the request dropped and take back its inline context, so
         // this turn resends both. Starting again reads the settled state.
         const occurredAt = yield* DateTime.now;
         const allocateEventId = () =>
           idAllocator.allocate.event({ threadId: projection.thread.id });
+        // Its attempt starts before it delivers anything, so later inline deliveries are its own,
+        // including handoffs carried from an earlier run that they still target.
+        const cutStartedAt =
+          projection.attempts.find((candidate) => candidate.id === cutTurn.run.activeAttemptId)
+            ?.startedAt ?? cutTurn.run.startedAt;
         const settled = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
@@ -1135,9 +1143,11 @@ export const layer: Layer.Layer<
             ...(yield* Effect.forEach(
               projection.contextHandoffs.filter(
                 (handoff) =>
-                  handoff.targetRunId === cutTurn.run.id &&
                   handoff.delivery?.status === "inline" &&
-                  handoff.delivery.nativeThreadId === providerThread.nativeThreadRef?.nativeId,
+                  handoff.delivery.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
+                  (handoff.targetRunId === cutTurn.run.id ||
+                    (cutStartedAt !== null &&
+                      DateTime.isGreaterThanOrEqualTo(handoff.updatedAt, cutStartedAt))),
               ),
               ({ delivery: _delivery, ...handoff }) =>
                 Effect.map(allocateEventId(), (id) => ({
