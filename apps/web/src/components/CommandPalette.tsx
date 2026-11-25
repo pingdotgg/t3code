@@ -595,9 +595,9 @@ function OpenCommandPaletteDialog(props: {
   const draftProjectAddPending = useRef(false);
   const isCurrentAddProjectIntent = () =>
     addProjectDraftId === null || useCommandPaletteStore.getState().openIntent === props.openIntent;
-  const runProjectAdd = async (add: () => Promise<void>): Promise<void> => {
+  const runProjectAdd = <A,>(add: () => Promise<A>): Promise<A> => {
     draftProjectAddPending.current = addProjectDraftId !== null;
-    await add().finally(() => {
+    return add().finally(() => {
       draftProjectAddPending.current = false;
     });
   };
@@ -2203,18 +2203,18 @@ function OpenCommandPaletteDialog(props: {
     ) {
       return;
     }
-    draftProjectAddPending.current = addProjectDraftId !== null;
     newProjectSubmittingRef.current = true;
     setIsCreatingNewProject(true);
-    const created = await settlePromise(() =>
-      createNewProject({
-        environmentId: newProjectFlow.environmentId,
-        name: newProjectName,
-        publishTo: newProjectPublishes ? newProjectPublishTarget : null,
-      }),
+    const created = await runProjectAdd(() =>
+      settlePromise(() =>
+        createNewProject({
+          environmentId: newProjectFlow.environmentId,
+          name: newProjectName,
+          publishTo: newProjectPublishes ? newProjectPublishTarget : null,
+        }),
+      ),
     );
     newProjectSubmittingRef.current = false;
-    draftProjectAddPending.current = false;
     setIsCreatingNewProject(false);
     if (created._tag === "Failure") throw squashAtomCommandFailure(created);
     if (created.value && isCurrentAddProjectIntent()) setOpen(false);
