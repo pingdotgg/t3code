@@ -5,6 +5,7 @@ import type {
   PreviewStreamCopyOffer,
   PreviewStreamDownload,
   PreviewStreamFileChooser,
+  PreviewStreamSelectMenu,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 
 export interface PreviewStreamConfiguration {
@@ -39,6 +40,7 @@ export type PreviewStreamMessage =
   | ({ readonly type: "copyOffer" } & PreviewStreamCopyOffer)
   | ({ readonly type: "download" } & PreviewStreamDownload)
   | { readonly type: "fileChooser"; readonly chooser: PreviewStreamFileChooser | null }
+  | { readonly type: "selectMenu"; readonly menu: PreviewStreamSelectMenu | null }
   | {
       readonly type: "pictureInPicture";
       readonly supported: boolean;

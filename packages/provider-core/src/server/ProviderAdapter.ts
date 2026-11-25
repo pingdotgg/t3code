@@ -234,6 +234,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     providerTurnId: ProviderTurnId,
     runOrdinal: PositiveInt,
     failureItemOrdinal: PositiveInt,
+    /** The row the failure lands on; defaults to the turn's `terminal-failure` row. */
+    failureItemId: Schema.optional(TurnItemId),
     status: Schema.Literal("failed"),
     failure: OrchestrationV2ProviderFailure,
     retry: Schema.optional(OrchestrationV2ProviderRetry),
@@ -404,6 +406,8 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
     providerThreadId: ProviderThreadId,
     runId: RunId,
     cause: Schema.optional(Schema.Defect()),
+    /** The agent received no part of the turn, so context staged for it is still unsent. */
+    refusedBeforePrompt: Schema.optional(Schema.Boolean),
   },
 ) {
   override get message(): string {
@@ -648,7 +652,6 @@ export interface ProviderAdapterV2RuntimeRequestResponseInput {
 
 export interface ProviderAdapterV2ThreadSnapshot {
   readonly providerThread: OrchestrationV2ProviderThread;
-  readonly providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>;
   readonly messages: ReadonlyArray<OrchestrationV2ConversationMessage>;
   /** Ids in `messages` that hold the agent's reasoning, not its reply. */
   readonly reasoningMessageIds?: ReadonlyArray<OrchestrationV2ConversationMessage["id"]>;

@@ -177,6 +177,7 @@ export function start(configuration: PreviewStreamConfiguration) {
         onCopyOffer: (offer) => post({ type: "copyOffer", ...offer }),
         onDownload: (download) => post({ type: "download", ...download }),
         onFileChooser: (chooser) => post({ type: "fileChooser", chooser }),
+        onSelectMenu: (menu) => post({ type: "selectMenu", menu }),
         onViewport: (page) => {
           if (viewport?.width === page.width && viewport.height === page.height) return;
           viewport = page;

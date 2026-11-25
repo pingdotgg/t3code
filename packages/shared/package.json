@@ -55,6 +55,10 @@
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"
     },
+    "./projectMonogram": {
+      "types": "./src/projectMonogram.ts",
+      "import": "./src/projectMonogram.ts"
+    },
     "./mobileSourceMaps": {
       "types": "./src/mobileSourceMaps.ts",
       "import": "./src/mobileSourceMaps.ts"
@@ -107,6 +111,14 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./appImageRuntimeEnv": {
+      "types": "./src/appImageRuntimeEnv.ts",
+      "import": "./src/appImageRuntimeEnv.ts"
+    },
+    "./windowsSystem": {
+      "types": "./src/windowsSystem.ts",
+      "import": "./src/windowsSystem.ts"
+    },
     "./envTrampoline": {
       "types": "./src/envTrampoline.ts",
       "import": "./src/envTrampoline.ts"
@@ -139,6 +151,10 @@
       "types": "./src/schemaYaml.ts",
       "import": "./src/schemaYaml.ts"
     },
+    "./grepOutput": {
+      "types": "./src/grepOutput.ts",
+      "import": "./src/grepOutput.ts"
+    },
     "./toolActivity": {
       "types": "./src/toolActivity.ts",
       "import": "./src/toolActivity.ts"
@@ -150,6 +166,10 @@
     "./toolOutput": {
       "types": "./src/toolOutput.ts",
       "import": "./src/toolOutput.ts"
+    },
+    "./appLinks": {
+      "types": "./src/appLinks.ts",
+      "import": "./src/appLinks.ts"
     },
     "./htmlRender": {
       "types": "./src/htmlRender.ts",
@@ -206,6 +226,10 @@
     "./desktopBootstrapToken": {
       "types": "./src/desktopBootstrapToken.ts",
       "import": "./src/desktopBootstrapToken.ts"
+    },
+    "./desktopReadinessProof": {
+      "types": "./src/desktopReadinessProof.ts",
+      "import": "./src/desktopReadinessProof.ts"
     },
     "./dpopCommon": {
       "types": "./src/dpopCommon.ts",
@@ -518,6 +542,10 @@
     "./markdownGithubAlerts": {
       "types": "./src/markdownGithubAlerts.ts",
       "import": "./src/markdownGithubAlerts.ts"
+    },
+    "./markdownChunks": {
+      "types": "./src/markdownChunks.ts",
+      "import": "./src/markdownChunks.ts"
     },
     "./markdownHast": {
       "types": "./src/markdownHast.ts",
