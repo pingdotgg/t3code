@@ -27,9 +27,20 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
   const requested = useRef(new Set<string>());
   // Loaded folders a refresh skipped because they were hidden; their next load reads them again.
   const stale = useRef(new Set<string>());
+  // Folders the running refresh still waits for; refreshes asked for meanwhile merge into one rerun.
+  const sweep = useRef<Set<string> | null>(null);
+  const queuedSweep = useRef<(() => void) | null>(null);
   const active = useRef(true);
   const running = useRef(0);
   const waiting = useRef<Array<() => void>>([]);
+
+  const finishSweepPath = (current: Set<string> | null, path: string) => {
+    if (!current || sweep.current !== current || !current.delete(path) || current.size > 0) return;
+    sweep.current = null;
+    const queued = queuedSweep.current;
+    queuedSweep.current = null;
+    if (queued && active.current) queued();
+  };
 
   const startRequest = (directoryPath: string, refresh: boolean): Promise<void> => {
     loaded.current.add(directoryPath);
@@ -77,6 +88,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
             loaded.current.delete(path);
             requested.current.delete(path);
             stale.current.delete(path);
+            finishSweepPath(sweep.current, path);
             const detachedRequest = requests.current.get(path);
             if (detachedRequest) detachedRequests.current.set(path, detachedRequest);
             requests.current.delete(path);
@@ -181,12 +193,31 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
 
   /** Re-reads the root and the `open` folders (all loaded folders when omitted). */
   const refresh = (open?: ReadonlySet<string>) => {
-    const paths = [...requested.current].filter((path) => reachableDirectories.has(path));
+    if (sweep.current) {
+      queuedSweep.current = () => refresh(open);
+      return;
+    }
+    const reachable = new Set([""]);
+    const pending = [""];
+    for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
+      for (const entry of listings.current.get(path) ?? []) {
+        if (entry.kind !== "directory") continue;
+        reachable.add(entry.path);
+        pending.push(entry.path);
+      }
+    }
+    const paths: string[] = [];
+    for (const path of requested.current) {
+      if (!reachable.has(path)) continue;
+      if (!open || path === "" || open.has(path)) paths.push(path);
+      else if (loaded.current.has(path)) stale.current.add(path);
+    }
+    if (paths.length === 0) return;
+    const current = new Set(paths);
+    sweep.current = current;
     for (const path of paths) {
       if (!active.current) break;
-      if (open && path !== "" && !open.has(path)) {
-        if (loaded.current.has(path)) stale.current.add(path);
-      } else void load(path, true);
+      void load(path, true).finally(() => finishSweepPath(current, path));
     }
   };
 

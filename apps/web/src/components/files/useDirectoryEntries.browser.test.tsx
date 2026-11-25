@@ -308,3 +308,30 @@ it("refreshes only open folders and re-reads a skipped folder when it is next lo
   expect(state.calls).toHaveLength(6);
   expect(state.view.isPending).toBe(false);
 });
+
+it("merges refreshes asked for during a running refresh into one rerun after it", async () => {
+  const state = setup();
+  // The hook probe does not navigate.
+  await using _screen = await render(<state.Probe />, { router: false });
+  const folders = ["a", "b"].map((path) => ({ path, kind: "directory" as const }));
+  await state.settle(0, folders);
+  await act(async () => {
+    for (const folder of folders) void state.view.load(folder.path);
+  });
+  await state.settle(1);
+  await state.settle(2);
+
+  await act(async () => state.view.refresh());
+  expect(state.calls.slice(3).map((call) => call.path)).toEqual(["", "a", "b"]);
+  await state.settle(3, folders);
+  await state.settle(4);
+  await act(async () => {
+    for (let index = 0; index < 5; index++) state.view.refresh();
+  });
+  expect(state.calls).toHaveLength(6);
+  await state.settle(5);
+  expect(state.calls.slice(6).map((call) => call.path)).toEqual(["", "a", "b"]);
+  for (let index = 6; index < 9; index++) await state.settle(index, index === 6 ? folders : []);
+  expect(state.calls).toHaveLength(9);
+  expect(state.view.isPending).toBe(false);
+});
