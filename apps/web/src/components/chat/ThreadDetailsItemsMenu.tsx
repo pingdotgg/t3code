@@ -25,24 +25,19 @@ import {
  */
 export function ThreadDetailsItemsMenuItems(props: {
   readonly section?: ThreadDetailsSectionId | null;
-  /** Sections the card shows now. A move passes one of them, so it always changes the card. */
-  readonly shown?: ReadonlyArray<ThreadDetailsSectionId> | undefined;
+  /** The sections the card shows right now. A move passes one of them, so it always shows. */
+  readonly shownSections?: () => ReadonlyArray<ThreadDetailsSectionId>;
 }) {
   const visibility = useClientSettings(resolveThreadDetailsVisibility);
   const order = useClientSettings(resolveThreadDetailsOrder);
   const m = useMessages();
   const section = THREAD_DETAILS_SECTIONS.find((candidate) => candidate.id === props.section);
-  // Sections shown when the menu opened, minus any turned off in this menu since.
-  const shown = order.filter(
-    (id) =>
-      id === section?.id ||
-      (props.shown?.includes(id) &&
-        THREAD_DETAILS_SECTIONS.find((candidate) => candidate.id === id)?.items.some(
-          (item) => visibility[item],
-        )),
-  );
-  const neighbor = (direction: -1 | 1) =>
-    section ? shown[shown.indexOf(section.id) + direction] : undefined;
+  const neighbor = (direction: -1 | 1) => {
+    if (!section) return undefined;
+    const shown = props.shownSections?.() ?? [];
+    const others = order.filter((id) => id === section.id || shown.includes(id));
+    return others[others.indexOf(section.id) + direction];
+  };
   const move = (direction: -1 | 1) => {
     const passes = neighbor(direction);
     if (!section || passes === undefined) return;

@@ -20,7 +20,7 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
 import { T, useGT } from "gt-react";
-import { Fragment, useState, type ComponentProps, type ReactNode } from "react";
+import { Fragment, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -111,8 +111,14 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     x: number;
     y: number;
     section: ThreadDetailsSectionId | null;
-    shown: ReadonlyArray<ThreadDetailsSectionId>;
   } | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  // Read when a move happens, so sections turned on or off in the open menu count.
+  const shownSections = () =>
+    [...(cardRef.current?.querySelectorAll<HTMLElement>("[data-thread-details-section]") ?? [])]
+      .filter((element) => element.getClientRects().length > 0)
+      .map((element) => threadDetailsSectionForHeading(element.dataset.threadDetailsSection)?.id)
+      .filter((id) => id !== undefined);
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
     props.activeProjectScripts && visible.scripts ? props.gitCwd : null,
@@ -191,23 +197,15 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         )
           return;
         event.preventDefault();
-        const sectionOf = (element: HTMLElement | null) =>
-          threadDetailsSectionForHeading(element?.dataset.threadDetailsSection)?.id ?? null;
+        cardRef.current = event.currentTarget;
         setMenu({
           x: event.clientX,
           y: event.clientY,
-          section: sectionOf(target.closest<HTMLElement>("[data-thread-details-section]")),
-          shown: [
-            ...new Set(
-              [
-                ...event.currentTarget.querySelectorAll<HTMLElement>(
-                  "[data-thread-details-section]",
-                ),
-              ]
-                .filter((element) => element.getClientRects().length > 0)
-                .map(sectionOf),
-            ),
-          ].filter((id) => id !== null),
+          section:
+            threadDetailsSectionForHeading(
+              target.closest<HTMLElement>("[data-thread-details-section]")?.dataset
+                .threadDetailsSection,
+            )?.id ?? null,
         });
       }}
     >
@@ -374,7 +372,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   panel
                   onClick={(event) => {
                     const rect = event.currentTarget.getBoundingClientRect();
-                    setMenu({ x: rect.left, y: rect.bottom, section: null, shown: [] });
+                    setMenu({ x: rect.left, y: rect.bottom, section: null });
                   }}
                 >
                   <SlidersHorizontalIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
@@ -397,7 +395,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 align="start"
                 side="bottom"
               >
-                <ThreadDetailsItemsMenuItems section={menu?.section ?? null} shown={menu?.shown} />
+                <ThreadDetailsItemsMenuItems
+                  section={menu?.section ?? null}
+                  shownSections={shownSections}
+                />
               </MenuPopup>
             </Menu>
           </>
