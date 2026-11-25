@@ -532,8 +532,10 @@ const INSTALL_PROBES = `(() => {
     const t0 = performance.now();
     const watch = { t0, clickAt: null, frames: [] };
     const tick = (ts) => {
+      // ts is the frame's begin time, which can precede the click whose long task delayed it.
       watch.frames.push({
         ts,
+        at: performance.now(),
         moved: location.pathname !== fromPath,
         rows: document.querySelectorAll("[data-timeline-row-id]").length,
         loading: document.querySelector("[data-timeline-loading]") !== null,
@@ -607,7 +609,7 @@ const READ_SWITCH = `(() => {
     at,
     reading: {
       paintMs: event ? Math.round(event.duration) : null,
-      contentMs: content ? Math.max(0, Math.round(content.ts - clickAt)) : null,
+      contentMs: content ? Math.max(0, Math.round(content.at - clickAt)) : null,
       firstFrameContent: Boolean(moved && content && moved === content),
       loafMs: Math.round(loaf),
     },
@@ -717,6 +719,10 @@ const stopRenders = Effect.fn("clientMetrics.stopRenders")(function* (
   return rendersOf(reading);
 });
 
+/** Whether a page path is a thread's route; ids like `mcp:<uuid>` are percent-encoded in it. */
+const isThreadPath = (path: string, threadId: string) =>
+  decodeURIComponent(path).endsWith(`/${threadId}`);
+
 const rowKeyOf = (seeded: Seeded, name: ThreadName) =>
   `${seeded.environmentId}:${seeded.threads[name]}`;
 
@@ -761,7 +767,7 @@ const clickRow = Effect.fn("clientMetrics.clickRow")(function* (
   if (!read.clicked) {
     return yield* new MetricsError({ message: `switch to ${name}: the page saw no click` });
   }
-  if (!read.at.endsWith(`/${h.seeded.threads[name]}`)) {
+  if (!isThreadPath(read.at, h.seeded.threads[name])) {
     return yield* new MetricsError({
       message: `switch to ${name}: the click left the page at ${read.at}`,
     });
@@ -772,7 +778,7 @@ const clickRow = Effect.fn("clientMetrics.clickRow")(function* (
 
 const onThread = Effect.fn("clientMetrics.onThread")(function* (h: Harness, name: ThreadName) {
   const at = evaluate(h.page, "location.pathname", Schema.String);
-  const opened = (path: string) => path.endsWith(`/${h.seeded.threads[name]}`);
+  const opened = (path: string) => isThreadPath(path, h.seeded.threads[name]);
   if (opened(yield* at)) return;
   yield* clickRow(h, name, { kind: "plain" });
   const now = yield* at;
