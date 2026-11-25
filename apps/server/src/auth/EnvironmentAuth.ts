@@ -119,6 +119,8 @@ export interface AuthenticatedSession {
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
+  /** Set on an RPC socket upgrade whose verified DPoP proof asked for the secure channel. */
+  readonly secureChannel?: true;
 }
 
 const serverAuthInternalErrorContext = {
@@ -1598,6 +1600,7 @@ export const make = Effect.gen(function* () {
               diagnostic: `WebSocket ticket was issued for the ${session.audience} route.`,
             });
           }
+          let secureChannel = false;
           if (session.proofKeyThumbprint) {
             // WebSocket clients cannot set headers, so the proof travels in the query.
             // The proof hashes the ticket; consuming its jti prevents replay after first use.
@@ -1609,7 +1612,7 @@ export const make = Effect.gen(function* () {
                 dpopFailureReason: "invalid_proof",
               });
             }
-            yield* verifyRequestDpopProof({
+            const verified = yield* verifyRequestDpopProof({
               request,
               proof,
               expectedThumbprint: session.proofKeyThumbprint,
@@ -1618,6 +1621,7 @@ export const make = Effect.gen(function* () {
               Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
               Effect.provideService(Digest.Digest, digest),
             );
+            secureChannel = verified.secureChannel;
           }
           return {
             sessionId: session.sessionId,
@@ -1628,6 +1632,7 @@ export const make = Effect.gen(function* () {
               ? { proofKeyThumbprint: session.proofKeyThumbprint }
               : {}),
             ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
+            ...(secureChannel ? { secureChannel: true as const } : {}),
           };
         }
       }

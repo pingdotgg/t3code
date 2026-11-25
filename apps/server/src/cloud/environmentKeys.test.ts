@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import { importRelayPublicKey } from "@t3tools/shared/relayJwt";
+import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -35,6 +37,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         assert.isTrue(Option.isSome(yield* secretStore.get("cloud-link-ed25519-key-pair")));
         assert.isTrue(Option.isNone(yield* secretStore.get("cloud-link-ed25519-private-key")));
         assert.isTrue(Option.isNone(yield* secretStore.get("cloud-link-ed25519-public-key")));
+
+        const signingKey = yield* EnvironmentSigningKey.pipe(Effect.provide(layer));
+        const identity = yield* signingKey.secureChannelIdentity;
+        const message = new TextEncoder().encode("transcript");
+        const publicKey = yield* importRelayPublicKey(first.publicKey);
+        assert.deepEqual(identity.publicKey, yield* Signature.toBytes(publicKey.key));
+        assert.strictEqual(identity.publicKey.length, 32);
+        const signature = yield* Signature.Signature;
+        assert.isTrue(
+          yield* signature.verify(publicKey.key, yield* identity.sign(message), message),
+        );
       }).pipe(Effect.provide(layerServerSecretStore())),
     );
 
@@ -58,6 +71,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         assert.strictEqual(signingKey.publicKey, "public");
         const error = yield* Effect.flip(signingKey.sign({ typ: "test+jwt", payload: {} }));
         assert.strictEqual(error._tag, "RelayJwtError");
+        const channelError = yield* Effect.flip(signingKey.secureChannelIdentity);
+        assert.strictEqual(channelError.reason, "crypto_failure");
       }).pipe(Effect.provide(layerServerSecretStore())),
     );
 

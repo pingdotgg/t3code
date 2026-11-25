@@ -1098,6 +1098,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           key.sign({ method: "GET", url: socketUrl, token: Redacted.value(rpc.ticket), iat }),
         );
         expect(signed.sessionId).toBe(session.sessionId);
+        expect(signed.secureChannel).toBeUndefined();
+        const secure = yield* upgrade(
+          Redacted.value(rpc.ticket),
+          "rpc",
+          key.sign({
+            method: "GET",
+            url: socketUrl,
+            token: Redacted.value(rpc.ticket),
+            iat,
+            claims: { t3sc: true },
+          }),
+        );
+        expect(secure.secureChannel).toBe(true);
 
         const wrongKey = yield* Effect.flip(
           upgrade(

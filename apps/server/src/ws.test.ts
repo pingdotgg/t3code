@@ -1,6 +1,6 @@
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as NodeWS from "@effect/platform-node/NodeWS";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { WebSocket } from "@effect/platform-node/NodeWS";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Bind an isolated WebSocket negotiation fixture.
 import * as NodeHttp from "node:http";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -48,7 +48,16 @@ import {
   type ServerConfigStreamEvent,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { computeDpopJwkThumbprint } from "@t3tools/shared/dpop";
+import { SecureChannelError, type SecureChannelIdentity } from "@t3tools/shared/secureChannel";
+import {
+  makeSecureClientSocket,
+  SECURE_CHANNEL_CLOSE_CODE,
+} from "@t3tools/shared/secureChannelSocket";
 import { SOCKET_FRAME_PARTS_QUERY_PARAM } from "@t3tools/shared/socketFrameParts";
+import * as Signature from "effect/crypto/Signature";
+import * as Base64Url from "effect/encoding/Base64Url";
+import * as Socket from "effect/socket/Socket";
 import * as Deferred from "effect/Deferred";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as DateTime from "effect/DateTime";
@@ -69,7 +78,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
 import * as Ws from "./ws.ts";
-import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
+import { EnvironmentSigningKey } from "./cloud/environmentKeys.ts";
+import { RpcClient, RpcGroup, RpcMessage, RpcSerialization, RpcServer } from "effect/rpc";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
@@ -942,6 +952,76 @@ const layerConfigSources = Layer.mergeAll(
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
+const SECURE_TEST_ENVIRONMENT_ID = EnvironmentId.make("secure-channel-test");
+
+/** Serves `/ws` on a real port for `session` and returns its socket URL. */
+const serveRpcSocket = Effect.fnUntraced(function* (
+  session: EnvironmentAuth.AuthenticatedSession,
+  secureChannelIdentity: Effect.Effect<SecureChannelIdentity, SecureChannelError> = Effect.die(
+    "This fixture has no environment key.",
+  ),
+) {
+  const services = Layer.mergeAll(
+    layerUnusedConfigRpcServices,
+    Layer.mock(ServerBrowser.ServerBrowser)({
+      profileReporter: Effect.succeed(() => Effect.void),
+    }),
+    Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+      authenticateWebSocketUpgrade: () => Effect.succeed(session),
+    }),
+    Layer.mock(SessionStore.SessionStore)({
+      cookieName: "compression-test",
+      legacyCookieName: undefined,
+      markConnected: () => Effect.void,
+      markDisconnected: () => Effect.void,
+      awaitInvalidation: () => Effect.never,
+    }),
+    Layer.mock(AnalyticsService.AnalyticsService)({ recordOwners: () => Effect.void }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: process.cwd(),
+    }),
+    Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+    Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+    Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+    Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+    Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({
+      getEnvironmentId: Effect.succeed(SECURE_TEST_ENVIRONMENT_ID),
+    }),
+    Layer.mock(EnvironmentSigningKey)({ publicKey: "", secureChannelIdentity }),
+    Layer.mock(VcsProcess.VcsProcess)({
+      run: (input) =>
+        Effect.fail(
+          new VcsProcessSpawnError({
+            operation: input.operation,
+            command: input.command,
+            cwd: input.cwd,
+            cause: "No VCS commands in the compression fixture",
+          }),
+        ),
+    }),
+    ProviderInstallationGate.layer,
+    FetchHttpClient.layer,
+  );
+  const context = yield* Layer.build(
+    HttpRouter.serve(Ws.layer, { disableListenLog: true }).pipe(
+      Layer.provideMerge(
+        NodeHttpServer.layer(NodeHttp.createServer, {
+          host: "127.0.0.1",
+          port: 0,
+          websocket: { perMessageDeflate: true },
+        }),
+      ),
+      Layer.provide(services),
+      Layer.provide(layerConfigSources),
+    ),
+  );
+  const server = Context.get(context, HttpServer.HttpServer);
+  const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
+  return `${origin}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${ORCHESTRATION_PROTOCOL_VERSION}`;
+});
+
 it.live.each([
   { subject: "desktop-bootstrap", extensions: "", framed: false },
   { subject: "desktop-bootstrap", extensions: "", framed: true },
@@ -951,76 +1031,18 @@ it.live.each([
   "negotiates compression for $subject sessions (framed=$framed)",
   ({ subject, extensions, framed }) =>
     Effect.gen(function* () {
-      const services = Layer.mergeAll(
-        layerUnusedConfigRpcServices,
-        Layer.mock(ServerBrowser.ServerBrowser)({
-          profileReporter: Effect.succeed(() => Effect.void),
-        }),
-        Layer.mock(EnvironmentAuth.EnvironmentAuth)({
-          authenticateWebSocketUpgrade: () =>
-            Effect.succeed({
-              sessionId: AuthSessionId.make("compression-test"),
-              subject,
-              method: "bearer-access-token",
-              scopes: [],
-            }),
-        }),
-        Layer.mock(SessionStore.SessionStore)({
-          cookieName: "compression-test",
-          legacyCookieName: undefined,
-          markConnected: () => Effect.void,
-          markDisconnected: () => Effect.void,
-          awaitInvalidation: () => Effect.never,
-        }),
-        Layer.mock(AnalyticsService.AnalyticsService)({ recordOwners: () => Effect.void }),
-        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-          namedProjectsRoot: process.cwd(),
-        }),
-        Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
-        Layer.mock(UsageLimitSources.UsageLimitSources)({}),
-        Layer.mock(ExternalLauncher.ExternalLauncher)({}),
-        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
-        Layer.mock(DirectEndpoints.DirectEndpoints)({}),
-        Layer.mock(ServerEnvironment.ServerEnvironment)({}),
-        Layer.mock(VcsProcess.VcsProcess)({
-          run: (input) =>
-            Effect.fail(
-              new VcsProcessSpawnError({
-                operation: input.operation,
-                command: input.command,
-                cwd: input.cwd,
-                cause: "No VCS commands in the compression fixture",
-              }),
-            ),
-        }),
-        ProviderInstallationGate.layer,
-        FetchHttpClient.layer,
-      );
-      const context = yield* Layer.build(
-        HttpRouter.serve(Ws.layer, { disableListenLog: true }).pipe(
-          Layer.provideMerge(
-            NodeHttpServer.layer(NodeHttp.createServer, {
-              host: "127.0.0.1",
-              port: 0,
-              websocket: { perMessageDeflate: true },
-            }),
-          ),
-          Layer.provide(services),
-          Layer.provide(layerConfigSources),
-        ),
-      );
-      const server = Context.get(context, HttpServer.HttpServer);
-      const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
+      const url = yield* serveRpcSocket({
+        sessionId: AuthSessionId.make("compression-test"),
+        subject,
+        method: "bearer-access-token",
+        scopes: [],
+      });
       const socket = yield* Effect.acquireRelease(
         Effect.sync(
           () =>
-            new WebSocket(
-              `${origin}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${ORCHESTRATION_PROTOCOL_VERSION}${framed ? `&${SOCKET_FRAME_PARTS_QUERY_PARAM}=1` : ""}`,
-              {
-                origin: "t3code://app",
-              },
-            ),
+            new NodeWS.WebSocket(`${url}${framed ? `&${SOCKET_FRAME_PARTS_QUERY_PARAM}=1` : ""}`, {
+              origin: "t3code://app",
+            }),
         ),
         (socket) => Effect.sync(() => socket.terminate()),
       );
@@ -1033,6 +1055,109 @@ it.live.each([
       );
       assert.equal(socket.extensions, extensions);
     }).pipe(Effect.scoped),
+);
+
+/** A client DPoP key and the environment key, as secure channel identities. */
+const makeSecureChannelKeys = Effect.gen(function* () {
+  const signature = yield* Signature.Signature;
+  const identityOf = Effect.fnUntraced(function* (algorithm: Signature.Algorithm) {
+    const pair = yield* signature.generateKeyPair(algorithm);
+    const identity: SecureChannelIdentity = {
+      publicKey: yield* Signature.toBytes(pair.publicKey),
+      sign: (message) =>
+        signature
+          .sign(pair.privateKey, message)
+          .pipe(
+            Effect.mapError((cause) => new SecureChannelError({ reason: "crypto_failure", cause })),
+          ),
+    };
+    return { identity, publicKey: pair.publicKey };
+  }, Effect.orDie);
+  const client = yield* identityOf(Signature.ecdsaP256);
+  const environment = yield* identityOf(Signature.ed25519);
+  const thumbprintOf = (publicKey: Uint8Array) =>
+    computeDpopJwkThumbprint({
+      kty: "EC",
+      crv: "P-256",
+      x: Base64Url.encode(publicKey.subarray(1, 33)),
+      y: Base64Url.encode(publicKey.subarray(33)),
+    });
+  const secureSession = (proofKey: Uint8Array): EnvironmentAuth.AuthenticatedSession => ({
+    sessionId: AuthSessionId.make("secure-channel-test"),
+    subject: "one-time-token",
+    method: "dpop-access-token",
+    scopes: [AuthOrchestrationReadScope],
+    proofKeyThumbprint: thumbprintOf(proofKey),
+    secureChannel: true,
+  });
+  /** The client's end of the channel over a fresh connection to `url`. */
+  const connect = (url: string) =>
+    Socket.makeWebSocket(url).pipe(
+      Effect.flatMap((socket) =>
+        makeSecureClientSocket(socket, {
+          context: new TextEncoder().encode(SECURE_TEST_ENVIRONMENT_ID),
+          identity: client.identity,
+          verifyPeer: (input) =>
+            input.publicKey.every((byte, index) => byte === environment.identity.publicKey[index])
+              ? signature
+                  .verify(environment.publicKey, input.signature, input.message)
+                  .pipe(Effect.orElseSucceed(() => false))
+              : Effect.succeed(false),
+        }),
+      ),
+      Effect.provide(NodeWS.layerWebSocketConstructor),
+    );
+  return { client, environment, secureSession, connect };
+});
+
+it.live("runs RPC over the secure channel when the upgrade proof asked for it", () =>
+  Effect.gen(function* () {
+    const keys = yield* makeSecureChannelKeys;
+    const url = yield* serveRpcSocket(
+      keys.secureSession(keys.client.identity.publicKey),
+      Effect.succeed(keys.environment.identity),
+    );
+    const socket = yield* keys.connect(url);
+    const protocol = yield* Layer.build(
+      RpcClient.layerProtocolSocket().pipe(
+        Layer.provide(Layer.succeed(Socket.Socket, socket)),
+        Layer.provide(RpcSerialization.layerJson),
+      ),
+    );
+    const client = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
+    const probe = yield* client[WS_METHODS.serverProbe]({});
+    assert.isString(probe.serverTime);
+  }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
+);
+
+it.live.each([
+  { label: "a plaintext RPC frame", secure: false, sessionKey: "client" },
+  { label: "a key other than the session's proof key", secure: true, sessionKey: "other" },
+] as const)(
+  "closes a socket that asked for the secure channel on $label",
+  ({ secure, sessionKey }) =>
+    Effect.gen(function* () {
+      const keys = yield* makeSecureChannelKeys;
+      const other = yield* makeSecureChannelKeys;
+      const url = yield* serveRpcSocket(
+        keys.secureSession((sessionKey === "client" ? keys : other).client.identity.publicKey),
+        Effect.succeed(keys.environment.identity),
+      );
+      const socket = secure
+        ? yield* keys.connect(url)
+        : yield* Socket.makeWebSocket(url).pipe(Effect.provide(NodeWS.layerWebSocketConstructor));
+      const writer = yield* socket.writer;
+      const reader = yield* socket.reader;
+      yield* writer.write(
+        JSON.stringify({ _tag: "Request", id: "1", tag: WS_METHODS.serverProbe, payload: {} }),
+      );
+      // The server closes before answering anything, so the pull fails without frames.
+      const error = yield* Effect.flip(reader.pull);
+      assert.strictEqual(
+        error.reason._tag === "SocketCloseError" ? error.reason.code : undefined,
+        SECURE_CHANNEL_CLOSE_CODE,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeCrypto.layer)),
 );
 
 it.effect.each([

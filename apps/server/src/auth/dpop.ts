@@ -127,7 +127,7 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
           ),
         );
     });
-  return { thumbprint: result.thumbprint, consume };
+  return { thumbprint: result.thumbprint, secureChannel: result.secureChannel, consume };
 });
 
 export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(function* (
@@ -135,5 +135,5 @@ export const verifyRequestDpopProof = Effect.fn("dpop.verifyRequestDpopProof")(f
 ) {
   const proof = yield* checkRequestDpopProof(input);
   yield* proof.consume;
-  return proof.thumbprint;
+  return { thumbprint: proof.thumbprint, secureChannel: proof.secureChannel };
 });

@@ -1,4 +1,10 @@
-import { importRelayPrivateKey, RelayJwtError, signRelayJwt } from "@t3tools/shared/relayJwt";
+import {
+  importRelayPrivateKey,
+  importRelayPublicKey,
+  RelayJwtError,
+  signRelayJwt,
+} from "@t3tools/shared/relayJwt";
+import { SecureChannelError, type SecureChannelIdentity } from "@t3tools/shared/secureChannel";
 import * as Context from "effect/Context";
 import * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
@@ -124,6 +130,8 @@ export class EnvironmentSigningKey extends Context.Service<
       readonly typ: string;
       readonly payload: Readonly<Record<string, unknown>>;
     }) => Effect.Effect<string, RelayJwtError>;
+    /** The same key as a secure channel identity: raw 32-byte public key, plain Ed25519 signatures. */
+    readonly secureChannelIdentity: Effect.Effect<SecureChannelIdentity, SecureChannelError>;
   }
 >()("t3/cloud/environmentKeys/EnvironmentSigningKey") {}
 
@@ -135,6 +143,27 @@ export const layer = Layer.effect(
     const keyPair = yield* getOrCreateEnvironmentKeyPairFromSecretStore(secrets);
     // Parsed lazily so corrupt key material fails Connect operations, not server startup.
     let privateKey: Jwk.PrivateKey | undefined;
+    const secureChannelIdentity = yield* Effect.cached(
+      Effect.gen(function* () {
+        const secret = yield* importRelayPrivateKey(keyPair.privateKey);
+        const publicKey = yield* importRelayPublicKey(keyPair.publicKey).pipe(
+          Effect.flatMap((key) => Signature.toBytes(key.key)),
+        );
+        return {
+          publicKey,
+          sign: (message: Uint8Array) =>
+            signature
+              .sign(secret.key, message)
+              .pipe(
+                Effect.mapError(
+                  (cause) => new SecureChannelError({ reason: "crypto_failure", cause }),
+                ),
+              ),
+        } satisfies SecureChannelIdentity;
+      }).pipe(
+        Effect.mapError((cause) => new SecureChannelError({ reason: "crypto_failure", cause })),
+      ),
+    );
     return EnvironmentSigningKey.of({
       publicKey: keyPair.publicKey,
       sign: Effect.fn("EnvironmentSigningKey.sign")(function* (input) {
@@ -149,6 +178,7 @@ export const layer = Layer.effect(
           Effect.provideService(Signature.Signature, signature),
         );
       }),
+      secureChannelIdentity,
     });
   }),
 );

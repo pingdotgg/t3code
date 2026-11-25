@@ -56,6 +56,7 @@ const DpopJwtPayloadJson = Schema.fromJsonString(
     jti: Schema.String.check(Schema.isNonEmpty()),
     iat: Schema.Int,
     ath: Schema.optionalKey(Schema.String),
+    t3sc: Schema.optionalKey(Schema.Boolean),
   }),
 );
 const decodeDpopJwtPayloadJson = Schema.decodeUnknownOption(DpopJwtPayloadJson);
@@ -66,6 +67,8 @@ export type DpopVerificationResult =
       readonly thumbprint: string;
       readonly jti: string;
       readonly iat: number;
+      /** The proof's `t3sc` claim: the client asks for the secure channel on this socket. */
+      readonly secureChannel: boolean;
     }
   | {
       readonly ok: false;
@@ -199,6 +202,7 @@ export function verifyDpopProof(input: {
       thumbprint,
       jti: payload.value.jti,
       iat: payload.value.iat,
+      secureChannel: payload.value.t3sc === true,
     };
   } catch {
     return { ok: false, code: "invalid_proof", reason: "Invalid DPoP proof." };

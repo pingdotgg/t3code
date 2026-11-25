@@ -19,6 +19,7 @@ function signDpopProof(input: {
   readonly privateKey: NodeCrypto.KeyObject;
   readonly publicJwk: DpopPublicJwk | (DpopPublicJwk & { readonly d: string });
   readonly accessToken?: string;
+  readonly claims?: Readonly<Record<string, unknown>>;
 }) {
   const header = Buffer.from(
     JSON.stringify({
@@ -34,6 +35,7 @@ function signDpopProof(input: {
       jti: "proof-1",
       iat: input.iat,
       ...(input.accessToken ? { ath: computeDpopAccessTokenHash(input.accessToken) } : {}),
+      ...input.claims,
     }),
   ).toString("base64url");
   const signature = NodeCrypto.sign("sha256", Buffer.from(`${header}.${payload}`), {
@@ -96,6 +98,30 @@ describe("verifyDpopProof", () => {
     }
     assert.equal(result.thumbprint, thumbprint);
     assert.equal(result.jti, "proof-1");
+    assert.equal(result.secureChannel, false);
+  });
+
+  it("reports the t3sc claim and ignores claims it does not know", () => {
+    const verify = (claims: Readonly<Record<string, unknown>>) =>
+      verifyDpopProof({
+        proof: signDpopProof({
+          method: "GET",
+          url: "https://example.com/ws",
+          iat: 100,
+          privateKey,
+          publicJwk,
+          claims,
+        }),
+        method: "GET",
+        url: "https://example.com/ws",
+        nowEpochSeconds: 101,
+      });
+    const asked = verify({ t3sc: true, future: "claim" });
+    if (!asked.ok) assert.fail(asked.reason);
+    assert.equal(asked.secureChannel, true);
+    const declined = verify({ t3sc: false });
+    if (!declined.ok) assert.fail(declined.reason);
+    assert.equal(declined.secureChannel, false);
   });
 
   it("rejects malformed DPoP header and payload JSON", () => {

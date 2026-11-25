@@ -199,6 +199,7 @@ import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
 import * as NpmRelease from "./cloud/npmRelease.ts";
 import * as RelayTracing from "./cloud/relayTracing.ts";
+import { EnvironmentSigningKey } from "./cloud/environmentKeys.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -293,6 +294,7 @@ import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as RelayClient from "@t3tools/shared/relayClient";
+import { makeSecureEnvironmentSocket } from "@t3tools/shared/secureChannelSocket";
 import {
   SOCKET_FRAME_PARTS_QUERY_PARAM,
   splitLargeSocketFrames,
@@ -3851,6 +3853,19 @@ export const layer = Layer.unwrap(
             "sec-websocket-extensions"
           ];
         }
+        // The proof asked for the secure channel, so this socket never carries plaintext RPC.
+        const secureChannel =
+          session.secureChannel && session.proofKeyThumbprint !== undefined
+            ? {
+                context: new TextEncoder().encode(
+                  yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId,
+                ),
+                identity: yield* (yield* EnvironmentSigningKey).secureChannelIdentity.pipe(
+                  Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
+                ),
+                proofKeyThumbprint: session.proofKeyThumbprint,
+              }
+            : undefined;
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* analytics.recordOwners(readClientOwners(request), "client");
         const reportProfiles = yield* serverBrowser.profileReporter;
@@ -3946,8 +3961,15 @@ export const layer = Layer.unwrap(
             // wrapped through the request it reads.
             Object.create(request, {
               upgrade: {
-                value: Effect.map(request.upgrade, (socket) =>
-                  withSocketHeartbeat(splitFrames ? splitLargeSocketFrames(socket) : socket),
+                value: (secureChannel === undefined
+                  ? request.upgrade
+                  : Effect.flatMap(request.upgrade, (socket) =>
+                      makeSecureEnvironmentSocket(socket, secureChannel),
+                    )
+                ).pipe(
+                  Effect.map((socket) =>
+                    withSocketHeartbeat(splitFrames ? splitLargeSocketFrames(socket) : socket),
+                  ),
                 ),
               },
             }),
