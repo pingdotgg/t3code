@@ -741,9 +741,36 @@ it.effect("a worktree launch discovers each repository's common directory once",
 
       // One lookup for the project and one for the new worktree.
       assert.isAtMost(spawnedArgs.filter((args) => args.includes("--git-common-dir")).length, 2);
-      assert.equal(spawnedArgs.filter((args) => args.at(-1) === "remote").length, 1);
     }),
   ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("sees a remote added through an included config file on the next base lookup", () =>
+  Effect.gen(function* () {
+    const cwd = yield* makeTmpDir();
+    const { initialBranch } = yield* initRepoWithCommit(cwd);
+    const remoteDir = yield* makeTmpDir("git-remote-");
+    yield* git(cwd, ["clone", "--bare", cwd, remoteDir]);
+    const path = yield* Path.Path;
+    const included = path.join(yield* makeTmpDir("git-include-"), "remotes.config");
+    yield* writeTextFile(path.dirname(included), "remotes.config", "");
+    yield* git(cwd, ["config", "include.path", included]);
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    assert.isNull(yield* driver.resolveWorktreeBaseRemote({ cwd, refName: initialBranch }));
+
+    yield* writeTextFile(
+      path.dirname(included),
+      "remotes.config",
+      `[remote "origin"]\n\turl = ${remoteDir}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n`,
+    );
+    assert.deepStrictEqual(
+      yield* driver.resolveWorktreeBaseRemote({ cwd, refName: initialBranch }),
+      {
+        remoteName: "origin",
+        branchName: initialBranch,
+      },
+    );
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each(["bare", "unborn"] as const)(

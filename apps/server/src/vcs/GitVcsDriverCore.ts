@@ -2132,57 +2132,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const originRemoteExists = (cwd: string): Effect.Effect<boolean, GitCommandError> =>
     remoteExists({ cwd, remoteName: "origin" });
 
-  const statToken = (target: string) =>
-    fileSystem.stat(target).pipe(
-      Effect.map(
-        (info) =>
-          `${Option.getOrElse(info.ino, () => "")}:${info.size}:${Option.match(info.mtime, {
-            onNone: () => "",
-            onSome: (mtime) => mtime.getTime(),
-          })}`,
-      ),
-      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("-")),
-    );
-
-  const readRemoteNames = (cwd: string, gitDirArgs: ReadonlyArray<string> = []) =>
+  const listRemoteNames = (
+    cwd: string,
+    gitDirArgs: ReadonlyArray<string> = [],
+  ): Effect.Effect<ReadonlyArray<string>, GitCommandError> =>
     runGitStdout("GitVcsDriver.listRemoteNames", cwd, [...gitDirArgs, "remote"]).pipe(
       Effect.map(parseRemoteNamesInGitOrder),
     );
-  // Git rewrites the repository config through a lock file on every change, `git remote add`
-  // included, so its stat says when the cached names are stale. An unreadable stat never matches.
-  const readConfigToken = (gitCommonDir: string) =>
-    statToken(path.join(gitCommonDir, "config")).pipe(Effect.orElseSucceed(() => null));
-  const remoteNamesCache = yield* Cache.makeWith(
-    (cwd: string) =>
-      Effect.gen(function* () {
-        const gitCommonDir = (yield* resolveRepositoryPaths(cwd).pipe(
-          Effect.orElseSucceed(() => null),
-        ))?.gitCommonDir;
-        if (gitCommonDir === undefined) return null;
-        const configToken = yield* readConfigToken(gitCommonDir);
-        return { gitCommonDir, configToken, names: yield* readRemoteNames(cwd) };
-      }),
-    {
-      capacity: REPOSITORY_PATHS_CACHE_CAPACITY,
-      timeToLive: Exit.match({
-        onSuccess: (cached) => (cached === null ? Duration.zero : STATUS_ORIGIN_EXISTS_CACHE_TTL),
-        onFailure: () => Duration.zero,
-      }),
-    },
-  );
-  const listRemoteNames = Effect.fnUntraced(function* (
-    cwd: string,
-    gitDirArgs: ReadonlyArray<string> = [],
-  ) {
-    if (gitDirArgs.length > 0) return yield* readRemoteNames(cwd, gitDirArgs);
-    const cacheKey = normalizeRepositoryPathsCacheKey(cwd);
-    const cached = yield* Cache.get(remoteNamesCache, cacheKey);
-    if (cached === null) return yield* readRemoteNames(cwd);
-    const configToken = yield* readConfigToken(cached.gitCommonDir);
-    if (configToken !== null && configToken === cached.configToken) return cached.names;
-    yield* Cache.invalidate(remoteNamesCache, cacheKey);
-    return (yield* Cache.get(remoteNamesCache, cacheKey))?.names ?? (yield* readRemoteNames(cwd));
-  });
 
   // Only the destination remote's prefix is dropped; `alice/fix` pushed to origin keeps its full name.
   const resolvePublishBranchName = (branchName: string, remoteName: string) =>
@@ -2539,6 +2495,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { allowNonZeroExit: true },
       );
       if (effectiveConfig.exitCode !== 0 || effectiveConfig.stdoutTruncated) return null;
+      const statToken = (target: string) =>
+        fileSystem.stat(target).pipe(
+          Effect.map(
+            (info) =>
+              `${Option.getOrElse(info.ino, () => "")}:${info.size}:${Option.match(info.mtime, {
+                onNone: () => "",
+                onSome: (mtime) => mtime.getTime(),
+              })}`,
+          ),
+          Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("-")),
+        );
       const packedRefsPath = path.join(gitCommonDir, "packed-refs");
       const [packedToken, reftableToken] = yield* Effect.all(
         [statToken(packedRefsPath), statToken(path.join(gitCommonDir, "reftable", "tables.list"))],
