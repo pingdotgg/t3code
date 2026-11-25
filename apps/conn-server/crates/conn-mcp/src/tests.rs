@@ -1447,7 +1447,29 @@ async fn organize_writes_as_the_typescript_server() {
     let f = fixture("organize");
     let mut swamp = Client::open(&f.service, client(true)).await;
     let full = launch_as_swamp(&mut swamp, "Full", "hang", "full-access", "default").await;
-    let narrow = launch_as_swamp(&mut swamp, "Narrow", "hang", "approval-required", "plan").await;
+    let scratch = f
+        .service
+        .config
+        .engine
+        .call("projects.ensureScratch", json!({}))
+        .await
+        .unwrap();
+    let general = swamp
+        .ok(
+            "conn_thread_launch",
+            json!({
+                "projectId": scratch["projectId"], "title": "General", "message": "hang",
+                "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+                "runtimeMode": "approval-required", "interactionMode": "plan",
+            }),
+        )
+        .await;
+    let narrow = general["threadId"].as_str().unwrap().to_owned();
+    assert_eq!(
+        thread_field(&f, &narrow, "projectId").await,
+        scratch["projectId"]
+    );
+    assert!(thread_field(&f, &narrow, "orbitProject").await.is_null());
 
     // Refusals first: a read-only client, a caller below the target's modes, a dead caller.
     let mut reader = Client::open(&f.service, client(false)).await;

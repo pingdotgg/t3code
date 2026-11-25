@@ -62,172 +62,46 @@ struct WorkGroupCard: View {
     }
 }
 
-private struct AgentMessageCard: View {
-    let text: String
-    @Environment(\.connTheme) private var theme
-    @State private var expanded = false
-
-    var body: some View {
-        Button {
-            withAnimation(Kit.Motion.fast) {
-                expanded.toggle()
-            }
-        } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text("Agent")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(theme.foreground)
-                    Text("·")
-                        .font(.system(size: 12))
-                        .foregroundStyle(theme.mutedForeground)
-                    Text("Agent message")
-                        .font(.system(size: 12))
-                        .foregroundStyle(theme.mutedForeground)
-                    Spacer()
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(theme.mutedForeground)
-                }
-                Text(text)
-                    .font(.system(size: 14))
-                    .foregroundStyle(theme.mutedForeground)
-                    .lineLimit(expanded ? nil : 2)
-                    .multilineTextAlignment(.leading)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(theme.card)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(theme.border.opacity(0.7), lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-private struct AssistantMessageFooter: View {
-    let markdown: String
-    let timestamp: String?
-    @Environment(\.connTheme) private var theme
-    @State private var copied = false
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Button {
-                UIPasteboard.general.string = markdown
-                copied = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    copied = false
-                }
-            } label: {
-                ConnIcon(copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.mutedForeground)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Copy message")
-
-            Button {
-            } label: {
-                ConnIcon("arrow.triangle.branch")
-                    .font(.system(size: 13))
-                    .foregroundStyle(theme.mutedForeground)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Fork from here")
-
-            if let timeLabel = formattedClockTime(from: timestamp) {
-                Text(timeLabel)
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(theme.mutedForeground)
-            }
-            Spacer()
-        }
-        .padding(.top, 4)
-    }
-
-    private func formattedClockTime(from raw: String?) -> String? {
-        guard let raw, !raw.isEmpty else { return nil }
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let date = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
-        guard let date else { return nil }
-        let fmt = DateFormatter()
-        fmt.timeStyle = .short
-        fmt.dateStyle = .none
-        return fmt.string(from: date)
-    }
-}
-
 struct TimelineEntryRow: View {
     let threadId: String
     let entry: FfiTimelineEntry
     @Bindable var store: CoreStore
-    let onOpenThread: (String) -> Void
+    let detail: FfiFeedDetail?
+    let interactive: Bool
+    let onOpenThread: (String, String?) -> Void
+    let onTemplate: (String) -> Void
     @Environment(\.connTheme) private var theme
 
     var body: some View {
+        switch detail {
+        case let .html(attachment, title, height):
+            ThreadEmbed(store: store, thread: threadId, item: entry.entryId, attachment: attachment, title: title, height: CGFloat(height), mcp: false)
+        case let .mcp(sourceThread, attachment, title):
+            ThreadEmbed(store: store, thread: sourceThread, item: entry.entryId, attachment: attachment, title: title, height: 260, mcp: true)
+        case let .task(task):
+            TaskReceiptCard(task: task)
+        default:
+            entryView
+        }
+    }
+
+    @ViewBuilder private var entryView: some View {
         switch entry {
-        case let .user(_, text, _, createdByAgent, isSteer, _, attachments):
-            if createdByAgent {
-                AgentMessageCard(text: text)
-            } else {
-                HStack {
-                    Spacer(minLength: 48)
-                    VStack(alignment: .trailing, spacing: Kit.Space.xs) {
-                        if isSteer {
-                            KitBadge("Steer")
-                        }
-                        Text(text)
-                            .font(.kitBody)
-                            .foregroundStyle(theme.messageForeground)
-                            .textSelection(.enabled)
-                            .padding(.horizontal, Kit.Space.xl)
-                            .padding(.vertical, Kit.Space.m + 2)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .fill(theme.messageSurface)
-                            )
-                        if !attachments.isEmpty {
-                            KitBadge("\(attachments.count) attachment\(attachments.count == 1 ? "" : "s")")
-                        }
+        case let .user(_, text, date, agent, steer, _, files):
+            ThreadMessage(text: text, date: date, agent: agent, badge: steer ? "Steer" : nil, files: files,
+                          detail: detail, store: store, onOpenThread: onOpenThread)
+        case let .queuedUser(_, _, _, text, date, agent, files):
+            ThreadMessage(text: text, date: date, agent: agent, badge: "Queued", files: files,
+                          detail: detail, store: store, onOpenThread: onOpenThread)
+        case let .assistant(_, markdown, streaming, timestamp, _, status):
+            VStack(alignment: .leading, spacing: 4) {
+                MarkdownView(source: markdown, onTemplate: onTemplate)
+                if streaming { KitStatusIcon(.working, size: 12, label: "Streaming") }
+                else {
+                    HStack {
+                        if status == .failed { Label("Response interrupted", systemImage: "exclamationmark.circle").font(.caption) }
+                        MessageFooter(text: markdown, timestamp: timestamp)
                     }
-                }
-            }
-
-        case let .queuedUser(_, _, _, text, _, _, _):
-            HStack {
-                Spacer(minLength: 48)
-                VStack(alignment: .trailing, spacing: Kit.Space.xs) {
-                    KitBadge("Queued")
-                    Text(text)
-                        .font(.kitBody)
-                        .foregroundStyle(theme.mutedForeground)
-                        .padding(.horizontal, Kit.Space.l)
-                        .padding(.vertical, Kit.Space.m)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(theme.card)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .strokeBorder(theme.border, lineWidth: 0.5)
-                        )
-                }
-            }
-
-        case let .assistant(_, markdown, streaming, timestamp, _, _):
-            VStack(alignment: .leading, spacing: Kit.Space.xs) {
-                MarkdownView(source: markdown)
-                if streaming {
-                    KitStatusIcon(.working, size: 12, label: "Streaming")
-                } else {
-                    AssistantMessageFooter(markdown: markdown, timestamp: timestamp)
                 }
             }
 
@@ -257,34 +131,33 @@ struct TimelineEntryRow: View {
                 placeholder: placeholder,
                 status: status,
                 pending: pending,
+                interactive: interactive,
                 store: store
             )
 
-        case let .proposedPlan(_, _, title, markdown, displayMarkdown, _, _, streaming, _, _):
-            ProposedPlanCard(
-                title: title.isEmpty ? "Proposed Plan" : title,
-                markdown: displayMarkdown.isEmpty ? markdown : displayMarkdown,
-                streaming: streaming
-            )
-
-        case let .subagent(_, childThreadId, title, role, status, statusLabel, _, summary, _, _, _, _):
-            SubagentCard(
-                childThreadId: childThreadId,
-                title: title,
-                role: role,
-                status: status,
-                statusLabel: statusLabel,
-                summary: summary,
-                onOpenThread: onOpenThread
-            )
-
-        case let .turnCheckpoint(_, _, _, fileCount, additions, deletions, files):
-            TurnCheckpointCard(
-                fileCount: Int(fileCount),
-                additions: additions,
-                deletions: deletions,
-                files: files
-            )
+        case let .proposedPlan(_, _, title, markdown, display, _, _, streaming, _, _):
+            ProposedPlanCard(title: title, markdown: markdown, display: display, streaming: streaming)
+        case let .subagent(_, child, title, role, status, label, _, summary, remoteLabel, _, started, ended):
+            let metadata = subagentMetadata
+            ThreadCard {
+                ProviderIcon(driver: metadata.provider, size: 14).overlay(alignment: .bottomTrailing) {
+                    Circle().fill(status == .completed ? theme.success : status == .failed ? theme.destructive : theme.warning)
+                        .frame(width: 6, height: 6)
+                }
+                let elapsed = threadElapsed(started, ended)
+                Text([metadata.model ?? role, metadata.effort, elapsed == nil ? label : nil, remoteLabel]
+                    .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")).lineLimit(2)
+                Spacer(minLength: 0)
+                if let elapsed { Text(elapsed).monospacedDigit().fixedSize() }
+                if let destination = metadata.thread ?? child {
+                    Button { onOpenThread(destination, metadata.environment) } label: {
+                        Image(systemName: "arrow.up.right").padding(6)
+                    }.accessibilityLabel("Open " + title)
+                }
+            } content: { AgentSummary(title: title, text: summary ?? "") }
+        case let .turnCheckpoint(_, _, ordinal, fileCount, additions, deletions, files):
+            TurnCheckpointCard(fileCount: Int(fileCount), additions: additions, deletions: deletions, files: files,
+                               ordinal: ordinal, threadId: threadId, store: store)
 
         case let .notice(_, text, isError):
             KitNotice(text, icon: isError ? .warning : .info, tone: isError ? .error : .info)
@@ -293,6 +166,13 @@ struct TimelineEntryRow: View {
             KitBadge(label)
         }
     }
+    private var subagentMetadata: (provider: String?, model: String?, effort: String?, environment: String?, thread: String?) {
+        if case let .subagent(provider, model, effort, environment, thread) = detail {
+            return (provider, model, effort, environment, thread)
+        }
+        return (nil, nil, nil, nil, nil)
+    }
+
 }
 
 struct ThinkingRow: View {
@@ -344,12 +224,14 @@ struct ToolRow: View {
             expandable: hasDetail
         ) {
             if let detail, !detail.isEmpty {
-                ScrollView(.horizontal, showsIndicators: true) {
+                if kind == "file_change" && detail.contains("\n") {
+                    CodeCard(code: detail, language: "diff")
+                } else { ScrollView(.horizontal, showsIndicators: true) {
                     Text(detail)
                         .font(.kitMono)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
-                }
+                } }
             }
         }
     }
@@ -429,6 +311,7 @@ private struct SecretRequestCard: View {
     let placeholder: String?
     let status: FfiSecretRequestStatus
     let pending: Bool
+    let interactive: Bool
     @Bindable var store: CoreStore
     @Environment(\.connTheme) private var theme
 
@@ -436,64 +319,53 @@ private struct SecretRequestCard: View {
     @State private var submitting = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Kit.Space.m) {
-            HStack(spacing: Kit.Space.s) {
-                Image(systemName: "key.fill")
-                    .foregroundStyle(pending ? theme.warning : theme.mutedForeground)
-                Text(label.isEmpty ? "Secret Request" : label)
-                    .font(.kitLabel.weight(.semibold))
-                    .foregroundStyle(theme.cardForeground)
-                Spacer()
-                if !pending {
-                    KitBadge(statusLabel)
-                }
-            }
-
-            if !reason.isEmpty {
-                Text(reason)
-                    .font(.kitDetail)
-                    .foregroundStyle(theme.mutedForeground)
-            }
-
-            if pending {
-                SecureField(placeholder ?? "Enter secret…", text: $secret)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.kitBody)
-
-                HStack(spacing: Kit.Space.s) {
-                    Button("Save") {
-                        submitting = true
-                        let value = secret
-                        Task {
-                            await store.answerSecretRequest(threadId: threadId, turnItemId: turnItemId, secret: value)
-                            secret = ""
-                            submitting = false
-                        }
+        ThreadCard {
+            Label("Secret request", systemImage: "key")
+            Spacer()
+            if pending && interactive {
+                let canSave = !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !submitting
+                HStack(spacing: 6) {
+                    Button("Decline", role: .destructive) { answer(nil) }
+                        .foregroundStyle(theme.destructive)
+                        .disabled(submitting)
+                    Button { answer(secret) } label: {
+                        Text("Save")
+                            .foregroundStyle(canSave ? theme.primaryForeground : theme.mutedForeground)
+                            .padding(.horizontal, 10)
+                            .frame(minHeight: 24)
+                            .background(canSave ? theme.primary : theme.card.mix(with: theme.foreground, by: 0.14),
+                                        in: Capsule())
                     }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || submitting)
-
-                    Button("Decline", role: .destructive) {
-                        submitting = true
-                        Task {
-                            await store.answerSecretRequest(threadId: threadId, turnItemId: turnItemId, secret: nil)
-                            submitting = false
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(submitting)
+                    .disabled(!canSave)
                 }
-            }
+                .buttonStyle(.plain)
+            } else { Text(statusLabel) }
+        } content: {
+            VStack(alignment: .leading, spacing: 8) {
+                if !label.isEmpty { Text(label).font(.system(size: 14, weight: .medium)) }
+                if !reason.isEmpty { Text(reason).font(.kitDetail).foregroundStyle(theme.mutedForeground) }
+                if pending && interactive {
+                    if let url, let source = URL(string: url), source.scheme == "https" {
+                        Link("Open secret provider", destination: source)
+                    }
+                    SecureField(placeholder ?? "Enter secret…", text: $secret)
+                        .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never)
+                        .autocorrectionDisabled().privacySensitive()
+                        .disabled(submitting)
+                }
+            }.padding(11)
         }
-        .padding(Kit.Space.l)
-        .background(
-            RoundedRectangle(cornerRadius: Kit.Radius.group, style: .continuous)
-                .fill(theme.card)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Kit.Radius.group, style: .continuous)
-                .strokeBorder(theme.border, lineWidth: 0.5)
-        )
+        .onDisappear { secret = "" }
+    }
+
+    private func answer(_ value: String?) {
+        guard pending && interactive && !submitting else { return }
+        submitting = true
+        secret = ""
+        Task {
+            await store.answerSecretRequest(threadId: threadId, turnItemId: turnItemId, secret: value)
+            submitting = false
+        }
     }
 
     private var statusLabel: String {
@@ -502,124 +374,6 @@ private struct SecretRequestCard: View {
         case .saved: "Saved"
         case .declined: "Declined"
         case .cancelled: "Cancelled"
-        }
-    }
-}
-
-private struct ProposedPlanCard: View {
-    let title: String
-    let markdown: String
-    let streaming: Bool
-
-    var body: some View {
-        KitCollapsibleCard(
-            title,
-            status: streaming ? .working : .ok,
-            trailingText: "Plan"
-        ) {
-            MarkdownView(source: markdown)
-        }
-    }
-}
-
-private struct SubagentCard: View {
-    let childThreadId: String?
-    let title: String
-    let role: String
-    let status: FfiTurnItemStatus
-    let statusLabel: String
-    let summary: String?
-    let onOpenThread: (String) -> Void
-    @Environment(\.connTheme) private var theme
-
-    var body: some View {
-        Button {
-            if let childThreadId {
-                onOpenThread(childThreadId)
-            }
-        } label: {
-            HStack(spacing: Kit.Space.m) {
-                KitStatusIcon(mappedStatus, size: 15, label: statusLabel)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title.isEmpty ? role : title)
-                        .font(.kitDetail.weight(.semibold))
-                        .foregroundStyle(theme.cardForeground)
-                        .lineLimit(1)
-                    if let summary, !summary.isEmpty {
-                        Text(summary)
-                            .font(.kitDetail)
-                            .foregroundStyle(theme.mutedForeground)
-                            .lineLimit(2)
-                    } else if !role.isEmpty {
-                        Text(role)
-                            .font(.kitDetail)
-                            .foregroundStyle(theme.mutedForeground)
-                    }
-                }
-                Spacer()
-                KitBadge(statusLabel)
-                if childThreadId != nil {
-                    KitIconImage(.chevronRight, size: 11)
-                        .foregroundStyle(theme.mutedForeground)
-                }
-            }
-            .padding(Kit.Space.l)
-            .background(
-                RoundedRectangle(cornerRadius: Kit.Radius.group, style: .continuous)
-                    .fill(theme.card)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: Kit.Radius.group, style: .continuous)
-                    .strokeBorder(theme.border, lineWidth: 0.5)
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(childThreadId == nil)
-    }
-
-    private var mappedStatus: KitStatusIcon.Status {
-        switch status {
-        case .running: .working
-        case .completed: .ok
-        case .failed: .error
-        case .idle, .pending, .waiting: .pending
-        case .cancelled, .interrupted: .warning
-        }
-    }
-}
-
-private struct TurnCheckpointCard: View {
-    let fileCount: Int
-    let additions: Int64
-    let deletions: Int64
-    let files: [FfiTurnCheckpointFile]
-    @Environment(\.connTheme) private var theme
-
-    var body: some View {
-        KitCollapsibleCard(
-            "\(fileCount) file\(fileCount == 1 ? "" : "s") changed",
-            icon: .branch,
-            trailingText: "+\(additions) -\(deletions)",
-            expandable: !files.isEmpty
-        ) {
-            VStack(alignment: .leading, spacing: Kit.Space.xs) {
-                ForEach(files, id: \.path) { file in
-                    HStack(spacing: Kit.Space.s) {
-                        Text(file.path)
-                            .font(.kitMono)
-                            .foregroundStyle(theme.foreground)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                        Text("+\(file.additions)")
-                            .font(.kitDetail.monospaced())
-                            .foregroundStyle(theme.diffAdded)
-                        Text("-\(file.deletions)")
-                            .font(.kitDetail.monospaced())
-                            .foregroundStyle(theme.diffRemoved)
-                    }
-                }
-            }
         }
     }
 }

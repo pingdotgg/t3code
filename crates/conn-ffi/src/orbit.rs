@@ -1017,6 +1017,7 @@ impl From<AgentState> for FfiAgentState {
 pub enum FfiImplementerMode {
     PerSubtask,
     Shared,
+    Task,
 }
 
 impl From<ImplementerMode> for FfiImplementerMode {
@@ -1024,6 +1025,7 @@ impl From<ImplementerMode> for FfiImplementerMode {
         match value {
             ImplementerMode::PerSubtask => Self::PerSubtask,
             ImplementerMode::Shared => Self::Shared,
+            ImplementerMode::Task => Self::Task,
         }
     }
 }
@@ -1779,9 +1781,13 @@ impl OrbitCore {
         F: FnOnce(String, String) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = BearerCheckOutcome> + Send + 'static,
     {
+        let profile = self.profile_client();
         let client = self.fleet_client();
         let fleet = self
-            .spawn_on_rt(async move { client.list_fleet(None).await.map_err(FfiError::from) })
+            .spawn_on_rt(async move {
+                profile.me().await.map_err(FfiError::from)?;
+                client.list_fleet(None).await.map_err(FfiError::from)
+            })
             .await;
         let target = match fleet {
             Ok(fleet) => select_primary_agent_node(&fleet.nodes, None).cloned(),
@@ -3260,6 +3266,11 @@ pub(crate) mod tests {
             (
                 "no agent role",
                 Box::new(|req| match req.path.as_str() {
+                    "/me" => Ok(GatewayResponse {
+                        status: 200,
+                        body: json!({"data":{"id":1,"name":"phone","wireguard_ip":"10.0.0.2"}})
+                            .to_string(),
+                    }),
                     "/environments" => Ok(GatewayResponse {
                         status: 200,
                         body: json!({ "data": [{
@@ -3280,6 +3291,11 @@ pub(crate) mod tests {
             (
                 "pairing refused",
                 Box::new(|req| match req.path.as_str() {
+                    "/me" => Ok(GatewayResponse {
+                        status: 200,
+                        body: json!({"data":{"id":1,"name":"phone","wireguard_ip":"10.0.0.2"}})
+                            .to_string(),
+                    }),
                     "/environments" => Ok(GatewayResponse {
                         status: 200,
                         body: json!({ "data": [{
@@ -3435,6 +3451,11 @@ pub(crate) mod tests {
                 return Err(GatewayError::Network("connection refused".to_owned()));
             }
             match req.path.as_str() {
+                "/me" => Ok(GatewayResponse {
+                    status: 200,
+                    body: json!({"data":{"id":1,"name":"phone","wireguard_ip":"10.0.0.2"}})
+                        .to_string(),
+                }),
                 "/environments" => Ok(GatewayResponse {
                     status: 200,
                     body: json!({ "data": [{

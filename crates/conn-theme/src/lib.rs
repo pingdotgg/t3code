@@ -14,6 +14,8 @@
 //! - [`Tokens::derive`]: every semantic and shell token the views paint with.
 
 mod color;
+#[cfg(feature = "highlight")]
+pub mod highlight;
 mod palette_data;
 mod palettes;
 mod tokens;

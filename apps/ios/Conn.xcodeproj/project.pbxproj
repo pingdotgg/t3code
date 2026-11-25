@@ -10,11 +10,15 @@
 		065568327293027BBAC6D5A6 /* ConnCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2FD75455596219E78B67B80B /* ConnCore.xcframework */; };
 		086E11C4D2557C0F73E0B7FA /* ConnSymbols.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5E65CBEE5DAA2A531FDBEFB8 /* ConnSymbols.xcassets */; };
 		0874F035E86E2E56F5042390 /* PushExplainerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45F2866A2B7B7C126E7F96F9 /* PushExplainerSheet.swift */; };
+		0E762194DEB1EEC9949DAFB1 /* ThreadMessages.swift in Sources */ = {isa = PBXBuildFile; fileRef = 362BABC1D0CE218BFEC81CE0 /* ThreadMessages.swift */; };
+		11F90A4595F8C522E1A4F744 /* PullRequestsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A380BEABDE2E2C5A0D33192E /* PullRequestsTabView.swift */; };
 		12A10ADA099500D133C5F214 /* ConnSpikeUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B282DA827183E073EF9A48C6 /* ConnSpikeUITests.swift */; };
 		155A6C09FC940518D0D86F26 /* ConnTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1785EB0CC38B9B367514E3D9 /* ConnTheme.swift */; };
 		17CA94C6E222134A31BF4D14 /* OrbitConnectView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E26EA68AF617A11A6E036C60 /* OrbitConnectView.swift */; };
+		1A542EEDF57194C0E8081457 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2A101A8DA8F4F68706844776 /* Assets.xcassets */; };
 		215CE6E0AD4A4E4588E30A90 /* ConnAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0ABEB932FF5357EF1B48C2F /* ConnAppDelegate.swift */; };
 		2CB7DF35B882E4F49849D0B6 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7425B395B824B6191534A3E /* SettingsView.swift */; };
+		311ACDAE17B1C7CD799417FD /* ThreadWorktreeCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20A6DB48E5FE229DD63A44B /* ThreadWorktreeCard.swift */; };
 		3A296D5A1DBE936247D7E801 /* ProviderIcons.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = E5F7BBA19D8EDDBBF83177C7 /* ProviderIcons.xcassets */; };
 		3C02BE75CFA0F738CEEBD65B /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BEEC1EEE1A9677F008F2091 /* PairingView.swift */; };
 		418D760D3144BAD26EF87FFA /* conn_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CE3181F6E68461F996404BA /* conn_ffi.swift */; };
@@ -25,9 +29,13 @@
 		61076398806FFD92BE0A5E40 /* ModelPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 195AC4C2F3764E276F2218A3 /* ModelPickerSheet.swift */; };
 		69C03BDDBBAF2D4F5AC8F26E /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CCA06E54355676CFB571582 /* ThreadView.swift */; };
 		6A166A14F61CD909AA333A65 /* ConnSymbols.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44D3E63F9DA6645C0DFCA78 /* ConnSymbols.swift */; };
+		8B5E3641A3A3555E2B805F5F /* ThreadReview.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7340F2E25B5730D8ACAED5 /* ThreadReview.swift */; };
 		8C2418FCEB0B7E3BDBDBF3A3 /* ConnComposerPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = F68DE7A95743889502EF21AA /* ConnComposerPill.swift */; };
+		8FA657D971422A96A54C6D92 /* ThreadAttachments.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68138261D10D816E0BD5FD86 /* ThreadAttachments.swift */; };
+		9500C781677466778D393FAD /* ThreadCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CBCA439230E858AF2DE3142 /* ThreadCard.swift */; };
 		9955DFD2D19FE1A3E8D199B7 /* PairingURLParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC6905040E6DA7BF655EC13 /* PairingURLParser.swift */; };
 		9ADD2E6E60470D1BC518EDF1 /* WorkspaceRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9801FA3C8411705F36721B72 /* WorkspaceRootView.swift */; };
+		A3418F329A4223019B638B72 /* ThreadSandbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BD36778E7FEDE6EFAC41041 /* ThreadSandbox.swift */; };
 		A399F8620E541780A63B7B9B /* TimelineEntryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7008F6E4031009E6DD67DF79 /* TimelineEntryViews.swift */; };
 		A48B0233539A33A746A0C0A0 /* NewThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3341300D754CB97F598B98C8 /* NewThreadView.swift */; };
 		AC0B78CBBD07A66FD1BF78D4 /* CoreStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5790483D75FB12EC9D5E8AA0 /* CoreStore.swift */; };
@@ -61,21 +69,28 @@
 		1B9E5245F4E95FC79202BCF9 /* ConnUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = ConnUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		1CE3181F6E68461F996404BA /* conn_ffi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = conn_ffi.swift; sourceTree = "<group>"; };
 		293A0DC9F8A7EF5B24D84EC7 /* PushRegistration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistration.swift; sourceTree = "<group>"; };
+		2A101A8DA8F4F68706844776 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		2CBCA439230E858AF2DE3142 /* ThreadCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadCard.swift; sourceTree = "<group>"; };
 		2FD75455596219E78B67B80B /* ConnCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = ConnCore.xcframework; path = build/ConnCore.xcframework; sourceTree = "<group>"; };
 		3341300D754CB97F598B98C8 /* NewThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewThreadView.swift; sourceTree = "<group>"; };
+		362BABC1D0CE218BFEC81CE0 /* ThreadMessages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadMessages.swift; sourceTree = "<group>"; };
 		3D3FE73635BB92AB18553D21 /* ConnSymbolNames.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnSymbolNames.swift; sourceTree = "<group>"; };
 		45F2866A2B7B7C126E7F96F9 /* PushExplainerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushExplainerSheet.swift; sourceTree = "<group>"; };
 		514FE91791CFC73D65F2978C /* Conn.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Conn.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5790483D75FB12EC9D5E8AA0 /* CoreStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreStore.swift; sourceTree = "<group>"; };
+		5BD36778E7FEDE6EFAC41041 /* ThreadSandbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadSandbox.swift; sourceTree = "<group>"; };
 		5E65CBEE5DAA2A531FDBEFB8 /* ConnSymbols.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = ConnSymbols.xcassets; sourceTree = "<group>"; };
+		68138261D10D816E0BD5FD86 /* ThreadAttachments.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadAttachments.swift; sourceTree = "<group>"; };
 		6BEEC1EEE1A9677F008F2091 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
 		7008F6E4031009E6DD67DF79 /* TimelineEntryViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineEntryViews.swift; sourceTree = "<group>"; };
 		8CCA06E54355676CFB571582 /* ThreadView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadView.swift; sourceTree = "<group>"; };
 		953DAB675D1E26DF4D62D777 /* MarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownView.swift; sourceTree = "<group>"; };
 		9801FA3C8411705F36721B72 /* WorkspaceRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceRootView.swift; sourceTree = "<group>"; };
+		A380BEABDE2E2C5A0D33192E /* PullRequestsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PullRequestsTabView.swift; sourceTree = "<group>"; };
 		B282DA827183E073EF9A48C6 /* ConnSpikeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnSpikeUITests.swift; sourceTree = "<group>"; };
 		C9CA7C5134613DD1AAA8BC68 /* PendingApprovalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalCard.swift; sourceTree = "<group>"; };
 		CE790160CB877B8F694F27DE /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
+		D20A6DB48E5FE229DD63A44B /* ThreadWorktreeCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadWorktreeCard.swift; sourceTree = "<group>"; };
 		DDC6905040E6DA7BF655EC13 /* PairingURLParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingURLParser.swift; sourceTree = "<group>"; };
 		E08A1B9DE873B63FCAC345CB /* DesignKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DesignKit; path = "../../../design-kit/DesignKit"; sourceTree = SOURCE_ROOT; };
 		E0F3FADEDA515DE053342539 /* TasksTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksTab.swift; sourceTree = "<group>"; };
@@ -88,6 +103,7 @@
 		F68DE7A95743889502EF21AA /* ConnComposerPill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnComposerPill.swift; sourceTree = "<group>"; };
 		F7425B395B824B6191534A3E /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		FB37DF09D3781436727F439A /* Conn.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Conn.entitlements; sourceTree = "<group>"; };
+		FB7340F2E25B5730D8ACAED5 /* ThreadReview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThreadReview.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -163,6 +179,7 @@
 		F25464DCE8842484FA2143DF /* Conn */ = {
 			isa = PBXGroup;
 			children = (
+				2A101A8DA8F4F68706844776 /* Assets.xcassets */,
 				FB37DF09D3781436727F439A /* Conn.entitlements */,
 				0AF68E89FDEB6E0FCFB1897A /* ConnApp.swift */,
 				F0ABEB932FF5357EF1B48C2F /* ConnAppDelegate.swift */,
@@ -184,11 +201,18 @@
 				C9CA7C5134613DD1AAA8BC68 /* PendingApprovalCard.swift */,
 				070B85D9B8F0787AF450159A /* PendingUserInputCard.swift */,
 				E5F7BBA19D8EDDBBF83177C7 /* ProviderIcons.xcassets */,
+				A380BEABDE2E2C5A0D33192E /* PullRequestsTabView.swift */,
 				45F2866A2B7B7C126E7F96F9 /* PushExplainerSheet.swift */,
 				293A0DC9F8A7EF5B24D84EC7 /* PushRegistration.swift */,
 				F7425B395B824B6191534A3E /* SettingsView.swift */,
 				E0F3FADEDA515DE053342539 /* TasksTab.swift */,
+				68138261D10D816E0BD5FD86 /* ThreadAttachments.swift */,
+				2CBCA439230E858AF2DE3142 /* ThreadCard.swift */,
+				362BABC1D0CE218BFEC81CE0 /* ThreadMessages.swift */,
+				FB7340F2E25B5730D8ACAED5 /* ThreadReview.swift */,
+				5BD36778E7FEDE6EFAC41041 /* ThreadSandbox.swift */,
 				8CCA06E54355676CFB571582 /* ThreadView.swift */,
+				D20A6DB48E5FE229DD63A44B /* ThreadWorktreeCard.swift */,
 				7008F6E4031009E6DD67DF79 /* TimelineEntryViews.swift */,
 				9801FA3C8411705F36721B72 /* WorkspaceRootView.swift */,
 			);
@@ -292,6 +316,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1A542EEDF57194C0E8081457 /* Assets.xcassets in Resources */,
 				086E11C4D2557C0F73E0B7FA /* ConnSymbols.xcassets in Resources */,
 				3A296D5A1DBE936247D7E801 /* ProviderIcons.xcassets in Resources */,
 			);
@@ -321,11 +346,18 @@
 				3C02BE75CFA0F738CEEBD65B /* PairingView.swift in Sources */,
 				B41AE3C505014F8382E4184F /* PendingApprovalCard.swift in Sources */,
 				45DA92F4D278DDAA743C2E43 /* PendingUserInputCard.swift in Sources */,
+				11F90A4595F8C522E1A4F744 /* PullRequestsTabView.swift in Sources */,
 				0874F035E86E2E56F5042390 /* PushExplainerSheet.swift in Sources */,
 				51DF3AD000F6B7995E0FCEA7 /* PushRegistration.swift in Sources */,
 				2CB7DF35B882E4F49849D0B6 /* SettingsView.swift in Sources */,
 				53C3272026A88E6B1AA893D4 /* TasksTab.swift in Sources */,
+				8FA657D971422A96A54C6D92 /* ThreadAttachments.swift in Sources */,
+				9500C781677466778D393FAD /* ThreadCard.swift in Sources */,
+				0E762194DEB1EEC9949DAFB1 /* ThreadMessages.swift in Sources */,
+				8B5E3641A3A3555E2B805F5F /* ThreadReview.swift in Sources */,
+				A3418F329A4223019B638B72 /* ThreadSandbox.swift in Sources */,
 				69C03BDDBBAF2D4F5AC8F26E /* ThreadView.swift in Sources */,
+				311ACDAE17B1C7CD799417FD /* ThreadWorktreeCard.swift in Sources */,
 				A399F8620E541780A63B7B9B /* TimelineEntryViews.swift in Sources */,
 				9ADD2E6E60470D1BC518EDF1 /* WorkspaceRootView.swift in Sources */,
 				418D760D3144BAD26EF87FFA /* conn_ffi.swift in Sources */,
@@ -416,7 +448,7 @@
 		1E0B82D2E0CB90BF5D29FD83 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Conn/Conn.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				FRAMEWORK_SEARCH_PATHS = (
@@ -437,7 +469,7 @@
 		34E13B12D8F9C816073BD9FD /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = "";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = Conn/Conn.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				FRAMEWORK_SEARCH_PATHS = (

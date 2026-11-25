@@ -4,7 +4,7 @@ import SwiftUI
 
 /// The launch path through Orbit, shown while no connection is up.
 enum OrbitConnectState: Equatable {
-    case connecting
+    case connecting(String)
     case failed(message: String, detail: String?)
 }
 
@@ -35,6 +35,13 @@ final class CoreStore {
     @ObservationIgnored private var session: ConnSession?
     private var core: ConnCore? { session?.core() }
 
+    func pullRequest<T: Decodable>(_ operation: FfiPullRequestOperation, input: [String: Any], as: T.Type) async throws -> T {
+        guard let core else { throw URLError(.notConnectedToInternet) }
+        let data = try JSONSerialization.data(withJSONObject: input)
+        let response = try await core.pullRequest(operation: operation, input: String(decoding: data, as: UTF8.self))
+        return try JSONDecoder().decode(T.self, from: Data(response.utf8))
+    }
+
     let scope: String
     private(set) var linked: [String: CoreStore] = [:]
 
@@ -62,15 +69,20 @@ final class CoreStore {
     /// The workspace, rather than the Orbit or pairing screen: connected before, or connecting to
     /// this launch's first server (its offline history shows meanwhile). After a switch to
     /// another server, the connecting screen shows until that one connects.
-    var showsWorkspace: Bool { hasConnected || (isPaired && identityEpoch == 0) }
+    private(set) var showsWorkspace = false
+
+    private func updateWorkspaceVisibility() {
+        if shell != nil && (hasConnected || offlineReader != nil) { showsWorkspace = true }
+    }
     var serverURL: String? { state?.serverUrl }
     /// The connected server's environment id.
     var environmentId: String? { state?.environmentId }
 
     var orbitConnect: OrbitConnectState? {
         switch state?.phase {
-        case .connecting: .connecting
-        case .live where !hasConnected: .connecting
+        case .connecting: .connecting("Checking connection")
+        case .live(.connected): .connecting("Finalizing")
+        case .live: .connecting("Downloading threads")
         case let .failed(message, detail, _): .failed(message: message, detail: detail)
         default: nil
         }
@@ -80,13 +92,21 @@ final class CoreStore {
         self.scope = scope
         let arguments = ProcessInfo.processInfo.arguments
         if scope.isEmpty && arguments.contains("--reset-session") {
+            for key in UserDefaults.standard.dictionaryRepresentation().keys where key.hasPrefix("workspace.route.") {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+            UserDefaults.standard.removeObject(forKey: "workspace.selectedTab")
             clearLinkedSessions()
             KeychainStore.clearSession(scope: scope)
             try? FileManager.default.removeItem(at: Self.cacheDirectory(scope))
         }
+        var gatewayURL: String?
+        #if DEBUG
+        if arguments.contains("--test-unreachable-gateway") { gatewayURL = "https://127.0.0.1:1" }
+        #endif
         do {
             session = try ConnSession(
-                gatewayUrl: nil,
+                gatewayUrl: gatewayURL,
                 cacheDirectory: Self.cacheDirectory(scope).path,
                 listener: SessionBridge(store: self, scope: scope)
             )
@@ -138,6 +158,29 @@ final class CoreStore {
         } catch {
             lastError = error.localizedDescription
         }
+    }
+
+    func assetURL(id: String, name: String, mime: String, mcp: Bool = false) async throws -> URL {
+        guard let core, status == .connected else { throw URLError(.notConnectedToInternet) }
+        let epoch = identityEpoch
+        let raw = try await core.attachmentUrl(id: id, name: name, mime: mime, mcpApp: mcp)
+        guard identityEpoch == epoch, let url = URL(string: raw) else { throw URLError(.cancelled) }
+        return url
+    }
+
+    func mcpApp(thread: String, item: String, attachment: String) async throws -> ThreadMcpApp {
+        guard let core, status == .connected else { throw URLError(.notConnectedToInternet) }
+        return try await core.threadMcpApp(thread: thread, item: item, attachment: attachment)
+    }
+
+    func patches(thread: String, turn: Int64) async throws -> [FfiFilePatch] {
+        guard let core, status == .connected else { throw URLError(.notConnectedToInternet) }
+        return try await core.turnPatch(threadId: thread, turn: turn)
+    }
+
+    func setupFeed(thread: String) throws -> WorktreeSetupFeed {
+        guard let core, status == .connected else { throw URLError(.notConnectedToInternet) }
+        return try core.worktreeSetup(threadId: thread)
     }
 
     func openThread(_ threadId: String) {
@@ -192,10 +235,10 @@ final class CoreStore {
 
     /// Save in the thread settings sheet. `.unavailable` means the catalog dropped the pick and
     /// nothing was sent; `nil` means the send failed (see `lastError`).
-    func saveThreadModel(threadId: String, instanceId: String, model: String) async -> FfiModelSave? {
+    func saveThreadModel(threadId: String, instanceId: String, model: String, changes: [String: String]) async -> FfiModelSave? {
         guard let core else { return nil }
         do {
-            return try await core.saveThreadModel(threadId: threadId, instanceId: instanceId, model: model)
+            return try await core.saveThreadModelOptions(threadId: threadId, instanceId: instanceId, model: model, changes: changes)
         } catch {
             lastError = error.localizedDescription
             return nil
@@ -212,10 +255,18 @@ final class CoreStore {
 
     /// Sends the thread's draft. Like mobile, the draft clears as the message goes out; a failed
     /// send merges the sent text back into that thread's draft, wherever the user is by then.
+    func followUpSteers(_ threadId: String) -> Bool {
+        UserDefaults.standard.bool(forKey: "steer.\(environmentId ?? scope).\(threadId)")
+    }
+
+    func setFollowUpSteers(_ steer: Bool, threadId: String) {
+        UserDefaults.standard.set(steer, forKey: "steer.\(environmentId ?? scope).\(threadId)")
+    }
+
     func sendDraft(threadId: String) async -> Bool {
         let message = drafts[threadId] ?? ""
         drafts[threadId] = nil
-        let sent = await sendMessage(threadId: threadId, text: message, mode: .auto)
+        let sent = await sendMessage(threadId: threadId, text: message, mode: followUpSteers(threadId) ? .steer : .queue)
         if !sent {
             let restored = composerRestoreDraft(current: drafts[threadId] ?? "", sent: message)
             drafts[threadId] = restored.isEmpty ? nil : restored
@@ -460,12 +511,14 @@ final class CoreStore {
             offlineReader = nil
         }
         if newState.identityEpoch != state?.identityEpoch ?? 0 {
+            showsWorkspace = false
             openThread = nil
             openThreadId = nil
         }
         state = newState
         switch newState.phase {
         case let .idle(message):
+            showsWorkspace = false
             if let message { lastError = message }
         case let .live(status):
             if status != .connected { shell?.synchronized = false }
@@ -473,6 +526,7 @@ final class CoreStore {
         default:
             break
         }
+        updateWorkspaceVisibility()
         if newState.offlineReady, offlineReader == nil, let reader = session?.offlineReader() {
             showOffline(reader, connection: newState.connectionId)
         }
@@ -485,6 +539,7 @@ final class CoreStore {
             let saved = await reader.savedShell()
             guard state?.connectionId == connection else { return }
             if shell == nil { shell = saved }
+            updateWorkspaceVisibility()
             if let id = openThreadId { restoreThread(id) }
         }
     }
@@ -492,6 +547,7 @@ final class CoreStore {
     fileprivate func handleShell(_ snapshot: FfiShellSnapshot, connectionId: UInt64) {
         guard connectionId >= (state?.connectionId ?? 0) else { return }
         if snapshot.synchronized || shell == nil { shell = snapshot }
+        updateWorkspaceVisibility()
     }
 
     fileprivate func handleThread(_ snapshot: FfiThreadSnapshot, connectionId: UInt64) {

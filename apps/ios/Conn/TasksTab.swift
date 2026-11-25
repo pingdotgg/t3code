@@ -107,6 +107,11 @@ final class TasksModel {
         state = .failed(phoneTasksErrorText(reason: reason))
     }
 
+    func detail(for id: Int64) async throws -> FfiTaskDetail {
+        guard let orbit = orbitCore() else { throw URLError(.cannotConnectToHost) }
+        return try await orbit.taskDetail(taskId: id)
+    }
+
     private func orbitCore() -> OrbitCore? {
         if let orbit { return orbit }
         do {
@@ -152,8 +157,6 @@ struct TasksTabView: View {
 
     /// `TasksTopBar` height.
     private let barHeight: CGFloat = 56
-    /// The bar sits where a native one would: its middle 28pt below the safe area's top.
-    private let barLift: CGFloat = 8
 
     var body: some View {
         let view = model.view(query: searchQuery)
@@ -162,7 +165,7 @@ struct TasksTabView: View {
                 LazyVStack(spacing: 0) {
                     content(view)
                 }
-                .padding(.top, barHeight + 4 - barLift)
+                .padding(.top, barHeight + 4)
             }
             .refreshable { await model.refresh() }
             .background(theme.background)
@@ -175,7 +178,6 @@ struct TasksTabView: View {
                 onSelectLane: { model.lane = $0 }
             )
             .frame(height: barHeight)
-            .padding(.top, -barLift)
         }
         .onAppear { model.appear() }
         .onDisappear { model.disappear() }
@@ -215,7 +217,10 @@ struct TasksTabView: View {
                     .accessibilityIdentifier("tasks.empty")
             } else {
                 ForEach(view.rows, id: \.id) { row in
-                    TaskRowView(row: row)
+                    NavigationLink(value: WorkspaceRoute.task(row.id)) {
+                        TaskRowView(row: row)
+                    }
+                    .buttonStyle(.plain)
                         .padding(.horizontal, 8)
                         .padding(.bottom, 4)
                 }
@@ -364,7 +369,7 @@ private struct ProjectTileView: View {
 }
 
 /// A 6pt status dot in a 2pt ring of the screen colour (`StatusBadgeDot`).
-private struct StatusBadgeDot: View {
+struct StatusBadgeDot: View {
     let dot: FfiTaskDot
     @Environment(\.connTheme) private var theme
     @Environment(\.colorScheme) private var colorScheme
@@ -417,5 +422,101 @@ extension Color {
             green: Double((hex >> 8) & 0xFF) / 255.0,
             blue: Double(hex & 0xFF) / 255.0
         )
+    }
+}
+
+struct TaskRecordView: View {
+    enum Section: String, CaseIterable {
+        case overview, steps, agents
+
+        var icon: String {
+            switch self {
+            case .overview: "doc.text"
+            case .steps: "checklist"
+            case .agents: "person.2"
+            }
+        }
+    }
+
+    let id: Int64
+    let model: TasksModel
+    @State private var section = Section.overview
+    @State private var detail: FfiTaskDetail?
+    @State private var failure: String?
+    @State private var attempt = 0
+    @Environment(\.connTheme) private var theme
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let detail {
+                    Text(detail.summary.title).font(.title2.weight(.semibold))
+                    switch section {
+                    case .overview:
+                        LabeledContent("Project", value: detail.summary.project.name)
+                        LabeledContent("Status", value: detail.summary.statusText)
+                        if let workspace = detail.summary.workspace {
+                            LabeledContent("Workspace", value: workspace.name)
+                            if let branch = workspace.branch { LabeledContent("Branch", value: branch) }
+                        }
+                        if !detail.usageText.isEmpty { LabeledContent("Usage", value: detail.usageText) }
+                        Divider()
+                        MarkdownView(source: detail.brief)
+                    case .steps:
+                        Text("\(detail.summary.subtaskCounts.completed) of \(detail.subtasks.count) completed").font(.subheadline).foregroundStyle(.secondary)
+                        if detail.subtasks.isEmpty { Text("No steps").foregroundStyle(.secondary) }
+                        ForEach(detail.subtasks, id: \.id) { step in
+                            DisclosureGroup {
+                                MarkdownView(source: step.brief)
+                                ForEach(step.deliverables, id: \.id) { item in
+                                    Label(item.description, systemImage: "doc.text")
+                                }
+                                if let usage = step.usageText { Text(usage).foregroundStyle(.secondary) }
+                            } label: {
+                                LabeledContent(step.title, value: step.statusText)
+                            }.accessibilityIdentifier("task.step." + String(step.id))
+                        }
+                    case .agents:
+                        Text("\(detail.agents.count) assigned").font(.subheadline).foregroundStyle(.secondary)
+                        if detail.agents.isEmpty { Text("No agents assigned").foregroundStyle(.secondary) }
+                        ForEach(detail.agents, id: \.id) { agent in
+                            VStack(alignment: .leading, spacing: 4) {
+                                LabeledContent(agent.label, value: agent.stateText)
+                                Text([agent.provider, agent.model, agent.effort].compactMap { $0 }.joined(separator: " · "))
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } else if let failure {
+                    Text(failure)
+                    Button("Try again") { attempt += 1 }
+                } else {
+                    ProgressView()
+                }
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(theme.background)
+        .navigationTitle("Task #\(id)")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItemGroup(placement: .bottomBar) {
+                ForEach(Section.allCases, id: \.self) { item in
+                    Button { section = item } label: {
+                        Image(systemName: item.icon)
+                            .foregroundStyle(item == section ? theme.accentForeground : theme.mutedForeground)
+                    }
+                    .accessibilityLabel(item.rawValue.capitalized)
+                    .accessibilityAddTraits(item == section ? .isSelected : [])
+                }
+            }
+        }
+        .task(id: attempt) {
+            failure = nil
+            do { detail = try await model.detail(for: id) }
+            catch { if !Task.isCancelled { failure = error.localizedDescription } }
+        }
     }
 }

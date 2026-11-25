@@ -15,17 +15,20 @@ enum WorkspaceTab: String, Hashable, CaseIterable {
     }
 }
 
-enum WorkspaceRoute: Hashable {
+enum WorkspaceRoute: Hashable, Codable {
+    case task(Int64)
+    case pullRequest(PullRequestRow)
     case thread(String, scope: String)
-    case newThreadDraft(projectId: String?, title: String)
+    case newThreadDraft(projectId: String?, title: String, scope: String = "", prompt: String = "")
 }
 
 struct WorkspaceRootView: View {
     @Bindable var store: CoreStore
     @Environment(\.connTheme) private var theme
 
-    @State private var selectedTab: WorkspaceTab = .threads
+    @AppStorage("workspace.selectedTab") private var selectedTab: WorkspaceTab = .threads
     @State private var navigationPath: [WorkspaceRoute] = []
+    @State private var restoredEnvironment: String?
     @State private var showingSettings = false
     @State private var isSearching = false
     @State private var searchQuery = ""
@@ -58,6 +61,7 @@ struct WorkspaceRootView: View {
                         )
                     case .pullRequests:
                         PullRequestsTabView(
+                            store: store,
                             searchQuery: isSearching ? searchQuery : ""
                         )
                     }
@@ -66,10 +70,8 @@ struct WorkspaceRootView: View {
                 .background(theme.background.ignoresSafeArea())
 
                 if let status = store.status, status != .connected {
-                    HomeConnectionStatusOverlay(status: status) {
-                        showingSettings = true
-                    }
-                    .padding(.bottom, 12)
+                    OfflinePill()
+                        .padding(.bottom, 12)
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -90,13 +92,7 @@ struct WorkspaceRootView: View {
                     onSelectTaskLane: { tasks.lane = $0 },
                     onOpenSettings: { showingSettings = true },
                     onNewChat: {
-                        let defaultProject = store.shell?.projects.first(where: { !isScratchProjectTitle($0.title) })
-                        navigationPath.append(
-                            .newThreadDraft(
-                                projectId: defaultProject?.id,
-                                title: defaultProject?.title ?? "General"
-                            )
-                        )
+                        navigationPath.append(.newThreadDraft(projectId: nil, title: "General"))
                     }
                 )
             }
@@ -113,6 +109,10 @@ struct WorkspaceRootView: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
             .navigationDestination(for: WorkspaceRoute.self) { route in
                 switch route {
+                case let .task(id):
+                    TaskRecordView(id: id, model: tasks)
+                case let .pullRequest(row):
+                    PullRequestRecord(store: store, row: row)
                 case let .thread(threadId, scope):
                     if let owner = scope.isEmpty ? store : store.linked[scope] {
                         let summary = owner.shell?.threads.first(where: { $0.id == threadId })
@@ -123,23 +123,33 @@ struct WorkspaceRootView: View {
                             store: owner,
                             threadId: threadId,
                             initialTitle: summary?.title ?? "Thread",
-                            initialProjectTitle: projectTitle,
+                            initialProjectTitle: summary?.orbitProjectSlug ?? projectTitle,
                             initialBranch: summary?.branch,
                             initialSettled: summary?.settled ?? false,
-                            onOpenThread: { childId in
-                                navigationPath.append(.thread(childId, scope: scope))
+                            onOpenThread: { childId, environment in
+                                if let environment, environment != owner.environmentId {
+                                    store.open(ThreadLink(environmentId: environment, threadId: childId))
+                                } else {
+                                    navigationPath.append(.thread(childId, scope: scope))
+                                }
+                            },
+                            onTemplate: { prompt in
+                                navigationPath.append(.newThreadDraft(projectId: summary?.projectId, title: projectTitle ?? "General", scope: scope, prompt: prompt))
                             }
                         )
                     }
-                case let .newThreadDraft(projectId, title):
+                case let .newThreadDraft(projectId, title, scope, prompt):
+                    if let owner = scope.isEmpty ? store : store.linked[scope] {
                     NewThreadDraftView(
-                        store: store,
+                        store: owner,
                         initialProjectId: projectId,
                         initialProjectTitle: title,
+                        initialPrompt: prompt,
                         onCreated: { newThreadId in
-                            navigationPath = [.thread(newThreadId, scope: "")]
+                            navigationPath = [.thread(newThreadId, scope: scope)]
                         }
                     )
+                    }
                 }
             }
         }
@@ -150,6 +160,24 @@ struct WorkspaceRootView: View {
         .onAppear {
             showPendingLink()
             store.isInboxVisible = inboxOnScreen
+        }
+        .task(id: store.environmentId) {
+            guard let environment = store.environmentId, restoredEnvironment != environment else { return }
+            let switching = restoredEnvironment != nil
+            restoredEnvironment = environment
+            if switching { navigationPath = [] }
+            guard navigationPath.isEmpty, store.pendingLink == nil,
+                  let data = UserDefaults.standard.data(forKey: "workspace.route." + environment),
+                  let route = try? JSONDecoder().decode(WorkspaceRoute.self, from: data) else { return }
+            if case let .thread(_, scope) = route, !scope.isEmpty && store.linked[scope] == nil { return }
+            navigationPath = [route]
+        }
+        .onChange(of: navigationPath) { _, path in
+            guard let environment = restoredEnvironment, environment == store.environmentId else { return }
+            let key = "workspace.route." + environment
+            guard let route = path.last else { UserDefaults.standard.removeObject(forKey: key); return }
+            if case .newThreadDraft = route { return }
+            if let data = try? JSONEncoder().encode(route) { UserDefaults.standard.set(data, forKey: key) }
         }
         .onDisappear { store.isInboxVisible = false }
         .onChange(of: inboxOnScreen) { _, visible in store.isInboxVisible = visible }
@@ -346,70 +374,14 @@ private struct WorkspaceFilterMenu: View {
 
 // MARK: - HomeConnectionStatusOverlay
 
-private struct HomeConnectionStatusOverlay: View {
-    let status: FfiConnectionStatus
-    let onTap: () -> Void
-    @Environment(\.connTheme) private var theme
-
+struct OfflinePill: View {
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(dotColor)
-                    .frame(width: 7, height: 7)
-                Text(label)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(theme.foreground)
-            }
+        Label("Not connected", systemImage: "bolt.fill")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(Color(red: 0.16, green: 0.14, blue: 0.055))
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .glassEffect(.regular, in: .capsule)
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var dotColor: Color {
-        switch status {
-        case .connected: theme.success
-        case .connecting, .reconnecting: theme.warning
-        case .failed: theme.destructive
-        }
-    }
-
-    private var label: String {
-        switch status {
-        case .connected: "Connected"
-        case .connecting: "Connecting…"
-        case let .reconnecting(attempt): "Reconnecting (\(attempt))…"
-        case .failed: "Connection failed"
-        }
-    }
-}
-
-// MARK: - PullRequestsTabView (1:1 port of PullRequestsScreen.tsx)
-
-struct PullRequestsTabView: View {
-    let searchQuery: String
-    @Environment(\.connTheme) private var theme
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 8) {
-                Text(searchQuery.isEmpty ? "No pull requests" : "No matching pull requests")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(theme.foreground)
-                Text("Pull requests from connected environments will appear here.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(theme.mutedForeground)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 32)
-            .padding(.top, 96)
-        }
-        .background(theme.background)
-        .scrollEdgeEffectStyle(.soft, for: .top)
-        .scrollEdgeEffectHidden(true, for: .bottom)
+            .background(Color(red: 1, green: 0.83, blue: 0.30), in: Capsule())
     }
 }
 

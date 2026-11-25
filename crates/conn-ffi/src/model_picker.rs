@@ -6,11 +6,59 @@
 
 use conn_contract::{ModelSelection, OrchestrationV2AppThread};
 use conn_state::ThreadShell;
-use conn_state::providers::{ModelCatalog, ModelOption};
+use conn_state::providers::{
+    ModelCatalog, ModelOption, ModelOptionDescriptor, OptionMap, model_options_from_json,
+};
 use conn_state::thread_models::ThreadModelScope;
 
 /// Drivers whose sections start expanded (`PRIMARY_PROVIDER_DRIVERS`).
 const PRIMARY_DRIVERS: [&str; 3] = ["claudeAgent", "codex", "antigravity"];
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FfiModelControl {
+    pub id: String,
+    pub label: String,
+    pub values: Vec<String>,
+    pub labels: Vec<String>,
+    pub current: String,
+    pub toggle: bool,
+}
+
+fn model_controls(model: &ModelOption, selected: Option<&OptionMap>) -> Vec<FfiModelControl> {
+    let controls = model.column_controls();
+    [controls.effort, controls.speed_select, controls.fast_toggle]
+        .into_iter()
+        .flatten()
+        .filter_map(|descriptor| {
+            let toggle = matches!(descriptor, ModelOptionDescriptor::Boolean { .. });
+            let (values, labels, current) = if toggle {
+                (
+                    vec!["false".into(), "true".into()],
+                    vec!["Off".into(), "On".into()],
+                    descriptor.bool_value(selected).to_string(),
+                )
+            } else {
+                let choices = descriptor.selectable_choices();
+                if choices.is_empty() {
+                    return None;
+                }
+                (
+                    choices.iter().map(|c| c.id.clone()).collect(),
+                    choices.iter().map(|c| c.label.clone()).collect(),
+                    descriptor.select_value(selected)?.to_owned(),
+                )
+            };
+            Some(FfiModelControl {
+                id: descriptor.id().to_owned(),
+                label: descriptor.label().to_owned(),
+                values,
+                labels,
+                current,
+                toggle,
+            })
+        })
+        .collect()
+}
 
 /// One model row (`ModelRowContent`).
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -20,6 +68,7 @@ pub struct FfiModelPickerRow {
     pub label: String,
     /// The sub-provider, or empty.
     pub subtitle: String,
+    pub controls: Vec<FfiModelControl>,
     pub is_default: bool,
     pub is_legacy: bool,
     /// The checkmark: the pending pick, else the thread's model.
@@ -70,7 +119,11 @@ pub enum FfiModelSave {
 /// [`model_to_save`]'s answer: the selection to send, or why nothing is sent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SaveDecision {
-    Send { instance_id: String, model: String },
+    Send {
+        instance_id: String,
+        model: String,
+        options: Option<OptionMap>,
+    },
     Unchanged,
     Unavailable,
     NotReady,
@@ -96,6 +149,7 @@ pub(crate) struct PickerThread {
     pub model: Option<String>,
     /// A started thread keeps its provider and continuation group.
     pub started: bool,
+    pub options: OptionMap,
     pub project_id: Option<String>,
     /// The worktree, else the project's root (`useSelectedThreadWorktree`).
     pub cwd: Option<String>,
@@ -144,6 +198,12 @@ impl PickerThread {
                 .filter(|id| !id.is_empty()),
             model: selection.model.as_str().and_then(non_empty),
             started,
+            options: selection
+                .options
+                .as_ref()
+                .and_then(Option::as_ref)
+                .and_then(model_options_from_json)
+                .unwrap_or_default(),
             project_id: non_empty(project_id),
             cwd: worktree_path.and_then(non_empty),
         }
@@ -244,6 +304,10 @@ pub(crate) fn build_model_picker(
                             is_default: m.is_default,
                             is_legacy: m.is_legacy,
                             selected: displayed(m),
+                            controls: model_controls(
+                                m,
+                                thread.applies(m).then_some(&thread.options),
+                            ),
                         })
                         .collect()
                 },
@@ -280,17 +344,48 @@ pub(crate) fn model_to_save(
     thread: &PickerThread,
     instance_id: &str,
     model: &str,
+    changes: &std::collections::HashMap<String, String>,
 ) -> SaveDecision {
-    if thread.instance_id.as_deref() == Some(instance_id) && thread.model.as_deref() == Some(model)
-    {
-        SaveDecision::Unchanged
-    } else if catalog.offers(instance_id, model) {
-        SaveDecision::Send {
-            instance_id: instance_id.to_owned(),
-            model: model.to_owned(),
-        }
+    let current = thread.instance_id.as_deref() == Some(instance_id)
+        && thread.model.as_deref() == Some(model);
+    if current && changes.is_empty() {
+        return SaveDecision::Unchanged;
+    }
+    if !catalog.offers(instance_id, model) {
+        return SaveDecision::Unavailable;
+    }
+    let Some(offered) = catalog
+        .find_model(Some(instance_id), model)
+        .filter(|m| m.instance_id == instance_id && m.slug == model)
+    else {
+        return SaveDecision::Unavailable;
+    };
+    let mut options = if current {
+        thread.options.clone()
     } else {
-        SaveDecision::Unavailable
+        OptionMap::new()
+    };
+    let controls = model_controls(offered, Some(&options));
+    for (id, value) in changes {
+        let Some(control) = controls
+            .iter()
+            .find(|control| control.id == *id && control.values.contains(value))
+        else {
+            return SaveDecision::Unavailable;
+        };
+        options.insert(
+            id.clone(),
+            if control.toggle {
+                serde_json::Value::Bool(value == "true")
+            } else {
+                serde_json::Value::String(value.clone())
+            },
+        );
+    }
+    SaveDecision::Send {
+        instance_id: instance_id.to_owned(),
+        model: model.to_owned(),
+        options: (!options.is_empty()).then_some(options),
     }
 }
 
@@ -440,16 +535,50 @@ mod tests {
     #[test]
     fn save_sends_only_a_model_the_catalog_still_offers() {
         let claude = thread("claudeAgent", "sonnet");
+        let mut with_speed = catalog();
+        with_speed.providers[0].models[0]
+            .descriptors
+            .push(ModelOptionDescriptor::Boolean {
+                id: "fastMode".into(),
+                label: "Fast mode".into(),
+                current_value: Some(false),
+            });
+        let changes = std::collections::HashMap::from([("fastMode".to_owned(), "true".to_owned())]);
         assert_eq!(
-            model_to_save(&catalog(), &claude, "grok", "grok-build"),
+            model_to_save(&with_speed, &claude, "claudeAgent", "sonnet", &changes),
+            SaveDecision::Send {
+                instance_id: "claudeAgent".into(),
+                model: "sonnet".into(),
+                options: Some(OptionMap::from_iter([("fastMode".into(), json!(true))]))
+            }
+        );
+        assert_eq!(
+            model_to_save(&with_speed, &claude, "grok", "grok-build", &changes),
+            SaveDecision::Unavailable
+        );
+        assert_eq!(
+            model_to_save(
+                &catalog(),
+                &claude,
+                "grok",
+                "grok-build",
+                &Default::default()
+            ),
             SaveDecision::Send {
                 instance_id: "grok".to_owned(),
-                model: "grok-build".to_owned()
+                model: "grok-build".to_owned(),
+                options: None
             },
             "an offered pick is sent"
         );
         assert_eq!(
-            model_to_save(&catalog(), &claude, "claudeAgent", "sonnet"),
+            model_to_save(
+                &catalog(),
+                &claude,
+                "claudeAgent",
+                "sonnet",
+                &Default::default()
+            ),
             SaveDecision::Unchanged,
             "the thread's own model sends nothing"
         );
@@ -464,7 +593,7 @@ mod tests {
             provider("grok", "grok", "Grok", json!([])),
         ]);
         assert_eq!(
-            model_to_save(&after, &claude, "grok", "grok-build"),
+            model_to_save(&after, &claude, "grok", "grok-build", &Default::default()),
             SaveDecision::Unavailable,
             "a model removed between select and Save is not sent"
         );

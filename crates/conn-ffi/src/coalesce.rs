@@ -158,6 +158,7 @@ mod tests {
             title: None,
             branch: None,
             model_label: None,
+            feed_details: Default::default(),
             entries: vec![FfiTimelineEntry::Assistant {
                 id: "a1".to_owned(),
                 markdown: text.to_owned(),

@@ -284,8 +284,8 @@ pub struct TaskAgent {
 #[serde(rename_all = "snake_case")]
 pub enum ImplementerMode {
     PerSubtask,
-    /// Reserved for a future Orbit mode.
     Shared,
+    Task,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

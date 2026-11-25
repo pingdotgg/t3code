@@ -121,6 +121,7 @@ enum PumpControl {
         thread_id: String,
         instance_id: String,
         model: String,
+        changes: std::collections::HashMap<String, String>,
         reply: oneshot::Sender<SaveDecision>,
     },
     PlanWorkspaceScan {
@@ -320,7 +321,7 @@ impl ConnCore {
             .map_err(FfiError::from)
     }
 
-    async fn call_json(
+    pub(crate) async fn call_json(
         &self,
         tag: &'static str,
         payload: serde_json::Value,
@@ -405,8 +406,45 @@ fn map_build_error(what: &str, err: serde_json::Error) -> FfiError {
     }
 }
 
+#[derive(Debug, uniffi::Enum)]
+pub enum FfiPullRequestOperation {
+    List,
+    Detail,
+    Activity,
+    SubmitReview,
+    Diff,
+    ListStats,
+}
+
 #[uniffi::export]
 impl ConnCore {
+    /// Runs a pull request operation on this environment's authenticated connection.
+    pub async fn pull_request(
+        &self,
+        operation: FfiPullRequestOperation,
+        input: String,
+    ) -> Result<String, FfiError> {
+        let payload = serde_json::from_str(&input).map_err(|error| FfiError::InvalidInput {
+            message: error.to_string(),
+        })?;
+        let tag = match operation {
+            FfiPullRequestOperation::Diff => {
+                self.ensure_connected()?;
+                return Ok(self
+                    .connection
+                    .pull_request_diff(payload)
+                    .await?
+                    .to_string());
+            }
+            FfiPullRequestOperation::ListStats => "pullRequests.listStats",
+            FfiPullRequestOperation::List => "pullRequests.list",
+            FfiPullRequestOperation::Detail => "pullRequests.detail",
+            FfiPullRequestOperation::Activity => "pullRequests.activity",
+            FfiPullRequestOperation::SubmitReview => "pullRequests.submitReview",
+        };
+        Ok(self.call_json(tag, payload).await?.to_string())
+    }
+
     /// Connects to `server_url` with `credential`, subscribes to `orchestration.subscribeShell`,
     /// and starts pumping state snapshots to `listener`.
     ///
@@ -450,6 +488,76 @@ impl ConnCore {
     #[must_use]
     pub fn server_url(&self) -> String {
         self.server_url.clone()
+    }
+
+    pub fn worktree_setup(
+        &self,
+        thread_id: String,
+    ) -> Result<Arc<crate::WorktreeSetupFeed>, FfiError> {
+        self.ensure_connected()?;
+        Ok(crate::WorktreeSetupFeed::start(
+            self.connection.clone(),
+            thread_id,
+        ))
+    }
+
+    pub async fn turn_patch(
+        &self,
+        thread_id: String,
+        turn: i64,
+    ) -> Result<Vec<crate::feed::FfiFilePatch>, FfiError> {
+        if turn < 1 {
+            return Err(FfiError::InvalidInput {
+                message: "Missing checkpoint ordinal".into(),
+            });
+        }
+        let result = self
+            .call_json(
+                "orchestration.getTurnDiff",
+                serde_json::json!({
+                    "threadId":thread_id,"fromTurnCount":turn-1,"toTurnCount":turn
+                }),
+            )
+            .await?;
+        serde_json::from_value::<conn_contract::ThreadTurnDiff>(result)
+            .map(|r| crate::feed::file_patches(&r.diff))
+            .map_err(|err| FfiError::Rpc {
+                message: err.to_string(),
+            })
+    }
+
+    /// Mints the same scoped asset URL used by the web and mobile preview frames.
+    pub async fn attachment_url(
+        &self,
+        id: String,
+        name: String,
+        mime: String,
+        mcp_app: bool,
+    ) -> Result<String, FfiError> {
+        let mut resource = serde_json::json!({"_tag":"attachment","attachmentId":id,"fileName":name,"mimeType":mime,"disposition":"inline"});
+        if mcp_app {
+            resource["renderIntent"] = "mcp-app".into();
+        }
+        let result = self
+            .call_json("assets.createUrl", serde_json::json!({"resource":resource}))
+            .await?;
+        let relative = result["relativeUrl"]
+            .as_str()
+            .ok_or_else(|| FfiError::Rpc {
+                message: "Missing asset URL".into(),
+            })?;
+        let base = url::Url::parse(&self.server_url).map_err(|e| FfiError::InvalidUrl {
+            message: e.to_string(),
+        })?;
+        let url = base.join(relative).map_err(|e| FfiError::InvalidUrl {
+            message: e.to_string(),
+        })?;
+        if url.origin() != base.origin() {
+            return Err(FfiError::InvalidUrl {
+                message: "Unexpected asset origin".into(),
+            });
+        }
+        Ok(url.to_string())
     }
 
     /// Loads and subscribes to `thread_id`, emitting snapshots to [`CoreListener::on_thread`].
@@ -616,6 +724,17 @@ impl ConnCore {
         instance_id: String,
         model: String,
     ) -> Result<FfiModelSave, FfiError> {
+        self.save_thread_model_options(thread_id, instance_id, model, Default::default())
+            .await
+    }
+
+    pub async fn save_thread_model_options(
+        &self,
+        thread_id: String,
+        instance_id: String,
+        model: String,
+        changes: std::collections::HashMap<String, String>,
+    ) -> Result<FfiModelSave, FfiError> {
         self.ensure_connected()?;
         let (reply, rx) = oneshot::channel();
         self.ctrl_tx
@@ -623,6 +742,7 @@ impl ConnCore {
                 thread_id: thread_id.clone(),
                 instance_id,
                 model,
+                changes,
                 reply,
             })
             .map_err(|_| FfiError::Closed)?;
@@ -630,12 +750,16 @@ impl ConnCore {
             SaveDecision::Unchanged => Ok(FfiModelSave::Unchanged),
             SaveDecision::Unavailable => Ok(FfiModelSave::Unavailable),
             SaveDecision::NotReady => Ok(FfiModelSave::NotReady),
-            SaveDecision::Send { instance_id, model } => {
+            SaveDecision::Send {
+                instance_id,
+                model,
+                options,
+            } => {
                 let command = conn_client::commands::set_model_selection(
                     &thread_id,
                     &instance_id,
                     &model,
-                    None,
+                    options.as_ref(),
                 )
                 .map_err(|err| map_build_error("thread.model-selection.set", err))?;
                 self.dispatch_command(command).await?;
@@ -1234,12 +1358,17 @@ impl PumpState {
                 thread_id,
                 instance_id,
                 model,
+                changes,
                 reply,
             } => {
                 let decision = match self.picker_thread(&thread_id) {
-                    Some(thread) => {
-                        model_to_save(&self.catalog_for(&thread), &thread, &instance_id, &model)
-                    }
+                    Some(thread) => model_to_save(
+                        &self.catalog_for(&thread),
+                        &thread,
+                        &instance_id,
+                        &model,
+                        &changes,
+                    ),
                     None => SaveDecision::NotReady,
                 };
                 let _ = reply.send(decision);

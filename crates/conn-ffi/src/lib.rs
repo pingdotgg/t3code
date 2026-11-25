@@ -8,7 +8,15 @@ mod approvals;
 mod coalesce;
 mod composer;
 mod core;
+mod feed;
+pub use feed::{
+    FfiChangedFileRow, FfiCodeSpan, FfiFeedDetail, FfiFilePatch, FfiPatchLine, FfiReviewExcerpt,
+    FfiSetupStage, FfiWorktreeSetup, WorktreeSetupFeed, changed_file_rows, highlight_code,
+    parse_file_patches,
+};
+mod mcp_app;
 mod model_picker;
+pub use mcp_app::{FfiMcpToolInfo, ThreadMcpApp};
 mod offline;
 mod orbit;
 mod phone_tasks;
@@ -21,9 +29,9 @@ uniffi::setup_scaffolding!();
 
 pub use crate::approvals::{FfiApprovalOption, FfiButtonTone, FfiPendingApproval};
 pub use crate::composer::composer_restore_draft;
-pub use crate::core::{ConnCore, CoreListener};
+pub use crate::core::{ConnCore, CoreListener, FfiPullRequestOperation};
 pub use crate::model_picker::{
-    FfiModelPicker, FfiModelPickerRow, FfiModelPickerSection, FfiModelSave,
+    FfiModelControl, FfiModelPicker, FfiModelPickerRow, FfiModelPickerSection, FfiModelSave,
 };
 pub use crate::offline::{FfiPromptMarker, OfflineReader};
 pub use crate::orbit::{
@@ -46,7 +54,7 @@ pub use crate::orbit::{
 };
 pub use crate::phone_tasks::{
     FfiPhoneNotice, FfiPhoneTaskLane, FfiPhoneTaskRow, FfiPhoneTasks, FfiPhoneTasksView,
-    FfiTaskDot, phone_tasks_error_text, phone_tasks_view,
+    FfiTaskDot, phone_tasks_error_text, phone_tasks_view, task_receipt_row,
 };
 pub use crate::questions::{
     FfiPendingQuestion, FfiQuestionDraft, FfiQuestionPanel, FfiQuestionPanelOption, FfiTextFits,

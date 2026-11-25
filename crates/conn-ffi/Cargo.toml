@@ -25,7 +25,7 @@ conn-client.workspace = true
 conn-contract.workspace = true
 conn-orbit.workspace = true
 conn-state.workspace = true
-conn-theme.workspace = true
+conn-theme = { workspace = true, features = ["highlight"] }
 reqwest.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

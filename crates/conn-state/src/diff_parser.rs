@@ -2,7 +2,7 @@
 
 /// Kind of a single line inside a unified diff hunk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum DiffLineKind {
+pub enum DiffLineKind {
     Context,
     Added,
     Removed,
@@ -10,43 +10,43 @@ pub(crate) enum DiffLineKind {
 
 /// One line inside a unified diff hunk, with optional old/new line numbers.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DiffLine {
-    pub(crate) kind: DiffLineKind,
-    pub(crate) old_line: Option<u32>,
-    pub(crate) new_line: Option<u32>,
-    pub(crate) text: String,
+pub struct DiffLine {
+    pub kind: DiffLineKind,
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+    pub text: String,
 }
 
 /// One `@@ -old +new @@` hunk in a diffed file.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DiffHunk {
-    pub(crate) header: String,
-    pub(crate) old_start: u32,
-    pub(crate) old_count: u32,
-    pub(crate) new_start: u32,
-    pub(crate) new_count: u32,
-    pub(crate) lines: Vec<DiffLine>,
+pub struct DiffHunk {
+    pub header: String,
+    pub old_start: u32,
+    pub old_count: u32,
+    pub new_start: u32,
+    pub new_count: u32,
+    pub lines: Vec<DiffLine>,
 }
 
 /// Parsed diff for a single changed file.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DiffFile {
-    pub(crate) old_path: Option<String>,
-    pub(crate) new_path: Option<String>,
-    pub(crate) display_path: String,
-    pub(crate) additions: usize,
-    pub(crate) deletions: usize,
-    pub(crate) is_binary: bool,
+pub struct DiffFile {
+    pub old_path: Option<String>,
+    pub new_path: Option<String>,
+    pub display_path: String,
+    pub additions: usize,
+    pub deletions: usize,
+    pub is_binary: bool,
     /// The blob hashes and mode of git's `index <old>..<new> <mode>` header line, when the diff
     /// has one. They change with the content, so a binary or a mode-only change has an identity.
-    pub(crate) index: Option<String>,
-    pub(crate) hunks: Vec<DiffHunk>,
+    pub index: Option<String>,
+    pub hunks: Vec<DiffHunk>,
 }
 
 /// Parses a unified diff patch string into structured per-file diffs with hunks,
 /// line numbers, and addition/deletion counts.
 #[must_use]
-pub(crate) fn parse_unified_diff(patch: &str) -> Vec<DiffFile> {
+pub fn parse_unified_diff(patch: &str) -> Vec<DiffFile> {
     let mut files: Vec<DiffFile> = Vec::new();
     let mut current_file: Option<DiffFile> = None;
     let mut current_hunk: Option<DiffHunk> = None;
@@ -87,7 +87,9 @@ pub(crate) fn parse_unified_diff(patch: &str) -> Vec<DiffFile> {
             continue;
         }
 
-        if let Some(path) = line.strip_prefix("--- ") {
+        if current_hunk.is_none()
+            && let Some(path) = line.strip_prefix("--- ")
+        {
             if current_file.is_none() {
                 current_file = Some(DiffFile {
                     old_path: None,
@@ -106,7 +108,9 @@ pub(crate) fn parse_unified_diff(patch: &str) -> Vec<DiffFile> {
             continue;
         }
 
-        if let Some(path) = line.strip_prefix("+++ ") {
+        if current_hunk.is_none()
+            && let Some(path) = line.strip_prefix("+++ ")
+        {
             if let Some(file) = current_file.as_mut() {
                 file.new_path = clean_diff_path(path);
             }
@@ -267,8 +271,8 @@ index 1234567..89abcdef 100644
 +++ b/src/lib.rs
 @@ -10,4 +10,5 @@ fn demo() {
  let a = 1;
--let b = 2;
-+let b = 20;
+--- old content
++++ new content
 +let c = 30;
  let d = 4;
 diff --git a/new.txt b/new.txt

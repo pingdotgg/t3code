@@ -19,100 +19,31 @@ struct NewThreadDraftView: View {
         store: CoreStore,
         initialProjectId: String?,
         initialProjectTitle: String,
+        initialPrompt: String = "",
         onCreated: @escaping (String) -> Void
     ) {
         self.store = store
         self.onCreated = onCreated
+        self._prompt = State(initialValue: initialPrompt)
         self._selectedProjectId = State(initialValue: initialProjectId)
         self._selectedProjectTitle = State(initialValue: initialProjectTitle)
     }
 
-    private var environmentLabel: String {
-        if let url = store.serverURL, let host = URL(string: url)?.host {
-            return host == "127.0.0.1" ? "conn-gpui-dev" : host
-        }
-        return "conn-gpui-dev"
-    }
-
-    /// Mobile's `text-2xl font-t3-medium tracking-tight`: 26pt, weight 500, -0.025em.
-    private static let heroFont = Font.system(size: 26, weight: .medium)
-    private static let heroTracking: CGFloat = -0.65
-    /// One space in the hero font, including its tracking.
-    private static let heroSpaceWidth: CGFloat =
-        (" " as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: 26, weight: .medium)]).width
-        + heroTracking
-
     private var canLaunch: Bool {
-        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLaunching
+        !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLaunching && store.status == .connected
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // NewTaskDraftScreen.tsx splits the free space 1:2 around the hero
-            // (`flexGrow: 1` above, `flexGrow: 2` below).
             Spacer()
-
-            // Hero: "What should we build in <project>?"; the project has a 1pt muted bottom border.
-            VStack(spacing: 24) {
-                VStack(spacing: 6) {
-                    Text("What should we build")
-                        .font(Self.heroFont)
-                        .tracking(Self.heroTracking)
-                        .foregroundStyle(theme.foreground)
-                    HStack(spacing: 0) {
-                        // SwiftUI drops a trailing space in `Text`, so the space after "in" is padding.
-                        Text("in")
-                            .font(Self.heroFont)
-                            .tracking(Self.heroTracking)
-                            .foregroundStyle(theme.foreground)
-                            .padding(.trailing, Self.heroSpaceWidth)
-                        Button {
-                            showingProjectPicker = true
-                        } label: {
-                            // `max-w-[250px] border-b border-foreground-muted`
-                            CappedWidth(maxWidth: 250) {
-                                Text(selectedProjectTitle)
-                                    .font(Self.heroFont)
-                                    .tracking(Self.heroTracking)
-                                    .foregroundStyle(theme.foreground)
-                                    .lineLimit(1)
-                                    .padding(.bottom, 1)
-                                    .overlay(alignment: .bottom) {
-                                        Rectangle()
-                                            .fill(theme.mutedForeground)
-                                            .frame(height: 1)
-                                    }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("newThread.projectPickerButton")
-                        Text("?")
-                            .font(Self.heroFont)
-                            .tracking(Self.heroTracking)
-                            .foregroundStyle(theme.foreground)
-                    }
-                }
+            Text("What should we work on?")
+                .font(.system(size: 26, weight: .medium))
+                .tracking(-0.65)
                 .multilineTextAlignment(.center)
-
-                // DraftEnvironmentControl: "on <environment> ›"
-                HStack(spacing: 6) {
-                    ConnIcon("server.rack")
-                        .font(.system(size: 13))
-                        .foregroundStyle(theme.mutedForeground)
-                    Text("on \(environmentLabel)")
-                        .font(.system(size: 14))
-                        .foregroundStyle(theme.mutedForeground)
-                        .lineLimit(1)
-                    ConnIcon("chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(theme.mutedForeground)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            if selectedProjectId != nil {
+                Button(selectedProjectTitle) { showingProjectPicker = true }
+                    .accessibilityIdentifier("newThread.projectPickerButton")
             }
-            .padding(.horizontal, 24)
-
-            Spacer()
             Spacer()
 
             if let error = store.lastError, !error.isEmpty {
@@ -126,33 +57,7 @@ struct NewThreadDraftView: View {
         // Draft mode of the thread screen: the same floating glass pill, no band behind it.
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                // Workspace & branch context row above composer ("Current checkout · main ›")
-                if selectedProjectId != nil {
-                    HStack(spacing: 14) {
-                        HStack(spacing: 5) {
-                            ConnIcon("folder")
-                                .font(.system(size: 13))
-                                .foregroundStyle(theme.mutedForeground)
-                            Text("Current checkout")
-                                .font(.system(size: 13))
-                                .foregroundStyle(theme.mutedForeground)
-                        }
-                        HStack(spacing: 5) {
-                            ConnIcon("arrow.triangle.branch")
-                                .font(.system(size: 13))
-                                .foregroundStyle(theme.mutedForeground)
-                            Text("main")
-                                .font(.system(size: 13))
-                                .foregroundStyle(theme.mutedForeground)
-                            ConnIcon("chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(theme.mutedForeground)
-                        }
-                        Spacer()
-                    }
-                    .padding(.horizontal, 4)
-                }
-
+                if store.status != .connected { OfflinePill().frame(maxWidth: .infinity) }
                 ConnComposerPill(
                     placeholder: "Ask anything",
                     text: $prompt,
@@ -172,23 +77,6 @@ struct NewThreadDraftView: View {
         .scrollEdgeEffectStyle(.soft, for: .bottom)
         .navigationTitle("New thread")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button {
-                    } label: {
-                        Label("Git controls", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
-                    }
-                    Button {
-                    } label: {
-                        Label("Open files", systemImage: "folder")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                }
-                .accessibilityLabel("More actions")
-            }
-        }
         .sheet(isPresented: $showingProjectPicker) {
             NewTaskProjectPickerView(
                 store: store,
@@ -311,20 +199,5 @@ struct NewTaskProjectPickerView: View {
         }
         .buttonStyle(.plain)
         .listRowBackground(theme.background)
-    }
-}
-
-/// Caps its child's width like CSS `max-width`, without growing to the cap the way
-/// `.frame(maxWidth:)` does.
-private struct CappedWidth: Layout {
-    let maxWidth: CGFloat
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = min(proposal.width ?? maxWidth, maxWidth)
-        return subviews.first?.sizeThatFits(ProposedViewSize(width: width, height: proposal.height)) ?? .zero
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        subviews.first?.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
     }
 }

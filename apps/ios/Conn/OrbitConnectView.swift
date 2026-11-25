@@ -1,78 +1,54 @@
-import DesignKit
 import SwiftUI
 
-/// Shown while the app finds its Conn server through Orbit, or after that failed. Rust picks the
-/// target and says why it failed; Try again repeats the same target.
 struct OrbitConnectView: View {
     let store: CoreStore
     let state: OrbitConnectState
+    @Environment(\.connTheme) private var theme
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: Kit.Space.xxl) {
-                    VStack(spacing: Kit.Space.m) {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.kitTile)
-                                .frame(width: 56, height: 56)
-                            KitIconImage(.server, size: 24)
-                                .foregroundStyle(.primary)
-                        }
-
-                        switch state {
-                        case .connecting:
-                            Text("Connecting through Orbit…")
-                                .font(.kitHeading)
-                                .accessibilityIdentifier("orbit.connecting")
-                            ProgressView()
-                        case let .failed(message, detail):
-                            Text("Couldn't connect")
-                                .font(.kitHeading)
-                            Text(message)
-                                .font(.kitDetail)
-                                .foregroundStyle(Color.kitErrorText)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, Kit.Space.xl)
-                                .accessibilityIdentifier("orbit.errorText")
-                            if let detail, !detail.isEmpty {
-                                Text(detail)
-                                    .font(.kitDetail)
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal, Kit.Space.xl)
-                            }
-                        }
+        ZStack {
+            theme.background.ignoresSafeArea()
+            Image("LaunchMark")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 96, height: 64)
+                .accessibilityHidden(true)
+            switch state {
+            case let .connecting(message):
+                VStack {
+                    Spacer()
+                    Text(message)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(theme.mutedForeground)
+                        .accessibilityIdentifier("orbit.connecting")
+                }.padding(.bottom, 12)
+            case let .failed(message, detail):
+                Color.black.opacity(0.36).ignoresSafeArea()
+                VStack(spacing: 0) {
+                    Text(message)
+                        .font(.headline)
+                        .accessibilityIdentifier("orbit.errorText")
+                    if let detail, !detail.isEmpty {
+                        Text(detail).font(.subheadline).foregroundStyle(.secondary).padding(.top, 6)
                     }
-                    .padding(.top, Kit.Space.xxxl)
-
-                    VStack(spacing: Kit.Space.m) {
-                        if case .failed = state {
-                            Button {
-                                store.retry()
-                            } label: {
-                                Text("Try again")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.kitPrimary)
+                    Divider().padding(.top, 16)
+                    HStack(spacing: 0) {
+                        Button("Connect manually") { store.showManualPairing() }
+                            .frame(maxWidth: .infinity)
+                            .accessibilityIdentifier("orbit.manualButton")
+                        Divider()
+                        Button("Try again") { store.retry() }
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
                             .accessibilityIdentifier("orbit.retryButton")
-                        }
-
-                        Button("Connect manually") {
-                            store.showManualPairing()
-                        }
-                        .buttonStyle(.plain)
-                        .font(.kitDetail)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("orbit.manualButton")
-                    }
+                    }.frame(height: 46)
                 }
-                .padding(.horizontal, Kit.contentInset)
-                .padding(.bottom, Kit.Space.xxxl)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12)
+                .padding(.top, 20)
+                .frame(maxWidth: 300)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
             }
-            .background(Color.kitContent.ignoresSafeArea())
-            .navigationTitle("Conn")
-            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }
