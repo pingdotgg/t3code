@@ -239,7 +239,9 @@ describe("desktop-local media fallback", () => {
   const threadId = ThreadId.make("remote-thread");
 
   // The remote is missing every file; the desktop has one at every absolute path.
-  const makeFallback = Effect.fn("TestAssetUrl.makeFallback")(function* () {
+  const makeFallback = Effect.fn("TestAssetUrl.makeFallback")(function* (
+    workspacePages: ReadonlyArray<string> = [],
+  ) {
     const calls: Array<EnvironmentId> = [];
     const supervisor = (environmentId: EnvironmentId) =>
       Effect.gen(function* () {
@@ -247,6 +249,11 @@ describe("desktop-local media fallback", () => {
           client: {
             [WS_METHODS.assetsCreateUrl]: ({ resource }: { resource: AssetResource }) =>
               Effect.suspend(() => {
+                if (resource._tag === "workspace-file") {
+                  return workspacePages.includes(resource.path)
+                    ? Effect.succeed({ relativeUrl: "/api/assets/w/index.html", expiresAt: 4e12 })
+                    : Effect.fail(new AssetWorkspaceAssetNotFoundError({ resource }));
+                }
                 calls.push(environmentId);
                 return environmentId === remote
                   ? Effect.fail(new AssetWorkspaceAssetNotFoundError({ resource }))
@@ -315,8 +322,36 @@ describe("desktop-local media fallback", () => {
         Effect.map((result) => ({ loaded: result._tag === "Success", calls: [...calls] })),
       );
     };
-    return { load };
+    const openPage = (path: string) => {
+      calls.length = 0;
+      return AtomRegistry.getResult(
+        registry,
+        atoms.createUrl({
+          environmentId: remote,
+          input: { resource: { _tag: "media-file", threadId, path } },
+        }),
+      ).pipe(
+        Effect.result,
+        Effect.map((result) => ({
+          url: result._tag === "Success" ? result.success.relativeUrl : null,
+          hostFileCalls: [...calls],
+        })),
+      );
+    };
+    return { load, openPage };
   });
+
+  // The client cannot tell that a real path is inside a project registered through a symlink.
+  it.effect("opens a page through the thread's workspace before treating it as a host file", () =>
+    Effect.gen(function* () {
+      const { openPage } = yield* makeFallback(["/real/repo/site/index.html"]);
+      expect(yield* openPage("/real/repo/site/index.html")).toEqual({
+        url: "/api/assets/w/index.html",
+        hostFileCalls: [],
+      });
+      expect(yield* openPage("/tmp/report.html")).toEqual({ url: null, hostFileCalls: [remote] });
+    }),
+  );
 
   it.effect("keeps a relative Markdown image on the thread's environment", () =>
     Effect.gen(function* () {

@@ -238,6 +238,20 @@ export function makeRevisionedAssetUrlFamily(
     family(JSON.stringify([target.environmentId, target.input.resource, target.revision]));
 }
 
+/**
+ * A host file URL serves that one file, so a page opened through it loads none of the files
+ * next to it. Clients compare paths as written and take a page for a host file when its
+ * project is registered through a symlink; only the server can tell, so it is asked first.
+ */
+function workspacePageResource(resource: AssetResource): AssetResource | null {
+  return resource._tag === "media-file" &&
+    resource.disposition === undefined &&
+    (resource.path.startsWith("/") || isWindowsAbsolutePath(resource.path)) &&
+    /\.html?$/i.test(resource.path)
+    ? { _tag: "workspace-file", threadId: resource.threadId, path: resource.path }
+    : null;
+}
+
 export function createAssetEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
   localMediaEnvironment?: Atom.Atom<{
@@ -259,6 +273,13 @@ export function createAssetEnvironmentAtoms<R, E>(
   };
   const execute = Effect.fn("assets.createUrl")(function* (input: AssetCreateUrlInput) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const workspacePage = workspacePageResource(input.resource);
+    if (workspacePage !== null) {
+      const page = yield* mint(supervisor.target.environmentId, { resource: workspacePage }).pipe(
+        Effect.result,
+      );
+      if (Result.isSuccess(page)) return page.success;
+    }
     const result = yield* mint(supervisor.target.environmentId, input).pipe(Effect.result);
     if (Result.isSuccess(result)) return result.success;
     const error = result.failure;
