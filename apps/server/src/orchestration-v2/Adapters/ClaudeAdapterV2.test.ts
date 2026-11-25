@@ -3862,7 +3862,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ClaudeAdapterV2.ClaudeAgentSdkQuerySession,
       "mcpServerStatus" | "readMcpResource" | "callMcpTool"
     > &
-      Partial<Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules">>;
+      Partial<
+        Pick<ClaudeAdapterV2.ClaudeAgentSdkQuerySession, "listPermissionRules" | "mcpAuthenticate">
+      >;
     readonly environment?: NodeJS.ProcessEnv;
     readonly onSessionInit?: (cwd: string) => Effect.Effect<void>;
     readonly subagentLaunchToolUseId?: string;
@@ -4002,7 +4004,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   mcpServerStatus: options?.mcp?.mcpServerStatus ?? Effect.succeed([]),
                   readMcpResource: () => Effect.die("unexpected MCP resource read"),
                   callMcpTool: () => Effect.die("unexpected MCP tool call"),
-                  mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                  mcpAuthenticate:
+                    options?.mcp?.mcpAuthenticate ?? (() => Effect.die("unexpected MCP sign-in")),
                   mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
                   reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                   listPermissionRules: Effect.die("unexpected permission rules read"),
@@ -4048,7 +4051,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   (() => Effect.die("unexpected MCP resource read")),
                 callMcpTool:
                   options?.mcp?.callMcpTool ?? (() => Effect.die("unexpected MCP tool call")),
-                mcpAuthenticate: () => Effect.die("unexpected MCP sign-in"),
+                mcpAuthenticate:
+                  options?.mcp?.mcpAuthenticate ?? (() => Effect.die("unexpected MCP sign-in")),
                 mcpSubmitOAuthCallbackUrl: () => Effect.die("unexpected MCP sign-in"),
                 reconnectMcpServer: () => Effect.die("unexpected MCP reconnect"),
                 listPermissionRules: options?.mcp?.listPermissionRules ?? Effect.succeed([]),
@@ -7640,6 +7644,84 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  // regression: #42868 Sign in on an MCP notice must work after Claude's idle release reopens the session
+  it.effect("starts an MCP sign-in on a reopened Claude session before its next turn", () =>
+    Effect.gen(function* () {
+      const authenticated: Array<string> = [];
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        mcp: {
+          mcpServerStatus: Effect.succeed([{ name: "linear", status: "needs-auth" }]),
+          readMcpResource: () => Effect.die("unexpected MCP resource read"),
+          callMcpTool: () => Effect.die("unexpected MCP tool call"),
+          mcpAuthenticate: (server) =>
+            Effect.sync(() => {
+              authenticated.push(server);
+              return "https://linear.example/authorize";
+            }),
+        },
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("mcp-sign-in-reopened-1"),
+          text: "Plan the sprint",
+          attachments: [],
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          uuid: "mcp-sign-in-reopened-init",
+          session_id: WAKE_NATIVE_SESSION,
+          mcp_servers: [{ name: "linear", status: "pending" }],
+        }),
+      );
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "mcp-sign-in-reopened-result", result: "Planned" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const providerThread = harness.events.findLast(
+        (
+          event,
+        ): event is Extract<
+          ProviderAdapter.ProviderAdapterV2Event,
+          { type: "provider_thread.updated" }
+        > => event.type === "provider_thread.updated",
+      )!.providerThread;
+
+      // The idle release unloaded the first session; Sign in reopens and resumes the thread.
+      const reopened = yield* harness.adapter.openSession({
+        threadId: harness.threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-claude-wake-2"),
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+      const resumed = yield* reopened.resumeThread({ providerThread });
+
+      const result = yield* reopened.mcpSignIn!.start({
+        providerThread: resumed,
+        server: "linear",
+      });
+
+      assert.deepEqual(result, { authorizationUrl: "https://linear.example/authorize" });
+      assert.deepEqual(authenticated, ["linear"]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   // regression: #38284 an MCP app's update-model-context note must reach Claude's next turn
