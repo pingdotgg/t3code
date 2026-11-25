@@ -1,0 +1,1 @@
+- Show which tracked repository is being fetched or checked out during worktree setup, alongside the number of repositories ready.
