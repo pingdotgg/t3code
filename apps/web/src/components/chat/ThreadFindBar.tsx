@@ -92,9 +92,12 @@ export function ThreadFindBar(props: ThreadFindBarProps) {
         aria-busy={props.status === "loading" || props.counting === true}
         className="w-full"
       >
+        {/* Native search inputs clear on Escape even during IME composition. */}
         <InputGroupInput
           ref={inputRef}
-          type="search"
+          type="text"
+          role="searchbox"
+          enterKeyHint="search"
           size="sm"
           value={props.query}
           aria-label={gt("Find in thread")}
