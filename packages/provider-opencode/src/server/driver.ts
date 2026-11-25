@@ -15,6 +15,7 @@ import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -37,7 +38,9 @@ import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
 import { loadOpenCode2Catalog, loadOpenCode2DirectoryCatalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
+  followOpenCode2Scans,
   loadOpenCode2Workspace,
+  makeOpenCode2CatalogWatch,
   makeOpenCode2ModelLoader,
   makePendingOpenCodeProvider,
   openCode2CommandsToServerProviderSlashCommands,
@@ -47,6 +50,8 @@ import {
   openCodeCommandsToServerProviderSlashCommands,
   openCodeProviderModels,
   readSettledOpenCode2Catalog,
+  withOpenCode2Catalog,
+  type OpenCode2Model,
 } from "./status.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
@@ -397,37 +402,61 @@ export const OpenCodeDriver: ProviderDriver<
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
       ),
     });
+    const catalogWatch = yield* makeOpenCode2CatalogWatch(processEnv);
+    // An external server may not have the host's cwd; without a location it uses its own default.
+    const machineDirectory = (connection: OpenCode2Server.OpenCode2Connection) =>
+      connection.external ? undefined : host.paths.cwd;
+    const followMachineCatalog = (connection: OpenCode2Server.OpenCode2Connection) =>
+      catalogWatch.follow(
+        connection.url,
+        connection.events,
+        loadOpenCode2DirectoryCatalog(connection.client, machineDirectory(connection)),
+      );
+    // Locations whose scan T3 saw end on the current server; a scan is announced only once.
+    let scans = { url: "", scanned: new Set<string>() };
+    const followScans = (connection: OpenCode2Server.OpenCode2Connection) =>
+      Effect.suspend(() => {
+        const scanned = new Set<string>();
+        scans = { url: connection.url, scanned };
+        return connection.events.pipe(
+          Effect.flatMap((events) =>
+            followOpenCode2Scans(events, (directory) => Effect.sync(() => scanned.add(directory))),
+          ),
+          Effect.scoped,
+          Effect.ignore,
+          Effect.forkScoped,
+        );
+      });
+    // A session or text generation can start the server too, and reads no catalog when it does.
+    yield* Stream.runForEach(openCode2Server.connections, (connection) =>
+      followScans(connection).pipe(Effect.andThen(followMachineCatalog(connection))),
+    ).pipe(Effect.forkScoped);
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-      // An external server may not have the host's cwd; without a location it uses its own default.
-      openCode2Server.withConnection(({ client, external }) =>
-        loadOpenCode2Catalog(client, external ? undefined : host.paths.cwd),
+      openCode2Server.withConnection((connection) =>
+        followMachineCatalog(connection).pipe(
+          Effect.andThen(loadOpenCode2Catalog(connection.client, machineDirectory(connection))),
+        ),
       ),
       processEnv,
     );
     const listOpenCode2Workspace = (cwd: string) =>
-      openCode2Server.withConnection(({ client, events }) =>
+      openCode2Server.withConnection(({ client, events, url }) =>
         Effect.gen(function* () {
           // OpenCode names a location by its resolved path (no trailing slash or `..`).
           const directory = pathService.resolve(cwd);
           const location = { directory };
+          if (scans.url !== url) scans = { url, scanned: new Set() };
+          const { scanned: seen } = scans;
           const scanned = yield* Deferred.make<void>();
-          const pending = new Set(["command.updated", "skill.updated"]);
           const stream = yield* events.pipe(Effect.option);
           if (stream._tag === "Some") {
-            yield* stream.value.pipe(
-              Stream.runForEach((event) =>
-                "location" in event &&
-                event.location?.directory === directory &&
-                pending.delete(event.type) &&
-                pending.size === 0
-                  ? Deferred.succeed(scanned, undefined)
-                  : Effect.void,
-              ),
-              Effect.ignore,
-              Effect.forkScoped,
-            );
+            yield* followOpenCode2Scans(stream.value, (scannedDirectory) =>
+              scannedDirectory === directory
+                ? Deferred.succeed(scanned, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ).pipe(Effect.forkScoped);
           }
-          return yield* loadOpenCode2Workspace(
+          const workspace = yield* loadOpenCode2Workspace(
             Effect.all(
               {
                 skills: client.skill.list({ location }).pipe(Effect.map((list) => list.data)),
@@ -437,17 +466,12 @@ export const OpenCodeDriver: ProviderDriver<
             ),
             Deferred.await(scanned),
             // Without events no scan can be awaited, so trust the first read as before.
-            stream._tag === "None"
-              ? Effect.succeed(true)
-              : client.debug.location.list().pipe(
-                  Effect.map((loaded) => loaded.some((entry) => entry.directory === directory)),
-                  Effect.timeout("2 seconds"),
-                  Effect.orElseSucceed(() => true),
-                ),
-            // OpenCode answers provider.list for a location only once its skill scan has ended.
-            client.provider.list({ location }).pipe(Effect.timeout("10 seconds"), Effect.ignore),
+            stream._tag === "None" || seen.has(directory),
             processEnv,
           );
+          // A location loaded before T3 watched never announces its scan; wait for it only once.
+          seen.add(directory);
+          return workspace;
         }).pipe(Effect.scoped),
       );
     const serverOwner = yield* OpenCodeServerOwner.make({
@@ -661,17 +685,43 @@ export const OpenCodeDriver: ProviderDriver<
         makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
       checkUsageLimits,
-      enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
-        resolveMaintenance().pipe(
-          Effect.flatMap((maintenanceCapabilities) =>
-            enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
-              enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-            }),
+      enrichSnapshot: ({ settings, snapshot, publishSnapshot }) => {
+        let enriched = snapshot;
+        let catalog: ReadonlyArray<OpenCode2Model> | undefined;
+        // Each publication replaces the whole snapshot, so both sources publish their combination.
+        const publishing = Semaphore.makeUnsafe(1);
+        const publish = publishing.withPermit(
+          Effect.suspend(() =>
+            publishSnapshot(
+              catalog === undefined
+                ? enriched
+                : withOpenCode2Catalog(enriched, effectiveConfig, catalog),
+            ),
           ),
-          Effect.provideService(HttpClient.HttpClient, httpClient),
-          Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
-          Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
-        ),
+        );
+        return Effect.all(
+          [
+            resolveMaintenance().pipe(
+              Effect.flatMap((maintenanceCapabilities) =>
+                enrichProviderSnapshotWithVersionAdvisory(snapshot, maintenanceCapabilities, {
+                  enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+                }),
+              ),
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+              Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+              Effect.flatMap((enrichedSnapshot) => {
+                enriched = enrichedSnapshot;
+                return publish;
+              }),
+            ),
+            Stream.runForEach(catalogWatch.changes, (listed) => {
+              catalog = listed;
+              return publish;
+            }),
+          ],
+          { concurrency: "unbounded", discard: true },
+        );
+      },
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -713,18 +763,29 @@ export const OpenCodeDriver: ProviderDriver<
                     [
                       snapshot.getSnapshot,
                       // A project's opencode.jsonc can define its own providers.
-                      readSettledOpenCode2Catalog(
-                        openCode2Server.withConnection(({ client }) =>
-                          loadOpenCode2DirectoryCatalog(client, cwd),
-                        ),
-                        processEnv,
-                      ).pipe(
-                        Effect.map(
-                          Option.map((catalog) =>
-                            openCode2ProviderModels(effectiveConfig, catalog),
+                      openCode2Server
+                        .withConnection(({ client, events, url }) => {
+                          const read = loadOpenCode2DirectoryCatalog(client, cwd);
+                          return readSettledOpenCode2Catalog(read, processEnv).pipe(
+                            Effect.tap((settled) =>
+                              catalogWatch.follow(url, events, read, {
+                                cwd,
+                                ...Option.match(settled, {
+                                  onNone: () => ({}),
+                                  onSome: (catalog) => ({ settled: catalog }),
+                                }),
+                              }),
+                            ),
+                          );
+                        })
+                        .pipe(
+                          Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
+                          Effect.map(
+                            Option.map((catalog) =>
+                              openCode2ProviderModels(effectiveConfig, catalog),
+                            ),
                           ),
                         ),
-                      ),
                       listOpenCode2Workspace(cwd).pipe(
                         // Leaves room for the reads around the scan wait, which uses the same override.
                         Effect.timeout(
@@ -784,6 +845,7 @@ export const OpenCodeDriver: ProviderDriver<
                 }),
               ),
             ),
+      workspaceRescans: catalogWatch.rescans,
       invalidateCaches: openCode2Server.forget,
       afterUpdate,
       orchestrationAdapter,

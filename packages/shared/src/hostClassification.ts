@@ -179,5 +179,9 @@ export const isPublicFaviconHost = (host: string): boolean => {
 export const isWildcardHost = (host: string | undefined): boolean =>
   host === "0.0.0.0" || host === "::" || host === "[::]";
 
+/** An unset, loopback, or wildcard bind host shares the port that `localhost` clients reach. */
+export const listensOnLoopback = (host: string | undefined): boolean =>
+  host === undefined || host === "" || isWildcardHost(host) || isLocalLoopbackHost(host);
+
 export const formatHostForUrl = (host: string): string =>
   host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;

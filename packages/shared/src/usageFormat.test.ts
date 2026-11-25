@@ -2,7 +2,13 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { UsageSource } from "@t3tools/contracts";
 
-import { formatHourShort, formatTokens, makeWindow, usageSourceMessages } from "./usageFormat.ts";
+import {
+  formatDateTimeShort,
+  formatHourShort,
+  formatTokens,
+  makeWindow,
+  usageSourceMessages,
+} from "./usageFormat.ts";
 
 function malformedSource(count: number, overrides: Partial<UsageSource> = {}): UsageSource {
   return {
@@ -150,6 +156,15 @@ describe("hourly usage formatting", () => {
     expect(formatHourShort("2026-11-01T06:37:00.000Z", "America/New_York", false)).toBe(
       "01:00 EST",
     );
+  });
+
+  it("uses a 12-hour clock in locales that default to 24-hour", () => {
+    const instant = "2026-11-24T18:03:00.000Z";
+    for (const locale of ["fr", "de", "es"]) {
+      expect(formatHourShort(instant, "UTC", true, locale)).not.toContain("18");
+    }
+    expect(formatDateTimeShort(instant, "UTC", true, "fr")).not.toContain("18");
+    expect(formatHourShort(instant, "UTC", false, "es")).toBe("18:00");
   });
 
   it("builds an exact minute-aligned 24-hour request", () => {
