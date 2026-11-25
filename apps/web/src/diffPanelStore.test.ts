@@ -137,7 +137,9 @@ describe("diffPanelStore", () => {
     const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
     const selection = () => useDiffPanelStore.getState().byThreadKey[scopedThreadKey(ref)];
     const store = useDiffPanelStore.getState();
-    store.selectTurnRepository(ref, RunId.make("run-1"), "/work/api");
+    store.selectTurnRepository(ref, null, "/work/api");
+    store.reconcileTurnSelection(ref, [RunId.make("run-2"), RunId.make("run-1")]);
+    expect(selection()).toMatchObject({ turnId: null, repository: "/work/api" });
     store.selectTurn(ref, RunId.make("run-2"));
     expect(selection()).toMatchObject({ turnId: "run-2", repository: "/work/api" });
     store.selectTurn(ref, RunId.make("run-2"), "web/src/index.ts");

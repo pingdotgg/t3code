@@ -3144,6 +3144,16 @@ it.effect(
       assert.include(patch, "+++ b/app/src/new.txt");
       assert.notInclude(patch, "base.txt");
 
+      const scopedPatch = yield* driver.checkpoints.diffCheckpoints({
+        ...refs,
+        ignoreWhitespace: false,
+        excludePaths: ["app", "app.worktrees/1"],
+      });
+      assert.notInclude(scopedPatch, "app/src/new.txt");
+      assert.notInclude(scopedPatch, "feature.txt");
+      assert.include(scopedPatch, "app [reuse #3]/reuse.txt");
+      assert.include(scopedPatch, "notes.txt");
+
       for (const requestedPath of ["app [feature #1]/feature.txt", "app.worktrees/1/feature.txt"]) {
         const filtered = yield* driver.checkpoints.diffCheckpoints({
           ...refs,
