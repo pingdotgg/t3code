@@ -25,6 +25,7 @@ import {
   resolveDesktopTheme,
   resolveThemeAppearance,
   serializeThemeFile,
+  themeFileName,
   T3_CHAT_THEME,
   GROVE_THEME,
   updateCustomTheme,
@@ -75,6 +76,18 @@ describe("theme files", () => {
     const night = parseThemeFile({ ...file, name: "夜" });
     expect(parseThemeFile({ ...file, name: "朝" }).id).not.toBe(night.id);
     expect(parseThemeFile({ ...file, name: " 夜 " }).id).toBe(night.id);
+  });
+
+  it("names an exported file after the current label and keeps the id in the file", () => {
+    const copy = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "T3 Code copy",
+      appearance: "dark",
+      colors: { canvas: "#101820" },
+    });
+    const renamed = { ...copy, label: "T3 Code 2" };
+    expect(themeFileName(renamed)).toBe("t3-code-2.json");
+    expect(JSON.parse(serializeThemeFile(renamed)).id).toBe("t3-code-copy");
   });
 
   it("keeps built-in and standard search pairs readable and distinct from inline code", () => {
