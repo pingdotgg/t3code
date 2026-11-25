@@ -787,14 +787,19 @@ export default function DiffPanel({
     remainingFileCount > 0 ? (
       <DiffFileLoadingBoundary load={loadNextFiles} count={remainingFileCount} />
     ) : null;
-  const codeViewFiles = shownFileEntries.map(({ fileDiff, fileKey, fileVersion }) => ({
-    fileDiff,
-    filePath: resolveFileDiffPath(fileDiff),
-    fileKey,
-    fileVersion,
-    collapsed:
-      collapsedDiffFileKeys.has(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
-  }));
+  const codeViewFiles = shownFileEntries.map(({ fileDiff, fileKey, fileVersion }) => {
+    const pending = fileDiff.cacheKey?.endsWith(":pending") === true;
+    const collapsed = collapsedDiffFileKeys.has(fileKey);
+    return {
+      fileDiff,
+      filePath: resolveFileDiffPath(fileDiff),
+      fileKey,
+      // A pending file shows collapsed either way; the low bit gives it a new version when it
+      // is expanded, so its header re-renders and re-arms the placeholder's load.
+      fileVersion: fileVersion * 2 + (pending && !collapsed ? 1 : 0),
+      collapsed: collapsed || pending,
+    };
+  });
   const pendingFiles = renderableFiles.filter(
     (file) => file.cacheKey?.endsWith(":pending") && isFileShown(file),
   );

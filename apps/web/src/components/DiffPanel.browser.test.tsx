@@ -30,6 +30,7 @@ import { makeThreadFixture } from "~/test-fixtures";
 type ResultAtom<A> = Atom.Atom<AsyncResult.AsyncResult<A, Error>>;
 
 const state = vi.hoisted(() => ({
+  requestedPatchPaths: new Set<string>(),
   thread: null as ReturnType<typeof makeThreadFixture> | null,
   threadRef: null as ScopedThreadRef | null,
   previews: new Map<string | null, ResultAtom<ReviewDiffPreviewResult>>(),
@@ -57,7 +58,10 @@ vi.mock("~/state/review", () => ({
     diffPreview: ({ input }: { input: { baseRef?: string } }) =>
       state.previews.get(input.baseRef ?? null)!,
     branchCommits: () => state.commits,
-    diffFilePatch: () => state.patch,
+    diffFilePatch: (target: { input: { request: { file: { path: string } } } }) => {
+      state.requestedPatchPaths.add(target.input.request.file.path);
+      return state.patch;
+    },
     diffFileContents: {},
   },
 }));
@@ -145,6 +149,7 @@ function setup(failedBaseRef: string | null) {
     useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
   };
   reset();
+  state.requestedPatchPaths.clear();
   state.diffFilesCollapsed = false;
   state.project = { workspaceRoot: "/project", repositoryIdentity: null };
   state.toolCallItem = null;
@@ -351,6 +356,33 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
+
+it("loads a visible unloaded file when expand all opens it", async () => {
+  using context = setup("origin/orphan");
+  state.diffFilesCollapsed = true;
+  // The first four files load up front; only the fifth waits for its header.
+  const paths = ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"];
+  const metadata = preview();
+  const source = {
+    ...metadata.sources[0]!,
+    files: paths.map((path) => ({ path, previousPath: null, additions: 1, deletions: 1 })),
+  };
+  state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Expand e.txt", exact: true }))
+    .toBeVisible();
+  expect(state.requestedPatchPaths.has("e.txt")).toBe(false);
+  await userEvent.click(screen.getByRole("button", { name: "Expand all files" }).first());
+  await vi.waitFor(() => expect(state.requestedPatchPaths.has("e.txt")).toBe(true));
+});
 
 it("says a turn diff cut off at the server's size limit is incomplete", async () => {
   using context = setup("origin/orphan");
