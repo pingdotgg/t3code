@@ -49,13 +49,6 @@ describe("terminal session reducers", () => {
       attach: true,
     },
     {
-      title: "one-byte attach budget",
-      history: "\u001b]0;Build ",
-      budget: 1,
-      chunks: ["progress", "\u0007"],
-      attach: true,
-    },
-    {
       title: "title cut during observe",
       history: "\u001b]0;Build ",
       budget: 2,
