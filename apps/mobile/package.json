@@ -148,7 +148,7 @@
     "@babel/core": "^7.29.7",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "@pierre/trees": "1.0.0-beta.6",
+    "@pierre/trees": "catalog:",
     "@types/mdast": "^4.0.4",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
