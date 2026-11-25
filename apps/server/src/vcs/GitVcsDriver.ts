@@ -15,7 +15,6 @@ import { ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
-  trimAsciiWhitespace,
   VcsCheckpointStorageError,
   VcsProcessExitError,
   VcsUnsupportedOperationError,
@@ -1303,12 +1302,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: ["config", "--null", "--get", "lfs.storage"],
           allowNonZeroExit: true,
         });
+        // git-lfs reads config with -z and uses the value verbatim, spaces and tabs included.
+        // It resolves a relative lfs.storage against the common Git directory.
         const configuredStorage = configured.stdout.split("\0", 1)[0] ?? "";
-        // Older Git LFS versions read config line by line. Keep the existing handling for LF.
-        const storageDirectory = configuredStorage.includes("\n")
-          ? trimAsciiWhitespace(configuredStorage)
-          : configuredStorage;
-        const storage = path.resolve(gitCommonDir, storageDirectory || "lfs");
+        const storage = path.resolve(gitCommonDir, configuredStorage || "lfs");
         yield* Effect.forEach(
           objects,
           (entry) =>

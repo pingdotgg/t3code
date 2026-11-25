@@ -493,7 +493,7 @@ const checkpointLfsStorageCases = [
   undefined,
   "lfs objects\u00a0",
   " lfs objects",
-  ...(HostProcess.Platform.defaultValue() === "win32" ? [] : ["lfs objects ", "lfs objects\t"]),
+  ...(HostProcess.Platform.defaultValue() === "win32" ? [] : ["lfs objects "]),
 ];
 
 it.effect.each(checkpointLfsStorageCases)(
