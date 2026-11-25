@@ -180,10 +180,18 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
         : fs.writeFile(path.join(workspace, file), content);
     }
     const git = (args: ReadonlyArray<string>) => run("git", args, { cwd: workspace });
-    const author = ["-c", "user.name=Scenario", "-c", "user.email=scenario@example.invalid"];
+    // The developer's own git config must not decide whether the seed commit lands.
+    const author = [
+      "-c",
+      "user.name=Scenario",
+      "-c",
+      "user.email=scenario@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+    ];
     yield* git(["init", "--quiet", "--initial-branch=main"]);
     yield* git(["add", "--all"]);
-    yield* git([...author, "commit", "--quiet", "--message", "Initial commit"]);
+    yield* git([...author, "commit", "--quiet", "--no-verify", "--message", "Initial commit"]);
     const created = yield* mutate({
       type: "project.create",
       commandId: CommandId.make(yield* uuid),

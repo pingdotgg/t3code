@@ -10,7 +10,7 @@ Rules for writing tests, and for asking for them in review.
 - Write a browser test only for behavior that needs a real browser: layout and scrolling, focus and pointer input, real workers, or a component wired to its hooks. Logic a component calls gets a unit test beside it (`*.logic.test.ts`). A browser test file spends seconds in CI loading its module graph before its first test runs; a unit test takes milliseconds.
 - In review, ask for a missing test only when it would catch a real regression. Do not ask for one assertion per constant, label, or `switch` case. Flag a new test that breaks the rules above, and name the fix: fold it into the existing case or table, delete it, keep one layer, or move a browser test whose assertions would pass without rendering into a unit test.
 - Backend behavior changes ship with focused tests for that behavior.
-- Proof for a bug fix depends on the bug. Logic, data, state, and protocol bugs get a failing test first (the fewest that fail on `main` for that reason, in an existing case of the module's test file where one fits), then the fix. Purely visual bugs (spacing, colour, alignment, a layout shift) get before/after captures as their proof and no test: do not add UI tests for nitpicks, and do not ask for one in review when a capture already shows it. A server-only fix with no visible surface ships the test plus a short runtime transcript.
+- Proof for a bug fix depends on the bug. Logic, data, state, and protocol bugs get a failing test first (the fewest that fail on `main` for that reason, in an existing case of the module's test file where one fits), then the fix. Purely visual bugs (spacing, colour, alignment, a layout shift) get before/after captures as their proof and no test: do not add UI tests for nitpicks, and do not ask for one in review when a capture already shows it. A bug a user can reproduce in the web or iOS app also ships a [scenario](#scenarios) proof, which takes the before/after captures itself. A server-only fix with no visible surface ships the test plus a short runtime transcript.
 
 ## Waiting for work
 
@@ -45,7 +45,7 @@ Rules for writing tests, and for asking for them in review.
 
 ## Scenarios
 
-Scenarios are [e2e](https://e2e.com/docs) tests in [`scripts/scenarios`](../../scripts/scenarios) (`*.e2e.ts`) that drive the real app (server, HTTP/WS, web browser or pooled iOS simulator) using the free `Replay (dev)` agent. Use one as real-app proof for a user-reproducible bug fix:
+Scenarios are [e2e](https://e2e.com/docs) tests in [`scripts/scenarios`](../../scripts/scenarios) (`*.e2e.ts`) that drive the real app (server, HTTP/WS, web browser or pooled iOS simulator) using the free `Replay (dev)` agent. Use one as real-app proof for a user-reproducible bug fix. The `prove-t3-fix` skill is the workflow; the `e2e` MCP server in `.mcp.json` opens a live session on a scenario's seeded state:
 
 ```sh
 vp run scenarios                                                  # run all
@@ -56,5 +56,6 @@ vp run scenarios:prove scripts/scenarios/<name>.e2e.ts --base main --upload-comm
 - In web scenarios, navigate directly with `t3.open(thread)` or `t3.open("/settings/...")` unless the scenario exercises sidebar navigation.
 - Put `expect` assertions only on the behavior the bug breaks, and take `app.screenshot("label")` where the bug shows so `scenarios:prove` pairs base and head captures. Never call `agent.act` or `agent.assert` (no model is configured).
 - The app starts with a minimal env (`PATH`, `HOME`, temp dir); pass extra env vars via `T3_SCENARIO_INHERIT_ENV='VAR,PREFIX_*'`. Run one scenario run at a time per checkout.
+- `scenarios:prove` runs commits, so commit the fix first; the scenario file is read from your checkout. Paste the `proof.md` it writes under `scripts/.e2e/prove/` into the PR as it is.
 - `scenarios:prove` exits `0` only when the test fails on base and passes on head (`1` = did not prove, `2` = app failed to start, `3` = scenario failed before its assertion). iOS scenarios lease a Simlock simulator and require `SIMLOCK_AGENT_DEVICE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`.
 - Scenarios cannot cover desktop shell/IPC, Android, provider-specific protocol behavior (replay speaks generic ACP), or timing/perf regressions.

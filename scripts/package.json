@@ -8,8 +8,8 @@
     "test": "vp test run --config ../vite.config.ts --dir ."
   },
   "dependencies": {
-    "@e2e-dev/mobile": "0.12.6",
-    "@e2e-dev/web": "0.15.5",
+    "@e2e-dev/mobile": "0.12.8",
+    "@e2e-dev/web": "0.16.1",
     "@effect/platform-node": "catalog:",
     "@electron/asar": "^4.3.0",
     "@electron/osx-sign": "2.7.0",
