@@ -114,6 +114,7 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
+import { previewBridge } from "./preview/previewBridge";
 import { SharedTooltipProvider, SharedTooltipTrigger } from "./ui/shared-tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -817,7 +818,7 @@ function useChatMarkdownState(
     if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
     await pullRequestLinking.changeLink(threadRef, href, linked);
   };
-  const openExternalLinkInPreview = (url: string) => {
+  const openExternalLinkInPreview = (url: string, tabWindow = false) => {
     if (!threadRef || !canOperatePreview) {
       return Promise.resolve(
         AsyncResult.failure<void, BrowserPreviewUnavailableError>(
@@ -829,7 +830,7 @@ function useChatMarkdownState(
         ),
       );
     }
-    return openUrlInPreview({ threadRef, url, openPreview }).then((result) => {
+    return openUrlInPreview({ threadRef, url, openPreview, tabWindow }).then((result) => {
       if (result._tag === "Success") recordVisitForThread(threadRef, url);
       else if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -1490,11 +1491,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
               threadLinkAction,
               position: { x: event.clientX, y: event.clientY },
               showContextMenu: (items, position) => api.contextMenu.show(items, position, source),
+              canOpenInWindow: previewBridge !== undefined,
               openInPreview: async (target) => {
                 const result = await openExternalLinkInPreview(target);
                 if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
                   reportMarkdownActionFailure(
                     { operation: "open-link-in-preview", target },
+                    result.cause,
+                  );
+                }
+              },
+              openInWindow: async (target) => {
+                const result = await openExternalLinkInPreview(target, true);
+                if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                  reportMarkdownActionFailure(
+                    { operation: "open-link-in-window", target },
                     result.cause,
                   );
                 }

@@ -53,6 +53,7 @@ function hostedBrowserSessions(
             runtimeTabId: previewRuntimeTabId(threadRef, previewState.serverEpoch, snapshot.tabId),
             pictureInPicture:
               previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
+            detached: previewState.desktopByTabId[snapshot.tabId]?.detached ?? false,
             zoomFactor: previewState.desktopByTabId[snapshot.tabId]?.zoomFactor ?? 1,
           }))
       : [];
@@ -119,7 +120,8 @@ export function startElectronBrowserHost(): () => void {
     preview.onPointerEvent((event) => {
       useBrowserPointerStore.getState().apply(event);
     }),
-    preview.onOpenLink(openLinkInPreview),
+    // Open-link events reach every window; only the main window acts, so one link opens one tab.
+    ...(popoutTabId ? [] : [preview.onOpenLink(openLinkInPreview)]),
     preview.onTunnelAccessRequest(({ requestId, environmentId }) => {
       void readPreviewTunnelUrl(environmentId).then((url) =>
         preview.resolveTunnelAccess(requestId, url),
@@ -131,40 +133,49 @@ export function startElectronBrowserHost(): () => void {
   };
 }
 
+// A pop-out window hosts exactly one tab; the main window shows a placeholder for it.
+const popoutMatch = /^#\/browser-window\/([^/?]+)/.exec(window.location.hash);
+const popoutTabId = popoutMatch ? decodeURIComponent(popoutMatch[1]!) : null;
+
 export function ElectronBrowserHost() {
   const previewByThreadKey = useActivePreviewSessions();
   const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
   useDesktopHostedPreviewSessions(primaryEnvironmentId);
-  const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId);
+  const sessions = hostedBrowserSessions(previewByThreadKey, primaryEnvironmentId).filter(
+    (session) => !popoutTabId || session.runtimeTabId === popoutTabId,
+  );
 
   if (!isElectron) return null;
   return (
     <div className="contents" data-electron-browser-host>
-      {sessions.map(({ threadRef, snapshot, runtimeTabId, pictureInPicture, zoomFactor }) => {
-        const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
-        return (
-          <AuthorizedBrowserWebview
-            key={runtimeTabId}
-            threadRef={threadRef}
-            tabId={snapshot.tabId}
-            runtimeTabId={runtimeTabId}
-            initialUrl={url}
-            viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
-            pictureInPicture={pictureInPicture}
-            profileId={snapshot.profileId}
-            zoomFactor={zoomFactor}
-            serverDriven={snapshot.runtime === "server"}
-            {...(snapshot.runtime === "server"
-              ? {
-                  serverRendering: {
-                    colorScheme: snapshot.colorScheme ?? "system",
-                    zoomFactor: snapshot.zoomFactor ?? 1,
-                  },
-                }
-              : {})}
-          />
-        );
-      })}
+      {sessions.map(
+        ({ threadRef, snapshot, runtimeTabId, pictureInPicture, detached, zoomFactor }) => {
+          const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
+          return (
+            <AuthorizedBrowserWebview
+              key={runtimeTabId}
+              threadRef={threadRef}
+              tabId={snapshot.tabId}
+              runtimeTabId={runtimeTabId}
+              initialUrl={url}
+              viewport={snapshot.viewport ?? FILL_PREVIEW_VIEWPORT}
+              pictureInPicture={pictureInPicture}
+              detached={detached && !popoutTabId}
+              profileId={snapshot.profileId}
+              zoomFactor={zoomFactor}
+              serverDriven={snapshot.runtime === "server"}
+              {...(snapshot.runtime === "server"
+                ? {
+                    serverRendering: {
+                      colorScheme: snapshot.colorScheme ?? "system",
+                      zoomFactor: snapshot.zoomFactor ?? 1,
+                    },
+                  }
+                : {})}
+            />
+          );
+        },
+      )}
     </div>
   );
 }

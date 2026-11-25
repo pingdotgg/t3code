@@ -37,10 +37,7 @@ import {
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
-import {
-  PASSKEY_BRIDGE_ARGUMENT,
-  PRIMARY_PASTE_DISABLED_ARGUMENT,
-} from "../preview/GuestProtocol.ts";
+import { hardenPreviewWebviewPreferences } from "../preview/WebviewPreferences.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -49,6 +46,8 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import { m } from "../i18n/messages.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { makeQuitShortcutHandler } from "./QuitHold.ts";
+import { isSameOriginRendererNavigation } from "./RendererNavigation.ts";
+
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 import { installMainWindowRemoteRequestHeaderPolicy } from "./RemoteRequestHeaders.ts";
 
@@ -282,24 +281,6 @@ function buildConnectingSplashDataUrl(
     : "Connecting to WSL…";
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>html,body{margin:0;height:100%}body{background:${background};color:${label};font-family:system-ui,-apple-system,'Segoe UI',sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;-webkit-user-select:none;user-select:none;-webkit-app-region:drag}.spinner{width:26px;height:26px;border:3px solid ${track};border-top-color:${accent};border-radius:50%;animation:spin .8s linear infinite}.label{font-size:13px}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body><div class="spinner"></div><div class="label">${message}</div></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
-}
-
-export function isSameOriginRendererNavigation(input: {
-  readonly applicationUrl: string;
-  readonly navigationUrl: string;
-}): boolean {
-  try {
-    const applicationUrl = new URL(input.applicationUrl);
-    const navigationUrl = new URL(input.navigationUrl);
-    // Node serializes custom-scheme origins as "null", even for different hosts and schemes.
-    return (
-      applicationUrl.host !== "" &&
-      navigationUrl.protocol === applicationUrl.protocol &&
-      navigationUrl.host === applicationUrl.host
-    );
-  } catch {
-    return false;
-  }
 }
 
 function isRetryableDevelopmentRendererLoadFailure(input: {
@@ -641,23 +622,11 @@ export const make = Effect.gen(function* () {
         event.preventDefault();
         return;
       }
-      webPreferences.sandbox = true;
-      webPreferences.nodeIntegration = false;
-      webPreferences.nodeIntegrationInSubFrames = false;
-      webPreferences.contextIsolation = true;
-      webPreferences.disableHtmlFullscreenWindowResize = true;
-      if (previewPasskeys.bridgeEnabled) {
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          PASSKEY_BRIDGE_ARGUMENT,
-        ];
-      }
-      if (!primaryPaste.enabled) {
-        webPreferences.additionalArguments = [
-          ...(webPreferences.additionalArguments ?? []),
-          PRIMARY_PASTE_DISABLED_ARGUMENT,
-        ];
-      }
+      hardenPreviewWebviewPreferences(
+        webPreferences,
+        previewPasskeys.bridgeEnabled,
+        primaryPaste.enabled,
+      );
     });
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();
@@ -783,6 +752,14 @@ export const make = Effect.gen(function* () {
       installContextMenu(window, contents, true);
       void runPromise(previewManager.prepareWebview(contents));
     });
+    // Pop-out browser windows host their own guest, which needs the same menu.
+    const onWindowCreated = (_event: Electron.Event, created: Electron.BrowserWindow) => {
+      created.webContents.on("did-attach-webview", (_attachEvent, contents) => {
+        installContextMenu(created, contents);
+      });
+    };
+    Electron.app.on("browser-window-created", onWindowCreated);
+    window.once("closed", () => Electron.app.off("browser-window-created", onWindowCreated));
 
     // Popups from every frame in this window arrive here without a caller, so only web links
     // pass. The app opens editors and other applications over IPC.
