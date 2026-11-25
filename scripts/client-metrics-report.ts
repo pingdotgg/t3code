@@ -207,9 +207,13 @@ export function slope(points: ReadonlyArray<readonly [number, number]>) {
   return points.reduce((sum, [x, y]) => sum + (x - mx) * (y - my), 0) / sxx;
 }
 
-/** Growth per iteration of a soak, past its warm-up sample (the first). */
+/**
+ * Growth per iteration over a soak's later half. Warm-up (caches filling, code compiling) slows
+ * down as it settles while a leak keeps its rate, so the later half keeps a leak and drops warm-up.
+ */
 export function soakSlopes(samples: ReadonlyArray<SoakSample>) {
-  const settled = samples.slice(1);
+  const last = samples.at(-1)?.iteration ?? 0;
+  const settled = samples.filter((sample) => sample.iteration >= last / 2);
   const fit = (pick: (sample: SoakSample) => number) =>
     slope(settled.map((sample) => [sample.iteration, pick(sample)] as const));
   return {
@@ -220,6 +224,14 @@ export function soakSlopes(samples: ReadonlyArray<SoakSample>) {
 }
 /** Per-iteration growth that reads as a leak rather than noise. */
 export const SOAK_LEAK = { heapMB: 0.05, domNodes: 5, listeners: 1 } as const;
+
+/** The soak measures growing past their leak bars. */
+export function soakLeaks(samples: ReadonlyArray<SoakSample>) {
+  const slopes = soakSlopes(samples);
+  return (Object.keys(SOAK_LEAK) as Array<keyof typeof SOAK_LEAK>).filter(
+    (key) => slopes[key] > SOAK_LEAK[key],
+  );
+}
 
 /** Event Timing reports only paints of 16 ms or more; a null paint is under it, so counts as 16. */
 export const PAINT_THRESHOLD_MS = 16;
@@ -493,9 +505,7 @@ export function summaryTable(metrics: ClientMetrics) {
   metrics.runs.forEach((run, index) => {
     if (!run.soak || run.soak.length < 3) return;
     const slopes = soakSlopes(run.soak);
-    const leaking = (Object.keys(SOAK_LEAK) as Array<keyof typeof SOAK_LEAK>).filter(
-      (key) => slopes[key] > SOAK_LEAK[key],
-    );
+    const leaking = soakLeaks(run.soak);
     lines.push(
       "",
       `| soak, run ${index + 1}: iteration | heap MB | DOM nodes | listeners |`,
@@ -507,8 +517,8 @@ export function summaryTable(metrics: ClientMetrics) {
       `| growth per iteration | ${round(slopes.heapMB, 3)} | ${round(slopes.domNodes, 1)} | ${round(slopes.listeners, 2)} |`,
       "",
       leaking.length > 0
-        ? `**Growing:** ${leaking.join(", ")} past ${leaking.map((key) => `${SOAK_LEAK[key]}`).join(", ")} per iteration after warm-up.`
-        : "No growth past the leak bars after warm-up.",
+        ? `**Growing:** ${leaking.join(", ")} past ${leaking.map((key) => `${SOAK_LEAK[key]}`).join(", ")} per iteration over the soak's later half.`
+        : "No growth past the leak bars over the soak's later half.",
     );
   });
   const skipped = metrics.runs.flatMap((run) => run.skipped ?? []);

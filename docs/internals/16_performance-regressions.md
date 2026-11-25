@@ -73,7 +73,9 @@ machine for the pinned `playwright-core` with
 - Memory (heap and DOM after GC) is sampled on load, after the first visits, and after every
   measured round has run, not per switch. Renderer CPU is sampled while the working thread streams
   its replayed turn; a window the turn ended before or during is skipped and named. `--soak <n>` repeats every
-  case n times and fits heap, DOM and listener growth per iteration past warm-up.
+  case n times and fits heap, DOM and listener growth per iteration over the soak's later half. It
+  runs in a second browser with V8's compiling tiers off: compiled code keeps growing for dozens of
+  iterations as more functions get hot, which reads as a leak when it is only warm-up.
 
 `--renders` counts React commits and component renders per step, the subtrees React bailed out
 of not counted, with the top components and a cause per render (`mount`, `state#<hook slot>`,

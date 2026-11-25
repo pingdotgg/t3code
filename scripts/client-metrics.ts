@@ -928,9 +928,13 @@ const INTERACTIONS: Record<InteractionCase, { readonly thread: ThreadName; reado
             KEY_SETTLE_MS,
           );
         }
+        // Chat shortcuts ignore keys until the palette unmounts, closing animation included.
         yield* browserPromise("close the palette", async () => {
           await h.page.keyboard.press("Escape");
-          await h.page.waitForTimeout(400);
+          await h.page
+            .locator("[data-command-palette]")
+            .first()
+            .waitFor({ state: "detached", timeout: 5_000 });
         });
       }),
     },
@@ -1194,8 +1198,49 @@ interface MeasureOptions {
   readonly artifacts: string | undefined;
 }
 
-/** One measured run on a fresh server and browser. */
+/**
+ * V8 tiers that compile hot functions to machine code. Code space grows for dozens of soak
+ * iterations as more functions get hot, which reads as a heap leak; with them off the heap is flat.
+ */
+const NO_JIT_TIERS = "--js-flags=--no-opt --no-maglev --no-sparkplug";
+
+/**
+ * One measured run on a fresh server and browser. `--soak` repeats in a second pass whose browser
+ * runs JS interpreted, so its heap tracks retained objects and not compiled code; that pass's
+ * timings are discarded.
+ */
 const measureOnce = Effect.fn("clientMetrics.measureOnce")(function* (options: MeasureOptions) {
+  const measured = yield* measurePass({ ...options, soak: 0 });
+  if (options.soak === 0) return measured;
+  yield* Console.error("soaking in a second browser with V8's compiling tiers off...");
+  const soaked = yield* measurePass({
+    ...options,
+    switchRounds: 1,
+    trace: false,
+    renders: false,
+    artifacts: undefined,
+  });
+  const measuredSkips = measured.run.skipped ?? [];
+  const skipped = [
+    ...measuredSkips,
+    ...(soaked.run.skipped ?? []).flatMap((entry) =>
+      measuredSkips.some((other) => other.case === entry.case)
+        ? []
+        : [{ case: entry.case, reason: `in the soak: ${entry.reason}` }],
+    ),
+  ];
+  return {
+    ...measured,
+    run: {
+      ...measured.run,
+      ...(soaked.run.soak === undefined ? {} : { soak: soaked.run.soak }),
+      ...(skipped.length === 0 ? {} : { skipped }),
+    },
+  };
+});
+
+const measurePass = Effect.fn("clientMetrics.measurePass")(function* (options: MeasureOptions) {
+  const soaking = options.soak > 0;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const machine = yield* watchMachine;
@@ -1207,7 +1252,11 @@ const measureOnce = Effect.fn("clientMetrics.measureOnce")(function* (options: M
     browserPromise("launch Chromium", () =>
       chromium.launch({
         headless: true,
-        args: ["--enable-gpu-rasterization", "--enable-precise-memory-info"],
+        args: [
+          "--enable-gpu-rasterization",
+          "--enable-precise-memory-info",
+          ...(soaking ? [NO_JIT_TIERS] : []),
+        ],
       }),
     ),
     (launched: Browser) => Effect.promise(() => launched.close()).pipe(Effect.ignore),
@@ -1400,7 +1449,7 @@ const measureOnce = Effect.fn("clientMetrics.measureOnce")(function* (options: M
   }
 
   const idle: Idle[] = [];
-  if (cases.includes("working")) {
+  if (cases.includes("working") && !soaking) {
     // Its replayed turn is finite; a window it did not stream through all along is dropped.
     for (const [thread, label] of [
       ["working", "on the working thread"],
@@ -1601,7 +1650,7 @@ const measureFlags = {
   soak: Flag.Int("soak").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     Flag.withDescription(
-      "After measuring, repeat every case this many times and record heap, DOM nodes and listeners after GC along the way, with their growth per iteration.",
+      "After measuring, repeat every case this many times in a second browser with V8's compiling tiers off (so compiled code does not read as a leak) and record heap, DOM nodes and listeners after GC along the way, with their growth per iteration over the soak's later half.",
     ),
     Flag.withDefault(0),
   ),

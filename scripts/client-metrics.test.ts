@@ -13,6 +13,7 @@ import {
   percentile,
   PROBE_KEYS,
   slope,
+  soakLeaks,
   soakSlopes,
   summaryTable,
   workloadDifferences,
@@ -322,6 +323,23 @@ describe("soak", () => {
       { iteration: 6, heapMB: 80, domNodes: 3_080, listeners: 140 },
     ]);
     expect(slopes).toEqual({ heapMB: 0, domNodes: 20, listeners: 0 });
+  });
+
+  const curve = (heapAt: (iteration: number) => number) =>
+    [0, 4, 8, 12, 16, 20, 24].map((iteration) => ({
+      iteration,
+      heapMB: heapAt(iteration),
+      domNodes: 3_000,
+      listeners: 1_350,
+    }));
+
+  it("does not call a warm-up that settles a leak", () => {
+    // 1 MB per iteration at first, settling over ten iterations: caches filling, code compiling.
+    expect(soakLeaks(curve((iteration) => 74 + 10 * (1 - Math.exp(-iteration / 4))))).toEqual([]);
+  });
+
+  it("calls steady growth a leak", () => {
+    expect(soakLeaks(curve((iteration) => 74 + 0.2 * iteration))).toEqual(["heapMB"]);
   });
 });
 
