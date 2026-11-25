@@ -1185,6 +1185,56 @@ function actionReplyClient(overrides: Record<string, unknown> = {}) {
   } as unknown as WsRpcProtocolClient;
 }
 
+it.effect("waits for a fresh check status before clearing a workflow approval", () =>
+  Effect.gen(function* () {
+    const afterApproval = yield* Deferred.make<void>();
+    const checksStarted = yield* Deferred.make<void>();
+    const staleReadStarted = yield* Deferred.make<void>();
+    let reads = 0;
+    let approved = false;
+    const client = actionReplyClient({
+      [WS_METHODS.pullRequestsRunAction]: () =>
+        Effect.sync(() => {
+          approved = true;
+          return undefined;
+        }),
+      [WS_METHODS.pullRequestsChecks]: () =>
+        Effect.gen(function* () {
+          if (++reads === 1) return { state: "open", checks: [], workflowApprovalsRequired: 1 };
+          if (!approved) {
+            yield* Deferred.succeed(staleReadStarted, undefined);
+            return yield* Effect.never;
+          }
+          yield* Deferred.succeed(checksStarted, undefined);
+          yield* Deferred.await(afterApproval);
+          return { state: "open", checks: [], workflowApprovalsRequired: 0 };
+        }),
+    });
+    const { atoms, registry } = yield* makeTestRuntime(client);
+    const target = { environmentId: TARGET.environmentId, input: actionReference };
+    const checks = atoms.checks(target);
+    yield* AtomRegistry.mount(registry, checks);
+    yield* AtomRegistry.getResult(registry, checks);
+    registry.refresh(checks);
+    yield* Deferred.await(staleReadStarted);
+
+    const action = yield* atoms.runAction
+      .run(registry, { ...target, input: { ...actionReference, action: "approve-workflows" } })
+      .pipe(Effect.forkChild);
+    yield* Effect.raceFirst(
+      Deferred.await(checksStarted),
+      Fiber.join(action).pipe(
+        Effect.andThen(Effect.die("Approval finished before refreshing the checks")),
+      ),
+    );
+    yield* Deferred.succeed(afterApproval, undefined);
+    yield* Fiber.join(action);
+    expect(Option.getOrThrow(AsyncResult.value(registry.get(checks)))).toMatchObject({
+      workflowApprovalsRequired: 0,
+    });
+  }),
+);
+
 it.effect("shows an action's reply in loaded readers and moves list rows without reads", () =>
   Effect.gen(function* () {
     const reads: string[] = [];
