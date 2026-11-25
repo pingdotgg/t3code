@@ -464,7 +464,7 @@ async function renderShortPages(stack: AsyncDisposableStack) {
     ),
   );
   const container = document.createElement("div");
-  container.className = "flex h-[1000px] w-[900px]";
+  container.className = "h-[1000px] w-[900px]";
   const screen = stack.use(await render(tab(0), { container }));
   const loadNextPage = async () => {
     await screen.getByRole("button", { name: "Show file tree", exact: true }).click();
