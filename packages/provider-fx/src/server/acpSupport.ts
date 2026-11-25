@@ -33,7 +33,7 @@ export const FX_MODE_CONFIG_ID = "mode";
 const FX_EFFORT_CONFIG_ID = "effort";
 const FX_DEFAULT_EFFORT = "medium";
 
-const FX_DEFAULT_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export const FX_DEFAULT_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 const FX_EFFORT_LABELS: Readonly<Record<string, string>> = {
   auto: "Auto",
@@ -54,13 +54,7 @@ const FX_EFFORT_LABELS: Readonly<Record<string, string>> = {
 export function fxEffortOptionDescriptor(
   efforts: ReadonlyArray<string>,
 ): ProviderOptionDescriptor | undefined {
-  const levels: Array<string> = [];
-  for (const effort of efforts) {
-    const id = effort.trim();
-    if (id.length > 0 && id !== "auto" && !levels.includes(id)) {
-      levels.push(id);
-    }
-  }
+  const levels = efforts.filter((id) => id !== "auto");
   if (levels.length === 0) return undefined;
   const defaultEffort = levels.includes(FX_DEFAULT_EFFORT) ? FX_DEFAULT_EFFORT : "auto";
   return {
@@ -74,9 +68,6 @@ export function fxEffortOptionDescriptor(
     })),
   };
 }
-
-export const FX_EFFORT_OPTION_DESCRIPTOR: ProviderOptionDescriptor =
-  fxEffortOptionDescriptor(FX_DEFAULT_EFFORT_LEVELS)!;
 
 /** Every fx offers these; the provider snapshot adds Full access where `fx status` lists `full-access`. */
 export const FX_SUPPORTED_RUNTIME_MODES = [
@@ -348,20 +339,27 @@ export const applyFxModelSelection = Effect.fn("applyFxModelSelection")(function
   );
 });
 
-/** The shared option loop writes a stored effort; a thread without one starts at medium. */
+/** The shared option loop writes a stored effort; a thread without one starts at medium, or auto if medium is not advertised. */
 export const applyFxEffortDefault = Effect.fn("applyFxEffortDefault")(function* (
-  runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+  runtime: Pick<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    "getConfigOptions" | "setConfigOption"
+  >,
   modelSelection: ModelSelection,
 ): Effect.fn.Return<void, EffectAcpErrors.AcpError> {
   if (getModelSelectionStringOptionValue(modelSelection, FX_EFFORT_CONFIG_ID)) return;
   const option = (yield* runtime.getConfigOptions).find(
     (entry) => entry.id === FX_EFFORT_CONFIG_ID && entry.type === "select",
   );
-  if (
-    option !== undefined &&
-    collectSessionConfigOptionValues(option).includes(FX_DEFAULT_EFFORT)
-  ) {
-    yield* runtime.setConfigOption(FX_EFFORT_CONFIG_ID, FX_DEFAULT_EFFORT);
+  if (option === undefined) return;
+  const values = collectSessionConfigOptionValues(option);
+  const target = values.includes(FX_DEFAULT_EFFORT)
+    ? FX_DEFAULT_EFFORT
+    : values.includes("auto")
+      ? "auto"
+      : undefined;
+  if (target !== undefined) {
+    yield* runtime.setConfigOption(FX_EFFORT_CONFIG_ID, target);
   }
 });
 

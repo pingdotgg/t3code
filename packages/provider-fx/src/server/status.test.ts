@@ -387,12 +387,13 @@ describe("checkFxProviderStatus", () => {
           },
           {
             id: "custom/no-metadata",
-            name: "   ",
+            name: null,
+            efforts: null,
           },
         ],
       });
       const { draft } = yield* check({
-        " status --json": status("fx login", { model: "google/gemini-4-neon" }),
+        " status --json": status("fx login", { model: "meta/llama-non-reasoning" }),
         "gateway status --json": status("fx login"),
         "gateway models --json": gatewayPayload,
         "codex status --json": status("missing"),
@@ -402,7 +403,7 @@ describe("checkFxProviderStatus", () => {
       assert.deepEqual(
         draft.models.map((model) => [model.slug, model.name]),
         [
-          ["default", "Default (Gemini 4 Neon)"],
+          ["default", "Default (Llama Non-Reasoning)"],
           ["gateway:google/gemini-4-neon", "Gemini 4 Neon"],
           ["gateway:openai/gpt-no-medium", "GPT No Medium"],
           ["gateway:meta/llama-non-reasoning", "Llama Non-Reasoning"],
@@ -418,7 +419,18 @@ describe("checkFxProviderStatus", () => {
         return descriptor?.type === "select" ? descriptor.options : undefined;
       };
 
-      assert.deepEqual(effortOf("default"), [
+      // "Default" resolves per folder at session time, so it keeps the fallback effort list
+      // even when the machine-wide default advertises no effort levels.
+      const fallbackEffort = [
+        { id: "auto", label: "Auto" },
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium", isDefault: true },
+        { id: "high", label: "High" },
+        { id: "xhigh", label: "Extra High" },
+        { id: "max", label: "Max" },
+      ];
+      assert.deepEqual(effortOf("default"), fallbackEffort);
+      assert.deepEqual(effortOf("gateway:google/gemini-4-neon"), [
         { id: "auto", label: "Auto" },
         { id: "none", label: "None" },
         { id: "minimal", label: "Minimal" },
@@ -426,7 +438,6 @@ describe("checkFxProviderStatus", () => {
         { id: "medium", label: "Medium", isDefault: true },
         { id: "high", label: "High" },
       ]);
-      assert.deepEqual(effortOf("gateway:google/gemini-4-neon"), effortOf("default"));
       assert.deepEqual(effortOf("gateway:openai/gpt-no-medium"), [
         { id: "auto", label: "Auto", isDefault: true },
         { id: "low", label: "Low" },
@@ -434,14 +445,7 @@ describe("checkFxProviderStatus", () => {
         { id: "max", label: "Max" },
       ]);
       assert.isUndefined(effortOf("gateway:meta/llama-non-reasoning"));
-      assert.deepEqual(effortOf("gateway:custom/no-metadata"), [
-        { id: "auto", label: "Auto" },
-        { id: "low", label: "Low" },
-        { id: "medium", label: "Medium", isDefault: true },
-        { id: "high", label: "High" },
-        { id: "xhigh", label: "Extra High" },
-        { id: "max", label: "Max" },
-      ]);
+      assert.deepEqual(effortOf("gateway:custom/no-metadata"), fallbackEffort);
     }),
   );
 });
