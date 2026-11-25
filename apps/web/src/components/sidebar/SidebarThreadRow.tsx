@@ -17,7 +17,6 @@ import {
   hasQueuedTurnStart,
   QUEUED_TURN_START_GRACE_MS,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
   resolveSettledThreadTimestamp,
   resolveThreadActivityTimestamp,
@@ -62,6 +61,8 @@ import {
 } from "lucide-react";
 import {
   memo,
+  Fragment,
+  use,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -113,6 +114,7 @@ import {
   ThreadLinkBadge,
   ThreadPullRequestBadgeControl,
   ThreadPullRequestsMiniList,
+  ThreadWorktreeIndicator,
   prStatusIndicator,
   resolveThreadPullRequestBadge,
   terminalStatusFromRunningIds,
@@ -134,6 +136,13 @@ import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
+import {
+  SidebarRowLayoutEditingContext,
+  type SidebarRowItemId,
+  type SidebarRowLayout,
+  type SidebarRowLine,
+  type SidebarRowToken,
+} from "./sidebarRowLayout";
 import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 import { useThreadHasUnsentDraft } from "../../composerDraftStore";
@@ -602,8 +611,9 @@ function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: 
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   // "folder" is a one-line row inside a boring sidebar project folder;
-  // "folder-multiline" adds the card's environment and PR line under it.
+  // "folder-multiline" adds the card's top and bottom line items under it.
   variant: "card" | "slim" | "folder" | "folder-multiline";
+  layout: SidebarRowLayout;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -700,8 +710,9 @@ function ThreadRenameInput(props: {
   );
 }
 
-const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
+export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowProps) {
   const gt = useGT();
+  const layoutEditing = use(SidebarRowLayoutEditingContext);
   const messages = useMessages();
   const {
     isRenaming,
@@ -1098,6 +1109,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
   });
 
+  // A spacer on the title's line takes the free space, so the title keeps its natural width.
+  const titleStretches =
+    variant !== "card" ||
+    !(["top", "middle", "bottom"] as const).some(
+      (line) =>
+        props.layout[line].some((token) => token.id === "title") &&
+        props.layout[line].some((token) => token.id === "spacer"),
+    );
   const title = isRenaming ? (
     <ThreadRenameInput
       title={renamingTitle}
@@ -1109,7 +1128,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     <span
       ref={isRegeneratingTitle ? observeVisibleAnimation : undefined}
       className={cn(
-        "min-w-0 flex-1 text-start text-sm transition-opacity motion-reduce:transition-none",
+        "min-w-0 text-start text-sm transition-opacity motion-reduce:transition-none",
+        titleStretches ? "flex-1" : "shrink",
         shouldRecede ? "font-normal" : "font-medium",
         isRegeneratingTitle
           ? "relative truncate text-muted-foreground"
@@ -1271,60 +1291,167 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     )
   ) : null;
 
-  const diff = latestRunDiff(thread);
-  // Only the trailing icons would remain, so the row moves them to the title line instead.
-  const metaLineEmpty =
-    props.environmentLabel === null &&
-    prBadge === null &&
-    issueBadge === null &&
-    diff === null &&
-    runningTerminalIds.length === 0;
-  const metaLine = metaLineEmpty ? null : (
-    <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-      {props.environmentLabel !== null ? (
-        <>
-          <EnvironmentMachineIcon
-            aria-hidden
-            kind={props.environmentMachine}
-            className="size-3.5 shrink-0 text-icon-muted"
-          />
-          <span className="min-w-0 flex-1 truncate">{props.environmentLabel}</span>
-        </>
-      ) : (
-        <span className="flex-1" />
+  const environmentIcon = (
+    <EnvironmentMachineIcon
+      aria-hidden
+      kind={props.environmentMachine}
+      className="size-3.5 shrink-0 text-icon-muted"
+    />
+  );
+  const itemNode = (token: SidebarRowToken): ReactNode => {
+    switch (token.id) {
+      case "projectIcon":
+        return props.project ? (
+          <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+        ) : null;
+      case "projectName":
+        return props.projectDisplayName ? (
+          <span className="min-w-0 shrink truncate font-normal text-secondary-label text-xs">
+            {props.projectDisplayName}
+          </span>
+        ) : null;
+      case "environment":
+        if (props.environmentLabel === null) return null;
+        return token.form === "compact" ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span
+                  role="img"
+                  aria-label={props.environmentLabel}
+                  className="inline-flex shrink-0 items-center"
+                />
+              }
+            >
+              {environmentIcon}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{props.environmentLabel}</TooltipPopup>
+          </Tooltip>
+        ) : (
+          <span className="flex min-w-0 shrink items-center gap-1.5 text-secondary-label text-xs">
+            {environmentIcon}
+            <span className="min-w-0 truncate">{props.environmentLabel}</span>
+          </span>
+        );
+      case "branch":
+        return checkoutThread.branch ? (
+          <span className="flex min-w-0 shrink items-center gap-1.5 text-secondary-label text-xs">
+            <ThreadWorktreeIndicator thread={checkoutThread} />
+            <span className="flex min-w-0">
+              <MiddleTruncate value={checkoutThread.branch} showTitle={false} />
+            </span>
+          </span>
+        ) : null;
+      case "terminals":
+        return runningTerminalIds.length > 0 ? terminalStatusIcon : null;
+      case "pullRequest":
+        return prBadge;
+      case "issues":
+        return issueBadge;
+      case "agents":
+        return (
+          <span aria-hidden className="pointer-events-none inline-flex shrink-0 items-center gap-1">
+            <SidebarProviderStack
+              thread={thread}
+              providerEntryByInstanceId={props.providerEntryByInstanceId}
+            />
+          </span>
+        );
+      case "spacer":
+        return <span className="min-w-0 flex-1" />;
+      case "title":
+        return (
+          <>
+            {title}
+            {isRegeneratingTitle ? (
+              <span role="status" className="sr-only">
+                <T>Regenerating title</T>
+              </span>
+            ) : null}
+          </>
+        );
+    }
+  };
+  const renderLine = (
+    line: Exclude<SidebarRowLine, "hidden">,
+    tokens: ReadonlyArray<SidebarRowToken>,
+  ) => {
+    const items = tokens.map((token) => ({ token, node: itemNode(token) }));
+    if (layoutEditing) return layoutEditing.renderLine(line, items);
+    return items
+      .filter((item) => item.node !== null)
+      .map((item) => <Fragment key={item.token.key}>{item.node}</Fragment>);
+  };
+  // Agents and spacers carry no thread detail, so a line with nothing else folds into the title's line.
+  const hasDetail = (tokens: ReadonlyArray<SidebarRowToken>) =>
+    tokens.some(
+      (token) => token.id !== "agents" && token.id !== "spacer" && itemNode(token) !== null,
+    );
+  const titleLine =
+    (["top", "middle", "bottom"] as const).find((line) =>
+      props.layout[line].some((token) => token.id === "title"),
+    ) ?? "middle";
+  const inFolderVariant = variant === "folder" || variant === "folder-multiline";
+  // Folder rows sit under their project and draw the title themselves: the title's line keeps its
+  // other items, and every other line joins one line under it.
+  const withoutFolderItems = (tokens: ReadonlyArray<SidebarRowToken>) =>
+    tokens.filter(
+      (token) => token.id !== "projectIcon" && token.id !== "projectName" && token.id !== "title",
+    );
+  const lineTokens: Record<
+    "top" | "middle" | "bottom",
+    ReadonlyArray<SidebarRowToken>
+  > = inFolderVariant
+    ? {
+        top: [],
+        middle: withoutFolderItems(props.layout[titleLine]),
+        bottom: (["top", "middle", "bottom"] as const)
+          .filter((line) => line !== titleLine)
+          .flatMap((line) => withoutFolderItems(props.layout[line])),
+      }
+    : props.layout;
+  // Folder rows merge the card's other lines into one, which keeps whenever any line is kept.
+  const kept = (line: "middle" | "bottom") =>
+    inFolderVariant ? props.layout.keepLines.length > 0 : props.layout.keepLines.includes(line);
+  const folds = (line: "middle" | "bottom") =>
+    layoutEditing === null &&
+    !kept(line) &&
+    (inFolderVariant ? line === "bottom" : line !== titleLine) &&
+    !hasDetail(lineTokens[line]);
+  const middleFolds = folds("middle");
+  const bottomFolds = folds("bottom");
+  const foldedAgents = [
+    ...(middleFolds ? lineTokens.middle : []),
+    ...(bottomFolds ? lineTokens.bottom : []),
+  ].filter((token) => token.id === "agents");
+  const tokensFor = (line: "top" | "middle" | "bottom") => {
+    const own =
+      (line === "middle" && middleFolds) || (line === "bottom" && bottomFolds)
+        ? []
+        : lineTokens[line];
+    const foldsHere = inFolderVariant ? line === "middle" : line === titleLine;
+    return foldsHere ? [...own, ...foldedAgents] : own;
+  };
+  const metaLine = bottomFolds ? null : (
+    <div
+      className={cn(
+        // A kept line holds its height with nothing on it.
+        "mt-0.5 flex min-h-4 min-w-0 items-center gap-1.5 text-secondary-label text-xs",
+        titleLine === "bottom" && !inFolderVariant && "h-5",
       )}
-      {terminalStatusIcon}
-      {prBadge}
-      {issueBadge}
-      {diff ? (
-        <span className="shrink-0 font-mono">
-          <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}
-          <span className="text-diff-deletion-foreground">−{formatDiffCount(diff.deletions)}</span>
-        </span>
-      ) : null}
-      <span
-        aria-hidden
-        className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-      >
-        <SidebarProviderStack
-          thread={thread}
-          providerEntryByInstanceId={props.providerEntryByInstanceId}
-        />
-      </span>
+    >
+      {renderLine("bottom", tokensFor("bottom"))}
     </div>
   );
-  const titleLineIcons = metaLineEmpty ? (
-    <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
-      <SidebarProviderStack
-        thread={thread}
-        providerEntryByInstanceId={props.providerEntryByInstanceId}
-      />
-    </span>
-  ) : null;
+  const titleLineItems = renderLine("middle", tokensFor("middle"));
+  // Matches the rendered height so content-visibility reserves the right space before a row paints.
+  const cardHeight =
+    16 + 20 + (middleFolds ? 0 : 24) + (bottomFolds ? 0 : titleLine === "bottom" ? 22 : 18);
+  const shows = (id: SidebarRowItemId) => !props.layout.hidden.some((token) => token.id === id);
 
   if (variant !== "card") {
     const multiline = variant === "folder-multiline";
-    const inFolder = variant === "folder" || multiline;
+    const inFolder = inFolderVariant;
     return (
       <li
         data-thread-item={threadKey}
@@ -1332,11 +1459,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         {...(fileDropHandlers ?? {})}
         className={cn(
           "list-none [content-visibility:auto] [contain-intrinsic-size:auto_--spacing(9)]",
-          metaLine !== null && multiline && "[contain-intrinsic-size:auto_--spacing(13.5)]",
+          !bottomFolds && multiline && "[contain-intrinsic-size:auto_--spacing(13.5)]",
           sortable?.isDragging && "relative z-20",
         )}
       >
-        <Tooltip disabled={isRenaming || sortable?.isDragging}>
+        <Tooltip disabled={isRenaming || sortable?.isDragging || layoutEditing !== null}>
           <TooltipTrigger
             render={
               <div
@@ -1381,10 +1508,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {draftIndicator}
               {title}
-              {multiline ? titleLineIcons : null}
+              {multiline ? titleLineItems : null}
               {pinIndicator}
-              {multiline ? null : terminalStatusIcon}
-              {multiline ? null : issueBadge}
+              {multiline || !shows("terminals") ? null : terminalStatusIcon}
+              {multiline || !shows("issues") ? null : issueBadge}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
                   <T>Regenerating title</T>
@@ -1541,12 +1668,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       // The hints are the rendered heights inside py-0.5. Revealing the open thread measures rows
       // that have not rendered yet, so a hint off by a pixel lands it a pixel short per row above.
       className={cn(
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
-        metaLineEmpty && "[contain-intrinsic-size:auto_60px]",
+        "list-none py-0.5 [content-visibility:auto]",
         sortable?.isDragging && "relative z-20",
       )}
+      style={{ containIntrinsicSize: `auto ${cardHeight}px` }}
     >
-      <Tooltip disabled={isRenaming || snoozeMenuOpen || sortable?.isDragging}>
+      <Tooltip
+        disabled={isRenaming || snoozeMenuOpen || sortable?.isDragging || layoutEditing !== null}
+      >
         <TooltipTrigger
           render={
             <div
@@ -1568,28 +1697,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           }
         >
           <div
-            className={cn(
-              "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
-              metaLineEmpty && "h-auto",
-            )}
+            className="relative z-10 px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)"
+            style={layoutEditing === null ? { height: cardHeight } : undefined}
           >
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
-              {props.project ? (
-                <ProjectFavicon project={props.project} className="size-4 shrink-0" />
-              ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
               {pinIndicator}
-              {props.projectDisplayName ? (
-                <span
-                  className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}
-                >
-                  {props.projectDisplayName}
-                </span>
-              ) : (
-                <span className="flex-1" />
-              )}
+              {renderLine("top", tokensFor("top"))}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -1732,15 +1848,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {props.sweepAction !== null ? dragDestination : null}
             </div>
-            <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              {title}
-              {isRegeneratingTitle ? (
-                <span role="status" className="sr-only">
-                  <T>Regenerating title</T>
-                </span>
-              ) : null}
-              {titleLineIcons}
-            </div>
+            {middleFolds ? null : (
+              <div className="mt-1 flex h-5 min-w-0 items-center gap-1.5">{titleLineItems}</div>
+            )}
             {metaLine}
           </div>
         </TooltipTrigger>
@@ -1749,13 +1859,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     </li>
   );
 });
-
-function latestRunDiff(
-  thread: SidebarThreadSummary,
-): { insertions: number; deletions: number } | null {
-  void thread;
-  return null;
-}
 
 // Attached only to the highlighted result, so React calls it each time the
 // highlight lands on a different row: a new query, late rows replacing the first

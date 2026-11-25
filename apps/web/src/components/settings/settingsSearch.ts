@@ -397,6 +397,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "sidebar-row-layout",
+    title: msg("Sidebar thread rows"),
+    to: "/settings/appearance",
+    searchTerms: [
+      msg(
+        "customize layout sidebar thread row card line branch worktree environment machine project pull request issues terminals agents hide move",
+      ),
+    ],
+  },
+  {
     id: "effort-display",
     title: msg("Effort display"),
     to: "/settings/appearance",

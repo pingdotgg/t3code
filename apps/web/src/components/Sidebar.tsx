@@ -172,6 +172,7 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import type { SidebarThreadSummary } from "../types";
+import { resolveSidebarRowLayout, withoutSidebarRowItem } from "./sidebar/sidebarRowLayout";
 import { cn } from "~/lib/utils";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import { ProjectRowActions } from "./ProjectComboboxRow";
@@ -314,7 +315,7 @@ function sameSidebarProviderEntries(
 }
 
 // Resolve providers per environment because default instance ids collide across environments.
-const sidebarProviderEntriesAtom = Atom.make((get) => {
+export const sidebarProviderEntriesAtom = Atom.make((get) => {
   const providersByEnvironment = get(environmentPresentations.providersByEnvironmentAtom);
   const derived = deriveProviderEntriesByEnvironment(
     [...get(environmentPresentations.serverConfigsAtom)].map(
@@ -1010,6 +1011,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   });
   const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
+  const storedRowLayout = useClientSettings((settings) => settings.sidebarRowLayout);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
   const { handleNewThread } = newThreadContext;
@@ -1187,6 +1189,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const stayOnRouteThread = (threadKey: string) =>
     setDepartingThreadKey((current) => (current === threadKey ? null : current));
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
+  const resolvedRowLayout = resolveSidebarRowLayout(storedRowLayout);
+  // With one environment every row would repeat the same machine name.
+  const rowLayout = showProjectEnvironments
+    ? resolvedRowLayout
+    : withoutSidebarRowItem(resolvedRowLayout, "environment");
   // Pinning from a row keeps rows in place while the menu is open.
   const projectScopeItems = useOrderWhileOpen(
     lookupProjectScopeItems,
@@ -3540,6 +3547,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }
                             thread={thread}
                             variant={rowVariant}
+                            layout={rowLayout}
                             navigationParent={
                               folderRow ??
                               (section === "working" ||
