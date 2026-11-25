@@ -131,3 +131,25 @@ it("resolves missing accessibility fields past hitSlop wrappers and across sibli
   expect(innerButton?.getAttribute("data-role")).toBeNull();
   expect(innerButton?.getAttribute("data-label")).toBeNull();
 });
+
+it("does not build lazy actions while the menu is closed", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  roots.push(root);
+  const actions = vi.fn(() => [{ id: "open", title: "Open" }]);
+
+  act(() =>
+    root.render(
+      <AndroidAnchoredMenu actions={actions} title="Thread">
+        <Pressable accessibilityRole="button" accessibilityLabel="Thread">
+          <span>Thread</span>
+        </Pressable>
+      </AndroidAnchoredMenu>,
+    ),
+  );
+
+  expect(container.querySelector("button")).not.toBeNull();
+  expect(actions).not.toHaveBeenCalled();
+});

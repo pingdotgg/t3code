@@ -49,6 +49,10 @@ export function Menu(props: MenuTriggerProps) {
   const pendingPress = useRef<(() => void) | null>(null);
 
   const { className: _className, actions, ...menuProps } = props;
+  const resolvedActions = useMemo(
+    () => (typeof actions === "function" ? actions() : actions),
+    [actions],
+  );
   let children = menuProps.children;
   if (props.shouldOpenOnLongPress && isValidElement(children)) {
     const child = children as ReactElement<Pick<PressableProps, "onTouchStart" | "onPress">>;
@@ -110,7 +114,7 @@ export function Menu(props: MenuTriggerProps) {
   return (
     <ThemedMenuView
       {...menuProps}
-      actions={typeof actions === "function" ? actions() : actions}
+      actions={resolvedActions}
       iconColorClassName="accent-icon"
       destructiveIconColorClassName="accent-danger-foreground"
       themeVariant={isDarkMode ? "dark" : "light"}
