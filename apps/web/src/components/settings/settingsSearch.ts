@@ -254,6 +254,14 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
 
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "share-usage-data",
+    title: msg("Share usage data"),
+    to: "/settings/general",
+    scope: "environment-defaults",
+    environmentOnly: true,
+    searchTerms: [msg("privacy telemetry analytics PostHog opt out product usage data")],
+  },
+  {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
     title: msg("Keep worktrees with local changes"),

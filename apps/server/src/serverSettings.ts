@@ -297,6 +297,11 @@ export class ServerSettingsService extends Context.Service<
 
     /** Subscribe before reading a snapshot to retain changes before lazy stream startup. */
     readonly subscribeChanges: Effect.Effect<Stream.Stream<ServerSettings>, never, Scope.Scope>;
+
+    /** Synchronous observers run before a settings update returns, without loading secrets. */
+    readonly observeChanges?: (
+      listener: (settings: ServerSettings) => void,
+    ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("t3/serverSettings/ServerSettingsService") {
   static readonly layerTest = (
@@ -322,6 +327,7 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       : {}),
   });
   const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
+  const observers = new Set<(settings: ServerSettings) => void>();
   const writeSemaphore = yield* Semaphore.make(1);
   const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
@@ -333,6 +339,11 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
         Effect.flatMap(update),
         Effect.flatMap(normalizeServerSettings),
         Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+        Effect.tap((nextSettings) =>
+          Effect.sync(() => {
+            for (const listener of observers) listener(resolveTextGenerationProvider(nextSettings));
+          }),
+        ),
         Effect.map(resolveTextGenerationProvider),
       ),
     );
@@ -358,6 +369,11 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
       writeSemaphore.withPermits(1)(getSettings.pipe(Effect.flatMap(use))),
     streamChanges: Stream.empty,
     subscribeChanges: Effect.succeed(Stream.empty),
+    observeChanges: (listener) =>
+      Effect.acquireRelease(
+        Effect.sync(() => observers.add(listener)),
+        () => Effect.sync(() => observers.delete(listener)),
+      ).pipe(Effect.asVoid),
   } satisfies ServerSettingsService["Service"];
 });
 
@@ -446,6 +462,7 @@ function decodeSettingsFile(
         {
           ...managed.defaults,
           continueThreadsAfterServerUpdate: false,
+          shareUsageData: false,
           usageHistoryRetentionDays: "unlimited",
           requireConnectDeviceApproval: true,
           enablePreviewTunnel: false,
@@ -743,13 +760,17 @@ const make = Effect.gen(function* () {
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
+  const observers = new Set<(settings: ServerSettings) => void>();
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
 
   const emitChange = (settings: ServerSettings) =>
-    PubSub.publish(changesPubSub, settings).pipe(Effect.asVoid);
+    Effect.sync(() => {
+      const effective = toEffective(settings);
+      for (const listener of observers) listener(effective);
+    }).pipe(Effect.andThen(PubSub.publish(changesPubSub, settings)), Effect.asVoid);
 
   const readConfigExists = fs.exists(settingsPath).pipe(
     Effect.mapError(
@@ -1474,6 +1495,11 @@ const make = Effect.gen(function* () {
         Effect.map((subscription) => materializeChanges(Stream.fromSubscription(subscription))),
       );
     },
+    observeChanges: (listener) =>
+      Effect.acquireRelease(
+        Effect.sync(() => observers.add(listener)),
+        () => Effect.sync(() => observers.delete(listener)),
+      ).pipe(Effect.asVoid),
   } satisfies ServerSettingsService["Service"];
 });
 

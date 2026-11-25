@@ -12909,6 +12909,11 @@
   "f6a91589456cca50": "Genehmigt",
   "c92657bb7f2293ff": "Genehmigung nötig",
   "f1e5c1be1ac92361": "Genehmigen",
+  "a248beb127b9a957": "Datenschutz",
+  "77d8990c4843d35f": "Nutzungsdatenfreigabe auf Standard zurücksetzen",
+  "7a2e1683709d2793": "Nutzungsdaten teilen",
+  "81a652f2a776f5c3": "Produktnutzungsdaten an T3 Code senden. Die Umgebungsvariable {variable} des Servers hat Vorrang vor dieser Einstellung.",
+  "32f141cf12bd28d8": "Datenschutz Telemetrie Analysen PostHog deaktivieren Produktnutzungsdaten",
   "fcb5f3c4d4753326": "Über diese Verbindung lassen sich keine Befehle genehmigen. Verwende einen Client, der das Terminal verwenden darf.",
   "4e96712d839ccbff": "{who} hat {choice} gesagt",
   "19097cfb8f5a79cf": [

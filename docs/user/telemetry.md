@@ -14,6 +14,24 @@ Product events do not include prompts, responses, file contents, authentication 
 raw provider events, child-agent output, or identifiers from your provider accounts. The one exception is [agent feedback](#agent-feedback),
 which is off unless you turn it on.
 
+## Turn off product usage data
+
+In the web or desktop app, open **Settings > General > Privacy** and turn off **Share usage data**.
+Select the environment you want to change, or select all connected environments to change them together.
+This preference is saved on each selected server and applies to all clients connected to it.
+It is on by default, including for existing installations.
+
+Turning it off stops product events immediately and discards queued events and pending retries.
+A request already sent may finish. Turning it back on collects new events without sending the
+discarded ones.
+
+`T3CODE_TELEMETRY_ENABLED` still overrides this preference when explicitly set to `true` or `false`
+in the server's environment. When it is unset, the server uses the saved preference. An
+administrator's managed policy can still disable telemetry.
+
+This setting controls product events, including delivery of agent feedback. It does not control
+relay connection diagnostics or OpenTelemetry export to your own receiver, described below.
+
 ## Agent feedback
 
 Agent feedback lets agents tell the T3 team about T3 Code: a T3 tool or `t3` command that did not
