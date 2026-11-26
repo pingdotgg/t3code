@@ -1324,6 +1324,7 @@
   "42a2622893a6bced": "No se pudieron leer los límites.",
   "4897e228d3185c96": "No se informaron límites.",
   "e27d2cb964df5dd5": "{source}: no se informaron cuentas.",
+  "161135f0aea4d1ca": "{source}: no hay cuentas de Codex, Claude ni Grok. Se omitieron: {providers}.",
   "1b503134018285f4": "{days} d {hours} h",
   "164c674cf062933a": "{label} · quedan {count} · caduca en {expires}",
   "9c82c39589c23938": "{label} · quedan {count}",
@@ -7544,8 +7545,8 @@
     },
     "."
   ],
-  "432e85a50e2e7964": [
-    "Muestra la cuota de cada cuenta que agrupa el hub, junto a los proveedores en",
+  "28988b067c83383c": [
+    "Muestra la cuota de cada cuenta de Codex, Claude y Grok que agrupa el hub, junto a los proveedores en",
     " ",
     {
       "i": 1,
@@ -9638,6 +9639,7 @@
   "3dd6eb5644a6ed8b": "Número de procesos",
   "85f0adb1de45cbc1": "{processStarts} inicios · {processExits} salidas",
   "0f0ae2813abd70e4": "Rendimiento de lectura",
+  "dc52330df5cc4586": "{bytes} observados",
   "d032b2addb6f00dc": "Rendimiento de escritura",
   "910a0c5f01321f81": "Límite de velocidad de la CPU",
   "0360d3113c5a74f7": "Estado térmico {thermalState}",
@@ -9661,6 +9663,7 @@
   "7b2e770a310d3271": "Proceso principal de Electron",
   "953cb034cd2e65ae": "Tiempo de recopilación",
   "75f59f3b8b292536": "Escaneo de procesos",
+  "cb9f65e224af203d": "{retained}/{scanned} guardados",
   "30d77fc0bc57f102": "Inaccesible",
   "69c367f8a75a477d": "Sidecar",
   "543ff5a7f825adc3": "Reinicios",

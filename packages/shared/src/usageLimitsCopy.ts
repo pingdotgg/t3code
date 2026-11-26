@@ -107,6 +107,15 @@ export function collectLimitNotices(
     for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       if (source.error) {
         notices.add(`${label(environmentLabel, source.label)}: ${source.error}`);
+      } else if (source.accounts.length === 0 && source.unreadProviders?.length) {
+        notices.add(
+          resolve(
+            msg("{source}: No Codex, Claude, or Grok accounts. Skipped {providers}.", {
+              source: label(environmentLabel, source.label),
+              providers: source.unreadProviders.join(", "),
+            }),
+          ),
+        );
       } else if (
         (source.kind === "http" ? (source.quotaAccounts?.length ?? 0) : source.accounts.length) ===
         0

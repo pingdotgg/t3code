@@ -764,7 +764,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
     const found = yield* store
       .getThreadRecords(
         threadId,
-        ["runs", "nodes", "subagents", "messages", "attempts", "providerTurns"],
+        ["runs", "nodes", "subagents", "messages", "attempts", "providerTurns", "checkpoints"],
         {
           runIds: [RunId.make("run:idle-compaction:4")],
           nodeIds: [nodeId],
@@ -772,6 +772,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
           messageIds: [MessageId.make("message:idle-compaction:4")],
           attemptIds: [RunAttemptId.make("attempt:idle-compaction")],
           providerTurnIds: [ProviderTurnId.make("turn:idle-old")],
+          checkpointIds: [CheckpointId.make("checkpoint:idle-compaction")],
         },
       )
       .pipe(Effect.withTracer(byId.tracer));
@@ -791,9 +792,15 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       })
       .pipe(Effect.withTracer(byId.tracer));
     for (const [table, index] of [
-      ...["runs", "nodes", "subagents", "messages", "run_attempts", "provider_turns"].map(
-        (name) => [name, `sqlite_autoindex_orchestration_v2_projection_${name}_1`] as const,
-      ),
+      ...[
+        "runs",
+        "nodes",
+        "subagents",
+        "messages",
+        "run_attempts",
+        "provider_turns",
+        "checkpoints",
+      ].map((name) => [name, `sqlite_autoindex_orchestration_v2_projection_${name}_1`] as const),
       ["subagents", "orchestration_v2_projection_subagents_child_thread_idx"],
       ["turn_items", "orchestration_v2_projection_turn_items_node_ordinal_idx"],
     ] as const) {
