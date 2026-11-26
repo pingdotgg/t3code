@@ -240,7 +240,7 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     // Claude Code keeps one gateway model cache per Claude home, for one base URL at a time, so a
     // ready probe can omit this instance's gateway models after another instance or a terminal
     // `claude` on a different gateway rewrote that cache.
-    return true;
+    return provider.status !== "ready" || provider.modelsIncomplete === true;
   }
 
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
