@@ -1,4 +1,7 @@
 {
+  "6c6e16b9488f8b91": "Role para ler tudo.",
+  "035aab5e99159bd8": "{count, plural, one {… {hidden} caractere do meio não é exibido.} other {… {hidden} caracteres do meio não são exibidos.}} O texto termina com:",
+  "011b1ef726fa9928": "Role cada parte para ler tudo.",
   "4bcfa3b976a421cf": "Chat paralelo",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread em {machine}",
@@ -3475,7 +3478,7 @@
   "12170596ff889d5b": "Anexar novamente",
   "748efc40dc99b309": "Remova para enviar",
   "fd3d4318e7b094fa": "Rascunho",
-  "9c421cab815b9905": "{count, plural, one {Mostrar mais {count} imagem anexada} other {Mostrar mais {count} imagens anexadas}}",
+  "c7f5c98f1e79cc6c": "{count, plural, one {Mostrar mais {count} imagem anexada} other {Mostrar mais {count} imagens anexadas}}",
   "ae136257600738d3": "Anexar arquivos",
   "3e04fb123bbf31b4": "Não foi possível salvar o anexo do rascunho localmente, e ele pode se perder ao navegar.",
   "81709882b9996586": "Anexar arquivos",
