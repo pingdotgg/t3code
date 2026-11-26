@@ -246,51 +246,94 @@ function renderScreen(render: () => ReactNode) {
   return screen;
 }
 
-it("does not open the clone destination after leaving the repository screen", async () => {
-  const repository = AsyncResult.success({
-    provider: "github",
-    nameWithOwner: "example/slow",
-    url: "https://github.com/example/slow",
-    sshUrl: "git@github.com:example/slow.git",
-  });
-  const lookup = Promise.withResolvers<typeof repository>();
-  state.lookupRepository.mockReset().mockReturnValue(lookup.promise);
-  state.dispatch.mockReset();
-  state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
-  state.connectionStates = {};
-  let screen: ReactNode;
-  function RepositoryScreen() {
-    screen = AddProjectRepositoryScreen({ environmentId: "environment", source: "github" });
-    return null;
-  }
-  function typeRepository(node: ReactNode): void {
-    Children.forEach(node, (child) => {
-      if (
-        !isValidElement<{ children?: ReactNode; onChangeText?: (value: string) => void }>(child)
-      ) {
-        return;
-      }
-      child.props.onChangeText?.("example/slow");
-      typeRepository(child.props.children);
+it.each([
+  { name: "Back after two submissions in one render", repeatSubmit: true, unmount: true },
+  { name: "Back before the screen unmounts" },
+  { name: "a change to the repository route parameters", changeParams: true },
+])(
+  "ignores a pending repository reply after $name",
+  async ({ repeatSubmit, unmount, changeParams }) => {
+    const repository = AsyncResult.success({
+      provider: "github",
+      nameWithOwner: "example/slow",
+      url: "https://github.com/example/slow",
+      sshUrl: "git@github.com:example/slow.git",
     });
-  }
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const root = createRoot(document.createElement("div"));
-  mountedRoots.push(root);
-  await act(() => root.render(createElement(RepositoryScreen)));
-  await act(() => typeRepository(screen));
-  const submit = findAction(screen, "Lookup repository");
-  if (!submit) throw new Error("Repository lookup action missing");
-  await act(() => void submit());
-  expect(state.lookupRepository).toHaveBeenCalledWith("example/slow");
-
-  await act(() => root.render(null));
-  await act(async () => {
-    lookup.resolve(repository);
-    await lookup.promise;
-  });
-  expect(state.dispatch).not.toHaveBeenCalled();
-});
+    const lookup = Promise.withResolvers<typeof repository>();
+    const duplicateLookup = Promise.withResolvers<typeof repository>();
+    state.lookupRepository
+      .mockReset()
+      .mockReturnValueOnce(lookup.promise)
+      .mockReturnValue(duplicateLookup.promise);
+    state.dispatch.mockReset();
+    state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+    state.connectionStates = {};
+    const flow = mountProjectFlow(false, false, false, "AddProjectRepository");
+    flow.setParams({ environmentId: "environment", source: "github" });
+    let screen: ReactNode;
+    function RepositoryScreen() {
+      screen = AddProjectRepositoryScreen({ environmentId: "environment", source: "github" });
+      return null;
+    }
+    function withRepositoryInput(
+      node: ReactNode,
+      action: (input: {
+        onChangeText: (value: string) => void;
+        onSubmitEditing: () => void;
+      }) => void,
+    ): void {
+      Children.forEach(node, (child) => {
+        if (
+          !isValidElement<{
+            children?: ReactNode;
+            onChangeText?: (value: string) => void;
+            onSubmitEditing?: () => void;
+          }>(child)
+        ) {
+          return;
+        }
+        const { onChangeText, onSubmitEditing } = child.props;
+        if (onChangeText && onSubmitEditing) {
+          action({ onChangeText, onSubmitEditing });
+        } else {
+          withRepositoryInput(child.props.children, action);
+        }
+      });
+    }
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    mountedRoots.push(root);
+    await act(() => root.render(createElement(RepositoryScreen)));
+    await act(() => withRepositoryInput(screen, (input) => input.onChangeText("example/slow")));
+    const submit = findAction(screen, "Lookup repository");
+    if (!submit) throw new Error("Repository lookup action missing");
+    try {
+      await act(() => {
+        if (repeatSubmit) {
+          withRepositoryInput(screen, (input) => input.onSubmitEditing());
+        }
+        void submit();
+      });
+      expect(state.lookupRepository).toHaveBeenCalledWith("example/slow");
+      if (changeParams) {
+        flow.setParams({ source: "gitlab" });
+      } else {
+        flow.back();
+      }
+      if (unmount) await act(() => root.render(null));
+      await act(async () => {
+        lookup.resolve(repository);
+        duplicateLookup.resolve(repository);
+        await lookup.promise;
+      });
+      expect(state.dispatch).not.toHaveBeenCalled();
+      expect(state.lookupRepository).toHaveBeenCalledOnce();
+    } finally {
+      state.navigationState = undefined;
+      state.dispatch.mockReset();
+    }
+  },
+);
 
 function cloneAction() {
   const action = findAction(
@@ -392,6 +435,7 @@ function mountProjectFlow(
       "PullRequestFile",
       "NewTaskProject",
       "AddProject",
+      "AddProjectRepository",
       "AddProjectLocal",
       "AddProjectNew",
       "AddProjectDestination",
