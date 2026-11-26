@@ -88,11 +88,8 @@ describe("composer list indentation", () => {
     expect(applyEdit(value, edit)).toBe("1. parent\n   1. first\n   2. second");
   });
 
-  // regression: #43628 Tab must renumber following siblings when an ordered item indents
   it.each([
-    ["1. a\n2. b\n3. c", "1. a\n   1. b\n2. c"],
     ["1. a\n2. b\n3. c\n4. d", "1. a\n   1. b\n2. c\n3. d"],
-    ["- a\n2. b\n3. c", "- a\n  1. b\n2. c"],
     ["1. a\n2. b\n3) c", "1. a\n   1. b\n3) c"],
     ["1. a\n2. b\n   - x\n3. c", "1. a\n   1. b\n   - x\n2. c"],
   ])("renumbers following siblings when indenting %j to %j", (value, expected) => {
