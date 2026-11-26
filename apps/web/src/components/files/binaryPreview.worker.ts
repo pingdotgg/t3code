@@ -237,8 +237,8 @@ async function handle(input: BinaryWorkerRequest) {
           path,
           size: file.bytes.length,
           directory: file.directory,
-          // ZIP stores the archiver's wall-clock time, but JSZip reads those fields as UTC.
-          // Without the "Z", the viewer parses the time back in its own zone.
+          // ZIP stores wall-clock time without a zone, while JSZip reads those fields as UTC.
+          // Omitting "Z" marks the timestamp as wall-clock so the viewer formats its calendar date.
           modified: Number.isNaN(file.date.getTime()) ? null : file.date.toISOString().slice(0, -1),
         };
       });

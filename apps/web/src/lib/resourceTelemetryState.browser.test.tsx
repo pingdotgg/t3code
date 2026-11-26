@@ -316,9 +316,9 @@ describe("resource monitor retry", () => {
   });
 });
 
-it("shows each group's process count in German", async () => {
+it("shows process counts, I/O totals and the process scan in German", async () => {
   using fixture = setup();
-  const { groups } = fixture.snapshot;
+  const { groups, health } = fixture.snapshot;
   const liveTelemetry = Atom.make<AsyncResult.AsyncResult<ResourceTelemetrySnapshot, MonitorError>>(
     AsyncResult.success({
       ...fixture.snapshot,
@@ -326,7 +326,9 @@ it("shows each group's process count in German", async () => {
         ...groups,
         backend: { ...groups.backend, processCount: 3 },
         electron: { ...groups.electron, processCount: 1 },
+        allT3: { ...groups.allT3, ioReadBytes: 512, ioWriteBytes: 300 },
       },
+      health: { ...health, scannedProcessCount: 40, retainedProcessCount: 12 },
     }),
   ).pipe(Atom.keepAlive);
   monitor.telemetry.mockImplementation(() => liveTelemetry);
@@ -341,4 +343,7 @@ it("shows each group's process count in German", async () => {
   );
   await expect.element(screen.getByText("3 Prozesse", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("1 Prozess", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("512 B beobachtet", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("300 B beobachtet", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("12/40 gespeichert", { exact: true })).toBeVisible();
 });

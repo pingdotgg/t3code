@@ -73,6 +73,13 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         "api/.git",
         "web/.git",
         "sub/.git",
+        "libs/hash/.git",
+        "libs/semi/.git",
+        "libs/a#b/.git",
+        "libs/cont/.git",
+        "libs/inline/.git",
+        "extra/repo/.git",
+        "extra/joined/.git",
         "notes",
         "src/svc/.git",
         "tree",
@@ -89,9 +96,30 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         path.join(root, "tree", ".git"),
         `gitdir: ${path.join(root, "api", ".git", "worktrees", "tree")}\n`,
       );
+      // Read as Git reads it: comments, quotes, escapes and keys outside `submodule` sections.
       yield* fileSystem.writeFileString(
         path.join(root, ".gitmodules"),
-        '[submodule "sub"]\n\tpath = sub\n\turl = https://example.test/sub.git\n',
+        [
+          "[include]",
+          "\tpath = extra/repo",
+          '[submodule "sub"]',
+          "\tpath = sub",
+          "\turl = https://example.test/sub.git",
+          '[submodule "hash"]',
+          "\tpath = libs/hash # pinned",
+          '[submodule "semi"]',
+          "\tpath = libs/semi ; pinned",
+          '[submodule "quoted"]',
+          '\tpath = "libs/a#b"',
+          '[submodule "cont"]',
+          "\tpath = libs/\\",
+          "cont",
+          '[submodule "inline"] path = libs/inline',
+          '[submodule "joined"]',
+          "\turl = https://example.test/joined.git\\",
+          "\tpath = extra/joined",
+          "",
+        ].join("\n"),
       );
       yield* fileSystem.writeFileString(
         path.join(root, "team.code-workspace"),
@@ -137,6 +165,18 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           },
           { path: path.join(root, fits), name: fits, isGitRepository: true, source: "child" },
           // One level below a plain folder is looked into.
+          {
+            path: path.join(root, "extra", "joined"),
+            name: "joined",
+            isGitRepository: true,
+            source: "child",
+          },
+          {
+            path: path.join(root, "extra", "repo"),
+            name: "repo",
+            isGitRepository: true,
+            source: "child",
+          },
           {
             path: path.join(root, "src", "svc"),
             name: "svc",

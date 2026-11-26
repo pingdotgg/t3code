@@ -396,6 +396,36 @@ describe("buildProjectGroups", () => {
     expect(pathGroups.map((group) => group.label)).toEqual(["Design docs", "t3code"]);
   });
 
+  it.each([
+    ["/", ["/", "/app", "/tools"]],
+    ["D:\\", ["D:/", "D:/app", "D:/tools"]],
+  ] as const)("keeps folder groups apart in a repository checked out at %s", (rootPath, paths) => {
+    const identity = { ...repositoryIdentity, rootPath };
+    const groups = buildProjectGroups({
+      projects: paths.map((path, index) =>
+        makeProject(`project-${index}`, path, { repositoryIdentity: identity }),
+      ),
+      settings: settings("repository_path"),
+    });
+
+    const key = repositoryIdentity.canonicalKey;
+    expect(groups.map((group) => group.key)).toEqual([key, `${key}::app`, `${key}::tools`]);
+  });
+
+  it("keeps a POSIX folder name ending in a backslash as part of the repository root", () => {
+    const identity = { ...repositoryIdentity, rootPath: "/work/repo\\" };
+    const groups = buildProjectGroups({
+      projects: [
+        makeProject("app", "/work/repo\\/app", { repositoryIdentity: identity }),
+        makeProject("sibling", "/work/repo\\other", { repositoryIdentity: identity }),
+      ],
+      settings: settings("repository_path"),
+    });
+
+    const key = repositoryIdentity.canonicalKey;
+    expect(groups.map((group) => group.key)).toEqual([`${key}::app`, key]);
+  });
+
   it("applies a physical-project override without dropping its siblings", () => {
     const first = makeProject("t3code", "/work/t3code");
     const second = makeProject("t3code-2", "/work/t3code-2");
