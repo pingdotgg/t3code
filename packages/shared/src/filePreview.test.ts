@@ -210,14 +210,14 @@ describe("attachment preview classification", () => {
       "// 中文注释\n",
     );
   });
-  it("does not corrupt a GBK character cut by the preview boundary", () => {
+  it("drops a GBK character split by the preview boundary", () => {
     const bytes = new Uint8Array(FILE_TEXT_PREVIEW_MAX_BYTES + 1).fill(0x61);
-    bytes[FILE_TEXT_PREVIEW_MAX_BYTES - 2] = 0xd6;
-    bytes[FILE_TEXT_PREVIEW_MAX_BYTES - 1] = 0xd0;
-    bytes[FILE_TEXT_PREVIEW_MAX_BYTES] = 0xce;
-    const preview = decodeFilePreviewText(bytes);
-    expect(preview.truncated).toBe(true);
-    expect(preview.text.endsWith("�")).toBe(false);
+    bytes.set([0xd6, 0xd0], 0);
+    bytes.set([0xce, 0xc4], FILE_TEXT_PREVIEW_MAX_BYTES - 1);
+    expect(decodeFilePreviewText(bytes)).toEqual({
+      text: `中${"a".repeat(FILE_TEXT_PREVIEW_MAX_BYTES - 3)}`,
+      truncated: true,
+    });
   });
   it.each(["doc", "xls", "ppt", "7z", "rar"])(
     "retains the binary fallback for %s, which opencode does not render",

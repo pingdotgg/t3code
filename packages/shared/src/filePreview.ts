@@ -168,17 +168,18 @@ export function officePreviewKind(file: {
   return null;
 }
 
-// GBK/GB18030 sources are not UTF-8, and the byte cap can cut their last character. A cut tail
-// decodes as U+FFFD in both decoders, so strip it before deciding that GB18030 is wrong.
-function decodeBoundedText(bounded: Uint8Array, truncated: boolean): string | null {
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bounded, { stream: truncated });
-  } catch {
-    const gb18030 = new TextDecoder("gb18030").decode(bounded);
-    if (!gb18030.includes("�")) return gb18030;
-    const withoutCutTail = truncated ? gb18030.slice(0, -1) : gb18030;
-    return withoutCutTail.includes("�") ? null : withoutCutTail;
+// GB18030 (a superset of GBK) covers Chinese sources that are not UTF-8. Hermes only implements
+// a few encodings, so a runtime without GB18030 keeps the UTF-8-only behaviour.
+const FILE_PREVIEW_ENCODINGS = ["utf-8", "gb18030"] as const;
+
+function decodeBoundedText(bounded: Uint8Array, truncated: boolean) {
+  for (const encoding of FILE_PREVIEW_ENCODINGS) {
+    try {
+      // `stream` drops a multi-byte character the byte cap cut in half instead of failing on it.
+      return new TextDecoder(encoding, { fatal: true }).decode(bounded, { stream: truncated });
+    } catch {}
   }
+  return null;
 }
 
 export function decodeFilePreviewText(bytes: Uint8Array, truncated = false) {
