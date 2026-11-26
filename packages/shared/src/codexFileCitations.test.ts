@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { codexFileCitationMarkdown, resolveCodexFileCitationLink } from "./codexFileCitations.ts";
-import { isMarkdownFileLinkLabel, parseMarkdownFileLink } from "./markdownLinks.ts";
+import {
+  extractMarkdownLinkHrefs,
+  isMarkdownFileLinkLabel,
+  parseMarkdownFileLink,
+  resolveMarkdownFileLink,
+} from "./markdownLinks.ts";
 
 describe("resolveCodexFileCitationLink", () => {
   it("resolves the attributes emitted by Codex", () => {
@@ -31,6 +36,45 @@ describe("resolveCodexFileCitationLink", () => {
       label: "main.ts",
       lineRangeStart: 42,
     });
+  });
+
+  it("opens forward-slash UNC citations inside the current workspace", () => {
+    for (const host of ["files", "localhost"]) {
+      const cwd = String.raw`\\${host}\team\repo`;
+      const citation = resolveCodexFileCitationLink({
+        path: `//${host}/team/repo/src/app.ts`,
+        line_range_start: "7",
+      });
+      expect(citation).not.toBeNull();
+      if (!citation) return;
+      const copiedHref = extractMarkdownLinkHrefs(codexFileCitationMarkdown(citation))[0];
+      for (const href of [citation.href, copiedHref]) {
+        expect(resolveMarkdownFileLink(href, cwd)).toMatchObject({
+          targetPath: `${cwd}\\src\\app.ts:7`,
+          position: { path: `${cwd}\\src\\app.ts`, line: 7 },
+        });
+      }
+    }
+  });
+
+  it("keeps UNC citations outside the workspace from becoming file links", () => {
+    for (const path of [
+      "//other/team/repo/src/app.ts",
+      "//files/other/repo/src/app.ts",
+      "//localhost/team/repo/src/app.ts",
+    ]) {
+      const citation = resolveCodexFileCitationLink({ path, line_range_start: "7" });
+      expect(resolveMarkdownFileLink(citation?.href, "\\\\files\\team\\repo")).toBeNull();
+    }
+  });
+
+  it("keeps ordinary protocol-relative Markdown links external", () => {
+    expect(
+      resolveMarkdownFileLink("//files/team/repo/src/app.ts#L7", "\\\\files\\team\\repo"),
+    ).toBeNull();
+    expect(resolveCodexFileCitationLink({ path: "///Users/me/repo/src/app.ts" })?.href).toBe(
+      "///Users/me/repo/src/app.ts",
+    );
   });
 
   it("rejects missing paths and invalid line numbers", () => {

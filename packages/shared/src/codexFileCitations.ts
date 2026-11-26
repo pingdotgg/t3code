@@ -26,6 +26,9 @@ function markdownDestinationPath(path: string): string {
     .replaceAll("#", "%23")
     .replaceAll("?", "%3F")
     .replace(/^\s+|\s+$/g, (whitespace) => encodeURIComponent(whitespace));
+  if (/^\/\/[^/\\]+[\\/][^/\\]/.test(path)) {
+    return `\\\\${destination.slice(2).replaceAll("/", "\\")}`;
+  }
   // Only disambiguate rejected relative paths; recognized links keep workspace lookup behavior.
   return parseMarkdownFileLink(destination) || /^(?:[a-z][a-z\d+.-]*:|[\\/])/i.test(path)
     ? destination
