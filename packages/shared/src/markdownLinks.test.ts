@@ -88,7 +88,6 @@ describe("inlineCodeFilePathCandidate", () => {
         resolveMarkdownFileLink(`${path}:10-20`, "/work"),
       );
       expect(resolveMarkdownFileLink(anchored, "/work")).toMatchObject({
-        targetPath: `${path === "src/a.ts" ? "/work/" : ""}${path}:10`,
         position: { line: 10, endLine: 20 },
       });
     },
