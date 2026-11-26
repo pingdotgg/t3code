@@ -403,6 +403,8 @@ Third}`;
                   text: ["\r 10%|#         |", "\r100%|##########|\n", "done\r\n", "🚀 ready\rX\n"],
                 },
                 { data: { "text/html": ["<b>Results</b>"], "text/plain": ["Results"] } },
+                { output_type: "display_data", data: { "text/markdown": ["| a |\n", "|---|"] } },
+                { data: { "text/plain": "plain wins", "text/markdown": "**markdown**" } },
               ],
             },
           ],
@@ -424,10 +426,16 @@ Third}`;
             { kind: "text", text: "42\n" },
             { kind: "text", text: "100%|##########|\ndone\nX  ready\n" },
             { kind: "html", text: "<b>Results</b>" },
+            { kind: "text", text: "| a |\n|---|" },
+            { kind: "text", text: "plain wins" },
           ],
         },
       ],
     });
+    for (const name of ["", "Питон"]) {
+      const blank = { nbformat: 4, metadata: { language_info: { name } }, cells: [] };
+      expect(openNotebook(bytes(JSON.stringify(blank)))).toMatchObject({ language: "text" });
+    }
     // IPython traceback frames can omit trailing newlines or place ANSI resets after them.
     const failed = openNotebook(
       bytes(

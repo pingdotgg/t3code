@@ -132,7 +132,7 @@ type TranscriptCommitResult =
   | { readonly kind: "stale" }
   | { readonly kind: "empty" };
 
-const WORD_SPACELESS_LANGUAGES = new Set(["ja", "zh", "yue", "th", "lo", "km", "my"]);
+const WORD_SPACELESS_LANGUAGES = new Set(["ja", "zh", "cmn", "yue", "th", "lo", "km", "my"]);
 const AUTO_WORD_CHARACTERS = String.raw`\p{Script=Latin}\p{Script=Cyrillic}\p{Script=Greek}\p{N}`;
 const AUTO_LEFT_EDGE = new RegExp(String.raw`(?:[${AUTO_WORD_CHARACTERS}]|[.!?,:;)\]}'"])$`, "u");
 const AUTO_RIGHT_EDGE = new RegExp(`^(?:[${AUTO_WORD_CHARACTERS}]|[([{'"])`, "u");

@@ -1416,6 +1416,13 @@ describe("CursorAdapterV2", () => {
       );
       assert(started.type === "provider_turn.updated");
       yield* runtime.interruptTurn({ providerThread, providerTurnId: started.providerTurn.id });
+      assert.isTrue(
+        yield* runtime.nativeTurnKept!({
+          providerThread,
+          nativeTurnId: started.providerTurn.nativeTurnRef!.nativeId!,
+        }),
+        "a live session replays the stopped request itself, so the server must not resend it too",
+      );
       yield* runtime.startTurn(turnInput(2, steerText));
 
       assert.lengthOf(sentMessages, 2);
