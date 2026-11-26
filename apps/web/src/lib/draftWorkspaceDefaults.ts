@@ -47,7 +47,7 @@ export function readPendingDraftCheckout(draftId: DraftId): Promise<boolean> | n
 }
 
 export function readPendingWorkspaceDefault(draftId: DraftId): Promise<void> | null {
-  const checkout = readPendingDraftCheckout(draftId);
+  const checkout = pendingCheckouts.get(draftId);
   if (checkout) return checkout.then(() => {});
   const pending = pendingDefaults.get(draftId);
   if (!pending) return null;
