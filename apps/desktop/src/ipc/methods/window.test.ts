@@ -32,6 +32,7 @@ import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
@@ -44,6 +45,7 @@ import {
   readMedia,
   syncHtmlFullscreen,
   toLocalBackendPath,
+  wheelZoom,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -462,6 +464,41 @@ describe("pickProjectFavicon", () => {
       assert.strictEqual(pickFiles.mock.calls.length, 0);
     }),
   );
+});
+
+describe("wheelZoom", () => {
+  const wheelZoomLayer = (zooms: Array<DesktopWindow.MainWindowZoomDirection>) =>
+    Layer.mergeAll(
+      Layer.mock(ElectronWindow.ElectronWindow)({
+        main: Effect.succeedSome({
+          webContents: { id: 1 },
+          isDestroyed: () => false,
+        } as unknown as Electron.BrowserWindow),
+      }),
+      Layer.mock(DesktopWindow.DesktopWindow)({
+        zoomMain: (direction) =>
+          Effect.sync(() => {
+            zooms.push(direction);
+          }),
+      }),
+    );
+
+  it.effect("zooms the app like the menu does", () => {
+    const zooms: Array<DesktopWindow.MainWindowZoomDirection> = [];
+    return Effect.gen(function* () {
+      yield* wheelZoom.handler("in", { sender: { id: 1 } });
+      yield* wheelZoom.handler("out", { sender: { id: 1 } });
+      assert.deepEqual(zooms, ["in", "out"]);
+    }).pipe(Effect.provide(wheelZoomLayer(zooms)));
+  });
+
+  it.effect("ignores renderers other than the main window's", () => {
+    const zooms: Array<DesktopWindow.MainWindowZoomDirection> = [];
+    return Effect.gen(function* () {
+      yield* wheelZoom.handler("in", { sender: { id: 2 } });
+      assert.deepEqual(zooms, []);
+    }).pipe(Effect.provide(wheelZoomLayer(zooms)));
+  });
 });
 
 describe("syncHtmlFullscreen", () => {
