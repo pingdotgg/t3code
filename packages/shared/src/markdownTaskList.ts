@@ -39,16 +39,22 @@ export function markdownTaskMarkerOffset(
 ): number | null {
   // Native attachments replace their labels, so the remaining text could name another task.
   if (renderedText.includes("\uFFFC")) return null;
-  const tasks: ListItem[] = [];
+  const tasks: Array<{ readonly item: ListItem; readonly offset: number }> = [];
   const collect = (node: Nodes) => {
-    if (node.type === "listItem" && typeof node.checked === "boolean") tasks.push(node);
+    if (node.type === "listItem" && typeof node.checked === "boolean") {
+      // Native enrmrkd only recognizes task markers on the same line as their list bullet.
+      const start = node.position?.start.offset;
+      const offset = start === undefined ? null : taskListMarkerOffset(markdown, start);
+      if (start !== undefined && offset !== null && !/[\r\n]/.test(markdown.slice(start, offset))) {
+        tasks.push({ item: node, offset });
+      }
+    }
     if ("children" in node) node.children.forEach(collect);
   };
   collect(parser.parse(markdown));
   const task = tasks[index];
-  const start =
-    task?.checked === !checked && renderedTexts(task).includes(lettersAndDigits(renderedText))
-      ? task.position?.start.offset
-      : undefined;
-  return start === undefined ? null : taskListMarkerOffset(markdown, start);
+  return task?.item.checked === !checked &&
+    renderedTexts(task.item).includes(lettersAndDigits(renderedText))
+    ? task.offset
+    : null;
 }

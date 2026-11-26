@@ -14,6 +14,14 @@ const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
 // A label stops at any bracket, so a run of unclosed brackets is scanned once, not once per bracket.
 const LABEL = String.raw`[^[\]\n]*`;
 const LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*`;
+const QUOTE_PREFIX = new RegExp(String.raw`^([ \t]*${LIST_MARKERS})(>(?:[ \t]*>)+)`, "gm");
+// Move inter-marker spacing before the quote so fence depth matches and offsets stay intact. A label
+// may span \r or U+2028, which multiline `^` follows, so labels and output are read from the original.
+const threadLinkSource = (markdown: string) =>
+  markdown.replace(QUOTE_PREFIX, (_source, indent: string, quote: string) => {
+    const markers = quote.replace(/[ \t]/g, "");
+    return indent + " ".repeat(quote.length - markers.length) + markers;
+  });
 // CommonMark fences start on their own line (optional blockquotes, indentation, or list markers)
 // and close on a line with at least as many of the same marker; backtick info strings hold no `.
 // Quote markers are compared from the first `>`, so lines may indent them differently.
@@ -25,10 +33,13 @@ const fencedCode = (char: "`" | "~", name: string) => {
   const closer = String.raw`[ \t]*\k<${bq}>${AFTER_QUOTE}\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
   return String.raw`^[ \t]*${LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]*${LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:(?:\r\n?|\n)(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:(?:\r\n?|\n)${closer})?`;
 };
-// A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, or deeper blockquote.
+// A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, rule,
+// setext underline, or deeper blockquote.
 const SPAN_BREAK_LINE =
   /[ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|(?:[-*+]|\d{1,9}[.)])[ \t]|`{3,}[^`\r\n]*\r?$|~{3,})/my;
 const LINE_PREFIX = /([ \t]*)(>|(?:[-*+]|\d{1,9}[.)])[ \t]+)?/y;
+const THEMATIC_BREAK = /^(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?$/;
+const SETEXT_UNDERLINE = /^(?:-+|=+)[ \t]*\r?$/;
 // Earlier alternatives claim text so later ones cannot match inside it: an escaped character opens
 // nothing, code is literal, and a link to anywhere else keeps a thread URL in its label or href.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
@@ -48,7 +59,7 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
 );
 
 function codeSpanLines(markdown: string) {
-  const lines: Array<{ start: number; depth: number }> = [];
+  const lines: Array<{ start: number; depth: number; breaksSpan: boolean }> = [];
   const listIndents: number[] = [];
   let paragraphDepth: number | undefined;
   let start = 0;
@@ -85,10 +96,21 @@ function codeSpanLines(markdown: string) {
       }
     }
     const content = line.slice(offset);
+    const text = content.trimStart();
+    const indent = content.slice(0, content.length - text.length).replace(/\t/g, "    ").length;
+    const containerIndent = hasList ? 0 : (listIndents[depth] ?? 0);
+    const lazy = indent < containerIndent || depth < (paragraphDepth ?? 0);
+    // Rules and setext underlines end a paragraph unless indented as code; a lazy line is never an underline.
+    const breaksSpan =
+      !hasList &&
+      (lazy ? indent : indent - containerIndent) <= 3 &&
+      (THEMATIC_BREAK.test(text) ||
+        (paragraphDepth !== undefined && !lazy && SETEXT_UNDERLINE.test(text)));
     const endsParagraph =
+      breaksSpan ||
       /^(?:[ \t\r]*$|[ \t]*#{1,6}(?:[ \t]|$)|[ \t]*`{3,}[^`]*$|[ \t]*~{3,})/.test(content);
     const effectiveDepth = endsParagraph || hasList ? depth : Math.max(depth, paragraphDepth ?? 0);
-    lines.push({ start, depth: effectiveDepth });
+    lines.push({ start, depth: effectiveDepth, breaksSpan });
     paragraphDepth = endsParagraph ? undefined : effectiveDepth;
     start += line.length + 1;
   }
@@ -112,7 +134,8 @@ function findCodeSpanEnd(
     } else if (markdown[i] === "\n") {
       lineIndex++;
       SPAN_BREAK_LINE.lastIndex = i + 1;
-      if (SPAN_BREAK_LINE.test(markdown) || lines[lineIndex]!.depth > openDepth) return -1;
+      const line = lines[lineIndex]!;
+      if (SPAN_BREAK_LINE.test(markdown) || line.breaksSpan || line.depth > openDepth) return -1;
     }
   }
   return -1;
@@ -270,11 +293,12 @@ export function replaceThreadLinks(
   if (!hasThreadLinks(markdown)) return markdown;
   // Hermes' matchAll yields matches without `groups`; exec keeps them.
   const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
+  const source = threadLinkSource(markdown);
   let result = "";
   let cursor = 0;
   let lines: ReturnType<typeof codeSpanLines> | undefined;
   let lineIndex = 0;
-  for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
+  for (let match = pattern.exec(source); match !== null; match = pattern.exec(source)) {
     const spanTicks = match.groups?.spanTicks;
     if (spanTicks !== undefined) {
       lines ??= codeSpanLines(markdown);
@@ -287,7 +311,11 @@ export function replaceThreadLinks(
     const href =
       match.groups?.angleHref ?? match.groups?.href ?? match.groups?.autolink ?? match.groups?.bare;
     const link = href === undefined ? null : parseThreadLinkHref(href);
-    const rewritten = link === null ? undefined : replace(link, match.groups?.label);
+    const label = match.groups?.label;
+    const rewritten =
+      link === null
+        ? undefined
+        : replace(link, label && markdown.slice(match.index + 1, match.index + 1 + label.length));
     if (rewritten === undefined) continue;
     result += markdown.slice(cursor, match.index) + rewritten;
     cursor = match.index + match[0].length;
