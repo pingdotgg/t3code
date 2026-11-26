@@ -154,46 +154,46 @@ export function abandonedProviderTurns(
 const CUT_TURN_SETTLED = "cut-turn-settled";
 
 /**
- * The previous run's cancelled or stopped turn when no adapter said whether it kept the request.
- * A restart cancels the turn with no adapter left to tell. A Stop leaves its request with the
- * session, which is gone once the session closes.
+ * The latest cancelled or stopped turn when no adapter said whether it kept the request. A restart
+ * cancels the turn with no adapter left to tell. A Stop leaves its request with the session, which
+ * carries it into the next turn and is gone once the session closes. Later runs whose request the
+ * provider never got are passed over: a stopped request they carried was lost with them.
  */
 function unsettledCutProviderTurn(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
   run: Pick<OrchestrationV2Run, "ordinal">,
   providerThread: Pick<OrchestrationV2ProviderThread, "id" | "nativeThreadRef">,
 ) {
-  const previous = projection.runs.reduce<OrchestrationV2Run | undefined>(
-    (latest, candidate) =>
-      candidate.ordinal < run.ordinal &&
-      candidate.providerThreadId === providerThread.id &&
-      candidate.startedAt !== null &&
-      (latest === undefined || candidate.ordinal > latest.ordinal)
-        ? candidate
-        : latest,
-    undefined,
-  );
-  if (
-    (previous?.status !== "cancelled" && previous?.status !== "interrupted") ||
-    previous.activeAttemptId === null
-  )
-    return undefined;
-  const turn = projection.providerTurns.findLast(
-    (candidate) =>
-      candidate.runAttemptId === previous.activeAttemptId &&
-      candidate.providerThreadId === providerThread.id,
-  );
-  const nativeTurnId = turn?.nativeTurnRef?.nativeId;
-  if (
-    turn === undefined ||
-    nativeTurnId == null ||
-    (turn.status !== "cancelled" && turn.status !== "interrupted") ||
-    turn.promptDropped === true ||
-    (turn.nativeThreadRef !== undefined &&
-      turn.nativeThreadRef.nativeId !== providerThread.nativeThreadRef?.nativeId)
-  )
-    return undefined;
-  return { run: previous, turn, nativeTurnId };
+  const previousRuns = projection.runs
+    .filter(
+      (candidate) =>
+        candidate.ordinal < run.ordinal &&
+        candidate.providerThreadId === providerThread.id &&
+        candidate.startedAt !== null,
+    )
+    .toSorted((left, right) => right.ordinal - left.ordinal);
+  for (const previous of previousRuns) {
+    const turn =
+      previous.activeAttemptId === null
+        ? undefined
+        : projection.providerTurns.findLast(
+            (candidate) =>
+              candidate.runAttemptId === previous.activeAttemptId &&
+              candidate.providerThreadId === providerThread.id,
+          );
+    if (turn === undefined || !isDeliveredProviderTurn(turn)) continue;
+    const nativeTurnId = turn.nativeTurnRef?.nativeId;
+    if (
+      (previous.status !== "cancelled" && previous.status !== "interrupted") ||
+      nativeTurnId == null ||
+      (turn.status !== "cancelled" && turn.status !== "interrupted") ||
+      (turn.nativeThreadRef !== undefined &&
+        turn.nativeThreadRef.nativeId !== providerThread.nativeThreadRef?.nativeId)
+    )
+      return undefined;
+    return { run: previous, turn, nativeTurnId };
+  }
+  return undefined;
 }
 
 export const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
@@ -1109,61 +1109,77 @@ export const layer: Layer.Layer<
       const session = sessionResult.success;
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const cutTurn = unsettledCutProviderTurn(projection, run, providerThread);
-      if (
-        cutTurn !== undefined &&
+      // A cut turn the provider did not keep may itself have carried an earlier stopped request,
+      // which is lost with it, so keep asking back to a turn the provider kept.
+      const droppedCutTurns: Array<NonNullable<typeof cutTurn>> = [];
+      for (
+        let candidate = cutTurn;
+        candidate !== undefined &&
         session.nativeTurnKept !== undefined &&
         !(yield* (
           session
-            .nativeTurnKept({ providerThread, nativeTurnId: cutTurn.nativeTurnId })
+            .nativeTurnKept({ providerThread, nativeTurnId: candidate.nativeTurnId })
             // As when the turn ends: an unknown answer resends the request rather than losing it.
             .pipe(Effect.orElseSucceed(() => false))
-        ))
+        ));
+        candidate = unsettledCutProviderTurn(projection, candidate.run, providerThread)
       ) {
-        // Settle it as a failed turn is settled: mark the request dropped and take back its inline
-        // context, so this turn resends both. Starting again reads the settled state.
+        droppedCutTurns.push(candidate);
+      }
+      const earliestCutTurn = droppedCutTurns.at(-1);
+      if (earliestCutTurn !== undefined) {
+        // Settle them as a failed turn is settled: mark each request dropped and take back their
+        // inline context, so this turn resends all of it. Starting again reads the settled state.
         const occurredAt = yield* DateTime.now;
         const allocateEventId = () =>
           idAllocator.allocate.event({ threadId: projection.thread.id });
         // Its attempt starts before it delivers anything, so later inline deliveries are its own,
         // including handoffs carried from an earlier run that they still target.
         const cutStartedAt =
-          projection.attempts.find((candidate) => candidate.id === cutTurn.run.activeAttemptId)
-            ?.startedAt ?? cutTurn.run.startedAt;
+          projection.attempts.find(
+            (candidate) => candidate.id === earliestCutTurn.run.activeAttemptId,
+          )?.startedAt ?? earliestCutTurn.run.startedAt;
         const settled = yield* eventSink.writeIfRunCurrent({
           threadId: projection.thread.id,
           runId: run.id,
           activeAttemptId: attempt.id,
           expectedStatus: "starting",
           events: [
-            {
-              id: yield* allocateEventId(),
-              type: "provider-turn.updated" as const,
-              threadId: projection.thread.id,
-              runId: cutTurn.run.id,
-              nodeId: cutTurn.turn.nodeId,
-              providerInstanceId: cutTurn.run.providerInstanceId,
-              occurredAt,
-              payload: { ...cutTurn.turn, promptDropped: true as const },
-            },
+            ...(yield* Effect.forEach(droppedCutTurns, (dropped) =>
+              Effect.map(allocateEventId(), (id) => ({
+                id,
+                type: "provider-turn.updated" as const,
+                threadId: projection.thread.id,
+                runId: dropped.run.id,
+                nodeId: dropped.turn.nodeId,
+                providerInstanceId: dropped.run.providerInstanceId,
+                occurredAt,
+                payload: { ...dropped.turn, promptDropped: true as const },
+              })),
+            )),
             ...(yield* Effect.forEach(
               projection.contextHandoffs.filter(
                 (handoff) =>
                   handoff.delivery?.status === "inline" &&
                   handoff.delivery.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
-                  (handoff.targetRunId === cutTurn.run.id ||
+                  (droppedCutTurns.some((dropped) => handoff.targetRunId === dropped.run.id) ||
                     (cutStartedAt !== null &&
                       DateTime.isGreaterThanOrEqualTo(handoff.updatedAt, cutStartedAt))),
               ),
-              ({ delivery: _delivery, ...handoff }) =>
-                Effect.map(allocateEventId(), (id) => ({
+              ({ delivery: _delivery, ...handoff }) => {
+                const owner =
+                  droppedCutTurns.find((dropped) => handoff.targetRunId === dropped.run.id) ??
+                  earliestCutTurn;
+                return Effect.map(allocateEventId(), (id) => ({
                   id,
                   type: "context-handoff.updated" as const,
                   threadId: projection.thread.id,
-                  runId: cutTurn.run.id,
-                  providerInstanceId: cutTurn.run.providerInstanceId,
+                  runId: owner.run.id,
+                  providerInstanceId: owner.run.providerInstanceId,
                   occurredAt,
                   payload: { ...handoff, updatedAt: occurredAt },
-                })),
+                }));
+              },
             )),
           ],
         });
