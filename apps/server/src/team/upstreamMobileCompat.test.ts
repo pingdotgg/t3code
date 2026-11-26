@@ -3,6 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AuthAccessWriteScope,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthStandardClientScopes,
   CommandId,
   EnvironmentId,
@@ -167,8 +169,19 @@ describe("upstreamMobileCompat pure helpers", () => {
       "bob: something",
     );
     expect(stripUpstreamCompatThreadTitlePrefix("alice:", memberCtx)).toBe("alice:");
+    expect(formatUpstreamCompatThreadTitle("alice:", memberCtx)).toBe("alice:");
     expect(stripUpstreamCompatThreadTitlePrefix("acme: Nightly triage v2", teamCtx)).toBe(
       "Nightly triage v2",
+    );
+
+    // Non-ASCII case-folding length change ("İstanbul".toLowerCase() can have 2 code units for İ).
+    const unicodeTeamCtx = { ownerKind: "team" as const, teamDisplayName: "İstanbul" };
+    expect(formatUpstreamCompatThreadTitle("Deploy", unicodeTeamCtx)).toBe("İstanbul: Deploy");
+    expect(formatUpstreamCompatThreadTitle("İstanbul: Deploy", unicodeTeamCtx)).toBe(
+      "İstanbul: Deploy",
+    );
+    expect(stripUpstreamCompatThreadTitlePrefix("İstanbul: Deploy v2", unicodeTeamCtx)).toBe(
+      "Deploy v2",
     );
   });
 });
@@ -671,6 +684,246 @@ describe("upstreamMobileCompat integration", () => {
             { upstreamCompat: false },
           ),
         ).toBe(false);
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "preserves narrowed mobile scope ceilings across role changes, tombstones revoked pairing links, serializes concurrent suspension/demotion, rejects unbound pairing creation, and preserves mobile visibility on member mutations",
+    () =>
+      Effect.gen(function* () {
+        const teamService = yield* TeamService.TeamService;
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const repo = yield* TeamRepository.TeamRepository;
+
+        const ownerSession = yield* sessions.issue({
+          method: "browser-session-cookie",
+          subject: "owner",
+          scopes: AuthStandardClientScopes,
+          client: desktopClientMeta,
+        });
+        yield* teamService.initializeTeam({
+          sessionId: ownerSession.sessionId,
+          payload: { name: "Acme", ownerPseudo: "alice" },
+        });
+
+        // Invite Dana (admin) and Bob (regular).
+        const danaInvite = yield* teamService.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "admin", prefilledPseudo: "dana" },
+        });
+        const danaRedeemed = yield* teamService.redeemInvite({
+          token: danaInvite.token,
+          pseudo: "dana",
+          client: desktopClientMeta,
+        });
+        const danaDesktop = yield* sessions.verify(danaRedeemed.accessToken);
+
+        const bobInvite = yield* teamService.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob" },
+        });
+        const bobRedeemed = yield* teamService.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob",
+          client: desktopClientMeta,
+        });
+        const bobDesktop = yield* sessions.verify(bobRedeemed.accessToken);
+
+        // 1. Narrowed mobile pairing scope ceiling MUST NOT widen on demotion or promotion.
+        const danaReadOnlyLink = yield* teamService.createMobilePairingLink({
+          sessionId: danaDesktop.sessionId,
+          callerScopes: danaDesktop.scopes,
+          payload: { label: "Dana ReadOnly", scopes: [AuthOrchestrationReadScope] },
+          serverAuth,
+        });
+        const danaReadOnlyToken = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          danaReadOnlyLink.credential,
+          undefined,
+          clientMeta,
+          { proofKeyThumbprint: "dpop-jkt-dana-ro" },
+        );
+        const danaReadOnlyBefore = yield* sessions.verify(danaReadOnlyToken.access_token);
+        expect(danaReadOnlyBefore.scopes).toEqual([AuthOrchestrationReadScope]);
+
+        // Admin-only narrowed link gets revoked when Dana is demoted to regular.
+        const danaAdminOnlyLink = yield* teamService.createMobilePairingLink({
+          sessionId: danaDesktop.sessionId,
+          callerScopes: danaDesktop.scopes,
+          payload: { label: "Dana AdminOnly", scopes: [AuthAccessWriteScope] },
+          serverAuth,
+        });
+        const danaAdminOnlyToken = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          danaAdminOnlyLink.credential,
+          undefined,
+          clientMeta,
+        );
+
+        // Demote Dana admin -> regular: read-only session stays read-only (NO orchestration:operate added!),
+        // and admin-only narrowed session is revoked.
+        yield* teamService.updateMemberRole({
+          sessionId: ownerSession.sessionId,
+          payload: { memberId: danaRedeemed.member.id, role: "regular" },
+        });
+        const danaReadOnlyAfterDemote = yield* sessions.verify(danaReadOnlyToken.access_token);
+        expect(danaReadOnlyAfterDemote.scopes).toEqual([AuthOrchestrationReadScope]);
+        expect(danaReadOnlyAfterDemote.scopes).not.toContain(AuthOrchestrationOperateScope);
+
+        const danaAdminOnlyVerifyAfterDemote = yield* Effect.exit(
+          sessions.verify(danaAdminOnlyToken.access_token),
+        );
+        expect(Exit.isFailure(danaAdminOnlyVerifyAfterDemote)).toBe(true);
+
+        // Promote Bob regular -> admin: Bob's narrowed read-only mobile session stays read-only,
+        // while Bob's full-role desktop invite session gains admin scopes.
+        const bobReadOnlyLink = yield* teamService.createMobilePairingLink({
+          sessionId: bobDesktop.sessionId,
+          callerScopes: bobDesktop.scopes,
+          payload: { label: "Bob ReadOnly", scopes: [AuthOrchestrationReadScope] },
+          serverAuth,
+        });
+        const bobReadOnlyToken = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          bobReadOnlyLink.credential,
+          undefined,
+          clientMeta,
+        );
+        yield* teamService.updateMemberRole({
+          sessionId: ownerSession.sessionId,
+          payload: { memberId: bobRedeemed.member.id, role: "admin" },
+        });
+        const bobReadOnlyAfterPromote = yield* sessions.verify(bobReadOnlyToken.access_token);
+        expect(bobReadOnlyAfterPromote.scopes).toEqual([AuthOrchestrationReadScope]);
+        const bobDesktopAfterPromote = yield* sessions.verify(bobRedeemed.accessToken);
+        expect(bobDesktopAfterPromote.scopes).toContain(AuthAccessWriteScope);
+
+        // 2. Revoking a pairing link tombstones team_pairing_meta (never deletes it) so an
+        //    in-flight redemption cannot fall back to an unbound personal session.
+        const bobRevokeLink = yield* teamService.createMobilePairingLink({
+          sessionId: bobDesktop.sessionId,
+          callerScopes: bobDesktopAfterPromote.scopes,
+          payload: { label: "Bob Tombstone" },
+          serverAuth,
+        });
+        yield* teamService.revokeMyMobilePairingLink({
+          sessionId: bobDesktop.sessionId,
+          payload: { id: bobRevokeLink.id },
+          serverAuth,
+        });
+        const tombstonedMeta = yield* repo.getPairingLinkMeta(bobRevokeLink.id);
+        expect(Option.isSome(tombstonedMeta)).toBe(true);
+        expect(Option.getOrNull(tombstonedMeta)?.revokedAt).not.toBeNull();
+        // Also verify markPairingLinkRevoked (used by POST /api/auth/pairing-links/revoke) tombstones cleanly.
+        const bobAdminRevokeLink = yield* teamService.createMobilePairingLink({
+          sessionId: bobDesktop.sessionId,
+          callerScopes: bobDesktopAfterPromote.scopes,
+          payload: { label: "Bob Admin Revoke" },
+          serverAuth,
+        });
+        yield* teamService.markPairingLinkRevoked(bobAdminRevokeLink.id);
+        const tombstonedAdminMeta = yield* repo.getPairingLinkMeta(bobAdminRevokeLink.id);
+        expect(Option.getOrNull(tombstonedAdminMeta)?.revokedAt).not.toBeNull();
+        // Attempting to redeem the tombstoned link fails closed (401) even if underlying grant wasn't revoked yet!
+        const tombstonedRedeemExit = yield* Effect.exit(
+          serverAuth.exchangeBootstrapCredentialForAccessToken(
+            bobAdminRevokeLink.credential,
+            undefined,
+            clientMeta,
+          ),
+        );
+        expect(Exit.isFailure(tombstonedRedeemExit)).toBe(true);
+
+        // 3. Concurrent suspension vs pairing redemption (bearer, DPoP, and browser) never leaves
+        //    a live session for a suspended member.
+        const raceBearerLink = yield* teamService.createMobilePairingLink({
+          sessionId: danaDesktop.sessionId,
+          callerScopes: (yield* sessions.verify(danaRedeemed.accessToken)).scopes,
+          payload: { label: "Dana Race Bearer" },
+          serverAuth,
+        });
+        const raceBrowserLink = yield* teamService.createMobilePairingLink({
+          sessionId: danaDesktop.sessionId,
+          callerScopes: (yield* sessions.verify(danaRedeemed.accessToken)).scopes,
+          payload: { label: "Dana Race Browser" },
+          serverAuth,
+        });
+        const [bearerExit, browserExit] = yield* Effect.all(
+          [
+            Effect.exit(
+              serverAuth.exchangeBootstrapCredentialForAccessToken(
+                raceBearerLink.credential,
+                undefined,
+                clientMeta,
+                { proofKeyThumbprint: "dpop-jkt-race" },
+              ),
+            ),
+            Effect.exit(serverAuth.createBrowserSession(raceBrowserLink.credential, clientMeta)),
+            teamService.updateMemberStatus({
+              sessionId: ownerSession.sessionId,
+              payload: { memberId: danaRedeemed.member.id, status: "suspended" },
+            }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        if (Exit.isSuccess(bearerExit)) {
+          // If redemption won the barrier first, suspension MUST have immediately revoked it.
+          const verifyAfterSuspend = yield* Effect.exit(
+            sessions.verify(bearerExit.value.access_token),
+          );
+          expect(Exit.isFailure(verifyAfterSuspend)).toBe(true);
+        }
+        if (Exit.isSuccess(browserExit)) {
+          const verifyAfterSuspend = yield* Effect.exit(
+            sessions.verify(browserExit.value.sessionToken),
+          );
+          expect(Exit.isFailure(verifyAfterSuspend)).toBe(true);
+        }
+
+        // 4. Member mutations (pseudo, role, status) preserve upstreamClientThreadVisibility = "all_accessible".
+        const bobAllVis = yield* teamService.updateMyMobileVisibility({
+          sessionId: bobDesktop.sessionId,
+          payload: { upstreamClientThreadVisibility: "all_accessible" },
+        });
+        expect(bobAllVis.upstreamClientThreadVisibility).toBe("all_accessible");
+
+        const bobRenamed = yield* teamService.updateMyPseudo({
+          sessionId: bobDesktop.sessionId,
+          payload: { pseudo: "bobby" },
+        });
+        expect(bobRenamed.upstreamClientThreadVisibility).toBe("all_accessible");
+
+        const bobRoleChanged = yield* teamService.updateMemberRole({
+          sessionId: ownerSession.sessionId,
+          payload: { memberId: bobRedeemed.member.id, role: "modo" },
+        });
+        expect(bobRoleChanged.upstreamClientThreadVisibility).toBe("all_accessible");
+
+        const bobSuspended = yield* teamService.updateMemberStatus({
+          sessionId: ownerSession.sessionId,
+          payload: { memberId: bobRedeemed.member.id, status: "suspended" },
+        });
+        expect(bobSuspended.upstreamClientThreadVisibility).toBe("all_accessible");
+
+        // 5. Unbound session cannot mint standard pairing links on a configured Team Server.
+        const unboundSession = yield* sessions.issue({
+          method: "bearer-access-token",
+          subject: "unbound-admin",
+          scopes: AuthStandardClientScopes,
+          client: desktopClientMeta,
+        });
+        const unboundAssertExit = yield* Effect.exit(
+          teamService.assertCanCreateStandardPairingLink({
+            sessionId: unboundSession.sessionId,
+            scopes: [AuthOrchestrationReadScope],
+          }),
+        );
+        expect(Exit.isFailure(unboundAssertExit)).toBe(true);
+        const unboundBindExit = yield* Effect.exit(
+          teamService.bindPairingLinkToSessionMember({
+            sessionId: unboundSession.sessionId,
+            pairingLinkId: "fake-link-id",
+          }),
+        );
+        expect(Exit.isFailure(unboundBindExit)).toBe(true);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });

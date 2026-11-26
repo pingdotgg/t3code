@@ -41,6 +41,7 @@ describe("team sidecar migrations", () => {
         "team_relay_binding",
         "team_schema_migrations",
         "team_session_meta",
+        "team_session_scope_ceilings",
         "team_skills",
         "team_thread_env_labels",
         "team_thread_follows",

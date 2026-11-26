@@ -5,6 +5,7 @@ import {
   TEAM_CLIENT_CAPABILITY_VALUE,
   TeamId,
   TeamMemberId,
+  type AuthEnvironmentScope,
   type AuthSessionId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
@@ -38,6 +39,7 @@ export interface TeamPairingMetaRecord {
   readonly teamId: TeamId;
   readonly memberId: TeamMemberId;
   readonly createdAt: string;
+  readonly revokedAt: string | null;
 }
 
 /**
@@ -69,6 +71,14 @@ export function resolveTeamThreadTitlePrefix(
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function hasLeadingPrefixColon(value: string, prefix: string, lowerPrefix: string): boolean {
+  return (
+    value.length > prefix.length &&
+    value[prefix.length] === ":" &&
+    value.slice(0, prefix.length).toLowerCase() === lowerPrefix
+  );
+}
+
 /**
  * Dynamically formats a thread title for non-team-aware clients (`<creatorPseudo>: <title>` or
  * `<teamDisplayName>: <title>`) without mutating SQLite. Avoids double-prefixing if the raw title
@@ -84,11 +94,13 @@ export function formatUpstreamCompatThreadTitle(
   if (rawTitle.startsWith(expectedPrefix)) {
     return rawTitle;
   }
-  if (rawTitle.toLowerCase().startsWith(`${prefix.toLowerCase()}:`)) {
+  const lowerPrefix = prefix.toLowerCase();
+  if (hasLeadingPrefixColon(rawTitle, prefix, lowerPrefix)) {
     const rest = rawTitle.slice(prefix.length + 1).trimStart();
-    if (rest.length > 0) {
-      return `${expectedPrefix}${rest}`;
+    if (rest.length === 0) {
+      return `${prefix}:`;
     }
+    return `${expectedPrefix}${rest}`;
   }
   return `${expectedPrefix}${rawTitle}`;
 }
@@ -106,9 +118,9 @@ export function stripUpstreamCompatThreadTitlePrefix(
   const prefix = resolveTeamThreadTitlePrefix(context);
   if (prefix === null) return incomingTitle;
   let current = incomingTitle.trim();
-  const lowerColon = `${prefix.toLowerCase()}:`;
-  while (current.toLowerCase().startsWith(lowerColon)) {
-    const remainder = current.slice(lowerColon.length).trimStart();
+  const lowerPrefix = prefix.toLowerCase();
+  while (hasLeadingPrefixColon(current, prefix, lowerPrefix)) {
+    const remainder = current.slice(prefix.length + 1).trimStart();
     if (remainder.length === 0) {
       break;
     }
@@ -439,27 +451,33 @@ interface PairingMetaRow {
   readonly team_id: string;
   readonly member_id: string;
   readonly created_at: string;
+  readonly revoked_at: string | null;
 }
 
 interface MemberPreferenceRow {
   readonly upstream_client_thread_visibility: TeamUpstreamClientThreadVisibility;
 }
 
+interface SessionScopeCeilingRow {
+  readonly max_scopes_json: string;
+}
+
 export const upsertTeamPairingMeta = (
   sql: SqlClient.SqlClient,
-  input: TeamPairingMetaRecord,
+  input: Omit<TeamPairingMetaRecord, "revokedAt">,
 ) => sql`
-  INSERT INTO team_pairing_meta (pairing_link_id, team_id, member_id, created_at)
-  VALUES (${input.pairingLinkId}, ${input.teamId}, ${input.memberId}, ${input.createdAt})
+  INSERT INTO team_pairing_meta (pairing_link_id, team_id, member_id, created_at, revoked_at)
+  VALUES (${input.pairingLinkId}, ${input.teamId}, ${input.memberId}, ${input.createdAt}, NULL)
   ON CONFLICT(pairing_link_id) DO UPDATE SET
     team_id = excluded.team_id,
     member_id = excluded.member_id,
-    created_at = excluded.created_at
+    created_at = excluded.created_at,
+    revoked_at = NULL
 `;
 
 export const getTeamPairingMeta = (sql: SqlClient.SqlClient, pairingLinkId: string) =>
   sql<PairingMetaRow>`
-    SELECT pairing_link_id, team_id, member_id, created_at
+    SELECT pairing_link_id, team_id, member_id, created_at, revoked_at
     FROM team_pairing_meta
     WHERE pairing_link_id = ${pairingLinkId}
     LIMIT 1
@@ -471,6 +489,7 @@ export const getTeamPairingMeta = (sql: SqlClient.SqlClient, pairingLinkId: stri
             teamId: TeamId.make(rows[0].team_id),
             memberId: TeamMemberId.make(rows[0].member_id),
             createdAt: rows[0].created_at,
+            revokedAt: rows[0].revoked_at,
           })
         : Option.none<TeamPairingMetaRecord>(),
     ),
@@ -480,14 +499,65 @@ export const listTeamPairingLinkIdsForMember = (sql: SqlClient.SqlClient, member
   sql<{ readonly pairing_link_id: string }>`
     SELECT pairing_link_id
     FROM team_pairing_meta
-    WHERE member_id = ${memberId}
+    WHERE member_id = ${memberId} AND revoked_at IS NULL
     ORDER BY created_at DESC
   `.pipe(Effect.map((rows) => rows.map((row) => row.pairing_link_id)));
 
-export const deleteTeamPairingMeta = (sql: SqlClient.SqlClient, pairingLinkId: string) => sql`
-  DELETE FROM team_pairing_meta
+export const markTeamPairingMetaRevoked = (
+  sql: SqlClient.SqlClient,
+  pairingLinkId: string,
+  revokedAt: string,
+) => sql`
+  UPDATE team_pairing_meta
+  SET revoked_at = COALESCE(revoked_at, ${revokedAt})
   WHERE pairing_link_id = ${pairingLinkId}
 `;
+
+export const markAllTeamPairingMetaRevokedForMember = (
+  sql: SqlClient.SqlClient,
+  memberId: TeamMemberId,
+  revokedAt: string,
+) => sql`
+  UPDATE team_pairing_meta
+  SET revoked_at = COALESCE(revoked_at, ${revokedAt})
+  WHERE member_id = ${memberId} AND revoked_at IS NULL
+`;
+
+export const upsertTeamSessionScopeCeiling = (
+  sql: SqlClient.SqlClient,
+  input: {
+    readonly sessionId: AuthSessionId;
+    readonly maxScopes: ReadonlyArray<AuthEnvironmentScope>;
+    readonly createdAt: string;
+  },
+) => sql`
+  INSERT INTO team_session_scope_ceilings (session_id, max_scopes_json, created_at)
+  VALUES (${input.sessionId}, ${JSON.stringify(input.maxScopes)}, ${input.createdAt})
+  ON CONFLICT(session_id) DO UPDATE SET
+    max_scopes_json = excluded.max_scopes_json
+`;
+
+export const getTeamSessionScopeCeiling = (sql: SqlClient.SqlClient, sessionId: AuthSessionId) =>
+  sql<SessionScopeCeilingRow>`
+    SELECT max_scopes_json
+    FROM team_session_scope_ceilings
+    WHERE session_id = ${sessionId}
+    LIMIT 1
+  `.pipe(
+    Effect.map((rows) => {
+      const raw = rows[0]?.max_scopes_json;
+      if (!raw) return Option.none<ReadonlyArray<AuthEnvironmentScope>>();
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return Option.none<ReadonlyArray<AuthEnvironmentScope>>();
+        return Option.some(
+          parsed.filter((entry): entry is AuthEnvironmentScope => typeof entry === "string"),
+        );
+      } catch {
+        return Option.none<ReadonlyArray<AuthEnvironmentScope>>();
+      }
+    }),
+  );
 
 export const getMemberUpstreamMobileVisibility = (
   sql: SqlClient.SqlClient,

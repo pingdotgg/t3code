@@ -520,7 +520,9 @@ export const layer = HttpApiBuilder.group(
               }
             }
             const shouldBindTeamMember =
-              Option.isSome(teamServiceOption) && args.payload.purpose !== "peer-link";
+              Option.isSome(teamServiceOption) &&
+              args.payload.purpose !== "peer-link" &&
+              args.payload.access === undefined;
             if (shouldBindTeamMember) {
               yield* teamServiceOption.value
                 .assertCanCreateStandardPairingLink({
@@ -572,6 +574,9 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             yield* requireEnvironmentScope(AuthAccessWriteScope);
+            if (Option.isSome(teamServiceOption)) {
+              yield* teamServiceOption.value.markPairingLinkRevoked(args.payload.id);
+            }
             const revoked = yield* serverAuth.revokePairingLink(args.payload.id);
             return { revoked };
           },

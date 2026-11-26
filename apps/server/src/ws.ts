@@ -337,6 +337,7 @@ import {
 import {
   adaptThreadProjectionForUpstreamCompat,
   adaptThreadShellsForUpstreamCompat,
+  formatUpstreamCompatThreadTitle,
   isTeamAwareClientRequest,
 } from "./team/upstreamMobileCompat.ts";
 
@@ -1240,9 +1241,23 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       },
     );
     const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
+      const listShellIndex =
+        teamSession && (yield* teamSession.teamService.isTeamConfigured())
+          ? threadManagement.listActiveShellIndex().pipe(
+              Effect.flatMap((rows) =>
+                teamSession.teamService
+                  .filterVisibleShellThreadIds(
+                    teamSession.sessionId,
+                    rows.map((row) => row.id),
+                    { upstreamCompat: teamSession.upstreamCompat === true },
+                  )
+                  .pipe(Effect.map((visibleIds) => rows.filter((row) => visibleIds.has(row.id)))),
+              ),
+            )
+          : threadManagement.listActiveShellIndex();
       const forSubscriber = yield* loadSubscriberShellSnapshot({
         sql,
-        listShellIndex: threadManagement.listActiveShellIndex(),
+        listShellIndex,
         readThreads: (threadIds) =>
           threadManagement.readShellSnapshot({
             location: "active",
@@ -2193,9 +2208,25 @@ export const layerWsRpc = (
                   result.threads.map((thread) => thread.id),
                 )
                 .pipe(
-                  Effect.map((readableIds) => ({
-                    threads: result.threads.filter((thread) => readableIds.has(thread.id)),
-                  })),
+                  Effect.flatMap((readableIds) => {
+                    const visible = result.threads.filter((thread) => readableIds.has(thread.id));
+                    if (!upstreamCompat || visible.length === 0) {
+                      return Effect.succeed({ threads: visible });
+                    }
+                    return teamService
+                      .getThreadTitlePrefixContextMap(visible.map((thread) => thread.id))
+                      .pipe(
+                        Effect.map((prefixByThreadId) => ({
+                          threads: visible.map((thread) => ({
+                            ...thread,
+                            title: formatUpstreamCompatThreadTitle(
+                              thread.title,
+                              prefixByThreadId.get(thread.id),
+                            ),
+                          })),
+                        })),
+                      );
+                  }),
                 ),
             ),
           ),
@@ -3783,9 +3814,25 @@ export const layerWsRpc = (
                   result.threads.map((thread) => thread.id),
                 )
                 .pipe(
-                  Effect.map((readableIds) => ({
-                    threads: result.threads.filter((thread) => readableIds.has(thread.id)),
-                  })),
+                  Effect.flatMap((readableIds) => {
+                    const visible = result.threads.filter((thread) => readableIds.has(thread.id));
+                    if (!upstreamCompat || visible.length === 0) {
+                      return Effect.succeed({ threads: visible });
+                    }
+                    return teamService
+                      .getThreadTitlePrefixContextMap(visible.map((thread) => thread.id))
+                      .pipe(
+                        Effect.map((prefixByThreadId) => ({
+                          threads: visible.map((thread) => ({
+                            ...thread,
+                            title: formatUpstreamCompatThreadTitle(
+                              thread.title,
+                              prefixByThreadId.get(thread.id),
+                            ),
+                          })),
+                        })),
+                      );
+                  }),
                 ),
             ),
           ),

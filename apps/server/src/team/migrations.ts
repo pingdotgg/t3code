@@ -423,7 +423,8 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
             pairing_link_id TEXT PRIMARY KEY,
             team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
             member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            revoked_at TEXT
           )
         `;
       yield* sql`
@@ -437,6 +438,13 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
             upstream_client_thread_visibility TEXT NOT NULL DEFAULT 'owned_and_followed'
               CHECK (upstream_client_thread_visibility IN ('owned_and_followed', 'all_accessible')),
             updated_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_session_scope_ceilings (
+            session_id TEXT PRIMARY KEY,
+            max_scopes_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
           )
         `;
     }),

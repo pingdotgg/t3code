@@ -120,7 +120,10 @@ export function TeamMobileCompatSection({
     readonly environmentId: EnvironmentId;
     readonly result: TeamCreateMobilePairingLinkResult;
   } | null>(null);
-  const [pendingLinks, setPendingLinks] = useState<ReadonlyArray<TeamMobilePairingLinkSummary>>([]);
+  const [pendingLinksState, setPendingLinksState] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly links: ReadonlyArray<TeamMobilePairingLinkSummary>;
+  } | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
 
   const currentMemberId = currentMember?.id ?? null;
@@ -135,7 +138,7 @@ export function TeamMobileCompatSection({
     void loadPendingLinks(environmentId).then((result) => {
       if (cancelled) return;
       if (result._tag === "Success") {
-        setPendingLinks(result.value.pairingLinks);
+        setPendingLinksState({ environmentId, links: result.value.pairingLinks });
       }
     });
     return () => {
@@ -160,9 +163,13 @@ export function TeamMobileCompatSection({
   };
 
   const refreshPendingLinks = async () => {
-    const listed = await runListPairings({ environmentId, input: {} });
+    const targetEnvironmentId = environmentId;
+    const listed = await runListPairings({ environmentId: targetEnvironmentId, input: {} });
     if (listed._tag === "Success") {
-      setPendingLinks(listed.value.pairingLinks);
+      setPendingLinksState({
+        environmentId: targetEnvironmentId,
+        links: listed.value.pairingLinks,
+      });
     }
   };
 
@@ -250,6 +257,10 @@ export function TeamMobileCompatSection({
   const activeLatestPairingUrl = activeLatestPairing
     ? resolveMobilePairingUrl(serverBaseUrl, activeLatestPairing.credential)
     : null;
+  const pendingLinks =
+    pendingLinksState !== null && pendingLinksState.environmentId === environmentId
+      ? pendingLinksState.links
+      : [];
   const activePendingLinks = pendingLinks.filter((link) => {
     const expiresMs = Date.parse(link.expiresAt);
     return Number.isNaN(expiresMs) || expiresMs > nowMs;

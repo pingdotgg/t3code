@@ -119,6 +119,10 @@ export interface PairingRedemptionBinding {
 }
 
 export interface PairingRedemptionHook {
+  /** Optional barrier wrapping beforeIssueSession -> sessions.issue -> afterIssueSession atomically. */
+  readonly wrapPairingRedemption?: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   readonly beforeIssueSession: (input: {
     readonly pairingLinkId: string;
     readonly grantedScopes: ReadonlyArray<AuthEnvironmentScope>;
@@ -131,7 +135,8 @@ export interface PairingRedemptionHook {
     readonly sessionId: AuthSessionId;
     readonly teamId: string;
     readonly memberId: string;
-  }) => Effect.Effect<void, ServerAuthInternalError>;
+    readonly grantedScopes: ReadonlyArray<AuthEnvironmentScope>;
+  }) => Effect.Effect<void, ServerAuthInvalidCredentialError | ServerAuthInternalError>;
 }
 
 export interface AuthenticatedSession {
@@ -1004,6 +1009,22 @@ export const make = Effect.gen(function* () {
         };
       });
 
+  const withPairingRedemptionHooks = <A, E, R>(
+    pairingLinkId: string | undefined,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> => {
+    if (pairingLinkId === undefined || pairingRedemptionHooks.size === 0) {
+      return effect;
+    }
+    let wrapped = effect;
+    for (const hook of pairingRedemptionHooks) {
+      if (hook.wrapPairingRedemption) {
+        wrapped = hook.wrapPairingRedemption(wrapped);
+      }
+    }
+    return wrapped;
+  };
+
   const runBeforePairingIssue = Effect.fn("EnvironmentAuth.runBeforePairingIssue")(function* (
     pairingLinkId: string | undefined,
     grantedScopes: ReadonlyArray<AuthEnvironmentScope>,
@@ -1043,6 +1064,7 @@ export const make = Effect.gen(function* () {
   const runAfterPairingIssue = Effect.fn("EnvironmentAuth.runAfterPairingIssue")(function* (
     pairingLinkId: string | undefined,
     sessionId: AuthSessionId,
+    grantedScopes: ReadonlyArray<AuthEnvironmentScope>,
     bindings: ReadonlyArray<{
       readonly hook: PairingRedemptionHook;
       readonly teamId: string;
@@ -1058,6 +1080,7 @@ export const make = Effect.gen(function* () {
           sessionId,
           teamId: binding.teamId,
           memberId: binding.memberId,
+          grantedScopes,
         }),
       { discard: true },
     ).pipe(Effect.onError(() => sessions.revoke(sessionId).pipe(Effect.ignore)));
@@ -1115,34 +1138,50 @@ export const make = Effect.gen(function* () {
     const grant = yield* bootstrapCredentials
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
-    const preparedPairing = yield* runBeforePairingIssue(grant.pairingLinkId, grant.scopes).pipe(
-      Effect.catchTags({
-        ServerAuthScopeNotGrantedError: () =>
-          Effect.fail(
-            new ServerAuthInvalidCredentialError({
-              diagnostic: "Pairing link scopes are no longer permitted for the member.",
-            }),
-          ),
+    const session = yield* withPairingRedemptionHooks(
+      grant.pairingLinkId,
+      Effect.gen(function* () {
+        const preparedPairing = yield* runBeforePairingIssue(
+          grant.pairingLinkId,
+          grant.scopes,
+        ).pipe(
+          Effect.catchTags({
+            ServerAuthScopeNotGrantedError: () =>
+              Effect.fail(
+                new ServerAuthInvalidCredentialError({
+                  diagnostic: "Pairing link scopes are no longer permitted for the member.",
+                }),
+              ),
+          }),
+        );
+        const issued = yield* issueUnlessOthersRevokedSince(
+          revocationsAtStart,
+          sessions
+            .issue({
+              method: "browser-session-cookie",
+              subject: grant.subject,
+              scopes: preparedPairing.effectiveScopes,
+              ...(previousSession?.method === "browser-session-cookie"
+                ? { replaceSessionId: previousSession.sessionId }
+                : {}),
+              client: {
+                ...requestMetadata,
+                ...(grant.label ? { label: grant.label } : {}),
+              },
+            })
+            .pipe(
+              Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })),
+            ),
+        );
+        yield* runAfterPairingIssue(
+          grant.pairingLinkId,
+          issued.sessionId,
+          grant.scopes,
+          preparedPairing.bindings,
+        );
+        return issued;
       }),
     );
-    const session = yield* issueUnlessOthersRevokedSince(
-      revocationsAtStart,
-      sessions
-        .issue({
-          method: "browser-session-cookie",
-          subject: grant.subject,
-          scopes: preparedPairing.effectiveScopes,
-          ...(previousSession?.method === "browser-session-cookie"
-            ? { replaceSessionId: previousSession.sessionId }
-            : {}),
-          client: {
-            ...requestMetadata,
-            ...(grant.label ? { label: grant.label } : {}),
-          },
-        })
-        .pipe(Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause }))),
-    );
-    yield* runAfterPairingIssue(grant.pairingLinkId, session.sessionId, preparedPairing.bindings);
     return {
       response: {
         authenticated: true,
@@ -1277,49 +1316,57 @@ export const make = Effect.gen(function* () {
               if (grantedScopes.length === 0) {
                 return yield* new ServerAuthScopeNotGrantedError({});
               }
-              const preparedPairing = yield* runBeforePairingIssue(
+              return yield* withPairingRedemptionHooks(
                 grant.pairingLinkId,
-                grantedScopes,
+                Effect.gen(function* () {
+                  const preparedPairing = yield* runBeforePairingIssue(
+                    grant.pairingLinkId,
+                    grantedScopes,
+                  );
+                  // Only plain pairing links renew. T3 Connect, CLI, desktop and peer sessions keep
+                  // their own lifetimes, so unlinking Connect or rotating a credential still cuts off.
+                  const renewable =
+                    input?.proofKeyThumbprint !== undefined &&
+                    grant.method === "one-time-token" &&
+                    grant.subject === PAIRING_LINK_SUBJECT;
+                  const issue = sessions
+                    .issue({
+                      method: input?.proofKeyThumbprint
+                        ? "dpop-access-token"
+                        : "bearer-access-token",
+                      subject: grant.subject,
+                      scopes: preparedPairing.effectiveScopes,
+                      ...(input?.proofKeyThumbprint
+                        ? {
+                            proofKeyThumbprint: input.proofKeyThumbprint,
+                            ttl: renewable ? RENEWABLE_ACCESS_TOKEN_TTL : Duration.hours(1),
+                          }
+                        : {}),
+                      ...(renewable ? { renewalWindow: RENEWABLE_SESSION_WINDOW } : {}),
+                      replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
+                      client: {
+                        ...requestMetadata,
+                        ...(grant.label ? { label: grant.label } : {}),
+                      },
+                    })
+                    .pipe(
+                      Effect.mapError(
+                        (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
+                      ),
+                    );
+                  // A proof-key exchange holds the lock from before it spends its credential.
+                  const issuedSession = yield* input?.proofKeyThumbprint
+                    ? issue
+                    : issueUnlessOthersRevokedSince(revocationsAtStart, issue);
+                  yield* runAfterPairingIssue(
+                    grant.pairingLinkId,
+                    issuedSession.sessionId,
+                    grantedScopes,
+                    preparedPairing.bindings,
+                  );
+                  return issuedSession;
+                }),
               );
-              // Only plain pairing links renew. T3 Connect, CLI, desktop and peer sessions keep
-              // their own lifetimes, so unlinking Connect or rotating a credential still cuts off.
-              const renewable =
-                input?.proofKeyThumbprint !== undefined &&
-                grant.method === "one-time-token" &&
-                grant.subject === PAIRING_LINK_SUBJECT;
-              const issue = sessions
-                .issue({
-                  method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
-                  subject: grant.subject,
-                  scopes: preparedPairing.effectiveScopes,
-                  ...(input?.proofKeyThumbprint
-                    ? {
-                        proofKeyThumbprint: input.proofKeyThumbprint,
-                        ttl: renewable ? RENEWABLE_ACCESS_TOKEN_TTL : Duration.hours(1),
-                      }
-                    : {}),
-                  ...(renewable ? { renewalWindow: RENEWABLE_SESSION_WINDOW } : {}),
-                  replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
-                  client: {
-                    ...requestMetadata,
-                    ...(grant.label ? { label: grant.label } : {}),
-                  },
-                })
-                .pipe(
-                  Effect.mapError(
-                    (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
-                  ),
-                );
-              // A proof-key exchange holds the lock from before it spends its credential.
-              const issuedSession = yield* input?.proofKeyThumbprint
-                ? issue
-                : issueUnlessOthersRevokedSince(revocationsAtStart, issue);
-              yield* runAfterPairingIssue(
-                grant.pairingLinkId,
-                issuedSession.sessionId,
-                preparedPairing.bindings,
-              );
-              return issuedSession;
             }),
           ),
           Effect.flatMap(toAccessTokenResult),

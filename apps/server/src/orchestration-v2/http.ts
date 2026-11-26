@@ -114,9 +114,26 @@ export const layer = HttpApiBuilder.group(
         readonly upstreamCompat: boolean;
       },
     ) {
+      const isTeam =
+        Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured());
+      // Pre-filter the active shell index before computing olderSettled cutoff & counts so
+      // colleagues' hidden/unfollowed threads never inflate counts or push visible threads past the cap.
+      const listShellIndex = isTeam
+        ? threadManagement.listActiveShellIndex().pipe(
+            Effect.flatMap((rows) =>
+              teamServiceOption.value
+                .filterVisibleShellThreadIds(
+                  sessionId,
+                  rows.map((row) => row.id),
+                  { upstreamCompat: options.upstreamCompat },
+                )
+                .pipe(Effect.map((visibleIds) => rows.filter((row) => visibleIds.has(row.id)))),
+            ),
+          )
+        : threadManagement.listActiveShellIndex();
       const { snapshot } = yield* loadSubscriberShellSnapshot({
         sql,
-        listShellIndex: threadManagement.listActiveShellIndex(),
+        listShellIndex,
         readThreads: (threadIds) =>
           threadManagement.readShellSnapshot({
             location: "active",
@@ -126,8 +143,6 @@ export const layer = HttpApiBuilder.group(
         latestSequence: applicationEvents.latestApplicationSequence,
         options,
       });
-      const isTeam =
-        Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured());
       const filteredThreads = isTeam
         ? yield* teamServiceOption.value
             .filterVisibleShellThreadIds(
