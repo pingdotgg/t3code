@@ -324,9 +324,18 @@ describe("splitMarkdown", () => {
     ["escaped closing bracket", "[a\\]b]: /url", true],
     ["space-only label", "[ ]: /url", false],
     ["tab-only label", "[\t]: /url", false],
+    ["line ending and spaces only", "[ \r\t]: /url", false],
     ["nonbreaking space in a label", "[\u00a0]: /url", true],
     ["label at the length limit", "[" + "a".repeat(999) + "]: /url", true],
     ["label over the length limit", "[" + "a".repeat(1000) + "]: /url", false],
+    ["bare carriage return at the length limit", "[" + "a".repeat(998) + "\rb]: /url", true],
+    ["backslash before a bare carriage return", "[" + "a".repeat(997) + "\\\rb]: /url", true],
+    ["tab after a bare carriage return at the limit", "[" + "a".repeat(994) + "\r\tb]: /url", true],
+    [
+      "tab after a bare carriage return past the limit",
+      "[" + "a".repeat(996) + "\r\t]: /url",
+      false,
+    ],
     ["tab expands past the length limit", " [" + "a".repeat(998) + "\t]: /url", false],
     [
       "indentation keeps a tabbed label within the limit",
