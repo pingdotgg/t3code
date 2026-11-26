@@ -55,6 +55,17 @@ describe("mobile device identity", () => {
     }),
   );
 
+  it.effect("keeps the analytics id separate from the relay device id", () =>
+    Effect.gen(function* () {
+      const storage = yield* makeStorage;
+      const relayDeviceId = yield* storage.loadOrCreateAgentAwarenessDeviceId;
+      const analyticsDeviceId = yield* storage.loadOrCreateAnalyticsDeviceId;
+
+      expect(analyticsDeviceId).not.toBe(relayDeviceId);
+      expect(yield* storage.loadOrCreateAnalyticsDeviceId).toBe(analyticsDeviceId);
+    }),
+  );
+
   // regression: #18837 serialize initial device identity creation
   it.effect("reuses an existing device identity without generating or writing", () =>
     Effect.gen(function* () {

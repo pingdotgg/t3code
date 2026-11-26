@@ -3759,6 +3759,27 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("cuts long commit subjects without splitting an emoji", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "feature/emoji-subject"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", `${"a".repeat(299)}😀 tail`]);
+        const sha = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        const branch = yield* driver.getReviewBranchCommits({ cwd, baseRef: initialBranch });
+        const preview = yield* driver.getReviewDiffPreview({ cwd, commitSha: sha });
+        const commitSubject = preview.sources.find(
+          (candidate) => candidate.kind === "commit",
+        )?.commitSubject;
+        assert.deepStrictEqual(
+          [branch.commits[0]?.subject, commitSubject],
+          ["a".repeat(299), "a".repeat(299)],
+        );
+      }),
+    );
+
     it.effect("previews one selected commit, a merge against its first parent", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -4774,6 +4795,91 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
 
         assert.deepStrictEqual(contents, { oldContents: before, newContents: after });
+      }),
+    );
+
+    it.effect("shows GBK-encoded files as readable text in the review diff and expansion", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const before = "// 初始中文注释\nint a = 1;\n";
+        const after = "// 修改后的中文注释\nint a = 2;\n";
+        // GBK bytes of `before` and `after`.
+        const writeMain = (hex: string) =>
+          Effect.sync(() =>
+            NodeFS.writeFileSync(NodePath.join(cwd, "main.c"), Buffer.from(hex, "hex")),
+          );
+        yield* writeMain("2f2f20b3f5cabcd6d0cec4d7a2cacd0a696e742061203d20313b0a");
+        yield* git(cwd, ["add", "main.c"]);
+        yield* git(cwd, ["commit", "-m", "add GBK file"]);
+        yield* writeMain("2f2f20d0deb8c4baf3b5c4d6d0cec4d7a2cacd0a696e742061203d20323b0a");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const diff = preview.sources.map((source) => source.diff).join("\n");
+        assert.include(diff, "-// 初始中文注释");
+        assert.include(diff, "+// 修改后的中文注释");
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, { oldPath: "main.c", newPath: "main.c" }),
+        );
+        assert.deepStrictEqual(contents, { oldContents: before, newContents: after });
+      }),
+    );
+
+    // macOS and Windows filesystems reject file names that are not valid UTF-8.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+      "keeps UTF-8 paths intact next to a non-UTF-8 path in NUL-separated output",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          for (const name of ["文档.md", "café.md"]) {
+            NodeFS.writeFileSync(NodePath.join(cwd, name), "x\n");
+          }
+          NodeFS.writeFileSync(
+            Buffer.concat([
+              Buffer.from(`${cwd}/Gro`),
+              Buffer.from([0xf6, 0xdf]),
+              Buffer.from("e.c"),
+            ]),
+            "x\n",
+          );
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const result = yield* driver.execute({
+            operation: "test.lsFilesOthers",
+            cwd,
+            args: ["ls-files", "-z", "--others"],
+          });
+          const paths = result.stdout.split("\0");
+          assert.include(paths, "文档.md");
+          assert.include(paths, "café.md");
+        }),
+    );
+
+    it.effect("keeps truncated UTF-8 output as UTF-8 when the cap cuts a character", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const blob = yield* driver.execute({
+          operation: "test.hashObject",
+          cwd,
+          args: ["hash-object", "-w", "--stdin"],
+          stdin: "a中文中文\n",
+        });
+
+        // "a" + "中" + the first byte of "文": the cap lands inside a UTF-8 character.
+        const result = yield* driver.execute({
+          operation: "test.catFile",
+          cwd,
+          args: ["cat-file", "-p", blob.stdout.trim()],
+          maxOutputBytes: 5,
+          appendTruncationMarker: true,
+        });
+        assert.isTrue(result.stdoutTruncated);
+        assert.strictEqual(result.stdout, "a中\uFFFD");
       }),
     );
 
@@ -6169,6 +6275,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(updater, ["push", "origin", initialBranch]);
 
         const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, [
+          "symbolic-ref",
+          "refs/remotes/origin/HEAD",
+          `refs/remotes/origin/${initialBranch}`,
+        ]);
+        const linked = yield* makeTmpDir();
+        yield* git(cwd, ["worktree", "add", "-b", "feature", linked]);
+        const observed = yield* driver.readStatusPoll(linked, "feature", false);
+        if (observed === null) return assert.fail("Expected poll inputs for the linked worktree");
+        assert.equal(yield* observed.inputStampAfterLookup, observed.inputStamp);
         const cachedStatus = yield* driver.statusDetailsRemote(cwd, {
           refreshUpstream: false,
         });
@@ -6176,6 +6292,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         assert.equal(cachedStatus.behindCount, 0);
         assert.equal(refreshedStatus.behindCount, 1);
+        const fresh = yield* driver.readStatusPoll(linked, "feature", false);
+        if (fresh === null) return assert.fail("Expected poll inputs after the fetch");
+        assert.notEqual(fresh.inputStamp, observed.inputStamp);
+        assert.equal(yield* observed.inputStampAfterLookup, fresh.inputStamp);
       }),
     );
 
@@ -6205,6 +6325,210 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.notEqual(switched, initial);
         yield* git(cwd, ["worktree", "remove", worktree]);
         assert.equal(yield* snapshot, initial);
+      }),
+    );
+
+    it.effect.each([{ reftable: false }, { reftable: gitHasReftable }])(
+      "scopes linked worktree poll inputs and matches Git after ref moves (reftable: $reftable)",
+      ({ reftable }) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const linked = yield* makeTmpDir();
+          const sibling = yield* makeTmpDir();
+          yield* commitInitialRepo(cwd, [
+            "--initial-branch=main",
+            ...(reftable ? ["--ref-format=reftable"] : []),
+          ]);
+          yield* git(cwd, ["remote", "add", "origin", cwd]);
+          const initial = yield* git(cwd, ["rev-parse", "HEAD"]);
+          yield* git(cwd, ["commit", "--allow-empty", "-m", "next"]);
+          const next = yield* git(cwd, ["rev-parse", "HEAD"]);
+          yield* git(cwd, ["update-ref", "refs/remotes/origin/main", initial]);
+          yield* git(cwd, ["update-ref", "refs/remotes/origin/trunk", next]);
+          yield* git(cwd, ["update-ref", "refs/remotes/origin/feature", initial]);
+          yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+          yield* git(cwd, ["worktree", "add", "-b", "feature", linked, next]);
+          yield* git(cwd, ["worktree", "add", "-b", "sibling", sibling, initial]);
+          yield* git(linked, ["branch", "--set-upstream-to=origin/feature"]);
+          yield* git(cwd, ["config", "extensions.worktreeConfig", "true"]);
+
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const readPoll = Effect.fnUntraced(function* () {
+            const head = yield* driver.execute({
+              operation: "GitVcsDriver.test.head",
+              cwd: linked,
+              args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+              allowNonZeroExit: true,
+            });
+            const branch = head.exitCode === 0 ? head.stdout.trim() : null;
+            const poll = yield* driver.readStatusPoll(linked, branch, false);
+            if (poll === null) return assert.fail("Expected a bounded poll read");
+            const defaultRef = yield* git(linked, [
+              "rev-parse",
+              "--verify",
+              "--symbolic-full-name",
+              "refs/remotes/origin/HEAD",
+            ]);
+            const upstream = yield* driver.execute({
+              operation: "GitVcsDriver.test.upstream",
+              cwd: linked,
+              args: ["rev-parse", "--symbolic-full-name", "@{upstream}"],
+              allowNonZeroExit: true,
+            });
+            const hasUpstream = upstream.exitCode === 0;
+            const configured = yield* driver.execute({
+              operation: "GitVcsDriver.test.base",
+              cwd: linked,
+              args: ["config", "--get", "branch.feature.t3-merge-base-ref"],
+              allowNonZeroExit: true,
+            });
+            const base = configured.exitCode === 0 ? configured.stdout.trim() : defaultRef;
+            const aheadOfBase =
+              branch === null
+                ? 0
+                : Number(yield* git(linked, ["rev-list", "--count", `${base}..HEAD`]));
+            const [ahead = 0, behind = 0] = hasUpstream
+              ? (yield* git(linked, ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]))
+                  .split(/\s+/)
+                  .map(Number)
+              : [aheadOfBase, 0];
+            assert.deepStrictEqual(poll.details, {
+              isRepo: true,
+              branch,
+              defaultBranch: defaultRef.replace("refs/remotes/origin/", ""),
+              hasPrimaryRemote: true,
+              isDefaultBranch: false,
+              upstreamRef: hasUpstream
+                ? upstream.stdout.trim().replace(/^refs\/remotes\//, "")
+                : null,
+              hasUpstream,
+              aheadCount: ahead,
+              behindCount: behind,
+              aheadOfDefaultCount: aheadOfBase,
+            });
+            return poll.inputStamp;
+          });
+
+          let snapshot = yield* readPoll();
+          const digest = yield* driver.readRefSnapshot(linked);
+          yield* git(cwd, ["update-ref", "refs/t3/checkpoints/thread/turn", next]);
+          assert.notEqual(yield* driver.readRefSnapshot(linked), digest);
+          assert.equal(yield* readPoll(), snapshot);
+          assert.notEqual(
+            (yield* driver.readStatusPoll(sibling, "sibling", false))?.inputStamp,
+            snapshot,
+          );
+
+          yield* git(sibling, ["update-ref", "refs/heads/sibling", next]);
+          yield* git(cwd, ["update-ref", "refs/remotes/origin/unrelated", next]);
+          yield* git(cwd, ["pack-refs", "--all"]);
+          assert.equal(yield* readPoll(), snapshot);
+          // Divergence comes from the poll itself; readPoll checks it against Git.
+          yield* git(cwd, ["update-ref", "refs/remotes/origin/feature", next]);
+          snapshot = yield* readPoll();
+
+          yield* git(cwd, [
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/trunk",
+          ]);
+          const movedHead = yield* readPoll();
+          assert.notEqual(movedHead, snapshot);
+          yield* git(cwd, ["update-ref", "refs/remotes/origin/trunk", initial]);
+          const movedBase = yield* readPoll();
+          assert.notEqual(movedBase, movedHead);
+          yield* git(linked, [
+            "config",
+            "--worktree",
+            "branch.feature.t3-merge-base-ref",
+            "refs/remotes/origin/main",
+          ]);
+          const configuredBase = yield* readPoll();
+          assert.notEqual(configuredBase, movedBase);
+          assert.equal(
+            (yield* driver.statusDetailsLocal(linked, { includeBranchChanges: true })).branchChanges
+              ?.baseRef,
+            "origin/main",
+          );
+          yield* git(linked, ["branch", "--unset-upstream"]);
+          yield* readPoll();
+          yield* git(linked, ["checkout", "--detach", "HEAD"]);
+          const detached = yield* readPoll();
+          assert.notEqual(detached, configuredBase);
+          yield* git(linked, ["checkout", "feature"]);
+          assert.notEqual(yield* readPoll(), detached);
+
+          yield* git(cwd, ["branch", "local-base", initial]);
+          const localWorktree = yield* makeTmpDir();
+          yield* driver.createWorktree({
+            cwd,
+            path: localWorktree,
+            refName: "refs/heads/local-base",
+            baseRefName: "refs/heads/local-base",
+            newRefName: "local-feature",
+          });
+          assert.equal(
+            yield* git(localWorktree, ["config", "--get", "branch.local-feature.t3-merge-base"]),
+            "local-base",
+          );
+          yield* git(localWorktree, ["commit", "--allow-empty", "-m", "local feature"]);
+          const pollLocal = driver.readStatusPoll(localWorktree, "local-feature", false);
+          const local = yield* pollLocal;
+          assert.isNotNull(local);
+          assert.equal(local?.details.aheadCount, 1);
+          yield* git(cwd, ["update-ref", "refs/t3/checkpoints/thread/unrelated", initial]);
+          assert.equal((yield* pollLocal)?.inputStamp, local?.inputStamp);
+          const featureHead = yield* git(localWorktree, ["rev-parse", "HEAD"]);
+          yield* git(cwd, ["update-ref", "refs/heads/local-base", featureHead]);
+          const advanced = yield* pollLocal;
+          assert.isNotNull(advanced);
+          assert.notEqual(advanced?.inputStamp, local?.inputStamp);
+          assert.equal(advanced?.details.aheadCount, 0);
+        }),
+    );
+
+    it.effect("uses Git's exact fallback ref lookup for differently cased loose refs", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* commitInitialRepo(cwd, ["--initial-branch=Main"]);
+        yield* git(cwd, ["checkout", "-b", "feature"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "feature work"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const poll = driver.readStatusPoll(cwd, "feature", false);
+        const before = yield* poll;
+        assert.isNotNull(before);
+        const direct = yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false });
+        assert.deepStrictEqual(before?.details, direct);
+        yield* git(cwd, ["update-ref", "refs/heads/Main", "HEAD"]);
+        const after = yield* poll;
+        assert.isNotNull(after);
+        assert.deepStrictEqual(
+          after?.details,
+          yield* driver.statusDetailsRemote(cwd, { refreshUpstream: false }),
+        );
+        // With loose refs, the filesystem decides whether Main also resolves as main.
+        if (direct.aheadCount > 0) assert.notEqual(after?.inputStamp, before?.inputStamp);
+      }),
+    );
+
+    it.effect("polls an unborn worktree and declines unproven ref dependencies", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* git(cwd, ["init", "--initial-branch=main"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const poll = driver.readStatusPoll(cwd, "main", false);
+        const unborn = yield* poll;
+        assert.isNotNull(unborn);
+        assert.equal((yield* poll)?.inputStamp, unborn?.inputStamp);
+        assert.equal(unborn?.details.branch, "main");
+        assert.isFalse(unborn?.details.hasUpstream);
+        yield* commitInitialRepo(cwd);
+        const born = yield* poll;
+        assert.isNotNull(born);
+        assert.notEqual(born?.inputStamp, unborn?.inputStamp);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "replacement"]);
+        yield* git(cwd, ["replace", "HEAD^", "HEAD"]);
+        assert.isNull(yield* poll);
       }),
     );
 
@@ -6263,10 +6587,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const shallowRefs = yield* git(shallow, ["show-ref", "--head"]);
         const shallowSnapshot = yield* driver.readRefSnapshot(shallow);
         assert.isNotNull(shallowSnapshot);
+        const shallowBranch = yield* git(shallow, ["symbolic-ref", "--short", "HEAD"]);
+        const shallowInputs = yield* driver.readStatusPoll(shallow, shallowBranch, false);
+        assert.isNotNull(shallowInputs);
         const shallowWorktree = yield* makeTmpDir("git-vcs-driver-shallow-worktree-");
         yield* git(shallow, ["worktree", "add", "--detach", shallowWorktree]);
         const worktreeSnapshot = yield* driver.readRefSnapshot(shallowWorktree);
         assert.isNotNull(worktreeSnapshot);
+        const worktreeInputs = yield* driver.readStatusPoll(shallowWorktree, null, false);
+        assert.isNotNull(worktreeInputs);
         yield* git(shallow, ["fetch", "--unshallow", "origin"]);
         assert.equal(yield* git(shallow, ["show-ref", "--head"]), shallowRefs);
         const unshallowSnapshot = yield* driver.readRefSnapshot(shallow);
@@ -6275,6 +6604,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isNotNull(unshallowWorktreeSnapshot);
         assert.notEqual(unshallowSnapshot, shallowSnapshot);
         assert.notEqual(unshallowWorktreeSnapshot, worktreeSnapshot);
+        const deepened = yield* driver.readStatusPoll(shallow, shallowBranch, false);
+        const deepenedWorktree = yield* driver.readStatusPoll(shallowWorktree, null, false);
+        assert.isNotNull(deepened);
+        assert.isNotNull(deepenedWorktree);
+        assert.notEqual(deepened?.inputStamp, shallowInputs?.inputStamp);
+        assert.notEqual(deepenedWorktree?.inputStamp, worktreeInputs?.inputStamp);
 
         yield* git(cwd, ["checkout", "--detach"]);
         yield* git(cwd, ["commit", "--allow-empty", "-m", "detached"]);
@@ -8547,7 +8882,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("force-removes a worktree without deleting what its junctions point to", () =>
+    it.effect.each([
+      ["native", ""],
+      ["Windows with trailing NBSP in metadata paths", "\u00a0"],
+    ] as const)("force-removes a worktree without deleting junction targets: %s", ([, suffix]) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
@@ -8556,9 +8894,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["commit", "-m", "ignore node_modules"]);
         const fileSystem = yield* FileSystem.FileSystem;
         const pathService = yield* Path.Path;
+        const commonDir = pathService.join(cwd, suffix ? "metadata" + suffix : ".git");
+        if (suffix) yield* git(cwd, ["init", "--separate-git-dir", commonDir]);
         const outside = yield* makeTmpDir("git-worktree-link-target-");
         yield* writeTextFile(outside, "keep.txt", "keep\n");
-        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
+        const worktreeName = "linked" + suffix;
+        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), worktreeName);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* driver.createWorktree({
           cwd,
@@ -8575,9 +8916,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         NodeFS.symlinkSync(outside, pathService.join(worktreePath, "shared"), "junction");
 
-        yield* driver.removeWorktree({ cwd, path: worktreePath, force: true });
+        const platform = yield* HostProcess.Platform;
+        yield* driver
+          .removeWorktree({ cwd, path: worktreePath, force: true })
+          .pipe(Effect.provideService(HostProcess.Platform, suffix ? "win32" : platform));
 
         assert.deepEqual(NodeFS.readdirSync(pathService.dirname(worktreePath)), []);
+        assert.isFalse(
+          yield* fileSystem.exists(pathService.join(commonDir, "worktrees", worktreeName)),
+        );
         assert.equal(
           yield* fileSystem.readFileString(pathService.join(outside, "keep.txt")),
           "keep\n",
@@ -10740,6 +11087,485 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           ]),
           "",
         );
+      }),
+    );
+
+    it.effect("runs approved push hooks only while they are the files that were approved", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-hooked-remote-");
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        assert.isNull(yield* driver.pushHooks(cwd));
+
+        // Kept in a linked worktree's checkout, as a project with husky has them.
+        const worktree = NodePath.join(yield* makeTmpDir("git-hooked-worktree-"), "topic");
+        yield* git(cwd, ["config", "core.hooksPath", ".husky"]);
+        yield* git(cwd, ["worktree", "add", "-b", "topic", worktree]);
+        const hook = NodePath.join(worktree, ".husky", "pre-push");
+        const ran = NodePath.join(yield* makeTmpDir("git-hook-ran-"), "ran");
+        NodeFS.mkdirSync(NodePath.dirname(hook));
+        const writeHook = (label: string) =>
+          NodeFS.writeFileSync(hook, `#!/bin/sh\necho ${label} >> '${ran}'\n`, { mode: 0o755 });
+        writeHook("first");
+        const approved = yield* driver.pushHooks(worktree);
+        assert.deepEqual(
+          approved?.files.map((file) => NodeFS.realpathSync(file)),
+          [NodeFS.realpathSync(hook)],
+        );
+        assert.deepEqual(approved?.commands, []);
+        if ((yield* HostProcess.Platform) !== "win32") {
+          // A file Git may not execute is not a hook it would run.
+          NodeFS.chmodSync(hook, 0o644);
+          assert.isNull(yield* driver.pushHooks(worktree));
+          NodeFS.chmodSync(hook, 0o755);
+        }
+
+        writeHook("second");
+        const push = (digest: string | null) =>
+          driver.pushCurrentBranch(worktree, null).pipe(
+            Effect.provideService(GitVcsDriver.RepositoryHooks, {
+              _tag: "approved-push",
+              digest,
+            }),
+          );
+        const pushedTopic = git(cwd, ["ls-remote", "origin", "refs/heads/topic"]);
+        for (const digest of [approved!.digest, null]) {
+          const refused = yield* push(digest).pipe(Effect.flip);
+          assert.instanceOf(refused.cause, GitVcsDriver.PushHooksUnapprovedError);
+          assert.equal(yield* pushedTopic, "");
+          assert.isFalse(NodeFS.existsSync(ran));
+        }
+
+        const current = yield* driver.pushHooks(worktree);
+        assert.notEqual(current?.digest, approved?.digest);
+        assert.deepInclude(yield* push(current!.digest), { status: "pushed", branch: "topic" });
+        assert.equal(NodeFS.readFileSync(ran, "utf8"), "second\n");
+        assert.notEqual(yield* pushedTopic, "");
+      }),
+    );
+
+    /** A checkout on `topic` with a remote to push to, and `push` under an approval for `digest`. */
+    const repoToPush = Effect.fn(function* () {
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-hooked-remote-");
+      yield* initRepoWithCommit(cwd);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      yield* git(cwd, ["checkout", "-b", "topic"]);
+      yield* git(remote, ["init", "--bare"]);
+      yield* git(cwd, ["remote", "add", "origin", remote]);
+      const ran = NodePath.join(yield* makeTmpDir("git-hook-ran-"), "ran");
+      const push = (digest: string | null) =>
+        driver
+          .pushCurrentBranch(cwd, null)
+          .pipe(
+            Effect.provideService(GitVcsDriver.RepositoryHooks, { _tag: "approved-push", digest }),
+          );
+      const hooksRun = () => (NodeFS.existsSync(ran) ? NodeFS.readFileSync(ran, "utf8") : "");
+      return { cwd: NodeFS.realpathSync(cwd), driver, ran, push, hooksRun };
+    });
+
+    it.effect("an approved push runs the approved hook files and no other", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const hooksDir = NodePath.join(repo.cwd, ".hooks");
+        yield* git(repo.cwd, ["config", "core.hooksPath", ".hooks"]);
+        NodeFS.mkdirSync(hooksDir);
+        // The approved hook leaves another one beside it while the push is under way.
+        const late = NodePath.join(hooksDir, "reference-transaction");
+        NodeFS.writeFileSync(
+          NodePath.join(hooksDir, "pre-push"),
+          [
+            "#!/bin/sh",
+            `echo pre-push >> '${repo.ran}'`,
+            `printf '#!/bin/sh\\necho late >> "%s"\\n' '${repo.ran}' > '${late}'`,
+            `chmod +x '${late}'`,
+            "",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+        const approved = yield* repo.driver.pushHooks(repo.cwd);
+        assert.deepEqual(approved?.files, [NodePath.join(hooksDir, "pre-push")]);
+
+        assert.deepInclude(yield* repo.push(approved!.digest), { status: "pushed" });
+        assert.isTrue(NodeFS.existsSync(late));
+        assert.equal(repo.hooksRun(), "pre-push\n");
+      }),
+    );
+
+    /** `repoToPush` with a `pre-push` hook, and its approved push by a driver over `services`. */
+    const hookedRepoToPush = Effect.fn(function* (services: {
+      readonly fileSystem: FileSystem.FileSystem;
+      readonly spawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+    }) {
+      const repo = yield* repoToPush();
+      const hook = NodePath.join(repo.cwd, ".git", "hooks", "pre-push");
+      NodeFS.mkdirSync(NodePath.dirname(hook), { recursive: true });
+      NodeFS.writeFileSync(hook, `#!/bin/sh\necho pre-push >> '${repo.ran}'\n`, { mode: 0o755 });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(FileSystem.FileSystem, services.fileSystem),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, services.spawner),
+      );
+      const approved = yield* driver.pushHooks(repo.cwd);
+      assert.deepEqual(approved?.files, [hook]);
+      const push = driver.pushCurrentBranch(repo.cwd, null).pipe(
+        Effect.provideService(GitVcsDriver.RepositoryHooks, {
+          _tag: "approved-push",
+          digest: approved!.digest,
+        }),
+      );
+      return { ...repo, push };
+    });
+
+    /** What is left of the per-push hook directories once a push has ended. */
+    const pushHookDirectories = Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      return NodeFS.readdirSync(NodePath.join(stateDir, "push-hooks"));
+    });
+
+    it.effect("an approved push does not start when its hook launchers are not executable", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        // Files the driver writes stay as written, without the permission to execute them.
+        const repo = yield* hookedRepoToPush({
+          fileSystem: { ...fileSystem, chmod: () => Effect.void },
+          spawner,
+        });
+
+        const refused = yield* repo.push.pipe(Effect.flip);
+        assert.equal(
+          refused.detail,
+          "Could not start the repository's push hooks from the server's state directory. Nothing was pushed.",
+        );
+        assert.equal(repo.hooksRun(), "");
+        assert.equal(yield* git(repo.cwd, ["ls-remote", "origin", "refs/heads/topic"]), "");
+        assert.deepEqual(yield* pushHookDirectories, []);
+      }),
+    );
+
+    it.effect("an approved push leaves no hook directory behind", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const repo = yield* hookedRepoToPush({
+          fileSystem: yield* FileSystem.FileSystem,
+          spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        });
+
+        yield* repo.push;
+        assert.equal(repo.hooksRun(), "pre-push\n");
+        assert.deepEqual(yield* pushHookDirectories, []);
+      }),
+    );
+
+    it.effect.each([
+      { outcome: "is refused permission", exits: null },
+      { outcome: "exits 126", exits: 126 },
+    ])("an approved push does not start when the launcher check $outcome", ({ exits }) =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const launchers = NodePath.join(stateDir, "push-hooks") + NodePath.sep;
+        const checked: Array<string> = [];
+        const spawner = ChildProcessSpawner.make((command) => {
+          // Git is started by name or from where it is installed; the check, from the launchers.
+          if (!ChildProcess.isStandardCommand(command) || !command.command.startsWith(launchers)) {
+            return delegate.spawn(command);
+          }
+          checked.push(command.command);
+          if (exits !== null) {
+            return Effect.succeed(
+              ChildProcessSpawner.makeHandle({
+                ...makeNonRepositoryHandle(),
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exits)),
+              }),
+            );
+          }
+          return Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "ChildProcess",
+              method: "spawn",
+              syscall: "spawn",
+              pathOrDescriptor: command.command,
+            }),
+          );
+        });
+        const repo = yield* hookedRepoToPush({ fileSystem, spawner });
+
+        const refused = yield* repo.push.pipe(Effect.flip);
+        assert.include(refused.detail, "Could not start the repository's push hooks");
+        assert.equal(repo.hooksRun(), "");
+        assert.equal(yield* git(repo.cwd, ["ls-remote", "origin", "refs/heads/topic"]), "");
+        assert.lengthOf(checked, 1);
+        assert.deepEqual(yield* pushHookDirectories, []);
+      }),
+    );
+
+    it.effect("turns hooks off for a Git that reads no configuration from the environment", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const repo = yield* repoToPush();
+        const hook = NodePath.join(repo.cwd, ".git", "hooks", "pre-push");
+        NodeFS.mkdirSync(NodePath.dirname(hook), { recursive: true });
+        NodeFS.writeFileSync(hook, `#!/bin/sh\necho pre-push >> '${repo.ran}'\n`, { mode: 0o755 });
+        // Git before 2.31 does not know GIT_CONFIG_COUNT: this one is started without it.
+        const env = yield* HostProcess.Environment;
+        const realGit = (env.PATH ?? "")
+          .split(NodePath.delimiter)
+          .map((directory) => NodePath.join(directory, "git"))
+          .find((candidate) => NodeFS.existsSync(candidate));
+        assert.isDefined(realGit);
+        const bin = yield* makeTmpDir("git-without-config-env-");
+        NodeFS.writeFileSync(
+          NodePath.join(bin, "git"),
+          `#!/bin/sh\nunset GIT_CONFIG_COUNT\nexec '${realGit}' "$@"\n`,
+          { mode: 0o755 },
+        );
+        const olderGit = Effect.provideService(HostProcess.Environment, {
+          ...env,
+          PATH: `${bin}${NodePath.delimiter}${env.PATH}`,
+        });
+
+        const pushed = yield* repo.driver
+          .pushCurrentBranch(repo.cwd, null)
+          .pipe(Effect.provideService(GitVcsDriver.RepositoryHooks, { _tag: "none" }), olderGit);
+        assert.deepInclude(pushed, { status: "pushed" });
+        assert.equal(repo.hooksRun(), "");
+
+        // And with them on, the hook does run under that Git.
+        NodeFS.writeFileSync(NodePath.join(repo.cwd, "more.txt"), "more\n");
+        yield* git(repo.cwd, ["add", "more.txt"]);
+        yield* git(repo.cwd, ["commit", "-m", "More"]);
+        yield* repo.driver.pushCurrentBranch(repo.cwd, null).pipe(olderGit);
+        assert.equal(repo.hooksRun(), "pre-push\n");
+      }),
+    );
+
+    it.effect("finds the hooks from a folder inside the checkout", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        yield* git(repo.cwd, ["config", "core.hooksPath", ".hooks"]);
+        const hook = NodePath.join(repo.cwd, ".hooks", "pre-push");
+        NodeFS.mkdirSync(NodePath.dirname(hook));
+        NodeFS.writeFileSync(hook, "#!/bin/sh\n", { mode: 0o755 });
+        const inside = NodePath.join(repo.cwd, "packages", "app");
+        NodeFS.mkdirSync(inside, { recursive: true });
+        assert.deepEqual((yield* repo.driver.pushHooks(inside))?.files, [hook]);
+      }),
+    );
+
+    it.effect("a hook that cannot be inspected stops the push instead of counting as none", () =>
+      Effect.gen(function* () {
+        // Mode bits do not keep an administrator or a Windows user out.
+        if ((yield* HostProcess.Platform) === "win32" || process.getuid?.() === 0) return;
+        const repo = yield* repoToPush();
+        const hooksDir = NodePath.join(repo.cwd, ".hooks");
+        yield* git(repo.cwd, ["config", "core.hooksPath", ".hooks"]);
+        NodeFS.mkdirSync(hooksDir);
+        NodeFS.writeFileSync(
+          NodePath.join(hooksDir, "pre-push"),
+          `#!/bin/sh\necho pre-push >> '${repo.ran}'\n`,
+          { mode: 0o755 },
+        );
+        NodeFS.chmodSync(hooksDir, 0o000);
+        yield* Effect.addFinalizer(() => Effect.sync(() => NodeFS.chmodSync(hooksDir, 0o755)));
+
+        const unread = yield* repo.driver.pushHooks(repo.cwd).pipe(Effect.flip);
+        assert.include(unread.detail, "Could not read the hook");
+        const refused = yield* repo.push(null).pipe(Effect.flip);
+        assert.include(refused.detail, "Could not read the hook");
+        assert.equal(yield* git(repo.cwd, ["ls-remote", "origin", "refs/heads/topic"]), "");
+
+        // A hooks path that is not a directory holds no hook, and that is known.
+        yield* git(repo.cwd, ["config", "core.hooksPath", "/dev/null"]);
+        assert.isNull(yield* repo.driver.pushHooks(repo.cwd));
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("a hook set up in Git's configuration is approved and turned off like a file", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const command = (word: string) => `echo ${word} >> '${repo.ran}'`;
+        yield* git(repo.cwd, ["config", "hook.checks.command", command("checks")]);
+        yield* git(repo.cwd, ["config", "--add", "hook.checks.event", "pre-commit"]);
+        yield* git(repo.cwd, ["config", "--add", "hook.checks.event", "pre-push"]);
+        // Not for a push, switched off, and with its events cleared: none of these would run.
+        yield* git(repo.cwd, ["config", "hook.format.command", command("format")]);
+        yield* git(repo.cwd, ["config", "hook.format.event", "pre-commit"]);
+        yield* git(repo.cwd, ["config", "hook.unused.command", command("unused")]);
+        yield* git(repo.cwd, ["config", "hook.unused.event", "pre-push"]);
+        yield* git(repo.cwd, ["config", "hook.unused.enabled", "false"]);
+        yield* git(repo.cwd, ["config", "hook.cleared.command", command("cleared")]);
+        yield* git(repo.cwd, ["config", "--add", "hook.cleared.event", "pre-push"]);
+        yield* git(repo.cwd, ["config", "--add", "hook.cleared.event", ""]);
+        // Read through an included file kept in the checkout, as a project can ship one.
+        const shipped = ["config", "--file", "hooks.gitconfig"];
+        yield* git(repo.cwd, [...shipped, "hook.shipped.event", "reference-transaction"]);
+        yield* git(repo.cwd, [...shipped, "hook.shipped.command", command("shipped")]);
+        yield* git(repo.cwd, ["config", "include.path", "../hooks.gitconfig"]);
+
+        const first = yield* repo.driver.pushHooks(repo.cwd);
+        assert.deepEqual(first?.files, []);
+        assert.deepEqual(first?.commands, [
+          { name: "checks", command: command("checks") },
+          { name: "shipped", command: command("shipped") },
+        ]);
+        const pushedTopic = git(repo.cwd, ["ls-remote", "origin", "refs/heads/topic"]);
+        const refused = yield* repo.push(null).pipe(Effect.flip);
+        assert.instanceOf(refused.cause, GitVcsDriver.PushHooksUnapprovedError);
+
+        // A changed command is a change to what was approved.
+        yield* git(repo.cwd, ["config", "hook.checks.command", command("edited")]);
+        const edited = yield* repo.push(first!.digest).pipe(Effect.flip);
+        assert.instanceOf(edited.cause, GitVcsDriver.PushHooksUnapprovedError);
+        assert.equal(yield* pushedTopic, "");
+        assert.equal(repo.hooksRun(), "");
+
+        // With hooks off, no configured hook runs for the push.
+        yield* repo.driver
+          .pushCurrentBranch(repo.cwd, null)
+          .pipe(Effect.provideService(GitVcsDriver.RepositoryHooks, { _tag: "none" }));
+        assert.notEqual(yield* pushedTopic, "");
+        assert.equal(repo.hooksRun(), "");
+
+        // Approved as they are now: the two named hooks run where Git runs configured hooks.
+        NodeFS.writeFileSync(NodePath.join(repo.cwd, "more.txt"), "more\n");
+        yield* git(repo.cwd, ["add", "more.txt"]);
+        yield* git(repo.cwd, [
+          "-c",
+          "core.hooksPath=/dev/null",
+          "commit",
+          "--no-verify",
+          "-m",
+          "More",
+        ]);
+        NodeFS.rmSync(repo.ran, { force: true });
+        const current = yield* repo.driver.pushHooks(repo.cwd);
+        assert.deepInclude(yield* repo.push(current!.digest), { status: "pushed" });
+        const version = /^git version (\d+)\.(\d+)/.exec(yield* git(repo.cwd, ["version"]));
+        const runsConfiguredHooks = Number(version?.[1]) > 2 || Number(version?.[2]) >= 54;
+        // Git passes a configured hook its arguments, so each line is the name and then those.
+        const ran = new Set(
+          repo
+            .hooksRun()
+            .split("\n")
+            .filter(Boolean)
+            .map((line) => line.split(" ")[0]),
+        );
+        assert.deepEqual([...ran].sort(), runsConfiguredHooks ? ["edited", "shipped"] : []);
+      }),
+    );
+
+    it.effect("a configured hook moved to another point of the push is asked about again", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        yield* git(repo.cwd, ["config", "hook.checks.command", "true"]);
+        yield* git(repo.cwd, ["config", "hook.checks.event", "pre-push"]);
+        const approved = yield* repo.driver.pushHooks(repo.cwd);
+        assert.equal((yield* repo.driver.pushHooks(repo.cwd))?.digest, approved?.digest);
+
+        yield* git(repo.cwd, ["config", "hook.checks.event", "reference-transaction"]);
+        const moved = yield* repo.driver.pushHooks(repo.cwd);
+        assert.deepEqual(moved?.commands, approved?.commands);
+        assert.notEqual(moved?.digest, approved?.digest);
+        const refused = yield* repo.push(approved!.digest).pipe(Effect.flip);
+        assert.instanceOf(refused.cause, GitVcsDriver.PushHooksUnapprovedError);
+      }),
+    );
+
+    it.effect(
+      "finds configured hooks when the server's environment names one file for `git config`",
+      () =>
+        Effect.gen(function* () {
+          const repo = yield* repoToPush();
+          yield* git(repo.cwd, ["config", "hook.checks.command", "true"]);
+          yield* git(repo.cwd, ["config", "hook.checks.event", "pre-push"]);
+          const other = NodePath.join(yield* makeTmpDir("git-config-env-"), "config");
+          NodeFS.writeFileSync(other, "");
+          const env = yield* HostProcess.Environment;
+          const found = yield* repo.driver
+            .pushHooks(repo.cwd)
+            .pipe(Effect.provideService(HostProcess.Environment, { ...env, GIT_CONFIG: other }));
+          assert.deepEqual(found?.commands, [{ name: "checks", command: "true" }]);
+        }),
+    );
+
+    // The files husky 9.1.7 installs: `_/pre-push` is what Git runs, `_/h` is its runner.
+    const HUSKY_SHIM = '#!/usr/bin/env sh\n. "$(dirname "$0")/h"';
+    const HUSKY_RUNNER = [
+      "#!/usr/bin/env sh",
+      '[ "$HUSKY" = "2" ] && set -x',
+      'n=$(basename "$0")',
+      's=$(dirname "$(dirname "$0")")/$n',
+      "",
+      '[ ! -f "$s" ] && exit 0',
+      "",
+      'if [ -f "$HOME/.huskyrc" ]; then',
+      "\techo \"husky - '~/.huskyrc' is DEPRECATED, please move your code to ~/.config/husky/init.sh\"",
+      "fi",
+      'i="${XDG_CONFIG_HOME:-$HOME/.config}/husky/init.sh"',
+      '[ -f "$i" ] && . "$i"',
+      "",
+      '[ "${HUSKY-}" = "0" ] && exit 0',
+      "",
+      'export PATH="node_modules/.bin:$PATH"',
+      'sh -e "$s" "$@"',
+      "c=$?",
+      "",
+      '[ $c != 0 ] && echo "husky - $n script failed (code $c)"',
+      '[ $c = 127 ] && echo "husky - command not found in PATH=$PATH"',
+      "exit $c",
+      "",
+    ].join("\n");
+
+    it.effect("an approval of a husky hook covers the script husky runs for it", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const husky = NodePath.join(repo.cwd, ".husky");
+        yield* git(repo.cwd, ["config", "core.hooksPath", ".husky/_"]);
+        NodeFS.mkdirSync(NodePath.join(husky, "_"), { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(husky, "_", "pre-push"), HUSKY_SHIM, { mode: 0o755 });
+        NodeFS.writeFileSync(NodePath.join(husky, "_", "h"), HUSKY_RUNNER);
+        // The project's own script finds a file beside itself, and the runner one beside `$0`.
+        NodeFS.writeFileSync(NodePath.join(husky, "label.sh"), "label=first\n");
+        const writeScript = (word: string) =>
+          NodeFS.writeFileSync(
+            NodePath.join(husky, "pre-push"),
+            `. "$(dirname "$0")/label.sh"\necho "${word} $label $1" >> '${repo.ran}'\n`,
+          );
+        writeScript("ran");
+        // The runner reads these from whoever runs the suite; here it gets none of them.
+        const home = yield* makeTmpDir("git-husky-home-");
+        const env = { ...(yield* HostProcess.Environment), HOME: home, XDG_CONFIG_HOME: home };
+        const push = (digest: string) =>
+          repo
+            .push(digest)
+            .pipe(Effect.provideService(HostProcess.Environment, { ...env, HUSKY: undefined }));
+
+        const approved = yield* repo.driver.pushHooks(repo.cwd);
+        assert.deepEqual(approved?.files, [
+          NodePath.join(husky, "_", "pre-push"),
+          NodePath.join(husky, "_", "h"),
+          NodePath.join(husky, "pre-push"),
+        ]);
+
+        // Editing the script, not the file Git runs, is a change to what was approved.
+        writeScript("edited");
+        const refused = yield* push(approved!.digest).pipe(Effect.flip);
+        assert.instanceOf(refused.cause, GitVcsDriver.PushHooksUnapprovedError);
+        assert.equal(repo.hooksRun(), "");
+
+        const current = yield* repo.driver.pushHooks(repo.cwd);
+        assert.notEqual(current?.digest, approved?.digest);
+        assert.deepInclude(yield* push(current!.digest), { status: "pushed" });
+        assert.equal(repo.hooksRun(), "edited first origin\n");
       }),
     );
 
