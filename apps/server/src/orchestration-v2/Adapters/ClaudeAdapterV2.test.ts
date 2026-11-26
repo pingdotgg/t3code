@@ -16550,6 +16550,36 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("opens a fresh session after a new Claude Code process exits before init", () =>
+    Effect.gen(function* () {
+      const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+        "claude-query-startup-exit",
+        Stream.fail(
+          new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+            method: "fromAsyncIterable",
+            cause: new ClaudeAdapterV2.ClaudeCodeStartupExitError({
+              status: "exit code 1",
+              guidance: "",
+              cause: new Error("Claude Code process exited with code 1"),
+            }),
+          }),
+        ),
+      );
+      yield* harness.runtime.startTurn(harness.turnInput("a", 1)).pipe(Effect.exit);
+      yield* harness.runtime.startTurn(harness.turnInput("b", 2));
+      assert.deepStrictEqual(harness.openedResumes, [false, false]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("shows Claude's root refusal when its query exits before the turn starts", () =>
     Effect.scoped(
       Effect.gen(function* () {

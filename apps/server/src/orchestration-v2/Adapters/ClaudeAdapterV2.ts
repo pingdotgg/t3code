@@ -1000,12 +1000,12 @@ export interface ClaudeAgentSdkSubagentLookupInput {
 
 const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeAgentSdkQueryRunnerError);
 
-const queryExitedWith = (
-  cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
-  tag: "ClaudeConversationNotFoundError" | "ClaudeStartupRefusedError",
-) => {
+const isClaudeConversationNotFound = (cause: Cause.Cause<ClaudeAgentSdkQueryRunnerError>) => {
   const error = Cause.squash(cause);
-  return isClaudeAgentSdkQueryRunnerError(error) && Predicate.isTagged(error.cause, tag);
+  return (
+    isClaudeAgentSdkQueryRunnerError(error) &&
+    Predicate.isTagged(error.cause, "ClaudeConversationNotFoundError")
+  );
 };
 const isClaudeMcpRegistrationTimeoutError = Schema.is(ClaudeMcpRegistrationTimeoutError);
 const isProviderAdapterRuntimeRequestResponseError = Schema.is(
@@ -14375,11 +14375,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
                 if (exit._tag === "Failure") {
                   context.exitCause = exit.cause;
-                  if (queryExitedWith(exit.cause, "ClaudeConversationNotFoundError")) {
+                  if (isClaudeConversationNotFound(exit.cause)) {
                     missingNativeThreads.add(context.nativeThreadId);
                   }
-                  // A refused start creates no session, so the next open must not resume one.
-                  if (!shouldResume && queryExitedWith(exit.cause, "ClaudeStartupRefusedError")) {
+                  // A fresh CLI that fails before init wrote no session, so the next open must not resume one.
+                  if (!shouldResume && !context.receivedInit) {
                     yield* Ref.update(openedNativeThreads, (current) => {
                       const updated = new Set(current);
                       updated.delete(context.nativeThreadId);
