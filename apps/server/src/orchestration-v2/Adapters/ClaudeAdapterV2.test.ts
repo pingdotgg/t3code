@@ -16192,6 +16192,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       SDKMessage,
       ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError
     > = Stream.empty,
+    openedQueries: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput> = [],
   ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -16222,8 +16223,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       continuationRequests: { offer: () => Effect.void },
       queryRunner: {
         allocateSessionId: Effect.succeed(`native-${name}`),
-        open: () =>
+        open: (openInput) =>
           Effect.gen(function* () {
+            openedQueries.push(openInput);
             opened += 1;
             const sdkMessages = yield* Queue.unbounded<SDKMessage>();
             return {
@@ -16353,6 +16355,74 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         })
         .pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(resumed));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  const claudeOrganizationSettingsLoading =
+    "Claude Code is still loading your organization's settings. Example Org requires them before a session can start; this usually takes a few seconds.";
+  const failsWithOrganizationSettingsLoading = Stream.fail(
+    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+      method: "fromAsyncIterable",
+      cause: new Error(
+        `Claude Code returned an error result: ${claudeOrganizationSettingsLoading}`,
+      ),
+    }),
+  );
+
+  it.effect("shows Claude's error result when its query ends before the turn starts", () =>
+    Effect.gen(function* () {
+      const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+        "claude-query-org-settings-loading",
+        failsWithOrganizationSettingsLoading,
+      );
+      const started = yield* harness.runtime.startTurn(harness.turnInput("a", 1)).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(started));
+      if (Exit.isFailure(started)) {
+        assert.include(
+          makeProviderFailure({ cause: started.cause, class: "transport_error" }).message,
+          "still loading your organization's settings",
+        );
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("starts a fresh session after a first query that ended before any frame", () =>
+    Effect.gen(function* () {
+      const openedQueries: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput> = [];
+      const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+        "claude-query-retry-without-session",
+        failsWithOrganizationSettingsLoading,
+        openedQueries,
+      );
+      const started = yield* harness.runtime.startTurn(harness.turnInput("a", 1)).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(started));
+      // The failed turn recorded no provider turn, so the retry is still ordinal 1.
+      yield* harness.runtime.startTurn(harness.turnInput("b", 1)).pipe(Effect.exit);
+      assert.strictEqual(openedQueries.length, 2);
+      assert.strictEqual(openedQueries[0]?.options.resume, undefined);
+      assert.strictEqual(
+        openedQueries[1]?.options.resume,
+        undefined,
+        "the retry resumed a Claude session the first query never created",
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
