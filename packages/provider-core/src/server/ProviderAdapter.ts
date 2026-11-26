@@ -593,6 +593,8 @@ export interface ProviderAdapterV2TurnInput {
   readonly runId: RunId;
   readonly runOrdinal: number;
   readonly nativeThreadHasTurns?: boolean;
+  /** Native turn which dispatched this task, when verified on the same provider instance. */
+  readonly nativeParentTurnId?: string;
   readonly providerTurnOrdinal: number;
   readonly restartContinuationOfRunId?: RunId;
   readonly resume?: true;
