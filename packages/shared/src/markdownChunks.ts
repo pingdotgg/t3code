@@ -198,8 +198,12 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           for (; end < sourceLines.length; end++) {
             const next = sourceLines[end]!;
             flowChars += next.length + 1;
-            if (flowChars > HTML_FLOW_MAX_CHARS || BLANK_LINE.test(next) || ATX_HEADING.test(next))
+            if (flowChars > HTML_FLOW_MAX_CHARS || BLANK_LINE.test(next)) break;
+            // The heading itself can end a lazy container continuation before the cut.
+            if (ATX_HEADING.test(next)) {
+              end++;
               break;
+            }
           }
           htmlStarts = new Set();
           if (index < end) {

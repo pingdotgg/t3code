@@ -222,6 +222,15 @@ describe("splitMarkdown", () => {
     expect(splitMarkdown(text).chunks.map((chunk) => chunk.text)).toEqual([text]);
   });
 
+  it("can cut at a heading after a tag in a lazy quote continuation", () => {
+    const quote = ["> " + "x".repeat(4200), "continued", "<span>"].join("\n");
+    const heading = "# Next";
+    expect(splitMarkdown(quote + "\n" + heading).chunks.map((chunk) => chunk.text)).toEqual([
+      quote,
+      heading,
+    ]);
+  });
+
   it("keeps leading frontmatter in the first piece", () => {
     const text = ["---", "title: x", "", "# not a heading", "---", "", "# Heading"].join("\n");
     expect(starts(text)).toEqual(["---", "# Heading"]);
