@@ -37,7 +37,7 @@ const INLINE_CODE_WHITESPACE_PATTERN = /\s/;
 // `/Users/me/Mobile Documents/a - b.md` is, `/usr/bin/python3 -m venv .venv` (a flag) is not.
 // A space only in the last segment reads as a command (`/usr/local/bin/node server.js`), so it
 // must sit under a user root, and nothing after a bin folder counts.
-const SPACED_ABSOLUTE_PATH_ROOT_PATTERN = /^(?:\/|~\/|[A-Za-z]:[\\/])/;
+const SPACED_ABSOLUTE_PATH_ROOT_PATTERN = /^(?:\/|~\/|[A-Za-z]:[\\/]|\\\\)/;
 const SPACED_PATH_BODY_PATTERN =
   /^(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: (?!-+\p{L})[\p{L}\p{M}\p{N}._$+@()[\]-]+)*(?:[\\/]|$))+$/u;
 
@@ -50,6 +50,7 @@ function isSpacedAbsoluteFilePath(text: string): boolean {
   const foldersBeforeSpace = body.slice(0, firstSpace).split(PATH_SEPARATOR_PATTERN).slice(0, -1);
   if (foldersBeforeSpace.some((folder) => folder === "bin" || folder === "sbin")) return false;
   const spaceInFolder = PATH_SEPARATOR_PATTERN.test(body.slice(firstSpace));
+  if (root === "\\\\" && foldersBeforeSpace.length < (spaceInFolder ? 1 : 2)) return false;
   if (!spaceInFolder && root === "/" && !/^(?:Users|home)[\\/]/.test(body)) return false;
   if (PATH_SEPARATOR_PATTERN.test(body.at(-1) ?? "")) return true;
   const basename = body.split(PATH_SEPARATOR_PATTERN).at(-1) ?? "";

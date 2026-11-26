@@ -69,6 +69,14 @@ describe("inlineCodeFilePathCandidate", () => {
     ["/bin/echo hello world.txt", null],
     ["~/bin/run tests.sh", null],
     ["/Users/me/notes with spaces.md", "/Users/me/notes with spaces.md"],
+    [
+      "\\\\server\\share\\Project\\Guide Notes.md:10-20",
+      "\\\\server\\share\\Project\\Guide Notes.md:10-20",
+    ],
+    ["\\\\server\\Shared Docs\\Guide.md", "\\\\server\\Shared Docs\\Guide.md"],
+    ["\\\\server name\\share\\Guide Notes.md", null],
+    ["\\\\server\\Guide Notes.md", null],
+    ["\\\\foo bar.md", null],
     ["~/Videos/clips/<thread-slug>/shot.png", null],
     ["clips/<name>.mp4", null],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
