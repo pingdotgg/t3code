@@ -728,6 +728,7 @@ describe("OpenCodeAdapterV2", () => {
           get: async () => ({
             data: {
               id: "root",
+              directory: "/workspace",
               permission: openCodePermissionRules(fullAccess),
               time: { created: 1, updated: 1 },
             },
@@ -788,21 +789,26 @@ describe("OpenCodeAdapterV2", () => {
               time: { created: 1, updated: 1 },
             },
           }),
-          fork: async ({ sessionID }: { sessionID: string }) => {
-            const id = `${sessionID}_fork`;
-            directories.set(id, "/workspace");
-            return { data: { id, directory: "/workspace", time: { created: 1, updated: 1 } } };
-          },
-          update: async (input: { sessionID: string; directory?: string }) => {
-            if (input.directory !== undefined) directories.set(input.sessionID, input.directory);
-            return { data: { id: input.sessionID, time: { created: 1, updated: 2 } } };
-          },
+          update: async (input: { sessionID: string }) => ({
+            data: { id: input.sessionID, time: { created: 1, updated: 2 } },
+          }),
           promptAsync: async ({ sessionID }: { sessionID: string }) => {
             prompted.push(sessionID);
             return { data: true };
           },
           abort: async () => ({ data: true }),
           children: async () => ({ data: [] }),
+        },
+        path: { get: async () => ({ data: { directory: "/workspace" } }) },
+        client: {
+          post: async (input: {
+            url: string;
+            body: { sessionID: string; destination: { directory: string } };
+          }) => {
+            assert.equal(input.url, "/experimental/control-plane/move-session");
+            directories.set(input.body.sessionID, input.body.destination.directory);
+            return { data: undefined };
+          },
         },
       });
       assert.equal(directories.get("root"), "/repo");
@@ -843,6 +849,7 @@ describe("OpenCodeAdapterV2", () => {
           get: async ({ sessionID }: { sessionID: string }) => ({
             data: {
               id: sessionID,
+              directory: "/workspace",
               ...(sessionID === child ? { parentID: root } : {}),
               permission: nativePermissions.get(sessionID),
               time: { created: 1, updated: 1 },
@@ -1180,7 +1187,9 @@ describe("OpenCodeAdapterV2", () => {
         event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
         session: {
           create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
-          get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          get: async () => ({
+            data: { id: "root", directory: "/workspace", time: { created: 1, updated: 1 } },
+          }),
           promptAsync: async (input: { messageID: string }) => {
             promptId = input.messageID;
             return { data: true };
@@ -2465,7 +2474,9 @@ describe("OpenCodeAdapterV2", () => {
                 create: async () => ({
                   data: { id: "ses_replacement", time: { created: 1, updated: 1 } },
                 }),
-                get: async () => ({ data: { id: root, time: { created: 1, updated: 1 } } }),
+                get: async () => ({
+                  data: { id: root, directory: "/workspace", time: { created: 1, updated: 1 } },
+                }),
                 messages: async () => ({
                   data: [
                     {
