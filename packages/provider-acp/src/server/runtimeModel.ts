@@ -1147,6 +1147,9 @@ const T3_MCP_BARE_TITLE_CALL = /^(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
 // Antigravity titles calls "Running <tool>" or, from agy 1.5.8, "Run mcp_<server>_<tool>"; prompts end in "?".
 const ANTIGRAVITY_TOOL_TITLE = /^Run(?:ning)? (?<name>[^\s?]+)\??$/;
 
+// Devin titles MCP calls "Called <tool> from <server>".
+const DEVIN_T3_MCP_TITLE_CALL = /^Called (?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*) from t3[-_ ]?code$/i;
+
 /** ACP lacks typed MCP calls; recognize provider metadata and terminal fallback commands. */
 export function extractMcpToolCallIdentity(
   toolCall: AcpToolCallState,
@@ -1250,7 +1253,8 @@ export function extractMcpToolCallIdentity(
     const match =
       T3_MCP_TITLE_CALL.exec(name) ??
       T3_MCP_TITLE_SUFFIX_CALL.exec(name) ??
-      T3_MCP_BARE_TITLE_CALL.exec(name);
+      T3_MCP_BARE_TITLE_CALL.exec(name) ??
+      DEVIN_T3_MCP_TITLE_CALL.exec(trimmed);
     const candidateTool = match?.groups?.tool;
     if (candidateTool !== undefined && T3_MCP_TOOL_NAMES.has(candidateTool)) {
       return { server: "t3-code", tool: candidateTool };
