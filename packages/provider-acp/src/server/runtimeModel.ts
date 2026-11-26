@@ -1109,7 +1109,8 @@ export interface AcpMcpToolCallIdentity {
   readonly input?: Record<string, unknown>;
 }
 
-const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)(?:\s+(.+?))?\s*$/u;
+// Unanchored: heredocs, multi-line JSON, wrapper scripts and truncation suffixes span lines.
+const ACP_MCP_FALLBACK_CALL = /(?:^|[\s"'=])acp-mcp-call[\s"']+([A-Za-z0-9_.-]+)/gu;
 
 function acpMcpFallbackInput(value: string | undefined): Record<string, unknown> | undefined {
   if (value === undefined) return undefined;
@@ -1263,10 +1264,11 @@ export function extractMcpToolCallIdentity(
     ...(options?.embeddedTerminalCommands ?? []),
   ];
   for (const command of commands) {
-    const match = ACP_MCP_FALLBACK_CALL.exec(command);
-    if (match?.[1] !== undefined) {
-      const input = acpMcpFallbackInput(match[2]);
-      return { server: "t3-code", tool: match[1], ...(input === undefined ? {} : { input }) };
+    for (const match of command.matchAll(ACP_MCP_FALLBACK_CALL)) {
+      const tool = match[1];
+      if (tool === undefined || !T3_MCP_TOOL_NAMES.has(tool)) continue;
+      const input = acpMcpFallbackInput(command.slice(match.index + match[0].length));
+      return { server: "t3-code", tool, ...(input === undefined ? {} : { input }) };
     }
   }
   return undefined;
