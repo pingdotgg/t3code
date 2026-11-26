@@ -6,6 +6,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
@@ -123,6 +124,7 @@ interface AntigravityProviderOptions {
     EffectAcpErrors.AcpError | ProviderSetupError
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
+  readonly probeUsageLimits?: Effect.Effect<ServerProviderUsageLimits>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   /** Auth type and label published once a session authenticates. */
   readonly auth?: { readonly type: string; readonly label: string };
@@ -161,6 +163,9 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     draft: initialDraft,
     authRevision: 0,
   });
+  const probeUsageLimits = options.probeUsageLimits
+    ? (yield* Effect.cachedInvalidateWithTTL(options.probeUsageLimits, "1 minute"))[0]
+    : undefined;
   // Skills the driver discovered on disk per workspace. Session callbacks
   // rewrite the workspace entry with native commands and must keep these, or
   // the registry drops the suggestions and never re-reads the workspace.
@@ -192,6 +197,10 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
               : `Antigravity did not respond to its local health check within ${HEALTH_CHECK_TIMEOUT}.`;
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
+    const usageLimits =
+      before.draft.auth.status === "authenticated" && probeUsageLimits
+        ? yield* probeUsageLimits
+        : undefined;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
       if (state.authRevision !== before.authRevision) return state;
@@ -227,6 +236,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
                   supportsTextGeneration && draft.auth.status !== "unauthenticated",
               }
             : {}),
+          ...(usageLimits ? { usageLimits } : {}),
           ...(message ? { message } : {}),
         },
       } satisfies AntigravityProviderState;
@@ -261,6 +271,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   ) {
     const before = yield* SubscriptionRef.get(metadata);
     const supportsTextGeneration = yield* options.supportsTextGeneration;
+    const usageLimits = probeUsageLimits ? yield* probeUsageLimits : undefined;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     yield* SubscriptionRef.update(metadata, (state) => {
       if (
@@ -287,6 +298,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           checkedAt: updatedAt,
           models: buildAntigravityModelsFromSession(started.sessionSetupResult),
           supportsTextGeneration,
+          ...(usageLimits ? { usageLimits } : {}),
           ...(cwd
             ? {
                 workspaceSnapshots: [
@@ -351,25 +363,24 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
 
   const clearAccountMetadata = Effect.fn("AntigravityProvider.clearAccountMetadata")(function* () {
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* SubscriptionRef.update(
-      metadata,
-      (state) =>
-        ({
-          authRevision: state.authRevision + 1,
-          draft: {
-            ...state.draft,
-            auth: { status: "unauthenticated" },
-            status: settings.enabled ? "warning" : "disabled",
-            message: SIGN_IN_MESSAGE,
-            checkedAt: updatedAt,
-            models: [],
-            slashCommands: [],
-            skills: [],
-            workspaceSnapshots: [],
-            supportsTextGeneration: false,
-          },
-        }) satisfies AntigravityProviderState,
-    );
+    yield* SubscriptionRef.update(metadata, (state) => {
+      const { usageLimits: _previousAccount, ...draft } = state.draft;
+      return {
+        authRevision: state.authRevision + 1,
+        draft: {
+          ...draft,
+          auth: { status: "unauthenticated" },
+          status: settings.enabled ? "warning" : "disabled",
+          message: SIGN_IN_MESSAGE,
+          checkedAt: updatedAt,
+          models: [],
+          slashCommands: [],
+          skills: [],
+          workspaceSnapshots: [],
+          supportsTextGeneration: false,
+        },
+      } satisfies AntigravityProviderState;
+    });
     discoveredSkills.clear();
   });
 

@@ -74,6 +74,7 @@ const removedEnvironmentKeys = new Set([
   "AGY_ACP_ENABLE_OAUTH",
   "GEMINI_HOME",
   "AGY_ACP_FORCE_FILE_STORAGE",
+  "AGY_CLI_FORCE_FILE_TOKEN_STORAGE",
   "ANTIGRAVITY_HARNESS_PATH",
   "BROWSER",
   "PYTHONUNBUFFERED",
@@ -219,6 +220,9 @@ function antigravityEnvironment(
     ...credential,
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
+    // Antigravity 1.5.16+ renamed the file-token switch. Keep the T3 profile
+    // visible to the standalone CLI usage probe as well as the ACP runtime.
+    AGY_CLI_FORCE_FILE_TOKEN_STORAGE: "true",
     BROWSER: profile.browserCommand,
     PYTHONUNBUFFERED: "1",
     ELECTRON_RUN_AS_NODE: "1",
