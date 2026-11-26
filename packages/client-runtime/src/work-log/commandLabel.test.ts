@@ -6,6 +6,8 @@ describe("commandProgramName", () => {
   it.each([
     ["/bin/bash --rcfile /tmp/config -c 'git status'", "git"],
     ['bash -lc -- "printf ok"', "printf"],
+    // fish runs `--` itself as the script; "printf ok" is a positional argument
+    ['fish -c -- "printf ok"', "--"],
     ["zsh -lc 'CI=1 env -u DEBUG sudo -u root vp test run'", "vp"],
     ['"C:\\Program Files\\Git\\bin\\bash.exe" -lc "git status"', "git"],
     // regression: #9371 a multiline script whose later line re-quotes must still label its first program
@@ -153,6 +155,7 @@ describe("commandProgramName", () => {
 describe("commandDisplayText with shell option terminators", () => {
   it.each([
     ['bash -lc -- "printf ok"', "printf ok"],
+    ['fish -c -- "printf ok"', 'fish -c -- "printf ok"'],
     ['bash -c -- "printf ok" arg0', 'bash -c -- "printf ok" arg0'],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
