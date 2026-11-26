@@ -316,7 +316,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   // Once an attempt has failed, the wait stays unreachable: each new attempt would otherwise flip it back to loading.
   const connectionWait =
     attemptWait === "unreachable"
-      ? attemptFailed
+      ? attemptFailed || unreachableThreadKey === routeThreadKey
         ? "unreachable"
         : "connecting"
       : attemptWait === "connecting" && unreachableThreadKey === routeThreadKey
