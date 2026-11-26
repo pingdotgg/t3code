@@ -54,13 +54,10 @@ export function deriveThreadWorkLogSizing(input: {
 }
 
 const AUXILIARY_PANE_MIN_WIDTH = 260;
-const AUXILIARY_PANE_MAX_WIDTH = 480;
-const AUXILIARY_PANE_DEFAULT_MAX_WIDTH = 320;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
-const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;
-// UIKit's inspector column keeps its own width, so the sidebar steps aside only when the page
-// would get narrower than this: landscape 11" and 13" iPads keep three columns, portrait ones don't.
-export const NATIVE_INSPECTOR_MIN_MAIN_WIDTH = 320;
+// The inspector keeps its own width, so the sidebar steps aside only when the page would get
+// narrower than this: landscape 11" and 13" iPads keep three columns, portrait ones don't.
+export const INSPECTOR_MIN_MAIN_WIDTH = 320;
 
 /**
  * The window's width class. Compact: the sidebar is the root and pages push over it. Medium: the
@@ -75,6 +72,11 @@ export interface Layout {
   readonly listPaneWidth: number | null;
   readonly listPaneGap?: number;
   readonly shellPadding: number;
+}
+
+/** The iOS split's preferred sidebar column width, which the tab bar over a page also takes. */
+export function nativeSidebarColumnWidth(layout: Layout) {
+  return (layout.listPaneWidth ?? 320) + (layout.listPaneGap ?? 0) / 2;
 }
 
 export interface WorkspacePaneLayout {
@@ -151,7 +153,13 @@ export function deriveLayout(input: {
     usesSplitView: true,
     listPaneWidth:
       division?.x ??
-      clamp(Math.round(width * 0.32), SPLIT_SIDEBAR_MIN_WIDTH, SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH),
+      (input.nativeWorkspace === true && variant === "medium"
+        ? 350
+        : clamp(
+            Math.round(width * 0.32),
+            SPLIT_SIDEBAR_MIN_WIDTH,
+            SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH,
+          )),
     ...(division ? { listPaneGap: division.width } : {}),
     shellPadding: 0,
   };
@@ -229,7 +237,6 @@ export function deriveWorkspacePaneLayout(input: {
     layout: input.layout,
     viewportWidth,
     preferredWidth: input.auxiliaryPanePreferredWidth,
-    reservedLeadingWidth: preferredPrimarySidebarWidth,
   });
   const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
   const inspectorWidth = input.nativeWorkspace
@@ -246,7 +253,7 @@ export function deriveWorkspacePaneLayout(input: {
       input.layout.listPaneWidth -
       (input.layout.listPaneGap ?? 0) -
       inspectorWidth <
-      (input.nativeWorkspace ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH : FILE_INSPECTOR_MIN_MAIN_WIDTH);
+      INSPECTOR_MIN_MAIN_WIDTH;
   const primarySidebarVisible =
     preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
   const primarySidebarWidth = primarySidebarVisible ? preferredPrimarySidebarWidth : 0;
@@ -274,7 +281,7 @@ export function nativeInspectorColumnWidth(input: {
   const { viewportWidth } = input;
   const maxWidth = Math.min(
     viewportWidth * 0.6,
-    viewportWidth - input.horizontalSafeArea - NATIVE_INSPECTOR_MIN_MAIN_WIDTH,
+    viewportWidth - input.horizontalSafeArea - INSPECTOR_MIN_MAIN_WIDTH,
   );
   return Math.max(260, Math.min(maxWidth, viewportWidth * input.fraction));
 }
@@ -283,13 +290,8 @@ export function deriveFileInspectorPaneLayout(input: {
   readonly layout: Layout;
   readonly viewportWidth: number;
   readonly preferredWidth?: number;
-  readonly reservedLeadingWidth?: number;
 }): FileInspectorPaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
-  const reservedLeadingWidth = Number.isFinite(input.reservedLeadingWidth)
-    ? Math.max(0, input.reservedLeadingWidth ?? 0)
-    : 0;
-  const availableContentWidth = Math.max(0, viewportWidth - reservedLeadingWidth);
   const supported =
     input.layout.usesSplitView && viewportWidth >= FILE_INSPECTOR_MIN_VIEWPORT_WIDTH;
 
@@ -297,32 +299,28 @@ export function deriveFileInspectorPaneLayout(input: {
     supported,
     width: supported
       ? constrainAuxiliaryPaneWidth({
-          preferredWidth:
-            input.preferredWidth ??
-            clamp(
-              Math.round(availableContentWidth * 0.28),
-              AUXILIARY_PANE_MIN_WIDTH,
-              AUXILIARY_PANE_DEFAULT_MAX_WIDTH,
-            ),
-          availableWidth: availableContentWidth,
+          preferredWidth: input.preferredWidth ?? viewportWidth * 0.4,
+          viewportWidth,
         })
       : null,
   };
 }
 
+/**
+ * Sized against the whole workspace, like the iOS inspector: the sidebar steps aside when the
+ * page would get too narrow, so the sidebar never caps how wide the inspector can grow.
+ */
 export function constrainAuxiliaryPaneWidth(input: {
   readonly preferredWidth: number;
-  readonly availableWidth: number;
+  readonly viewportWidth: number;
 }): number {
   const safePreferredWidth = Number.isFinite(input.preferredWidth)
     ? input.preferredWidth
     : AUXILIARY_PANE_MIN_WIDTH;
-  const availableWidth = Number.isFinite(input.availableWidth)
-    ? Math.max(0, input.availableWidth)
-    : 0;
+  const viewportWidth = Number.isFinite(input.viewportWidth) ? Math.max(0, input.viewportWidth) : 0;
   const maxWidth = Math.max(
     AUXILIARY_PANE_MIN_WIDTH,
-    Math.min(AUXILIARY_PANE_MAX_WIDTH, availableWidth - FILE_INSPECTOR_MIN_MAIN_WIDTH),
+    Math.min(viewportWidth * 0.6, viewportWidth - INSPECTOR_MIN_MAIN_WIDTH),
   );
   return clamp(Math.round(safePreferredWidth), AUXILIARY_PANE_MIN_WIDTH, maxWidth);
 }

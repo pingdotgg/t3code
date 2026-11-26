@@ -20,3 +20,29 @@ export function reloadOnceForChunkLoadError(
   reload();
   return true;
 }
+
+// Browsers cache a failed dynamic import per document, so only a reload can retry it.
+const CHUNK_LOAD_ERROR_PREFIXES = [
+  "Failed to fetch dynamically imported module", // Chromium
+  "error loading dynamically imported module", // Firefox
+  "Importing a module script failed", // Safari
+];
+
+export function isChunkLoadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : undefined;
+  return (
+    message !== undefined && CHUNK_LOAD_ERROR_PREFIXES.some((prefix) => message.startsWith(prefix))
+  );
+}
+
+export const chunkLoadState = { reloadScheduled: false };
+
+// Registered from the entry before main loads, so main-chunk and route-chunk failures share one decision.
+export function handleChunkLoadErrors() {
+  window.addEventListener("vite:preloadError", (event) => {
+    if (reloadOnceForChunkLoadError()) {
+      chunkLoadState.reloadScheduled = true;
+      event.preventDefault();
+    }
+  });
+}

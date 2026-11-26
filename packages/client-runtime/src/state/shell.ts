@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   type EnvironmentId,
@@ -11,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -23,6 +26,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import { AsyncResult, Atom } from "effect/reactivity";
 
+import { observeServerTime } from "../clock.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import { connectionProjectionPhase, type PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
@@ -30,7 +34,7 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
-import { subscribeDynamicWithSession } from "../rpc/client.ts";
+import { subscribeDynamicWithSession, subscriptionRetryDelay } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
@@ -84,7 +88,12 @@ function withoutDeferredPullRequests(value: DeferredShellSnapshot): Orchestratio
   return snapshot;
 }
 
-const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
+const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = msg("Could not synchronize environment data.");
+
+/** @public The shell's sync error in the active language; other messages stay as they are. */
+export function shellErrorText(error: string, resolve: MFunctionType = mFallback): string {
+  return error === SHELL_SYNCHRONIZATION_ERROR_MESSAGE ? resolve(error) : error;
+}
 
 /**
  * Replay does not refresh the older-settled cut, rows that left the newest window, or
@@ -203,6 +212,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   // Only a server snapshot renews it; `snapshot-required` drops it.
   const origin = yield* Ref.make(cachedOrigin);
   const reloadRequests = yield* Queue.unbounded<void>();
+  let defectRetries = 0;
   const latestLive = yield* Ref.make<Option.Option<LiveShell>>(Option.none());
   const persistence = yield* Queue.sliding<OrchestrationV2ShellSnapshot>(1);
 
@@ -316,6 +326,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     let receivedAuthoritativeSnapshot = false;
     let snapshotRequired = false;
     let deltas: Array<ShellStreamEvent> = [];
+    const receivedAtMs = yield* Clock.currentTimeMillis;
     const flushDeltas = () => {
       if (deltas.length > 0 && Option.isSome(next.snapshot)) {
         let sequence = next.snapshot.value.snapshotSequence;
@@ -328,6 +339,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
               removedAt.set(delta.threadId, delta.sequence);
               break;
             case "thread.updated":
+              // Replayed catch-up deltas may predate a backward host clock correction.
+              if (!waiting) {
+                observeServerTime(
+                  environmentId,
+                  DateTime.toEpochMillis(delta.thread.updatedAt),
+                  receivedAtMs,
+                );
+              }
+              break;
             case "project.updated":
             case "project.removed":
               break;
@@ -702,11 +722,27 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         };
       }),
       {
+        // A defect parks the stream, so resubscribe after a backoff rather than wait for a wakeup.
+        onDefect: (cause) =>
+          setStreamError(Cause.squash(cause)).pipe(
+            Effect.andThen(Effect.sleep(subscriptionRetryDelay("250 millis", defectRetries++))),
+            Effect.andThen(Queue.offer(reloadRequests, undefined)),
+          ),
         onExpectedFailure: (cause) => setStreamError(Cause.squash(cause)),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: resubscriptions,
       },
-    ).pipe(Stream.runForEachArray((entries) => applyItems(entries))),
+    ).pipe(
+      Stream.runForEachArray((entries) =>
+        applyItems(entries).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              defectRetries = 0;
+            }),
+          ),
+        ),
+      ),
+    ),
   );
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {

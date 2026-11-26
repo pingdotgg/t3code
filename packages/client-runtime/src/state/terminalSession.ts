@@ -9,6 +9,7 @@ import type {
 import { DEFAULT_MAX_TERMINAL_BUFFER_BYTES } from "@t3tools/contracts";
 import {
   appendOutput,
+  clearOutput,
   EMPTY_TERMINAL_OUTPUT_STATE,
   resetOutput,
   type TerminalOutputState,
@@ -17,6 +18,7 @@ import {
 export {
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   readTerminalOutputUpdate,
+  terminalOutputReplay,
   terminalOutputText,
   type TerminalOutputCursor,
   type TerminalOutputState,
@@ -32,6 +34,8 @@ export interface TerminalGrid {
 
 export interface TerminalSessionState {
   readonly summary: TerminalSummary | null;
+  readonly pid: number | null;
+  readonly supportsConditionalWrites: boolean;
   readonly output: TerminalOutputState;
   /** Null when the server predates shared terminal geometry. */
   readonly grid: TerminalGrid | null;
@@ -44,6 +48,8 @@ export interface TerminalSessionState {
 }
 
 export interface TerminalBufferState {
+  readonly pid: number | null;
+  readonly supportsConditionalWrites: boolean;
   readonly output: TerminalOutputState;
   readonly grid: TerminalGrid | null;
   readonly status: TerminalSessionSnapshot["status"] | "closed";
@@ -73,6 +79,8 @@ export function selectRunningSubprocessTerminalIds(
 }
 
 export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
+  pid: null,
+  supportsConditionalWrites: false,
   output: EMPTY_TERMINAL_OUTPUT_STATE,
   grid: null,
   status: "closed",
@@ -84,6 +92,8 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
 
 export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>({
   summary: null,
+  pid: null,
+  supportsConditionalWrites: false,
   output: EMPTY_TERMINAL_OUTPUT_STATE,
   grid: null,
   status: "closed",
@@ -113,10 +123,12 @@ function terminalBufferStateFromSnapshot(
   current: TerminalBufferState = EMPTY_TERMINAL_BUFFER_STATE,
 ): TerminalBufferState {
   return {
-    output: resetOutput(current.output, snapshot.history, maxBufferBytes),
+    pid: snapshot.pid,
+    supportsConditionalWrites: snapshot.supportsConditionalWrites === true,
+    output: resetOutput(current.output, snapshot, maxBufferBytes),
     grid: nextGrid(current.grid, snapshot),
     status: snapshot.status,
-    error: null,
+    error: snapshot.error ?? null,
     updatedAt: snapshot.updatedAt,
     version: current.version + 1,
     lifecycleVersion: current.lifecycleVersion,
@@ -145,6 +157,8 @@ export function combineTerminalSessionState(
 ): TerminalSessionState {
   return {
     summary,
+    pid: buffer.pid,
+    supportsConditionalWrites: buffer.supportsConditionalWrites,
     output: buffer.output,
     grid: buffer.grid,
     status: buffer.version > 0 ? buffer.status : (summary?.status ?? buffer.status),
@@ -193,7 +207,7 @@ export function applyTerminalAttachStreamEvent(
     case "cleared":
       return {
         ...current,
-        output: resetOutput(current.output, "", maxBufferBytes),
+        output: clearOutput(current.output, maxBufferBytes, event.pendingControlSequence),
         error: null,
         version: current.version + 1,
       };

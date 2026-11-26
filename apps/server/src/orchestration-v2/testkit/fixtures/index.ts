@@ -26,6 +26,10 @@ import { claudeCompactAfterResumeWakeInput } from "./claude_compact_after_resume
 import { assertClaudeCompactAfterResumeWakeOutput } from "./claude_compact_after_resume_wake/output.ts";
 import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
 import { assertClaudeIdleResumeOutput } from "./claude_idle_resume/output.ts";
+import { claudeAutoModeInput } from "./claude_auto_mode/input.ts";
+import { assertClaudeAutoModeOutput } from "./claude_auto_mode/output.ts";
+import { claudeAutoModeUnavailableInput } from "./claude_auto_mode_unavailable/input.ts";
+import { assertClaudeAutoModeUnavailableOutput } from "./claude_auto_mode_unavailable/output.ts";
 import { claudeLocalBashTaskInput } from "./claude_local_bash_task/input.ts";
 import { assertClaudeLocalBashTaskOutput } from "./claude_local_bash_task/output.ts";
 import { claudeNestedBackgroundSubagentWakeInput } from "./claude_nested_background_subagent_wake/input.ts";
@@ -36,6 +40,7 @@ import { claudeMcpToolPresentationInput } from "./claude_mcp_tool_presentation/i
 import { assertClaudeMcpToolPresentationOutput } from "./claude_mcp_tool_presentation/output.ts";
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
+import { assertClaudeUsageLimitOutput } from "./usage_limit/claude_output.ts";
 import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
 import { kiroCompactionInput } from "./kiro_compaction/input.ts";
 import { kiroForkFromTurnInput } from "./kiro_fork_from_turn/input.ts";
@@ -90,7 +95,6 @@ import { assertMuseTurnInterruptOutput } from "./turn_interrupt/muse_output.ts";
 import { piCompactionInput } from "./pi_compaction/input.ts";
 import { assertPiCompactionOutput } from "./pi_compaction/output.ts";
 import { providerThreadResumeInput } from "./provider_thread_resume/input.ts";
-import { assertKiroProviderThreadResumeOutput } from "./provider_thread_resume/kiro_output.ts";
 import { assertPiProviderThreadResumeOutput } from "./provider_thread_resume/pi_output.ts";
 import { assertMultiTurnClaudeOutput } from "./multi_turn/claude_output.ts";
 import { assertMultiTurnOutput } from "./multi_turn/codex_output.ts";
@@ -101,6 +105,7 @@ import { assertOpenCodeChildApprovalOutput } from "./opencode_child_approval/out
 import { openCodeRunningChildApprovalInput } from "./opencode_running_child_approval/input.ts";
 import { assertOpenCodeRunningChildApprovalOutput } from "./opencode_running_child_approval/output.ts";
 import { openCodeSubagentInput } from "./opencode_subagent/input.ts";
+import { openCodeBackgroundWakeInput } from "./opencode_background_wake/input.ts";
 import { openCode2InboxInput } from "./opencode2_inbox/input.ts";
 import { openCode2RevertInput } from "./opencode2_revert/input.ts";
 import { assertOpenCode2RevertOutput } from "./opencode2_revert/output.ts";
@@ -132,6 +137,7 @@ import { assertCodexModelRerouteOutput } from "./codex_model_reroute/output.ts";
 import { openCode2ToolCallInput } from "./opencode2_tool_call/input.ts";
 import { assertOpenCode2ToolCallOutput } from "./opencode2_tool_call/output.ts";
 import { assertOpenCodeSubagentOutput } from "./opencode_subagent/output.ts";
+import { assertOpenCodeBackgroundWakeOutput } from "./opencode_background_wake/output.ts";
 import {
   assertCodexPlanQuestionsOutput,
   assertPlanQuestionsOutput,
@@ -226,9 +232,12 @@ import { fxEarlyStopInput } from "./fx_early_stop/input.ts";
 import { assertFxEarlyStopOutput } from "./fx_early_stop/fx_output.ts";
 import { fxSubagentInput } from "./fx_subagent/input.ts";
 import { assertFxSubagentOutput } from "./fx_subagent/fx_output.ts";
+import { fxSubagentStopInput } from "./fx_subagent_stop/input.ts";
+import { assertFxSubagentStopOutput } from "./fx_subagent_stop/fx_output.ts";
 import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_tool/claude_output.ts";
 import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
 import { assertTurnInterruptMidToolCursorOutput } from "./turn_interrupt_mid_tool/cursor_output.ts";
+import { assertTurnInterruptMidToolFxOutput } from "./turn_interrupt_mid_tool/fx_output.ts";
 import {
   turnInterruptMidToolInput,
   turnInterruptMidToolKiroInput,
@@ -437,6 +446,33 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "claude_auto_mode",
+    buildInput: claudeAutoModeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL("./claude_auto_mode/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeAutoModeOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_auto_mode_unavailable",
+    buildInput: claudeAutoModeUnavailableInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_auto_mode_unavailable/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeAutoModeUnavailableOutput,
+      },
+    ],
+  },
+  {
     name: "claude_local_bash_task",
     buildInput: claudeLocalBashTaskInput,
     providers: [
@@ -506,6 +542,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./claude_idle_resume/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertClaudeIdleResumeOutput,
+      },
+    ],
+  },
+  {
+    name: "usage_limit",
+    buildInput: simpleInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL("./usage_limit/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeUsageLimitOutput,
       },
     ],
   },
@@ -1175,6 +1223,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "opencode_background_wake",
+    buildInput: openCodeBackgroundWakeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_background_wake/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertOpenCodeBackgroundWakeOutput,
+      },
+    ],
+  },
+  {
     name: "opencode2_simple",
     buildInput: openCode2SimpleInput,
     providers: [
@@ -1585,12 +1649,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: PI_MODEL_SELECTION,
         assertOutput: assertPiProviderThreadResumeOutput,
       },
-      {
-        driver: ProviderDriverKind.make("kiro"),
-        transcriptFile: new URL("./provider_thread_resume/kiro_transcript.ndjson", import.meta.url),
-        modelSelection: KIRO_MODEL_SELECTION,
-        assertOutput: assertKiroProviderThreadResumeOutput,
-      },
     ],
   },
   {
@@ -1787,12 +1845,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertCursorMessageSteeringOutput,
       },
       {
-        driver: ProviderDriverKind.make("grok"),
-        transcriptFile: new URL("./message_steering/grok_transcript.ndjson", import.meta.url),
-        modelSelection: GROK_MODEL_SELECTION,
-        assertOutput: assertGrokMessageSteeringOutput,
-      },
-      {
         driver: ProviderDriverKind.make("fx"),
         transcriptFile: new URL("./message_steering/fx_transcript.ndjson", import.meta.url),
         modelSelection: FX_MODEL_SELECTION,
@@ -1899,6 +1951,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "fx_subagent_stop",
+    buildInput: fxSubagentStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./fx_subagent_stop/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertFxSubagentStopOutput,
+      },
+    ],
+  },
+  {
     name: "command_output_streaming",
     buildInput: commandOutputStreamingInput,
     providers: [
@@ -1956,6 +2020,17 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CURSOR_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptMidToolCursorOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./turn_interrupt_mid_tool/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        // fx asks before running the command; a workspace sandbox would deny it.
+        runtimePolicyOverride: {
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "dangerFullAccess" },
+        },
+        assertOutput: assertTurnInterruptMidToolFxOutput,
       },
       {
         driver: ProviderDriverKind.make("pi"),

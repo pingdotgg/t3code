@@ -79,6 +79,18 @@ it.layer(layer)("PreviewManager", (it) => {
     }),
   );
 
+  it.effect("opens a server tab with the requested zoom and appearance", () =>
+    Effect.gen(function* () {
+      const threadId = freshThreadId();
+      const manager = yield* PreviewManager.PreviewManager;
+      const rendering = { zoomFactor: 0.8, colorScheme: "dark" } as const;
+
+      const opened = yield* manager.open({ threadId, runtime: "server", ...rendering });
+
+      expect(opened).toMatchObject(rendering);
+    }),
+  );
+
   it.effect("reissues presentation requests without replaying them on navigation", () =>
     Effect.gen(function* () {
       const threadId = freshThreadId();

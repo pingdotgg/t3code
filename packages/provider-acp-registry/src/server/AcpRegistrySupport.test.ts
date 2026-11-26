@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodePath from "@effect/platform-node/NodePath";
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -23,6 +24,7 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
+import { prefersHttpMcpTransport } from "./mcpTransport.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 
 const registryUrl = "https://registry.test/registry.json";
@@ -297,18 +299,46 @@ describe("AcpRegistrySupport", () => {
         registryUrl,
       }).pipe(Effect.provideService(HostProcess.Environment, environment));
       const resolved = yield* resolver.resolve(
-        decodeAcpRegistrySettings({ source: "local", commandPath }),
+        decodeAcpRegistrySettings({
+          source: "local",
+          commandPath: (yield* Path.Path).relative(process.cwd(), commandPath),
+        }),
         "/workspace",
       );
 
-      expect(resolved.spawn).toEqual({
-        command: commandPath,
+      expect(resolved.spawn).toMatchObject({
         args: [],
         cwd: "/workspace",
         env: environment,
         shell: false,
       });
+      expect((yield* Path.Path).isAbsolute(resolved.spawn.command)).toBe(true);
+      expect(yield* fileSystem.realPath(resolved.spawn.command)).toBe(
+        yield* fileSystem.realPath(commandPath),
+      );
       expect(resolved.agent).toBeUndefined();
+
+      yield* fileSystem.makeDirectory(`${cacheDir}/target/nested`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${cacheDir}/target/dsh wrapper`,
+        "#!/bin/sh\necho target\n",
+      );
+      yield* fileSystem.chmod(`${cacheDir}/target/dsh wrapper`, 0o755);
+      yield* fileSystem.symlink(`${cacheDir}/target/nested`, `${cacheDir}/link`);
+      const symlinkCommand = `${cacheDir}/link/../dsh wrapper`;
+      for (const command of [
+        symlinkCommand,
+        `${(yield* Path.Path).relative(process.cwd(), cacheDir)}/link/../dsh wrapper`,
+      ]) {
+        const throughSymlink = yield* resolver.resolve(
+          decodeAcpRegistrySettings({ source: "local", commandPath: command }),
+          "/workspace",
+        );
+        expect((yield* Path.Path).isAbsolute(throughSymlink.spawn.command)).toBe(true);
+        expect(yield* fileSystem.readFileString(throughSymlink.spawn.command)).toBe(
+          "#!/bin/sh\necho target\n",
+        );
+      }
 
       for (const extension of [".cmd", ".BAT"]) {
         const windowsResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
@@ -317,7 +347,7 @@ describe("AcpRegistrySupport", () => {
           registryUrl,
         }).pipe(
           Effect.provideService(HostProcess.Platform, "win32"),
-          Effect.provideService(SpawnExecutableResolution, () => `C:\\bin\\dsh${extension}`),
+          Effect.provideService(SpawnExecutableResolution, async () => `C:\\bin\\dsh${extension}`),
         );
         const localSettings = decodeAcpRegistrySettings({ source: "local", commandPath: "dsh" });
         for (const failure of [
@@ -330,6 +360,65 @@ describe("AcpRegistrySupport", () => {
           });
         }
       }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
+    ),
+  );
+
+  it.effect("resolves the local Command Code configurations the HTTP selector matches", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-command-code-",
+      });
+      const catalog = (executable: string) =>
+        AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          Effect.provideService(SpawnExecutableResolution, () => executable),
+          Effect.provide(NodePath.layerWin32),
+        );
+
+      const bare = decodeAcpRegistrySettings({ source: "local", commandPath: "cmdc" });
+      expect(prefersHttpMcpTransport(bare)).toBe(true);
+      expect(
+        yield* (yield* catalog("C:\\bin\\cmdc.exe")).resolve(bare, "/workspace"),
+      ).toMatchObject({ spawn: { command: "C:\\bin\\cmdc.exe", shell: false } });
+      const windowsPath = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+      for (const drive of ["C:", "D:"]) {
+        const command = `${drive}tools\\link\\..\\cmdc.exe`;
+        expect(yield* (yield* catalog(command)).resolve(bare, "/workspace")).toMatchObject({
+          spawn: {
+            command: `${windowsPath.resolve(drive)}\\tools\\link\\..\\cmdc.exe`,
+            shell: false,
+          },
+        });
+      }
+      // A bare name that PATHEXT resolves to a batch shim never launches, so the transport it
+      // selects cannot matter: there is no session to attach MCP servers to.
+      expect(
+        yield* (yield* catalog("C:\\bin\\cmdc.cmd")).resolve(bare, "/workspace").pipe(Effect.flip),
+      ).toMatchObject({ reason: "runner_unavailable" });
+
+      const vendored = decodeAcpRegistrySettings({
+        source: "local",
+        commandPath: "node.exe",
+        commandArgs: [
+          "C:\\Users\\me\\.t3\\bin\\cmdcode\\node_modules\\command-code\\dist\\index.mjs",
+          "acp",
+        ],
+      });
+      expect(prefersHttpMcpTransport(vendored)).toBe(true);
+      expect(
+        yield* (yield* catalog("C:\\Program Files\\nodejs\\node.exe")).resolve(
+          vendored,
+          "/workspace",
+        ),
+      ).toMatchObject({ spawn: { command: "C:\\Program Files\\nodejs\\node.exe" } });
     }).pipe(
       Effect.scoped,
       Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
@@ -462,6 +551,27 @@ describe("AcpRegistrySupport", () => {
       const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
       expect(npmCommands.match(/^install --global /gmu)).toHaveLength(1);
       expect(npmCommands).toContain("install --global @example/acp@V1.2.3");
+
+      // A missing npm bin link must not select an unrelated command from the user's PATH.
+      const userBin = `${cacheDir}/user-bin`;
+      yield* fileSystem.makeDirectory(userBin);
+      yield* fileSystem.writeFileString(`${userBin}/example-agent`, "#!/bin/sh\n");
+      yield* fileSystem.chmod(`${userBin}/example-agent`, 0o755);
+      yield* fileSystem.remove(toolchain.executablePath);
+      const userEnvironment = {
+        ...toolchain.environment,
+        PATH: `${userBin}:${toolchain.environment.PATH}`,
+      };
+      const repaired = yield* resolver.resolve(settings(), "/workspace", userEnvironment);
+      expect(repaired.spawn.command).toBe(toolchain.executablePath);
+      const repairCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      expect(repairCommands.match(/^install --global /gmu)).toHaveLength(2);
+
+      yield* fileSystem.remove(toolchain.executablePath);
+      const failedRepair = yield* resolver
+        .resolve(settings(), "/workspace", { ...userEnvironment, npm_config_bin_links: "false" })
+        .pipe(Effect.flip);
+      expect(failedRepair.reason).toBe("install_failed");
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -502,6 +612,187 @@ describe("AcpRegistrySupport", () => {
         command: path.join(userGlobalBin, "example-agent"),
         env: { PATH: expect.stringMatching(new RegExp(`^${userGlobalBin}:`, "u")) },
       });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("installs into its managed prefix with an npm that ignores npm_config_prefix", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-npm-shim-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, FAKE_NPM_IGNORE_PREFIX_ENV: "1" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", environment);
+
+      expect(resolved.spawn.command).toBe(toolchain.executablePath);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("names the npm shim when npm cannot install into the managed prefix", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-npm-shim-no-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, FAKE_NPM_IGNORE_PREFIX: "1" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      const error = yield* resolver
+        .resolve(settings(), "/workspace", environment)
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("shim");
+      const npmCommands = yield* fileSystem.readFileString(toolchain.logPath);
+      expect(npmCommands).not.toMatch(/^install /mu);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("gives Windows npm commands only the managed prefix spelling", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-windows-npm-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, NPM_CONFIG_PREFIX: "C:\\inherited-npm" };
+      const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const npmEnvironments: Array<Record<string, unknown>> = [];
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(HostProcess.Environment, environment),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, (command) =>
+          command === "npm" ? toolchain.npmPath : undefined,
+        ),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (command._tag === "StandardCommand" && command.command === toolchain.npmPath) {
+              npmEnvironments.push({ ...command.options.env });
+            }
+            return realSpawner.spawn(command);
+          }),
+        ),
+      );
+
+      yield* resolver.resolve(settings(), "C:\\workspace", environment).pipe(Effect.ignore);
+
+      expect(npmEnvironments.length).toBeGreaterThan(0);
+      for (const env of npmEnvironments) {
+        expect(Object.keys(env).filter((key) => key.toLowerCase() === "npm_config_prefix")).toEqual(
+          ["npm_config_prefix"],
+        );
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("keeps only the end of a failed install's output in its error", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-failed-install-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, FAKE_NPM_INSTALL_FAILURE_LINES: "40000" };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(HostProcess.Environment, environment));
+
+      const error = yield* resolver
+        .resolve(settings(), "/workspace", environment)
+        .pipe(Effect.flip);
+
+      expect(error.reason).toBe("install_failed");
+      expect(error.detail).toContain("exited with code 1");
+      expect(error.detail).toMatch(/npm error see the complete log for details$/u);
+      expect(error.detail.split("exited with code 1: ")[1]?.length).toBeLessThanOrEqual(1_000);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
+  it.effect("launches the managed uv command over a PATH command named after the agent", () => {
+    const agent = makeAgent({
+      uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-uv-path-collision-",
+      });
+      const toolchain = yield* makeFakeUvToolchain(cacheDir);
+      const userBin = path.join(cacheDir, "user-bin");
+      const userCommand = path.join(userBin, "example-agent");
+      yield* fileSystem.makeDirectory(userBin, { recursive: true });
+      yield* fileSystem.writeFileString(userCommand, "#!/bin/sh\n");
+      yield* fileSystem.chmod(userCommand, 0o755);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+
+      const resolved = yield* resolver.resolve(settings(), "/workspace", {
+        ...toolchain.environment,
+        PATH: `${userBin}:${toolchain.environment.PATH}`,
+      });
+
+      expect(resolved.spawn.command).toBe(toolchain.executablePath);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -618,6 +909,89 @@ describe("AcpRegistrySupport", () => {
                 );
           return Effect.succeed(HttpClientResponse.fromWeb(request, response));
         }),
+      ),
+    );
+  });
+
+  it.effect("gives Antigravity a T3-owned temp directory that is removed with the process", () => {
+    const agent = {
+      ...makeAgent({ binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./agy" } } }),
+      id: "antigravity-acp",
+    };
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-runtime-temp-",
+      });
+      const runtimeTempDir = `${cacheDir}/antigravity-tmp/acp-registry`;
+      yield* fileSystem.makeDirectory(`${runtimeTempDir}/run-killed/_MEI123`, { recursive: true });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        runtimeTempDir,
+        registryUrl,
+      });
+      expect(yield* fileSystem.exists(`${runtimeTempDir}/run-killed`)).toBe(false);
+
+      const temp = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const resolved = yield* resolver.resolve(
+            settings({ agentId: "antigravity-acp" }),
+            "/workspace",
+            { TMPDIR: "/tmp" },
+          );
+          const directory = resolved.spawn.env?.TMPDIR ?? "";
+          expect(directory.startsWith(`${runtimeTempDir}/run-`)).toBe(true);
+          expect(yield* fileSystem.exists(directory)).toBe(true);
+          return directory;
+        }),
+      );
+      expect(yield* fileSystem.exists(temp)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(request.url === registryUrl ? makeRegistry(agent) : "#!/bin/sh\n"),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
+  it.effect("installs a contained binary whose name starts with two dots", () => {
+    const agent = makeAgent({
+      binary: { "linux-x86_64": { archive: archiveUrl, cmd: "..example-agent" } },
+    });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-dot-name-",
+      });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const resolved = yield* resolver.resolve(settings(), "/workspace");
+
+      expect(resolved.spawn.command).toContain(
+        "/tools/example-agent/1.2.3/linux-x86_64/..example-agent",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(request.url === registryUrl ? makeRegistry(agent) : "#!/bin/sh\n"),
+            ),
+          ),
+        ),
       ),
     );
   });
@@ -932,6 +1306,7 @@ describe("AcpRegistrySupport", () => {
       name: "Codex Darwin",
     } satisfies AcpRegistrySupport.AcpRegistryAgent;
 
+    const lookups: string[] = [];
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -941,9 +1316,15 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      });
+      }).pipe(
+        Effect.provideService(SpawnExecutableResolution, async (command) => {
+          lookups.push(command);
+          return "/bin/npm";
+        }),
+      );
       const result = yield* resolver.search({ query: "codex" });
 
+      expect(lookups).toEqual(["npm"]);
       expect(result.agents.map((agent) => agent.id)).toEqual(["codex-acp", "other-agent"]);
       expect(result.agents[0]).toMatchObject({
         authors: ["OpenAI", "Zed Industries"],
@@ -1334,6 +1715,60 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect(
+    "installs the registry's current version when a cached index pins a removed build",
+    () => {
+      const binaryAgent = (version: string) => ({
+        ...makeAgent({
+          binary: {
+            "linux-x86_64": {
+              archive: `https://registry.test/example-agent-${version}.bin`,
+              cmd: "./bin/example-agent",
+              args: ["acp"],
+            },
+          },
+        }),
+        version,
+      });
+      const requests: Array<string> = [];
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-stale-",
+        });
+        yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${cacheDir}/acp-registry/registry.json`,
+          makeRegistry(binaryAgent("1.2.3")),
+        );
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+        const resolved = yield* resolver.resolve(settings(), "/workspace");
+
+        expect(resolved.agent?.version).toBe("1.2.4");
+        expect(resolved.spawn.command).toContain("/tools/example-agent/1.2.4/");
+        expect(requests).toContain(registryUrl);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) => {
+            requests.push(request.url);
+            const response =
+              request.url === registryUrl
+                ? new Response(makeRegistry(binaryAgent("1.2.4")))
+                : request.url.endsWith("-1.2.4.bin")
+                  ? new Response("#!/bin/sh\necho example\n")
+                  : new Response("forbidden", { status: 403 });
+            return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("rejects unsafe command paths before downloading an archive", () => {
     const agent = makeAgent({
       binary: {
@@ -1399,6 +1834,52 @@ describe("AcpRegistrySupport", () => {
           requests += 1;
           return Effect.succeed(
             HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect("recovers inspection from a corrupt cache once the registry is reachable", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    let online = false;
+    let requests = 0;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-offline-",
+      });
+      yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+      yield* fileSystem.writeFileString(`${cacheDir}/acp-registry/registry.json`, "{not json");
+      const options = { cacheDir, toolsDir: `${cacheDir}/tools`, registryUrl };
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog(options);
+
+      const offline = yield* resolver.inspect(settings()).pipe(Effect.flip);
+      expect(offline.reason).toBe("registry_unavailable");
+
+      online = true;
+      const concurrent = yield* Effect.all(
+        [resolver.inspect(settings()), resolver.inspect(settings())],
+        { concurrency: "unbounded" },
+      );
+      expect(concurrent).toMatchObject([{ status: "ready" }, { status: "ready" }]);
+      expect(requests).toBe(2);
+
+      const restarted = yield* AcpRegistrySupport.makeAcpRegistryCatalog(options);
+      expect(yield* restarted.inspect(settings())).toMatchObject({ status: "ready" });
+      expect(requests).toBe(2);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests += 1;
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              online
+                ? new Response(makeRegistry(agent))
+                : new Response("unavailable", { status: 503 }),
+            ),
           );
         }),
       ),
@@ -1805,6 +2286,99 @@ describe("AcpRegistrySupport", () => {
       ),
     );
   });
+
+  it.effect("refreshes stale disk indexes with max-age, offline backoff, and invalidation", () => {
+    const v1 = makeAgent({ npx: { package: "example-agent@1.0.0" } });
+    const v2 = {
+      ...makeAgent({ npx: { package: "example-agent@2.0.0" } }),
+      version: "2.0.0",
+    };
+    let currentAgent = v2;
+    let failNetwork = false;
+    let requests = 0;
+
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-refresh-index-",
+      });
+      yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+      yield* fileSystem.writeFileString(`${cacheDir}/acp-registry/registry.json`, makeRegistry(v1));
+
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "1.2.3",
+      });
+      expect(requests).toBe(0);
+
+      // Cold disk cache has no network timestamp, so refreshIndex fetches v2.
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        true,
+      );
+      expect(requests).toBe(1);
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "2.0.0",
+      });
+
+      // Within maxAgeMs, no network call happens.
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        false,
+      );
+      expect(requests).toBe(1);
+
+      // After invalidateIndex, an offline failure preserves in-memory v2 and backs off.
+      yield* resolver.invalidateIndex();
+      failNetwork = true;
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        false,
+      );
+      expect(requests).toBe(2);
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "2.0.0",
+      });
+
+      // Within failureBackoffMs, repeated background refreshes do not hammer the network.
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        false,
+      );
+      expect(requests).toBe(2);
+
+      // Explicit invalidateIndex clears backoff so the next refresh retries immediately.
+      failNetwork = false;
+      currentAgent = {
+        ...makeAgent({ npx: { package: "example-agent@2.0.0", args: ["--flag"] } }),
+        version: "2.0.0",
+      };
+      yield* resolver.invalidateIndex();
+      expect(yield* resolver.refreshIndex({ maxAgeMs: 60_000, failureBackoffMs: 10_000 })).toBe(
+        true,
+      );
+      expect(requests).toBe(3);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          requests += 1;
+          if (failNetwork) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response(null, { status: 503 })),
+            );
+          }
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(makeRegistry(currentAgent))),
+          );
+        }),
+      ),
+    );
+  });
 });
 
 describe("acpRegistryManagedBinaryDirectories", () => {
@@ -1903,6 +2477,6 @@ describe("acpRegistryManagedBinaryDirectories", () => {
         architecture: "x64",
       });
       expect(missing).toEqual([]);
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 });

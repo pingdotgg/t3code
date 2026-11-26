@@ -12,7 +12,8 @@ export const PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v2";
 const LEGACY_PROMPT_STASH_STORAGE_KEY = "t3code:prompt-stash:v1";
 const PROMPT_STASH_STORAGE_VERSION = 2;
 
-export const MAX_STASH_ENTRIES = 20;
+// A sanity bound; storage quota is the real limit and reports its own failure.
+export const MAX_STASH_ENTRIES = 100;
 // Share localStorage's ~5MB quota with drafts; record oversized attachments in droppedImageNames.
 export const MAX_STASH_ENTRY_ATTACHMENT_CHARS = 2_700_000;
 
@@ -37,24 +38,19 @@ type PersistedPromptStashState = typeof PersistedPromptStashState.Type;
 const decodePersistedPromptStashState = Schema.decodeUnknownSync(PersistedPromptStashState);
 
 // Encoders cannot survive reload; clear orphaned counts so entries remain restorable.
-function clearOrphanedPendingImages(
-  entries: ReadonlyArray<PromptStashEntry>,
-): ReadonlyArray<PromptStashEntry> {
-  return entries.map((entry) => {
-    if (!entry.pendingImageCount) return entry;
-    const lostCount = entry.pendingImageCount;
-    return {
-      ...entry,
-      pendingImageCount: 0,
-      unreadableImageNames: [
-        ...(entry.unreadableImageNames ?? []),
-        ...Array.from(
-          { length: lostCount },
-          (_, index) => `image ${index + 1} (not saved before reload)`,
-        ),
-      ],
-    };
-  });
+function clearOrphanedPendingImages(entry: PromptStashEntry): PromptStashEntry {
+  if (!entry.pendingImageCount) return entry;
+  return {
+    ...entry,
+    pendingImageCount: 0,
+    unreadableImageNames: [
+      ...(entry.unreadableImageNames ?? []),
+      ...Array.from(
+        { length: entry.pendingImageCount },
+        (_, index) => `image ${index + 1} (not saved before reload)`,
+      ),
+    ],
+  };
 }
 
 export function partitionStashAttachments(
@@ -89,6 +85,8 @@ function resolveBaseStorage(): { storage: StateStorage; durable: boolean } {
 
 const { storage: baseStashStorage, durable: storageIsDurable } = resolveBaseStorage();
 
+const unpersistedFinalizedEntryIds = new Set<string>();
+
 // Clear the composer only after a durable write; debounce cannot confirm durability.
 function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
   written: boolean;
@@ -102,6 +100,7 @@ function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
         state: { entries },
       }),
     );
+    unpersistedFinalizedEntryIds.clear();
     return { written: true, durable: storageIsDurable };
   } catch (error) {
     console.error("[PROMPT-STASH] Could not persist stash (storage quota?).", error);
@@ -109,32 +108,55 @@ function persistEntries(entries: ReadonlyArray<PromptStashEntry>): {
   }
 }
 
-function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
+function readStoredEntries(): ReadonlyArray<PromptStashEntry> | null {
   try {
     const raw = baseStashStorage.getItem(PROMPT_STASH_STORAGE_KEY);
     if (typeof raw !== "string" || raw.length === 0) return null;
     const parsed: unknown = JSON.parse(raw);
     const state = (parsed as { state?: unknown } | null)?.state;
     if (!state) return null;
-    return clearOrphanedPendingImages(decodePersistedPromptStashState(state).entries);
+    return decodePersistedPromptStashState(state).entries;
   } catch {
     return null;
   }
 }
 
-/** Starts each write from storage so entries other tabs stashed or took are not overwritten. */
+function readPersistedEntries(): ReadonlyArray<PromptStashEntry> | null {
+  return readStoredEntries()?.map(clearOrphanedPendingImages) ?? null;
+}
+
+/**
+ * Starts each write from storage so other tabs' stashes, takes and finalized images survive.
+ * Local encoding and failed finalize writes retain ownership while the stored entry exists.
+ */
 function latestEntries(memory: ReadonlyArray<PromptStashEntry>): ReadonlyArray<PromptStashEntry> {
-  const stored = readPersistedEntries();
+  const stored = readStoredEntries();
   if (!stored) return memory;
+  const storedIds = new Set(stored.map((entry) => entry.id));
+  for (const id of unpersistedFinalizedEntryIds) {
+    if (!storedIds.has(id)) unpersistedFinalizedEntryIds.delete(id);
+  }
   const memoryById = new Map(memory.map((entry) => [entry.id, entry]));
-  return stored.map((entry) => memoryById.get(entry.id) ?? entry);
+  return stored.map((entry) => {
+    const local = memoryById.get(entry.id);
+    if (
+      local &&
+      (local.pendingImageCount ||
+        entry.pendingImageCount ||
+        unpersistedFinalizedEntryIds.has(entry.id))
+    ) {
+      return local;
+    }
+    return clearOrphanedPendingImages(entry);
+  });
 }
 
 interface PromptStashStoreState {
   entries: ReadonlyArray<PromptStashEntry>;
   stashEntry: (entry: PromptStashEntry) => {
-    evicted: PromptStashEntry | null;
-    /** False when the write failed outright (e.g. quota); nothing was kept. */
+    /** True when the stash already holds MAX_STASH_ENTRIES; nothing was written. */
+    full: boolean;
+    /** False when the write failed outright (e.g. quota or a full stash); nothing was kept. */
     written: boolean;
     /** False for failed writes or in-memory fallback; the entry will not survive reload. */
     durable: boolean;
@@ -155,15 +177,19 @@ interface PromptStashStoreState {
 export const usePromptStashStore = create<PromptStashStoreState>()((set, get) => ({
   entries: [],
   stashEntry: (entry) => {
-    const nextEntries = [entry, ...latestEntries(get().entries)];
-    const evicted = nextEntries.length > MAX_STASH_ENTRIES ? (nextEntries.pop() ?? null) : null;
+    const currentEntries = latestEntries(get().entries);
+    // Never discard a stashed prompt to make room; the user decides what to remove.
+    if (currentEntries.length >= MAX_STASH_ENTRIES) {
+      return { full: true, written: false, durable: false };
+    }
+    const nextEntries = [entry, ...currentEntries];
     const { written, durable } = persistEntries(nextEntries);
-    // Failed writes must not duplicate the intact composer; eviction also commits only on success.
+    // Failed writes must not duplicate the intact composer.
     if (!written) {
-      return { evicted: null, written: false, durable: false };
+      return { full: false, written: false, durable: false };
     }
     set(() => ({ entries: nextEntries }));
-    return { evicted, written: true, durable };
+    return { full: false, written: true, durable };
   },
   takeEntry: (entryId) => {
     const entries = latestEntries(get().entries);
@@ -171,6 +197,7 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
     if (!entry) return { entry: null, durable: true };
     const nextEntries = entries.filter((candidate) => candidate.id !== entryId);
     const { durable } = persistEntries(nextEntries);
+    unpersistedFinalizedEntryIds.delete(entryId);
     set(() => ({ entries: nextEntries }));
     return { entry, durable };
   },
@@ -187,7 +214,8 @@ export const usePromptStashStore = create<PromptStashStoreState>()((set, get) =>
       unreadableImageNames: images.unreadableImageNames,
       pendingImageCount: 0,
     };
-    const { durable } = persistEntries(nextEntries);
+    const { written, durable } = persistEntries(nextEntries);
+    if (!written) unpersistedFinalizedEntryIds.add(entryId);
     set(() => ({ entries: nextEntries }));
     return { attached: true, durable };
   },

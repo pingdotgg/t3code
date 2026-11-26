@@ -5,15 +5,16 @@ import {
   resolvePullRequestReviewAnchor,
 } from "@t3tools/shared/pullRequestAnchor";
 import { stripInlineContextReferences } from "~/lib/composerContextReferences";
-import type { Nodes as MdastNodes } from "mdast";
-import { fromMarkdown } from "mdast-util-from-markdown";
+import type { Nodes } from "hast";
+
+import { markdownHtmlComments, markdownTree } from "~/markdown/wordsHast";
 import {
-  capitalizeTerm,
   sourceControlClients,
   type ChangeRequestTerminology,
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 import {
+  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   GitCommandError,
   PullRequestDetail,
   PullRequestOperationError,
@@ -48,12 +49,18 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
 
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
+import { changeRequestTermKind } from "./changeRequestTerm";
+
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
-  merge: "Merge",
-  squash: "Squash and merge",
-  rebase: "Rebase and merge",
+  merge: msg("Merge"),
+  squash: msg("Squash and merge"),
+  rebase: msg("Rebase and merge"),
+  "fast-forward": msg("Fast-forward merge"),
 };
 
 export function allowsSinglePullRequestMerge(input: {
@@ -200,13 +207,13 @@ export function pullRequestPanelContext(
   const links = visibleThreadPullRequests(thread.pullRequests ?? []);
   if (links.length > 0) {
     const repository = surface.repository.toLowerCase();
+    const target =
+      surface.host === undefined
+        ? null
+        : { host: surface.host, repository: surface.repository, number: surface.number };
     return links.some((link) =>
-      surface.host !== undefined
-        ? threadPullRequestKeysEqual(link, {
-            host: surface.host,
-            repository: surface.repository,
-            number: surface.number,
-          })
+      target !== null
+        ? threadPullRequestKeysEqual(link, target)
         : link.number === surface.number && link.repository.toLowerCase() === repository,
     )
       ? "thread"
@@ -247,18 +254,18 @@ export function threadPullRequestPanelTarget(thread: {
   return legacy ?? thread.branchPullRequest ?? null;
 }
 
-export function pullRequestHandoffLabels(inThisThread: boolean) {
+export function pullRequestHandoffLabels(inThisThread: boolean, resolve: MessageResolver = m) {
   // Beside a composer a remark's Fix shares its header with Add to chat.
   return inThisThread
     ? {
-        fixFinding: "Fix",
-        fixCheck: "Fix in this thread",
-        fixFindings: "Fix findings in this thread",
+        fixFinding: resolve(msg("Fix", { $context: "verb, fix a review finding" })),
+        fixCheck: resolve(msg("Fix in this thread")),
+        fixFindings: resolve(msg("Fix findings in this thread")),
       }
     : {
-        fixFinding: "Fix in a thread",
-        fixCheck: "Fix",
-        fixFindings: "Fix findings in a thread",
+        fixFinding: resolve(msg("Fix in a thread")),
+        fixCheck: resolve(msg("Fix", { $context: "verb, fix a review finding" })),
+        fixFindings: resolve(msg("Fix findings in a thread")),
       };
 }
 
@@ -329,8 +336,11 @@ export function classifyPullRequestChecks(
   return "passing";
 }
 
-export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck>): string {
-  if (checks.length === 0) return "No checks reported";
+export function describePullRequestChecks(
+  checks: ReadonlyArray<PullRequestCheck>,
+  resolve: MessageResolver = m,
+): string {
+  if (checks.length === 0) return resolve(msg("No checks reported"));
   const failed = checks.filter(
     (check) => check.status === "failure" || check.status === "cancelled",
   ).length;
@@ -338,13 +348,24 @@ export function describePullRequestChecks(checks: ReadonlyArray<PullRequestCheck
   const actionRequired = checks.filter((check) => check.status === "action-required").length;
   const passed = checks.filter((check) => check.status === "success").length;
   const parts: string[] = [];
-  if (pending > 0) parts.push(`${pending} of ${checks.length} running`);
-  if (actionRequired > 0) parts.push(`${actionRequired} of ${checks.length} awaiting action`);
+  const total = checks.length;
+  if (pending > 0) parts.push(resolve(msg("{pending} of {total} running", { pending, total })));
+  if (actionRequired > 0) {
+    parts.push(
+      resolve(msg("{actionRequired} of {total} awaiting action", { actionRequired, total })),
+    );
+  }
   if (failed > 0) {
-    parts.push(parts.length > 0 ? `${failed} failed` : `${failed} of ${checks.length} failing`);
+    parts.push(
+      parts.length > 0
+        ? resolve(msg("{failed} failed", { failed }))
+        : resolve(msg("{failed} of {total} failing", { failed, total })),
+    );
   }
   if (parts.length === 0) {
-    return passed === checks.length ? "All checks passed" : `${passed} of ${checks.length} passing`;
+    return passed === total
+      ? resolve(msg("All checks passed"))
+      : resolve(msg("{passed} of {total} passing", { passed, total }));
   }
   return parts.join(" · ");
 }
@@ -673,27 +694,18 @@ export function pagePullRequestConversationItems(
 function readableBody(raw: string): string | null {
   if (visibleBody(raw) === null) return null;
   const body = raw.replace(/\r\n?/gu, "\n");
-  const cuts: Array<[number, number]> = [];
-  const visit = (node: MdastNodes) => {
-    if (node.type === "html" && node.position?.start.offset !== undefined) {
-      cuts.push([node.position.start.offset, node.position.end.offset ?? body.length]);
-    }
-    if ("children" in node) for (const child of node.children) visit(child);
-  };
-  visit(fromMarkdown(body));
   let readable = "";
   let from = 0;
-  for (const [start, end] of cuts) {
+  for (const { start, end } of markdownHtmlComments(body)) {
+    // A comment opened inside another one ends with it.
+    if (start < from) continue;
     readable += body.slice(from, start);
-    // An HTML block can carry markup around its comment; only the comment itself is hidden.
-    const html = body.slice(start, end).replace(/<!--[\s\S]*?(?:-->|$)/gu, "");
     // A line that was all comment is dropped rather than left as a blank one.
     const ownLine = /(?:^|\n)[ \t>]*$/u.test(readable) && /^[ \t]*(?:\n|$)/u.test(body.slice(end));
-    if (ownLine && html.trim() === "") {
+    if (ownLine) {
       readable = readable.replace(/[ \t>]*$/u, "");
       from = end + (/^[ \t]*\n/u.exec(body.slice(end))?.[0].length ?? 0);
     } else {
-      readable += html;
       from = end;
     }
   }
@@ -720,11 +732,12 @@ const LINK_EXCERPT_LENGTH = 280;
 /** The words of a markdown body, without markup, HTML or images, for a short preview. */
 function markdownExcerpt(body: string): string | null {
   const words: string[] = [];
-  const visit = (node: MdastNodes) => {
-    if (node.type === "text" || node.type === "inlineCode") words.push(node.value);
-    if (node.type !== "code" && "children" in node) for (const child of node.children) visit(child);
+  const visit = (node: Nodes) => {
+    if (node.type === "text") words.push(node.value);
+    if (node.type === "element" && node.tagName === "pre") return;
+    if ("children" in node) for (const child of node.children) visit(child);
   };
-  visit(fromMarkdown(body));
+  visit(markdownTree(body, { skipHtml: true }));
   // GitHub's alert marker (`> [!NOTE]`) parses as text but reads as markup.
   const text = words
     .join(" ")
@@ -737,7 +750,7 @@ function markdownExcerpt(body: string): string | null {
   // Never end on a lone high surrogate.
   const last = text.charCodeAt(end - 1);
   if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-  return `${text.slice(0, end)}…`;
+  return `${text.slice(0, end).trimEnd()}…`;
 }
 
 /** The comment or commit a pull request link names, for its hover card; null for the PR itself. */
@@ -790,14 +803,20 @@ export function buildPullRequestTimeline(
     "provider" | "createdAt" | "author" | "commits" | "comments" | "mergedAt" | "closedAt"
   > &
     Partial<Pick<PullRequestDetailView, "reviewThreads" | "overviewThreads">>,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<PullRequestTimelineEvent> {
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
+  const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
   return [
     {
       id: "created",
       at: detail.createdAt,
       kind: "opened" as const,
-      title: `opened this ${term}`,
+      title: resolve(
+        msg(
+          "opened this {term, select, mr {merge request} cr {change request} other {pull request}}",
+          { term },
+        ),
+      ),
       body: null,
       markdown: false,
       url: null,
@@ -813,7 +832,7 @@ export function buildPullRequestTimeline(
       id: commit.oid,
       at: commit.committedDate,
       kind: "commit" as const,
-      title: `Commit ${commit.oid.slice(0, 7)}`,
+      title: resolve(msg("Commit {sha}", { sha: commit.oid.slice(0, 7) })),
       body: commit.messageHeadline || null,
       markdown: false,
       url: null,
@@ -852,7 +871,12 @@ export function buildPullRequestTimeline(
             id: "merged",
             at: detail.mergedAt,
             kind: "merged" as const,
-            title: `${capitalizeTerm(term)} merged`,
+            title: resolve(
+              msg(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} merged",
+                { term },
+              ),
+            ),
             body: null,
             markdown: false,
             url: null,
@@ -872,7 +896,12 @@ export function buildPullRequestTimeline(
             id: "closed",
             at: detail.closedAt,
             kind: "closed" as const,
-            title: `${capitalizeTerm(term)} closed`,
+            title: resolve(
+              msg(
+                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} closed",
+                { term },
+              ),
+            ),
             body: null,
             markdown: false,
             url: null,
@@ -901,7 +930,7 @@ function bounded(value: string): string {
   if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
     end -= 1;
   }
-  return `${trimmed.slice(0, end)}...`;
+  return `${trimmed.slice(0, end).trimEnd()}...`;
 }
 
 function boundedField(value: string): string {
@@ -915,29 +944,38 @@ function terminologyForUrl(url: string): ChangeRequestTerminology {
     .changeRequest;
 }
 
+function reviewThreadText(thread: PullRequestReviewThread): string {
+  return thread.comments
+    .flatMap((comment) => {
+      const body = readableBody(comment.body);
+      return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
+    })
+    .join("\n")
+    .trim();
+}
+
+/** A thread's line, marked when it is numbered as in the base branch, the diff's left side. */
+function reviewThreadLine(thread: PullRequestReviewThread): string | null {
+  return thread.line === null ? null : `${thread.line}${thread.side === "left" ? " (before)" : ""}`;
+}
+
 function reviewThreadContext(
   thread: PullRequestReviewThread,
   pullRequestNumber: number,
 ): ReviewCommentContext {
   const lineIndex = Math.max(0, (thread.line ?? 1) - 1);
+  const line = reviewThreadLine(thread);
   return {
     id: `pull-request-finding:${thread.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
     sectionTitle: `PR #${pullRequestNumber} review`,
     filePath: thread.path,
     startIndex: lineIndex,
     endIndex: lineIndex,
-    rangeLabel:
-      thread.line === null ? "file" : `L${thread.line}${thread.side === "left" ? " (before)" : ""}`,
+    rangeLabel: line === null ? "file" : `L${line}`,
     // Strip bot bookkeeping comments before bounding finding text.
-    text: bounded(
-      thread.comments
-        .flatMap((comment) => {
-          const body = readableBody(comment.body);
-          return body === null ? [] : [`${comment.author?.login ?? "ghost"}: ${body}`];
-        })
-        .join("\n"),
-    ),
+    text: bounded(reviewThreadText(thread)),
     diff: "",
     fenceLanguage: inferReviewCommentFenceLanguage(thread.path),
   };
@@ -946,8 +984,10 @@ function reviewThreadContext(
 // A task added to an existing thread's composer has no checkout prepared for it.
 function checkoutInstruction(inThisThread: boolean | undefined): string {
   return inThisThread
-    ? "Work on its branch, switching to it or checking it out first if this workspace is not on it"
-    : "Work in the prepared checkout";
+    ? // oxlint-disable-next-line t3code/no-untranslated-copy -- agent prompt
+      "Work on its branch, switching to it or checking it out first if this workspace is not on it"
+    : // oxlint-disable-next-line t3code/no-untranslated-copy -- agent prompt
+      "Work in the prepared checkout";
 }
 
 // The attached pull request chip names the title, URL and branches.
@@ -1205,6 +1245,7 @@ function pullRequestContextComment(
     // Use URLs because repositories can share pull request numbers.
     id: `pull-request-context:${input.url}`,
     sectionId: `pull-request:${input.number}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
     sectionTitle: `PR #${input.number}`,
     filePath: `PR #${input.number}`,
     startIndex: 0,
@@ -1257,15 +1298,25 @@ export type PullRequestChatSubject = Extract<PullRequestFinding, { kind: "thread
  * URL because host ids are only unique within a repository. Null when there are no words in it.
  */
 export function buildPullRequestCommentContext(
-  pullRequest: { readonly number: number; readonly url: string },
+  pullRequest: {
+    readonly number: number;
+    readonly url: string;
+    readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+    readonly reviewThreadsTruncated?: boolean | undefined;
+  },
   subject: PullRequestChatSubject,
 ): ReviewCommentContext | null {
   const pullRequestNumber = pullRequest.number;
+  // Unlike a batch fix, one remark brought in to talk about travels whole.
   if (subject.kind === "thread") {
-    const context = reviewThreadContext(subject.thread, pullRequestNumber);
-    return context.text === ""
+    const text = reviewThreadText(subject.thread);
+    return text === ""
       ? null
-      : { ...context, id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}` };
+      : {
+          ...reviewThreadContext(subject.thread, pullRequestNumber),
+          id: `pr-comment:${pullRequest.url}:thread:${subject.thread.id}`,
+          text,
+        };
   }
   const comment = subject.comment;
   const body = readableBody(comment.body);
@@ -1274,18 +1325,79 @@ export function buildPullRequestCommentContext(
   return {
     id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
     sectionId: `pull-request:${pullRequestNumber}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
     sectionTitle: `PR #${pullRequestNumber} conversation`,
     // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
     filePath: comment.path ?? `@${author}`,
     startIndex: 0,
     endIndex: 0,
     rangeLabel: "comment",
-    text: bounded(`${author}: ${body}`),
+    text: remarkText(`${author}: ${body}`.trim(), reviewLineComments(comment, pullRequest)),
     diff: "",
     ...(comment.path === null
       ? {}
       : { fenceLanguage: inferReviewCommentFenceLanguage(comment.path) }),
   };
+}
+
+/**
+ * The record keeps only the first COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS, so a long summary gives
+ * up its tail, never more than half, before the review link and line comments that follow it.
+ */
+function remarkText(remark: string, review: ReadonlyArray<string>): string {
+  if (review.length === 0) return remark;
+  const after = review.join("\n\n");
+  const room = Math.max(
+    COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS / 2,
+    COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS - after.length - 200,
+  );
+  if (remark.length <= room) return `${remark}\n\n${after}`;
+  let end = room;
+  const last = remark.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  const omitted = remark.length - end;
+  return `${remark.slice(0, end)}\n… ${omitted} more characters of the review summary are omitted; read it at the review link.\n\n${after}`;
+}
+
+/** A GitHub review summary's link and the line comments it posted, which live in other threads. */
+function reviewLineComments(
+  comment: PullRequestComment,
+  pullRequest: {
+    readonly reviewThreads: ReadonlyArray<PullRequestReviewThread>;
+    readonly reviewThreadsTruncated?: boolean | undefined;
+  },
+): ReadonlyArray<string> {
+  const reviewThreads = pullRequest.reviewThreads;
+  const anchor = comment.kind === "review" ? parsePullRequestAnchor(comment.url) : null;
+  // Only GitHub links line comments to their review, so no other host can say it posted none.
+  if (anchor?.kind !== "timeline" || !/^pullrequestreview-\d+$/i.test(anchor.anchor)) return [];
+  const posted = reviewThreads.flatMap((thread) =>
+    thread.comments.flatMap((lineComment) => {
+      const body = readableBody(lineComment.body);
+      if (body === null || !pullRequestAnchorMatchesUrl(anchor.anchor, lineComment.reviewUrl)) {
+        return [];
+      }
+      const line = reviewThreadLine(thread);
+      const at = line === null ? "" : ` line ${line}`;
+      return [`${lineComment.author?.login ?? "ghost"} on \`${thread.path}\`${at}: ${body}`];
+    }),
+  );
+  // Threads or their replies can be partly loaded; then an empty match proves nothing.
+  const complete =
+    pullRequest.reviewThreadsTruncated === false &&
+    reviewThreads.every((thread) => thread.nextCommentsCursor === undefined);
+  const more = complete ? [] : ["More may exist; see the review link."];
+  return [
+    `Review: ${comment.url}`,
+    ...(posted.length === 0
+      ? [
+          complete
+            ? "This review posted no line comments."
+            : "No line comments from this review were loaded.",
+          ...more,
+        ]
+      : [`Line comments in this review:\n\n${posted.join("\n\n")}`, ...more]),
+  ];
 }
 
 const ANSWER_INSTRUCTIONS = [
@@ -1341,7 +1453,15 @@ export function buildAddSelectionToAgentHandoff(input: {
 }): FixFindingsHandoff {
   return {
     prompt: bounded(input.request),
-    reviewComments: [pullRequestContextComment(input, []), { ...input.comment, text: "" }],
+    reviewComments: [
+      pullRequestContextComment(input, []),
+      {
+        ...input.comment,
+        id: `pull-request-selection:${input.url}:${input.comment.id}`,
+        sectionTitle: `${input.comment.sectionTitle} (${boundedField(input.url)})`,
+        text: "",
+      },
+    ],
   };
 }
 
@@ -1381,6 +1501,7 @@ export function buildAskAboutGuideStopHandoff(input: {
       {
         id: `pull-request-guide-stop:${input.url}:${stop.index}`,
         sectionId: `pull-request:${input.number}`,
+        // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
         sectionTitle: `PR #${input.number} review guide`,
         filePath: `Guide stop ${stop.index + 1}`,
         startIndex: 0,
@@ -1422,16 +1543,37 @@ const TOOL_NOISE = [
 
 const FAILURE_DETAIL_MAX_LENGTH = 320;
 
+/**
+ * The head a reader was first shown. A background refresh does not move it, so a merge or review
+ * keeps applying to the commits they read until they load the newer ones.
+ */
+export function seenPullRequestHead(
+  seen: { readonly key: string; readonly sha: string | undefined } | null,
+  key: string,
+  settledHead: string | undefined,
+) {
+  return seen !== null && seen.key === key && (seen.sha !== undefined || settledHead === undefined)
+    ? seen
+    : { key, sha: settledHead };
+}
+
+/** A merge lands the head the reader was shown, so it refuses a head that moved since. */
+export function mergeHeadPin(action: PullRequestAction, headSha: string | undefined) {
+  return (action === "merge" || action === "enable-auto-merge") && headSha !== undefined
+    ? { expectedHeadSha: headSha }
+    : {};
+}
+
 export function readableFailure(failure: unknown, hint: string): string {
   const raw =
     failure instanceof Error ? failure.message : typeof failure === "string" ? failure : "";
   const detail = raw.replace(OPERATION_PREFIX, "").trim();
   if (detail.length === 0 || TOOL_NOISE.some((pattern) => pattern.test(detail))) return hint;
-  const bounded =
-    detail.length <= FAILURE_DETAIL_MAX_LENGTH
-      ? detail
-      : `${detail.slice(0, FAILURE_DETAIL_MAX_LENGTH - 1)}…`;
-  return bounded;
+  if (detail.length <= FAILURE_DETAIL_MAX_LENGTH) return detail;
+  let end = FAILURE_DETAIL_MAX_LENGTH - 1;
+  const last = detail.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${detail.slice(0, end).trimEnd()}…`;
 }
 
 const isGitCommandError = Schema.is(GitCommandError);
@@ -1444,7 +1586,7 @@ export function checkoutFailureDescription(failure: unknown): string {
     : failure;
   return readableFailure(
     description,
-    "Check that the branch still exists and is not checked out elsewhere, then try again.",
+    m(msg("Check that the branch still exists and is not checked out elsewhere, then try again.")),
   );
 }
 
@@ -1484,7 +1626,7 @@ const ACTION_NEEDS_HOST_REFRESH: Record<PullRequestAction, boolean> = {
   "disable-auto-merge": false,
   revert: false,
   "delete-branch": false,
-  "approve-workflows": true,
+  "approve-workflows": false,
 };
 
 export function pullRequestActionNeedsHostRefresh(action: PullRequestAction): boolean {
@@ -1608,4 +1750,37 @@ export function resolveDisplayedPullRequestDetail(input: {
   return link !== undefined && (link.authority ?? link.host) === input.reference.host.toLowerCase()
     ? input.cached
     : null;
+}
+
+const OBSERVATION_STAMPS = new Set(["observedAt", "readAt"]);
+
+/**
+ * Whether two reads of a pull request differ only in when they were observed. Every refresh
+ * restamps those, so the panel keeps the detail it shows instead of re-rendering its whole tree.
+ */
+export function samePullRequestReadExceptStamps(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (typeof left !== "object" || typeof right !== "object" || left === null || right === null) {
+    return false;
+  }
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return (
+      left.length === right.length &&
+      left.every((item, index) => samePullRequestReadExceptStamps(item, right[index]))
+    );
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const keys = (record: Record<string, unknown>) =>
+    Object.keys(record).filter((key) => !OBSERVATION_STAMPS.has(key));
+  const leftKeys = keys(leftRecord);
+  return (
+    leftKeys.length === keys(rightRecord).length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) &&
+        samePullRequestReadExceptStamps(leftRecord[key], rightRecord[key]),
+    )
+  );
 }

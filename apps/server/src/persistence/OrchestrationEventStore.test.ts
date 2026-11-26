@@ -38,69 +38,67 @@ const layer = it.layer(layerTest);
 
 layer("OrchestrationEventStore", (it) => {
   it.effect("retains only shell metadata from oversized replay and live application events", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const store = yield* OrchestrationEventStore.OrchestrationEventStore;
-        const afterSequence = yield* store.latestApplicationSequence;
-        const now = yield* DateTime.now;
-        const threadId = ThreadId.make("thread:large-shell-body");
-        const input = "x".repeat(9 * 1024 * 1024);
-        const event: OrchestrationV2DomainEvent = {
-          id: EventId.make("event:large-shell-body:replay"),
-          type: "turn-item.updated",
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const afterSequence = yield* store.latestApplicationSequence;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:large-shell-body");
+      const input = "x".repeat(9 * 1024 * 1024);
+      const event: OrchestrationV2DomainEvent = {
+        id: EventId.make("event:large-shell-body:replay"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("tool:large-shell-body"),
+          type: "command_execution",
           threadId,
-          occurredAt: now,
-          payload: {
-            id: TurnItemId.make("tool:large-shell-body"),
-            type: "command_execution",
-            threadId,
-            runId: null,
-            nodeId: null,
-            providerThreadId: null,
-            providerTurnId: null,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal: 1,
-            status: "running",
-            title: "Large command",
-            input,
-            startedAt: now,
-            completedAt: null,
-            updatedAt: now,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "running",
+          title: "Large command",
+          input,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        },
+      };
+      const [replayed] = yield* store.appendAgentEvents({ events: [event] });
+      const pull = yield* Stream.toPull(
+        store.streamProjectedApplicationEvents({
+          afterSequence,
+          project: toShellApplicationEvent,
+        }),
+      );
+      assert.deepEqual(yield* pull, [{ sequence: replayed!.sequence, event: { threadId } }]);
+      const [live] = yield* store.appendAgentEvents({
+        events: [
+          {
+            ...event,
+            id: EventId.make("event:large-shell-body:live"),
+            payload: { ...event.payload, status: "completed", completedAt: now },
           },
-        };
-        const [replayed] = yield* store.appendAgentEvents({ events: [event] });
-        const pull = yield* Stream.toPull(
-          store.streamProjectedApplicationEvents({
-            afterSequence,
-            project: toShellApplicationEvent,
-          }),
-        );
-        assert.deepEqual(yield* pull, [{ sequence: replayed!.sequence, event: { threadId } }]);
-        const [live] = yield* store.appendAgentEvents({
-          events: [
-            {
-              ...event,
-              id: EventId.make("event:large-shell-body:live"),
-              payload: { ...event.payload, status: "completed", completedAt: now },
-            },
-          ],
-        });
-        yield* store.publishCommitted([live!]);
-        assert.deepEqual(yield* pull, [{ sequence: live!.sequence, event: { threadId } }]);
-        const durable = yield* store
-          .readAgentEvents({ threadId, afterSequence })
-          .pipe(Stream.runCollect);
-        assert.lengthOf(durable, 2);
-        for (const stored of durable) {
-          assert.equal(stored.event.type, "turn-item.updated");
-          if (stored.event.type !== "turn-item.updated") return;
-          assert.equal(stored.event.payload.type, "command_execution");
-          if (stored.event.payload.type !== "command_execution") return;
-          assert.equal(stored.event.payload.input, input);
-        }
-      }),
-    ),
+        ],
+      });
+      yield* store.publishCommitted([live!]);
+      assert.deepEqual(yield* pull, [{ sequence: live!.sequence, event: { threadId } }]);
+      const durable = yield* store
+        .readAgentEvents({ threadId, afterSequence })
+        .pipe(Stream.runCollect);
+      assert.lengthOf(durable, 2);
+      for (const stored of durable) {
+        assert.equal(stored.event.type, "turn-item.updated");
+        if (stored.event.type !== "turn-item.updated") return;
+        assert.equal(stored.event.payload.type, "command_execution");
+        if (stored.event.payload.type !== "command_execution") return;
+        assert.equal(stored.event.payload.input, input);
+      }
+    }),
   );
 
   it.effect("stores an unchanged subagent prompt once and replays it on every update", () =>

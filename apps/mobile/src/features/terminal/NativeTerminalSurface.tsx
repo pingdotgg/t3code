@@ -1,4 +1,9 @@
-import type { TerminalGrid, TerminalOutputState } from "@t3tools/client-runtime/state/terminal";
+import {
+  terminalOutputText,
+  type TerminalGrid,
+  type TerminalOutputState,
+} from "@t3tools/client-runtime/state/terminal";
+import { useGT } from "gt-react-native";
 import { memo, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import {
   Pressable,
@@ -84,14 +89,15 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
   ...props
 }: ReadyTerminalSurfaceProps) {
   const fontSize = props.fontSize ?? MOBILE_TYPOGRAPHY.label.fontSize;
+  const gt = useGT();
   const inputRef = useRef<TextInputInstance>(null);
   const { themeAppearance, themeId } = useAppearancePreferences();
   const theme = props.theme ?? getMobileTerminalTheme(themeId, themeAppearance);
   const statusLabel = props.readOnly
-    ? "Viewing terminal output."
+    ? gt("Viewing terminal output.")
     : props.isRunning
-      ? "Native terminal unavailable. Using text fallback."
-      : "Open terminal to start a shell.";
+      ? gt("Native terminal unavailable. Using text fallback.")
+      : gt("Open terminal to start a shell.");
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -160,7 +166,7 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
           autoCorrect={false}
           blurOnSubmit={false}
           editable={props.isRunning && !props.readOnly}
-          placeholder="type and press return"
+          placeholder={gt("type and press return")}
           placeholderTextColor={theme.mutedForeground}
           returnKeyType="send"
           className="text-sm"
@@ -199,7 +205,12 @@ const FallbackTerminalSurface = memo(function FallbackTerminalSurface({
 });
 
 export const TerminalSurface = memo(function TerminalSurface(props: TerminalSurfaceProps) {
-  const buffer = useTerminalSurfaceBuffer(props);
+  // The text fallback draws escape sequences literally, so it gets displayed text, not the replay.
+  const buffer = useTerminalSurfaceBuffer(
+    resolveNativeTerminalSurfaceView() || props.output === null
+      ? props
+      : { terminalKey: props.terminalKey, buffer: terminalOutputText(props.output) },
+  );
   return <ReadyTerminalSurface key={props.terminalKey} {...props} buffer={buffer} />;
 });
 
@@ -272,7 +283,6 @@ const ReadyTerminalSurface = memo(function ReadyTerminalSurface({
   if (NativeTerminalSurfaceView) {
     return (
       <View style={props.style}>
-        {/* oxlint-disable-next-line react/static-components -- The resolver returns a cached native component with stable identity. */}
         <NativeTerminalSurfaceView
           ref={nativeRef}
           appearanceScheme={themeAppearance}

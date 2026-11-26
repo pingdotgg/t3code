@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
+import { isPreviewFocused } from "~/lib/previewFocus";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
 import { render } from "../../../test/render";
 import type { ChatComposerHandle } from "./ChatComposer";
@@ -19,6 +21,11 @@ const shortcutContext = {
 };
 
 const focusOnMount = (element: HTMLElement | null) => element?.focus();
+
+const ctrl = (key: string, command: KeybindingCommand, shiftKey = false) => ({
+  command,
+  shortcut: { key, metaKey: false, ctrlKey: true, shiftKey, altKey: false, modKey: false },
+});
 
 // Stands in for the right panel's launcher, which needs the whole app around it. Like the
 // real one it takes focus, advertises its letters in `data-surface-launcher-keys`, and
@@ -47,11 +54,17 @@ function Launcher(props: { keys: string; received: string[] }) {
 
 // The chat's shortcut listener registers when the chat mounts, so a launcher that opens
 // later registers after it. Tests mount the chat first and add the launcher by rerendering.
-function Chat(props: { composerKeys: string[]; launcher?: { keys: string; received: string[] } }) {
+function Chat(props: {
+  composerKeys: string[];
+  launcher?: { keys: string; received: string[] };
+  finds?: string[];
+  scriptKeybindings?: ResolvedKeybindingsConfig;
+  scriptsRan?: string[];
+}) {
   useChatShortcuts({
     enabled: true,
-    keybindings: [],
-    scriptKeybindings: [],
+    keybindings: [ctrl("f", "chat.find")],
+    scriptKeybindings: props.scriptKeybindings ?? [],
     getShortcutContext: () => shortcutContext,
     threadFindActive: false,
     // Type-to-focus only calls insertTextAtEnd, so the stand-in composer implements just that.
@@ -65,8 +78,9 @@ function Chat(props: { composerKeys: string[]; launcher?: { keys: string; receiv
     },
     branchToolbarRef: { current: null },
     closeThreadFind: () => {},
-    commands: {},
-    fallback: () => undefined,
+    commands: { "chat.find": () => void props.finds?.push("main") },
+    fallback: (command) =>
+      props.scriptsRan ? () => void props.scriptsRan?.push(command) : undefined,
   });
   return props.launcher ? <Launcher {...props.launcher} /> : null;
 }
@@ -134,17 +148,82 @@ it.each([
   expect(received).toEqual(launcher);
 });
 
-const ctrlShift = (key: string, command: KeybindingCommand) => ({
+function UnavailableTerminalCommand({
   command,
-  shortcut: { key, metaKey: false, ctrlKey: true, shiftKey: true, altKey: false, modKey: false },
+  owner,
+}: {
+  command: KeybindingCommand;
+  owner: "drawer" | "right-panel" | null;
+}) {
+  useChatShortcuts({
+    enabled: true,
+    keybindings: compileResolvedKeybindingsConfig([
+      { key: command === "terminal.previous" ? "cmd+shift+[" : "cmd+shift+]", command },
+    ]),
+    scriptKeybindings: [],
+    getShortcutContext: () => ({ ...shortcutContext, terminalFocus: owner !== null }),
+    threadFindActive: false,
+    composerRef: { current: null },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: { [command]: () => false },
+    fallback: () => undefined,
+  });
+  return (
+    <div data-terminal-owner={owner ?? undefined}>
+      <input ref={focusOnMount} />
+    </div>
+  );
+}
+
+it.each([
+  ["terminal.previous", "drawer", true],
+  ["terminal.next", "drawer", true],
+  ["terminal.new", "drawer", false],
+  ["terminal.previous", "right-panel", true],
+  ["terminal.next", "right-panel", true],
+  ["terminal.previous", null, false],
+  ["terminal.next", null, false],
+] as const)("handles unavailable %s with focus owner %s", async (command, owner, prevented) => {
+  await using screen = await render(
+    <UnavailableTerminalCommand command={command} owner={owner} />,
+    options,
+  );
+  const input = screen.container.querySelector("input")!;
+  const received: string[] = [];
+  input.addEventListener("keydown", (event) => received.push(event.key));
+  const previous = command === "terminal.previous";
+  const key = previous ? "{" : "}";
+  const event = new KeyboardEvent("keydown", {
+    key,
+    code: previous ? "BracketLeft" : "BracketRight",
+    shiftKey: true,
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(prevented);
+  expect(received).toEqual(prevented ? [] : [key]);
 });
+
 const sideChatKeybindings: ResolvedKeybindingsConfig = [
-  ctrlShift("m", "modelPicker.toggle"),
-  ctrlShift("x", "thread.stop"),
+  ctrl("m", "modelPicker.toggle", true),
+  ctrl("x", "thread.stop", true),
+  // The default find rule, with ctrl for mod so it matches on every platform.
+  ...compileResolvedKeybindingsConfig([
+    { key: "ctrl+f", command: "chat.find", when: "!terminalFocus && !previewFocus" },
+  ]),
 ];
 
-// A side chat in the main chat's panel: no window listeners, only its composer's own chords.
-function SideChat(props: { toggles: string[]; stops: string[] }) {
+// A side chat in the main chat's right panel: no window listeners, only its pane's find and its
+// composer's own chords. Passing `findCloses` opens its find.
+function SideChat(props: {
+  toggles: string[];
+  stops: string[];
+  finds?: string[];
+  findCloses?: string[];
+}) {
   const [composerElement, setComposerElement] = useState<HTMLDivElement | null>(null);
   useChatShortcuts({
     enabled: false,
@@ -152,22 +231,33 @@ function SideChat(props: { toggles: string[]; stops: string[] }) {
     composerElement,
     keybindings: sideChatKeybindings,
     scriptKeybindings: [],
-    getShortcutContext: () => shortcutContext,
-    threadFindActive: false,
+    getShortcutContext: () => ({ ...shortcutContext, previewFocus: isPreviewFocused() }),
+    threadFindActive: props.findCloses !== undefined,
     composerRef: {
       current: {
         toggleModelPicker: () => props.toggles.push("model"),
       } as Partial<ChatComposerHandle> as ChatComposerHandle,
     },
     branchToolbarRef: { current: null },
-    closeThreadFind: () => {},
-    commands: { "thread.stop": () => void props.stops.push("stop") },
+    closeThreadFind: () => void props.findCloses?.push("side"),
+    commands: {
+      "thread.stop": () => void props.stops.push("stop"),
+      "chat.find": () => void props.finds?.push("side"),
+    },
     fallback: () => undefined,
   });
   return (
     <>
-      <div ref={setComposerElement}>
-        <textarea aria-label="Side chat composer" />
+      <div data-preview-panel-mode="inline">
+        <div data-side-chat-pane>
+          <input aria-label="Side chat find" />
+          <div tabIndex={0} aria-label="Side chat timeline">
+            Conversation
+          </div>
+          <div ref={setComposerElement}>
+            <textarea aria-label="Side chat composer" />
+          </div>
+        </div>
       </div>
       <textarea aria-label="Main composer" />
     </>
@@ -186,4 +276,156 @@ it("runs a side chat's composer chords only from its composer, and never thread 
 
   expect(toggles).toEqual(["model"]);
   expect(stops).toEqual([]);
+});
+
+it("opens the side chat's own find for mod+F anywhere in its pane, not the main chat's", async () => {
+  const finds: string[] = [];
+  await using screen = await render(
+    <>
+      <Chat composerKeys={[]} finds={finds} />
+      <SideChat toggles={[]} stops={[]} finds={finds} />
+    </>,
+    options,
+  );
+
+  await userEvent.click(screen.getByLabelText("Side chat composer"));
+  await userEvent.keyboard("{Control>}f{/Control}");
+  await userEvent.click(screen.getByLabelText("Side chat timeline"));
+  await userEvent.keyboard("{Control>}f{/Control}");
+
+  expect(finds).toEqual(["side", "side"]);
+});
+
+it("closes the side chat's find for Escape in its find input and elsewhere in its pane", async () => {
+  const findCloses: string[] = [];
+  await using screen = await render(
+    <SideChat toggles={[]} stops={[]} findCloses={findCloses} />,
+    options,
+  );
+  // Stands in for the narrow right panel sheet, which also closes on an Escape that reaches it.
+  const sheetEscapes: string[] = [];
+  const onSheetKeyDown = (event: KeyboardEvent) => {
+    if (event.key === "Escape") sheetEscapes.push("sheet");
+  };
+  document.addEventListener("keydown", onSheetKeyDown);
+  using _sheet = {
+    [Symbol.dispose]: () => document.removeEventListener("keydown", onSheetKeyDown),
+  };
+
+  await userEvent.click(screen.getByLabelText("Side chat find"));
+  await userEvent.keyboard("{Escape}");
+  await userEvent.click(screen.getByLabelText("Side chat timeline"));
+  await userEvent.keyboard("{Escape}");
+
+  expect(findCloses).toEqual(["side", "side"]);
+  expect(sheetEscapes).toEqual([]);
+});
+
+const ctrlAlt = (key: string, command: KeybindingCommand) => ({
+  command,
+  shortcut: { key, metaKey: false, ctrlKey: true, shiftKey: false, altKey: true, modKey: false },
+});
+
+// The main chat's window listener while focus sits in a side chat pane in its right panel.
+function ChatWithSideChatPane(props: { ran: string[] }) {
+  useChatShortcuts({
+    enabled: true,
+    keybindings: [
+      ctrlAlt("b", "rightPanel.toggle"),
+      ctrlAlt("k", "rightPanel.close"),
+      ctrl("x", "thread.stop", true),
+    ],
+    scriptKeybindings: [],
+    getShortcutContext: () => shortcutContext,
+    threadFindActive: false,
+    composerRef: {
+      current: {
+        insertTextAtEnd: (key: string) => {
+          props.ran.push(`typed ${key}`);
+          return true;
+        },
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: {
+      "rightPanel.toggle": () => void props.ran.push("toggle"),
+      "rightPanel.close": () => void props.ran.push("close"),
+      "thread.stop": () => void props.ran.push("stop"),
+    },
+    fallback: () => undefined,
+  });
+  return (
+    <div data-side-chat-pane>
+      <div role="region" aria-label="Conversation" tabIndex={0}>
+        A side chat message
+      </div>
+      <textarea aria-label="Message Side chat" />
+    </div>
+  );
+}
+
+it("runs right panel commands from inside a side chat pane, but not thread commands", async () => {
+  const ran: string[] = [];
+  await using screen = await render(<ChatWithSideChatPane ran={ran} />, options);
+
+  await userEvent.click(screen.getByLabelText("Message Side chat"));
+  await userEvent.keyboard("{Control>}{Alt>}BK{/Alt}{/Control}");
+  await userEvent.keyboard("{Control>}{Shift>}X{/Shift}{/Control}");
+  await userEvent.click(screen.getByRole("region", { name: "Conversation" }));
+  await userEvent.keyboard("{Control>}{Alt>}B{/Alt}{/Control}");
+  await userEvent.keyboard("q");
+
+  expect(ran).toEqual(["toggle", "close", "toggle"]);
+});
+
+it("leaves keys to a focused video player with controls", async () => {
+  const composerKeys: string[] = [];
+  await using _screen = await render(
+    <>
+      <Chat composerKeys={composerKeys} />
+      <video ref={focusOnMount} controls />
+    </>,
+    options,
+  );
+
+  await userEvent.keyboard(" m");
+  expect(composerKeys).toEqual([]);
+
+  (document.activeElement as HTMLElement).blur();
+  await userEvent.keyboard("a");
+  expect(composerKeys).toEqual(["a"]);
+});
+
+it("leaves project-script shortcuts alone inside a keybinding capture field", async () => {
+  const scriptsRan: string[] = [];
+  const prevented: boolean[] = [];
+  await using screen = await render(
+    <>
+      <Chat
+        composerKeys={[]}
+        scriptKeybindings={[ctrl("y", "script.build.run", true)]}
+        scriptsRan={scriptsRan}
+      />
+      <input
+        ref={focusOnMount}
+        aria-label="Keybinding"
+        data-keybinding-capture=""
+        readOnly
+        onKeyDown={(event) => {
+          if (event.key.toLowerCase() === "y") prevented.push(event.defaultPrevented);
+        }}
+      />
+      <button type="button">Outside</button>
+    </>,
+    options,
+  );
+
+  await userEvent.keyboard("{Control>}{Shift>}Y{/Shift}{/Control}");
+  expect(scriptsRan).toEqual([]);
+  expect(prevented).toEqual([false]);
+
+  await userEvent.click(screen.getByRole("button", { name: "Outside" }));
+  await userEvent.keyboard("{Control>}{Shift>}Y{/Shift}{/Control}");
+  expect(scriptsRan).toEqual(["script.build.run"]);
 });

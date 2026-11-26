@@ -1,9 +1,13 @@
 import {
+  BearerConnectionProfile,
+  BearerConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
+  SshConnectionProfile,
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import { remoteFallbackEditors, resolveRemoteOpenState } from "./remoteOpen";
@@ -18,6 +22,22 @@ const primaryTarget = (httpBaseUrl: string) =>
     wsBaseUrl: httpBaseUrl.replace("http", "ws"),
   });
 
+const sshRoute = (target: {
+  readonly alias: string;
+  readonly username: string | null;
+  readonly port?: number | null;
+}) => ({
+  target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+  profile: Option.some(
+    new SshConnectionProfile({
+      connectionId: "ssh-1",
+      environmentId,
+      label: "sol",
+      target: { port: null, ...target, hostname: "sol.tail1234.ts.net" },
+    }),
+  ),
+});
+
 const TAILSCALE_TARGETS = [
   { kind: "tailscale", host: "sol.tail1234.ts.net" },
   { kind: "mdns", host: "sol.local" },
@@ -28,7 +48,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("http://127.0.0.1:8000"),
-        sshTarget: null,
+        routes: [],
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
         hostEnvironmentId: null,
@@ -40,7 +60,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("https://sol.tail1234.ts.net"),
-        sshTarget: null,
+        routes: [],
         isDesktopRenderer: false,
         remoteOpenTargets: TAILSCALE_TARGETS,
         hostEnvironmentId: null,
@@ -56,7 +76,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: primaryTarget("http://172.29.112.1:14369"),
-        sshTarget: null,
+        routes: [],
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
         hostEnvironmentId: null,
@@ -70,7 +90,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: new RelayConnectionTarget({ environmentId, label: "sol" }),
-        sshTarget: null,
+        routes: [],
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
         hostEnvironmentId: environmentId,
@@ -82,7 +102,7 @@ describe("resolveRemoteOpenState", () => {
     expect(
       resolveRemoteOpenState({
         target: new RelayConnectionTarget({ environmentId, label: "sol" }),
-        sshTarget: null,
+        routes: [],
         isDesktopRenderer: true,
         remoteOpenTargets: TAILSCALE_TARGETS,
         hostEnvironmentId: EnvironmentId.make("environment-host"),
@@ -96,7 +116,7 @@ describe("resolveRemoteOpenState", () => {
   it("leaves a bare desktop SSH alias for the editor to resolve through SSH config", () => {
     const state = resolveRemoteOpenState({
       target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
-      sshTarget: { alias: "sol", username: null, port: null },
+      routes: [sshRoute({ alias: "sol", username: null })],
       isDesktopRenderer: true,
       remoteOpenTargets: [
         { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
@@ -107,7 +127,7 @@ describe("resolveRemoteOpenState", () => {
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
     expect(
       buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/work/project" }),
-    ).toBe("vscode://vscode-remote/ssh-remote+sol/work/project");
+    ).toBe("vscode://vscode-remote/ssh-remote+sol/work/project?windowId=_blank");
     expect(
       buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/work/project" }),
     ).toBe("zed://ssh/sol/work/project");
@@ -127,7 +147,7 @@ describe("resolveRemoteOpenState", () => {
   ])("keeps one login username in editor links for $alias (username: '$username')", (sshTarget) => {
     const state = resolveRemoteOpenState({
       target: new SshConnectionTarget({ environmentId, label: "server", connectionId: "ssh-1" }),
-      sshTarget: { ...sshTarget, port: null },
+      routes: [sshRoute(sshTarget)],
       isDesktopRenderer: true,
       remoteOpenTargets: TAILSCALE_TARGETS,
       hostEnvironmentId: null,
@@ -136,7 +156,7 @@ describe("resolveRemoteOpenState", () => {
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
     expect(
       buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/work/project" }),
-    ).toBe("vscode://vscode-remote/ssh-remote+admin-user%40server/work/project");
+    ).toBe("vscode://vscode-remote/ssh-remote+admin-user%40server/work/project?windowId=_blank");
     expect(
       buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/work/project" }),
     ).toBe("zed://ssh/admin-user@server/work/project");
@@ -154,7 +174,7 @@ describe("resolveRemoteOpenState", () => {
   ])("keeps a non-default SSH port in editor links (port: $port)", ({ port, vscode, zed }) => {
     const state = resolveRemoteOpenState({
       target: new SshConnectionTarget({ environmentId, label: "dockware", connectionId: "ssh-1" }),
-      sshTarget: { alias: "localhost", username: "dockware", port },
+      routes: [sshRoute({ alias: "localhost", username: "dockware", port })],
       isDesktopRenderer: true,
       remoteOpenTargets: TAILSCALE_TARGETS,
       hostEnvironmentId: null,
@@ -162,7 +182,7 @@ describe("resolveRemoteOpenState", () => {
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
     expect(
       buildRemoteOpenUrl({ editor: "vscode", ...state.host, absolutePath: "/var/www/html" }),
-    ).toBe(`vscode://vscode-remote/ssh-remote+${vscode}/var/www/html`);
+    ).toBe(`vscode://vscode-remote/ssh-remote+${vscode}/var/www/html?windowId=_blank`);
     expect(
       buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/var/www/html" }),
     ).toBe(`zed://ssh/${zed}/var/www/html`);
@@ -171,7 +191,7 @@ describe("resolveRemoteOpenState", () => {
   it("uses the advertised login username in editor links over a relay", () => {
     const state = resolveRemoteOpenState({
       target: new RelayConnectionTarget({ environmentId, label: "server" }),
-      sshTarget: null,
+      routes: [],
       isDesktopRenderer: false,
       remoteOpenTargets: [
         { kind: "tailscale", host: "server.tail1234.ts.net", username: "admin-user" },
@@ -182,7 +202,9 @@ describe("resolveRemoteOpenState", () => {
     if (state.mode !== "remote-links") throw new Error("Expected a remote link");
     expect(
       buildRemoteOpenUrl({ editor: "cursor", ...state.host, absolutePath: "/work/project" }),
-    ).toBe("cursor://vscode-remote/ssh-remote+admin-user%40server.tail1234.ts.net/work/project");
+    ).toBe(
+      "cursor://vscode-remote/ssh-remote+admin-user%40server.tail1234.ts.net/work/project?windowId=_blank",
+    );
   });
 
   it("reports unavailable when a remote environment advertises no hosts", () => {
@@ -190,13 +212,49 @@ describe("resolveRemoteOpenState", () => {
       expect(
         resolveRemoteOpenState({
           target: new RelayConnectionTarget({ environmentId, label: "sol" }),
-          sshTarget: null,
+          routes: [],
           isDesktopRenderer: false,
           remoteOpenTargets,
           hostEnvironmentId: null,
         }),
       ).toEqual({ mode: "remote-unavailable" });
     }
+  });
+  it("uses a saved SSH route's alias when a Tailscale route is preferred", () => {
+    const target = new BearerConnectionTarget({
+      environmentId,
+      label: "sol",
+      connectionId: "ts-1",
+    });
+    const state = resolveRemoteOpenState({
+      target,
+      routes: [
+        {
+          target,
+          profile: Option.some(
+            new BearerConnectionProfile({
+              connectionId: "ts-1",
+              environmentId,
+              label: "sol",
+              httpBaseUrl: "https://sol.tail1234.ts.net",
+              wsBaseUrl: "wss://sol.tail1234.ts.net",
+              network: "tailscale",
+            }),
+          ),
+        },
+        sshRoute({ alias: "sol-alias", username: null }),
+      ],
+      isDesktopRenderer: false,
+      remoteOpenTargets: [
+        { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
+      ],
+      hostEnvironmentId: null,
+    });
+    expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol-alias" } });
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+    expect(
+      buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/work/project" }),
+    ).toBe("zed://ssh/sol-alias/work/project");
   });
 });
 
@@ -244,7 +302,7 @@ describe("buildRemoteOpenUrl", () => {
   it("roots Windows paths", () => {
     expect(
       buildRemoteOpenUrl({ editor: "vscode", host: "sol", absolutePath: "C:\\Users\\theo" }),
-    ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo");
+    ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo?windowId=_blank");
   });
 
   it.each([
@@ -275,6 +333,16 @@ describe("buildRemoteOpenUrl", () => {
     });
   });
 
+  it("asks VS Code to open a remote project folder in a new window", () => {
+    // Without windowId=_blank, VS Code reuses (and replaces) the last active window.
+    const url = buildRemoteOpenUrl({
+      editor: "vscode",
+      host: "sol",
+      absolutePath: "/work/project",
+    });
+    expect(new URL(url ?? "").searchParams.get("windowId")).toBe("_blank");
+  });
+
   it("drops the Windows drive letter for Zed", () => {
     expect(
       buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "C:\\Users\\theo" }),
@@ -288,8 +356,12 @@ describe("buildRemoteOpenUrl", () => {
     const targets = [
       ["vscode", true, "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md:1:1"],
       ["cursor", true, "cursor://vscode-remote/ssh-remote+sol/tmp/my%20file.md:1:1"],
-      ["vscode", false, "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md"],
-      ["vscode", undefined, "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md"],
+      ["vscode", false, "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md?windowId=_blank"],
+      [
+        "vscode",
+        undefined,
+        "vscode://vscode-remote/ssh-remote+sol/tmp/my%20file.md?windowId=_blank",
+      ],
       ["zed", true, "zed://ssh/sol/tmp/my%20file.md"],
       [
         "pycharm",

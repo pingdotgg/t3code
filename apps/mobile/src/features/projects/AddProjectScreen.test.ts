@@ -6,10 +6,14 @@ import * as NodeModule from "node:module";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { workspaceDetailRouter } from "../layout/workspace/workspace-detail-selection";
 import type { NavigationState } from "@react-navigation/native";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { act, createElement, isValidElement, type ReactNode } from "react";
+import { act, Children, createElement, isValidElement, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -22,10 +26,13 @@ const state = vi.hoisted(() => ({
     id: string;
     title: string;
     workspaceRoot: string;
+    repositoryIdentity?: { canonicalKey: string };
   }[],
+  cloneDestinations: [] as string[],
   createResult: null as Promise<unknown> | null,
   createNewResult: null as Promise<unknown> | null,
   startCloneResult: null as Promise<unknown> | null,
+  lookupRepository: vi.fn(),
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
   newProjectsRoot: null as string | null,
   waitForProject: vi.fn(),
@@ -70,6 +77,7 @@ vi.mock("react-native", () => ({
   View: "View",
 }));
 vi.mock("@react-navigation/native", () => ({
+  useRoute: () => state.navigationState?.routes[state.navigationState.index],
   useNavigation: () => ({
     dispatch: state.dispatch,
     getState: () =>
@@ -134,7 +142,19 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   }),
 }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => () => {} }));
+// Only filesystem.browse of `~` answers, with the host's home as its parentPath.
+vi.mock("../../state/use-atom-query-runner", () => ({
+  useAtomQueryRunner:
+    () =>
+    ({ input }: { input?: { partialPath?: string; repository?: string } }) =>
+      input?.repository
+        ? state.lookupRepository(input.repository)
+        : Promise.resolve(
+            input?.partialPath === "~"
+              ? AsyncResult.success({ parentPath: "/home/tester", entries: [] })
+              : undefined,
+          ),
+}));
 vi.mock("../../state/query", () => ({ useEnvironmentQuery: () => ({ data: null }) }));
 vi.mock("../../state/presentation", () => ({
   useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
@@ -144,6 +164,7 @@ vi.mock("../../state/sourceControl", () => ({
   sourceControlEnvironment: {
     discovery: (input: unknown) => input,
     startProjectClone: async ({ input }: { input: { destinationPath: string } }) => {
+      state.cloneDestinations.push(input.destinationPath);
       if (state.startCloneResult) return state.startCloneResult;
       NodeFS.mkdirSync(input.destinationPath);
       return AsyncResult.success(undefined);
@@ -175,6 +196,7 @@ import {
   AddProjectNewScreen,
   AddProjectDestinationScreen,
   AddProjectLocalFolderScreen,
+  AddProjectRepositoryScreen,
   AddProjectSourceScreen,
 } from "./AddProjectScreen";
 import { AddProjectSourceRoute } from "./AddProjectSourceRoute";
@@ -225,12 +247,105 @@ function renderScreen(render: () => ReactNode) {
   return screen;
 }
 
+it.each([
+  { name: "Back after two submissions in one render", repeatSubmit: true, unmount: true },
+  { name: "Back before the screen unmounts" },
+  { name: "a change to the repository route parameters", changeParams: true },
+  { name: "submitting from a render with stale route parameters", replaceBeforeSubmit: true },
+])(
+  "ignores a pending repository reply after $name",
+  async ({ repeatSubmit, unmount, changeParams, replaceBeforeSubmit }) => {
+    const repository = AsyncResult.success({
+      provider: "github",
+      nameWithOwner: "example/slow",
+      url: "https://github.com/example/slow",
+      sshUrl: "git@github.com:example/slow.git",
+    });
+    const lookup = Promise.withResolvers<typeof repository>();
+    const duplicateLookup = Promise.withResolvers<typeof repository>();
+    state.lookupRepository
+      .mockReset()
+      .mockReturnValueOnce(lookup.promise)
+      .mockReturnValue(duplicateLookup.promise);
+    state.dispatch.mockReset();
+    state.environments = [{ environmentId: "environment", environmentLabel: "Environment" }];
+    state.connectionStates = {};
+    const flow = mountProjectFlow(false, false, false, "AddProjectRepository");
+    flow.setParams({ environmentId: "environment", source: "github" });
+    let screen: ReactNode;
+    function RepositoryScreen() {
+      screen = AddProjectRepositoryScreen({ environmentId: "environment", source: "github" });
+      return null;
+    }
+    function withRepositoryInput(
+      node: ReactNode,
+      action: (input: {
+        onChangeText: (value: string) => void;
+        onSubmitEditing: () => void;
+      }) => void,
+    ): void {
+      Children.forEach(node, (child) => {
+        if (
+          !isValidElement<{
+            children?: ReactNode;
+            onChangeText?: (value: string) => void;
+            onSubmitEditing?: () => void;
+          }>(child)
+        ) {
+          return;
+        }
+        const { onChangeText, onSubmitEditing } = child.props;
+        if (onChangeText && onSubmitEditing) {
+          action({ onChangeText, onSubmitEditing });
+        } else {
+          withRepositoryInput(child.props.children, action);
+        }
+      });
+    }
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const root = createRoot(document.createElement("div"));
+    mountedRoots.push(root);
+    await act(() => root.render(createElement(RepositoryScreen)));
+    await act(() => withRepositoryInput(screen, (input) => input.onChangeText("example/slow")));
+    const submit = findAction(screen, "Lookup repository");
+    if (!submit) throw new Error("Repository lookup action missing");
+    try {
+      if (replaceBeforeSubmit) flow.setParams({ source: "gitlab" });
+      await act(() => {
+        if (repeatSubmit) {
+          withRepositoryInput(screen, (input) => input.onSubmitEditing());
+        }
+        void submit();
+      });
+      if (!replaceBeforeSubmit) {
+        expect(state.lookupRepository).toHaveBeenCalledWith("example/slow");
+        if (changeParams) {
+          flow.setParams({ source: "gitlab" });
+        } else {
+          flow.back();
+        }
+      }
+      if (unmount) await act(() => root.render(null));
+      await act(async () => {
+        lookup.resolve(repository);
+        duplicateLookup.resolve(repository);
+        await lookup.promise;
+      });
+      expect(state.dispatch).not.toHaveBeenCalled();
+      expect(state.lookupRepository).toHaveBeenCalledTimes(replaceBeforeSubmit ? 0 : 1);
+    } finally {
+      state.navigationState = undefined;
+      state.dispatch.mockReset();
+    }
+  },
+);
+
 function cloneAction() {
   const action = findAction(
     renderScreen(() =>
       AddProjectDestinationScreen({
         environmentId: "environment",
-        remoteUrl: "https://example.com/repo.git",
+        remoteUrl: "https://example.com/owner/repo.git",
         repositoryName: "repo",
       }),
     ),
@@ -274,6 +389,38 @@ describe("clone project permissions", () => {
       expect(state.projects).toEqual([]);
     },
   );
+
+  it.each([
+    [
+      "opens the existing project of that repository instead of cloning into its folder",
+      "example.com/owner/repo",
+      false,
+    ],
+    ["leaves a folder holding another repository to the clone", "example.com/owner/other", true],
+  ])("%s", async (_name, canonicalKey, clones) => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.cloneDestinations = [];
+    state.startCloneResult = Promise.resolve(
+      AsyncResult.failure(Cause.fail(new Error("Destination is not empty"))),
+    );
+    state.existingProjects = [
+      {
+        environmentId: "environment",
+        id: "existing",
+        title: "repo",
+        workspaceRoot: NodePath.join(state.baseDirectory, "repo"),
+        repositoryIdentity: { canonicalKey },
+      },
+    ];
+    try {
+      await cloneAction()();
+
+      expect(state.cloneDestinations.length > 0).toBe(clones);
+    } finally {
+      state.existingProjects = [];
+      state.startCloneResult = null;
+    }
+  });
 });
 
 function mountProjectFlow(
@@ -293,6 +440,7 @@ function mountProjectFlow(
       "PullRequestFile",
       "NewTaskProject",
       "AddProject",
+      "AddProjectRepository",
       "AddProjectLocal",
       "AddProjectNew",
       "AddProjectDestination",
@@ -488,10 +636,10 @@ describe("add project source environment", () => {
 });
 
 describe("local project navigation", () => {
-  function setup() {
+  function setup(baseDirectory = "/tmp/t3-mobile-audit-fixture") {
     state.navigationState = undefined;
     state.scopes = new Set([AuthOrchestrationOperateScope]);
-    state.baseDirectory = "/tmp/t3-mobile-audit-fixture";
+    state.baseDirectory = baseDirectory;
     state.projects = [];
     state.dispatch.mockReset();
     state.alert.mockReset();
@@ -521,6 +669,28 @@ describe("local project navigation", () => {
       "Project added",
       "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
     );
+  });
+
+  it("opens an existing project typed as a home-relative path instead of creating it", async () => {
+    state.existingProjects = [
+      {
+        environmentId: "environment",
+        id: "existing",
+        title: "bike-documents",
+        workspaceRoot: "/home/tester/projects/bike-documents",
+      },
+    ];
+    try {
+      const { created, projected, submit } = setup("~/projects/bike-documents/");
+      state.scopes.add(AuthFilesystemReadScope);
+      created.resolve(AsyncResult.success(undefined));
+      projected.resolve(null);
+      await submit();
+
+      expect(state.projects).toEqual([]);
+    } finally {
+      state.existingProjects = [];
+    }
   });
 
   it("does not replace a reopened flow when the previous submission finishes", async () => {
