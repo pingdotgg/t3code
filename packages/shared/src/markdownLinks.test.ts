@@ -213,6 +213,18 @@ describe("extractMarkdownLinkHrefs", () => {
 
   it.each([
     [
+      String.raw`[one](<./a/doc\> final.ts>) [two](<./b/doc\> final.ts>)`,
+      [String.raw`./a/doc\> final.ts`, String.raw`./b/doc\> final.ts`],
+    ],
+    [
+      String.raw`[one](<./a/doc\\> "title") [two](<./b/doc\\> (title))`,
+      [String.raw`./a/doc\\`, String.raw`./b/doc\\`],
+    ],
+    [
+      String.raw`[bad](<./x/dir\> text) [one](<./a/doc\\\> final.ts> "title") [two](<./b/doc\< final.ts>)`,
+      [String.raw`./a/doc\\\> final.ts`, String.raw`./b/doc\< final.ts`],
+    ],
+    [
       "[a](/x/app/(a)/page.tsx) [b](/x/app/(b)/page.tsx)",
       ["/x/app/(a)/page.tsx", "/x/app/(b)/page.tsx"],
     ],
