@@ -6,20 +6,20 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.2-astra
-  at: 2026-11-25T17:10:38+00:00
+  at: 2026-11-26T17:03:30+00:00
 verified:
   - by: opencode/gpt-6.2-astra
-    at: 2026-11-25T17:10:38+00:00
+    at: 2026-11-26T17:03:30+00:00
 snapshot:
-  at: 2026-11-25T17:10:38+00:00
-  fork_main: c6a57831fb900819431f2b5a054fad8d740bfe38
-  upstream_main: 6bb4e3d9d647cc5bf8ea15751a0caab931ae064f
-  shared_baseline: 1a01d7ee6f78a3da27810202a3151ff815adc4d4
-  last_main_integration: c6a57831fb900819431f2b5a054fad8d740bfe38
-  last_main_upstream: 1a01d7ee6f78a3da27810202a3151ff815adc4d4
-  missing_upstream_on_main: 255
-  branch_integration: de10f209e3a4e1dbc61e91d3af36ed5b15b97c66
-  branch_code_tip: 4476abebf8cc8656850bcf3234d5f738a127ea15
+  at: 2026-11-26T17:03:30+00:00
+  fork_main: 39099df5656ab9088f2e62ff9c943be0ba81a136
+  upstream_main: f28ced81b36027597c2fe45a1cc271e880975451
+  shared_baseline: 6bb4e3d9d647cc5bf8ea15751a0caab931ae064f
+  last_main_integration: 39099df5656ab9088f2e62ff9c943be0ba81a136
+  last_main_upstream: 6bb4e3d9d647cc5bf8ea15751a0caab931ae064f
+  missing_upstream_on_main: 289
+  branch_integration: 48a275bf16681aa270bcb02018641531ad40434e
+  branch_code_tip: bc223ada7bb1ece462a6a2ded6d401c6f0257300
   missing_upstream_on_branch: 0
 sources:
   - id: upstream-nov23-policy
@@ -446,7 +446,11 @@ sources:
 
 # Upstream integration
 
-The November 25 candidate incorporates 255 commits through [upstream `6bb4e3d9d6`](https://github.com/pingdotgg/t3code/commit/6bb4e3d9d647cc5bf8ea15751a0caab931ae064f). Git checkpoints return upstream’s precomputed comparison range alongside the fork’s exclusions. Jujutsu keeps resolving its own refs. T3 Connect Android notifications now match the per-device account hash; self-hosted paired delivery still uses its separate encrypted payload.
+The November 26 candidate merges [upstream `f28ced81b3`](https://github.com/pingdotgg/t3code/commit/f28ced81b36027597c2fe45a1cc271e880975451) into fork main `39099df565`. It incorporates 289 commits. Git uses upstream’s new status polling; Jujutsu continues through its own status service.
+
+## November 25 sync
+
+[Fork PR #93](https://github.com/NicholasZolton/t3code/pull/93) incorporated 255 commits through [upstream `6bb4e3d9d6`](https://github.com/pingdotgg/t3code/commit/6bb4e3d9d647cc5bf8ea15751a0caab931ae064f). Git checkpoints return upstream’s precomputed comparison range alongside the fork’s exclusions. Jujutsu keeps resolving its own refs. T3 Connect Android notifications now match the per-device account hash; self-hosted paired delivery still uses its separate encrypted payload.
 
 ## November 24 sync
 
