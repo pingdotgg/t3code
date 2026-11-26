@@ -4,6 +4,7 @@ import type { SettingsWindow } from "./MacSettingsWindow.ts";
 
 const mocks = vi.hoisted(() => ({
   granted: false,
+  locale: "en",
   createFromPath: vi.fn(),
   startDrag: vi.fn(),
   showItemInFolder: vi.fn(),
@@ -76,6 +77,10 @@ vi.mock("electron", async () => {
     shell: { showItemInFolder: mocks.showItemInFolder },
   };
 });
+vi.mock("../i18n/messages.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../i18n/messages.ts")>()),
+  activeUiLocale: () => mocks.locale,
+}));
 vi.mock("./MacSettingsWindow.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./MacSettingsWindow.ts")>();
   return {
@@ -95,6 +100,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
   mocks.granted = false;
+  mocks.locale = "en";
   const icon = { toDataURL: () => "data:image/png;base64,abc" };
   mocks.createFromPath.mockReturnValue({ isEmpty: () => false, resize: () => icon });
   mocks.loadURL.mockResolvedValue(undefined);
@@ -122,4 +128,11 @@ it("does not reopen a superseded helper when its initial probe completes", async
   await first;
   expect(windows).toHaveLength(1);
   expect(windows[0]!.destroyed).toBe(false);
+});
+
+it("lays out the helper right-to-left in a right-to-left UI language", async () => {
+  mocks.locale = "he";
+  await open();
+  const html = decodeURIComponent(String(mocks.loadURL.mock.calls[0]?.[0]));
+  expect(html).toContain('<html lang="he" dir="rtl">');
 });

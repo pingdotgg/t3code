@@ -60,11 +60,11 @@ export function WorkspaceTabDock(props: { readonly placement: "column" | "window
       pointerEvents="box-none"
       style={{
         position: "absolute",
-        left: 0,
+        start: 0,
         bottom: 0,
         height: 128,
         direction,
-        ...(width === undefined ? { right: 0 } : { width }),
+        ...(width === undefined ? { end: 0 } : { width }),
       }}
     >
       <NativeSidebarTabBar

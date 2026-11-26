@@ -49,6 +49,10 @@ export function m(message: string, variables: Readonly<Record<string, string>> =
     : gtFallback(target, { ...options, $locale: activeLocale, $_fallback: source });
 }
 
+export function activeUiLocale(): string {
+  return activeLocale;
+}
+
 /** Runs `listener` after each switch to a different UI language. */
 export function onLocaleChange(listener: () => void): () => void {
   listeners.add(listener);
