@@ -11,6 +11,7 @@ import {
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import type * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -20,10 +21,12 @@ import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
@@ -763,13 +766,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         return yield* withAcceptedFallback(provider);
       }
       const coordinator = runtimeCoordinator.value;
-      const withCommands = applyAcpRegistryAvailableCommands(
-        provider,
-        yield* coordinator.getAvailableCommands(instanceId),
-      );
       const liveSnapshot = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
       yield* observeLiveRevision(liveSnapshot.revision);
-      const base = yield* withAcceptedFallback(withCommands);
+      const base = yield* withAcceptedFallback(provider);
       const withConfiguration = Option.isSome(liveSnapshot.configuration)
         ? yield* applyLiveConfiguration(base, liveSnapshot.configuration.value)
         : base;
@@ -1085,21 +1084,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         );
         if (Option.isNone(runtimeCoordinator)) return yield* publishEnrichment;
 
-        const publishLiveCommands = runtimeCoordinator.value.watchAvailableCommands(
-          instanceId,
-          ({ slashCommands, skills }) =>
-            liveSnapshotSemaphore.withPermit(
-              getSnapshot.pipe(
-                Effect.flatMap((current) =>
-                  publishSnapshot({
-                    ...current,
-                    slashCommands,
-                    skills,
-                  }),
-                ),
-              ),
-            ),
-        );
         const publishLiveConfiguration = Ref.get(lastObservedLiveRevision).pipe(
           Effect.flatMap((afterRevision) =>
             runtimeCoordinator.value.watchLiveConfiguration(
@@ -1152,13 +1136,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               ),
             ),
         );
-        yield* Effect.all(
-          [publishEnrichment, publishLiveCommands, publishLiveConfiguration, publishUrlAuthAction],
-          {
-            concurrency: "unbounded",
-            discard: true,
-          },
-        );
+        yield* Effect.all([publishEnrichment, publishLiveConfiguration, publishUrlAuthAction], {
+          concurrency: "unbounded",
+          discard: true,
+        });
       }),
     }).pipe(
       Effect.mapError(
@@ -1171,6 +1152,78 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }),
       ),
     );
+
+    // A session's commands belong to its directory, so they reach clients through that
+    // directory's snapshot. Reports are retained until the registry subscribes.
+    const workspaceRescans = yield* Queue.unbounded<string, Cause.Done>();
+    yield* Effect.addFinalizer(() => Queue.end(workspaceRescans));
+    if (Option.isSome(runtimeCoordinator)) {
+      yield* runtimeCoordinator.value
+        .watchAvailableCommands(instanceId, (cwd) =>
+          Queue.offer(workspaceRescans, cwd).pipe(Effect.asVoid),
+        )
+        .pipe(Effect.forkScoped);
+    }
+    // ACP advertises commands only to a session, and a session has one directory.
+    const probeCommandsForCwd = Effect.fn("AcpRegistryDriver.probeCommandsForCwd")(function* (
+      cwd: string,
+    ) {
+      const inspection = yield* catalog
+        .inspect(effectiveConfig, processEnvironment)
+        .pipe(Effect.option);
+      if (Option.isNone(inspection) || inspection.value.status !== "ready") {
+        return Option.none<AcpRegistryAvailableCommands>();
+      }
+      const probe = probeAcpRegistryConfiguration({
+        instanceId,
+        settings: effectiveConfig,
+        cwd,
+        environment: providerProbeEnvironment(processEnvironment),
+        commandsOnly: true,
+      }).pipe(
+        Effect.map(({ slashCommands, skills }) => ({ slashCommands, skills })),
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(SecureRandom.SecureRandom, random),
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: `Failed to discover ACP commands for '${cwd}'.`,
+              cause,
+            }),
+        ),
+      );
+      return Option.isSome(runtimeCoordinator)
+        ? yield* runtimeCoordinator.value.runBackgroundProbe(
+            effectiveConfig.source === "local" ? `local:${instanceId}` : effectiveConfig.agentId,
+            probe.pipe(
+              Effect.provideService(
+                AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+                runtimeCoordinator.value,
+              ),
+            ),
+          )
+        : Option.some(yield* probe);
+    });
+    const snapshotForCwd = Effect.fn("AcpRegistryDriver.snapshotForCwd")(function* (cwd: string) {
+      const machineSnapshot = yield* snapshot.getSnapshot;
+      if (!effectiveConfig.enabled) return machineSnapshot;
+      const live = Option.isSome(runtimeCoordinator)
+        ? yield* runtimeCoordinator.value.getAvailableCommands(instanceId, cwd)
+        : Option.none<AcpRegistryAvailableCommands>();
+      const commands = Option.isSome(live) ? live : yield* probeCommandsForCwd(cwd);
+      // No probe ran: the agent is not ready, or a starting session cancelled the probe and
+      // reports this directory's commands itself.
+      if (Option.isNone(commands)) return { ...machineSnapshot, slashCommandsPending: true };
+      return {
+        ...applyAcpRegistryAvailableCommands(machineSnapshot, commands),
+        slashCommandsPending: false,
+      };
+    });
 
     const provideAcpManagementServices = <A, E>(
       effect: Effect.Effect<
@@ -1238,6 +1291,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
+      snapshotForCwd,
+      workspaceRescans: Stream.fromQueue(workspaceRescans),
       invalidateCaches: liveSnapshotSemaphore
         .withPermit(
           (Option.isSome(runtimeCoordinator)

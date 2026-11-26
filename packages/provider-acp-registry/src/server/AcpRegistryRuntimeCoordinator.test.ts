@@ -87,23 +87,23 @@ describe("AcpRegistryRuntimeCoordinator", () => {
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 
-  it.effect("replays and replaces late command advertisements per provider instance", () =>
+  it.effect("replays and replaces late command advertisements per instance and directory", () =>
     Effect.gen(function* () {
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const codex = ProviderInstanceId.make("acpRegistry_codex");
       const kilo = ProviderInstanceId.make("acpRegistry_kilo");
       const firstSeen = yield* Deferred.make<void>();
       const replacementSeen = yield* Deferred.make<void>();
-      const received: Array<AcpRegistryAvailableCommands> = [];
+      const received: Array<readonly [string, AcpRegistryAvailableCommands]> = [];
 
-      yield* coordinator.publishAvailableCommands(codex, {
+      yield* coordinator.publishAvailableCommands(codex, "/project", {
         slashCommands: [{ name: "status" }],
         skills: [{ name: "workspace-skill", path: "acp://skill/workspace-skill", enabled: true }],
       });
       const consumer = yield* coordinator
-        .watchAvailableCommands(codex, (commands) =>
+        .watchAvailableCommands(codex, (cwd, commands) =>
           Effect.gen(function* () {
-            received.push(commands);
+            received.push([cwd, commands]);
             yield* received.length === 1
               ? Deferred.succeed(firstSeen, undefined)
               : Deferred.succeed(replacementSeen, undefined);
@@ -112,26 +112,34 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         .pipe(Effect.forkChild);
       yield* Deferred.await(firstSeen);
 
-      yield* coordinator.publishAvailableCommands(kilo, {
+      yield* coordinator.publishAvailableCommands(kilo, "/project", {
         slashCommands: [{ name: "review" }],
         skills: [],
       });
-      yield* coordinator.publishAvailableCommands(codex, { slashCommands: [], skills: [] });
+      yield* coordinator.publishAvailableCommands(codex, "/other", {
+        slashCommands: [],
+        skills: [],
+      });
       yield* Deferred.await(replacementSeen);
       yield* Fiber.interrupt(consumer);
 
+      const projectCommands = {
+        slashCommands: [{ name: "status" }],
+        skills: [{ name: "workspace-skill", path: "acp://skill/workspace-skill", enabled: true }],
+      };
       expect(received).toEqual([
-        {
-          slashCommands: [{ name: "status" }],
-          skills: [{ name: "workspace-skill", path: "acp://skill/workspace-skill", enabled: true }],
-        },
-        { slashCommands: [], skills: [] },
+        ["/project", projectCommands],
+        ["/other", { slashCommands: [], skills: [] }],
       ]);
-      expect(yield* coordinator.getAvailableCommands(kilo)).toEqual(
+      expect(yield* coordinator.getAvailableCommands(codex, "/project")).toEqual(
+        Option.some(projectCommands),
+      );
+      expect(yield* coordinator.getAvailableCommands(kilo, "/project")).toEqual(
         Option.some({ slashCommands: [{ name: "review" }], skills: [] }),
       );
       yield* coordinator.clearAvailableCommands(codex);
-      expect(Option.isNone(yield* coordinator.getAvailableCommands(codex))).toBe(true);
+      expect(Option.isNone(yield* coordinator.getAvailableCommands(codex, "/project"))).toBe(true);
+      expect(Option.isNone(yield* coordinator.getAvailableCommands(codex, "/other"))).toBe(true);
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 

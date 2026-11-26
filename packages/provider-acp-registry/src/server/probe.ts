@@ -408,6 +408,8 @@ export interface AcpRegistryConfigurationProbeInput {
   readonly cwd: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly modelDiscovery?: AcpRegistryModelDiscovery;
+  /** The caller reads only the commands, so a late model catalog is not waited for. */
+  readonly commandsOnly?: boolean;
 }
 
 type AcpRegistryManagementInput = AcpRegistryConfigurationProbeInput;
@@ -662,7 +664,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
 
       yield* Effect.all(
         [
-          hasInitialModels
+          hasInitialModels || input.commandsOnly === true
             ? Effect.void
             : Deferred.await(modelsAdvertised).pipe(
                 Effect.timeoutOption(MODEL_ADVERTISEMENT_GRACE),

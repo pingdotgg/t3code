@@ -1224,16 +1224,32 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
 
   it.effect("keeps a live session's project commands out of other projects", () =>
     Effect.gen(function* () {
-      const { instance, otherProject } = yield* createWorkspaceCommandsInstance();
+      const { instance, project, otherProject } = yield* createWorkspaceCommandsInstance();
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       // What a thread running in `project` publishes when the agent advertises its commands.
-      yield* coordinator.publishAvailableCommands(identity.instanceId, {
+      yield* coordinator.publishAvailableCommands(identity.instanceId, project, {
         slashCommands: [{ name: "global" }, { name: "demo" }],
         skills: [],
       });
       expect(instance.snapshotForCwd).toBeDefined();
       const snapshot = yield* instance.snapshotForCwd!(otherProject);
       expect(snapshot.slashCommands.map((command) => command.name)).not.toContain("demo");
+    }),
+  );
+
+  it.effect("lists a live session's commands in its own project and asks for a rescan", () =>
+    Effect.gen(function* () {
+      const { instance, project } = yield* createWorkspaceCommandsInstance();
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+      yield* coordinator.publishAvailableCommands(identity.instanceId, project, {
+        slashCommands: [{ name: "live-only" }],
+        skills: [],
+      });
+      expect(yield* Stream.runHead(instance.workspaceRescans!)).toEqual(Option.some(project));
+      const snapshot = yield* instance.snapshotForCwd!(project);
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["live-only"]);
+      const machine = yield* instance.snapshot.getSnapshot;
+      expect(machine.slashCommands.map((command) => command.name)).not.toContain("live-only");
     }),
   );
 

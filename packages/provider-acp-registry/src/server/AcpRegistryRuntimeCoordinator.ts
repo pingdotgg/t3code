@@ -19,6 +19,7 @@ import type { AcpRegistryAvailableCommands, AcpRegistryLiveConfiguration } from 
 
 interface AvailableCommandsUpdate {
   readonly instanceId: ProviderInstanceId;
+  readonly cwd: string;
   readonly commands: AcpRegistryAvailableCommands;
 }
 
@@ -71,16 +72,19 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E, R>;
     readonly clearAvailableCommands: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
+    /** Commands are a session's, and a session belongs to one directory: never share them across cwds. */
     readonly publishAvailableCommands: (
       instanceId: ProviderInstanceId,
+      cwd: string,
       commands: AcpRegistryAvailableCommands,
     ) => Effect.Effect<void>;
     readonly getAvailableCommands: (
       instanceId: ProviderInstanceId,
+      cwd: string,
     ) => Effect.Effect<Option.Option<AcpRegistryAvailableCommands>>;
     readonly watchAvailableCommands: (
       instanceId: ProviderInstanceId,
-      onUpdate: (commands: AcpRegistryAvailableCommands) => Effect.Effect<void>,
+      onUpdate: (cwd: string, commands: AcpRegistryAvailableCommands) => Effect.Effect<void>,
     ) => Effect.Effect<void>;
     readonly clearLiveConfiguration: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
     readonly clearLiveConfigurationIfRevision: (
@@ -127,7 +131,7 @@ const make = Effect.gen(function* () {
   const activeForegroundCounts = yield* Ref.make(new Map<string, number>());
   const availableCommandsUpdates = yield* PubSub.unbounded<AvailableCommandsUpdate>();
   const availableCommandsByInstance = yield* Ref.make(
-    new Map<ProviderInstanceId, AcpRegistryAvailableCommands>(),
+    new Map<ProviderInstanceId, ReadonlyMap<string, AcpRegistryAvailableCommands>>(),
   );
   const liveConfigurationUpdates = yield* PubSub.unbounded<LiveConfigurationUpdate>();
   const liveConfigurations = yield* Ref.make<LiveConfigurationState>({
@@ -195,15 +199,16 @@ const make = Effect.gen(function* () {
       });
 
   const publishAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["publishAvailableCommands"] =
-    (instanceId, commands) =>
+    (instanceId, cwd, commands) =>
       Ref.update(availableCommandsByInstance, (current) => {
         const next = new Map(current);
-        next.set(instanceId, commands);
+        next.set(instanceId, new Map(current.get(instanceId)).set(cwd, commands));
         return next;
       }).pipe(
         Effect.andThen(
           PubSub.publish(availableCommandsUpdates, {
             instanceId,
+            cwd,
             commands,
           }),
         ),
@@ -211,8 +216,10 @@ const make = Effect.gen(function* () {
       );
 
   const getAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["getAvailableCommands"] =
-    Effect.fn("AcpRegistryRuntimeCoordinator.getAvailableCommands")(function* (instanceId) {
-      return Option.fromNullishOr((yield* Ref.get(availableCommandsByInstance)).get(instanceId));
+    Effect.fn("AcpRegistryRuntimeCoordinator.getAvailableCommands")(function* (instanceId, cwd) {
+      return Option.fromNullishOr(
+        (yield* Ref.get(availableCommandsByInstance)).get(instanceId)?.get(cwd),
+      );
     });
 
   const watchAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["watchAvailableCommands"] =
@@ -221,13 +228,13 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           // Subscribe before reading to avoid missing publications.
           const subscription = yield* PubSub.subscribe(availableCommandsUpdates);
-          const current = yield* getAvailableCommands(instanceId);
-          if (Option.isSome(current)) {
-            yield* onUpdate(current.value);
+          const current = (yield* Ref.get(availableCommandsByInstance)).get(instanceId);
+          for (const [cwd, commands] of current ?? []) {
+            yield* onUpdate(cwd, commands);
           }
           yield* Stream.fromSubscription(subscription).pipe(
             Stream.filter((update) => update.instanceId === instanceId),
-            Stream.runForEach((update) => onUpdate(update.commands)),
+            Stream.runForEach((update) => onUpdate(update.cwd, update.commands)),
           );
         }),
       );
