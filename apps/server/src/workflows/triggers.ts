@@ -73,15 +73,21 @@ export const daily = (
   checkOptions(`daily("${timeOfDay}")`, options, ["weekdays"]);
   const weekdays = options?.weekdays;
   // Read once here: a time the schedule cannot read would otherwise never fire, without a word.
-  if (parseTimeOfDay(timeOfDay) === null) {
+  const time = parseTimeOfDay(timeOfDay);
+  if (time === null) {
     throw new Error(`daily("${timeOfDay}") needs a 24-hour time such as "09:00".`);
   }
-  if (weekdays?.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
-    throw new Error(`daily's weekdays are 0 (Sunday) to 6 (Saturday), not ${weekdays.join(", ")}.`);
+  const days = [...new Set(weekdays?.toSorted())];
+  if (days.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
+    throw new Error(
+      `daily's weekdays are 0 (Sunday) to 6 (Saturday), not ${weekdays?.join(", ")}.`,
+    );
   }
+  // Equivalent spellings share one id: the schedule reads no days or all seven as every day.
+  const at = `${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`;
   return {
     kind: "schedule",
-    id: `daily:${timeOfDay}:${weekdays?.toSorted().join(",") ?? "all"}`,
+    id: `daily:${at}:${days.length === 0 || days.length === 7 ? "all" : days.join(",")}`,
     schedule: { type: "fixed_time", timeOfDay, ...(weekdays === undefined ? {} : { weekdays }) },
   };
 };
