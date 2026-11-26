@@ -755,6 +755,20 @@ function getActiveRoute(navigation: {
   return state?.routes[state.index];
 }
 
+function isActiveRoute(
+  navigation: Parameters<typeof getActiveRoute>[0],
+  originRoute: ReturnType<typeof getActiveRoute>,
+): boolean {
+  const activeRoute = getActiveRoute(navigation);
+  // A warm link can change the task without replacing its native route key.
+  return (
+    originRoute !== undefined &&
+    activeRoute?.key === originRoute.key &&
+    activeRoute.name === originRoute.name &&
+    activeRoute.params === originRoute.params
+  );
+}
+
 function useOpenNewTaskDraft() {
   const navigation = useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList>>();
   const selectDetail = useSelectWorkspaceDetail();
@@ -768,17 +782,7 @@ function useOpenNewTaskDraft() {
     },
     originRoute: NavigationState<ParamListBase>["routes"][number] | undefined,
   ) => {
-    const isStillOnOrigin = () => {
-      const activeRoute = getActiveRoute(navigation);
-      // A warm link can change the task without replacing its native route key.
-      return (
-        originRoute !== undefined &&
-        activeRoute?.key === originRoute.key &&
-        activeRoute.name === originRoute.name &&
-        activeRoute.params === originRoute.params
-      );
-    };
-    if (!isStillOnOrigin()) return;
+    if (!isActiveRoute(navigation, originRoute)) return;
     const chooserDraft =
       params.draftId === undefined
         ? chooserDraftKey(
@@ -792,7 +796,7 @@ function useOpenNewTaskDraft() {
         environmentId: params.environmentId,
         projectId: params.projectId,
       }).catch(() => false));
-    if (!isStillOnOrigin()) return;
+    if (!isActiveRoute(navigation, originRoute)) return;
     selectDetail({
       name: "Thread",
       params: { draft: carried ? { ...params, draftId: chooserDraft } : params },
@@ -975,7 +979,7 @@ export function AddProjectRepositoryScreen(props: {
   useEffect(() => () => pendingLookup.current?.abort(), []);
 
   const lookupRepository = async () => {
-    if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
+    if (!environment || repositoryInput.trim().length === 0 || pendingLookup.current) return;
     const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(
       source,
       repositoryInput,
@@ -1003,6 +1007,7 @@ export function AddProjectRepositoryScreen(props: {
       return;
     }
 
+    const originRoute = getActiveRoute(navigation);
     const lookup = new AbortController();
     pendingLookup.current = lookup;
     const result = await lookupRepositoryQuery(
@@ -1016,6 +1021,9 @@ export function AddProjectRepositoryScreen(props: {
       { signal: lookup.signal },
     );
     if (lookup.signal.aborted) return;
+    pendingLookup.current = null;
+    setIsSubmitting(false);
+    if (!isActiveRoute(navigation, originRoute)) return;
     if (AsyncResult.isFailure(result)) {
       setError(errorMessage(Cause.squash(result.cause)));
     } else {
@@ -1030,7 +1038,6 @@ export function AddProjectRepositoryScreen(props: {
         }),
       );
     }
-    setIsSubmitting(false);
   };
 
   return (
