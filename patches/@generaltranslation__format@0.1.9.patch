@@ -1,0 +1,98 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 205502bd60b7aec8f2609468986c6b0d010afd61..496c86af28701ebf749d023be7c13a0843ac8ed7 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -246,7 +246,7 @@ const isCustomLanguage = (language) => {
+ * @returns {boolean} True if the BCP 47 code is valid, false otherwise.
+ * @internal
+ */
+-const _isValidLocale = (locale, customMapping) => {
++const _isValidLocaleUncached = (locale, customMapping) => {
+ 	locale = getCustomLocaleCode(customMapping, locale) || locale;
+ 	try {
+ 		const localeObject = require_IntlCache.intlCache.get("Locale", locale);
+@@ -265,6 +265,19 @@ const _isValidLocale = (locale, customMapping) => {
+ 		return false;
+ 	}
+ };
++// T3 patch: validity is a pure function of the locale and mapping, and useGT asks on every render.
++const validLocaleCache = new Map();
++const validLocaleCacheByMapping = new WeakMap();
++const _isValidLocale = (locale, customMapping) => {
++	let cache = validLocaleCache;
++	if (customMapping) {
++		cache = validLocaleCacheByMapping.get(customMapping);
++		if (!cache) validLocaleCacheByMapping.set(customMapping, cache = new Map());
++	}
++	let valid = cache.get(locale);
++	if (valid === void 0) cache.set(locale, valid = _isValidLocaleUncached(locale, customMapping));
++	return valid;
++};
+ /**
+ * Standardizes a BCP 47 locale to ensure correct formatting.
+ * @param {string} locale - The BCP 47 locale to standardize.
+@@ -319,7 +332,15 @@ function _prepareApprovedLocales(approvedLocales, customMapping) {
+ * "en-GB" and "en-US" would be different.
+ * @internal
+ */
++// T3 patch: same reasoning as _isValidLocale; the comparison only depends on the locale strings.
++const sameDialectCache = new Map();
+ function _isSameDialect(...locales) {
++	const key = JSON.stringify(locales.flat());
++	let same = sameDialectCache.get(key);
++	if (same === void 0) sameDialectCache.set(key, same = _isSameDialectUncached(...locales));
++	return same;
++}
++function _isSameDialectUncached(...locales) {
+ 	try {
+ 		const localeObjects = locales.flat().map((locale) => require_IntlCache.intlCache.get("Locale", _standardizeLocale(locale)));
+ 		const [firstLocale] = localeObjects;
+diff --git a/dist/index.mjs b/dist/index.mjs
+index e36debccece9da0c1f015a1ffaa8bc3f5f01a055..17619a9a9ce46e7bd85da7c5f8461e7377db6dfb 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -245,7 +245,7 @@ const isCustomLanguage = (language) => {
+ * @returns {boolean} True if the BCP 47 code is valid, false otherwise.
+ * @internal
+ */
+-const _isValidLocale = (locale, customMapping) => {
++const _isValidLocaleUncached = (locale, customMapping) => {
+ 	locale = getCustomLocaleCode(customMapping, locale) || locale;
+ 	try {
+ 		const localeObject = intlCache.get("Locale", locale);
+@@ -264,6 +264,19 @@ const _isValidLocale = (locale, customMapping) => {
+ 		return false;
+ 	}
+ };
++// T3 patch: validity is a pure function of the locale and mapping, and useGT asks on every render.
++const validLocaleCache = new Map();
++const validLocaleCacheByMapping = new WeakMap();
++const _isValidLocale = (locale, customMapping) => {
++	let cache = validLocaleCache;
++	if (customMapping) {
++		cache = validLocaleCacheByMapping.get(customMapping);
++		if (!cache) validLocaleCacheByMapping.set(customMapping, cache = new Map());
++	}
++	let valid = cache.get(locale);
++	if (valid === void 0) cache.set(locale, valid = _isValidLocaleUncached(locale, customMapping));
++	return valid;
++};
+ /**
+ * Standardizes a BCP 47 locale to ensure correct formatting.
+ * @param {string} locale - The BCP 47 locale to standardize.
+@@ -318,7 +331,15 @@ function _prepareApprovedLocales(approvedLocales, customMapping) {
+ * "en-GB" and "en-US" would be different.
+ * @internal
+ */
++// T3 patch: same reasoning as _isValidLocale; the comparison only depends on the locale strings.
++const sameDialectCache = new Map();
+ function _isSameDialect(...locales) {
++	const key = JSON.stringify(locales.flat());
++	let same = sameDialectCache.get(key);
++	if (same === void 0) sameDialectCache.set(key, same = _isSameDialectUncached(...locales));
++	return same;
++}
++function _isSameDialectUncached(...locales) {
+ 	try {
+ 		const localeObjects = locales.flat().map((locale) => intlCache.get("Locale", _standardizeLocale(locale)));
+ 		const [firstLocale] = localeObjects;

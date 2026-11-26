@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   serializeCodeBlockToMarkdown,
   serializeRenderedMarkdownFragment,
+  serializeTableElementToCsv,
   serializeTableElementToHtml,
   serializeTableElementToMarkdown,
 } from "./markdown-clipboard";
@@ -730,5 +731,53 @@ describe("copying a table as HTML", () => {
 
   it("returns an empty string for a table without cells", () => {
     expect(html(new FakeElement("TABLE").append(new FakeElement("TBODY").append(row())))).toBe("");
+  });
+});
+
+describe("copying a table as CSV", () => {
+  const row = (...cells: FakeElement[]) => new FakeElement("TR").append(...cells);
+  const td = (...children: Array<FakeElement | FakeText>) =>
+    new FakeElement("TD").append(...children);
+
+  beforeEach(() => {
+    vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("separates line breaks and block edges, and leaves out hidden elements", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(
+          new FakeElement("TH").append(new FakeText("Col A")),
+          new FakeElement("TH").append(new FakeText("Col B")),
+        ),
+      ),
+      new FakeElement("TBODY").append(
+        row(
+          td(new FakeText("line 1"), new FakeElement("BR"), new FakeText("line 2")),
+          td(
+            new FakeElement("P").append(new FakeText("para 1")),
+            new FakeElement("P").append(new FakeText("para 2")),
+          ),
+        ),
+        row(
+          td(
+            new FakeElement("SPAN", ["sr-only"]).append(new FakeText("hidden")),
+            new FakeText("visible"),
+          ),
+          td(
+            new FakeElement("SPAN", [], { "aria-hidden": "true" }).append(new FakeText("icon")),
+            new FakeText("a, b"),
+          ),
+        ),
+      ),
+    );
+
+    expect(serializeTableElementToCsv(table as unknown as Element)).toBe(
+      'Col A,Col B\nline 1 line 2,para 1 para 2\nvisible,"a, b"',
+    );
   });
 });
