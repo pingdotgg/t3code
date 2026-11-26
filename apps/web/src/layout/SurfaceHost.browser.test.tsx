@@ -547,6 +547,35 @@ it("keeps an unfocused pane's joined tab with a dim rim, and black chrome keeps 
   }
 });
 
+it("clears the pane's top corners so a joined tab's rim runs round them", async () => {
+  using _tabs = setup();
+  document.documentElement.style.setProperty("--desktop-window-corner-radius", "26px");
+  try {
+    await using _screen = await renderHost({ insetSidebar: true });
+    const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')!;
+    const pane = inSecondPane("[data-pane-header]").closest<HTMLElement>("[data-layout-pane-id]")!;
+    await vi.waitFor(() => {
+      expect(pane.hasAttribute("data-pane-notched")).toBe(true);
+      expect(inset.hasAttribute("data-pane-notched")).toBe(true);
+    });
+    expect(getComputedStyle(inset).borderStartStartRadius).toBe("0px");
+    expect(getComputedStyle(inset).borderStartEndRadius).toBe("0px");
+    expect(getComputedStyle(pane).borderStartStartRadius).toBe("0px");
+    expect(getComputedStyle(pane).borderStartEndRadius).toBe("0px");
+    expect(
+      getComputedStyle(pane.querySelector(':scope > [data-pane-cut="start-top"]')!).display,
+    ).toBe("none");
+    expect(
+      getComputedStyle(pane.querySelector(':scope > [data-pane-cut="end-top"]')!).display,
+    ).toBe("none");
+    expect(
+      getComputedStyle(pane.querySelector(':scope > [data-pane-cut="start-bottom"]')!).display,
+    ).toBe("flex");
+  } finally {
+    document.documentElement.style.removeProperty("--desktop-window-corner-radius");
+  }
+});
+
 const threadRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("chat"));
 const pullRequestThreadRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("pr"));
 const sideChatRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("side"));

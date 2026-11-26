@@ -718,7 +718,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   /* A split layout's panes square the corner under their notch too. */
   [data-slot="sidebar"][data-variant="inset"]
     ~ [data-slot="sidebar-inset"]
-    [data-layout-pane-id][data-pane-notched] {
+    :is([data-layout-pane-id], [data-pane-notch-host])[data-pane-notched] {
     border-start-start-radius: 0;
   }
 
@@ -7190,6 +7190,20 @@ body {
         background-image: var(--surface-grain);
         background-size: var(--surface-grain-size);
         pointer-events: none;
+      }
+    }
+
+    /* The bar owns the pane's top strip and rounds its foot corners; keeping
+       the pane's own top corners cuts a joined tab that meets the top edge. */
+    &[data-pane-notched],
+    & [data-layout-pane-id][data-pane-notched],
+    & [data-pane-notch-host][data-pane-notched] {
+      border-start-start-radius: 0;
+      border-start-end-radius: 0;
+
+      & > [data-pane-cut="start-top"],
+      & > [data-pane-cut="end-top"] {
+        display: none;
       }
     }
 
