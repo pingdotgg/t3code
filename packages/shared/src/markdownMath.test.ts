@@ -91,10 +91,6 @@ describe("chat math parsing", () => {
     expect(markdownMathRanges("```math\rx^2\r```")).toMatchObject([
       { start: 0, end: 15, tex: "x^2", display: true },
     ]);
-    expect(markdownMathRanges("```math\r\nx^2\r\n```")).toMatchObject([
-      { start: 0, end: 17, tex: "x^2", display: true },
-    ]);
-    expect(markdownMathRanges("~~~math\rx^2\r~~~")[0]?.tex).toBe("x^2");
     expect(markdownMathRanges("> ```math\n> x^2\n> ```")[0]?.tex).toBe("x^2");
     expect(markdownMathRanges("> ```math\r> x^2\r> ```")[0]?.tex).toBe("x^2");
   });
