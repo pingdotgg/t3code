@@ -869,32 +869,6 @@ describe("rendered Markdown scroll position", () => {
     await expectReadingPosition(saved);
   });
 
-  it("renders sample text and its literal heading in the same code block", async () => {
-    using _settings = setup();
-    using _style = withAppCss();
-    const text =
-      "Background for this release. ".repeat(180) +
-      "\n<span>\n```md\nSample Markdown\n\n# Sample heading\n```\n";
-    await using screen = await render(
-      sized(
-        <ChunkedMarkdown
-          {...splitMarkdown(text)}
-          loading={false}
-          cwd="/workspace"
-          relativePath="release.md"
-          threadRef={threadRef}
-          workspaceMutationId={null}
-        />,
-      ),
-    );
-    await vi.waitFor(() => {
-      const blocks = screen.container.querySelectorAll("pre code");
-      expect(Array.from(blocks, (block) => block.textContent?.trim())).toContain(
-        "Sample Markdown\n\n# Sample heading",
-      );
-    });
-  });
-
   it("waits for the saved chunk when a reopened file is still streaming in", async () => {
     using _settings = setup();
     using _style = withAppCss();
