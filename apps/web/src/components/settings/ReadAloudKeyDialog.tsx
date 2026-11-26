@@ -181,9 +181,12 @@ export function ReadAloudKeyDialog({
                     if (credential !== undefined) void saveKey(credential, !active);
                   }}
                 >
-                  <Label htmlFor="read-aloud-cloud-key">
-                    <T>API key</T>
-                  </Label>
+                  {/* With sign-in offered, its divider names the key field instead. */}
+                  {(provider !== "openrouter" || saved) && (
+                    <Label htmlFor="read-aloud-cloud-key">
+                      <T>API key</T>
+                    </Label>
+                  )}
                   <div className="flex min-w-0 items-start gap-2">
                     {sources.length > 0 && (
                       <SecretSourceSelect

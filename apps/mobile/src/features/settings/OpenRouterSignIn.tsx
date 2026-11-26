@@ -8,6 +8,7 @@ import { useGT } from "gt-react-native";
 import { useEffect, useState } from "react";
 import { AppState, TextInput, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
+import { ProviderIcon } from "../../components/ProviderIcon";
 import { Button } from "../../components/ui/Button";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { runSpeech } from "../voice-input/voiceDestination";
@@ -103,7 +104,9 @@ export function OpenRouterSignIn({
       ) : (
         <Button
           label={phase.kind === "waiting" ? gt("Sign in again") : gt("Sign in with OpenRouter")}
+          tone="contrast"
           size="compact"
+          leading={<ProviderIcon provider="openrouter" size={16} />}
           disabled={phase.kind === "starting"}
           onPress={() => void start()}
         />
@@ -118,6 +121,14 @@ export function OpenRouterSignIn({
           {error}
         </Text>
       ) : null}
+      {/* The key field below is the other way to set up OpenRouter. */}
+      <View className="flex-row items-center gap-3">
+        <View className="h-px flex-1 bg-border-subtle" />
+        <Text textRole="footnote" className="text-foreground-muted">
+          {gt("or paste an API key")}
+        </Text>
+        <View className="h-px flex-1 bg-border-subtle" />
+      </View>
     </View>
   );
 }

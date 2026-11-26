@@ -13102,5 +13102,6 @@
   "20a054556a7395b2": "Sign in with OpenRouter",
   "98f5e5fa1c6b0c62": "Finish signing in on OpenRouter, then come back here.",
   "b362d4f1c293a461": "Model",
-  "13682ea76b1efa5d": "The OpenRouter model that transcribes your dictation."
+  "13682ea76b1efa5d": "The OpenRouter model that transcribes your dictation.",
+  "bc5e8f45269a432e": "or paste an API key"
 }

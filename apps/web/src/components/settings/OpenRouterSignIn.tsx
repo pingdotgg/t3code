@@ -8,6 +8,7 @@ import { useGT } from "gt-react";
 import { useEffect, useId, useState } from "react";
 import { ensureLocalApi } from "../../localApi";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
+import { OpenRouterIcon } from "../Icons";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -119,29 +120,44 @@ export function OpenRouterSignIn({
             {error}
           </p>
         )}
+        <OrPasteKey />
       </form>
     );
 
   return (
-    <div className="grid gap-2">
-      <Button
-        type="button"
-        variant="outline"
-        disabled={disabled || phase.kind === "starting"}
-        onClick={() => void start()}
-      >
-        {phase.kind === "waiting" ? gt("Sign in again") : gt("Sign in with OpenRouter")}
-      </Button>
-      {phase.kind === "waiting" && (
-        <p className="text-sm text-muted-foreground" role="status">
-          {gt("Finish signing in on OpenRouter, then come back here.")}
-        </p>
-      )}
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={disabled || phase.kind === "starting"}
+          onClick={() => void start()}
+        >
+          <OpenRouterIcon aria-hidden />
+          {phase.kind === "waiting" ? gt("Sign in again") : gt("Sign in with OpenRouter")}
+        </Button>
+        {phase.kind === "waiting" && (
+          <p className="text-sm text-muted-foreground" role="status">
+            {gt("Finish signing in on OpenRouter, then come back here.")}
+          </p>
+        )}
+      </div>
       {error && (
         <p className="text-sm text-destructive" role="alert">
           {error}
         </p>
       )}
+      <OrPasteKey />
     </div>
+  );
+}
+
+/** Separates signing in from the key field below it, which is the other way to set up OpenRouter. */
+function OrPasteKey() {
+  const gt = useGT();
+  return (
+    <p className="flex items-center gap-3 text-xs text-muted-foreground before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border">
+      {gt("or paste an API key")}
+    </p>
   );
 }
