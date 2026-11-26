@@ -13000,5 +13000,9 @@
   "8a1952fca82d9d24": "Hooks Claude",
   "c59b50989ff6b27b": "Une approbation prend effet au démarrage de la prochaine session Claude.",
   "1a763785d1b9c100": "Les réglages Claude Code de ce projet exécutent leurs propres commandes dans les fils Claude. Elles s’exécutent sur la machine de cet environnement avec vos autorisations. En dessous d’Accès complet, elles ne s’exécutent que telles qu’approuvées ici, et les hooks modifiés doivent être approuvés à nouveau. Les fils en Accès complet les exécutent sans demander.",
-  "04858a61b8f5376b": "Hooks du dossier de ce projet"
+  "04858a61b8f5376b": "Hooks du dossier de ce projet",
+  "8899c7056c6470de": "Commande auxiliaire",
+  "4062cf8f41a77eb2": "Approuvés pour d'autres copies de travail",
+  "8bd0dcc7ff264563": "{count, plural, one {{count} autre ensemble de hooks est approuvé pour ce projet, par exemple pour un worktree sur une autre branche.} other {{count} autres ensembles de hooks sont approuvés pour ce projet, par exemple pour des worktrees sur d'autres branches.}}",
+  "d298ff8a0424837b": "Tout révoquer"
 }

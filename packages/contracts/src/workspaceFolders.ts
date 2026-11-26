@@ -137,11 +137,15 @@ export const WorkspaceApproveLayoutCommandsInput = Schema.Struct({
 });
 export type WorkspaceApproveLayoutCommandsInput = typeof WorkspaceApproveLayoutCommandsInput.Type;
 
-/** One hook a folder's Claude Code settings declare, as the file holds it now. */
+/**
+ * One command a folder's Claude Code settings ask Claude Code to run by itself, as the file holds
+ * it now: a hook, or a helper command such as `apiKeyHelper`.
+ */
 export const ClaudeProjectHook = Schema.Struct({
+  kind: Schema.Literals(["hook", "helper"]),
   /** `project` is `.claude/settings.json`; `local` is `.claude/settings.local.json`. */
   source: Schema.Literals(["project", "local"]),
-  /** The Claude Code event the hook runs on, such as `SessionStart`. */
+  /** The Claude Code event a hook runs on, such as `SessionStart`; a helper's settings key. */
   event: Schema.String,
   /** The tools or sources the hook is limited to, when the file names any. */
   matcher: Schema.optional(Schema.String),
@@ -151,7 +155,7 @@ export const ClaudeProjectHook = Schema.Struct({
 export type ClaudeProjectHook = typeof ClaudeProjectHook.Type;
 
 /**
- * - `none`: the folder declares no hooks.
+ * - `none`: the folder declares no hooks or helper commands.
  * - `approved`: a person approved exactly these hooks for this project.
  * - `needs-approval`: nobody approved them as they are now.
  * - `off`: the administrator's policy turns project hooks off.
@@ -176,6 +180,11 @@ export const WorkspaceClaudeProjectHooksResult = Schema.Struct({
   hooks: Schema.Array(ClaudeProjectHook),
   /** Names the hooks shown, so an approval covers what the person saw and nothing newer. */
   hooksHash: Schema.String,
+  /**
+   * How many sets of hooks are approved for the project. More than this folder accounts for when
+   * another checkout of the project, such as a worktree on another branch, had its own approved.
+   */
+  approvals: Schema.Number,
 });
 export type WorkspaceClaudeProjectHooksResult = typeof WorkspaceClaudeProjectHooksResult.Type;
 

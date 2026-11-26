@@ -50,8 +50,11 @@ function CheckoutClaudeHooks({
   });
   const shown = query.data;
   // Most projects declare none, and then there is nothing to show; a failed read shows nothing either.
-  if (shown === null || shown.status === "none") return null;
+  if (shown === null || (shown.status === "none" && shown.approvals === 0)) return null;
   const approved = shown.status === "approved";
+  // Approved in a thread whose folder declares other hooks than this one, as a worktree's branch can.
+  const approvedElsewhere = shown.approvals - (approved ? 1 : 0);
+  const cannotSave = !canApprove || !isConnected || saving || query.isPending;
 
   return (
     <SettingsSection id="project-claude-hooks" title={gt("Claude hooks")}>
@@ -70,49 +73,64 @@ function CheckoutClaudeHooks({
           </span>
         ) : null}
       </p>
-      <SettingsRow
-        title={
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="min-w-0 truncate">
-              <T>Hooks from this project's folder</T>
+      {shown.status === "none" ? null : (
+        <SettingsRow
+          title={
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 truncate">
+                <T>Hooks from this project's folder</T>
+              </span>
+              {policyDenial !== undefined ? (
+                <Badge size="sm" variant="outline">
+                  <T>Off</T>
+                </Badge>
+              ) : approved ? (
+                <Badge size="sm" variant="success">
+                  <T>Approved</T>
+                </Badge>
+              ) : (
+                <Badge size="sm" variant="warning">
+                  <T>Needs approval</T>
+                </Badge>
+              )}
             </span>
-            {policyDenial !== undefined ? (
-              <Badge size="sm" variant="outline">
-                <T>Off</T>
-              </Badge>
-            ) : approved ? (
-              <Badge size="sm" variant="success">
-                <T>Approved</T>
-              </Badge>
-            ) : (
-              <Badge size="sm" variant="warning">
-                <T>Needs approval</T>
-              </Badge>
-            )}
-          </span>
-        }
-        description={gt("An approval takes effect when the next Claude session starts.")}
-        control={
-          <Button
-            size="xs"
-            variant={approved ? "ghost" : "outline"}
-            disabled={
-              !canApprove ||
-              !isConnected ||
-              saving ||
-              query.isPending ||
-              (!approved && policyDenial !== undefined)
-            }
-            onClick={() => void save(!approved)}
-          >
-            {approved ? <T>Revoke</T> : <T>Approve</T>}
-          </Button>
-        }
-      >
-        <div className="mb-2">
-          <ClaudeProjectHookList hooks={shown.hooks} />
-        </div>
-      </SettingsRow>
+          }
+          description={gt("An approval takes effect when the next Claude session starts.")}
+          control={
+            <Button
+              size="xs"
+              variant={approved ? "ghost" : "outline"}
+              disabled={cannotSave || (!approved && policyDenial !== undefined)}
+              onClick={() => void save(!approved)}
+            >
+              {approved ? <T>Revoke</T> : <T>Approve</T>}
+            </Button>
+          }
+        >
+          <div className="mb-2">
+            <ClaudeProjectHookList hooks={shown.hooks} />
+          </div>
+        </SettingsRow>
+      )}
+      {approvedElsewhere > 0 ? (
+        <SettingsRow
+          title={gt("Approved for other checkouts")}
+          description={gt(
+            "{count, plural, one {{count} more set of hooks is approved for this project, as for a worktree on another branch.} other {{count} more sets of hooks are approved for this project, as for worktrees on other branches.}}",
+            { count: approvedElsewhere },
+          )}
+          control={
+            <Button
+              size="xs"
+              variant="ghost"
+              disabled={cannotSave}
+              onClick={() => void save(false)}
+            >
+              <T>Revoke all</T>
+            </Button>
+          }
+        />
+      ) : null}
       {!canApprove ? (
         <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
           <T>This connection cannot approve hooks. Use a client that can use the terminal.</T>

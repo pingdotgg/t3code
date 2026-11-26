@@ -1794,12 +1794,15 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
         projectConfigRoot: "/state/claude-project-config/abc",
         notice: "Hooks did not run.",
       };
+      // Approved hooks: the session reads the settings that were checked, and has nothing to say.
+      const approved = { projectConfigRoot: "/state/claude-project-config/def", notice: null };
       const opened = Effect.fnUntraced(function* (
         name: string,
         modes: Pick<
           ProviderAdapter.ProviderAdapterV2RuntimePolicy,
           "runtimeMode" | "interactionMode" | "maxRuntimeMode"
         >,
+        belowFullAccess: ClaudeProjectHooks.ClaudeSessionProjectConfig = withoutHooks,
       ) {
         const asked: Array<{ readonly cwd: string; readonly fullAccess: boolean }> = [];
         let options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
@@ -1817,7 +1820,7 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
             forSession: (input) =>
               Effect.sync(() => {
                 asked.push({ cwd: input.cwd, fullAccess: input.fullAccess });
-                return input.fullAccess ? null : withoutHooks;
+                return input.fullAccess ? null : belowFullAccess;
               }),
           },
           queryRunner: {
@@ -1915,6 +1918,14 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
           interactionMode: "default",
         }),
         leftOut,
+      );
+      assert.deepStrictEqual(
+        yield* opened(
+          "approved",
+          { runtimeMode: "approval-required", interactionMode: "default" },
+          approved,
+        ),
+        { ...leftOut, projectConfigRoot: approved.projectConfigRoot, notices: [] },
       );
       assert.deepStrictEqual(
         yield* opened("auto", { runtimeMode: "auto", interactionMode: "default" }),

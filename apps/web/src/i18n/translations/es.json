@@ -12995,5 +12995,9 @@
   "8a1952fca82d9d24": "Hooks de Claude",
   "c59b50989ff6b27b": "Una aprobación surte efecto cuando empieza la siguiente sesión de Claude.",
   "1a763785d1b9c100": "La configuración de Claude Code de este proyecto ejecuta sus propios comandos en los hilos de Claude. Se ejecutan en la máquina de este entorno con tus permisos. Por debajo de Acceso completo solo se ejecutan tal como se aprobaron aquí, y los hooks que cambian necesitan una nueva aprobación. Los hilos con Acceso completo los ejecutan sin preguntar.",
-  "04858a61b8f5376b": "Hooks de la carpeta de este proyecto"
+  "04858a61b8f5376b": "Hooks de la carpeta de este proyecto",
+  "8899c7056c6470de": "Comando auxiliar",
+  "4062cf8f41a77eb2": "Aprobados para otras copias de trabajo",
+  "8bd0dcc7ff264563": "{count, plural, one {Hay {count} conjunto más de hooks aprobado para este proyecto, por ejemplo para un worktree en otra rama.} other {Hay {count} conjuntos más de hooks aprobados para este proyecto, por ejemplo para worktrees en otras ramas.}}",
+  "d298ff8a0424837b": "Revocar todos"
 }

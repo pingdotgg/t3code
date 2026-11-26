@@ -13000,5 +13000,9 @@
   "8a1952fca82d9d24": "Hooks do Claude",
   "c59b50989ff6b27b": "Uma aprovação passa a valer quando a próxima sessão do Claude começa.",
   "1a763785d1b9c100": "As configurações do Claude Code deste projeto executam comandos próprios nas threads do Claude. Eles são executados na máquina deste ambiente com as suas permissões. Abaixo de Acesso total, só são executados como aprovados aqui, e hooks que mudam precisam de nova aprovação. Threads em Acesso total os executam sem perguntar.",
-  "04858a61b8f5376b": "Hooks da pasta deste projeto"
+  "04858a61b8f5376b": "Hooks da pasta deste projeto",
+  "8899c7056c6470de": "Comando auxiliar",
+  "4062cf8f41a77eb2": "Aprovados para outros checkouts",
+  "8bd0dcc7ff264563": "{count, plural, one {Mais {count} conjunto de hooks está aprovado para este projeto, por exemplo para uma worktree em outro branch.} other {Mais {count} conjuntos de hooks estão aprovados para este projeto, por exemplo para worktrees em outros branches.}}",
+  "d298ff8a0424837b": "Revogar todos"
 }

@@ -13947,8 +13947,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ],
             { concurrency: "unbounded" },
           );
-          // Asked for every process, so an approval or a mode change applies from the next one.
-          const withoutProjectHooks =
+          // Asked for every process, so an approval or a mode change applies from the next one. The
+          // answer names the settings that were checked, so nothing read later takes their place.
+          const projectConfig =
             adapterOptions.projectHooks === undefined || turnInput.runtimePolicy.cwd === null
               ? null
               : yield* adapterOptions.projectHooks
@@ -14030,9 +14031,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             onStop,
             supportedDialogKinds: ["resume_return"],
             ...(appendSystemPromptFileText === undefined ? {} : { appendSystemPromptFileText }),
-            ...(withoutProjectHooks === null
+            ...(projectConfig === null
               ? {}
-              : { projectConfigRoot: withoutProjectHooks.projectConfigRoot }),
+              : { projectConfigRoot: projectConfig.projectConfigRoot }),
             ...(toolSearchOverride === undefined ? {} : { toolSearchOverride }),
           });
           const resolvedTurnCwd = yield* fileSystem
@@ -14104,7 +14105,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             lastTurn: null,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
-            projectHooksNotice: withoutProjectHooks?.notice,
+            projectHooksNotice: projectConfig?.notice ?? undefined,
             receivedInit: false,
             checkMcpSignIns: false,
             capabilities: new Set(),

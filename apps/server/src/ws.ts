@@ -1610,7 +1610,7 @@ export const layerWsRpc = (
       const claudeProjectHookApprovalWrites =
         yield* ClaudeProjectHookApprovalWrites.ClaudeProjectHookApprovalWrites;
       // The folder a Claude session of the thread, or else of the project, reads its settings from.
-      const readClaudeProjectHooks = Effect.fn("ws.readClaudeProjectHooks")(function* (input: {
+      const claudeProjectFolder = Effect.fn("ws.claudeProjectFolder")(function* (input: {
         readonly projectId: ProjectId;
         readonly threadId?: ThreadId | undefined;
       }) {
@@ -1634,10 +1634,7 @@ export const layerWsRpc = (
             detail: `Project ${input.projectId} was not found.`,
           });
         }
-        return yield* claudeProjectHooks.read({
-          projectId: input.projectId,
-          cwd: shell?.worktreePath ?? project.value.workspaceRoot,
-        });
+        return shell?.worktreePath ?? project.value.workspaceRoot;
       });
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
@@ -3250,20 +3247,21 @@ export const layerWsRpc = (
               layoutCommandApprovalWrites.set({ projectId: input.projectId, ...approval }),
             { discard: true },
           ).pipe(Effect.andThen(taskFolders.layoutCommands(input.projectId))),
-        [WS_METHODS.workspaceClaudeProjectHooks]: (input) => readClaudeProjectHooks(input),
+        [WS_METHODS.workspaceClaudeProjectHooks]: (input) =>
+          claudeProjectFolder(input).pipe(
+            Effect.flatMap((cwd) => claudeProjectHooks.read({ projectId: input.projectId, cwd })),
+          ),
         // The one place an approval is recorded: a person's client session, behind the scope.
-        [WS_METHODS.workspaceApproveClaudeProjectHooks]: Effect.fnUntraced(function* (input) {
-          if (input.hooksHash !== null) {
-            const shown = yield* readClaudeProjectHooks(input);
-            if (shown.hooksHash !== input.hooksHash) {
-              return yield* new ClaudeProjectHooksError({
-                detail: "The project's hooks changed since they were shown. Review them again.",
-              });
-            }
-          }
-          yield* claudeProjectHookApprovalWrites.set(input);
-          return yield* readClaudeProjectHooks(input);
-        }),
+        [WS_METHODS.workspaceApproveClaudeProjectHooks]: (input) =>
+          claudeProjectFolder(input).pipe(
+            Effect.flatMap((cwd) =>
+              claudeProjectHookApprovalWrites.set({
+                projectId: input.projectId,
+                cwd,
+                hooksHash: input.hooksHash,
+              }),
+            ),
+          ),
         [WS_METHODS.attachmentsCreateUploadUrl]: (input) => issueAttachmentUploadUrl(input),
         [WS_METHODS.attachmentsDelete]: (input) => deletePendingAttachment(input.attachmentId),
         [WS_METHODS.agentSessionsScan]: () => agentSessionScanner.scan,

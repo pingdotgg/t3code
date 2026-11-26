@@ -13000,5 +13000,9 @@
   "8a1952fca82d9d24": "Claude-Hooks",
   "c59b50989ff6b27b": "Eine Genehmigung gilt ab dem Start der nächsten Claude-Sitzung.",
   "1a763785d1b9c100": "Die Claude-Code-Einstellungen dieses Projekts führen in Claude-Threads eigene Befehle aus. Sie laufen auf dem Rechner dieser Umgebung mit deinen Berechtigungen. Unterhalb von Vollzugriff laufen sie nur wie hier genehmigt, und geänderte Hooks brauchen eine neue Genehmigung. Threads mit Vollzugriff führen sie ohne Nachfrage aus.",
-  "04858a61b8f5376b": "Hooks aus dem Ordner dieses Projekts"
+  "04858a61b8f5376b": "Hooks aus dem Ordner dieses Projekts",
+  "8899c7056c6470de": "Hilfsbefehl",
+  "4062cf8f41a77eb2": "Für andere Checkouts genehmigt",
+  "8bd0dcc7ff264563": "{count, plural, one {{count} weiterer Satz von Hooks ist für dieses Projekt genehmigt, etwa für einen Worktree auf einem anderen Branch.} other {{count} weitere Sätze von Hooks sind für dieses Projekt genehmigt, etwa für Worktrees auf anderen Branches.}}",
+  "d298ff8a0424837b": "Alle widerrufen"
 }

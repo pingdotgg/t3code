@@ -2129,11 +2129,14 @@ it.effect(
     Effect.gen(function* () {
       const browser = yield* ServerBrowser.ServerBrowser;
       const projectId = ProjectId.make("project:hooks");
-      const shown = { status: "needs-approval", hooks: [], hooksHash: "shown" } as const;
-      const requested = Effect.fnUntraced(function* (
-        scopes: ReadonlyArray<AuthEnvironmentScope>,
-        hooksHash = "shown",
-      ) {
+      const shown = {
+        status: "needs-approval",
+        hooks: [],
+        hooksHash: "shown",
+        approvals: 0,
+      } as const;
+      const requested = Effect.fnUntraced(function* (scopes: ReadonlyArray<AuthEnvironmentScope>) {
+        const hooksHash = "shown";
         const recorded: unknown[] = [];
         const exits = yield* Queue.unbounded<string>();
         const services = Layer.mergeAll(
@@ -2141,11 +2144,13 @@ it.effect(
           Layer.mock(ProjectService.ProjectService)({
             getById: () => Effect.succeedSome({ workspaceRoot: "/project" } as Project),
           }),
-          Layer.mock(ClaudeProjectHooks.ClaudeProjectHooks)({
-            read: () => Effect.succeed(shown),
-          }),
+          Layer.mock(ClaudeProjectHooks.ClaudeProjectHooks)({}),
           Layer.mock(ClaudeProjectHookApprovalWrites.ClaudeProjectHookApprovalWrites)({
-            set: (input) => Effect.sync(() => void recorded.push(input)),
+            set: (input) =>
+              Effect.sync(() => {
+                recorded.push(input);
+                return shown;
+              }),
           }),
           Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
           Layer.mock(ExternalLauncher.ExternalLauncher)({}),
@@ -2201,12 +2206,7 @@ it.effect(
       );
       assert.deepEqual(yield* requested([AuthTerminalOperateScope]), {
         exit: "Success",
-        recorded: [{ projectId, hooksHash: "shown" }],
-      });
-      // Hooks that changed after they were shown are not approved unseen.
-      assert.deepEqual(yield* requested([AuthTerminalOperateScope], "older"), {
-        exit: "Failure",
-        recorded: [],
+        recorded: [{ projectId, cwd: "/project", hooksHash: "shown" }],
       });
     }).pipe(
       Effect.provide(

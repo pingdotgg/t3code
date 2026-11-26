@@ -264,9 +264,9 @@ so restart T3 Code after that.
   threads; existing thread folders are restored as plain checkouts and removed without the
   project's `remove` command.
 - `claudeProjectHooks: false`: Claude threads do not run the
-  [hooks](./providers-claude.md#project-hooks) a project folder's `.claude/settings.json` and
-  `.claude/settings.local.json` declare, whether or not a user approved them and in every
-  permission mode. The user's own Claude Code hooks and the rest of the project's Claude Code
+  [hooks and helper commands](./providers-claude.md#project-hooks) a project folder's
+  `.claude/settings.json` and `.claude/settings.local.json` declare, whether or not a user
+  approved them and in every permission mode. The user's own Claude Code hooks and the rest of the project's Claude Code
   settings still apply.
 - `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
   relay connection traces, and neither does a browser opened from the server. A policy cannot turn

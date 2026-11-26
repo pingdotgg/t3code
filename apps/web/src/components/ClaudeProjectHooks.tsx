@@ -25,8 +25,12 @@ const SOURCE_LABELS: Record<ClaudeProjectHook["source"], string> = {
   local: msg("From your local settings for this project"),
 };
 
-/** Every hook a folder's Claude Code settings declare, as the files hold them, grouped by file. */
+/**
+ * Every hook and helper command a folder's Claude Code settings declare, as the files hold them,
+ * grouped by file.
+ */
 export function ClaudeProjectHookList({ hooks }: { hooks: ReadonlyArray<ClaudeProjectHook> }) {
+  const gt = useGT();
   const m = useMessages();
   return (
     <div className="flex min-w-0 flex-col gap-3 text-left">
@@ -47,6 +51,12 @@ export function ClaudeProjectHookList({ hooks }: { hooks: ReadonlyArray<ClaudePr
                   {hook.matcher === undefined ? null : (
                     <span className="font-normal text-muted-foreground"> · {hook.matcher}</span>
                   )}
+                  {hook.kind === "helper" ? (
+                    <span className="font-normal text-muted-foreground">
+                      {" · "}
+                      {gt("Helper command")}
+                    </span>
+                  ) : null}
                 </span>
                 <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-anywhere rounded-md border bg-muted/40 px-3 py-2 font-mono text-xs">
                   {hook.detail}
