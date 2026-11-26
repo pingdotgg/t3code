@@ -36,7 +36,7 @@ export class ClaudeArtifacts extends Context.Service<
 
 type CachedAccount = Omit<ClaudeArtifactAccount, "instanceId" | "displayName">;
 
-const IDLE: CachedAccount = { status: "idle", artifacts: [], skippedLines: 0 };
+const IDLE: CachedAccount = { status: "idle", artifacts: [], skippedLines: 0, partial: false };
 
 type ArtifactInstance = ProviderInstance & {
   readonly listArtifactPages: NonNullable<ProviderInstance["listArtifactPages"]>;
@@ -55,7 +55,12 @@ function nextCachedAccount(
   result: ProviderArtifactListResult,
   fetchedAt: string,
 ): CachedAccount {
-  const kept = { artifacts: previous.artifacts, skippedLines: previous.skippedLines, fetchedAt };
+  const kept = {
+    artifacts: previous.artifacts,
+    skippedLines: previous.skippedLines,
+    partial: previous.partial,
+    fetchedAt,
+  };
   if (result._tag !== "pages") {
     return {
       ...kept,
@@ -77,9 +82,7 @@ function nextCachedAccount(
     status: "ok",
     fetchedAt,
     // Without a page token the rest cannot be reached, so the partial list is shown as such.
-    ...(lists.at(-1)?.truncated
-      ? { message: "Claude Code listed only part of this account's artifacts." }
-      : {}),
+    partial: lists.at(-1)?.truncated ?? false,
     ...mergeClaudeArtifactListPages(lists),
   };
 }

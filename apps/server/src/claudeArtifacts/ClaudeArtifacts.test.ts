@@ -73,6 +73,7 @@ describe("ClaudeArtifacts", () => {
             status: "idle",
             artifacts: [],
             skippedLines: 0,
+            partial: false,
           },
         ],
       });

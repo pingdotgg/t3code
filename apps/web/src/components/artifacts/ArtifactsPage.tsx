@@ -332,8 +332,10 @@ function AccountSection({
           {account.message}
         </p>
       ) : null}
-      {account.status === "ok" && account.message !== undefined ? (
-        <p className="text-muted-foreground text-xs">{account.message}</p>
+      {account.partial ? (
+        <p className="text-muted-foreground text-xs">
+          <T>Claude Code listed only part of this account's artifacts.</T>
+        </p>
       ) : null}
       {account.skippedLines > 0 ? (
         <p className="text-muted-foreground text-xs">

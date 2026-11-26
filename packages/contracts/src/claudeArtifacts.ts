@@ -32,6 +32,8 @@ export const ClaudeArtifactAccount = Schema.Struct({
   artifacts: Schema.Array(ClaudeArtifact),
   /** List lines that did not parse and were left out. */
   skippedLines: Schema.Number,
+  /** Claude Code listed only part of the account's artifacts and gave no way to the rest. */
+  partial: Schema.Boolean,
 });
 export type ClaudeArtifactAccount = typeof ClaudeArtifactAccount.Type;
 

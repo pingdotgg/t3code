@@ -98,6 +98,16 @@ describe("parseClaudeArtifactListPage", () => {
 (2 more not shown — one call lists at most 200 and there is no next page.)`,
       ),
     ).toMatchObject({ hasList: true, nextPageToken: undefined, truncated: true });
+    for (const footer of [
+      "(More may exist: others can exist that no `limit` reaches.)",
+      "(Not every artifact could be listed, so the count is a lower bound: others can exist.)",
+    ]) {
+      expect(
+        parseClaudeArtifactListPage(
+          `1 artifacts, published by you or shared with you:\n- (mine) A — https://claude.ai/artifact/A\n${footer}`,
+        ).truncated,
+      ).toBe(true);
+    }
   });
 });
 

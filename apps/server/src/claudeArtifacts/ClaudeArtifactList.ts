@@ -16,7 +16,9 @@ export interface ClaudeArtifactListPage {
 // and for an empty list "No published or shared artifacts yet."
 const LIST_HEADER =
   /^(?:(?:Showing \d+ of (?:at least )?)?\d+ (?:published )?artifacts?\b|No [^\n]*artifacts[^\n]* yet\.)/im;
-const MORE_NOT_SHOWN = /^\((?:At least )?\d+ more not shown\b/im;
+// Claude Code's footers for items a list left out.
+const MORE_NOT_SHOWN =
+  /^\((?:(?:At least )?\d+ more not shown\b|More may exist:|Not every artifact could be listed\b)/im;
 const NEXT_PAGE = /\(More exist: pass `page_token` "([^"\s]+)"/;
 // `- (mine, web page, pinned) Title — https://claude.ai/artifact/ID — updated 2026-11-18`
 const ITEM =
