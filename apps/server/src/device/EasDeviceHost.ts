@@ -644,8 +644,8 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
           if (!pending) break;
           if (retry) return;
           const exit = yield* restore(Deferred.await(pending));
-          if (exit !== undefined) return yield* exit;
-          // The listing that owned this attempt was canceled. A surviving Stop can try again.
+          if (exit !== undefined && Exit.isSuccess(exit)) return;
+          // The joined attempt failed or its owner was canceled; this caller makes its own.
         }
         if (sessions.get(session.sessionId) !== session) return;
         // Publish the pending result without yielding between the lookup and registration.

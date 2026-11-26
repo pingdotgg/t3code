@@ -633,38 +633,41 @@ describe("Expo Simulators host", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.effect("keeps an explicit stop running when discovery cancels its retry", () =>
-    Effect.gen(function* () {
-      const retry = yield* makeGate;
-      let stopFails = true;
-      let nextGate: Gate | undefined;
-      const expo = fakeExpo({
-        failStop: () => stopFails,
-        stopGate: () => {
-          const gate = nextGate;
-          nextGate = undefined;
-          return gate;
-        },
-      });
-      const host = yield* makeHost(expo, config(), yield* Scope.make());
-      const ready = yield* host.ensureReady(() => Effect.void);
-      const [catalogDevice] = (yield* ready.devices.list).devices;
-      const id = yield* ready.devices.boot(catalogDevice!);
-      const stop = ready.devices.shutdown({ id, platform: "ios" });
-      yield* Effect.flip(stop);
+  it.effect.each(["cancels", "fails"] as const)(
+    "keeps an explicit stop running when discovery %s its retry",
+    (outcome) =>
+      Effect.gen(function* () {
+        const retry = yield* makeGate;
+        let failures = 1;
+        let nextGate: Gate | undefined;
+        const expo = fakeExpo({
+          failStop: () => failures-- > 0,
+          stopGate: () => {
+            const gate = nextGate;
+            nextGate = undefined;
+            return gate;
+          },
+        });
+        const host = yield* makeHost(expo, config(), yield* Scope.make());
+        const ready = yield* host.ensureReady(() => Effect.void);
+        const [catalogDevice] = (yield* ready.devices.list).devices;
+        const id = yield* ready.devices.boot(catalogDevice!);
+        const stop = ready.devices.shutdown({ id, platform: "ios" });
+        yield* Effect.flip(stop);
 
-      stopFails = false;
-      nextGate = retry;
-      const listing = yield* Effect.forkChild(ready.devices.list);
-      yield* Deferred.await(retry.requested);
-      const stopping = yield* Effect.forkChild(stop, { startImmediately: true });
-      expect(expo.stopped()).toEqual([id, id]);
-      yield* Fiber.interrupt(listing);
+        failures = outcome === "fails" ? 1 : 0;
+        nextGate = retry;
+        const listing = yield* Effect.forkChild(ready.devices.list);
+        yield* Deferred.await(retry.requested);
+        const stopping = yield* Effect.forkChild(stop, { startImmediately: true });
+        expect(expo.stopped()).toEqual([id, id]);
+        if (outcome === "cancels") yield* Fiber.interrupt(listing);
+        else yield* Deferred.succeed(retry.release, undefined);
 
-      yield* Fiber.join(stopping);
-      expect(expo.stopped()).toEqual([id, id, id]);
-      expect((yield* ready.devices.list).devices.map((device) => device.id)).not.toContain(id);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
+        yield* Fiber.join(stopping);
+        expect(expo.stopped()).toEqual([id, id, id]);
+        expect((yield* ready.devices.list).devices.map((device) => device.id)).not.toContain(id);
+      }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.effect(
