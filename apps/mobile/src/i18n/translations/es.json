@@ -5755,5 +5755,8 @@
   "2cf284a7b130b411": "Volver a iniciar sesión",
   "20a054556a7395b2": "Iniciar sesión con OpenRouter",
   "98f5e5fa1c6b0c62": "Termina de iniciar sesión en OpenRouter y luego vuelve aquí.",
-  "bc5e8f45269a432e": "o pega una clave de API"
+  "bc5e8f45269a432e": "o pega una clave de API",
+  "b1404122fa62a7d8": "OpenRouter no aceptó este inicio de sesión. Vuelve a iniciar sesión.",
+  "0d5aac55ed15a52c": "No se pudo contactar con OpenRouter. Inténtalo de nuevo.",
+  "796ab9d04e7b4f96": "Este inicio de sesión de OpenRouter caducó. Vuelve a iniciar sesión."
 }

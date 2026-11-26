@@ -47,6 +47,14 @@ export const OpenRouterSignInCode = Schema.Struct({
   state: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
   code: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
 });
+export const OpenRouterSignInStatusRequest = Schema.Struct({
+  state: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+});
+/** Where a started sign-in stands: still open, done, refused by OpenRouter, or gone. */
+export const OpenRouterSignInStatus = Schema.Struct({
+  status: Schema.Literals(["pending", "signed-in", "rejected", "unavailable", "expired"]),
+});
+export type OpenRouterSignInStatus = typeof OpenRouterSignInStatus.Type;
 export class OpenRouterSignInError extends Schema.TaggedError<OpenRouterSignInError>()(
   "OpenRouterSignInError",
   { reason: Schema.Literals(["expired", "rejected", "unavailable"]) },

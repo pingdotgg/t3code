@@ -5761,5 +5761,8 @@
   "2cf284a7b130b411": "Logga in igen",
   "20a054556a7395b2": "Logga in med OpenRouter",
   "98f5e5fa1c6b0c62": "Slutför inloggningen hos OpenRouter och kom sedan tillbaka hit.",
-  "bc5e8f45269a432e": "eller klistra in en API-nyckel"
+  "bc5e8f45269a432e": "eller klistra in en API-nyckel",
+  "b1404122fa62a7d8": "OpenRouter godtog inte den här inloggningen. Logga in igen.",
+  "0d5aac55ed15a52c": "Det gick inte att nå OpenRouter. Försök igen.",
+  "796ab9d04e7b4f96": "Den här OpenRouter-inloggningen har gått ut. Logga in igen."
 }

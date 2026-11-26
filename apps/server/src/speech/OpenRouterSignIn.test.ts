@@ -52,8 +52,10 @@ it.effect("saves the key OpenRouter returns for a started sign-in, once", () => 
     expect(url.searchParams.get("state")).toBe(state);
     expect(url.searchParams.get("key_label")).toBe("T3 Code (Laptop)");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(yield* signIn.status(state)).toBe("pending");
 
     yield* signIn.finish(state, "returned-code");
+    expect(yield* signIn.status(state)).toBe("signed-in");
     const [exchange] = fake.exchanges;
     expect(exchange?.url).toBe("https://openrouter.ai/api/v1/auth/keys");
     expect(exchange?.body).toMatchObject({ code: "returned-code", code_challenge_method: "S256" });
@@ -72,6 +74,8 @@ it.effect("saves the key OpenRouter returns for a started sign-in, once", () => 
     const replay = yield* signIn.finish(state, "returned-code").pipe(Effect.flip);
     expect(replay.reason).toBe("expired");
     expect(fake.exchanges).toHaveLength(1);
+    // The replay does not change how the real sign-in ended.
+    expect(yield* signIn.status(state)).toBe("signed-in");
   }).pipe(Effect.provide(Layer.merge(fake.layer, NodeCrypto.layer)));
 });
 
@@ -83,6 +87,8 @@ it.effect("asks for a code to paste without a callback, and reports a refused co
     expect(new URL(authorizationUrl).searchParams.has("callback_url")).toBe(false);
     const refused = yield* signIn.finish(state, "typo").pipe(Effect.flip);
     expect(refused.reason).toBe("rejected");
+    expect(yield* signIn.status(state)).toBe("rejected");
+    expect(yield* signIn.status("never-started")).toBe("expired");
     expect(fake.setKey).not.toHaveBeenCalled();
     expect((yield* signIn.finish("never-started", "code").pipe(Effect.flip)).reason).toBe(
       "expired",

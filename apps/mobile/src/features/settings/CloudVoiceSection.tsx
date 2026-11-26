@@ -425,7 +425,7 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
         {canManage ? (
           <ListSection title={gt("API key")} footer={keyFooter}>
             <View className="gap-3 px-4 py-3">
-              {routed && !key && connection && (
+              {routed && connection && (
                 <OpenRouterSignIn
                   prepared={connection}
                   onSignedIn={() => {

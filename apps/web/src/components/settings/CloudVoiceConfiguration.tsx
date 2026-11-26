@@ -299,7 +299,7 @@ export function CloudVoiceConfiguration({
 
   const keyField = (
     <>
-      {routed && !saved && connected && (
+      {routed && connected && (
         <OpenRouterSignIn
           prepared={prepared}
           disabled={busy}
@@ -310,12 +310,8 @@ export function CloudVoiceConfiguration({
           }}
         />
       )}
-      {/* With sign-in offered, its divider names the key field instead. */}
-      {!(routed && !saved && connected) && (
-        <Label htmlFor="voice-cloud-key">
-          {routed && saved ? gt("Replace API key") : gt("API key")}
-        </Label>
-      )}
+      {/* OpenRouter's sign-in divider names the key field instead. */}
+      {!routed && <Label htmlFor="voice-cloud-key">{gt("API key")}</Label>}
       <div className="flex min-w-0 items-start gap-2">
         {sources.length > 0 && (
           <SecretSourceSelect

@@ -7949,7 +7949,6 @@
   "9a284b5893dc04a2": "OpenRouter 模型",
   "c8361c16c47d5fb5": "搜索转写模型",
   "d72eccdd92d4f989": "无法保存此更改，请检查连接后重试。",
-  "ef5fef499da688e8": "替换 API 密钥",
   "cad38c8893ab98e4": "API 密钥",
   "42ec8bbd6819af00": "{company} API 密钥",
   "03d751a890780a70": "{company} API 密钥引用",
@@ -13156,5 +13155,8 @@
         "）"
       ]
     }
-  ]
+  ],
+  "b1404122fa62a7d8": "OpenRouter 未接受此次登录。请重新登录。",
+  "0d5aac55ed15a52c": "无法连接到 OpenRouter。请重试。",
+  "796ab9d04e7b4f96": "此次 OpenRouter 登录已过期。请重新登录。"
 }

@@ -310,6 +310,13 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* openRouter.finish(args.payload.state, args.payload.code);
         }),
       )
+      .handle(
+        "openRouterSignInStatus",
+        Effect.fn("environment.voice.openRouterSignInStatus")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          return { status: yield* openRouter.status(args.payload.state) };
+        }),
+      )
       .handleRaw(
         "openRouterCallback",
         Effect.fn("environment.voice.openRouterCallback")(function* ({ request }) {

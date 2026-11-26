@@ -76,6 +76,8 @@ import {
   OpenRouterSignInCode,
   OpenRouterSignInError,
   OpenRouterSignInRequest,
+  OpenRouterSignInStatus,
+  OpenRouterSignInStatusRequest,
   EnvironmentSpeechAccelerationRequest,
   EnvironmentSpeechModelLinkRequest,
   EnvironmentSpeechModelRequest,
@@ -972,6 +974,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       payload: OpenRouterSignInCode,
       success: HttpApiSchema.NoContent,
       error: [...EnvironmentScopedOperationErrors, OpenRouterSignInError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("openRouterSignInStatus", "/api/voice/cloud/openrouter/sign-in/status", {
+      headers: OptionalBearerHeaders,
+      payload: OpenRouterSignInStatusRequest,
+      success: OpenRouterSignInStatus,
+      error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   // OpenRouter's redirect carries no credential; the one-time state of a started sign-in is the proof.

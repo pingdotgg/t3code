@@ -7933,7 +7933,6 @@
   "9a284b5893dc04a2": "OpenRouter-Modell",
   "c8361c16c47d5fb5": "Transkriptionsmodelle durchsuchen",
   "d72eccdd92d4f989": "Diese Änderung konnte nicht gespeichert werden. Prüfe deine Verbindung und versuche es erneut.",
-  "ef5fef499da688e8": "API-Schlüssel ersetzen",
   "cad38c8893ab98e4": "API-Schlüssel",
   "42ec8bbd6819af00": "{company}-API-Schlüssel",
   "03d751a890780a70": "Referenz auf {company}-API-Schlüssel",
@@ -13142,5 +13141,8 @@
         }
       ]
     }
-  ]
+  ],
+  "b1404122fa62a7d8": "OpenRouter hat diese Anmeldung nicht akzeptiert. Melde dich erneut an.",
+  "0d5aac55ed15a52c": "OpenRouter ist nicht erreichbar. Versuche es erneut.",
+  "796ab9d04e7b4f96": "Diese OpenRouter-Anmeldung ist abgelaufen. Melde dich erneut an."
 }

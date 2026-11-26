@@ -1,7 +1,7 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   finishOpenRouterSignIn,
-  getCloudSpeechKeys,
+  getOpenRouterSignInStatus,
   startOpenRouterSignIn,
 } from "@t3tools/client-runtime/voice-input";
 import { useGT } from "gt-react-native";
@@ -16,7 +16,7 @@ import { runSpeech } from "../voice-input/voiceDestination";
 type Phase =
   | { readonly kind: "idle" }
   | { readonly kind: "starting" }
-  | { readonly kind: "waiting" }
+  | { readonly kind: "waiting"; readonly state: string }
   | { readonly kind: "code"; readonly state: string };
 
 /**
@@ -46,17 +46,28 @@ export function OpenRouterSignIn({
       setPhase({ kind: "idle" });
       return;
     }
-    setPhase(signIn.pasteCode ? { kind: "code", state: signIn.state } : { kind: "waiting" });
+    setPhase({ kind: signIn.pasteCode ? "code" : "waiting", state: signIn.state });
   };
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- OpenRouter finishes in the browser; returning to the app is when the key may have arrived.
+  const waitingFor = phase.kind === "waiting" ? phase.state : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- OpenRouter finishes in the browser; returning to the app is when the sign-in may have finished.
   useEffect(() => {
-    if (phase.kind !== "waiting") return;
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state !== "active") return;
-      void runSpeech(getCloudSpeechKeys(prepared)).then(
-        (keys) => {
-          if (keys.openrouter) onSignedIn();
+    if (waitingFor === null) return;
+    // Asks about this sign-in, not whether a key exists, so replacing a saved key works too.
+    const subscription = AppState.addEventListener("change", (appState) => {
+      if (appState !== "active") return;
+      void runSpeech(getOpenRouterSignInStatus(prepared, waitingFor)).then(
+        ({ status }) => {
+          if (status === "signed-in") return onSignedIn();
+          if (status === "pending") return;
+          setError(
+            status === "rejected"
+              ? gt("OpenRouter didn’t accept this sign-in. Sign in again.")
+              : status === "unavailable"
+                ? gt("Couldn’t reach OpenRouter. Try again.")
+                : gt("This OpenRouter sign-in expired. Sign in again."),
+          );
+          setPhase({ kind: "idle" });
         },
         () => {
           // Checked again the next time the app comes back.
@@ -64,7 +75,7 @@ export function OpenRouterSignIn({
       );
     });
     return () => subscription.remove();
-  }, [phase.kind, prepared, onSignedIn]);
+  }, [waitingFor, prepared, onSignedIn, gt]);
 
   const finish = async (state: string) => {
     setError("");

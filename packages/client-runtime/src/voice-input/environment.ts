@@ -171,6 +171,16 @@ export const finishOpenRouterSignIn = (prepared: PreparedConnection, state: stri
       client.finishOpenRouterSignIn({ headers, payload: { state, code } }),
   });
 
+/** Where a started OpenRouter sign-in stands, such as signed in or expired. */
+export const getOpenRouterSignInStatus = (prepared: PreparedConnection, state: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.openRouterSignInStatus(),
+    run: ({ client, headers }) => client.openRouterSignInStatus({ headers, payload: { state } }),
+  });
+
 export const transcribeCloudPcm = (
   prepared: PreparedConnection,
   provider: CloudSpeechProvider,

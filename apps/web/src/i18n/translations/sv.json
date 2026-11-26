@@ -7938,7 +7938,6 @@
   "9a284b5893dc04a2": "OpenRouter-modell",
   "c8361c16c47d5fb5": "Sök transkriberingsmodeller",
   "d72eccdd92d4f989": "Kunde inte spara ändringen. Kontrollera anslutningen och försök igen.",
-  "ef5fef499da688e8": "Ersätt API-nyckel",
   "cad38c8893ab98e4": "API-nyckel",
   "42ec8bbd6819af00": "API-nyckel för {company}",
   "03d751a890780a70": "Referens till API-nyckel för {company}",
@@ -13149,5 +13148,8 @@
         }
       ]
     }
-  ]
+  ],
+  "b1404122fa62a7d8": "OpenRouter godtog inte den här inloggningen. Logga in igen.",
+  "0d5aac55ed15a52c": "Det gick inte att nå OpenRouter. Försök igen.",
+  "796ab9d04e7b4f96": "Den här OpenRouter-inloggningen har gått ut. Logga in igen."
 }

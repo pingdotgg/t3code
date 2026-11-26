@@ -7932,7 +7932,6 @@
   "9a284b5893dc04a2": "Modelo de OpenRouter",
   "c8361c16c47d5fb5": "Buscar modelos de transcripción",
   "d72eccdd92d4f989": "No se pudo guardar este cambio. Comprueba tu conexión y vuelve a intentarlo.",
-  "ef5fef499da688e8": "Reemplazar clave de API",
   "cad38c8893ab98e4": "Clave de API",
   "42ec8bbd6819af00": "Clave de API de {company}",
   "03d751a890780a70": "Referencia de la clave de API de {company}",
@@ -13137,5 +13136,8 @@
         }
       ]
     }
-  ]
+  ],
+  "b1404122fa62a7d8": "OpenRouter no aceptó este inicio de sesión. Vuelve a iniciar sesión.",
+  "0d5aac55ed15a52c": "No se pudo contactar con OpenRouter. Inténtalo de nuevo.",
+  "796ab9d04e7b4f96": "Este inicio de sesión de OpenRouter caducó. Vuelve a iniciar sesión."
 }

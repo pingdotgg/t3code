@@ -162,13 +162,13 @@ export function ReadAloudKeyDialog({
               </p>
             ) : editingKey ? (
               <div className="grid gap-4">
-                {provider === "openrouter" && !saved && (
+                {provider === "openrouter" && (
                   <OpenRouterSignIn
                     prepared={prepared}
                     disabled={busy}
                     onSignedIn={() => {
                       refresh();
-                      onEnable();
+                      if (!active) onEnable();
                       close();
                     }}
                   />
@@ -182,7 +182,7 @@ export function ReadAloudKeyDialog({
                   }}
                 >
                   {/* With sign-in offered, its divider names the key field instead. */}
-                  {(provider !== "openrouter" || saved) && (
+                  {provider !== "openrouter" && (
                     <Label htmlFor="read-aloud-cloud-key">
                       <T>API key</T>
                     </Label>

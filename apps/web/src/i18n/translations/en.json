@@ -7940,7 +7940,6 @@
   "9a284b5893dc04a2": "OpenRouter model",
   "c8361c16c47d5fb5": "Search transcription models",
   "d72eccdd92d4f989": "Couldn’t save this change. Check your connection and try again.",
-  "ef5fef499da688e8": "Replace API key",
   "cad38c8893ab98e4": "API key",
   "42ec8bbd6819af00": "{company} API key",
   "03d751a890780a70": "{company} API key reference",
@@ -13155,5 +13154,8 @@
         }
       ]
     }
-  ]
+  ],
+  "b1404122fa62a7d8": "OpenRouter didn’t accept this sign-in. Sign in again.",
+  "0d5aac55ed15a52c": "Couldn’t reach OpenRouter. Try again.",
+  "796ab9d04e7b4f96": "This OpenRouter sign-in expired. Sign in again."
 }

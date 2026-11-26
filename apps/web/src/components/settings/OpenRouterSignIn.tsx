@@ -1,7 +1,7 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
   finishOpenRouterSignIn,
-  getCloudSpeechKeys,
+  getOpenRouterSignInStatus,
   startOpenRouterSignIn,
 } from "@t3tools/client-runtime/voice-input";
 import { useGT } from "gt-react";
@@ -16,7 +16,7 @@ import { Label } from "../ui/label";
 type Phase =
   | { readonly kind: "idle" }
   | { readonly kind: "starting" }
-  | { readonly kind: "waiting" }
+  | { readonly kind: "waiting"; readonly state: string }
   | { readonly kind: "code"; readonly state: string };
 
 /**
@@ -44,24 +44,35 @@ export function OpenRouterSignIn({
     try {
       const signIn = await runEnvironmentSpeech(startOpenRouterSignIn(prepared));
       await ensureLocalApi().shell.openExternal(signIn.authorizationUrl);
-      setPhase(signIn.pasteCode ? { kind: "code", state: signIn.state } : { kind: "waiting" });
+      setPhase({ kind: signIn.pasteCode ? "code" : "waiting", state: signIn.state });
     } catch {
       setError(gt("Couldn’t start signing in with OpenRouter. Try again."));
       setPhase({ kind: "idle" });
     }
   };
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- OpenRouter finishes in another tab or the system browser; coming back is when the key may have arrived.
+  const waitingFor = phase.kind === "waiting" ? phase.state : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- OpenRouter finishes in another tab or the system browser; coming back is when the sign-in may have finished.
   useEffect(() => {
-    if (phase.kind !== "waiting") return;
+    if (waitingFor === null) return;
     let checking = false;
+    // Asks about this sign-in, not whether a key exists, so replacing a saved key works too.
     const check = () => {
       if (checking || document.visibilityState !== "visible") return;
       checking = true;
-      void runEnvironmentSpeech(getCloudSpeechKeys(prepared)).then(
-        (keys) => {
+      void runEnvironmentSpeech(getOpenRouterSignInStatus(prepared, waitingFor)).then(
+        ({ status }) => {
           checking = false;
-          if (keys.openrouter) onSignedIn();
+          if (status === "signed-in") return onSignedIn();
+          if (status === "pending") return;
+          setError(
+            status === "rejected"
+              ? gt("OpenRouter didn’t accept this sign-in. Sign in again.")
+              : status === "unavailable"
+                ? gt("Couldn’t reach OpenRouter. Try again.")
+                : gt("This OpenRouter sign-in expired. Sign in again."),
+          );
+          setPhase({ kind: "idle" });
         },
         () => {
           // Checked again the next time this window comes back.
@@ -75,7 +86,7 @@ export function OpenRouterSignIn({
       window.removeEventListener("focus", check);
       document.removeEventListener("visibilitychange", check);
     };
-  }, [phase.kind, prepared, onSignedIn]);
+  }, [waitingFor, prepared, onSignedIn, gt]);
 
   const finish = async (state: string) => {
     setError("");

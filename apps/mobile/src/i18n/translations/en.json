@@ -5763,5 +5763,8 @@
   "2cf284a7b130b411": "Sign in again",
   "20a054556a7395b2": "Sign in with OpenRouter",
   "98f5e5fa1c6b0c62": "Finish signing in on OpenRouter, then come back here.",
-  "bc5e8f45269a432e": "or paste an API key"
+  "bc5e8f45269a432e": "or paste an API key",
+  "b1404122fa62a7d8": "OpenRouter didn’t accept this sign-in. Sign in again.",
+  "0d5aac55ed15a52c": "Couldn’t reach OpenRouter. Try again.",
+  "796ab9d04e7b4f96": "This OpenRouter sign-in expired. Sign in again."
 }

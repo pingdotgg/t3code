@@ -7932,7 +7932,6 @@
   "9a284b5893dc04a2": "Modelo do OpenRouter",
   "c8361c16c47d5fb5": "Pesquisar modelos de transcrição",
   "d72eccdd92d4f989": "Não foi possível salvar esta alteração. Verifique sua conexão e tente novamente.",
-  "ef5fef499da688e8": "Substituir chave de API",
   "cad38c8893ab98e4": "Chave de API",
   "42ec8bbd6819af00": "Chave de API da {company}",
   "03d751a890780a70": "Referência da chave de API da {company}",
@@ -13142,5 +13141,8 @@
         }
       ]
     }
-  ]
+  ],
+  "b1404122fa62a7d8": "O OpenRouter não aceitou este login. Entre novamente.",
+  "0d5aac55ed15a52c": "Não foi possível acessar o OpenRouter. Tente novamente.",
+  "796ab9d04e7b4f96": "Este login do OpenRouter expirou. Entre novamente."
 }

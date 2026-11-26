@@ -7933,7 +7933,6 @@
   "9a284b5893dc04a2": "Modèle OpenRouter",
   "c8361c16c47d5fb5": "Rechercher des modèles de transcription",
   "d72eccdd92d4f989": "Impossible d’enregistrer cette modification. Vérifiez votre connexion et réessayez.",
-  "ef5fef499da688e8": "Remplacer la clé API",
   "cad38c8893ab98e4": "Clé API",
   "42ec8bbd6819af00": "Clé API {company}",
   "03d751a890780a70": "Référence de la clé API {company}",
@@ -13142,5 +13141,8 @@
         }
       ]
     }
-  ]
+  ],
+  "b1404122fa62a7d8": "OpenRouter n’a pas accepté cette connexion. Reconnectez-vous.",
+  "0d5aac55ed15a52c": "Impossible de joindre OpenRouter. Réessayez.",
+  "796ab9d04e7b4f96": "Cette connexion OpenRouter a expiré. Reconnectez-vous."
 }

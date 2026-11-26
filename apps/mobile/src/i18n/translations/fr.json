@@ -5755,5 +5755,8 @@
   "2cf284a7b130b411": "Se reconnecter",
   "20a054556a7395b2": "Se connecter avec OpenRouter",
   "98f5e5fa1c6b0c62": "Terminez la connexion sur OpenRouter, puis revenez ici.",
-  "bc5e8f45269a432e": "ou collez une clé d’API"
+  "bc5e8f45269a432e": "ou collez une clé d’API",
+  "b1404122fa62a7d8": "OpenRouter n’a pas accepté cette connexion. Reconnectez-vous.",
+  "0d5aac55ed15a52c": "Impossible de joindre OpenRouter. Réessayez.",
+  "796ab9d04e7b4f96": "Cette connexion OpenRouter a expiré. Reconnectez-vous."
 }
