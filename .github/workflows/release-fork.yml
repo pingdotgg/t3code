@@ -311,6 +311,15 @@ jobs:
       - name: Build JS bundle
         run: vp run build:desktop
 
+      # Artifact uploads omit hidden files by default. Stage the manifest for release-desktop.yml.
+      - name: Stage web asset manifest
+        shell: bash
+        run: |
+          manifest=apps/server/dist/client/.vite/manifest.json
+          if [[ -f "$manifest" ]]; then
+            cp "$manifest" apps/server/dist/client/vite-manifest.release.json
+          fi
+
       # Two paths under apps/ so the artifact root is apps/; consumers download
       # into `apps` to restore both at their original locations.
       - name: Upload JS bundle
