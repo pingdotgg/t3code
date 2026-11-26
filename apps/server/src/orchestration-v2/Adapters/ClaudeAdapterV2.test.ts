@@ -6232,6 +6232,122 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  const autoModeNotices = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+    events.flatMap((event) =>
+      event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+        ? [event.turnItem.message]
+        : [],
+    );
+  const autoTurnInput = (
+    harness: {
+      readonly threadId: ThreadId;
+      readonly providerThread: OrchestrationV2ProviderThread;
+    },
+    ordinal: number,
+    providerThread = harness.providerThread,
+  ) => {
+    const input = makeClaudeTestTurnInput({
+      threadId: harness.threadId,
+      providerThread,
+      now: DateTime.makeUnsafe(0),
+      attemptId: RunAttemptId.make(`attempt-claude-auto-notice-${ordinal}`),
+      text: "Run git status.",
+      attachments: [],
+      providerTurnOrdinal: ordinal,
+      runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto",
+        interactionMode: "default",
+        cwd: "/workspace",
+      }),
+    });
+    return { ...input, appThread: { ...input.appThread, runtimeMode: "auto" as const } };
+  };
+
+  it.effect("says nothing about Auto when launch arguments ask Claude for another mode", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: {
+          ...DEFAULT_CLAUDE_SETTINGS,
+          launchArgs: "--permission-mode bypassPermissions",
+        },
+      });
+      yield* harness.runtime.startTurn(autoTurnInput(harness, 1));
+      assert.equal(harness.getOpenedOptions()?.permissionMode, "bypassPermissions");
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: "bypassPermissions",
+          uuid: "auto-launch-arg-init",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      // Events arrive in order, so the terminal one follows any notice the init caused.
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(autoModeNotices(harness.events), []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("tells a session Claude started under another id about Auto once", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+      });
+      const init = (uuid: string) =>
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          permissionMode: "default",
+          uuid,
+          session_id: "adopted-native-session",
+        });
+      yield* harness.runtime.startTurn(autoTurnInput(harness, 1));
+      // A start-up retry runs under a new id, which the adapter adopts from this init.
+      yield* harness.offerAndWait(init("auto-adopted-init"));
+      yield* harness.offerAndWait(turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      const adopted = harness.events.findLast((event) => event.type === "provider_thread.updated");
+      assert.equal(adopted?.providerThread.nativeThreadRef?.nativeId, "adopted-native-session");
+      yield* harness.runtime.interruptTurn({
+        providerThread: adopted!.providerThread,
+        providerTurnId: lastProviderTurn(harness.events).id,
+        requestRuntimeRestart: true,
+      });
+      yield* harness.runtime.startTurn(autoTurnInput(harness, 2, adopted!.providerThread));
+      assert.equal(harness.getOpenedOptions()?.resume, "adopted-native-session");
+      yield* harness.offerAndWait(init("auto-adopted-init-resumed"));
+      yield* harness.offerAndWait(
+        makeResultFrame({ uuid: "auto-adopted-result-resumed", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(autoModeNotices(harness.events), [
+        ClaudeAdapterV2.claudeAutoModeUnavailableNotice(undefined),
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect(
     "carries earlier user-only skill instructions on sends and steering with attachments",
     () =>

@@ -6,6 +6,7 @@ import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext, HiddenThreadContext } from "./backgroundThread";
 import {
+  draftRuntimeModeLimitsInstance,
   draftSupportedRuntimeModes,
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
@@ -1006,6 +1007,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Called before the derivation below: a hook between it and its uses stops React Compiler
   // from caching the mode options, and the footer then re-renders on every keystroke.
   const managedPolicy = useManagedPolicy(environmentId);
+  const runtimeModeLimitsFor = runtimeModeLimitsTarget(
+    environmentId,
+    draftRuntimeModeLimitsInstance(selectedProviderEntry?.instanceId, multipleModelSelections),
+    gitCwd,
+  );
+  const runtimeModeLimits = useProviderRuntimeModeLimits(runtimeModeLimitsFor);
   const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
     resolveCompatibleRuntimeMode(
       runtimeMode,
@@ -1015,15 +1022,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         providerStatuses,
       ),
     );
-  // A multi-model send gives each thread its own provider, so no one provider's limits apply.
-  const runtimeModeLimitsFor = runtimeModeLimitsTarget(
-    environmentId,
-    multipleModelSelections === null || multipleModelSelections.length === 0
-      ? selectedProviderEntry?.instanceId
-      : undefined,
-    gitCwd,
-  );
-  const runtimeModeLimits = useProviderRuntimeModeLimits(runtimeModeLimitsFor);
   // Modes above an administrator's ceiling, or that the provider cannot run in this folder,
   // stay listed, disabled with the reason.
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(

@@ -5704,6 +5704,8 @@ interface ClaudeLiveQueryContext {
   lastTurn: ActiveClaudeTurnContext | null;
   // "early" echoes on the first frame; "acknowledged" confirms uuid acceptance, but resume turns can still precede the prompt.
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
+  // What the CLI was asked for; launch arguments can make it differ from the thread's mode.
+  readonly requestedPermissionMode: PermissionMode;
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
   receivedInit: boolean;
@@ -6481,18 +6483,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           turn: ActiveClaudeTurnContext,
           live: ClaudeLiveQueryContext,
         ) {
+          // A start-up retry runs under another id, and a later turn resumes that one.
+          const nativeSessionId =
+            clearedNativeSessions.get(live.nativeThreadId) ?? live.nativeThreadId;
           if (
             !live.receivedInit ||
-            live.queryPolicy.permissionMode !== "auto" ||
+            live.requestedPermissionMode !== "auto" ||
             live.openedPermissionMode === "auto" ||
             turn.nativeThreadId !== live.nativeThreadId ||
             isClaudeProviderContinuationTurn(turn.input) ||
             permissionModeForClaudeRuntimePolicy(turn.input.runtimePolicy) !== "auto" ||
-            announcedAutoFallbacks.has(live.nativeThreadId)
+            announcedAutoFallbacks.has(nativeSessionId)
           ) {
             return;
           }
-          announcedAutoFallbacks.add(live.nativeThreadId);
+          announcedAutoFallbacks.add(nativeSessionId);
           if (announcedAutoFallbacks.size > 1000) {
             const oldest = announcedAutoFallbacks.values().next().value;
             if (oldest !== undefined) announcedAutoFallbacks.delete(oldest);
@@ -14213,6 +14218,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             closed,
             lastTurn: null,
             promptEchoMode: "unknown",
+            requestedPermissionMode: queryOptions.permissionMode,
             openedPermissionMode: queryOptions.permissionMode,
             receivedInit: false,
             checkMcpSignIns: false,
