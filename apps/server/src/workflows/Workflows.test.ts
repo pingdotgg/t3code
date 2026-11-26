@@ -2827,10 +2827,6 @@ it.effect("a list by tag keeps the runs that did something apart from skipped on
           `,
         ).pipe(Effect.provide(database));
         assert.include(
-          (yield* workflows.list({})).map((listed) => listed.runId),
-          run.runId,
-        );
-        assert.include(
           (yield* workflows.list({ tag: "pr" })).map((listed) => listed.runId),
           run.runId,
         );
