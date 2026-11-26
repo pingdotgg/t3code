@@ -68,6 +68,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
         })),
       )
     : null;
+  const hasCount = collapsed && hiddenThreads.length > 0;
   return (
     <li
       data-testid="sidebar-project-folder"
@@ -97,11 +98,20 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
             <span className="sr-only">{m(FOLDER_DOT_LABEL[dot])}</span>
           </span>
         ) : null}
-        {collapsed && hiddenThreads.length > 0 ? (
-          <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
-            {hiddenThreads.length}
-          </span>
-        ) : null}
+        {/* Widens to the new-thread button while it shows; empty, it also gives back its flex gap. */}
+        <span
+          className={cn(
+            "flex min-w-0 shrink-0 justify-end group-hover/project-folder:min-w-4 group-has-[[data-sidebar-action-for]:focus]/project-folder:min-w-4 pointer-coarse:min-w-4",
+            !hasCount &&
+              "-ml-2.5 group-hover/project-folder:ml-0 group-has-[[data-sidebar-action-for]:focus]/project-folder:ml-0 pointer-coarse:ml-0",
+          )}
+        >
+          {hasCount ? (
+            <span className="text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
+              {hiddenThreads.length}
+            </span>
+          ) : null}
+        </span>
         <ChevronDownIcon
           aria-hidden
           className={cn(

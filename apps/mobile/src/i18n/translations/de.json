@@ -1323,6 +1323,7 @@
   "42a2622893a6bced": "Limits konnten nicht gelesen werden.",
   "4897e228d3185c96": "Keine Limits gemeldet.",
   "e27d2cb964df5dd5": "{source}: Keine Konten gemeldet.",
+  "161135f0aea4d1ca": "{source}: Keine Codex-, Claude- oder Grok-Konten. Übersprungen: {providers}.",
   "1b503134018285f4": "{days} T. {hours} Std.",
   "164c674cf062933a": "{label} · noch {count} · läuft ab in {expires}",
   "9c82c39589c23938": "{label} · noch {count}",
