@@ -1,7 +1,25 @@
 diff --git a/react-native.js b/react-native.js
-index 785118ab1ac204e831ea6167331a6e8dbc34ed98..74ef4bfba918098ed5bac72b0e94f79f6598f230 100644
+index 785118a..debe955 100644
 --- a/react-native.js
 +++ b/react-native.js
+@@ -233,7 +233,7 @@ function createSelectorFunctionsArr(ctx, signalNames) {
+       for (let i = 0; i < signalNames.length; i++) {
+         const value = peek$(ctx, signalNames[i]);
+         currentValues.push(value);
+-        if (value !== lastSignalValues[i]) {
++        if (!Object.is(value, lastSignalValues[i])) {
+           hasChanged = true;
+         }
+       }
+@@ -278,7 +278,7 @@ function peek$(ctx, signalName) {
+ }
+ function set$(ctx, signalName, value) {
+   const { listeners, values } = ctx;
+-  if (values.get(signalName) !== value) {
++  if (!Object.is(values.get(signalName), value)) {
+     values.set(signalName, value);
+     const setListeners = listeners.get(signalName);
+     if (setListeners) {
 @@ -1344,7 +1344,8 @@ function checkAtBottom(ctx, allowedEdge, allowGateCreatedInCurrentCheck) {
      return;
    }
@@ -25,9 +43,27 @@ index 785118ab1ac204e831ea6167331a6e8dbc34ed98..74ef4bfba918098ed5bac72b0e94f79f
          var _a3;
          return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react-native.mjs b/react-native.mjs
-index 8aae009e1fcd890150e5f216c488ef8ee1747940..65330874626f55b3acb98e40dff999d6002863e6 100644
+index 8aae009..12cb604 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
+@@ -212,7 +212,7 @@ function createSelectorFunctionsArr(ctx, signalNames) {
+       for (let i = 0; i < signalNames.length; i++) {
+         const value = peek$(ctx, signalNames[i]);
+         currentValues.push(value);
+-        if (value !== lastSignalValues[i]) {
++        if (!Object.is(value, lastSignalValues[i])) {
+           hasChanged = true;
+         }
+       }
+@@ -257,7 +257,7 @@ function peek$(ctx, signalName) {
+ }
+ function set$(ctx, signalName, value) {
+   const { listeners, values } = ctx;
+-  if (values.get(signalName) !== value) {
++  if (!Object.is(values.get(signalName), value)) {
+     values.set(signalName, value);
+     const setListeners = listeners.get(signalName);
+     if (setListeners) {
 @@ -1323,7 +1323,8 @@ function checkAtBottom(ctx, allowedEdge, allowGateCreatedInCurrentCheck) {
      return;
    }
@@ -51,9 +87,27 @@ index 8aae009e1fcd890150e5f216c488ef8ee1747940..65330874626f55b3acb98e40dff999d6
          var _a3;
          return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react-native.web.js b/react-native.web.js
-index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..43db6848f3303fe6628e2402ce6d7df6c1b06c53 100644
+index ca0217a..e84e52e 100644
 --- a/react-native.web.js
 +++ b/react-native.web.js
+@@ -243,7 +243,7 @@ function createSelectorFunctionsArr(ctx, signalNames) {
+       for (let i = 0; i < signalNames.length; i++) {
+         const value = peek$(ctx, signalNames[i]);
+         currentValues.push(value);
+-        if (value !== lastSignalValues[i]) {
++        if (!Object.is(value, lastSignalValues[i])) {
+           hasChanged = true;
+         }
+       }
+@@ -288,7 +288,7 @@ function peek$(ctx, signalName) {
+ }
+ function set$(ctx, signalName, value) {
+   const { listeners, values } = ctx;
+-  if (values.get(signalName) !== value) {
++  if (!Object.is(values.get(signalName), value)) {
+     values.set(signalName, value);
+     const setListeners = listeners.get(signalName);
+     if (setListeners) {
 @@ -9024,7 +9024,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        contentLength: getContentSize(ctx),
        data: state.props.data,
@@ -67,9 +121,27 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..43db6848f3303fe6628e2402ce6d7df6
          var _a3;
          return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react-native.web.mjs b/react-native.web.mjs
-index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..590710611f4ceb3b77d84883d2ac196adb3ba5c0 100644
+index 801cd3d..cac5599 100644
 --- a/react-native.web.mjs
 +++ b/react-native.web.mjs
+@@ -222,7 +222,7 @@ function createSelectorFunctionsArr(ctx, signalNames) {
+       for (let i = 0; i < signalNames.length; i++) {
+         const value = peek$(ctx, signalNames[i]);
+         currentValues.push(value);
+-        if (value !== lastSignalValues[i]) {
++        if (!Object.is(value, lastSignalValues[i])) {
+           hasChanged = true;
+         }
+       }
+@@ -267,7 +267,7 @@ function peek$(ctx, signalName) {
+ }
+ function set$(ctx, signalName, value) {
+   const { listeners, values } = ctx;
+-  if (values.get(signalName) !== value) {
++  if (!Object.is(values.get(signalName), value)) {
+     values.set(signalName, value);
+     const setListeners = listeners.get(signalName);
+     if (setListeners) {
 @@ -9003,7 +9003,10 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        contentLength: getContentSize(ctx),
        data: state.props.data,
@@ -83,9 +155,27 @@ index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..590710611f4ceb3b77d84883d2ac196a
          var _a3;
          return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react.js b/react.js
-index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee5981322d28 100644
+index ca0217a..c050a11 100644
 --- a/react.js
 +++ b/react.js
+@@ -243,7 +243,7 @@ function createSelectorFunctionsArr(ctx, signalNames) {
+       for (let i = 0; i < signalNames.length; i++) {
+         const value = peek$(ctx, signalNames[i]);
+         currentValues.push(value);
+-        if (value !== lastSignalValues[i]) {
++        if (!Object.is(value, lastSignalValues[i])) {
+           hasChanged = true;
+         }
+       }
+@@ -288,7 +288,7 @@ function peek$(ctx, signalName) {
+ }
+ function set$(ctx, signalName, value) {
+   const { listeners, values } = ctx;
+-  if (values.get(signalName) !== value) {
++  if (!Object.is(values.get(signalName), value)) {
+     values.set(signalName, value);
+     const setListeners = listeners.get(signalName);
+     if (setListeners) {
 @@ -6415,7 +6415,8 @@ function useOnLayoutSync({
    onLayoutProp,
    onLayoutChange,
@@ -212,9 +302,27 @@ index ca0217afce6086dcd0bb6d50492abd7a624cd2ae..05a943fa9e56cfcdfbba8e89fc37ee59
          var _a3;
          return (_a3 = ctx.viewRefs.get(findContainerId(ctx, getId(state, index)))) == null ? void 0 : _a3.current;
 diff --git a/react.mjs b/react.mjs
-index 801cd3d7ab65c0abe63f7ceedac69a524d283fe8..a1c3fac58ca702836252bf774e8ccc533c597599 100644
+index 801cd3d..fa5312b 100644
 --- a/react.mjs
 +++ b/react.mjs
+@@ -222,7 +222,7 @@ function createSelectorFunctionsArr(ctx, signalNames) {
+       for (let i = 0; i < signalNames.length; i++) {
+         const value = peek$(ctx, signalNames[i]);
+         currentValues.push(value);
+-        if (value !== lastSignalValues[i]) {
++        if (!Object.is(value, lastSignalValues[i])) {
+           hasChanged = true;
+         }
+       }
+@@ -267,7 +267,7 @@ function peek$(ctx, signalName) {
+ }
+ function set$(ctx, signalName, value) {
+   const { listeners, values } = ctx;
+-  if (values.get(signalName) !== value) {
++  if (!Object.is(values.get(signalName), value)) {
+     values.set(signalName, value);
+     const setListeners = listeners.get(signalName);
+     if (setListeners) {
 @@ -6394,7 +6394,8 @@ function useOnLayoutSync({
    onLayoutProp,
    onLayoutChange,
