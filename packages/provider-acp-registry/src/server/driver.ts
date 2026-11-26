@@ -1164,7 +1164,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         )
         .pipe(Effect.forkScoped);
     }
-    // ACP advertises commands only to a session, and a session has one directory.
+    // ACP advertises commands only to a session, and opening one in a project can start that
+    // project's hooks and MCP servers, so this runs only for a scan the user asked for.
     const probeCommandsForCwd = Effect.fn("AcpRegistryDriver.probeCommandsForCwd")(function* (
       cwd: string,
     ) {
@@ -1209,20 +1210,27 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           )
         : Option.some(yield* probe);
     });
-    const snapshotForCwd = Effect.fn("AcpRegistryDriver.snapshotForCwd")(function* (cwd: string) {
+    const snapshotForCwd = Effect.fn("AcpRegistryDriver.snapshotForCwd")(function* (
+      cwd: string,
+      options?: { readonly fresh?: boolean },
+    ) {
       const machineSnapshot = yield* snapshot.getSnapshot;
       if (!effectiveConfig.enabled) return machineSnapshot;
-      const live = Option.isSome(runtimeCoordinator)
-        ? yield* runtimeCoordinator.value.getAvailableCommands(instanceId, cwd)
-        : Option.none<AcpRegistryAvailableCommands>();
-      const commands = Option.isSome(live) ? live : yield* probeCommandsForCwd(cwd);
-      // No probe ran: the agent is not ready, or a starting session cancelled the probe and
-      // reports this directory's commands itself.
-      if (Option.isNone(commands)) return { ...machineSnapshot, slashCommandsPending: true };
-      return {
-        ...applyAcpRegistryAvailableCommands(machineSnapshot, commands),
-        slashCommandsPending: false,
-      };
+      const probed =
+        options?.fresh === true
+          ? yield* probeCommandsForCwd(cwd)
+          : Option.none<AcpRegistryAvailableCommands>();
+      if (Option.isNone(runtimeCoordinator)) {
+        return applyAcpRegistryAvailableCommands(machineSnapshot, probed);
+      }
+      // Kept with the sessions' reports so later ordinary scans of this directory still list it.
+      if (Option.isSome(probed)) {
+        yield* runtimeCoordinator.value.publishAvailableCommands(instanceId, cwd, probed.value);
+      }
+      return applyAcpRegistryAvailableCommands(
+        machineSnapshot,
+        yield* runtimeCoordinator.value.getAvailableCommands(instanceId, cwd),
+      );
     });
 
     const provideAcpManagementServices = <A, E>(

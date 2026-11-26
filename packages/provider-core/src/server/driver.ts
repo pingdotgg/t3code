@@ -51,6 +51,8 @@ export interface ProviderInstance {
   readonly snapshot: ManagedServerProvider;
   readonly snapshotForCwd?: (
     cwd: string,
+    /** `fresh` marks a scan the user asked for, the only kind that may run a heavier probe. */
+    options?: { readonly fresh?: boolean },
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   /**
    * Modes this instance offers that cannot run in `cwd`. Must stay cheap: clients ask whenever a

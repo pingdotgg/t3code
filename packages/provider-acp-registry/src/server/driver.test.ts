@@ -1217,8 +1217,14 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
     Effect.gen(function* () {
       const { instance, project } = yield* createWorkspaceCommandsInstance();
       expect(instance.snapshotForCwd).toBeDefined();
-      const snapshot = yield* instance.snapshotForCwd!(project);
-      expect(snapshot.slashCommands.map((command) => command.name)).toContain("demo");
+      const names = (options?: { readonly fresh: boolean }) =>
+        instance.snapshotForCwd!(project, options).pipe(
+          Effect.map((snapshot) => snapshot.slashCommands.map((command) => command.name)),
+        );
+      // An ordinary scan must not open a session in the project.
+      expect(yield* names()).not.toContain("demo");
+      expect(yield* names({ fresh: true })).toContain("demo");
+      expect(yield* names()).toContain("demo");
     }),
   );
 

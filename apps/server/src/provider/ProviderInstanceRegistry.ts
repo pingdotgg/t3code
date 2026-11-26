@@ -115,7 +115,10 @@ const withLivePresentation = (
       streamChanges: Stream.suspend(() => snapshot.streamChanges).pipe(Stream.map(restamp)),
     },
     ...(snapshotForCwd
-      ? { snapshotForCwd: (cwd: string) => snapshotForCwd(cwd).pipe(Effect.map(restamp)) }
+      ? {
+          snapshotForCwd: (cwd: string, options?: { readonly fresh?: boolean }) =>
+            snapshotForCwd(cwd, options).pipe(Effect.map(restamp)),
+        }
       : {}),
   };
   const setPresentation = (entry: ProviderInstanceConfig) => {

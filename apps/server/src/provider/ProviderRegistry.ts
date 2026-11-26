@@ -1293,10 +1293,13 @@ export const layer = Layer.effect(
         : Effect.succeed(scannedFrom);
       const runScan = refreshMachineSnapshot.pipe(
         Effect.flatMap((scanBase) =>
-          Effect.map(snapshotForCwd(input.scanCwd ?? input.cwd), (scopedSnapshot) => ({
-            scanBase,
-            scopedSnapshot,
-          })),
+          Effect.map(
+            snapshotForCwd(input.scanCwd ?? input.cwd, { fresh: input.fresh === true }),
+            (scopedSnapshot) => ({
+              scanBase,
+              scopedSnapshot,
+            }),
+          ),
         ),
         // Scans fail on error; returned inventory remains valid even when provider health reports an error.
         Effect.flatMap(({ scanBase, scopedSnapshot }) =>
