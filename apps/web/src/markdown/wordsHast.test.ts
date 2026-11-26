@@ -296,6 +296,14 @@ describe("wordsHast", () => {
     expect(html).toContain('style="white-space:pre"> for </text>');
   });
 
+  it("keeps TeX delimiters as written when math is off", () => {
+    const html = wordsHtml(
+      "Build the network as \\(s \\to t\\).\n**The edge \\(s \\to \\text{Maya}\\) limits Maya.**",
+    );
+    expect(html).toContain("Build the network as \\(s \\to t\\).");
+    expect(html).toContain("<strong>The edge \\(s \\to \\text{Maya}\\) limits Maya.</strong>");
+  });
+
   it("keeps control bytes, blank lines, unclosed blocks, shell vars, and table dollars intact in math", () => {
     const options = { ...ASSISTANT, math: true };
     expect(toHtml(wordsHast("Pasted: $a\u001bb + c$", options))).toContain("<svg ");
