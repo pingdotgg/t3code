@@ -8209,6 +8209,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
             );
             if (activation.stopped) return;
+            // A blocked update can land while the first turn starts; do not force active.
+            if (goalsByNativeThread.get(threadId)?.status === "blocked") return;
             const { goal } = yield* client.request("thread/goal/set", {
               threadId,
               status: "active",
