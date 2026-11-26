@@ -13,8 +13,9 @@ import { ISSUES_PANEL_REF, PULL_REQUESTS_PANEL_REF, useRightPanelStore } from ".
 import { useProjects, useServerConfigs } from "../state/entities";
 
 /**
- * Opens an issue link beside the thread, and says whether it did. Unrecognized hosts,
- * modifier clicks, and links when "Open issues in T3 Code" is off are left for the caller.
+ * Opens an issue link beside the thread, and says whether it did. Anything else — an unknown
+ * host, a modifier click, or any link while "Open issues in T3 Code" is off — is left for the
+ * caller to handle as an ordinary link. Mirrors `useOpenChangeRequestLink`.
  */
 export function useOpenIssueLink(
   threadRef?: ScopedThreadRef,
