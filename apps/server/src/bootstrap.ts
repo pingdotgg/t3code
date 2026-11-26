@@ -5,7 +5,6 @@ import * as NodeReadline from "node:readline";
 import type * as NodeStream from "node:stream";
 
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -63,11 +62,31 @@ export class BootstrapEnvelopeDecodeError extends Schema.TaggedError<BootstrapEn
   }
 }
 
+export class BootstrapEnvelopeMissingError extends Schema.TaggedError<BootstrapEnvelopeMissingError>()(
+  "BootstrapEnvelopeMissingError",
+  { fd: Schema.Number },
+) {
+  override get message(): string {
+    return `Bootstrap input on file descriptor ${this.fd} closed without an envelope.`;
+  }
+}
+
+export class BootstrapEnvelopeTimeoutError extends Schema.TaggedError<BootstrapEnvelopeTimeoutError>()(
+  "BootstrapEnvelopeTimeoutError",
+  { fd: Schema.Number, timeoutMs: Schema.Number },
+) {
+  override get message(): string {
+    return `Timed out waiting for bootstrap envelope from file descriptor ${this.fd} after ${this.timeoutMs} ms.`;
+  }
+}
+
 export const BootstrapError = Schema.Union([
   BootstrapFdStatError,
   BootstrapInputStreamOpenError,
   BootstrapEnvelopeReadError,
   BootstrapEnvelopeDecodeError,
+  BootstrapEnvelopeMissingError,
+  BootstrapEnvelopeTimeoutError,
 ]);
 export type BootstrapError = typeof BootstrapError.Type;
 
@@ -77,17 +96,20 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
   options?: {
     timeoutMs?: number;
   },
-): Effect.fn.Return<Option.Option<A>, BootstrapError> {
-  const fdReady = yield* isFdReady(fd);
-  if (!fdReady) return Option.none();
+): Effect.fn.Return<A, BootstrapError> {
+  const stat = yield* Effect.try({
+    try: () => NodeFS.fstatSync(fd),
+    catch: (cause) => new BootstrapFdStatError({ fd, cause }),
+  });
 
-  const stream = yield* makeBootstrapInputStream(fd);
+  const stream = yield* makeBootstrapInputStream(fd, isPipeStat(stat));
 
-  const timeoutMs = options?.timeoutMs ?? 1000;
+  // Covers slow cold starts while staying well under the desktop readiness timeout.
+  const timeoutMs = options?.timeoutMs ?? 30_000;
 
   return yield* Effect.callback<
-    Option.Option<A>,
-    BootstrapEnvelopeReadError | BootstrapEnvelopeDecodeError
+    A,
+    BootstrapEnvelopeReadError | BootstrapEnvelopeDecodeError | BootstrapEnvelopeMissingError
   >((resume) => {
     const input = NodeReadline.createInterface({
       input: stream,
@@ -95,19 +117,20 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     });
 
     const cleanup = () => {
-      stream.removeListener("error", handleError);
+      input.removeListener("error", handleError);
       input.removeListener("line", handleLine);
       input.removeListener("close", handleClose);
       input.close();
       stream.destroy();
     };
 
+    const finish = (result: Parameters<typeof resume>[0]) => {
+      cleanup();
+      resume(result);
+    };
+
     const handleError = (error: Error) => {
-      if (isUnavailableBootstrapFdError(error)) {
-        resume(Effect.succeedNone);
-        return;
-      }
-      resume(
+      finish(
         Effect.fail(
           new BootstrapEnvelopeReadError({
             fd,
@@ -120,9 +143,9 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     const handleLine = (line: string) => {
       const parsed = decodeJsonResult(schema)(line);
       if (Result.isSuccess(parsed)) {
-        resume(Effect.succeedSome(parsed.success));
+        finish(Effect.succeed(parsed.success));
       } else {
-        resume(
+        finish(
           Effect.fail(
             new BootstrapEnvelopeDecodeError({
               fd,
@@ -134,45 +157,39 @@ export const readBootstrapEnvelope = Effect.fn("readBootstrapEnvelope")(function
     };
 
     const handleClose = () => {
-      resume(Effect.succeedNone);
+      finish(Effect.fail(new BootstrapEnvelopeMissingError({ fd })));
     };
 
-    stream.once("error", handleError);
+    input.once("error", handleError);
     input.once("line", handleLine);
     input.once("close", handleClose);
 
     return Effect.sync(cleanup);
-  }).pipe(Effect.timeoutOption(timeoutMs), Effect.map(Option.flatten));
-});
-
-const isUnavailableBootstrapFdError = Predicate.compose(
-  Predicate.hasProperty("code"),
-  (_) => _.code === "EBADF" || _.code === "ENOENT",
-);
-
-const isFdReady = (fd: number) =>
-  Effect.try({
-    try: () => NodeFS.fstatSync(fd),
-    catch: (error) =>
-      new BootstrapFdStatError({
-        fd,
-        cause: error,
-      }),
   }).pipe(
-    Effect.as(true),
-    Effect.catchTags({
-      BootstrapFdStatError: (error) =>
-        isUnavailableBootstrapFdError(error.cause) ? Effect.succeed(false) : Effect.fail(error),
+    Effect.timeoutOrElse({
+      duration: timeoutMs,
+      orElse: () => Effect.fail(new BootstrapEnvelopeTimeoutError({ fd, timeoutMs })),
     }),
   );
+});
+
+// Node's Stats.isFIFO() is hardwired to false on Windows, where libuv reports pipes as S_IFIFO.
+const isPipeStat = (stat: NodeFS.Stats): boolean =>
+  stat.isSocket() || (stat.mode & NodeFS.constants.S_IFMT) === NodeFS.constants.S_IFIFO;
 
 const makeBootstrapInputStream = Effect.fn("bootstrap.makeBootstrapInputStream")(function* (
   fd: number,
+  isPipe: boolean,
 ) {
   const platform = yield* HostProcess.Platform;
-  const fdPath = resolveFdPath(fd, platform);
+  const fdPath = isPipe ? undefined : resolveFdPath(fd, platform);
   return yield* Effect.try<NodeStream.Readable, BootstrapInputStreamOpenError>({
     try: () => {
+      // fs reads of an empty non-blocking pipe fail with EAGAIN, and blocking ones pin a
+      // threadpool thread past the timeout; a libuv stream waits for data and destroys cleanly.
+      if (isPipe) {
+        return makeSocketBootstrapStream(fd);
+      }
       if (fdPath === undefined) {
         return makeDirectBootstrapStream(fd);
       }
@@ -205,22 +222,21 @@ const makeBootstrapInputStream = Effect.fn("bootstrap.makeBootstrapInputStream")
   });
 });
 
-const makeDirectBootstrapStream = (fd: number): NodeStream.Readable => {
-  try {
-    return NodeFS.createReadStream("", {
-      fd,
-      encoding: "utf8",
-      autoClose: true,
-    });
-  } catch {
-    const stream = new NodeNet.Socket({
-      fd,
-      readable: true,
-      writable: false,
-    });
-    stream.setEncoding("utf8");
-    return stream;
-  }
+const makeDirectBootstrapStream = (fd: number): NodeStream.Readable =>
+  NodeFS.createReadStream("", {
+    fd,
+    encoding: "utf8",
+    autoClose: true,
+  });
+
+const makeSocketBootstrapStream = (fd: number): NodeStream.Readable => {
+  const stream = new NodeNet.Socket({
+    fd,
+    readable: true,
+    writable: false,
+  });
+  stream.setEncoding("utf8");
+  return stream;
 };
 
 // WSL-inherited stdin pipes cannot be reopened via /proc/self/fd/0 (EACCES),
