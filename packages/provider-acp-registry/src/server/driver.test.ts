@@ -1039,6 +1039,74 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
+// Copilot's shape: the startup model advertises no context tier and switching to the
+// target model returns a `contextTier` select without an ACP `category`.
+const uncategorizedContextTierAgentSource = `
+import { createInterface } from "node:readline";
+const MODEL = "gpt-6.2-sol";
+let current = "default";
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+const configOptions = () => [
+  {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue: current,
+    options: [
+      { value: "default", name: "Default" },
+      { value: MODEL, name: MODEL },
+    ],
+  },
+  ...(current === MODEL
+    ? [
+        {
+          id: "contextTier",
+          name: "Context size",
+          type: "select",
+          currentValue: "default",
+          options: [
+            { value: "default", name: "Default" },
+            { value: "long_context", name: "Long context" },
+          ],
+        },
+        {
+          id: "effort",
+          name: "Effort",
+          category: "thought_level",
+          type: "select",
+          currentValue: "medium",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "medium", name: "Medium" },
+          ],
+        },
+      ]
+    : []),
+];
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method, params } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") {
+    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+  } else if (method === "session/new") {
+    send({ id, result: { sessionId: "probe-session", configOptions: configOptions() } });
+    send({
+      method: "session/update",
+      params: {
+        sessionId: "probe-session",
+        update: { sessionUpdate: "available_commands_update", availableCommands: [] },
+      },
+    });
+  } else if (method === "session/set_config_option" && params.configId === "model") {
+    current = params.value;
+    send({ id, result: { configOptions: configOptions() } });
+  } else {
+    send({ id, result: {} });
+  }
+});
+`;
+
 const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(AcpRegistryRuntimeCoordinator.layer),
   Layer.provideMerge(IdAllocator.layer),
@@ -1413,6 +1481,55 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         liveSession(models, "default", ["high"]),
       );
       expect(Option.isSome(yield* Fiber.join(live))).toBe(true);
+    }),
+  );
+
+  it.effect("discovers an option that carries no ACP category for every model", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acpRegistry_uncategorized_option");
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      yield* fileSystem.writeFileString(agentPath, uncategorizedContextTierAgentSource);
+      const spawn = { command: process.execPath, args: [agentPath] };
+
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ agentId: "test-agent" }),
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "test-agent",
+            version: "1.0.0",
+            distribution: "npx",
+          }),
+          resolve: () => Effect.succeed({ distribution: "npx" as const, spawn }),
+        }),
+      );
+
+      const contextTier = (snapshot: ServerProvider, slug: string) => {
+        const option = snapshot.models
+          .find((model) => model.slug === slug)
+          ?.capabilities?.optionDescriptors?.find((descriptor) => descriptor.id === "contextTier");
+        return option?.type === "select" ? option.options.map((choice) => choice.id).join("+") : "";
+      };
+      // The startup model has no context tier; it is what discovery reads for Sol.
+      const probed = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter(
+          (snapshot) => contextTier(snapshot, "gpt-6.2-sol") === "default+long_context",
+        ),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      // The registration snapshot is the milestone; nothing else publishes here.
+      yield* instance.snapshot.getSnapshot;
+      yield* instance.snapshot.refresh;
+      expect(Option.isSome(yield* Fiber.join(probed))).toBe(true);
     }),
   );
 

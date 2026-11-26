@@ -263,11 +263,18 @@ export function normalizeAcpRegistryLiveConfiguration(
     return reasoningEffort === undefined ? model : { ...model, reasoningEffort };
   });
   const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });
-  const modelOptionIds = new Set(
-    configOptions
+  // An option scoped to one model is one the agent reports only while that model is
+  // selected (Copilot's `contextTier`). Agents do not mark it with an ACP `category`,
+  // so it has to be learned per model or every other model would claim it.
+  const modelScopedIds = new Set(
+    configOptions.filter((option) => option.category === undefined).map((option) => option.id),
+  );
+  const modelOptionIds = new Set([
+    ...configOptions
       .filter((option) => isAcpThoughtLevelOption(option) || option.category === "model_config")
       .map((option) => option.id),
-  );
+    ...modelScopedIds,
+  ]);
   const includeCatalog = options?.includeCatalog !== false;
   return {
     models: includeCatalog ? models : [],

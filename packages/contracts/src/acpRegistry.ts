@@ -283,7 +283,8 @@ export const AcpRegistryProbeResult = Schema.Struct({
   models: Schema.Array(AcpRegistryProbeModel).check(Schema.isMaxLength(256)),
   currentModelId: Schema.NullOr(AcpRegistryProbeText),
   configOptions: Schema.Array(ProviderOptionDescriptor).check(Schema.isMaxLength(16)),
-  // configOptions ids that describe only the current model (ACP thought_level / model_config).
+  // configOptions ids that describe only the current model (ACP thought_level /
+  // model_config, and options an agent reports without any category).
   modelOptionIds: Schema.optionalKey(
     Schema.Array(AcpRegistryProbeText).check(Schema.isMaxLength(16)),
   ),
