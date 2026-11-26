@@ -18,6 +18,7 @@ import {
   resolveDefaultWorktreeBaseBranch,
   resolveLocalCheckoutBranchMismatch,
   resolveLockedWorkspaceLabel,
+  resolveWorktreeBaseBranchCandidate,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
   isBranchHoldCurrent,
@@ -70,6 +71,33 @@ describe("resolveBranchToolbarPrBranch", () => {
         activeThreadBranch: "feature/current",
         resolvedActiveBranch: "feature/next",
       }),
+    ).toBeNull();
+  });
+});
+
+describe("resolveWorktreeBaseBranchCandidate", () => {
+  const input = {
+    configuredBaseBranch: "",
+    isRepo: true,
+    refs: [
+      { name: "feature/open-thread", isDefault: false, current: true },
+      { name: "main", isDefault: true, current: false },
+    ],
+  };
+
+  it("uses the repository default, not the open thread's branch, when no base is configured", () => {
+    expect(resolveWorktreeBaseBranchCandidate(input)).toBe("main");
+  });
+
+  it("uses the configured base even when the loaded refs do not include it", () => {
+    expect(resolveWorktreeBaseBranchCandidate({ ...input, configuredBaseBranch: "dev" })).toBe(
+      "dev",
+    );
+  });
+
+  it("ignores a configured base outside a Git repository", () => {
+    expect(
+      resolveWorktreeBaseBranchCandidate({ configuredBaseBranch: "dev", isRepo: false, refs: [] }),
     ).toBeNull();
   });
 });

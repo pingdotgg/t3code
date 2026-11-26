@@ -281,6 +281,16 @@ export function resolveDefaultWorktreeBaseBranch(
   return (refs.find((ref) => ref.isDefault) ?? refs.find((ref) => ref.current))?.name ?? null;
 }
 
+/** A configured base is used as typed; it may sit outside the loaded ref page or exist only on a remote. */
+export function resolveWorktreeBaseBranchCandidate(input: {
+  configuredBaseBranch: string;
+  isRepo: boolean;
+  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault" | "current">>;
+}): string | null {
+  if (input.isRepo && input.configuredBaseBranch !== "") return input.configuredBaseBranch;
+  return resolveDefaultWorktreeBaseBranch(input.refs);
+}
+
 export function resolveBranchTriggerLabel(
   input: {
     activeWorktreePath: string | null;
