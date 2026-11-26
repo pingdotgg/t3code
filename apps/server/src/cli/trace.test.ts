@@ -1,7 +1,15 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as TestConsole from "effect/testing/TestConsole";
+import { Command } from "effect/cli";
 
-import { formatTraceSummary, makeTraceSpanSummary } from "./trace.ts";
+import { formatTraceSummary, makeTraceSpanSummary, traceCommand } from "./trace.ts";
 
 const MINUTE_MS = 60_000;
 
@@ -140,3 +148,57 @@ it("formats large summaries without overflowing the call stack", () => {
     "long-span-name      1   1.0  1ms  1ms  1ms            0       0",
   );
 });
+
+const summaryOf = (lines: ReadonlyArray<string>) => {
+  const summarizer = makeTraceSpanSummary();
+  lines.forEach(summarizer.addLine);
+  return summarizer.finish();
+};
+
+it("uses singular nouns only for counts of one", () => {
+  const one = formatTraceSummary(
+    summaryOf([span("a", 1, MINUTE_MS), span("b", 1, MINUTE_MS), "{not json"]),
+    1,
+  ).split("\n");
+  const two = formatTraceSummary(
+    summaryOf([
+      span("a", 1, MINUTE_MS),
+      span("b", 1, MINUTE_MS),
+      span("c", 1, MINUTE_MS),
+      "x",
+      "y",
+    ]),
+    1,
+  ).split("\n");
+
+  assert.match(formatTraceSummary(summaryOf([span("a", 1, MINUTE_MS)]), 25), /^1 span ended from /);
+  assert.match(one[0]!, /^2 spans ended from /);
+  assert.deepStrictEqual(
+    [one[1], one.at(-1), two[1], two.at(-1)],
+    [
+      "Skipped 1 line that is not a span.",
+      "1 more span name. Use --limit to show more.",
+      "Skipped 2 lines that are not spans.",
+      "2 more span names. Use --limit to show more.",
+    ],
+  );
+});
+
+it.effect("counts one skipped line in the singular when a trace has no spans", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-trace-cli-" });
+    const traceFile = (yield* Path.Path).join(dir, "server.trace.ndjson");
+    yield* fs.writeFileString(traceFile, "{not json\n");
+
+    yield* Command.runWith(traceCommand, { version: "0.0.0" })(["summary", "--base-dir", dir]).pipe(
+      Effect.provide(
+        ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_TRACE_FILE: traceFile } })),
+      ),
+    );
+
+    assert.deepStrictEqual(yield* TestConsole.logLines, [
+      `No spans found in ${traceFile} or its rotated files. Skipped 1 line that is not a span.`,
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestConsole.layer))),
+);
