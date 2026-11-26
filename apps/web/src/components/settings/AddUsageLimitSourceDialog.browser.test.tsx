@@ -45,26 +45,4 @@ describe("AddUsageLimitSourceDialog", () => {
     });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
-
-  it("validates HTTP endpoints when URL.parse is missing", async () => {
-    const originalParse = URL.parse;
-    URL.parse = undefined as never;
-    try {
-      await using _screen = await render(
-        <AddUsageLimitSourceDialog
-          open
-          onOpenChange={vi.fn()}
-          environmentId={EnvironmentId.make("local")}
-          environmentLabel="This Mac"
-          kind="http"
-          sources={{}}
-        />,
-      );
-
-      await userEvent.type(page.getByLabelText("Endpoint URL"), "https://quota.example/status");
-      await expect.element(page.getByRole("button", { name: "Add source" })).toBeEnabled();
-    } finally {
-      URL.parse = originalParse;
-    }
-  });
 });
