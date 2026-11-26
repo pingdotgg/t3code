@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock(import("../motion/stripCamera"), () => ({ settleStripCamera: () => {} }));
 
-import { overviewRowShift, selectOverviewStage } from "./Overview";
+import { overviewRowShift, selectOverviewStage, selectOverviewStartPaneIds } from "./Overview";
+import { rememberWorkspaceCamera } from "../motion/workspaceSwitch";
 import {
   focusLayoutWorkspaceStep,
   type LayoutState,
@@ -64,5 +65,35 @@ describe("overviewRowShift", () => {
     expect(stageOf(onNewBelow).focusedRow.workspace.id).toBe("trailing");
     expect(overviewRowShift(stageOf(onLast).rows, stageOf(onNewBelow).rows)).toBe(0);
     expect(overviewRowShift(stageOf(onNewBelow).rows, stageOf(onLast).rows)).toBe(0);
+  });
+
+  it("restores a remembered workspace camera instead of resetting non-entry rows to 0", () => {
+    const col = (id: string, width: number) => ({
+      id: `col-${id}`,
+      width,
+      panes: [
+        {
+          id: `pane-${id}`,
+          size: 1,
+          activeTabId: `tab-${id}`,
+          tabs: [{ id: `tab-${id}`, content: settings }],
+        },
+      ],
+    });
+    const wide: LayoutWorkspace = {
+      id: "remembered-ws",
+      name: null,
+      focusedPaneId: "pane-1",
+      cameraWidth: null,
+      columns: [col("0", 0.6), col("1", 0.6), col("2", 0.6)],
+    };
+    rememberWorkspaceCamera("remembered-ws", 590);
+    const layout: LayoutState = {
+      workspaces: [wide, workspace("b", true)],
+      focusedWorkspaceId: "b",
+    };
+    const starts = selectOverviewStartPaneIds(stageOf(layout), viewport.width);
+    expect(starts.has("pane-1")).toBe(true);
+    expect(starts.has("pane-0")).toBe(false);
   });
 });

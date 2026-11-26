@@ -26,7 +26,11 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import { registerCommands } from "../shortcuts/dispatcher";
 import { MotionAnimation, playMotion, type MotionRun } from "../motion/animation";
 import { settleStripCamera } from "../motion/stripCamera";
-import { finishWorkspaceSwitch } from "../motion/workspaceSwitch";
+import {
+  finishWorkspaceSwitch,
+  rememberWorkspaceCamera,
+  workspaceCamera,
+} from "../motion/workspaceSwitch";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import {
   buildDraftThreadRouteParams,
@@ -175,6 +179,7 @@ export function LayoutOverview() {
             workspaceId: state.layout.focusedWorkspaceId,
             rowOffset: handoff.rowOffset,
           };
+          rememberWorkspaceCamera(entry.workspaceId, entry.scrollLeft);
           // The panes go inert under the overview; keys belong to it now.
           const active = document.activeElement;
           if (active instanceof HTMLElement && !inPopoverAbove(active)) active.blur();
@@ -279,7 +284,10 @@ function useOverviewKeys(): void {
       event.stopPropagation();
       if (direction) useLayoutStore.getState().focusDirection(direction);
       else if (event.key === "Enter") choose(null);
-      else if (event.key === "Escape") setOverviewOpen(false);
+      else if (event.key === "Escape") {
+        if (stopOverviewGesture) stopOverviewGesture();
+        else setOverviewOpen(false);
+      }
     };
     return registerCommands(
       {},
@@ -532,13 +540,16 @@ export function overviewSlotStyle(
  */
 function exitScrollLeft(row: OverviewRow, width: number): number {
   const stripPx = row.stripWidth * width;
-  let scroll = row.workspace.id === entry.workspaceId ? entry.scrollLeft : 0;
+  let scroll =
+    row.workspace.id === entry.workspaceId
+      ? entry.scrollLeft
+      : (workspaceCamera(row.workspace.id) ?? 0);
   const slot = row.slots.find((candidate) => candidate.paneId === row.workspace.focusedPaneId);
   if (slot) {
     const left = slot.rect.left * stripPx;
     const right = left + slot.rect.width * stripPx;
-    if (left < scroll) scroll = left;
-    else if (right > scroll + width) scroll = Math.min(left, right - width);
+    if (left < scroll - 1) scroll = left;
+    else if (right > scroll + width + 1) scroll = Math.min(left, right - width);
   }
   return Math.max(0, Math.min(stripPx - width, scroll));
 }
