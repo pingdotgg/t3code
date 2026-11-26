@@ -2,7 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { codexFileCitationMarkdown, resolveCodexFileCitationLink } from "./codexFileCitations.ts";
 import { sanitizeChatHast } from "./markdownHast.ts";
-import { resolveMarkdownFileLink } from "./markdownLinks.ts";
+import {
+  isMarkdownFileLinkLabel,
+  parseMarkdownFileLink,
+  resolveMarkdownFileLink,
+} from "./markdownLinks.ts";
 
 describe("resolveCodexFileCitationLink", () => {
   it("resolves the attributes emitted by Codex", () => {
@@ -36,6 +40,7 @@ describe("resolveCodexFileCitationLink", () => {
 
   it("rejects missing paths and invalid line numbers", () => {
     expect(resolveCodexFileCitationLink({ purpose: "output" })).toBeNull();
+    expect(resolveCodexFileCitationLink({ path: "   " })).toBeNull();
     expect(
       resolveCodexFileCitationLink({ path: "src/main.ts", line_range_start: "not-a-line" }),
     ).toEqual({
@@ -43,6 +48,25 @@ describe("resolveCodexFileCitationLink", () => {
       href: "src/main.ts",
       label: "main.ts",
     });
+  });
+
+  it.each([
+    ["/tmp/draft.md ", "/tmp/draft.md%20", undefined],
+    ["/repo/draft.md ", "/repo/draft.md%20", undefined],
+    [" draft.md  ", "./%20draft.md%20%20", undefined],
+    ["/tmp/draft%20.md  ", "/tmp/draft%2520.md%20%20#L7", "7"],
+    ["\u00a0draft.md\n", "./%C2%A0draft.md%0A", undefined],
+  ])("preserves boundary spaces in literal filenames: %s", (path, href, line) => {
+    const citation = resolveCodexFileCitationLink({ path, line_range_start: line });
+
+    expect(citation?.path).toBe(path);
+    expect(citation?.href).toBe(href);
+    expect(parseMarkdownFileLink(citation?.href ?? "")).toEqual({
+      path: /^\s/.test(path) ? `./${path}` : path,
+      ...(line === undefined ? {} : { line: Number(line) }),
+    });
+    expect(citation && codexFileCitationMarkdown(citation)).toContain(`](<${href}>)`);
+    expect(citation && isMarkdownFileLinkLabel(citation.label, citation.href)).toBe(true);
   });
 
   it("preserves URL syntax characters in file paths", () => {
@@ -113,10 +137,10 @@ describe("resolveCodexFileCitationLink", () => {
 describe("codexFileCitationMarkdown", () => {
   it("escapes Markdown syntax in the visible filename", () => {
     const citation = resolveCodexFileCitationLink({
-      path: "reports/*draft*_[copy]`<&.txt",
+      path: "reports/*draft*_[copy]`<&|.txt",
     });
     expect(citation && codexFileCitationMarkdown(citation)).toBe(
-      "[\\*draft\\*\\_\\[copy\\]\\`\\<\\&.txt](<./reports/*draft*_[copy]`%3C%26.txt>)",
+      "[\\*draft\\*\\_\\[copy\\]\\`\\<\\&\\|.txt](<./reports/*draft*_[copy]`%3C%26%7C.txt>)",
     );
   });
 });
