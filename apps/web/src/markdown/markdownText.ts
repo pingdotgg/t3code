@@ -20,14 +20,26 @@ function replaceDirectives(
 ): string {
   if (!CODEX_DIRECTIVE.test(markdown)) return markdown;
   let rendered = markdown;
+  const changes: Array<{ start: number; delta: number }> = [];
   const directives = codexDirectiveSources(markdown).sort(
     (left, right) => right.start - left.start,
   );
   for (const directive of directives) {
-    const value = replacement(directive);
-    if (value !== undefined) {
-      rendered = rendered.slice(0, directive.start) + value + rendered.slice(directive.end);
+    // Consume child edits so this directive's original end and label still locate the rendered text.
+    let delta = 0;
+    while (changes.length && changes.at(-1)!.start < directive.end) {
+      delta += changes.pop()!.delta;
     }
+    const labelStart = markdown.indexOf("[", directive.start) + 1;
+    const label = rendered.slice(labelStart, labelStart + directive.label.length + delta);
+    const value =
+      replacement({ ...directive, label }) ??
+      rendered.slice(directive.start, directive.end + delta);
+    rendered = rendered.slice(0, directive.start) + value + rendered.slice(directive.end + delta);
+    changes.push({
+      start: directive.start,
+      delta: value.length - (directive.end - directive.start),
+    });
   }
   return rendered;
 }
