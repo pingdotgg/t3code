@@ -1641,12 +1641,30 @@ export default function FilePreviewPanel({
     const element = breadcrumbElement;
     if (!element) return;
     const revealCurrentCrumb = () => {
+      const viewport = element.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']");
+      if (!viewport) return;
+      const scrollCrumb = (crumb: HTMLElement | null | undefined, inline: "end" | "nearest") => {
+        if (!crumb) return;
+        const view = viewport.getBoundingClientRect();
+        if (view.width <= 0) return;
+        const box = crumb.getBoundingClientRect();
+        const left = viewport.scrollLeft + (box.left - view.left);
+        const right = viewport.scrollLeft + (box.right - view.left);
+        if (inline === "end") {
+          viewport.scrollLeft = Math.max(0, right - view.width);
+        } else if (left < viewport.scrollLeft) {
+          viewport.scrollLeft = Math.max(0, left);
+        } else if (right > viewport.scrollLeft + view.width) {
+          viewport.scrollLeft = Math.max(0, right - view.width);
+        }
+      };
       const crumbs = element.querySelectorAll<HTMLElement>("[data-file-crumb]");
-      // Show the deepest crumb when it fits, but never at the cost of the current one.
-      crumbs[crumbs.length - 1]?.scrollIntoView({ block: "nearest", inline: "end" });
-      element
-        .querySelector<HTMLElement>("[data-current-file-crumb='true']")
-        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      // Scroll only the breadcrumb viewport so ancestor strips never jump.
+      scrollCrumb(crumbs[crumbs.length - 1], "end");
+      scrollCrumb(
+        element.querySelector<HTMLElement>("[data-current-file-crumb='true']"),
+        "nearest",
+      );
     };
     revealCurrentCrumb();
     return observeResize(element, revealCurrentCrumb);
