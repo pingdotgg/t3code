@@ -5,7 +5,6 @@ import {
   AuthTerminalOperateScope,
   type EnvironmentId,
   type ProjectId,
-  type WorkspaceLayoutCommandsResult,
   type WorktreeLayoutCommand,
 } from "@t3tools/contracts";
 import { msg } from "gt-react";
@@ -90,23 +89,17 @@ export async function ensureWorktreeLayoutApproved(input: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly projectTitle: string;
-  /** An answer already read while the draft was written; without one the send waits for a read. */
-  readonly known?: WorkspaceLayoutCommandsResult | null;
 }): Promise<WorktreeLayoutApprovalOutcome> {
   const { environmentId, projectId } = input;
   if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) return { status: "proceed" };
-  let layout = input.known ?? null;
-  if (layout === null) {
-    const read = await runAtomCommand(
-      appAtomRegistry,
-      filesystemEnvironment.readLayoutCommands,
-      { environmentId, input: { projectId } },
-      { reportFailure: false, reportDefect: false },
-    );
-    if (read._tag !== "Success") return { status: "proceed" };
-    layout = read.value;
-  }
-  const commands = layout.commands.filter((command) => !command.approved);
+  const read = await runAtomCommand(
+    appAtomRegistry,
+    filesystemEnvironment.readLayoutCommands,
+    { environmentId, input: { projectId } },
+    { reportFailure: false, reportDefect: false },
+  );
+  if (read._tag !== "Success") return { status: "proceed" };
+  const commands = read.value.commands.filter((command) => !command.approved);
   if (commands.length === 0) return { status: "proceed" };
   // An approval would change nothing; the server's refusal names the policy.
   const policy = appAtomRegistry
@@ -149,8 +142,5 @@ export async function ensureWorktreeLayoutApproved(input: {
           : m(msg("Could not approve the worktree layout command.")),
     };
   }
-  appAtomRegistry.refresh(
-    filesystemEnvironment.layoutCommands({ environmentId, input: { projectId } }),
-  );
   return { status: "proceed" };
 }

@@ -21,7 +21,6 @@ import {
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
-  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   DEFAULT_MODEL,
   type EnvironmentId,
@@ -123,9 +122,7 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { countPreparingComposerImages, holdComposerSend } from "./preparingComposerImages";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { filesystemEnvironment } from "../../state/filesystem";
-import { useEnvironmentQuery } from "../../state/query";
+import { readEnvironmentScope } from "../../state/session";
 import { ensureWorktreeLayoutApproved } from "../../worktreeLayoutApproval";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
@@ -380,21 +377,6 @@ export function useComposerSend(input: ComposerSendInput) {
     linkCheckoutPullRequest,
   } = input;
   const linkedEnvironments = useLinkedEnvironments(environmentId);
-  const canReadLayoutCommands = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
-  // Read while the draft is written, so a New worktree send does not wait a round trip for it.
-  const layoutCommandsQuery = useEnvironmentQuery(
-    canReadLayoutCommands &&
-      activeProject !== null &&
-      sendEnvMode === "worktree" &&
-      !activeThread?.worktreePath
-      ? filesystemEnvironment.layoutCommands({
-          environmentId,
-          input: { projectId: activeProject.id },
-        })
-      : null,
-  );
-  // An answer still being read again may be from before an approval.
-  const knownLayoutCommands = layoutCommandsQuery.isPending ? null : layoutCommandsQuery.data;
   const handleNewThread = useNewThreadHandler();
   const navigate = useNavigate();
   const clientSettingsHydrated = useClientSettingsHydrated();
@@ -1056,8 +1038,8 @@ export function useComposerSend(input: ComposerSendInput) {
         .getState()
         .getComposerDraft(composerDraftTarget);
       sendInFlightRef.current = true;
-      // Without a settled answer the send waits a round trip for one, so it shows as sending.
-      const showsWait = knownLayoutCommands === null && isCurrentRouteThread();
+      // The commands are read as they are now, which takes a round trip, so the send shows as sending.
+      const showsWait = isCurrentRouteThread();
       if (showsWait) {
         beginLocalDispatch({
           preparingWorktree: true,
@@ -1071,7 +1053,6 @@ export function useComposerSend(input: ComposerSendInput) {
         environmentId,
         projectId: activeProject.id,
         projectTitle: activeProject.title,
-        known: knownLayoutCommands,
       }).finally(() => {
         sendInFlightRef.current = false;
         if (showsWait && isCurrentRouteThread()) resetLocalDispatch();
