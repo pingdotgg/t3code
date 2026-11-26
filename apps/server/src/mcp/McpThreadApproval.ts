@@ -30,9 +30,15 @@ export const UNHELD_WAIT = Duration.seconds(45);
  * "cancelled": the request ended without the person's answer, as when its turn ends or is
  * interrupted, or they dismiss it. "no-turn": the thread has no turn running, so there is
  * nowhere to show a request. "waiting": the person has not answered yet and the request is
- * still theirs to answer. "unavailable": the call comes from no thread.
+ * still theirs to answer. "unavailable": the call comes from no thread. "asked": a sessionless
+ * client was sent the request as this call's answer, and calls again.
  */
-export type Answer = McpProviderSessions.T3ApprovalAnswer | "no-turn" | "waiting" | "unavailable";
+export type Answer =
+  | McpProviderSessions.T3ApprovalAnswer
+  | "no-turn"
+  | "waiting"
+  | "unavailable"
+  | "asked";
 
 type Threads = ThreadManagement.ThreadManagementService["Service"];
 type Sessions = McpProviderSessions.McpProviderSessions["Service"];
@@ -208,19 +214,32 @@ export const ask = Effect.fn("McpThreadApproval.ask")(function* (
 
   const waiting = kept;
   const answered = sessions.awaitApprovalAnswer(thread.threadId, waiting.id);
+  const settled = sessions.approvalAnswer(thread.threadId, waiting.id);
+  type Outcome = Option.Option<McpProviderSessions.T3ApprovalAnswer> | "asked";
+  // Once the client holds nothing open, as after it answers for itself or its turn is
+  // interrupted, the call can only wait as long as that client's own limit allows.
+  const unheld: Effect.Effect<Outcome> = Effect.timeoutOption(answered, UNHELD_WAIT);
   // Only an adapter that holds T3 Code's requests is sent one: any other would show or answer it.
   const held =
     (yield* sessions.areApprovalRequestsHeld(thread.providerInstanceId)) &&
-    (yield* McpClientInput.takesElicitation)
-      ? McpClientInput.elicit({ id: waiting.id, message: input.message })
-      : Effect.void;
-  const answer = yield* Effect.raceFirst(
-    Effect.asSome(answered),
-    // Once the client holds nothing open, as after it answers for itself or its turn is
-    // interrupted, the call can only wait as long as that client's own limit allows.
-    Effect.andThen(held, Effect.timeoutOption(answered, UNHELD_WAIT)),
-  );
-  if (Option.isNone(answer)) return "waiting";
+    (yield* McpClientInput.takesElicitation);
+  // Read before the client is asked again: the call that brings a reply finds the answer here.
+  const already = yield* settled;
+  const outcome: Outcome = Option.isSome(already)
+    ? already
+    : yield* Effect.raceFirst(
+        Effect.asSome(answered),
+        held
+          ? McpClientInput.elicit({ id: waiting.id, message: input.message }).pipe(
+              Effect.flatMap((sent): Effect.Effect<Outcome> =>
+                sent === "asked" ? Effect.succeed("asked") : unheld,
+              ),
+            )
+          : unheld,
+      );
+  // The elicitation is the call's answer, and the request stays for the call that follows it.
+  if (outcome === "asked") return "asked";
+  if (Option.isNone(outcome)) return "waiting";
   yield* sessions.forgetApprovalRequest(thread.threadId, waiting.id);
-  return answer.value;
+  return outcome.value;
 });

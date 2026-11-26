@@ -175,7 +175,10 @@ model.
   MCP elicitation. So that the provider's client lets it wait, the request is also sent to
   that client as an MCP elicitation ([`McpClientInput`](../../apps/server/src/mcp/McpClientInput.ts))
   carrying the request's id, and the thread's adapter holds that elicitation open until the
-  request has ended and then answers it as it ended. An adapter never answers one itself,
+  request has ended and then answers it as it ended. A client with a session is sent it while
+  the call stays open. A sessionless one, as Claude Code is, is sent it as the call's answer
+  and calls again with its reply, so everything before the question must be safe to run from
+  the start twice. An adapter never answers one itself,
   whatever the turn's runtime mode and whatever was allowed for the session, and shows no
   card of its own for it. Codex stops its tool-call clock while an elicitation is open. Claude
   Code does not, and progress notifications do not extend its limit, so T3 Code's server is

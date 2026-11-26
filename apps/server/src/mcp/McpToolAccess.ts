@@ -429,6 +429,9 @@ const askInThread = Effect.fnUntraced(function* (
     case "unavailable":
       // Never read: a caller with a thread is asked in it.
       return yield* outsideActionRefused(`Not done: "${sentence}" has no thread to be asked in.`);
+    case "asked":
+      // Never read: the elicitation is this call's answer.
+      return yield* outsideActionRefused("Waiting for the user's approval.");
     case "no-turn":
       return yield* outsideActionRefused(
         `Not done: "${sentence}" needs the user's approval below Full access, and T3 Code asks them in a turn of this thread, which has none running now. Call again during a turn.`,

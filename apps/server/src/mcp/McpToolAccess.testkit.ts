@@ -131,6 +131,8 @@ export const makeAskedThread = Effect.fn("McpToolAccess.testkit.makeAskedThread"
     readonly held?: boolean;
     /** Whether the client says it takes elicitations. */
     readonly elicitation?: boolean;
+    /** A client with no session: it is asked by a call's answer, and calls again with its reply. */
+    readonly sessionless?: boolean;
   } = {},
 ) {
   const sessions = yield* McpProviderSessions.McpProviderSessions;
@@ -149,6 +151,8 @@ export const makeAskedThread = Effect.fn("McpToolAccess.testkit.makeAskedThread"
   const elicited = yield* Ref.make<
     ReadonlyArray<{ readonly message: string; readonly meta: unknown }>
   >([]);
+  const sent = yield* Ref.make<McpSchema.InputRequired | undefined>(undefined);
+  const reply = yield* Ref.make<string | undefined>(undefined);
   /** Ends every elicitation the client holds, as a client that stops waiting does. */
   const released = yield* SubscriptionRef.make(false);
 
@@ -278,23 +282,39 @@ export const makeAskedThread = Effect.fn("McpToolAccess.testkit.makeAskedThread"
       Ref.update(state, (current) => ({ ...current, runStatus: status })).pipe(
         Effect.andThen(bump),
       ),
+    /** What a sessionless client's last call was answered with, when that was a request. */
+    answeredWith: Ref.get(sent),
+    /** A sessionless client's next call brings its reply to the elicitation with this state. */
+    repliesTo: (state: string | undefined) => Ref.set(reply, state),
     /** The client stops waiting on what it was sent, as on an interrupt. */
     clientStopsWaiting: SubscriptionRef.set(released, true),
     /** The services one tool call from this thread's client runs with. */
     provide: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      effect.pipe(
-        Effect.provideService(McpClientInput.McpClientInput, { sessions }),
-        Effect.provideService(McpSchema.McpServerClient, client),
-        Effect.provideService(
-          McpSchema.McpRequestContext,
-          McpSchema.McpRequestContext.of({
-            clientId: 1,
-            protocolVersion: "2025-06-18",
-            clientCapabilities: new McpSchema.ClientCapabilities(
-              options.elicitation === false ? {} : { elicitation: {} },
-            ),
+      Effect.gen(function* () {
+        const state = yield* Ref.get(reply);
+        yield* Ref.set(sent, undefined);
+        const called = effect.pipe(
+          Effect.provideService(McpClientInput.McpClientInput, {
+            sessions,
+            ...(options.sessionless === true ? { request: sent } : {}),
           }),
-        ),
-      ),
+          Effect.provideService(
+            McpSchema.McpRequestContext,
+            McpSchema.McpRequestContext.of({
+              clientId: 1,
+              protocolVersion: options.sessionless === true ? "2026-07-28" : "2025-06-18",
+              clientCapabilities: new McpSchema.ClientCapabilities(
+                options.elicitation === false ? {} : { elicitation: {} },
+              ),
+              ...(state === undefined
+                ? {}
+                : { inputResponses: { approval: { action: "accept" } }, requestState: state }),
+            }),
+          ),
+        );
+        return yield* options.sessionless === true
+          ? called
+          : called.pipe(Effect.provideService(McpSchema.McpServerClient, client));
+      }),
   };
 });
