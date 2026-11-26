@@ -566,6 +566,37 @@ describe("GitHubIssueTracker", () => {
     }),
   );
 
+  it.effect("reads an issue on github.com in one GraphQL query", () =>
+    Effect.gen(function* () {
+      const operations: string[] = [];
+      const http = HttpClient.make((request) => {
+        if (request.body._tag !== "Uint8Array") return Effect.die("Expected a JSON request.");
+        const { query } = decodeVariables(new TextDecoder().decode(request.body.body));
+        const operation = query.match(/(?:query|mutation)\s+(\w+)/)?.[1] ?? "";
+        operations.push(operation);
+        const page = { hasNextPage: false, endCursor: null };
+        const detail = JSON.parse(DETAIL_RESPONSE);
+        Object.assign(detail.data.repository.issue, {
+          labels: { pageInfo: page, nodes: [] },
+          closedByPullRequestsReferences: { pageInfo: page, nodes: [] },
+        });
+        const body = operation === "IssueStatuses" ? NO_STATUSES : detail;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      });
+      const api = yield* GitHubIssueTracker.make.pipe(Effect.provide(transport(http)));
+      yield* api.getIssue({ cwd: "/w", host: "github.com", scope: "acme/web", key: "42" });
+      // Each query spends the viewer's shared GraphQL allowance; the sidebar reads every linked issue.
+      expect(operations).toHaveLength(1);
+    }),
+  );
+
   it.effect("lists issues without statuses when GitHub refuses the status fields", () =>
     Effect.gen(function* () {
       const operations: string[] = [];
