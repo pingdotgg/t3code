@@ -15,6 +15,7 @@ import { useState } from "react";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { ApprovalText } from "./ApprovalText";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { PushHooksApprovalDetails } from "./PushHooksApprovalDetails";
 import { ToolActionApprovalDetails } from "./ToolActionApprovalDetails";
@@ -50,9 +51,7 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
           {approval.pushHooks ? <PushHooksApprovalDetails pushHooks={approval.pushHooks} /> : null}
         </div>
       ) : (
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
-          {approval.detail || approval.requestKind}
-        </pre>
+        <ApprovalText text={approval.detail || approval.requestKind} />
       )}
       {approval.appName ? <p className="mt-2 text-muted-foreground">{approval.appName}</p> : null}
       {approval.responseCapability !== "live" ? (

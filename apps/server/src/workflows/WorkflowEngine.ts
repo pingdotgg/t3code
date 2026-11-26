@@ -17,6 +17,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as References from "effect/References";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Result from "effect/Result";
@@ -35,6 +36,7 @@ import {
 import { checkOutput, rejectionText } from "../orchestration-v2/runOutput.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { isMissedFixedTimeRun, nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
+import { currentScheduleId } from "./triggers.ts";
 import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
 import {
   answerStamped,
@@ -72,6 +74,7 @@ import {
   Workflows,
 } from "./Workflows.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
+import { routineSpan, withoutRoutineSpans } from "@t3tools/shared/observability";
 
 const SWEEP_EVERY = Duration.seconds(15);
 const LOOK_EVERY = Duration.minutes(1);
@@ -147,10 +150,14 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const digest = yield* Digest.Digest;
   const context = yield* Effect.context<WorkflowEngine.WorkflowEngine>();
   // The engine keeps 64-bit ids, which this SQLite client only reads when asked for BigInts.
+  // Callers keep their own span annotations, so a user's start or cancel is not marked routine.
   const withEngine = <A, E>(effect: Effect.Effect<A, E, WorkflowEngine.WorkflowEngine>) =>
-    effect.pipe(
-      Effect.provideContext(context),
-      Effect.provideService(SqlClient.SafeIntegers, true),
+    Effect.flatMap(References.TracerSpanAnnotations, (annotations) =>
+      effect.pipe(
+        Effect.provideService(References.TracerSpanAnnotations, annotations),
+        Effect.provideContext(context),
+        Effect.provideService(SqlClient.SafeIntegers, true),
+      ),
     );
   const byTag = new Map(registered.map(([, engine]) => [engine._tag, engine] as const));
   const definitionByTag = new Map(
@@ -365,11 +372,29 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const latestDefinitions = [...new Set(registered.map(([definition]) => definition.name))].map(
     (name) => latest(name)![0],
   );
+  // A daily schedule saved under an id that followed its spelling keeps that id, for its next
+  // time and for the keys of its runs: a time it has started is then not started again.
+  const savedIds = yield* store.triggerIds;
+  const stateId = (
+    definition: WorkflowDefinition,
+    trigger: Exclude<WorkflowDefinition["triggers"][number], { readonly kind: "webhook" }>,
+  ) => {
+    const prefix = `${definition.name}/`;
+    const id = `${prefix}${trigger.id}`;
+    if (trigger.kind !== "schedule" || savedIds.includes(id)) return id;
+    const earlier = savedIds
+      .filter(
+        (saved) =>
+          saved.startsWith(prefix) && currentScheduleId(saved.slice(prefix.length)) === trigger.id,
+      )
+      .toSorted();
+    return earlier[0] ?? id;
+  };
   // A schedule taken out and put back is new again: its first run is one interval away.
   yield* store.triggersKeep(
     latestDefinitions.flatMap((definition) =>
       definition.triggers.flatMap((trigger) =>
-        trigger.kind === "webhook" ? [] : [`${definition.name}/${trigger.id}`],
+        trigger.kind === "webhook" ? [] : [stateId(definition, trigger)],
       ),
     ),
   );
@@ -379,7 +404,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     for (const definition of latestDefinitions) {
       for (const trigger of definition.triggers) {
         if (trigger.kind !== "schedule") continue;
-        const id = `${definition.name}/${trigger.id}`;
+        const id = stateId(definition, trigger);
         const due = yield* store.triggerNext(id);
         if (due !== undefined) {
           const dueAt = DateTime.makeUnsafe(due);
@@ -429,7 +454,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     for (const definition of latestDefinitions) {
       for (const trigger of definition.triggers) {
         if (trigger.kind !== "issues" && trigger.kind !== "pullRequests") continue;
-        const id = `${definition.name}/${trigger.id}`;
+        const id = stateId(definition, trigger);
         const since = yield* store.triggerNext(id);
         if (since === undefined) {
           yield* store.triggerSet(id, DateTime.formatIso(now));
@@ -737,11 +762,13 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     const decode = Schema.decodeEffect(payloadCodec);
     yield* decode(row.input_json === null ? null : WorkflowStore.jsonValue(row.input_json)).pipe(
       Effect.flatMap((input) =>
-        onEnd(input as never, {
-          id: row.run_id,
-          outcome: "cancelled",
-          reason: row.detail ?? undefined,
-        }),
+        withoutRoutineSpans(
+          onEnd(input as never, {
+            id: row.run_id,
+            outcome: "cancelled",
+            reason: row.detail ?? undefined,
+          }),
+        ),
       ),
       Effect.provideContext(forStep(store, keyValues, link, forge, row.run_id, END_STEP)),
       // The sweep that runs it reads the engine's BigInts; the cleanup's own code must not.
@@ -1381,5 +1408,7 @@ export const layer = (
           ),
     ),
     Layer.provide(Layer.succeed(SqlClient.SafeIntegers, true)),
+    // Engine fibers fork from this build, so polls, activities and their store calls are all marked.
+    Layer.provide(Layer.succeed(References.TracerSpanAnnotations, routineSpan)),
   );
 };

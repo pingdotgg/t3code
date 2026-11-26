@@ -12,6 +12,7 @@ import { memo, use } from "react";
 import { type PendingApproval } from "../../session-logic";
 import { InlineButton } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { ApprovalText } from "./ApprovalText";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { PushHooksApprovalDetails } from "./PushHooksApprovalDetails";
 import { ToolActionApprovalDetails } from "./ToolActionApprovalDetails";
@@ -88,14 +89,10 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
             {question}
           </span>
         ) : (
-          <code
-            aria-label={m(presentation.detailLabel)}
-            className="block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-            data-approval-detail="complete"
-            tabIndex={0}
-          >
-            {approval.detail || m(presentation.label)}
-          </code>
+          <ApprovalText
+            text={approval.detail || m(presentation.label)}
+            label={m(presentation.detailLabel)}
+          />
         )
       }
     >
