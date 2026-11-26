@@ -132,6 +132,17 @@ describe("mergeUsage", () => {
     expect(cost([local(["remote01"])])).toBe(20);
     expect(cost([local(["remote01"]), remote])).toBe(20);
     expect(cost([local(["other001"]), remote])).toBe(30);
+    const partialRemote = {
+      ...remote,
+      summary: {
+        ...remote.summary,
+        sources: remote.summary.sources.map((source) => ({
+          ...source,
+          status: "partial" as const,
+        })),
+      },
+    };
+    expect(cost([local(["remote01"]), partialRemote])).toBe(30);
   });
 
   it("counts a Cursor account once across servers while retaining each server's other providers", () => {

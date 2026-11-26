@@ -188,7 +188,8 @@ function claimSources(
   for (const environment of environments) {
     const keys = new Set<string>();
     for (const source of environment.summary.sources) {
-      if (source.mirror === true || source.status === "missing") continue;
+      // A partial scan may hold only some of a session's requests, so only a complete one claims it.
+      if (source.mirror === true || source.status !== "ok") continue;
       for (const key of source.sessionKeys ?? [])
         keys.add(`${source.fingerprint.provider}\u0000${key}`);
     }
