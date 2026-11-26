@@ -27,12 +27,16 @@ describe("boundedZip", () => {
         [[...ascii("caf"), 0x82, ...ascii(".txt")], "CP437 e-acute"],
         [[...ascii("caf"), 0x8a, ...ascii(".txt")], "CP437 e-grave"],
         [[...ascii("na"), 0xc3, 0xaf, ...ascii("ve.txt")], "UTF-8"],
+        [[0xef, 0xbb, 0xbf, ...ascii("a.txt")], "UTF-8 with BOM"],
+        [ascii("a.txt"), "ASCII"],
       ]),
     );
     expect([...files].map(([name, file]) => [name, new TextDecoder().decode(file.bytes)])).toEqual([
       ["café.txt", "CP437 e-acute"],
       ["cafè.txt", "CP437 e-grave"],
       ["naïve.txt", "UTF-8"],
+      ["\uFEFFa.txt", "UTF-8 with BOM"],
+      ["a.txt", "ASCII"],
     ]);
   });
 });

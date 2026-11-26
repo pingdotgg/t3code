@@ -8,7 +8,7 @@ const CP437_HIGH_BYTES =
   "└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀" +
   "αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u00a0";
 
-const utf8 = new TextDecoder("utf-8", { fatal: true });
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
 // JSZip only calls this for names without the UTF-8 flag or a Unicode path field. Many
 // archivers still write UTF-8 there, so CP437 (the ZIP spec's default) is the fallback;
