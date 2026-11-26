@@ -865,6 +865,7 @@ export interface AcpAdapterV2Options {
     readonly afterPromptWireSettled?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterPromptCallback?: () => Effect.Effect<void>;
+    readonly beforeOutcomeResume?: () => Effect.Effect<void>;
     readonly onNativeResponseLifecycle?: (event: {
       readonly generation?: number;
       readonly requestId?: string;
@@ -1805,6 +1806,8 @@ interface ActiveAcpTurn {
   promptSequence: number;
   /** The turn already resent a prompt after a resumable outcome failure. */
   outcomeResumed: boolean;
+  /** Set while an automatic outcome resume is queued and before its follow-up prompt starts. */
+  outcomeResumePending: AcpPromptOutcomeFailure["threadDisposition"] | null;
   /** Clock millis just before `session/prompt` was handed to the runtime. */
   promptSentAt: number | null;
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
@@ -9638,6 +9641,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     hiddenFailure !== undefined &&
                     resumeWith !== undefined &&
                     steersWithPrompt &&
+                    !context.interrupted &&
                     !context.outcomeResumed
                   ) {
                     context.outcomeResumed = true;
@@ -9645,30 +9649,48 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       sessionId: context.nativeThreadId,
                       failure: hiddenFailure.failure,
                     });
-                    yield* steerWithPrompt({
-                      threadId: context.input.threadId,
-                      runId: context.input.runId,
-                      providerThread: context.input.providerThread,
-                      providerTurnId: context.providerTurnId,
-                      message: { ...context.input.message, text: resumeWith, attachments: [] },
-                    }).pipe(
-                      Effect.catchCause(() =>
-                        runRuntimeCallbackAtGeneration(
-                          settle.generation,
-                          Effect.gen(function* () {
-                            if (context.finalized || context.interrupted) return;
-                            yield* Ref.set(runtimeRestartRequired, true);
-                            yield* terminalizeOpenForegroundTools(context, "failed");
-                            yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
-                              childTurnsContinue: hasSurvivingBackgroundWork(context),
-                              threadDisposition: hiddenFailure.threadDisposition,
-                            });
+                    // Stop can land while reportProviderRetry yields; fall through to finalize if it did.
+                    if (!context.interrupted) {
+                      context.outcomeResumePending = hiddenFailure.threadDisposition;
+                      yield* (options.testHooks?.beforeOutcomeResume?.() ?? Effect.void).pipe(
+                        Effect.andThen(
+                          steerWithPrompt({
+                            threadId: context.input.threadId,
+                            runId: context.input.runId,
+                            providerThread: context.input.providerThread,
+                            providerTurnId: context.providerTurnId,
+                            message: {
+                              ...context.input.message,
+                              text: resumeWith,
+                              attachments: [],
+                            },
                           }),
                         ),
-                      ),
-                      Effect.forkIn(sessionScope),
-                    );
-                    return;
+                        Effect.catchCause(() =>
+                          runRuntimeCallbackAtGeneration(
+                            settle.generation,
+                            Effect.gen(function* () {
+                              context.outcomeResumePending = null;
+                              if (context.finalized) return;
+                              yield* Ref.set(runtimeRestartRequired, true);
+                              if (context.interrupted) {
+                                yield* finalizeTurn(context, "interrupted", undefined, {
+                                  threadDisposition: hiddenFailure.threadDisposition,
+                                });
+                                return;
+                              }
+                              yield* terminalizeOpenForegroundTools(context, "failed");
+                              yield* finalizeTurn(context, "failed", hiddenFailure.failure, {
+                                childTurnsContinue: hasSurvivingBackgroundWork(context),
+                                threadDisposition: hiddenFailure.threadDisposition,
+                              });
+                            }),
+                          ),
+                        ),
+                        Effect.forkIn(sessionScope),
+                      );
+                      return;
+                    }
                   }
                   if (hiddenFailure !== undefined) {
                     yield* Ref.set(runtimeRestartRequired, true);
@@ -9695,7 +9717,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }
                   }
                   if (failure !== undefined) {
-                    yield* terminalizeOpenForegroundTools(context, "failed");
+                    if (!context.interrupted) {
+                      yield* terminalizeOpenForegroundTools(context, "failed");
+                    }
                     // Unlike an RPC failure, the agent survives an idle error, so its
                     // background tools and subagents keep reporting to this run.
                     yield* finalizeTurn(context, "failed", failure, {
@@ -9994,6 +10018,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               foregroundIdle: yield* Deferred.make<void>(),
               promptSequence: 0,
               outcomeResumed: false,
+              outcomeResumePending: null,
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
@@ -10262,6 +10287,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 generation,
                 Effect.gen(function* () {
                   if (context.finalized || context.interrupted) return false;
+                  context.outcomeResumePending = null;
                   const compactionMarker = (yield* Ref.get(compactionMarkers)).get(
                     context.nativeThreadId,
                   );
@@ -11021,12 +11047,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       }
                       // A settled soft interrupt keeps background subagents, and with them their MCP calls.
                       yield* cancelPendingRuntimeRequests({ stopMcpCalls: !settledSoftInterrupt });
+                      const resumePending = context.outcomeResumePending;
                       // Finalize before killing so projection catches up and concurrent interrupts see activeTurn cleared.
                       if (
-                        (hardRestart || context.promptSettled || settledSoftInterrupt) &&
+                        (hardRestart ||
+                          context.promptSettled ||
+                          settledSoftInterrupt ||
+                          resumePending !== null) &&
                         !context.finalized
                       ) {
-                        yield* finalizeTurn(context, "interrupted");
+                        if (resumePending !== null) {
+                          context.outcomeResumePending = null;
+                          yield* Ref.set(runtimeRestartRequired, true);
+                        }
+                        yield* finalizeTurn(
+                          context,
+                          "interrupted",
+                          undefined,
+                          resumePending === null ? undefined : { threadDisposition: resumePending },
+                        );
                       }
                       if (hardRestart) {
                         if (runtime.terminateProcessGroup === undefined) {
@@ -11048,7 +11087,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         yield* Deferred.succeed(teardownBarrier!, undefined).pipe(Effect.ignore);
                       } else {
                         // Settled soft interrupts have no prompt to cancel; cancel could kill background subagents.
-                        if (!settledSoftInterrupt && (yield* promptStillRunsAfterHold(context))) {
+                        if (
+                          !settledSoftInterrupt &&
+                          resumePending === null &&
+                          (yield* promptStillRunsAfterHold(context))
+                        ) {
                           yield* runtime.cancel;
                         }
                         if (restartRuntime && flavor.restartRuntimeAfterInterrupt === true) {
