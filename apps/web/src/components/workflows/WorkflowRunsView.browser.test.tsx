@@ -351,6 +351,58 @@ describe("WorkflowRunsView", () => {
     await expect.element(screen.getByRole("button", { name: "Hold", exact: true })).toBeDisabled();
   });
 
+  it("shows what a run is about in its row, and opens it from there", async () => {
+    const { steps: _steps, origin: _origin, state: _state, ...subject } = issue101;
+    setup({ runs: [run({ runId: "fix", title: "Fix the minutes", subject })], questions: [] });
+    const reference = vi.fn();
+    await using _desktop = await desktop();
+    await using screen = await render(page(null, { reference }));
+
+    const row = screen
+      .getByRole("navigation", { name: "Workflow runs" })
+      .getByRole("button", { name: "#101 Wrong minutes" });
+    await row.click();
+
+    expect(reference).toHaveBeenCalledWith("fix", subject);
+  });
+
+  it("marks a thread subject as open beside its run, and a subject's state as unknown", async () => {
+    setup({
+      runs: [
+        run({
+          runId: "talk",
+          title: "Talk it through",
+          subject: { kind: "thread", key: "t1", address: { threadId: "t1" }, title: "", url: null },
+        }),
+        run({
+          runId: "land",
+          title: "Land the fix",
+          subject: {
+            kind: "pullRequest",
+            key: "pr7",
+            address: { projectId: "p1", host: "github.com", repository: "acme/app", number: 7 },
+            title: "Fix the minutes",
+            url: "https://github.com/acme/app/pull/7",
+          },
+        }),
+      ],
+      questions: [],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page("talk", {}, { thread: "t1" }));
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(runs.getByRole("button", { name: "thread", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    // A subject does not say where its pull request stands, so it wears no state's ink.
+    const mark = runs
+      .getByRole("button", { name: "#7 Fix the minutes" })
+      .element()
+      .querySelector("svg");
+    expect(mark?.getAttribute("class")).toContain("text-muted-foreground");
+  });
+
   it("says why a run paused at the step that failed, and resumes it", async () => {
     setup(
       {

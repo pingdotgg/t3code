@@ -10,12 +10,14 @@ import {
   type WorkflowRun,
   type WorkflowRunReference,
   type WorkflowRunsSnapshot,
+  type WorkflowRunSubject,
   type WorkflowStep,
   type WorkflowSummary,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { parseUrl } from "@t3tools/shared/url";
 
 export interface WorkflowQuestionChoice {
   readonly value: string;
@@ -47,7 +49,7 @@ const text = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
 
 const isWebUrl = (url: string) => {
-  const protocol = URL.parse(url)?.protocol;
+  const protocol = parseUrl(url)?.protocol;
   return protocol === "https:" || protocol === "http:";
 };
 
@@ -898,31 +900,39 @@ const decodeIssueAddress = Schema.decodeUnknownOption(WorkflowIssueAddress);
 const decodePullRequestAddress = Schema.decodeUnknownOption(WorkflowPullRequestAddress);
 
 /** A reference's issue, when it is one and its address reads as one. */
-export function workflowReferenceIssue(reference: WorkflowRunReference): IssueRef | null {
+export function workflowReferenceIssue(reference: WorkflowRunSubject): IssueRef | null {
   return reference.kind === WorkflowReferenceKind.issue
     ? Option.getOrNull(decodeIssueAddress(reference.address))
     : null;
 }
 
 /** A reference's pull request, when it is one and its address reads as one. */
-export function workflowReferencePullRequest(
-  reference: WorkflowRunReference,
-): PullRequestRef | null {
+export function workflowReferencePullRequest(reference: WorkflowRunSubject): PullRequestRef | null {
   return reference.kind === WorkflowReferenceKind.pullRequest
     ? Option.getOrNull(decodePullRequestAddress(reference.address))
     : null;
 }
 
+/** A reference's thread, when it is one, in the run's own environment. */
+export function workflowReferenceThreadId(reference: WorkflowRunSubject): string | null {
+  const threadId = field(reference.address, "threadId");
+  return reference.kind === WorkflowReferenceKind.thread && typeof threadId === "string"
+    ? threadId
+    : null;
+}
+
 /**
  * What a reference is called in a chip: `#412` for an issue or pull request on a git host, a
- * tracker's own key such as `ENG-12`, and the title for a kind this client does not know.
+ * tracker's own key such as `ENG-12`, and otherwise the title, or the host of its web address.
  */
-export function workflowReferenceLabel(reference: WorkflowRunReference): string {
+export function workflowReferenceLabel(reference: WorkflowRunSubject): string {
   const pullRequest = workflowReferencePullRequest(reference);
   if (pullRequest !== null) return `#${pullRequest.number}`;
   const issue = workflowReferenceIssue(reference);
   if (issue !== null) return /^\d+$/.test(issue.key) ? `#${issue.key}` : issue.key;
-  return reference.title === "" ? reference.kind : reference.title;
+  if (reference.title !== "") return reference.title;
+  const url = reference.url === null ? null : parseUrl(reference.url);
+  return url?.host ?? reference.kind;
 }
 
 /** The references a step touched, in the order the run first touched them. */
@@ -943,7 +953,8 @@ export function workflowStepTime(ms: number): string {
 
 /**
  * The first sentence of a reply, as one line of plain text: a heading, list mark, inline code,
- * emphasis or link reads as its words.
+ * emphasis or link reads as its words. Code keeps its text, and an underscore inside a word, as in
+ * snake_case, is not emphasis.
  */
 export function workflowOneLine(text: string): string {
   const line =
@@ -952,10 +963,13 @@ export function workflowOneLine(text: string): string {
       .map((candidate) => candidate.trim())
       .find((candidate) => candidate !== "" && !/^(#|```|\|)/.test(candidate))
       ?.replace(/^([-*>]|\d+\.)\s+/, "") ?? "";
+  const code: string[] = [];
   const plain = line
+    .replace(/(`+)(.+?)\1(?!`)/g, (_, _ticks, inner: string) => `\0${code.push(inner) - 1}\0`)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/`([^`]*)`/g, "$1")
-    .replace(/(\*\*|__|\*|_)(\S(?:.*?\S)?)\1/g, "$2");
+    .replace(/(?<![\p{L}\p{M}\p{N}_/])(__|_)(\S(?:.*?\S)?)\1(?![\p{L}\p{M}\p{N}_/])/gu, "$2")
+    .replace(/(\*\*|\*)(\S(?:.*?\S)?)\1/g, "$2")
+    .replace(/\0(\d+)\0/g, (match, index: string) => code[Number(index)] ?? match);
   const end = plain.search(/[.!?](\s|$)/);
   return end === -1 ? plain : plain.slice(0, end + 1);
 }

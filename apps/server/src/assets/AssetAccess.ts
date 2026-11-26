@@ -332,6 +332,8 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
     readonly relativePath: string;
     /** The HTML entry's folder, relative to the root, when serving one of its dependencies. */
     readonly previewBaseRelativePath?: string;
+    /** The request is for the opened page itself, which may be a link to elsewhere in the root. */
+    readonly previewEntry?: boolean;
   }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -354,16 +356,17 @@ const resolveCanonicalWorkspaceFile = Effect.fn("AssetAccess.resolveCanonicalWor
     if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return null;
 
     if (input.previewBaseRelativePath !== undefined) {
-      // The opened entry's own folder may be hidden; nothing below it, or reached outside it, may.
+      // The opened entry's own folder may be hidden; nothing below it may.
       const canonicalBase = yield* ProjectFaviconResolver.optionOnNotFound(
         fileSystem.realPath(path.join(canonicalRoot.value, input.previewBaseRelativePath)),
       );
       const belowBase = Option.isSome(canonicalBase)
         ? path.relative(canonicalBase.value, canonicalFile.value)
         : "..";
-      const dependency =
-        belowBase.startsWith("..") || path.isAbsolute(belowBase) ? relative : belowBase;
-      if (!isPreviewDependencyPath(dependency, path)) return null;
+      const outsideBase = belowBase.startsWith("..") || path.isAbsolute(belowBase);
+      // Only the opened page may resolve outside its folder; the files it loads may not.
+      if (outsideBase && input.previewEntry !== true) return null;
+      if (!isPreviewDependencyPath(outsideBase ? relative : belowBase, path)) return null;
     }
 
     const info = yield* ProjectFaviconResolver.optionOnNotFound(
@@ -379,6 +382,7 @@ const resolveCanonicalWorkspaceFileForRequest = (input: {
   readonly workspaceRoot: string;
   readonly relativePath: string;
   readonly previewBaseRelativePath?: string;
+  readonly previewEntry?: boolean;
 }) =>
   resolveCanonicalWorkspaceFile(input).pipe(
     Effect.tapError((cause) =>
@@ -751,19 +755,18 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           Effect.orElseSucceed(() => null),
         );
       }
+      const download = isGenericFile && !isVideo && inlinePreviewMimeType === undefined;
+      // A client-named type is kept only where it cannot make the bytes render as a document.
+      const mimeType =
+        inlinePreviewMimeType ??
+        (isVideo ? videoMimeType : download ? input.resource.mimeType : undefined);
       claims = {
         version: 1,
         kind: "attachment",
         attachmentId: input.resource.attachmentId,
-        ...(isGenericFile && !isVideo && inlinePreviewMimeType === undefined
-          ? { download: true }
-          : {}),
+        ...(download ? { download: true } : {}),
         ...(input.resource.fileName !== undefined ? { fileName: input.resource.fileName } : {}),
-        ...(inlinePreviewMimeType !== undefined
-          ? { mimeType: inlinePreviewMimeType }
-          : input.resource.mimeType !== undefined
-            ? { mimeType: isVideo ? videoMimeType : input.resource.mimeType }
-            : {}),
+        ...(mimeType !== undefined ? { mimeType } : {}),
         ...(input.resource.renderIntent === "mcp-app" && inlinePreviewMimeType === "text/html"
           ? { renderIntent: "mcp-app" as const }
           : {}),
@@ -1154,6 +1157,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     workspaceRoot: claims.workspaceRoot,
     relativePath: joinedRelativePath,
     previewBaseRelativePath: claims.baseRelativePath,
+    previewEntry: decodedPath === claims.entryFileName,
   });
   return workspaceFile
     ? ({ kind: "file", path: workspaceFile, renderIntent: "file-preview" } satisfies ResolvedAsset)

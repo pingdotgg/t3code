@@ -505,9 +505,10 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
   const notebook = record(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
   if (notebook.nbformat !== 4 || !Array.isArray(notebook.cells) || notebook.cells.length > 500)
     throw new PreviewError({ code: "notebook-unsupported" });
-  const language = String(record(record(notebook.metadata).language_info).name ?? "text")
-    .replaceAll(/[^a-z\d+#-]/gi, "")
-    .slice(0, 40);
+  const language =
+    String(record(record(notebook.metadata).language_info).name ?? "")
+      .replaceAll(/[^a-z\d+#-]/gi, "")
+      .slice(0, 40) || "text";
   const cells: NotebookCell[] = notebook.cells.map((value) => {
     const cell = record(value);
     const outputs = Array.isArray(cell.outputs) ? cell.outputs : [];
@@ -529,7 +530,12 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           const html = notebookText(data["text/html"]);
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
           const plain = terminalOutputPlainText(
-            notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
+            notebookText(
+              output.text ??
+                data["text/plain"] ??
+                data["text/markdown"] ??
+                tracebackLines(output.traceback),
+            ),
           );
           const text =
             output.output_type === "stream" ? terminalOutputCollapseRedraws(plain) : plain;

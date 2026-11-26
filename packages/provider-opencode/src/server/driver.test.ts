@@ -41,6 +41,7 @@ import { OpenCodeDriver, isLocalOpenCodeServerUrl, openCodeUpdateFor } from "./d
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import {
   OPENCODE_2_RESPONSES,
+  OPENCODE_2_SKILL_EVENTS,
   OPENCODE_2_WORKSPACE_RESPONSES,
   replayOpenCodeServer,
 } from "./probeResponses.fixture.ts";
@@ -704,6 +705,136 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         skills.map((skill) => skill.name),
         "plum",
       );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  // OpenCode 2.4.2 announces a skill that appears after a location's scan with another
+  // skill.updated: a SKILL.md written while T3 is open, or an MCP server's skills once it connects.
+  const makeLateSkillServer = Effect.gen(function* () {
+    let skillsRead = yield* Deferred.make<void>();
+    let skillAdded = false;
+    const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
+    const send = (event: string, directory: string) =>
+      Effect.sync(() => {
+        const data = event.replace(
+          '"directory":"/work"',
+          `"directory":${JSON.stringify(directory)}`,
+        );
+        const frame = new TextEncoder().encode(`data: ${data}\n\n`);
+        for (const stream of streams) {
+          try {
+            stream.enqueue(frame);
+          } catch {
+            streams.delete(stream);
+          }
+        }
+      });
+    const listed = JSON.parse(OPENCODE_2_WORKSPACE_RESPONSES["/api/skill"].body);
+    const lateSkill = {
+      id: "review",
+      name: "review",
+      description: "Review the current diff",
+      path: "/work/.opencode/skills/review/SKILL.md",
+      content: "Review the diff.",
+    };
+    const http = HttpClient.make((request) => {
+      const path = new URL(request.url).pathname;
+      const json = (body: unknown) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+      switch (path) {
+        case "/api/info":
+          return json(JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body));
+        case "/api/event":
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(new ReadableStream({ start: (stream) => streams.add(stream) }), {
+                headers: { "content-type": "text/event-stream" },
+              }),
+            ),
+          );
+        case "/api/debug/location":
+          return json([]);
+        case "/api/provider":
+        case "/api/model":
+          return json({ location: { directory: "/work" }, data: [] });
+        case "/api/command":
+          return json(JSON.parse(OPENCODE_2_WORKSPACE_RESPONSES["/api/command"].body));
+        case "/api/skill":
+          return Deferred.succeed(skillsRead, undefined).pipe(
+            Effect.andThen(
+              json(skillAdded ? { ...listed, data: [...listed.data, lateSkill] } : listed),
+            ),
+          );
+        default:
+          return Effect.die(`Unexpected request: ${path}`);
+      }
+    });
+    const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, http);
+    const skillNames = (cwd: string) =>
+      Effect.gen(function* () {
+        const read = yield* instance.snapshotForCwd!(cwd).pipe(Effect.forkChild);
+        yield* TestClock.adjust("10 seconds");
+        return (yield* Fiber.join(read)).skills.map((skill) => skill.name);
+      });
+    return {
+      skillNames,
+      /** Opens a project OpenCode has not loaded: T3 reads, then OpenCode ends the scan. */
+      open: (cwd: string) =>
+        Effect.gen(function* () {
+          skillsRead = yield* Deferred.make<void>();
+          const read = yield* instance.snapshotForCwd!(cwd).pipe(Effect.forkChild);
+          yield* Deferred.await(skillsRead);
+          yield* send(OPENCODE_2_SKILL_EVENTS.scanCommands, cwd);
+          yield* send(OPENCODE_2_SKILL_EVENTS.scanSkills, cwd);
+          yield* TestClock.adjust("10 seconds");
+          return (yield* Fiber.join(read)).skills.map((skill) => skill.name);
+        }),
+      /** A skill appears in OpenCode; returns the first cwd T3 is asked to rescan, if any. */
+      addSkill: (cwd: string) =>
+        Effect.gen(function* () {
+          const leftover = yield* instance.workspaceRescans!.pipe(
+            Stream.runHead,
+            Effect.timeoutOption("1 second"),
+            Effect.forkChild,
+          );
+          yield* TestClock.adjust("1 second");
+          assert.deepStrictEqual(yield* Fiber.join(leftover), Option.none());
+          const rescan = yield* instance.workspaceRescans!.pipe(
+            Stream.runHead,
+            Effect.timeoutOption("5 seconds"),
+            Effect.forkChild,
+          );
+          skillAdded = true;
+          yield* send(OPENCODE_2_SKILL_EVENTS.skillAdded, cwd);
+          yield* TestClock.adjust("5 seconds");
+          return Option.flatten(yield* Fiber.join(rescan));
+        }),
+      dropEvents: Effect.sync(() => {
+        for (const stream of streams) stream.error(new TypeError("network connection lost"));
+        streams.clear();
+      }).pipe(Effect.andThen(TestClock.adjust("1 second"))),
+    };
+  });
+
+  it.effect("rescans a directory when OpenCode adds a skill after its scan", () =>
+    Effect.gen(function* () {
+      const server = yield* makeLateSkillServer;
+      assert.notInclude(yield* server.open("/work"), "review");
+
+      assert.deepStrictEqual(yield* server.addSkill("/work"), Option.some("/work"));
+      assert.include(yield* server.skillNames("/work"), "review");
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("rescans for a skill added after the server's event stream drops", () =>
+    Effect.gen(function* () {
+      const server = yield* makeLateSkillServer;
+      yield* server.open("/work");
+      yield* server.dropEvents;
+      yield* server.open("/work/other");
+
+      assert.deepStrictEqual(yield* server.addSkill("/work/other"), Option.some("/work/other"));
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
