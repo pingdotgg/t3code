@@ -288,4 +288,28 @@ describe("parseGrokLine", () => {
     const records = parseGrokLine(line);
     expect(records[0]?.timestampMs).toBe(1_786_372_566_000);
   });
+
+  it("preserves modelCalls for multi-call turns and inherits top-level count for single models", () => {
+    const splitRecords = parseGrokLine(
+      turnCompleted({
+        usage: { modelCalls: 12 },
+        modelUsage: {
+          "gpt-6.1-sol": { inputTokens: 400_000, outputTokens: 1_000, modelCalls: 8 },
+          "grok-4.6": { inputTokens: 100_000, outputTokens: 500, modelCalls: 1 },
+        },
+      }),
+    );
+    expect(splitRecords.find((record) => record.model === "gpt-6.1-sol")?.modelCalls).toBe(8);
+    expect(splitRecords.find((record) => record.model === "grok-4.6")?.modelCalls).toBeUndefined();
+
+    const singleRecords = parseGrokLine(
+      turnCompleted({
+        usage: { modelCalls: 10 },
+        modelUsage: {
+          "gpt-6.1-sol": { inputTokens: 500_000, outputTokens: 1_000 },
+        },
+      }),
+    );
+    expect(singleRecords[0]?.modelCalls).toBe(10);
+  });
 });

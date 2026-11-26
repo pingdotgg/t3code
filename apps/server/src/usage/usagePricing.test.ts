@@ -427,4 +427,57 @@ describe("usage pricing", () => {
 
     expect(lookupRate(table, "example-model")).toBeNull();
   });
+
+  it("evaluates long-context tiers per model call when a turn aggregates multiple calls", () => {
+    const table = parseRateTable({
+      "gpt-6.1-sol": {
+        input_cost_per_token: 2e-6,
+        output_cost_per_token: 1e-5,
+        cache_read_input_token_cost: 1e-7,
+        input_cost_per_token_above_272k_tokens: 4e-6,
+        output_cost_per_token_above_272k_tokens: 1.5e-5,
+        cache_read_input_token_cost_above_272k_tokens: 2e-7,
+      },
+    });
+    const baseTotals = {
+      uncachedInputTokens: 200_000,
+      cachedInputTokens: 300_000,
+      cacheCreationTokens: 0,
+      outputTokens: 1_000,
+      reasoningTokens: 0,
+    };
+
+    // 500K across 10 calls = 50K/call (<= 272K) -> standard rates, no cliff surcharge.
+    const multiCallRecord = {
+      model: "gpt-6.1-sol",
+      speed: "standard" as const,
+      modelCalls: 10,
+      reportedCostUsd: null,
+      totals: baseTotals,
+    };
+    expect(priceUsage(table, multiCallRecord).costUsd).toBeCloseTo(
+      200_000 * 2e-6 + 300_000 * 1e-7 + 1_000 * 1e-5,
+      12,
+    );
+    expect(cacheSavingsUsd(table, multiCallRecord)).toBeCloseTo(300_000 * (2e-6 - 1e-7), 12);
+
+    // 3M across 10 calls = 300K/call (> 272K) -> still activates the above-272K tier.
+    const longPerCallRecord = {
+      model: "gpt-6.1-sol",
+      speed: "standard" as const,
+      modelCalls: 10,
+      reportedCostUsd: null,
+      totals: {
+        uncachedInputTokens: 1_000_000,
+        cachedInputTokens: 2_000_000,
+        cacheCreationTokens: 0,
+        outputTokens: 1_000,
+        reasoningTokens: 0,
+      },
+    };
+    expect(priceUsage(table, longPerCallRecord).costUsd).toBeCloseTo(
+      1_000_000 * 4e-6 + 2_000_000 * 2e-7 + 1_000 * 1.5e-5,
+      12,
+    );
+  });
 });
