@@ -3722,6 +3722,26 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             repos.repositories.slice(0, 1),
           );
           yield* git(cwd, ["checkout", "--", ".gitmodules"]);
+          yield* git(cwd, ["submodule", "add", nested, "pending-child"]);
+          yield* git(cwd, ["update-index", "--skip-worktree", ".gitmodules"]);
+          yield* fs.remove(NodePath.join(cwd, ".gitmodules"));
+          assert.deepStrictEqual(
+            (yield* driver.getReviewRepositories({ cwd })).repositories.map((repo) => repo.path),
+            [...repos.repositories.map((repo) => repo.path), "pending-child"],
+          );
+          yield* git(cwd, ["update-index", "--no-skip-worktree", ".gitmodules"]);
+          yield* git(cwd, ["checkout", "--", ".gitmodules"]);
+          yield* git(cwd, ["rm", "-f", "--", "pending-child"]);
+          yield* git(cwd, ["restore", "--staged", "--worktree", "--", ".gitmodules"]);
+          yield* fs.makeDirectory(NodePath.join(cwd, "independent"));
+          yield* initRepoWithCommit(NodePath.join(cwd, "independent"));
+          yield* git(cwd, [
+            "config",
+            "-f",
+            ".gitmodules",
+            "submodule.independent.path",
+            "independent",
+          ]);
           yield* git(cwd, [
             "config",
             "-f",
@@ -3841,6 +3861,32 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.include(nestedWorkspace.sources[0]?.diff, "changed parent");
         }),
       ),
+    );
+    it.effect("discards a tracked preview when another checkout replaces its directory", () =>
+      Effect.gen(function* () {
+        const parent = yield* makeTmpDir();
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = NodePath.join(parent, "checkout");
+        yield* fs.makeDirectory(cwd);
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "README.md", "from the first checkout\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const input = { cwd, requireRepositoryRoot: true, sourceKind: "working-tree" } as const;
+        const first = yield* driver.getReviewDiffPreview({ ...input, trackedOnly: true });
+        assert.isDefined(first.completionToken);
+        assert.include(first.sources[0]?.diff, "+from the first checkout");
+
+        yield* fs.rename(cwd, NodePath.join(parent, "original-checkout"));
+        yield* fs.makeDirectory(cwd);
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "README.md", "from the replacement checkout\n");
+        const replacement = yield* driver.getReviewDiffPreview({
+          ...input,
+          completionToken: first.completionToken!,
+        });
+        assert.include(replacement.sources[0]?.diff, "+from the replacement checkout");
+        assert.notInclude(replacement.sources[0]?.diff, "from the first checkout");
+      }),
     );
     it.effect("diffs a root commit against the empty tree but rejects a shallow boundary", () =>
       Effect.gen(function* () {

@@ -2205,6 +2205,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     needsCurrentBranch: boolean,
     requireRepositoryRoot = false,
+    refreshLayout = false,
   ) {
     // A cached layout outlives a removed cwd, which must still read as a missing cwd.
     if (
@@ -2213,7 +2214,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ) {
       return null;
     }
-    const repository = yield* requireRepositoryRoot
+    const repository = yield* requireRepositoryRoot || refreshLayout
       ? resolveRepositoryPathsUncached(cwd)
       : resolveRepositoryPaths(cwd);
     if (
@@ -5432,14 +5433,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                     [
                       "config",
                       "-z",
-                      ...(sparseManifest ? ["--blob", "HEAD:.gitmodules"] : ["--file=.gitmodules"]),
+                      ...(sparseManifest ? ["--blob", ":.gitmodules"] : ["--file=.gitmodules"]),
                       "--get-regexp",
                       "^submodule\\..*\\.path$",
                     ],
                     { allowNonZeroExit: true, maxOutputBytes: 1024 * 1024 },
                   )
                 : null;
-            const children =
+            const declaredPaths =
               manifest?.exitCode === 0
                 ? manifest.stdout.split("\0").flatMap((record) => {
                     const separator = record.indexOf("\n");
@@ -5452,10 +5453,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                       local !== ".." &&
                       !local.startsWith(`..${path.sep}`) &&
                       withinRoot(child)
-                      ? [child]
+                      ? [local.split(path.sep).join("/")]
                       : [];
                   })
                 : [];
+            const children: string[] = [];
+            const batch: string[] = [];
+            let batchSize = 0;
+            const readGitlinks = Effect.fnUntraced(function* (paths: ReadonlyArray<string>) {
+              const result = yield* executeGit(
+                "GitVcsDriver.review.repositories.index",
+                real,
+                ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...paths],
+                { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES, appendTruncationMarker: true },
+              );
+              const requested = new Set(paths);
+              for (const entry of result.stdout.split("\0")) {
+                const separator = entry.indexOf("\t");
+                if (separator === -1 || !/^160000 [a-f0-9]+ 0$/.test(entry.slice(0, separator)))
+                  continue;
+                const indexedPath = entry.slice(separator + 1);
+                if (requested.has(indexedPath)) children.push(path.join(real, indexedPath));
+              }
+              return result.stdoutTruncated;
+            });
+            let indexTruncated = false;
+            // Keep the argument list below Windows' command-line limit.
+            for (const local of new Set(declaredPaths)) {
+              const argSize = local.length * 2 + 3;
+              if (batch.length > 0 && batchSize + argSize > 16_000) {
+                indexTruncated = (yield* readGitlinks(batch)) || indexTruncated;
+                batch.length = 0;
+                batchSize = 0;
+              }
+              batch.push(local);
+              batchSize += argSize;
+            }
+            if (batch.length > 0) indexTruncated = (yield* readGitlinks(batch)) || indexTruncated;
             return {
               repository: {
                 cwd:
@@ -5470,6 +5504,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                 branch: yield* readCurrentBranch("GitVcsDriver.review.repositories.branch", real),
               },
               children,
+              truncated: indexTruncated,
             };
           }).pipe(
             Effect.catchCause((cause) =>
@@ -5481,6 +5516,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       for (const item of found) {
         if (!item) continue;
         repositories.push(item.repository);
+        truncated ||= item.truncated;
         pending.push(...new Set(item.children.filter((child) => !seen.has(child))));
       }
       if (seen.size + pending.length > 256) {
@@ -5577,6 +5613,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       readonly key: string;
       readonly expiresAt: number;
       readonly repository: { readonly worktreeRoot: string; readonly currentBranch: string | null };
+      readonly gitDir: string;
+      readonly checkoutIdentity: string;
       readonly review: { readonly baseRef: string | null; readonly mergeBase: string | null };
       readonly dirty: ReviewTrackedDiff;
       readonly base: ReviewTrackedDiff;
@@ -5591,6 +5629,40 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       input.ignoreWhitespace === true,
       input.metadataOnly === true,
     ]);
+  const readReviewCheckoutIdentity = Effect.fn("readReviewCheckoutIdentity")(function* (
+    cwd: string,
+    worktreeRoot: string,
+    gitDir: string,
+  ) {
+    return yield* Effect.gen(function* () {
+      const physicalCwd = yield* fileSystem.realPath(cwd);
+      const worktree = yield* fileSystem.stat(worktreeRoot);
+      const dotGit = yield* fileSystem.lstat(path.join(worktreeRoot, ".git"));
+      const admin = yield* fileSystem.stat(gitDir);
+      const head = yield* fileSystem.readFileString(path.join(gitDir, "HEAD"));
+      const identity = (info: typeof worktree) =>
+        [
+          String(info.dev),
+          Option.map(info.ino, String).valueOrUndefined,
+          info.birthtime.valueOrUndefined?.getTime(),
+        ].join(":");
+      if (
+        [worktree, dotGit, admin].some(
+          (info) => Option.isNone(info.ino) && Option.isNone(info.birthtime),
+        )
+      )
+        return null;
+      return [
+        physicalCwd,
+        identity(worktree),
+        identity(dotGit),
+        dotGit.type === "File" ? dotGit.mtime.valueOrUndefined?.getTime() : null,
+        identity(admin),
+        head,
+      ].join("\0");
+    }).pipe(Effect.orElseSucceed(() => null));
+  });
+
   const takeTrackedReviewPreview = Effect.fn("takeTrackedReviewPreview")(function* (
     input: ReviewDiffPreviewInput,
   ) {
@@ -5600,7 +5672,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     trackedReviewPreviews.delete(input.completionToken);
     if (entry.key !== trackedReviewPreviewKey(input)) return undefined;
     if ((yield* Clock.currentTimeMillis) > entry.expiresAt) return undefined;
-    return entry;
+    const identity = yield* readReviewCheckoutIdentity(
+      input.cwd,
+      entry.repository.worktreeRoot,
+      entry.gitDir,
+    );
+    return identity === entry.checkoutIdentity ? entry : undefined;
   });
 
   const getReviewDiffPreview = Effect.fn("getReviewDiffPreview")(function* (
@@ -5637,21 +5714,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const reusesTracked = input.file === undefined && input.commitSha === undefined;
     const tracked = reusesTracked ? yield* takeTrackedReviewPreview(input) : undefined;
     const repository =
-      tracked !== undefined && !input.requireRepositoryRoot
-        ? tracked.repository
-        : yield* resolveReviewRepository(
-            input.cwd,
-            needsCurrentBranch && tracked === undefined,
-            input.requireRepositoryRoot,
-          ).pipe(
-            Effect.map((resolved) =>
-              resolved === null ? null : (tracked?.repository ?? resolved),
-            ),
-            Effect.catchTags({
-              GitCommandError: (error) =>
-                isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
-            }),
-          );
+      tracked?.repository ??
+      (yield* resolveReviewRepository(
+        input.cwd,
+        needsCurrentBranch,
+        input.requireRepositoryRoot,
+        input.completionToken !== undefined,
+      ).pipe(
+        Effect.catchTags({
+          GitCommandError: (error) =>
+            isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+        }),
+      ));
     if (!repository?.worktreeRoot) {
       return {
         cwd: input.cwd,
@@ -5661,6 +5735,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const cwd = repository.worktreeRoot;
+    const checkout =
+      input.trackedOnly && reusesTracked
+        ? yield* Effect.gen(function* () {
+            const gitDir = (yield* runGitStdout("GitVcsDriver.review.checkout.gitDir", cwd, [
+              "rev-parse",
+              "--absolute-git-dir",
+            ])).replace(/\n$/, "");
+            const checkoutIdentity = yield* readReviewCheckoutIdentity(input.cwd, cwd, gitDir);
+            return checkoutIdentity === null ? null : { gitDir, checkoutIdentity };
+          }).pipe(Effect.orElseSucceed(() => null))
+        : null;
     const hashDiff = (diff: string, files: ReadonlyArray<ReviewDiffFileStat>) =>
       digest.digest(Digest.sha256, new TextEncoder().encode(JSON.stringify([diff, files]))).pipe(
         Effect.map(Hex.encode),
@@ -5831,12 +5916,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return [incomplete(dirtyRef, dirty), incomplete(review.mergeBase, base)] as const;
     }).pipe(Effect.scoped);
     let completionToken: string | undefined;
-    if (input.trackedOnly && reusesTracked && dirtyTrackedResult.files && baseResult.files) {
+    if (checkout && dirtyTrackedResult.files && baseResult.files) {
       completionToken = yield* random.uuidV4();
       trackedReviewPreviews.set(completionToken, {
         key: trackedReviewPreviewKey(input),
         expiresAt: (yield* Clock.currentTimeMillis) + REVIEW_TRACKED_PREVIEW_TTL_MS,
         repository,
+        ...checkout,
         review,
         dirty: { ...dirtyTrackedResult, files: dirtyTrackedResult.files },
         base: { ...baseResult, files: baseResult.files },
