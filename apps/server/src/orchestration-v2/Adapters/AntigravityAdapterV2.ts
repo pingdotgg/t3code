@@ -40,6 +40,8 @@ import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityCli
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
+  antigravitySwarmAddChildSessionId,
+  antigravitySwarmAddModel,
   antigravityToolOutlivesPrompt,
   antigravityCommandOutlivesPrompt,
   antigravitySubagentOutput,
@@ -99,6 +101,7 @@ export interface AntigravityAdapterV2Options {
   readonly onSessionStarted?: (
     started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
     cwd: string,
+    session?: { readonly resumed: boolean },
   ) => Effect.Effect<void>;
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
@@ -130,9 +133,9 @@ const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractS
       toolCall.title ??
       ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
     title: launch?.title ?? ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
-    model: null,
+    model: antigravitySwarmAddModel(toolCall),
     status,
-    childSessionId: null,
+    childSessionId: antigravitySwarmAddChildSessionId(toolCall),
     result: status === "failed" ? (antigravitySubagentOutput(toolCall) ?? null) : null,
   };
 };
@@ -202,13 +205,16 @@ export function makeAntigravityAcpAdapterFlavor(
           });
         },
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tap(
-                (started) => options.onSessionStarted?.(started, input.cwd) ?? Effect.void,
-              ),
+          runtime.start().pipe(
+            Effect.tap(
+              (started) =>
+                options.onSessionStarted?.(started, input.cwd, {
+                  resumed:
+                    input.resumeSessionId !== undefined &&
+                    started.sessionId === input.resumeSessionId,
+                }) ?? Effect.void,
             ),
+          ),
       } satisfies typeof runtime;
     },
     Effect.provideService(SecureRandom.SecureRandom, options.random),
