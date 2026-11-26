@@ -153,4 +153,35 @@ describe("parseElicitationForm", () => {
       extras: [],
     });
   });
+
+  it("marks optional number and integer fields as not required and omits blank answers", () => {
+    const form = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          limit: { type: "integer" },
+          ratio: { type: "number" },
+          retries: { type: "integer" },
+          threshold: { type: "number" },
+        },
+        required: ["retries", "threshold"],
+      },
+      "Configure limits",
+    );
+    assert(form !== undefined);
+    assert.deepStrictEqual(
+      form.questions.map((question) => [question.id, question.required]),
+      [
+        ["limit", false],
+        ["ratio", false],
+        ["retries", undefined],
+        ["threshold", undefined],
+      ],
+    );
+    assert.deepStrictEqual(form.content({ limit: "", ratio: "", retries: "3", threshold: "0.5" }), {
+      retries: 3,
+      threshold: 0.5,
+    });
+    assert.isUndefined(form.content({ limit: "", ratio: "", retries: "", threshold: "0.5" }));
+  });
 });
