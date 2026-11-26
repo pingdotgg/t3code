@@ -11,7 +11,9 @@ export function proposedPlanTitle(planMarkdown: string): string | null {
   for (const line of planMarkdown.replace(/^\uFEFF/, "").split(/\r?\n/)) {
     const [, marker = "", info = ""] = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/) ?? [];
     if (fence) {
-      if (marker[0] === fence[0] && marker.length >= fence.length && !info.trim()) fence = "";
+      if (marker[0] === fence[0] && marker.length >= fence.length && /^[ \t]*$/.test(info)) {
+        fence = "";
+      }
       continue;
     }
     if (comment || /^ {0,3}<!--/.test(line)) {
