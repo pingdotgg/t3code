@@ -71,7 +71,10 @@ import {
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  applyProviderSessionEnvironmentOverride,
+  mergeProviderInstanceEnvironment,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import { providerProbeEnvironment } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
@@ -381,6 +384,10 @@ export const OpenCodeDriver: ProviderDriver<
           }),
       ),
     );
+    const secureRandom = yield* SecureRandom.SecureRandom;
+    const openCode2Client = yield* OpenCode2Client.make.pipe(
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+    );
     const openCode2Server = yield* OpenCode2Server.make({
       binaryPath: effectiveConfig.binaryPath,
       serverUrl: effectiveConfig.serverUrl,
@@ -389,18 +396,35 @@ export const OpenCodeDriver: ProviderDriver<
       environment: processEnv,
     }).pipe(
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
-      Effect.provideService(
-        OpenCode2Client.OpenCode2Client,
-        yield* OpenCode2Client.make.pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
-      ),
+      Effect.provideService(OpenCode2Client.OpenCode2Client, openCode2Client),
     );
+    const makeSessionOpenCode2Server = effectiveConfig.serverUrl?.trim()
+      ? undefined
+      : (sessionEnvironmentOverride: Readonly<Record<string, string>>) =>
+          OpenCode2Server.make({
+            binaryPath: effectiveConfig.binaryPath,
+            serverUrl: effectiveConfig.serverUrl,
+            serverPassword: effectiveConfig.serverPassword,
+            directory: host.paths.cwd,
+            environment: applyProviderSessionEnvironmentOverride(
+              processEnv,
+              sessionEnvironmentOverride,
+            ),
+          }).pipe(
+            Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
+            Effect.provideService(OpenCode2Client.OpenCode2Client, openCode2Client),
+            Effect.provideService(SecureRandom.SecureRandom, secureRandom),
+          );
     const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
       probe: runtimeProbe,
       resolve: resolveRuntime,
       v1: openCodeV1Adapter,
-      v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
-        Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
-      ),
+      v2: yield* OpenCode2AdapterV2.make(
+        instanceId,
+        makeSessionOpenCode2Server === undefined
+          ? undefined
+          : { makeSessionServer: makeSessionOpenCode2Server },
+      ).pipe(Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server)),
     });
     const catalogWatch = yield* makeOpenCode2CatalogWatch(processEnv);
     // An external server may not have the host's cwd; without a location it uses its own default.

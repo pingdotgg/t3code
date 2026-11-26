@@ -3548,6 +3548,13 @@ export const layerWithOptions = (
               const sessionClosed = yield* Deferred.make<void>();
               yield* Scope.addFinalizer(sessionScope, Deferred.done(sessionClosed, Exit.void));
               yield* agentScope.clear(input.threadId);
+              const teamLeaseGenerationBeforeOpen =
+                Option.isSome(teamProviderManagerOption) &&
+                isTeamProviderInstanceId(input.modelSelection.instanceId)
+                  ? yield* teamProviderManagerOption.value
+                      .getLeaseGeneration(input.modelSelection.instanceId)
+                      .pipe(Effect.orElseSucceed(() => 0))
+                  : undefined;
               const teamProxySessionEnv =
                 Option.isSome(teamProviderManagerOption) &&
                 isTeamProviderInstanceId(input.modelSelection.instanceId)
@@ -3703,6 +3710,7 @@ export const layerWithOptions = (
                   .recordSessionLeaseGeneration(
                     input.modelSelection.instanceId,
                     effectiveProviderSessionId,
+                    teamLeaseGenerationBeforeOpen,
                   )
                   .pipe(Effect.ignore);
               }

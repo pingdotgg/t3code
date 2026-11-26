@@ -230,6 +230,7 @@ export const AntigravityDriver: ProviderDriver<
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      explicitApiKeyOverride?: string,
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
@@ -259,13 +260,19 @@ export const AntigravityDriver: ProviderDriver<
       const sessionOverride = yield* ProviderSessionEnvironmentOverride;
       const effectiveBaseEnv: NodeJS.ProcessEnv =
         Object.keys(sessionOverride).length > 0 ? { ...baseEnv, ...sessionOverride } : baseEnv;
-      const effectiveApiKey =
-        typeof effectiveBaseEnv.GEMINI_API_KEY === "string" &&
-        effectiveBaseEnv.GEMINI_API_KEY.length > 0
-          ? effectiveBaseEnv.GEMINI_API_KEY
-          : auth.apiKey;
+      // Only override the configured instance key from an explicit per-session override, never from ambient process.env.
+      const sessionApiKey =
+        (typeof sessionOverride.GEMINI_API_KEY === "string" &&
+        sessionOverride.GEMINI_API_KEY.length > 0
+          ? sessionOverride.GEMINI_API_KEY
+          : undefined) ??
+        (typeof explicitApiKeyOverride === "string" && explicitApiKeyOverride.length > 0
+          ? explicitApiKeyOverride
+          : undefined);
       const effectiveAuth: AntigravityAuthConfig =
-        auth.authMethod === "gemini-api-key" ? { ...auth, apiKey: effectiveApiKey } : auth;
+        auth.authMethod === "gemini-api-key" && sessionApiKey !== undefined
+          ? { ...auth, apiKey: sessionApiKey }
+          : auth;
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
         baseEnv: effectiveBaseEnv,
@@ -339,6 +346,7 @@ export const AntigravityDriver: ProviderDriver<
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        threadEnvironment?.GEMINI_API_KEY,
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,

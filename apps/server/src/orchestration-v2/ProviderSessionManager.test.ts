@@ -6718,10 +6718,14 @@ it.effect(
         readonly providerSessionId: ProviderSessionId;
         readonly override: Readonly<Record<string, string>> | undefined;
       }> = [];
-      const recordedGenerations: Array<ProviderSessionId> = [];
+      const recordedGenerations: Array<{
+        readonly providerSessionId: ProviderSessionId;
+        readonly generation: number | undefined;
+      }> = [];
       const revokedSessions: Array<ProviderSessionId> = [];
       let purgeCount = 0;
       let tokenSeq = 0;
+      let leaseGen = 1;
 
       const teamProviderManagerLayer = Layer.mock(TeamProviderManager.TeamProviderManager)({
         issueInternalProxySessionToken: (input) =>
@@ -6740,9 +6744,10 @@ it.effect(
           Effect.sync(() => {
             revokedSessions.push(providerSessionId);
           }),
-        recordSessionLeaseGeneration: (_virtualInstanceId, providerSessionId) =>
+        getLeaseGeneration: () => Effect.sync(() => leaseGen),
+        recordSessionLeaseGeneration: (_virtualInstanceId, providerSessionId, generation) =>
           Effect.sync(() => {
-            recordedGenerations.push(providerSessionId);
+            recordedGenerations.push({ providerSessionId, generation });
           }),
         purgeEphemeralTokensForInstance: () =>
           Effect.sync(() => {
@@ -6789,8 +6794,8 @@ it.effect(
           observedOpens[1]?.override?.OPENAI_API_KEY,
         );
         assert.deepStrictEqual(recordedGenerations, [
-          aliceRuntime.providerSessionId,
-          bobRuntime.providerSessionId,
+          { providerSessionId: aliceRuntime.providerSessionId, generation: 1 },
+          { providerSessionId: bobRuntime.providerSessionId, generation: 2 },
         ]);
 
         // Member-targeted release MUST release ONLY Bob's warm session while leaving Alice's live
@@ -6833,7 +6838,12 @@ it.effect(
         assert.strictEqual(purgeCount, 0);
         assert.strictEqual(observedOpens.length, 3);
         assert.include(observedOpens[2]?.override?.OPENAI_API_KEY ?? "", "t3teamint_session_3_");
-        assert.strictEqual(recordedGenerations[2], switchedRuntime.providerSessionId);
+        assert.strictEqual(
+          recordedGenerations[2]?.providerSessionId,
+          switchedRuntime.providerSessionId,
+        );
+        // Generation snapshot captured BEFORE openSession must win even if lease rotated mid-startup!
+        assert.strictEqual(recordedGenerations[2]?.generation, 3);
       }).pipe(
         Effect.provide(
           layerTest({
@@ -6843,6 +6853,8 @@ it.effect(
             teamProviderManagerLayer,
             beforeOpen: (openInput) =>
               Effect.sync(() => {
+                // Simulate a background lease rotation happening while adapter.openSession is starting!
+                leaseGen += 1;
                 observedOpens.push({
                   providerSessionId: openInput.providerSessionId,
                   override: openInput.sessionEnvironmentOverride,

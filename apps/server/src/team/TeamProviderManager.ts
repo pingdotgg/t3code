@@ -299,10 +299,13 @@ export class TeamProviderManager extends Context.Service<
     readonly purgeEphemeralTokensForInstance: (
       virtualInstanceId: ProviderInstanceId,
     ) => Effect.Effect<void>;
-    /** Records the current lease generation for a newly opened provider session so subsequent rotations recycle every live warm session. */
+    /** Reads the current lease rotation generation for a virtual team provider instance. */
+    readonly getLeaseGeneration: (virtualInstanceId: ProviderInstanceId) => Effect.Effect<number>;
+    /** Records the lease generation a newly opened session started with so rotations during or after startup trigger recycling. */
     readonly recordSessionLeaseGeneration: (
       virtualInstanceId: ProviderInstanceId,
       providerSessionId: ProviderSessionId,
+      generation?: number,
     ) => Effect.Effect<void>;
     /** Mints a per-session ephemeral loopback proxy token scoped to `(teamId, providerInstanceId, memberId)` on Team Server hosts. */
     readonly issueInternalProxySessionToken: (input: {
@@ -1592,14 +1595,21 @@ const make = Effect.gen(function* () {
       }
     }),
 
+    getLeaseGeneration: Effect.fn("TeamProviderManager.getLeaseGeneration")(
+      function* (virtualInstanceId) {
+        if (parseTeamProviderInstanceId(virtualInstanceId) === null) return 0;
+        return (yield* Ref.get(leaseGenerationByInstanceRef)).get(virtualInstanceId) ?? 0;
+      },
+    ),
+
     recordSessionLeaseGeneration: Effect.fn("TeamProviderManager.recordSessionLeaseGeneration")(
-      function* (virtualInstanceId, providerSessionId) {
+      function* (virtualInstanceId, providerSessionId, generation) {
         if (parseTeamProviderInstanceId(virtualInstanceId) === null) return;
-        const currentGen =
-          (yield* Ref.get(leaseGenerationByInstanceRef)).get(virtualInstanceId) ?? 0;
+        const recordedGen =
+          generation ?? (yield* Ref.get(leaseGenerationByInstanceRef)).get(virtualInstanceId) ?? 0;
         yield* Ref.update(sessionLeaseGenerationRef, (current) => {
           const next = new Map(current);
-          next.set(providerSessionId, currentGen);
+          next.set(providerSessionId, recordedGen);
           return next;
         });
       },
