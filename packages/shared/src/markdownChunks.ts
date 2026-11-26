@@ -4,6 +4,7 @@ const CHUNK_TARGET_CHARS = 4 * 1024;
 export const LARGE_MARKDOWN_CHUNK_MAX_CHARS = 128 * 1024;
 // A backtick fence's info string cannot contain a backtick, so "```a``` is inline" is a code span.
 const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,})/;
+const LIST_FENCE_PREFIX = /^( {0,3}(?:[-+*]|\d{1,9}[.)]))([ \t]+)(?=[`~])/;
 const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|\r?$)/;
 // A thematic break, or a "---" setext underline; no paragraph stays open after either. A lone
 // "===" is paragraph text unless it underlines one, so it is left out.
@@ -52,8 +53,7 @@ function openedWrappers(line: string): number {
   return opened;
 }
 
-/** Returns how to recognize the end of a block that `line` opens, or null for none. */
-function blockCloser(line: string): ((line: string) => boolean) | null {
+function fenceCloser(line: string): ((line: string) => boolean) | null {
   const fence = FENCE_OPEN.exec(line)?.[1];
   if (fence) {
     return (next) => {
@@ -66,6 +66,18 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
       );
     };
   }
+  return null;
+}
+
+function markdownColumn(text: string, column = 0): number {
+  for (const character of text) column += character === "\t" ? 4 - (column % 4) : 1;
+  return column;
+}
+
+/** Returns how to recognize the end of a block that `line` opens, or null for none. */
+function blockCloser(line: string): ((line: string) => boolean) | null {
+  const fence = fenceCloser(line);
+  if (fence) return fence;
   for (const [open, close] of SPANNING_BLOCKS) {
     const opener = open.exec(line)?.[0];
     if (opener === undefined) continue;
@@ -110,6 +122,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let first = true;
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
+  let listFenceIndent = 0;
   let afterBlankLine = false;
   let afterDefinition = false;
   let afterHeading = false;
@@ -124,8 +137,28 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     heldCut = 0;
   };
   for (const line of text.split("\n")) {
+    let blockLine = line;
+    if (listFenceIndent > 0) {
+      const whitespace = /^[ \t]*/.exec(line)![0];
+      const relativeIndent = markdownColumn(whitespace) - listFenceIndent;
+      if (relativeIndent < 0 && line.trim() !== "") {
+        // An outdent ends the fence with its list item. Scan this line in the outer block.
+        closes = null;
+        listFenceIndent = 0;
+        afterHeading = true;
+      } else {
+        blockLine =
+          relativeIndent >= 0 && relativeIndent <= 3
+            ? " ".repeat(relativeIndent) + line.slice(whitespace.length)
+            : "";
+      }
+    }
     if (closes !== null) {
-      if (closes(line)) closes = null;
+      if (closes(blockLine)) {
+        closes = null;
+        openedFence ||= listFenceIndent > 0;
+        listFenceIndent = 0;
+      }
     } else if (first && FRONTMATTER_OPEN.test(line)) {
       let seen = 0;
       closes = (next) => {
@@ -142,7 +175,18 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
-      // An indented fence may sit in a list item, which this does not track.
+      if (closes === null) {
+        const prefix = LIST_FENCE_PREFIX.exec(line);
+        if (prefix !== null) {
+          const markerEnd = prefix[1]!.length;
+          const indent = markdownColumn(prefix[2]!, markerEnd);
+          if (indent - markerEnd <= 4) {
+            closes = fenceCloser(line.slice(prefix[0].length));
+            if (closes !== null) listFenceIndent = indent;
+          }
+        }
+      }
+      // An indented fence opener without a list marker may sit in a list item.
       openedFence = /^[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.

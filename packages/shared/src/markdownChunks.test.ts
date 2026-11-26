@@ -161,6 +161,26 @@ describe("splitMarkdown", () => {
     expect(result.chunks.map((chunk) => chunk.text)).toEqual([intro, appendix]);
   });
 
+  it.each([
+    ["a closed bullet fence", "- ```md", "  ", "  ```"],
+    ["an ordered fence ending at an outdent", "1. ~~~md", "   ", ""],
+  ])("ignores definitions in %s", (_, opener, indent, closer) => {
+    const text = [
+      "[Release notes][release]",
+      "",
+      "## Appendix",
+      "",
+      opener,
+      `${indent}### References`,
+      `${indent}[release]: /fake`,
+      closer,
+      " # Real references",
+      "[real]: /real",
+    ].join("\n");
+
+    expect(splitMarkdown(text, 1).definitions).toBe("[real]: /real");
+  });
+
   it("collects link definitions outside code so every piece can resolve them", () => {
     const text = [
       "[![badge][b]][site]",
