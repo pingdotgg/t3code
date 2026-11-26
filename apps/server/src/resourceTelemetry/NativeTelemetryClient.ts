@@ -195,6 +195,10 @@ export class NativeTelemetryClient extends Context.Service<
       snapshot: HostPowerSnapshot,
     ) => Effect.Effect<void, NativeTelemetryClientError>;
     readonly sampleNow: Effect.Effect<NativeTelemetrySnapshot, NativeTelemetryClientError>;
+    readonly processIdentities?: Effect.Effect<
+      ReadonlyArray<ResourceMonitorProcessTableEntry>,
+      NativeTelemetryClientError
+    >;
     readonly processTable: Effect.Effect<
       ReadonlyArray<ResourceMonitorProcessTableEntry>,
       NativeTelemetryClientError
@@ -970,7 +974,7 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     );
   });
 
-  const processTable: NativeTelemetryClient["Service"]["processTable"] = Effect.gen(function* () {
+  const processTable = Effect.fnUntraced(function* (identities: boolean) {
     const current = yield* Ref.get(state);
     if (!canCommandNativeTelemetrySidecar(current.status, Option.isSome(current.handle))) {
       return yield* new NativeTelemetryUnavailable({
@@ -978,6 +982,12 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
       });
     }
 
+    if (identities && !Option.getOrUndefined(current.hello)?.capabilities.processIdentities) {
+      return yield* new NativeTelemetryUnavailable({ reason: "process identities unavailable" });
+    }
+
+    // A busy monitor must leave time for the cleanup tracker's ps fallback.
+    const timeout = identities ? Duration.millis(250) : PROCESS_TABLE_REQUEST_TIMEOUT;
     const requestId = yield* random
       .uuidV4()
       .pipe(
@@ -997,18 +1007,19 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     return yield* writeCommand(Option.getOrThrow(current.handle), {
       version: RESOURCE_MONITOR_PROTOCOL_VERSION,
       type: "processTable",
+      ...(identities ? { identities } : {}),
       requestId,
     }).pipe(
       Effect.andThen(
         Deferred.await(deferred).pipe(
-          Effect.timeoutOption(PROCESS_TABLE_REQUEST_TIMEOUT),
+          Effect.timeoutOption(timeout),
           Effect.flatMap(
             Option.match({
               onNone: () =>
                 Effect.fail(
                   new NativeTelemetryRequestTimedOut({
                     operation: "processTable",
-                    timeoutMs: Duration.toMillis(PROCESS_TABLE_REQUEST_TIMEOUT),
+                    timeoutMs: Duration.toMillis(timeout),
                   }),
                 ),
               onSome: Effect.succeed,
@@ -1047,7 +1058,8 @@ export const make = Effect.fn("resourceTelemetry.nativeTelemetryClient.make")(fu
     setExternalProcesses,
     setHostPowerState,
     sampleNow,
-    processTable,
+    processTable: processTable(false),
+    processIdentities: processTable(true),
     retry: Ref.get(state).pipe(
       Effect.flatMap((current) =>
         !canRequestNativeTelemetryRetry(current.status, Option.isSome(current.handle))
