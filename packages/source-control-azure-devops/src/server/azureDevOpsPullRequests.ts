@@ -29,17 +29,17 @@ export interface NormalizedAzureDevOpsPullRequestRecord {
 const AzureDevOpsPullRequestSchema = Schema.Struct({
   pullRequestId: PositiveInt,
   title: TrimmedNonEmptyString,
-  url: Schema.optional(Schema.String),
+  url: Schema.optional(Schema.NullOr(Schema.String)),
   repository: Schema.optional(
     Schema.Struct({
-      name: Schema.optional(Schema.String),
-      webUrl: Schema.optional(Schema.String),
+      name: Schema.optional(Schema.NullOr(Schema.String)),
+      webUrl: Schema.optional(Schema.NullOr(Schema.String)),
       project: Schema.optional(
         Schema.Struct({
-          name: Schema.optional(Schema.String),
-        }),
+          name: Schema.optional(Schema.NullOr(Schema.String)),
+        }).pipe(Schema.NullOr),
       ),
-    }),
+    }).pipe(Schema.NullOr),
   ),
   sourceRefName: TrimmedNonEmptyString,
   targetRefName: TrimmedNonEmptyString,
@@ -48,7 +48,7 @@ const AzureDevOpsPullRequestSchema = Schema.Struct({
     Schema.NullOr(Schema.Struct({ commitId: Schema.optional(Schema.NullOr(Schema.String)) })),
   ),
   status: Schema.String,
-  isDraft: Schema.optional(Schema.Boolean),
+  isDraft: Schema.optional(Schema.NullOr(Schema.Boolean)),
   /** `az` prints `null` for a pull request from the same repo. */
   forkSource: Schema.optional(Schema.Unknown),
   creationDate: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
@@ -57,10 +57,10 @@ const AzureDevOpsPullRequestSchema = Schema.Struct({
     Schema.Struct({
       web: Schema.optional(
         Schema.Struct({
-          href: Schema.String,
-        }),
+          href: Schema.NullOr(Schema.String),
+        }).pipe(Schema.NullOr),
       ),
-    }),
+    }).pipe(Schema.NullOr),
   ),
 });
 

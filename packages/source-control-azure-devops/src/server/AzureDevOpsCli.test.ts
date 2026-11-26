@@ -44,6 +44,49 @@ afterEach(() => {
 });
 
 describe("AzureDevOpsCli.layer", () => {
+  it.effect.each(["list", "show"] as const)(
+    "accepts null optional fields in pull request %s output",
+    (command) =>
+      Effect.gen(function* () {
+        const pullRequest = {
+          pullRequestId: 42,
+          title: "Add Azure provider",
+          url: "https://dev.azure.com/acme/_apis/git/repositories/1234/pullRequests/42",
+          repository: { name: "repo", webUrl: null, project: { name: "project" } },
+          sourceRefName: "refs/heads/feat/test",
+          targetRefName: "refs/heads/main",
+          status: "active",
+          isDraft: false,
+          forkSource: null,
+          creationDate: "2026-01-02T00:00:00.000Z",
+          closedDate: null,
+          _links: null,
+        };
+        mockRun.mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(JSON.stringify(command === "list" ? [pullRequest] : pullRequest)),
+          ),
+        );
+
+        const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+        const results =
+          command === "list"
+            ? yield* az.listPullRequests({ cwd: "/repo", headSelector: "feat/test", state: "open" })
+            : [yield* az.getPullRequest({ cwd: "/repo", reference: "42" })];
+
+        assert.strictEqual(results.length, 1);
+        assert.strictEqual(results[0]?.number, 42);
+        assert.strictEqual(
+          results[0]?.url,
+          "https://dev.azure.com/acme/project/_git/repo/pullrequest/42",
+        );
+        assert.strictEqual(results[0]?.headRefName, "feat/test");
+        assert.strictEqual(results[0]?.baseRefName, "main");
+        assert.strictEqual(results[0]?.state, "open");
+        assert.strictEqual(results[0]?.isCrossRepository, false);
+      }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("parses pull request view output", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(
