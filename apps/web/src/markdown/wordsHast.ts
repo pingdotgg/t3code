@@ -1332,10 +1332,12 @@ export function markdownReferenceDefinitions(markdown: string): string[] {
       if (child.type !== "element") continue;
       const label = lookups.get(child.position?.start.offset ?? -1);
       if (child.tagName === "a" && label !== undefined) {
-        const href = String(child.properties.href ?? "").replace(/[<>\\\n]/g, encodeURIComponent);
+        const href = String(child.properties.href ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/[<>\\\n]/g, encodeURIComponent);
         const title = child.properties.title;
         definitions.push(
-          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&")}"` : ""}`,
+          `[${label}]: <${href}>${typeof title === "string" ? ` "${title.replace(/\s+/g, " ").replace(/["\\]/g, "\\$&").replace(/&/g, "&amp;")}"` : ""}`,
         );
       } else visit(child);
     }
