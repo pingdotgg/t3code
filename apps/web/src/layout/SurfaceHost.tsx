@@ -1243,6 +1243,14 @@ export function LayoutSurfaceHost({
       const pane =
         best.panes.find((candidate) => candidate.id === remembered) ??
         best.panes[Math.min(Math.max(index, 0), best.panes.length - 1)]!;
+      const nextSlot = slotByPane.get(pane.id);
+      if (nextSlot) {
+        revealedSpan.current = {
+          paneId: pane.id,
+          left: nextSlot.rect.left,
+          width: nextSlot.rect.width,
+        };
+      }
       store.focusPane(pane.id);
     };
     const compute = (settled = false) => {

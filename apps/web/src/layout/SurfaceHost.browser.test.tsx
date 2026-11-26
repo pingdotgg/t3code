@@ -1141,3 +1141,36 @@ it("keeps the tab drag insertion marker inside an overflowing tab strip", async 
     window.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
   }
 });
+
+it("keeps scrollLeft settled when followView moves focus after manual sideways scrolling", async () => {
+  using _tabs = setup(0.7);
+  useLayoutStore.getState().openTab(createLayoutLauncherContent(null), { placement: "new-column" });
+  const initial = useLayoutStore.getState().layout;
+  const workspaceState = initial.workspaces[0]!;
+  const columns = workspaceState.columns.map((column) => ({ ...column, width: 0.7 }));
+  const firstPaneId = columns[0]!.panes[0]!.id;
+  const secondPaneId = columns[1]!.panes[0]!.id;
+  useLayoutStore.setState({
+    layout: {
+      ...initial,
+      workspaces: [{ ...workspaceState, columns, focusedPaneId: firstPaneId }],
+    },
+  });
+  await using _screen = await renderHost({ viewport: 900 });
+  const strip = document.querySelector<HTMLElement>("[data-layout-strip]")!;
+  await vi.waitFor(() => expect(strip.scrollWidth).toBeGreaterThan(1500));
+
+  strip.dispatchEvent(
+    new WheelEvent("wheel", { deltaX: 20, deltaY: 0, bubbles: true, cancelable: true }),
+  );
+  strip.scrollLeft = 340;
+  strip.dispatchEvent(new Event("scroll"));
+  await vi.waitFor(
+    () =>
+      expect(useLayoutStore.getState().layout.workspaces[0]!.focusedPaneId).toBe(secondPaneId),
+    { timeout: 1500 },
+  );
+  await new Promise((resolve) => setTimeout(resolve, 60));
+
+  expect(Math.round(strip.scrollLeft)).toBe(340);
+});
