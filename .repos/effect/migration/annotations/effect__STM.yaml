@@ -214,6 +214,10 @@ effect/STM#matchSTM:
 effect/STM#mergeAll:
   replacement: "Effect.reduce"
   note: "Reduce the input Effects sequentially and combine each produced value with the accumulator."
+effect/STM#negate:
+  replacement: "Effect.map"
+  note: "STM values are now ordinary Effects and there is no negate combinator; map the boolean with Boolean.not. Run the complete transaction with Effect.tx."
+  example: "Effect.map(self, Boolean.not)"
 effect/STM#none:
   replacement: "Effect.matchEffect + Option.match"
   note: "Recreate the Option success/error shuffle explicitly; no dedicated helper remains."

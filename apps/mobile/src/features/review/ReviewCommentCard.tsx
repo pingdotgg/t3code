@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react-native";
 import { memo, useMemo, useState } from "react";
 import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
 import { ScrollView, StyleSheet, Text as NativeText, View, type ColorValue } from "react-native";
@@ -12,8 +13,10 @@ import { resolveNativeReviewDiffView } from "../diffs/nativeReviewDiffSurface";
 import {
   buildNativeReviewDiffData,
   buildNativeReviewSnippetRows,
+  buildReviewCommentPatch,
   createNativeReviewDiffTheme,
   NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
+  reviewCommentDiffText,
 } from "./nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "./reviewModel";
 import { REVIEW_MONO_FONT_FAMILY } from "./reviewDiffRendering";
@@ -47,14 +50,15 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
   readonly colors: ReviewCommentColors;
 }) {
   const { codeSurface, nativeReviewDiffStyle } = useAppearanceCodeSurface();
+  const messages = useMessages();
   const markdownStyles = useMarkdownPreviewStyles();
   const { themeAppearance: appearanceScheme, themeId } = useAppearancePreferences();
   const appTheme = useUniwindTheme();
   const [NativeReviewDiffView] = useState(() => resolveNativeReviewDiffView());
   const patch = useMemo(() => buildReviewCommentPatch(props.comment), [props.comment]);
   const parsedDiff = useMemo(
-    () => buildReviewParsedDiff(patch, `thread-review-comment:${props.comment.id}`),
-    [patch, props.comment.id],
+    () => buildReviewParsedDiff(patch, `thread-review-comment:${props.comment.id}`, messages),
+    [patch, props.comment.id, messages],
   );
   const nativeReviewDiffData = useMemo(() => buildNativeReviewDiffData(parsedDiff), [parsedDiff]);
   const compactNativeRows = useMemo(() => {
@@ -86,7 +90,7 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     theme: appearanceScheme,
   });
   const snippetTokens = useMarkdownCodeHighlight({
-    code: props.comment.diff.trim(),
+    code: reviewCommentDiffText(props.comment.diff),
     language: props.comment.fenceLanguage ?? language,
     enabled: compactNativeRows.length === 0,
     theme: appearanceScheme,
@@ -234,32 +238,10 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
                     </NativeText>
                   ) /* oxlint-enable react/no-array-index-key */,
                 )
-              : props.comment.diff.trim()}
+              : reviewCommentDiffText(props.comment.diff)}
           </NativeText>
         </ScrollView>
       ) : null}
     </View>
   );
 });
-
-function buildReviewCommentPatch(comment: ReviewInlineComment): string {
-  if ((comment.fenceLanguage ?? "diff") !== "diff") {
-    return "";
-  }
-  const diff = comment.diff.trim();
-  if (!diff) {
-    return "";
-  }
-
-  if (diff.startsWith("diff --git ")) {
-    return diff;
-  }
-
-  const normalizedPath = comment.filePath.replaceAll("\\", "/");
-  return [
-    `diff --git a/${normalizedPath} b/${normalizedPath}`,
-    `--- a/${normalizedPath}`,
-    `+++ b/${normalizedPath}`,
-    diff,
-  ].join("\n");
-}

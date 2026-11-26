@@ -1,8 +1,11 @@
 import { ActiveNewTaskContext } from "../../state/active-new-task";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { msg, useMessages } from "gt-react-native";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { useNowMinuteMs } from "../../lib/clock";
+import { m, type MessageResolver } from "../../i18n/messages";
 import * as Dialog from "../../components/ui/Dialog";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -105,25 +108,34 @@ import {
 } from "./new-task-flow-state";
 import { usePrepareTriage } from "../triage/usePrepareTriage";
 import { useEnvironmentShellReadiness } from "../../state/shell";
+import { useWorktreeRepositoryChoices } from "../../state/use-worktree-repository-choices";
+import {
+  resolveWorktreeRepositorySelection,
+  type WorktreeRepositoryChoice,
+  type WorktreeRepositorySelection,
+} from "@t3tools/client-runtime/state/thread-repositories";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
 
 type WorkspaceMode = "local" | "worktree";
 
-export function branchBadgeLabel(input: {
-  readonly branch: VcsRef;
-  readonly project: EnvironmentProject | null;
-}): string | null {
+export function branchBadgeLabel(
+  input: {
+    readonly branch: VcsRef;
+    readonly project: EnvironmentProject | null;
+  },
+  resolve: MessageResolver = m,
+): string | null {
   if (input.branch.current) {
-    return "current";
+    return resolve(msg("current", { $context: "branch badge, the checked-out branch" }));
   }
   if (input.branch.worktreePath && input.branch.worktreePath !== input.project?.workspaceRoot) {
-    return "worktree";
+    return resolve(msg("worktree", { $context: "branch badge, checked out in another worktree" }));
   }
   if (input.branch.isRemote) {
-    return "remote";
+    return resolve(msg("remote", { $context: "branch badge, a remote-tracking branch" }));
   }
   if (input.branch.isDefault) {
-    return "default";
+    return resolve(msg("default", { $context: "branch badge, the repository default branch" }));
   }
   return null;
 }
@@ -137,6 +149,12 @@ type NewTaskFlowContextValue = {
   readonly workspaceMode: WorkspaceMode;
   readonly isGitRepo: boolean;
   readonly isGitRepoKnown: boolean;
+  /** The project tracks a Git folder, so a worktree is possible without a Git project folder. */
+  readonly tracksGitRepositories: boolean;
+  /** The project's tracked Git folders; null while they load. */
+  readonly worktreeRepositoryChoices: ReadonlyArray<WorktreeRepositoryChoice> | null;
+  readonly worktreeRepositorySelection: WorktreeRepositorySelection;
+  readonly setWorktreeRepositories: (repositoryPaths: ReadonlyArray<string>) => void;
   readonly canChooseWorkspace: boolean;
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
@@ -226,16 +244,20 @@ export function NewTaskFlowProvider(
   }>,
 ) {
   const projects = useProjects();
+  const messages = useMessages();
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
 
   const projectScopes = sortHomeProjectScopes({
-    scopes: buildHomeProjectScopes({
-      projects,
-      environmentId: null,
-      projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
-    }),
+    scopes: buildHomeProjectScopes(
+      {
+        projects,
+        environmentId: null,
+        projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
+      },
+      messages,
+    ),
     threads,
     pendingTasks: [],
     projectSortOrder: "updated_at",
@@ -304,11 +326,23 @@ export function NewTaskFlowProvider(
   // binding outlives the draft's project stamp (submit clears it).
   const updateFlow = (patch: Partial<NewTaskFlowState>) =>
     updateNewTaskFlowState(flowKey, { ...readFlow(), ...patch });
+  // A draft's project stamp is the selection: picking a project writes it, and uploads and
+  // the send read it, so the screen cannot show one project while the draft holds another.
+  const draftStamp = useComposerDraft(activeDraftKey).project;
+  const stampedProject =
+    draftStamp === undefined
+      ? undefined
+      : projects.find(
+          (project) =>
+            project.environmentId === draftStamp.environmentId &&
+            project.id === draftStamp.projectId,
+        );
   const selectedEnvironmentId =
-    selectedEnvironmentIdOverride !== null &&
+    stampedProject?.environmentId ??
+    (selectedEnvironmentIdOverride !== null &&
     projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
       ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
+      : (projects[0]?.environmentId ?? null));
   const projectsForEnvironment = pipe(
     projects,
     Arr.filter((project) => project.environmentId === selectedEnvironmentId),
@@ -319,7 +353,8 @@ export function NewTaskFlowProvider(
   const selectedProject =
     routeDraftResolution.kind === "pending"
       ? null
-      : (projectsForEnvironment.find(
+      : (stampedProject ??
+        projectsForEnvironment.find(
           (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
         ) ??
         projectsForEnvironment[0] ??
@@ -333,25 +368,6 @@ export function NewTaskFlowProvider(
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const selectedProjectDraftKey = selectedProject ? activeDraftKey : null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- creates the persistent draft in the new-task flow store once a project is selected, before the composer mounts
-  useEffect(() => {
-    // A route that names a draft binds that draft, or returns to the picker.
-    if (
-      props.active === false ||
-      props.routeDraftId !== undefined ||
-      activeDraftKey !== null ||
-      selectedProject === null
-    ) {
-      return;
-    }
-    // Creates the persistent draft once the project selection is ready; the key must exist before the composer mounts.
-    updateNewTaskFlowState(flowKey, {
-      draftKey: createNewTaskDraft({
-        environmentId: selectedProject.environmentId,
-        projectId: selectedProject.id,
-      }),
-    });
-  }, [activeDraftKey, flowKey, selectedProject, props.active, props.routeDraftId]);
   const activePendingKey =
     props.active === false
       ? null
@@ -380,6 +396,8 @@ export function NewTaskFlowProvider(
   });
   const knownIsGitRepo = projectGitStatus.data?.isRepo ?? projectBranches.data?.isRepo ?? null;
   const isGitRepo = knownIsGitRepo ?? true;
+  const { choices: worktreeRepositoryChoices, tracksGitRepositories } =
+    useWorktreeRepositoryChoices(props.active === false ? null : selectedProject);
   const projectSettings = projectDefaults.projectSettings;
   const canChooseWorkspace = !isScratchDraft;
   const defaultWorkspaceMode: WorkspaceMode = projectDefaults.defaultWorkspaceMode;
@@ -401,6 +419,7 @@ export function NewTaskFlowProvider(
       defaultMode: defaultWorkspaceMode,
       defaultModeSettled: projectDefaults.defaultWorkspaceModeSettled,
       isGitRepo,
+      tracksGitRepositories,
       branches: allBranchRefs,
       projectCwd: selectedProject?.workspaceRoot ?? null,
     });
@@ -421,6 +440,11 @@ export function NewTaskFlowProvider(
   // only the explicit flag is ever written back to the draft, so the resolved
   // value keeps tracking the server setting when the config loads late.
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
+  const draftRepositories = workspaceSelection.repositories;
+  const worktreeRepositorySelection = resolveWorktreeRepositorySelection(
+    { choices: worktreeRepositoryChoices, chosen: draftRepositories },
+    messages,
+  );
   const startFromOrigin =
     isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
   const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
@@ -644,12 +668,11 @@ export function NewTaskFlowProvider(
     if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(
-        "Could not switch machine",
-        error instanceof Error
-          ? error.message
-          : triage?._tag === "Failure"
-            ? "The server could not prepare triage."
-            : "The folder for threads without a project could not be created.",
+        m(msg("Could not switch machine")),
+        errorDisplayMessage(error, m) ??
+          (triage?._tag === "Failure"
+            ? m(msg("The server could not prepare triage."))
+            : m(msg("The folder for threads without a project could not be created."))),
       );
     }
     return false;
@@ -672,6 +695,7 @@ export function NewTaskFlowProvider(
         branch: mode === "local" ? localSelection.branch : selectedBranchName,
         worktreePath: mode === "local" ? localSelection.worktreePath : selectedWorktreePath,
         ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
+        ...(draftRepositories !== undefined ? { repositories: draftRepositories } : {}),
         // Refs have not named the current branch yet; the selection follows it.
         ...(mode === "local" && localSelection.awaitsCurrentBranch
           ? { followsCurrentCheckout: true }
@@ -694,6 +718,7 @@ export function NewTaskFlowProvider(
           branchWorktreePath: branch.worktreePath,
         }),
         ...(draftStartFromOrigin !== undefined ? { startFromOrigin: draftStartFromOrigin } : {}),
+        ...(draftRepositories !== undefined ? { repositories: draftRepositories } : {}),
       },
     });
   };
@@ -708,9 +733,24 @@ export function NewTaskFlowProvider(
         branch: selectedBranchName,
         worktreePath: selectedWorktreePath,
         startFromOrigin: value,
+        ...(draftRepositories !== undefined ? { repositories: draftRepositories } : {}),
         ...(selectedBranchName === null && workspaceSelection.followsCurrentCheckout
           ? { followsCurrentCheckout: true }
           : {}),
+      },
+    });
+  };
+
+  const setWorktreeRepositories = (repositoryPaths: ReadonlyArray<string>) => {
+    if (!selectedProjectDraftKey) {
+      return;
+    }
+    // The stored selection, not the resolved one: a derived base branch stays derived.
+    const stored = canChooseWorkspace ? selectedProjectDraft.workspaceSelection : undefined;
+    updateComposerDraftSettings(selectedProjectDraftKey, {
+      workspaceSelection: {
+        ...(stored ?? { mode: workspaceMode, branch: null, worktreePath: null }),
+        repositories: repositoryPaths,
       },
     });
   };
@@ -728,6 +768,19 @@ export function NewTaskFlowProvider(
     if (selectedProjectDraftKey) {
       updateComposerDraftSettings(selectedProjectDraftKey, { runtimeMode: value });
     }
+  };
+
+  const worktreeCreation = (chosen: ReadonlyArray<string> | undefined) => {
+    const repositories = resolveWorktreeRepositorySelection({
+      choices: worktreeRepositoryChoices,
+      chosen,
+    }).strategyRepositories;
+    return {
+      ...(repositories === undefined
+        ? {}
+        : { repositories: repositories.map((repository) => repository.path) }),
+      ...(isGitRepo ? {} : { startsFromRepositoryDefaults: true }),
+    };
   };
 
   const buildPendingTaskMessage = (
@@ -793,6 +846,7 @@ export function NewTaskFlowProvider(
         ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)
           ? { startFromOrigin: true }
           : {}),
+        ...(mode === "worktree" ? worktreeCreation(workspaceSelection.repositories) : {}),
       },
       createdAt: metadata.createdAt,
     };
@@ -868,6 +922,10 @@ export function NewTaskFlowProvider(
     workspaceMode,
     isGitRepo,
     isGitRepoKnown: knownIsGitRepo !== null,
+    tracksGitRepositories,
+    worktreeRepositoryChoices,
+    worktreeRepositorySelection,
+    setWorktreeRepositories,
     canChooseWorkspace,
     selectedBranchName,
     selectedWorktreePath,

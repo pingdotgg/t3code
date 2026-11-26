@@ -1,9 +1,11 @@
 import {
   createPullRequestEnvironmentAtoms,
+  editHeldPullRequestListEntries,
   createPullRequestStackAtomFamily,
   patchPullRequestListEntries,
+  pullRequestPendingEditsAtom,
 } from "@t3tools/client-runtime/state/pull-requests";
-import type { EnvironmentId, PullRequestListInput } from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestListInput, PullRequestRef } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -41,6 +43,16 @@ export const pullRequestListStatsFamily = Atom.family((_environmentId: string) =
   ),
 );
 
+export const filesViewedReadsKey = (target: {
+  readonly environmentId: EnvironmentId;
+  readonly input: PullRequestRef;
+}) => JSON.stringify([target.environmentId, target.input]);
+
+/** Completed server reads of each viewed-files query; unchanged answers are structurally shared. */
+export const filesViewedReadsFamily = Atom.family((_key: string) =>
+  Atom.make(0).pipe(Atom.setIdleTTL(5 * 60_000)),
+);
+
 export const composerPullRequests = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
   // Rows on pages past each listing's head; the head itself is patched where it is cached.
   actionReply: (target, reply, registry) =>
@@ -56,8 +68,27 @@ export const composerPullRequests = createPullRequestEnvironmentAtoms(connection
             pages.entries,
             target.input,
             reply,
+            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
           );
           return entries === "refresh" || entries === pages.entries ? pages : { ...pages, entries };
+        });
+      }
+    }),
+  acceptedEdit: (target, edit, registry) =>
+    Effect.sync(() => {
+      for (const atom of registry.getNodes().keys()) {
+        const listing =
+          typeof atom === "string" ? undefined : pullRequestListPagesTargets.get(atom);
+        if (listing === undefined || listing[0] !== target.environmentId) continue;
+        registry.update(atom as Atom.Writable<PullRequestListPages | null>, (pages) => {
+          if (pages === null) return pages;
+          const entries = editHeldPullRequestListEntries(
+            listing[1],
+            pages.entries,
+            () => [edit],
+            registry.get(pullRequestPendingEditsAtom(target.environmentId)),
+          );
+          return entries === pages.entries ? pages : { ...pages, entries };
         });
       }
     }),
@@ -69,6 +100,10 @@ export const composerPullRequests = createPullRequestEnvironmentAtoms(connection
       if (Option.isSome(previous) && previous.value.headSha !== value.headSha)
         registry.refresh(composerPullRequests.filesViewed(target));
     }),
+  filesViewed: (target, _value, registry) =>
+    Effect.sync(() =>
+      registry.update(filesViewedReadsFamily(filesViewedReadsKey(target)), (reads) => reads + 1),
+    ),
   list: (target, value, registry) =>
     Effect.sync(() => {
       const statsAtom = pullRequestListStatsFamily(target.environmentId);

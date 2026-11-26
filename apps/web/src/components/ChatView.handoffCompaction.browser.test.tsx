@@ -28,7 +28,7 @@ import {
 } from "../../test/fakeEnvironment";
 import { render } from "../../test/render";
 
-// The socket is the only fake layer; see test/appScenarios.renders.tsx.
+// The socket is the only fake layer.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
   const [actual, { fakeDriver }, Layer] = await Promise.all([
     importOriginal<{ readonly ConnectionDriver: Context.Key<unknown, FakeDriver> }>(),
@@ -47,8 +47,8 @@ const CLAUDE = ProviderInstanceId.make("claudeAgent");
 const CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
 
 /** A Claude thread whose 250k-token context went cold long ago, with its native thread kept for handoff. */
-function coldClaudeThread() {
-  const thread = threadWithHistory("thread-claude", 3, {
+function coldClaudeThread(threadId = "thread-claude") {
+  const thread = threadWithHistory(threadId, 3, {
     instanceId: CLAUDE,
     model: "claude-opus-4-6",
   });
@@ -122,4 +122,46 @@ it("sends a Codex follow-up on a cold Claude thread without compacting first", a
   const sent = { text: "keep going", instanceId: CODEX_PROVIDER.instanceId };
   await vi.waitFor(() => expect(messages()).toContainEqual(sent));
   expect(messages()).toEqual([sent]);
+});
+
+it("drops the compact offer on a cold Claude thread while /clear is armed", async () => {
+  // At phone width, dismissing the fresh-session notice collapses the composer and hides the chip.
+  const viewport = { width: window.innerWidth, height: window.innerHeight };
+  await page.viewport(1280, 800);
+  await using _viewport = {
+    [Symbol.asyncDispose]: () => page.viewport(viewport.width, viewport.height),
+  };
+  // The first test's model pick stays on thread-claude's draft, so this one uses its own thread.
+  const thread = coldClaudeThread("thread-claude-cleared");
+  using _environment = installFakeEnvironment([thread], { providers: [CLAUDE_PROVIDER] });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByText(`Answer 2 for ${thread.id}.`)).toBeVisible();
+  const chip = page.getByRole("button", { name: "Compact 250k tokens of history before sending" });
+  const compactAndSend = page.getByRole("button", { name: "Compact and send" });
+  await expect.element(chip).toBeVisible();
+  await expect.element(compactAndSend).toBeVisible();
+
+  const editor = page.getByTestId("composer-editor");
+  await userEvent.click(editor);
+  await userEvent.type(editor, "/clear");
+  await userEvent.keyboard("{Enter}");
+  await expect.element(page.getByText("Your next message starts a fresh session")).toBeVisible();
+  await expect.element(chip).not.toBeInTheDocument();
+  await expect.element(compactAndSend).not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: "Submit message" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Keep the current session" }).click();
+  await expect.element(chip).toBeVisible();
+  await expect.element(compactAndSend).toBeVisible();
 });

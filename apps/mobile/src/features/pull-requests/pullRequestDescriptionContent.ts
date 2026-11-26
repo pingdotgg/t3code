@@ -1,5 +1,7 @@
 import type { PullRequestBodySegment } from "@t3tools/client-runtime/pull-request-markdown";
+import { msg } from "gt-react-native";
 import type { MarkdownNode } from "../../lib/markdownDocument";
+import { m, type MessageResolver } from "../../i18n/messages";
 
 function isWebUrl(url: string): boolean {
   try {
@@ -13,6 +15,7 @@ function isWebUrl(url: string): boolean {
 export function pullRequestDescriptionContent(
   document: MarkdownNode,
   media: readonly PullRequestBodySegment[] = [],
+  resolve: MessageResolver = m,
 ) {
   const attachments = new Map<
     string,
@@ -24,7 +27,7 @@ export function pullRequestDescriptionContent(
       if (node.url && isWebUrl(node.url) && !attachments.has(node.url)) {
         attachments.set(node.url, {
           uri: node.url,
-          caption: node.alt || node.title || "Image",
+          caption: node.alt || node.title || resolve(msg("Image")),
           kind: "image",
         });
       }
@@ -46,7 +49,7 @@ export function pullRequestDescriptionContent(
       const name = new URL(segment.url).pathname.split("/").pop();
       attachments.set(segment.url, {
         uri: segment.url,
-        caption: segment.media === "video" ? "Video" : name || "Image",
+        caption: segment.media === "video" ? resolve(msg("Video")) : name || resolve(msg("Image")),
         kind: segment.media,
       });
     }

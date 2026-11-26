@@ -38,3 +38,85 @@ index 8c796236f9f4b58717ac3fbab65e33d11ba032f2..d886e13d2cd1390a396716ecf4a37920
      markerTransform.preRotate(degrees);
  
      boolean useStrokeWidth = "strokeWidth".equals(mMarkerUnits);
+diff --git a/android/src/main/java/com/horcrux/svg/TSpanView.java b/android/src/main/java/com/horcrux/svg/TSpanView.java
+index b6e0a3892eb5416b1badf447d4f8c4e4baef828c..4660fb4b7b49ec44e78fb413a543dd5f9f93ed6a 100644
+--- a/android/src/main/java/com/horcrux/svg/TSpanView.java
++++ b/android/src/main/java/com/horcrux/svg/TSpanView.java
+@@ -21,6 +21,7 @@ import static com.horcrux.svg.TextProperties.TextPathMidLine;
+ import static com.horcrux.svg.TextProperties.TextPathSide;
+ 
+ import android.annotation.SuppressLint;
++import android.annotation.TargetApi;
+ import android.content.res.AssetManager;
+ import android.graphics.Canvas;
+ import android.graphics.Matrix;
+@@ -290,6 +291,33 @@ class TSpanView extends TextView {
+   static final String additionalLigatures = "'hlig', 'cala', ";
+   static final String fontWeightTag = "'wght' ";
+ 
++  static String fontVariationSettings(int weight, String extra) {
++    String weightAxis = fontWeightTag + weight;
++    return extra == null || extra.trim().isEmpty() ? weightAxis : weightAxis + ", " + extra;
++  }
++
++  // Android throws IllegalArgumentException on settings it cannot parse, which would crash the
++  // draw; fall back to the weight axis alone.
++  @TargetApi(Build.VERSION_CODES.O)
++  private static void setPaintFontVariationSettings(Paint paint, FontData font) {
++    try {
++      paint.setFontVariationSettings(
++          fontVariationSettings(font.absoluteFontWeight, font.fontVariationSettings));
++    } catch (IllegalArgumentException e) {
++      paint.setFontVariationSettings(fontWeightTag + font.absoluteFontWeight);
++    }
++  }
++
++  @TargetApi(Build.VERSION_CODES.O)
++  private static void setBuilderFontVariationSettings(
++      Typeface.Builder builder, int weight, String extra) {
++    try {
++      builder.setFontVariationSettings(fontVariationSettings(weight, extra));
++    } catch (IllegalArgumentException e) {
++      builder.setFontVariationSettings(fontWeightTag + weight);
++    }
++  }
++
+   private void applySpacingAndFeatures(Paint paint, FontData font) {
+     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+       double letterSpacing = font.letterSpacing;
+@@ -307,8 +335,7 @@ class TSpanView extends TextView {
+       }
+ 
+       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+-        paint.setFontVariationSettings(
+-            fontWeightTag + font.absoluteFontWeight + font.fontVariationSettings);
++        setPaintFontVariationSettings(paint, font);
+       }
+     }
+   }
+@@ -487,8 +514,7 @@ class TSpanView extends TextView {
+       }
+ 
+       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+-        paint.setFontVariationSettings(
+-            fontWeightTag + font.absoluteFontWeight + font.fontVariationSettings);
++        setPaintFontVariationSettings(paint, font);
+       }
+     }
+     // OpenType.js font data
+@@ -1147,13 +1173,13 @@ class TSpanView extends TextView {
+       String ttfpath = FONTS + fontFamily + TTF;
+       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+         Typeface.Builder builder = new Typeface.Builder(assets, otfpath);
+-        builder.setFontVariationSettings("'wght' " + weight + font.fontVariationSettings);
++        setBuilderFontVariationSettings(builder, weight, font.fontVariationSettings);
+         builder.setWeight(weight);
+         builder.setItalic(isItalic);
+         typeface = builder.build();
+         if (typeface == null) {
+           builder = new Typeface.Builder(assets, ttfpath);
+-          builder.setFontVariationSettings("'wght' " + weight + font.fontVariationSettings);
++          setBuilderFontVariationSettings(builder, weight, font.fontVariationSettings);
+           builder.setWeight(weight);
+           builder.setItalic(isItalic);
+           typeface = builder.build();

@@ -6,6 +6,10 @@ import * as Context from "effect/Context";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import { isWildcardHost, listensOnLoopback, normalizeHostname } from "./hostClassification.ts";
+
+const WILDCARD_PORT_ATTEMPTS = 8;
+
 export class NetError extends Schema.TaggedError<NetError>()("NetError", {
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),
@@ -35,7 +39,7 @@ export interface NetServiceShape {
 
   readonly reserveLoopbackPort: (host?: string) => Effect.Effect<number, NetError>;
 
-  readonly findAvailablePort: (preferred: number) => Effect.Effect<number, NetError>;
+  readonly findAvailablePort: (preferred: number, host?: string) => Effect.Effect<number, NetError>;
 }
 
 export class NetService extends Context.Service<NetService, NetServiceShape>()(
@@ -130,6 +134,19 @@ export const make = () => {
     );
   });
 
+  const isPortAvailableForHost = Effect.fn("Net.isPortAvailableForHost")(function* (
+    port: number,
+    host: string | undefined,
+  ): Effect.fn.Return<boolean> {
+    if (host === undefined || listensOnLoopback(host)) {
+      return yield* isPortAvailableOnLoopback(port);
+    }
+    if (yield* hasListenerOnHost(port, host)) {
+      return false;
+    }
+    return yield* canListenOnHost(port, host);
+  });
+
   const reserveLoopbackPort = (host = "127.0.0.1"): Effect.Effect<number, NetError> =>
     Effect.callback<number, NetError>((resume) => {
       const probe = NodeNet.createServer();
@@ -167,11 +184,28 @@ export const make = () => {
     isPortAvailableOnLoopback,
     hasListenerOnHost,
     reserveLoopbackPort,
-    findAvailablePort: Effect.fn("Net.findAvailablePort")(function* (preferred) {
-      if (preferred > 0 && (yield* isPortAvailableOnLoopback(preferred))) {
+    findAvailablePort: Effect.fn("Net.findAvailablePort")(function* (preferred, host) {
+      const wildcardHost =
+        host !== undefined && (host === "" || isWildcardHost(host))
+          ? normalizeHostname(host)
+          : undefined;
+      if (
+        preferred > 0 &&
+        (yield* isPortAvailableForHost(preferred, host)) &&
+        (wildcardHost === undefined || (yield* canListenOnHost(preferred, wildcardHost)))
+      ) {
         return preferred;
       }
-      return yield* reserveLoopbackPort();
+      if (wildcardHost === undefined) {
+        return yield* reserveLoopbackPort(listensOnLoopback(host) ? undefined : host);
+      }
+
+      // A wildcard bind can succeed while another address family owns the localhost port.
+      for (let attempt = 0; attempt < WILDCARD_PORT_ATTEMPTS; attempt += 1) {
+        const port = yield* reserveLoopbackPort(wildcardHost);
+        if (yield* isPortAvailableOnLoopback(port)) return port;
+      }
+      return yield* new NetError({ message: "Failed to find an available wildcard port" });
     }),
   } satisfies NetServiceShape;
 };

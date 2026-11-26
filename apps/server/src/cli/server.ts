@@ -8,7 +8,7 @@ import * as CliError from "effect/cli/CliError";
 
 import { awaitServiceLauncherStop } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
-import { awaitLauncherLoss } from "../launcherWatch.ts";
+import { stopOnLauncherLoss } from "../launcherWatch.ts";
 import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as AutomaticPort from "./automaticPort.ts";
@@ -41,13 +41,7 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
     ),
   );
   if (config.mode !== "desktop" || config.desktopBootstrapToken === undefined) return yield* run;
-  return yield* Effect.raceFirst(
-    run,
-    awaitLauncherLoss().pipe(
-      // End like SIGTERM does (interrupt-only exit, so the runtime forces process exit).
-      Effect.andThen(Effect.interrupt),
-    ),
-  );
+  return yield* stopOnLauncherLoss(run);
 });
 
 export const runDefaultServerCommand = Effect.fn("server.runDefaultServerCommand")(function* (
@@ -85,7 +79,7 @@ const { autoBootstrapProjectFromCwd: _, ...serveCommandFlags } = sharedServerCom
 export const serveCommand = Command.make("serve", serveCommandFlags).pipe(
   Command.withShortDescription("Run T3 Code in this terminal, with no browser."),
   Command.withDescription(
-    "Run T3 Code in this terminal without opening a browser, and print pairing details. The background service runs this. To set up access from your other devices, run `t3 up`.",
+    "Run T3 Code in this terminal without opening a browser, and print pairing details. The background service runs this too, without printing them: pair with `t3 pair`. To set up access from your other devices, run `t3 up`.",
   ),
   Command.withHandler((flags) =>
     runServerCommand(

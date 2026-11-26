@@ -35,6 +35,12 @@ const post = (
 ) => handler(new Request("http://localhost/upload", { method: "POST", body, headers, duplex: "half" } as RequestInit))
 
 describe("request body", () => {
+  it.effect("fromWeb stream is empty when the request has no body", () =>
+    Effect.gen(function*() {
+      const web = new Request("http://localhost/upload", { method: "PUT", headers: { "content-length": "0" } })
+      assert.deepStrictEqual(yield* Stream.runCollect(HttpServerRequest.fromWeb(web).stream), [])
+    }))
+
   it.effect("fromWebHandler can inspect headers without reading the body", () =>
     Effect.gen(function*() {
       const request = fromClient()

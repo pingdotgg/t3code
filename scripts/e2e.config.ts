@@ -1,4 +1,4 @@
-// Scenarios: e2e tests that run against the real dev stack. See docs/operations/scenarios.md.
+// Scenarios: e2e tests that run against the real dev stack. See docs/internals/15_testing.md#scenarios.
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { mobile, type DeviceProvider } from "@e2e-dev/mobile";
@@ -86,6 +86,15 @@ const simlock = (device: string): DeviceProvider => {
     const daemon = yield* connect(request.env);
     const client = createAgentDeviceClient(daemon);
     const platform = request.platform === "android" ? "android" : "ios";
+    // A cache miss builds the dev client, which outlasts a test and can outlast a lease.
+    request.log(`preparing the ${platform} dev client`);
+    yield* run(
+      resolved.node,
+      ["scripts/mobile-native-client.ts", "ensure", platform, "--prepare"],
+      {
+        cwd: APP_DIR,
+      },
+    );
     const scope = { tenant: "t3-scenarios", runId: `${request.runId}-${request.slot}` };
     // Simlock takes the lease id from the caller: 32 hex characters.
     const leaseId = (yield* (yield* SecureRandom.SecureRandom).uuidV4()).replaceAll("-", "");
@@ -121,7 +130,10 @@ const simlock = (device: string): DeviceProvider => {
   return {
     name: "simlock",
     acquire: (request) =>
-      acquire(request).pipe(Effect.provide(NodeCrypto.layer), Effect.runPromise),
+      acquire(request).pipe(
+        Effect.provide([NodeCrypto.layer, NodeServices.layer]),
+        Effect.runPromise,
+      ),
     release: (lease, context) =>
       connect(context.env).pipe(
         Effect.flatMap((daemon) =>
@@ -143,6 +155,8 @@ export default {
       engine: web({ viewport: { width: 1280, height: 800 } }),
       app: {
         url: `http://${LOOPBACK}:0`,
+        // Lets a scenario put an image on the clipboard for a real keyboard paste.
+        permissions: { "clipboard-write": "grant" },
         // Vite answers before the server does; this path is proxied to the server.
         readyUrl: `http://${LOOPBACK}:{port}/.well-known/t3/environment`,
         command: {

@@ -505,18 +505,6 @@ export const PreviewAutomationWaitForInput = Schema.Struct({
 );
 export type PreviewAutomationWaitForInput = typeof PreviewAutomationWaitForInput.Type;
 
-export const PreviewAutomationElement = Schema.Struct({
-  tag: Schema.String,
-  role: Schema.NullOr(Schema.String),
-  name: Schema.String,
-  selector: Schema.String,
-  x: Schema.Number,
-  y: Schema.Number,
-  width: Schema.Number,
-  height: Schema.Number,
-});
-export type PreviewAutomationElement = typeof PreviewAutomationElement.Type;
-
 export const PreviewAutomationConsoleEntry = Schema.Struct({
   level: Schema.String,
   text: Schema.String,
@@ -551,7 +539,6 @@ export const PreviewAutomationSnapshot = Schema.Struct({
   loading: Schema.Boolean,
   loadError: Schema.optional(PreviewAutomationLoadError),
   visibleText: Schema.String,
-  interactiveElements: Schema.Array(PreviewAutomationElement),
   accessibilityTree: Schema.Unknown,
   consoleEntries: Schema.Array(PreviewAutomationConsoleEntry),
   networkEntries: Schema.Array(PreviewAutomationNetworkEntry),
@@ -569,10 +556,18 @@ export const PreviewAutomationSnapshot = Schema.Struct({
 });
 export type PreviewAutomationSnapshot = typeof PreviewAutomationSnapshot.Type;
 
+// pixelsRequired is false when the caller discards the screenshot; hosts that ignore it still return a PNG.
 export const PreviewAutomationSnapshotInput = Schema.Struct({
   fullScreenshot: Schema.optional(Schema.Boolean),
+  pixelsRequired: Schema.optional(Schema.Boolean),
 });
 export type PreviewAutomationSnapshotInput = typeof PreviewAutomationSnapshotInput.Type;
+
+export const PreviewAutomationSnapshotMetadata = Schema.Struct({
+  ...PreviewAutomationSnapshot.fields,
+  screenshot: Schema.Struct({ width: Schema.Int, height: Schema.Int }),
+});
+export type PreviewAutomationSnapshotMetadata = typeof PreviewAutomationSnapshotMetadata.Type;
 
 export const PreviewAutomationRecordingStatus = Schema.Struct({
   tabId: PreviewTabId,
@@ -780,17 +775,35 @@ export class PreviewAutomationTabNotFoundError extends Schema.TaggedError<Previe
   }
 }
 
+export const PreviewAutomationSnapshotStage = Schema.Literals([
+  "metrics",
+  "frames",
+  "page state",
+  "screenshot",
+  "accessibility tree",
+]);
+
+export const PreviewAutomationTimeoutDetail = Schema.Struct({
+  timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
+  pendingStages: Schema.Array(PreviewAutomationSnapshotStage).check(Schema.isMaxLength(5)),
+});
+
 export class PreviewAutomationTimeoutError extends Schema.TaggedError<PreviewAutomationTimeoutError>()(
   "PreviewAutomationTimeoutError",
   {
     ...PreviewAutomationRequestErrorFields,
     ...PreviewAutomationOptionalRemoteDiagnosticFields,
+    pendingStages: Schema.optional(PreviewAutomationTimeoutDetail.fields.pendingStages),
     reason: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
     const summary = `Preview automation ${this.operation} timed out after ${this.timeoutMs}ms.`;
-    return this.reason === undefined ? summary : `${summary} ${this.reason}`;
+    const stages = this.pendingStages?.length
+      ? ` Waiting for: ${this.pendingStages.join(", ")}.`
+      : "";
+    const reason = this.reason === undefined ? "" : ` ${this.reason}`;
+    return `${summary}${stages}${reason}`;
   }
 }
 

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import {
   formatHostedThreadLink,
@@ -7,10 +9,10 @@ import {
   guessThreadLinkRef,
   hostedThreadLink,
   parseThreadLinkHref,
-  relabelThreadLinks,
   threadLinkCandidates,
   threadLinkRefs,
 } from "./threadLinks.ts";
+import { relabelThreadLinks } from "./threadLinksCopy.ts";
 
 const ref = (environmentId: string, threadId = "chat-1") => ({
   environmentId: EnvironmentId.make(environmentId),
@@ -22,6 +24,12 @@ const titlesIn =
   (titles: Record<string, Record<string, string>>) =>
   ({ environmentId, threadId }: ScopedThreadRef) =>
     titles[environmentId]?.[threadId];
+const japanese: MFunctionType = (encodedMsg, options) => {
+  const english = mFallback(encodedMsg, options);
+  return (
+    english === "Thread no longer available" ? "スレッドは利用できなくなりました" : english
+  ) as typeof english;
+};
 
 describe("thread link destinations", () => {
   it("names a v1 link's thread in the message's environment, as written and then decoded", () => {
@@ -140,6 +148,9 @@ describe("thread links", () => {
     expect(relabelThreadLinks("[Old](t3-thread://v1/t1)", local, () => undefined)).toBe(
       "[Old](t3-thread://v1/t1)",
     );
+    expect(relabelThreadLinks("See <t3-thread://v1/gone>", local, () => undefined, japanese)).toBe(
+      "See スレッドは利用できなくなりました",
+    );
   });
 
   it("leaves links inside code spans and fences as written", () => {
@@ -159,6 +170,33 @@ describe("thread links", () => {
         "After [New](t3-thread://v2/local/t1)",
       ].join("\n"),
     );
+    for (const escaped of ["\\``<t3-thread://v2/env-1/t1>`", "\\```<t3-thread://v2/env-1/t1>``"]) {
+      expect(threadLinkRefs(escaped, local)).toEqual([]);
+    }
+  });
+
+  it("ends code where CommonMark does, so a link after it stays live", () => {
+    const after = "See <t3-thread://v2/env-1/t1>";
+    const hidden = "<t3-thread://v2/local/in-code>";
+    for (const markdown of [
+      ["```ts", 'const fence = "```";', hidden, "```", after],
+      ["> ```ts", '> const fence = "```";', `> ${hidden}`, "> ```", `> ${after}`],
+      ["> ```", ` > ${hidden}`, "> ```", after],
+      ["- ```bash", "  echo hi", "  ```", "", after],
+      ["- > ```md", `  > ${hidden}`, "  > ```", "", after],
+      ["1. Run:", "", "    ```bash", '    echo "```"', `    ${hidden}`, "    ```", "", after],
+      ["````md", "```", hidden, "````", after],
+      ["Use ~~~ to mark it.", after],
+      ["```" + hidden + "``` then", after],
+      ["Use ```example", hidden, "end``` then", after],
+      ["Stray ` tick", "", after, "and `code`"],
+      ["Stray ` tick", `# ${after}`, "and `code`"],
+      ["Stray ` tick", `- ${after}`, "and `code`"],
+      ["Use `example", "```" + hidden + "`", after],
+      ["\\\\``" + after + "`"],
+    ]) {
+      expect(threadLinkRefs(markdown.join("\n"), local)).toEqual([ref("env-1", "t1")]);
+    }
   });
 
   it("lists the threads a message's links can name, outside code", () => {

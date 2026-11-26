@@ -16,13 +16,14 @@ import {
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
   PreviewAutomationSnapshot,
+  PreviewAutomationSnapshotMetadata,
   PreviewAutomationStatus,
   PreviewAutomationTabTargetInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as FileSystem from "effect/FileSystem";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -42,10 +43,16 @@ const presentationFields = { toolIcon: Schema.optional(ToolActivityIcon) };
 const PreviewActionResult = Schema.Struct(presentationFields);
 
 const browserTool = <T extends Tool.Any>(tool: T): T =>
-  tool.annotate(Tool.OpenWorld, true).annotate(Tool.Destructive, true) as T;
+  tool
+    .annotate(Tool.OpenWorld, true)
+    .annotate(Tool.Destructive, true)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients) as T;
 
 const safeBrowserTool = <T extends Tool.Any>(tool: T): T =>
-  tool.annotate(Tool.OpenWorld, true).annotate(Tool.Destructive, false) as T;
+  tool
+    .annotate(Tool.OpenWorld, true)
+    .annotate(Tool.Destructive, false)
+    .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients) as T;
 
 const readonlyBrowserTool = <T extends Tool.Any>(tool: T): T =>
   safeBrowserTool(tool).annotate(Tool.Readonly, true).annotate(Tool.Idempotent, true) as T;
@@ -61,7 +68,8 @@ const PreviewStatusTool = Tool.make("preview_status", {
   .annotate(Tool.Title, "Get preview status")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 // `url` already covers websites, so open only adds the dev-server target.
 const EnvironmentPortTarget = BrowserNavigationTarget.members[1];
@@ -151,7 +159,7 @@ export const PreviewSnapshotTool = safeBrowserTool(
         }),
       ),
     }),
-    success: PreviewAutomationSnapshot,
+    success: Schema.Union([PreviewAutomationSnapshot, PreviewAutomationSnapshotMetadata]),
     failure: PreviewToolFailure,
     dependencies,
   }).annotate(Tool.Title, "Inspect browser page"),

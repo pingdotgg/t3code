@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -101,10 +102,12 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const cwd = yield* makeTempDir({ git: true });
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const platform = yield* HostProcess.Platform;
         yield* writeTextFile(cwd, "tracked.txt");
         yield* git(cwd, ["add", "tracked.txt"]);
         yield* writeTextFile(cwd, ".gitignore", "node_modules/\n.env\ntracked.txt\n");
         yield* writeTextFile(cwd, ".env", "secret=value");
+        if (platform !== "win32") yield* writeTextFile(cwd, ":(draft).md");
         yield* writeTextFile(cwd, "node_modules/pkg/index.js");
         yield* writeTextFile(cwd, "src/index.ts");
         yield* fileSystem.makeDirectory(path.join(cwd, "empty"));
@@ -126,6 +129,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             { path: "src", kind: "directory" },
             { path: "empty", kind: "directory" },
             { path: "tracked.txt", kind: "file" },
+            ...(platform === "win32" ? [] : [{ path: ":(draft).md", kind: "file" }]),
           ]),
         );
         expect(root.entries.some((entry) => entry.path.includes("/"))).toBe(false);
@@ -267,11 +271,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const platform = yield* HostProcess.Platform;
-        yield* writeTextFile(
-          cwd,
-          ".gitignore",
-          "node_modules/\ndist/\n\\[id\\]/\n*.map\nfoo\n!foo/\n",
-        );
+        yield* writeTextFile(cwd, ".gitignore", "node_modules/\ndist/\n\\[id\\]/\n*.map\n:foo/\n");
         yield* Effect.forEach(
           [
             "node_modules",
@@ -310,8 +310,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             ? [
                 // git refuses to classify paths beyond a symlink, so nothing there is labelled.
                 { directoryPath: "node_modules/link", ignored: false, except: [] },
-                // Leading : is pathspec magic; Git sees foo/pkg-0.js, unignored by !foo/.
-                { directoryPath: ":foo", ignored: false, except: [] },
+                // Git reads ./:foo literally, so :foo/ in .gitignore labels the whole folder.
+                { directoryPath: ":foo", ignored: true, except: [] },
               ]
             : []),
         ]) {
@@ -618,7 +618,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         }
       }),
     );
-    it.effect("lets the nearest .ignore rule decide a symlink, and git's rules still hide it", () =>
+    it.effect("lets the nearest .ignore rule decide a symlink, ahead of git's rules", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-symlinks-", git: true });
@@ -639,12 +639,12 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         for (const entries of [searched.entries, listed.entries]) {
           const paths = entries.map((entry) => entry.path);
           expect(paths).toContain("sub/hide-link.ts");
-          expect(paths).not.toContain("keep-link.ts");
+          expect(paths).toContain("keep-link.ts");
         }
         // The real files are shown or hidden by the same rules.
         const listedPaths = listed.entries.map((entry) => entry.path);
         expect(listedPaths).toContain("sub/hide-real.ts");
-        expect(listedPaths).not.toContain("keep-real.ts");
+        expect(listedPaths).toContain("keep-real.ts");
       }),
     );
     it.effect("matches .ignore rules against whole names and treats folder links as links", () =>
@@ -688,6 +688,13 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* git(cwd, ["commit", "-m", "init"], env);
         yield* git(cwd, ["worktree", "add", "-b", "x", ".worktrees/x"]);
         yield* writeTextFile(cwd, ".worktrees/x/src/foo.py", "print(1)");
+        const expected = [".worktrees/x/src/foo.py"];
+        // Windows file names cannot contain a newline.
+        if ((yield* HostProcess.Platform) !== "win32") {
+          yield* git(cwd, ["worktree", "add", "--detach", ".worktrees/line\nname"]);
+          yield* writeTextFile(cwd, ".worktrees/line\nname/src/foo.py", "print(2)");
+          expected.unshift(".worktrees/line\nname/src/foo.py");
+        }
 
         const exact = yield* searchWorkspaceEntries({
           cwd,
@@ -695,11 +702,52 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           limit: 25,
           kind: "file",
         });
-        expect(exact.entries).toEqual([{ path: ".worktrees/x/src/foo.py", kind: "file" }]);
+        expect(exact.entries.toSorted((a, b) => (a.path < b.path ? -1 : 1))).toEqual(
+          expected.map((path) => ({ path, kind: "file" })),
+        );
 
         const partial = yield* searchWorkspaceEntries({ cwd, query: "src/fo", limit: 25 });
-        expect(partial.entries.map((entry) => entry.path)).not.toContain(".worktrees/x/src/foo.py");
+        for (const path of expected) {
+          expect(partial.entries.map((entry) => entry.path)).not.toContain(path);
+        }
       }),
+    );
+
+    it.effect("releases an index nobody searched within the idle timeout on refresh", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-idle-refresh-" });
+        yield* writeTextFile(cwd, "src/index.ts");
+        let rescans = 0;
+        let destroyed = 0;
+        const createFinder = FileFinder.create.bind(FileFinder);
+        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+          const created = createFinder(options);
+          if (created.ok) {
+            const finder = created.value;
+            const scanFilesAsync = finder.scanFilesAsync.bind(finder);
+            finder.scanFilesAsync = () => {
+              rescans += 1;
+              return scanFilesAsync();
+            };
+            const destroy = finder.destroy.bind(finder);
+            finder.destroy = () => {
+              destroyed += 1;
+              destroy();
+            };
+          }
+          return created;
+        });
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        yield* TestClock.adjust("1 hour");
+        yield* searchWorkspaceEntries({ cwd, query: "index", limit: 10 });
+
+        for (let run = 0; run < 3; run++) {
+          yield* TestClock.adjust("6 minutes");
+          yield* workspaceEntries.refresh(cwd);
+        }
+
+        expect({ rescans, destroyed }).toEqual({ rescans: 2, destroyed: 1 });
+      }).pipe(Effect.provide(TestClock.layer())),
     );
   });
 
@@ -1003,6 +1051,68 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect({ finders, rescans }).toEqual({ finders: 1, rescans: 1 });
       }),
     );
+
+    it.effect("serves content search once a first scan that outlasted the wait finishes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-slow-scan-" });
+        yield* writeTextFile(cwd, "src/notes.ts", "const needle = 1;\n");
+        // Real finders; only the initial wait and the progress it reads report a scan still running.
+        let scanning = true;
+        let finders = 0;
+        let settle = (): Promise<unknown> => Promise.resolve();
+        const createFinder = FileFinder.create.bind(FileFinder);
+        vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+          const created = createFinder(options);
+          if (!created.ok) return created;
+          const finder = created.value;
+          finders += 1;
+          const waitForIndexReady = finder.waitForIndexReady.bind(finder);
+          settle = () => waitForIndexReady(15_000);
+          finder.waitForIndexReady = (timeoutMs) =>
+            scanning ? Promise.resolve({ ok: true, value: false }) : waitForIndexReady(timeoutMs);
+          const getScanProgress = finder.getScanProgressAsync.bind(finder);
+          finder.getScanProgressAsync = async () => {
+            const progress = await getScanProgress();
+            return scanning && progress.ok
+              ? {
+                  ok: true,
+                  value: { ...progress.value, isScanning: true, isWarmupComplete: false },
+                }
+              : progress;
+          };
+          return created;
+        });
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searchNeedle = workspaceEntries
+          .searchContents({
+            cwd,
+            query: "needle",
+            limit: 100,
+            caseSensitive: true,
+            wholeWord: false,
+            useRegex: false,
+          })
+          .pipe(
+            Effect.map((result): unknown => result.matches.map((match) => match.path)),
+            Effect.catchTags({
+              WorkspaceSearchIndexScanTimedOut: (error) => Effect.succeed<unknown>(error._tag),
+            }),
+          );
+
+        const whileScanning = yield* Effect.all([searchNeedle, searchNeedle], {
+          concurrency: "unbounded",
+        });
+        scanning = false;
+        yield* Effect.promise(() => settle());
+        const afterScan = yield* searchNeedle;
+
+        expect({ whileScanning, afterScan, finders }).toEqual({
+          whileScanning: ["WorkspaceSearchIndexScanTimedOut", "WorkspaceSearchIndexScanTimedOut"],
+          afterScan: ["src/notes.ts"],
+          finders: 1,
+        });
+      }),
+    );
   });
 
   describe("browse", () => {
@@ -1052,6 +1162,34 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           _tag: "WorkspaceEntriesReadDirectoryError",
           pathMissing: false,
         });
+      }),
+    );
+
+    it.effect("lists symlinks to directories under their link path", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-symlink-" });
+        const externalTarget = yield* makeTempDir({
+          prefix: "t3code-workspace-browse-symlink-target-",
+        });
+        yield* writeTextFile(cwd, "real-dir/readme.md", "hi");
+        yield* writeTextFile(cwd, "plain.txt", "hi");
+
+        yield* fileSystem.symlink(externalTarget, path.join(cwd, "personal"));
+        yield* fileSystem.symlink(path.join(cwd, "plain.txt"), path.join(cwd, "file-link"));
+        yield* fileSystem.symlink(path.join(cwd, "does-not-exist"), path.join(cwd, "broken-link"));
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+
+        expect(result.entries).toEqual([
+          { name: "personal", fullPath: path.join(cwd, "personal") },
+          { name: "real-dir", fullPath: path.join(cwd, "real-dir") },
+        ]);
       }),
     );
   });

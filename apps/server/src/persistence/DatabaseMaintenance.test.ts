@@ -41,6 +41,8 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const legacy = path.join(userdata, "state.sqlite");
         yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY)`;
+          yield* sql`CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT PRIMARY KEY)`;
           yield* sql`CREATE TABLE retained_data (value TEXT)`;
           yield* sql`INSERT INTO retained_data VALUES ('keep')`;
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
@@ -52,8 +54,30 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           yield* sql`PRAGMA journal_mode = WAL`;
           yield* sql`CREATE TABLE v1_data (value TEXT)`;
           yield* sql`INSERT INTO v1_data VALUES ('rollback')`;
+          yield* sql`CREATE TABLE projection_projects (project_id TEXT PRIMARY KEY, deleted_at TEXT)`;
+          yield* sql`CREATE TABLE projection_threads (thread_id TEXT PRIMARY KEY, deleted_at TEXT)`;
+          yield* sql`INSERT INTO projection_projects VALUES ('legacy-project', NULL)`;
+          yield* sql`INSERT INTO projection_threads VALUES ('legacy-thread', NULL), ('deleted-thread', '2026-10-01')`;
         }).pipe(Effect.provide(openLegacy));
         assert.isAbove((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes ?? 0, 0);
+
+        assert.deepEqual((yield* maintenance.inspect(dbPath)).legacyOnlyRecords, {
+          projects: 1,
+          threads: 1,
+        });
+        const missing = yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+        assert.equal(missing._tag, "LegacyDatabaseHasUnmigratedRecordsError");
+        assert.isTrue(yield* fs.exists(legacy));
+
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`INSERT INTO projection_projects VALUES ('legacy-project')`;
+          yield* sql`INSERT INTO orchestration_v2_projection_threads VALUES ('legacy-thread')`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+        assert.deepEqual((yield* maintenance.inspect(dbPath)).legacyOnlyRecords, {
+          projects: 0,
+          threads: 0,
+        });
 
         const refused = yield* Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;

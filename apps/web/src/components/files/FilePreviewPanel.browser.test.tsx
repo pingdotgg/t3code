@@ -1,9 +1,9 @@
 import { DEFAULT_THEMES, preloadHighlighter } from "@pierre/diffs";
 import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import type { ReactNode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { cdp, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
@@ -18,7 +18,11 @@ const state = vi.hoisted(() => ({
   optimistic: null as ProjectReadFileResult | null,
   writeFile: vi.fn(),
   assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
+  assetResources: [] as Array<import("@t3tools/contracts").AssetResource>,
   mintUrl: vi.fn<() => Promise<string | null>>(),
+  browserAssetMints: 0,
+  openedBrowserUrls: [] as string[],
+  diffWorkersReady: true,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
@@ -56,6 +60,7 @@ vi.mock(import("~/remoteOpen"), async (original) => ({
 vi.mock(import("~/hooks/useTheme"), async (original) => ({
   ...(await original()),
   useTheme: () => ({ resolvedTheme: "dark" }) as never,
+  useRenderedAppearance: () => "dark",
 }));
 vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
   useWorkspaceMutationRefresh: vi.fn(),
@@ -63,8 +68,64 @@ vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlRefresh: () => state.mintUrl,
-  useAssetUrlState: () => state.assetUrl,
+  useAssetUrlState: (
+    _environmentId: unknown,
+    resource: import("@t3tools/contracts").AssetResource | null,
+  ) => {
+    if (resource) state.assetResources.push(resource);
+    return state.assetUrl;
+  },
 }));
+vi.mock(import("~/browser/previewRuntime"), async (original) => ({
+  ...(await original()),
+  usePreviewAvailable: () => true,
+}));
+vi.mock(import("~/state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironmentHttpBaseUrl: () => "http://environment.test",
+}));
+vi.mock(import("~/state/assets"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const Effect = await import("effect/Effect");
+  // Like the real query family, a minted URL stays cached until the atom is refreshed.
+  const createUrl = Atom.family((_key: string) =>
+    Atom.make(
+      Effect.sync(() => ({
+        relativeUrl: `/api/assets/mint-${++state.browserAssetMints}/page.html`,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      })),
+    ).pipe(Atom.keepAlive),
+  );
+  return {
+    ...actual,
+    assetEnvironment: {
+      ...actual.assetEnvironment,
+      createUrl: ((target: { input: { resource: { path: string } } }) =>
+        createUrl(target.input.resource.path)) as never,
+    },
+  };
+});
+vi.mock(import("~/browser/openFileInPreview"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    openFileInPreview: (async (input: Parameters<typeof actual.openFileInPreview>[0]) => {
+      const result = await input.createAssetUrl({
+        environmentId: input.threadRef.environmentId,
+        input: {
+          resource: {
+            _tag: "workspace-file",
+            threadId: input.threadRef.threadId,
+            path: input.filePath,
+          },
+        },
+      });
+      if (result._tag === "Success") state.openedBrowserUrls.push(result.value.relativeUrl);
+      return AsyncResult.success(undefined);
+    }) as never,
+  };
+});
 // The Word engine compiles a large WebAssembly bundle; these tests only need the URL it loads.
 vi.mock(import("./OfficeFilePreview"), () => ({
   OfficeFilePreview: ({ src }: { src: string }) => <div data-testid="office-preview">{src}</div>,
@@ -83,7 +144,10 @@ vi.mock(import("./FileBrowserPanel"), () => ({
   ),
 }));
 vi.mock(import("../DiffWorkerPoolProvider"), () => ({
-  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  // Like the real provider, a pool that is still starting unmounts the viewer it wraps.
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => (
+    <>{state.diffWorkersReady ? children : null}</>
+  ),
 }));
 vi.mock(import("./projectFilesQueryState"), async (original) => ({
   ...(await original()),
@@ -110,6 +174,8 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
 }));
 
 import FilePreviewPanel from "./FilePreviewPanel";
+import { ChunkedMarkdown } from "./ChunkedMarkdown";
+import { splitMarkdown } from "@t3tools/shared/markdownChunks";
 
 const environmentId = EnvironmentId.make("markdown-preview-test");
 const threadRef = { environmentId, threadId: ThreadId.make("thread") };
@@ -121,6 +187,9 @@ function setup() {
   state.file = null;
   state.optimistic = null;
   state.assetUrl = { _tag: "Loading" };
+  state.assetResources = [];
+  state.openedBrowserUrls = [];
+  state.diffWorkersReady = true;
   let mints = 0;
   state.mintUrl.mockReset().mockImplementation(async () => `/assets/report.docx?mint=${++mints}`);
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -135,17 +204,25 @@ function setup() {
   };
 }
 
-function markdownPreview(truncated: boolean, contents = "- [ ] Keep the rest of this file\n") {
+function markdownPreview(
+  truncated: boolean,
+  contents = "- [ ] Keep the rest of this file\n",
+  relativePath = "tasks.md",
+) {
   state.file = {
-    relativePath: "tasks.md",
+    relativePath,
     contents,
     byteLength: truncated ? 1_200_000 : contents.length,
     truncated,
   };
-  return filePreview("tasks.md");
+  return filePreview(relativePath);
 }
 
-function filePreview(relativePath: string, workspaceMutationId: string | null = null) {
+function filePreview(
+  relativePath: string,
+  workspaceMutationId: string | null = null,
+  reveal: { line: number; requestId: number } | null = null,
+) {
   return (
     <FilePreviewPanel
       environmentId={environmentId}
@@ -157,8 +234,8 @@ function filePreview(relativePath: string, workspaceMutationId: string | null = 
       keybindings={[]}
       availableEditors={[]}
       openInShortcutEnabled={false}
-      revealLine={null}
-      revealRequestId={0}
+      revealLine={reveal?.line ?? null}
+      revealRequestId={reveal?.requestId ?? 0}
       onOpenFile={vi.fn()}
       onNavigateFolder={vi.fn()}
       folderTrail={undefined}
@@ -223,6 +300,17 @@ describe("source file focus", () => {
       isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
     );
     await vi.waitFor(() => expect(deepActiveElement()).toBeInstanceOf(HTMLInputElement));
+
+    const findField = deepActiveElement() as HTMLInputElement;
+    await userEvent.keyboard("server");
+    findField.blur();
+    expect(focus.focus("panel", false)).toBe(true);
+    await vi.waitFor(editorHasFocus);
+    const editor = deepActiveElement() as HTMLElement;
+    await userEvent.keyboard("ab");
+    await vi.waitFor(() => expect(editor.textContent).toContain("xabconst server"));
+    expect(findField.value).toBe("server");
+    editorHasFocus();
   });
 
   it("focuses the editor when a file row is clicked or activated with Enter", async () => {
@@ -268,18 +356,309 @@ describe("source file focus", () => {
   });
 });
 
-describe("rendered Markdown task saves", () => {
-  it("keeps a truncated read read-only without queuing a replacement", async () => {
+describe("source file scroll", () => {
+  it("returns a file tab to where it was scrolled after another file was shown", async () => {
     using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const sourceFile = (relativePath: string, lines: number) => {
+      const contents = Array.from({ length: lines }, (_, i) => `const line${i} = ${i};`).join("\n");
+      state.file = { relativePath, contents, byteLength: contents.length, truncated: false };
+      // The app mounts under StrictMode, whose remount must not wipe the saved offset.
+      return (
+        <StrictMode>
+          <div style={{ height: 400, display: "flex", flexDirection: "column" }}>
+            {filePreview(relativePath)}
+          </div>
+        </StrictMode>
+      );
+    };
+    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+
+    await using screen = await render(sourceFile("a.ts", 2000));
+    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(5000));
+    scroller()!.scrollTop = 4200;
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+
+    await screen.rerender(sourceFile("b.ts", 1500));
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(0));
+    await screen.rerender(sourceFile("a.ts", 2000));
+
+    await vi.waitFor(() => expect(scroller()?.scrollTop).toBe(4200));
+  });
+
+  it("centers a linked line in a scrolled read-only file, and again when the viewer is rebuilt", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["text"] });
+    // Wrapped lines of differing lengths, so the viewer estimates heights until it measures them.
+    const contents = Array.from(
+      { length: 140 },
+      (_, i) =>
+        `Line ${i + 1}. ${"Notes that wrap across the preview. ".repeat(2 + ((i * 7) % 9))}`,
+    ).join("\n");
+    // A file outside the workspace is read-only, which CodeView renders.
+    const hostFile = (reveal: { line: number; requestId: number } | null) => {
+      const relativePath = "/outside/notes.txt";
+      state.file = { relativePath, contents, byteLength: contents.length, truncated: false };
+      return (
+        <div style={{ height: 400, width: 500, display: "flex", flexDirection: "column" }}>
+          {filePreview(relativePath, null, reveal)}
+        </div>
+      );
+    };
+    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+    const row = (line: number) =>
+      document.querySelector("diffs-container")?.shadowRoot?.querySelector(`[data-line="${line}"]`);
+    const middle = (element: Element | null | undefined) => {
+      const rect = element?.getBoundingClientRect();
+      return rect ? (rect.top + rect.bottom) / 2 : Number.NaN;
+    };
+    const lineIsCentered = () =>
+      expect(Math.abs(middle(row(82)) - middle(scroller()))).toBeLessThan(2);
+
+    await using screen = await render(hostFile(null));
+    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(3000));
+    scroller()!.scrollTop = 2500;
+    // The viewer has moved its window of mounted rows to the new offset.
+    await vi.waitFor(() => expect(row(1)).toBeNull());
+
+    await screen.rerender(hostFile({ line: 82, requestId: 1 }));
+    await vi.waitFor(lineIsCentered);
+
+    // Starting the worker pool unmounts the viewer and mounts a new one.
+    state.diffWorkersReady = false;
+    await screen.rerender(hostFile({ line: 82, requestId: 1 }));
+    await vi.waitFor(() => expect(scroller()).toBeNull());
+    state.diffWorkersReady = true;
+    await screen.rerender(hostFile({ line: 82, requestId: 1 }));
+    await vi.waitFor(lineIsCentered);
+  });
+
+  it.each([
+    {
+      label: "keeps a downward drag whose anchor stays mounted across a window shift",
+      startLine: 65,
+      initialScrollLine: 65,
+      direction: "down" as const,
+      targetFirstMounted: 101,
+      expectedIncludedLine: 121,
+    },
+    {
+      label: "keeps a downward drag whose anchor unmounts on a window shift",
+      startLine: 5,
+      initialScrollLine: null,
+      direction: "down" as const,
+      targetFirstMounted: 101,
+      expectedIncludedLine: 121,
+    },
+    {
+      label: "keeps an upward drag whose anchor unmounts on a window shift",
+      startLine: 385,
+      initialScrollLine: 385,
+      direction: "up" as const,
+      targetFirstMounted: 201,
+      expectedIncludedLine: 290,
+    },
+  ])(
+    "$label",
+    async ({
+      startLine,
+      initialScrollLine,
+      direction,
+      targetFirstMounted,
+      expectedIncludedLine,
+    }) => {
+      using _settings = setup();
+      localStorage.setItem("t3code.renderMarkdown", "false");
+      const style = document.createElement("style");
+      style.textContent = appCss;
+      document.head.append(style);
+      using _style = { [Symbol.dispose]: () => style.remove() };
+      await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["markdown"] });
+
+      const lines = Array.from({ length: 400 }, (_, index) => `line ${index + 1} markdown content`);
+      const contents = `${lines.join("\n")}\n`;
+      state.file = {
+        relativePath: "notes.md",
+        contents,
+        byteLength: contents.length,
+        truncated: false,
+      };
+
+      await using screen = await render(
+        <div style={{ width: 560, height: 400, display: "flex", flexDirection: "column" }}>
+          {filePreview("notes.md")}
+        </div>,
+      );
+
+      const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
+      const rows = () => shadowRoot()?.querySelectorAll<HTMLElement>("[data-line]") ?? [];
+      await vi.waitFor(() =>
+        expect(
+          shadowRoot()?.querySelector('[data-content][contenteditable="true"]'),
+        ).not.toBeNull(),
+      );
+
+      const scroller = screen.container.querySelector<HTMLElement>(".file-preview-virtualizer")!;
+      if (initialScrollLine !== null) {
+        if (direction === "up") {
+          await vi.waitFor(() => expect(scroller.scrollHeight).toBeGreaterThan(5000));
+          scroller.scrollTop = scroller.scrollHeight;
+          await vi.waitFor(() =>
+            expect(
+              [...rows()].some((row) => row.getAttribute("data-line") === String(startLine)),
+            ).toBe(true),
+          );
+        }
+        const target = [...rows()].find(
+          (row) => row.getAttribute("data-line") === String(initialScrollLine),
+        );
+        expect(target).toBeDefined();
+        target!.scrollIntoView({ block: direction === "up" ? "end" : "start" });
+        await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+      }
+
+      const startRow = [...rows()].find(
+        (row) => row.getAttribute("data-line") === String(startLine),
+      );
+      expect(startRow).toBeDefined();
+      const startRect = startRow!.getBoundingClientRect();
+      const scrollerRect = scroller.getBoundingClientRect();
+      const nearEdgeY = direction === "down" ? scrollerRect.bottom - 5 : scrollerRect.top + 5;
+      const outsideEdgeY = direction === "down" ? scrollerRect.bottom + 60 : scrollerRect.top - 60;
+      const frame = window.frameElement?.getBoundingClientRect();
+      const mouse = (type: "mousePressed" | "mouseMoved" | "mouseReleased", x: number, y: number) =>
+        cdp().send("Input.dispatchMouseEvent", {
+          type,
+          x: x + (frame?.left ?? 0),
+          y: y + (frame?.top ?? 0),
+          button: "left",
+          buttons: type === "mouseReleased" ? 0 : 1,
+          clickCount: 1,
+        });
+
+      const startX = direction === "up" ? startRect.left + 140 : startRect.left + 2;
+      // The editor records the drag anchor on the press's selectionchange; drag only after it.
+      const anchored = new Promise((resolve) =>
+        document.addEventListener("selectionchange", resolve, { once: true }),
+      );
+      await mouse("mousePressed", startX, startRect.top + 5);
+      await anchored;
+      await mouse("mouseMoved", startRect.left + 80, nearEdgeY);
+      await mouse("mouseMoved", startRect.left + 80, outsideEdgeY);
+      await vi.waitFor(() => {
+        const firstMounted = Number(rows()[0]?.getAttribute("data-line"));
+        if (direction === "down") {
+          expect(firstMounted).toBeGreaterThanOrEqual(targetFirstMounted);
+        } else {
+          expect(firstMounted).toBeLessThanOrEqual(targetFirstMounted);
+        }
+      });
+      await mouse("mouseReleased", startRect.left + 80, outsideEdgeY);
+
+      const overlayRanges = shadowRoot()!.querySelectorAll("[data-selection-range]");
+      expect(overlayRanges.length).toBeGreaterThan(0);
+
+      const clipboardData = new DataTransfer();
+      const contentEl = shadowRoot()!.querySelector("[data-content]")!;
+      const handled = !contentEl.dispatchEvent(
+        new ClipboardEvent("copy", {
+          clipboardData,
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        }),
+      );
+      expect(handled).toBe(true);
+      const copied = clipboardData.getData("text/plain");
+      expect(copied).toContain(`line ${startLine} `);
+      expect(copied).toContain(`line ${expectedIncludedLine} markdown content`);
+    },
+  );
+
+  it("scrolls a find match below many wrapped lines into view", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
+    const wrapped = "wrap ".repeat(60);
+    const lines = Array.from({ length: 800 }, (_, i) => `const line${i} = "${wrapped}";`);
+    lines.push(
+      "const needle = 1;",
+      ...Array.from({ length: 40 }, (_, i) => `const tail${i} = ${i};`),
+    );
+    const contents = lines.join("\n");
+    state.file = {
+      relativePath: "wrapped.ts",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    const scroller = () => document.querySelector<HTMLElement>(".file-preview-virtualizer");
+
+    await using _screen = await render(
+      <div style={{ width: 500, height: 400, display: "flex", flexDirection: "column" }}>
+        {filePreview("wrapped.ts")}
+      </div>,
+    );
+    await vi.waitFor(() => expect(scroller()?.scrollHeight).toBeGreaterThan(20_000));
+    const shadowRows = () =>
+      [...document.querySelectorAll("*")].flatMap((host) =>
+        host.shadowRoot ? [...host.shadowRoot.querySelectorAll<HTMLElement>("[data-line]")] : [],
+      );
+    await userEvent.click(shadowRows().find((row) => row.getAttribute("data-line") === "1")!);
+    await vi.waitFor(() => expect(deepActiveElement()?.matches("[data-content]")).toBe(true));
+    await userEvent.keyboard(
+      isMacPlatform(navigator.platform) ? "{Meta>}f{/Meta}" : "{Control>}f{/Control}",
+    );
+    await vi.waitFor(() => expect(deepActiveElement()).toBeInstanceOf(HTMLInputElement));
+    await userEvent.keyboard("needle{Enter}");
+
+    const visibleLines = () => {
+      const viewport = scroller()!.getBoundingClientRect();
+      return shadowRows()
+        .filter((row) => {
+          const box = row.getBoundingClientRect();
+          return box.height > 0 && box.top >= viewport.top && box.bottom <= viewport.bottom;
+        })
+        .map((row) => Number(row.getAttribute("data-line")));
+    };
+    await vi.waitFor(() => expect(visibleLines()).toContain(801));
+  });
+});
+
+describe("rendered Markdown task saves", () => {
+  it("renders the whole file of a truncated read, read-only", async () => {
+    using _settings = setup();
+    state.assetUrl = {
+      _tag: "Success",
+      url: "/assets/tasks.md",
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+    const realFetch = globalThis.fetch;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) =>
+        new URL(String(input), location.href).pathname === "/assets/tasks.md"
+          ? Promise.resolve(
+              new Response("- [ ] Keep the rest of this file\n\nPast the first megabyte\n"),
+            )
+          : realFetch(input, init),
+      );
     await using screen = await render(markdownPreview(true));
-    using _timers = fakeTimers();
+    await expect.element(screen.getByText("Past the first megabyte")).toBeVisible();
     const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(checkbox).not.toBeNull();
     expect(checkbox.disabled).toBe(true);
-    expect(checkbox.readOnly).toBe(true);
     await act(async () => checkbox.click());
-    await vi.advanceTimersByTimeAsync(500);
-    expect(checkbox.checked).toBe(false);
     expect(state.optimistic).toBeNull();
     expect(state.writeFile).not.toHaveBeenCalled();
   });
@@ -287,6 +666,8 @@ describe("rendered Markdown task saves", () => {
   it("still toggles and saves tasks from a complete read", async () => {
     using _settings = setup();
     await using screen = await render(markdownPreview(false));
+    // The virtualized list mounts its pieces after measuring the viewport.
+    await expect.element(screen.getByRole("checkbox")).toBeInTheDocument();
     using _timers = fakeTimers();
     const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(checkbox).not.toBeNull();
@@ -363,6 +744,29 @@ describe("workspace document previews", () => {
   });
 });
 
+describe("open file in preview browser", () => {
+  it("mints a fresh asset URL on every click so the browser cannot reuse cached bytes", async () => {
+    using _settings = setup();
+    state.file = {
+      relativePath: "page.html",
+      contents: "<h1>page</h1>",
+      byteLength: 13,
+      truncated: false,
+    };
+    await using screen = await render(filePreview("page.html"));
+    const button = screen.getByRole("button", { name: "Open file in preview browser" });
+
+    await userEvent.click(button);
+    await vi.waitFor(() => expect(state.openedBrowserUrls).toHaveLength(1));
+    await userEvent.click(button);
+    await vi.waitFor(() => expect(state.openedBrowserUrls).toHaveLength(2));
+
+    expect(state.openedBrowserUrls[1], "the second click reused the first signed URL").not.toBe(
+      state.openedBrowserUrls[0],
+    );
+  });
+});
+
 describe("rendered Markdown select all", () => {
   it("selects only the rendered file, including after a task toggle", async () => {
     using _settings = setup();
@@ -386,5 +790,136 @@ describe("rendered Markdown select all", () => {
     // A toggled checkbox keeps focus on an input inside the preview.
     await userEvent.click(screen.getByRole("checkbox"));
     await expectFileOnlySelection();
+  });
+});
+
+describe("rendered Markdown relative images", () => {
+  it.each([
+    ["2026-11-23T14:05/README.md", "/workspace/2026-11-23T14:05/diagram.png"],
+    ["/README.md", "/diagram.png"],
+  ])("resolves relative images in %s against its folder", async (relativePath, expectedPath) => {
+    using _settings = setup();
+    await using _screen = await render(
+      markdownPreview(false, "![diagram](diagram.png)\n", relativePath),
+    );
+    await vi.waitFor(() => expect(state.assetResources).not.toHaveLength(0));
+    expect(state.assetResources).toContainEqual(
+      expect.objectContaining({ _tag: "media-file", path: expectedPath }),
+    );
+  });
+});
+
+describe("rendered Markdown scroll position", () => {
+  const sections = Array.from(
+    { length: 200 },
+    (_, index) => `## Section ${index}\n\nParagraph ${index}.\n`,
+  ).join("\n");
+  const scroller = () =>
+    document.querySelector<HTMLElement>(".scrollbar-gutter-both") ?? expect.unreachable();
+  /** The first heading in view and its offset from the top of the viewport. */
+  const readingPosition = () => {
+    const top = scroller().getBoundingClientRect().top;
+    for (const heading of scroller().querySelectorAll("h2")) {
+      const offset = Math.round(heading.getBoundingClientRect().top - top);
+      if (offset > -100) return { heading: heading.textContent, offset };
+    }
+    return null;
+  };
+  const scrollDown = async () => {
+    scroller().scrollTop = 3000;
+    scroller().dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(readingPosition()?.heading).not.toBe("Section 0"));
+    return readingPosition();
+  };
+  const expectReadingPosition = (saved: ReturnType<typeof readingPosition>) =>
+    vi.waitFor(() => {
+      const position = readingPosition();
+      expect(position?.heading).toBe(saved?.heading);
+      expect(Math.abs((position?.offset ?? 0) - (saved?.offset ?? 0))).toBeLessThanOrEqual(2);
+    });
+  const withAppCss = () => {
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    return { [Symbol.dispose]: () => style.remove() };
+  };
+  const sized = (children: ReactNode) => (
+    <div style={{ width: 500, height: 400, display: "flex", flexDirection: "column" }}>
+      {children}
+    </div>
+  );
+
+  it("restores each file's reading position after the preview remounts", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const preview = (relativePath: string) => sized(markdownPreview(false, sections, relativePath));
+
+    let saved: ReturnType<typeof readingPosition>;
+    {
+      await using screen = await render(preview("long.md"));
+      await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+      saved = await scrollDown();
+    }
+    {
+      await using screen = await render(preview("other.md"));
+      await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+      expect(scroller().scrollTop, "another file opens at the top").toBe(0);
+    }
+    await using _screen = await render(preview("long.md"));
+    await expectReadingPosition(saved);
+  });
+
+  it("waits for the saved chunk when a reopened file is still streaming in", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const { chunks, definitions } = splitMarkdown(sections, 200);
+    const preview = (loaded: number, loading: boolean) =>
+      sized(
+        <ChunkedMarkdown
+          chunks={chunks.slice(0, loaded)}
+          definitions={definitions}
+          loading={loading}
+          cwd="/workspace"
+          relativePath="streaming.md"
+          threadRef={threadRef}
+          workspaceMutationId={null}
+        />,
+      );
+
+    let saved: ReturnType<typeof readingPosition>;
+    {
+      await using screen = await render(preview(chunks.length, false));
+      await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+      saved = await scrollDown();
+    }
+    await using screen = await render(preview(3, true));
+    expect(document.querySelector(".scrollbar-gutter-both"), "no list before the chunk").toBeNull();
+    await screen.rerender(preview(chunks.length, false));
+    await expectReadingPosition(saved);
+  });
+
+  it("keeps each thread's position when the same file stays open across threads", async () => {
+    using _settings = setup();
+    using _style = withAppCss();
+    const { chunks, definitions } = splitMarkdown(sections, 200);
+    const preview = (threadId: string) =>
+      sized(
+        <ChunkedMarkdown
+          chunks={chunks}
+          definitions={definitions}
+          cwd="/workspace"
+          relativePath="shared.md"
+          threadRef={{ environmentId, threadId: ThreadId.make(threadId) }}
+          workspaceMutationId={null}
+        />,
+      );
+
+    await using screen = await render(preview("first"));
+    await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+    const saved = await scrollDown();
+    await screen.rerender(preview("second"));
+    await vi.waitFor(() => expect(readingPosition()?.heading).toBe("Section 0"));
+    await screen.rerender(preview("first"));
+    await expectReadingPosition(saved);
   });
 });

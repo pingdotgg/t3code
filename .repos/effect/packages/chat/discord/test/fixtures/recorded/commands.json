@@ -1,0 +1,1127 @@
+{
+  "case": "Slash commands on Discord, as the gateway delivered them and as the adapter answered, with the clicks and submits that followed, the follow-up edit and what Discord answers after 15 minutes",
+  "provenance": {
+    "kind": "recorded",
+    "source": "The adapter at 53b4d54024 behind a logging proxy (eff-3802-capture.ts), with the Janitor bot (1564742987727118426) on the gateway and Tim running /chat-capture",
+    "where": "guild 840178841540362250 (Tim's test guild); #test 1570605581192929301. /chat-capture was registered on that guild only and deleted afterwards",
+    "recordedAt": "2026-11-14T19:54Z to 20:18Z, during EFF-3802",
+    "body": "Payloads and callback bodies verbatim, apart from the interaction token, which is replaced with <redacted>. Network headers are left out",
+    "seenButNotInLog": [
+      "Callback type 6 closed the modal a command opened",
+      "The mention answer rendered <@449108784879763458> as a mention and did not notify",
+      "Seven followUps on one deferral left one message, edited to the seventh",
+      "A late command showed 'The application did not respond'"
+    ]
+  },
+  "commands": {
+    "private": {
+      "version": 1,
+      "type": 2,
+      "token": "<redacted>",
+      "member": {
+        "user": {
+          "username": "timsmart",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "449108784879763458",
+          "global_name": "Tim Smart",
+          "display_name_styles": null,
+          "discriminator": "0",
+          "collectibles": null,
+          "clan": null,
+          "avatar_decoration_data": null,
+          "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+        },
+        "unusual_dm_activity_until": null,
+        "roles": [],
+        "premium_since": null,
+        "permissions": "18014398509481983",
+        "pending": false,
+        "nick": null,
+        "mute": false,
+        "joined_at": "2021-05-07T10:50:45.596000+00:00",
+        "flags": 0,
+        "deaf": false,
+        "communication_disabled_until": null,
+        "banner": null,
+        "avatar": null
+      },
+      "locale": "en-GB",
+      "id": "1571251955899310120",
+      "guild_locale": "en-US",
+      "guild_id": "840178841540362250",
+      "guild": {
+        "locale": "en-US",
+        "id": "840178841540362250",
+        "features": []
+      },
+      "entitlements": [],
+      "entitlement_sku_ids": [],
+      "data": {
+        "type": 1,
+        "name": "chat-capture",
+        "id": "1571251308462084127",
+        "guild_id": "840178841540362250"
+      },
+      "context": 0,
+      "channel_id": "1570605581192929301",
+      "channel": {
+        "type": 0,
+        "topic": null,
+        "rate_limit_per_user": 0,
+        "position": 6,
+        "permissions": "18014398509481983",
+        "parent_id": "840178841540362251",
+        "nsfw": false,
+        "name": "test",
+        "last_message_id": "1570720379356581938",
+        "id": "1570605581192929301",
+        "guild_id": "840178841540362250",
+        "flags": 0
+      },
+      "authorizing_integration_owners": {
+        "0": "840178841540362250"
+      },
+      "attachment_size_limit": 20971520,
+      "application_id": "1564742987727118426",
+      "app_permissions": "18014398509481983"
+    },
+    "modal": {
+      "version": 1,
+      "type": 2,
+      "token": "<redacted>",
+      "member": {
+        "user": {
+          "username": "timsmart",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "449108784879763458",
+          "global_name": "Tim Smart",
+          "display_name_styles": null,
+          "discriminator": "0",
+          "collectibles": null,
+          "clan": null,
+          "avatar_decoration_data": null,
+          "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+        },
+        "unusual_dm_activity_until": null,
+        "roles": [],
+        "premium_since": null,
+        "permissions": "18014398509481983",
+        "pending": false,
+        "nick": null,
+        "mute": false,
+        "joined_at": "2021-05-07T10:50:45.596000+00:00",
+        "flags": 0,
+        "deaf": false,
+        "communication_disabled_until": null,
+        "banner": null,
+        "avatar": null
+      },
+      "locale": "en-GB",
+      "id": "1571252100829155488",
+      "guild_locale": "en-US",
+      "guild_id": "840178841540362250",
+      "guild": {
+        "locale": "en-US",
+        "id": "840178841540362250",
+        "features": []
+      },
+      "entitlements": [],
+      "entitlement_sku_ids": [],
+      "data": {
+        "type": 1,
+        "options": [
+          {
+            "value": "modal",
+            "type": 3,
+            "name": "what"
+          }
+        ],
+        "name": "chat-capture",
+        "id": "1571251308462084127",
+        "guild_id": "840178841540362250"
+      },
+      "context": 0,
+      "channel_id": "1570605581192929301",
+      "channel": {
+        "type": 0,
+        "topic": null,
+        "rate_limit_per_user": 0,
+        "position": 6,
+        "permissions": "18014398509481983",
+        "parent_id": "840178841540362251",
+        "nsfw": false,
+        "name": "test",
+        "last_message_id": "1570720379356581938",
+        "id": "1570605581192929301",
+        "guild_id": "840178841540362250",
+        "flags": 0
+      },
+      "authorizing_integration_owners": {
+        "0": "840178841540362250"
+      },
+      "attachment_size_limit": 20971520,
+      "application_id": "1564742987727118426",
+      "app_permissions": "18014398509481983"
+    },
+    "mention": {
+      "version": 1,
+      "type": 2,
+      "token": "<redacted>",
+      "member": {
+        "user": {
+          "username": "timsmart",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "449108784879763458",
+          "global_name": "Tim Smart",
+          "display_name_styles": null,
+          "discriminator": "0",
+          "collectibles": null,
+          "clan": null,
+          "avatar_decoration_data": null,
+          "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+        },
+        "unusual_dm_activity_until": null,
+        "roles": [],
+        "premium_since": null,
+        "permissions": "18014398509481983",
+        "pending": false,
+        "nick": null,
+        "mute": false,
+        "joined_at": "2021-05-07T10:50:45.596000+00:00",
+        "flags": 0,
+        "deaf": false,
+        "communication_disabled_until": null,
+        "banner": null,
+        "avatar": null
+      },
+      "locale": "en-GB",
+      "id": "1571252264956469369",
+      "guild_locale": "en-US",
+      "guild_id": "840178841540362250",
+      "guild": {
+        "locale": "en-US",
+        "id": "840178841540362250",
+        "features": []
+      },
+      "entitlements": [],
+      "entitlement_sku_ids": [],
+      "data": {
+        "type": 1,
+        "options": [
+          {
+            "value": "mention",
+            "type": 3,
+            "name": "what"
+          }
+        ],
+        "name": "chat-capture",
+        "id": "1571251308462084127",
+        "guild_id": "840178841540362250"
+      },
+      "context": 0,
+      "channel_id": "1570605581192929301",
+      "channel": {
+        "type": 0,
+        "topic": null,
+        "rate_limit_per_user": 0,
+        "position": 6,
+        "permissions": "18014398509481983",
+        "parent_id": "840178841540362251",
+        "nsfw": false,
+        "name": "test",
+        "last_message_id": "1570720379356581938",
+        "id": "1570605581192929301",
+        "guild_id": "840178841540362250",
+        "flags": 0
+      },
+      "authorizing_integration_owners": {
+        "0": "840178841540362250"
+      },
+      "attachment_size_limit": 20971520,
+      "application_id": "1564742987727118426",
+      "app_permissions": "18014398509481983"
+    },
+    "public": {
+      "version": 1,
+      "type": 2,
+      "token": "<redacted>",
+      "member": {
+        "user": {
+          "username": "timsmart",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "449108784879763458",
+          "global_name": "Tim Smart",
+          "display_name_styles": null,
+          "discriminator": "0",
+          "collectibles": null,
+          "clan": null,
+          "avatar_decoration_data": null,
+          "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+        },
+        "unusual_dm_activity_until": null,
+        "roles": [],
+        "premium_since": null,
+        "permissions": "18014398509481983",
+        "pending": false,
+        "nick": null,
+        "mute": false,
+        "joined_at": "2021-05-07T10:50:45.596000+00:00",
+        "flags": 0,
+        "deaf": false,
+        "communication_disabled_until": null,
+        "banner": null,
+        "avatar": null
+      },
+      "locale": "en-GB",
+      "id": "1571252314214236321",
+      "guild_locale": "en-US",
+      "guild_id": "840178841540362250",
+      "guild": {
+        "locale": "en-US",
+        "id": "840178841540362250",
+        "features": []
+      },
+      "entitlements": [],
+      "entitlement_sku_ids": [],
+      "data": {
+        "type": 1,
+        "options": [
+          {
+            "value": "public",
+            "type": 3,
+            "name": "what"
+          }
+        ],
+        "name": "chat-capture",
+        "id": "1571251308462084127",
+        "guild_id": "840178841540362250"
+      },
+      "context": 0,
+      "channel_id": "1570605581192929301",
+      "channel": {
+        "type": 0,
+        "topic": null,
+        "rate_limit_per_user": 0,
+        "position": 6,
+        "permissions": "18014398509481983",
+        "parent_id": "840178841540362251",
+        "nsfw": false,
+        "name": "test",
+        "last_message_id": "1570720379356581938",
+        "id": "1570605581192929301",
+        "guild_id": "840178841540362250",
+        "flags": 0
+      },
+      "authorizing_integration_owners": {
+        "0": "840178841540362250"
+      },
+      "attachment_size_limit": 20971520,
+      "application_id": "1564742987727118426",
+      "app_permissions": "18014398509481983"
+    },
+    "defer": {
+      "version": 1,
+      "type": 2,
+      "token": "<redacted>",
+      "member": {
+        "user": {
+          "username": "timsmart",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "449108784879763458",
+          "global_name": "Tim Smart",
+          "display_name_styles": null,
+          "discriminator": "0",
+          "collectibles": null,
+          "clan": null,
+          "avatar_decoration_data": null,
+          "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+        },
+        "unusual_dm_activity_until": null,
+        "roles": [],
+        "premium_since": null,
+        "permissions": "18014398509481983",
+        "pending": false,
+        "nick": null,
+        "mute": false,
+        "joined_at": "2021-05-07T10:50:45.596000+00:00",
+        "flags": 0,
+        "deaf": false,
+        "communication_disabled_until": null,
+        "banner": null,
+        "avatar": null
+      },
+      "locale": "en-GB",
+      "id": "1571252354362249429",
+      "guild_locale": "en-US",
+      "guild_id": "840178841540362250",
+      "guild": {
+        "locale": "en-US",
+        "id": "840178841540362250",
+        "features": []
+      },
+      "entitlements": [],
+      "entitlement_sku_ids": [],
+      "data": {
+        "type": 1,
+        "options": [
+          {
+            "value": "defer",
+            "type": 3,
+            "name": "what"
+          }
+        ],
+        "name": "chat-capture",
+        "id": "1571251308462084127",
+        "guild_id": "840178841540362250"
+      },
+      "context": 0,
+      "channel_id": "1570605581192929301",
+      "channel": {
+        "type": 0,
+        "topic": null,
+        "rate_limit_per_user": 0,
+        "position": 6,
+        "permissions": "18014398509481983",
+        "parent_id": "840178841540362251",
+        "nsfw": false,
+        "name": "test",
+        "last_message_id": "1571252315409612851",
+        "id": "1570605581192929301",
+        "guild_id": "840178841540362250",
+        "flags": 0
+      },
+      "authorizing_integration_owners": {
+        "0": "840178841540362250"
+      },
+      "attachment_size_limit": 20971520,
+      "application_id": "1564742987727118426",
+      "app_permissions": "18014398509481983"
+    },
+    "deferPublic": {
+      "version": 1,
+      "type": 2,
+      "token": "<redacted>",
+      "member": {
+        "user": {
+          "username": "timsmart",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "449108784879763458",
+          "global_name": "Tim Smart",
+          "display_name_styles": null,
+          "discriminator": "0",
+          "collectibles": null,
+          "clan": null,
+          "avatar_decoration_data": null,
+          "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+        },
+        "unusual_dm_activity_until": null,
+        "roles": [],
+        "premium_since": null,
+        "permissions": "18014398509481983",
+        "pending": false,
+        "nick": null,
+        "mute": false,
+        "joined_at": "2021-05-07T10:50:45.596000+00:00",
+        "flags": 0,
+        "deaf": false,
+        "communication_disabled_until": null,
+        "banner": null,
+        "avatar": null
+      },
+      "locale": "en-GB",
+      "id": "1571254079961964664",
+      "guild_locale": "en-US",
+      "guild_id": "840178841540362250",
+      "guild": {
+        "locale": "en-US",
+        "id": "840178841540362250",
+        "features": []
+      },
+      "entitlements": [],
+      "entitlement_sku_ids": [],
+      "data": {
+        "type": 1,
+        "options": [
+          {
+            "value": "defer-public",
+            "type": 3,
+            "name": "what"
+          }
+        ],
+        "name": "chat-capture",
+        "id": "1571251308462084127",
+        "guild_id": "840178841540362250"
+      },
+      "context": 0,
+      "channel_id": "1570605581192929301",
+      "channel": {
+        "type": 0,
+        "topic": null,
+        "rate_limit_per_user": 0,
+        "position": 6,
+        "permissions": "18014398509481983",
+        "parent_id": "840178841540362251",
+        "nsfw": false,
+        "name": "test",
+        "last_message_id": "1571252315409612851",
+        "id": "1570605581192929301",
+        "guild_id": "840178841540362250",
+        "flags": 0
+      },
+      "authorizing_integration_owners": {
+        "0": "840178841540362250"
+      },
+      "attachment_size_limit": 20971520,
+      "application_id": "1564742987727118426",
+      "app_permissions": "18014398509481983"
+    }
+  },
+  "callbacks": {
+    "private": {
+      "status": 204,
+      "payload": {
+        "type": 4,
+        "data": {
+          "content": "**Private answer** with _Markdown_, a list:\n\n- one\n- two\n\nand buttons",
+          "allowed_mentions": {
+            "parse": [],
+            "users": [],
+            "roles": [],
+            "replied_user": false
+          },
+          "flags": 68,
+          "components": [
+            {
+              "type": 1,
+              "components": [
+                {
+                  "type": 2,
+                  "style": 2,
+                  "label": "Ack",
+                  "custom_id": "cap-ack"
+                },
+                {
+                  "type": 2,
+                  "style": 1,
+                  "label": "Open modal",
+                  "custom_id": "cap-open"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "modal": {
+      "status": 204,
+      "payload": {
+        "type": 9,
+        "data": {
+          "custom_id": "cap-modal",
+          "title": "Capture",
+          "components": [
+            {
+              "type": 18,
+              "label": "Note (type err for a field error)",
+              "component": {
+                "type": 4,
+                "custom_id": "note",
+                "style": 1,
+                "required": true
+              }
+            }
+          ]
+        }
+      }
+    },
+    "mention": {
+      "status": 204,
+      "payload": {
+        "type": 4,
+        "data": {
+          "content": "Private answer mentioning <@449108784879763458>",
+          "allowed_mentions": {
+            "parse": [],
+            "users": [],
+            "roles": [],
+            "replied_user": false
+          },
+          "flags": 68
+        }
+      }
+    },
+    "public": {
+      "status": 204,
+      "payload": {
+        "type": 4,
+        "data": {
+          "content": "**Public answer** with _Markdown_ and buttons",
+          "allowed_mentions": {
+            "parse": [],
+            "users": [],
+            "roles": [],
+            "replied_user": false
+          },
+          "flags": 4,
+          "components": [
+            {
+              "type": 1,
+              "components": [
+                {
+                  "type": 2,
+                  "style": 2,
+                  "label": "Ack",
+                  "custom_id": "cap-ack"
+                },
+                {
+                  "type": 2,
+                  "style": 1,
+                  "label": "Open modal",
+                  "custom_id": "cap-open"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "defer": {
+      "status": 204,
+      "payload": {
+        "type": 5,
+        "data": {
+          "flags": 64
+        }
+      }
+    },
+    "deferPublic": {
+      "status": 204,
+      "payload": {
+        "type": 5
+      }
+    }
+  },
+  "clicks": {
+    "privateAnswer": {
+      "version": 1,
+      "type": 3,
+      "token": "<redacted>",
+      "message": {
+        "webhook_id": "1564742987727118426",
+        "type": 20,
+        "tts": false,
+        "timestamp": "2026-11-14T19:54:18.950000+00:00",
+        "pinned": false,
+        "mentions": [],
+        "mention_roles": [],
+        "mention_everyone": false,
+        "interaction_metadata": {
+          "user": {
+            "username": "timsmart",
+            "public_flags": 0,
+            "primary_guild": null,
+            "id": "449108784879763458",
+            "global_name": "Tim Smart",
+            "display_name_styles": null,
+            "discriminator": "0",
+            "collectibles": null,
+            "clan": null,
+            "avatar_decoration_data": null,
+            "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+          },
+          "type": 2,
+          "name": "chat-capture",
+          "id": "1571251955899310120",
+          "command_type": 1,
+          "authorizing_integration_owners": {
+            "0": "840178841540362250"
+          }
+        },
+        "interaction": {
+          "user": {
+            "username": "timsmart",
+            "public_flags": 0,
+            "primary_guild": null,
+            "id": "449108784879763458",
+            "global_name": "Tim Smart",
+            "display_name_styles": null,
+            "discriminator": "0",
+            "collectibles": null,
+            "clan": null,
+            "avatar_decoration_data": null,
+            "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+          },
+          "type": 2,
+          "name": "chat-capture",
+          "id": "1571251955899310120"
+        },
+        "id": "1571251956796752013",
+        "flags": 68,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "**Private answer** with _Markdown_, a list:\n\n- one\n- two\n\nand buttons",
+        "components": [
+          {
+            "type": 1,
+            "id": 1,
+            "components": [
+              {
+                "type": 2,
+                "style": 2,
+                "label": "Ack",
+                "id": 2,
+                "custom_id": "cap-ack"
+              },
+              {
+                "type": 2,
+                "style": 1,
+                "label": "Open modal",
+                "id": 3,
+                "custom_id": "cap-open"
+              }
+            ]
+          }
+        ],
+        "channel_id": "1570605581192929301",
+        "author": {
+          "username": "Janitor",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "1564742987727118426",
+          "global_name": null,
+          "display_name_styles": null,
+          "discriminator": "5426",
+          "collectibles": null,
+          "clan": null,
+          "bot": true,
+          "avatar_decoration_data": null,
+          "avatar": "07aaab1f8e37dd6b088b6f21d1332701"
+        },
+        "attachments": [],
+        "application_id": "1564742987727118426"
+      },
+      "member": {
+        "user": {
+          "username": "timsmart",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "449108784879763458",
+          "global_name": "Tim Smart",
+          "display_name_styles": null,
+          "discriminator": "0",
+          "collectibles": null,
+          "clan": null,
+          "avatar_decoration_data": null,
+          "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+        },
+        "unusual_dm_activity_until": null,
+        "roles": [],
+        "premium_since": null,
+        "permissions": "18014398509481983",
+        "pending": false,
+        "nick": null,
+        "mute": false,
+        "joined_at": "2021-05-07T10:50:45.596000+00:00",
+        "flags": 0,
+        "deaf": false,
+        "communication_disabled_until": null,
+        "banner": null,
+        "avatar": null
+      },
+      "locale": "en-GB",
+      "id": "1571251977059573781",
+      "guild_locale": "en-US",
+      "guild_id": "840178841540362250",
+      "guild": {
+        "locale": "en-US",
+        "id": "840178841540362250",
+        "features": []
+      },
+      "entitlements": [],
+      "entitlement_sku_ids": [],
+      "data": {
+        "id": 2,
+        "custom_id": "cap-ack",
+        "component_type": 2
+      },
+      "context": 0,
+      "channel_id": "1570605581192929301",
+      "channel": {
+        "type": 0,
+        "topic": null,
+        "rate_limit_per_user": 0,
+        "position": 6,
+        "permissions": "18014398509481983",
+        "parent_id": "840178841540362251",
+        "nsfw": false,
+        "name": "test",
+        "last_message_id": "1570720379356581938",
+        "id": "1570605581192929301",
+        "guild_id": "840178841540362250",
+        "flags": 0
+      },
+      "authorizing_integration_owners": {
+        "0": "840178841540362250"
+      },
+      "attachment_size_limit": 20971520,
+      "application_id": "1564742987727118426",
+      "app_permissions": "18014398509481983"
+    },
+    "privateAnswerCallback": {
+      "status": 204,
+      "payload": {
+        "type": 6
+      }
+    }
+  },
+  "commandModal": {
+    "submitErrors": {
+      "version": 1,
+      "type": 5,
+      "token": "<redacted>",
+      "member": {
+        "user": {
+          "username": "timsmart",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "449108784879763458",
+          "global_name": "Tim Smart",
+          "display_name_styles": null,
+          "discriminator": "0",
+          "collectibles": null,
+          "clan": null,
+          "avatar_decoration_data": null,
+          "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+        },
+        "unusual_dm_activity_until": null,
+        "roles": [],
+        "premium_since": null,
+        "permissions": "18014398509481983",
+        "pending": false,
+        "nick": null,
+        "mute": false,
+        "joined_at": "2021-05-07T10:50:45.596000+00:00",
+        "flags": 0,
+        "deaf": false,
+        "communication_disabled_until": null,
+        "banner": null,
+        "avatar": null
+      },
+      "locale": "en-GB",
+      "id": "1571252118004703322",
+      "guild_locale": "en-US",
+      "guild_id": "840178841540362250",
+      "guild": {
+        "locale": "en-US",
+        "id": "840178841540362250",
+        "features": []
+      },
+      "entitlements": [],
+      "entitlement_sku_ids": [],
+      "data": {
+        "custom_id": "cap-modal",
+        "components": [
+          {
+            "type": 18,
+            "id": 1,
+            "component": {
+              "value": "err",
+              "type": 4,
+              "id": 2,
+              "custom_id": "note"
+            }
+          }
+        ]
+      },
+      "context": 0,
+      "channel_id": "1570605581192929301",
+      "channel": {
+        "type": 0,
+        "topic": null,
+        "rate_limit_per_user": 0,
+        "position": 6,
+        "permissions": "18014398509481983",
+        "parent_id": "840178841540362251",
+        "nsfw": false,
+        "name": "test",
+        "last_message_id": "1570720379356581938",
+        "id": "1570605581192929301",
+        "guild_id": "840178841540362250",
+        "flags": 0
+      },
+      "authorizing_integration_owners": {
+        "0": "840178841540362250"
+      },
+      "attachment_size_limit": 20971520,
+      "application_id": "1564742987727118426",
+      "app_permissions": "18014398509481983"
+    },
+    "errorsCallback": {
+      "status": 204,
+      "payload": {
+        "type": 4,
+        "data": {
+          "content": "- That is the error you asked for",
+          "allowed_mentions": {
+            "parse": []
+          },
+          "flags": 64
+        }
+      }
+    },
+    "submitClose": {
+      "version": 1,
+      "type": 5,
+      "token": "<redacted>",
+      "member": {
+        "user": {
+          "username": "timsmart",
+          "public_flags": 0,
+          "primary_guild": null,
+          "id": "449108784879763458",
+          "global_name": "Tim Smart",
+          "display_name_styles": null,
+          "discriminator": "0",
+          "collectibles": null,
+          "clan": null,
+          "avatar_decoration_data": null,
+          "avatar": "2eded1558c297f57913f8b7e4c6b7efc"
+        },
+        "unusual_dm_activity_until": null,
+        "roles": [],
+        "premium_since": null,
+        "permissions": "18014398509481983",
+        "pending": false,
+        "nick": null,
+        "mute": false,
+        "joined_at": "2021-05-07T10:50:45.596000+00:00",
+        "flags": 0,
+        "deaf": false,
+        "communication_disabled_until": null,
+        "banner": null,
+        "avatar": null
+      },
+      "locale": "en-GB",
+      "id": "1571252196744634570",
+      "guild_locale": "en-US",
+      "guild_id": "840178841540362250",
+      "guild": {
+        "locale": "en-US",
+        "id": "840178841540362250",
+        "features": []
+      },
+      "entitlements": [],
+      "entitlement_sku_ids": [],
+      "data": {
+        "custom_id": "cap-modal",
+        "components": [
+          {
+            "type": 18,
+            "id": 1,
+            "component": {
+              "value": "hello",
+              "type": 4,
+              "id": 2,
+              "custom_id": "note"
+            }
+          }
+        ]
+      },
+      "context": 0,
+      "channel_id": "1570605581192929301",
+      "channel": {
+        "type": 0,
+        "topic": null,
+        "rate_limit_per_user": 0,
+        "position": 6,
+        "permissions": "18014398509481983",
+        "parent_id": "840178841540362251",
+        "nsfw": false,
+        "name": "test",
+        "last_message_id": "1570720379356581938",
+        "id": "1570605581192929301",
+        "guild_id": "840178841540362250",
+        "flags": 0
+      },
+      "authorizing_integration_owners": {
+        "0": "840178841540362250"
+      },
+      "attachment_size_limit": 20971520,
+      "application_id": "1564742987727118426",
+      "app_permissions": "18014398509481983"
+    },
+    "closeCallback": {
+      "status": 204,
+      "payload": {
+        "type": 6
+      }
+    }
+  },
+  "followUp": {
+    "request": {
+      "content": "**Deferred answer** to defer, with buttons",
+      "allowed_mentions": {
+        "parse": [],
+        "users": [],
+        "roles": [],
+        "replied_user": false
+      },
+      "flags": 68,
+      "components": [
+        {
+          "type": 1,
+          "components": [
+            {
+              "type": 2,
+              "style": 2,
+              "label": "Ack",
+              "custom_id": "cap-ack"
+            },
+            {
+              "type": 2,
+              "style": 1,
+              "label": "Open modal",
+              "custom_id": "cap-open"
+            }
+          ]
+        }
+      ]
+    },
+    "response": {
+      "status": 200,
+      "body": {
+        "type": 20,
+        "content": "**Deferred answer** to defer, with buttons",
+        "mentions": [],
+        "mention_roles": [],
+        "attachments": [],
+        "embeds": [],
+        "timestamp": "2026-11-14T19:55:53.917000+00:00",
+        "edited_timestamp": null,
+        "flags": 68,
+        "components": [
+          {
+            "type": 1,
+            "id": 1,
+            "components": [
+              {
+                "type": 2,
+                "id": 2,
+                "custom_id": "cap-ack",
+                "style": 2,
+                "label": "Ack"
+              },
+              {
+                "type": 2,
+                "id": 3,
+                "custom_id": "cap-open",
+                "style": 1,
+                "label": "Open modal"
+              }
+            ]
+          }
+        ],
+        "id": "1571252355117088918",
+        "channel_id": "1570605581192929301",
+        "author": {
+          "id": "1564742987727118426",
+          "username": "Janitor",
+          "avatar": "07aaab1f8e37dd6b088b6f21d1332701",
+          "discriminator": "5426",
+          "public_flags": 0,
+          "flags": 0,
+          "bot": true,
+          "banner": null,
+          "accent_color": null,
+          "global_name": null,
+          "avatar_decoration_data": null,
+          "collectibles": null,
+          "display_name_styles": null,
+          "banner_color": null,
+          "clan": null,
+          "primary_guild": null
+        },
+        "pinned": false,
+        "mention_everyone": false,
+        "tts": false,
+        "application_id": "1564742987727118426",
+        "interaction": {
+          "id": "1571252354362249429",
+          "type": 2,
+          "name": "chat-capture",
+          "user": {
+            "id": "449108784879763458",
+            "username": "timsmart",
+            "avatar": "2eded1558c297f57913f8b7e4c6b7efc",
+            "discriminator": "0",
+            "public_flags": 0,
+            "flags": 0,
+            "banner": null,
+            "accent_color": null,
+            "global_name": "Tim Smart",
+            "avatar_decoration_data": null,
+            "collectibles": null,
+            "display_name_styles": null,
+            "banner_color": null,
+            "clan": null,
+            "primary_guild": null
+          }
+        },
+        "webhook_id": "1564742987727118426",
+        "interaction_metadata": {
+          "id": "1571252354362249429",
+          "type": 2,
+          "user": {
+            "id": "449108784879763458",
+            "username": "timsmart",
+            "avatar": "2eded1558c297f57913f8b7e4c6b7efc",
+            "discriminator": "0",
+            "public_flags": 0,
+            "flags": 0,
+            "banner": null,
+            "accent_color": null,
+            "global_name": "Tim Smart",
+            "avatar_decoration_data": null,
+            "collectibles": null,
+            "display_name_styles": null,
+            "banner_color": null,
+            "clan": null,
+            "primary_guild": null
+          },
+          "authorizing_integration_owners": {
+            "0": "840178841540362250"
+          },
+          "name": "chat-capture",
+          "command_type": 1
+        }
+      }
+    }
+  },
+  "expired": {
+    "note": "15.5 minutes after the command, sent by the capture script itself with the interaction's token, before the adapter's followUp, which refused without a request. The same answer came three times, for an edit of @original and for a new follow-up",
+    "edit": {
+      "method": "PATCH",
+      "path": "/webhooks/1564742987727118426/<redacted>/messages/@original",
+      "status": 401,
+      "body": {
+        "message": "Invalid Webhook Token",
+        "code": 50027
+      }
+    },
+    "followUp": {
+      "method": "POST",
+      "path": "/webhooks/1564742987727118426/<redacted>",
+      "status": 401,
+      "body": {
+        "message": "Invalid Webhook Token",
+        "code": 50027
+      }
+    }
+  }
+}
