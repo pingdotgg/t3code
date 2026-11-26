@@ -230,8 +230,11 @@ export async function writePngToClipboard(
     throw new ClipboardApiUnavailableError(clipboardTargetFields(target, "unavailable"));
   }
   try {
+    const image = png();
+    // The clipboard can refuse before it reads the image; its rejection then reports the copy.
+    void image.catch(() => undefined);
     // Safari rejects a clipboard write that starts after an await, so hand it the promise.
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": png() })]);
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": image })]);
     return true;
   } catch (cause) {
     throw new ClipboardWriteError({ ...clipboardTargetFields(target, "failure"), cause });

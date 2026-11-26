@@ -106,6 +106,26 @@ describe("writePngToClipboard", () => {
     await expect(copied).resolves.toBe(true);
   });
 
+  it("leaves no unhandled rejection when the clipboard refuses before reading the image", async () => {
+    vi.stubGlobal("navigator", {
+      clipboard: { write: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    vi.stubGlobal(
+      "ClipboardItem",
+      class {
+        constructor(readonly data: Record<string, Promise<Blob>>) {}
+      },
+    );
+    const png = Promise.reject(new Error("the render failed"));
+    const handled = vi.spyOn(png, "catch");
+
+    await expect(writePngToClipboard(() => png)).rejects.toMatchObject({
+      _tag: "ClipboardWriteError",
+    });
+    // The clipboard never read the image, so only the copy's own handler covers its rejection.
+    expect(handled).toHaveBeenCalled();
+  });
+
   it("reports a clipboard without image support instead of drawing the image", async () => {
     vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn() } });
     const draw = vi.fn(async () => new Blob());

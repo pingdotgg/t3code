@@ -180,6 +180,8 @@ function paintOps(
 
 /** Copies a rendered `<table>` (and the backdrop behind it) into a PNG. */
 export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
+  // A detached table measures 0 x 0 and would copy an empty image over the clipboard.
+  if (!table.isConnected) throw new Error("The table left the page before it was drawn.");
   const bounds = table.getBoundingClientRect();
   const width = bounds.width + MARGIN * 2;
   const height = bounds.height + MARGIN * 2;
@@ -190,9 +192,10 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
     MAX_CANVAS_SIDE / height,
     Math.sqrt(MAX_CANVAS_AREA / (width * height)),
   );
+  // Rounding down keeps the canvas inside both caps; at most a pixel of margin is lost.
   const surface = createCanvas(
-    Math.max(1, Math.round(width * scale)),
-    Math.max(1, Math.round(height * scale)),
+    Math.max(1, Math.floor(width * scale)),
+    Math.max(1, Math.floor(height * scale)),
     "srgb",
   );
   if (!surface) throw new Error("A canvas is unavailable for the table image.");
@@ -547,6 +550,8 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
         width: clipsX ? right - left : UNBOUNDED * 2,
         height: clipsY ? bottom - top : UNBOUNDED * 2,
       };
+      // Both passes: a clipped block's descendants can be block-level boxes too.
+      blockOps.push({ kind: "clip", box: clip });
       contentOps.push({ kind: "clip", box: clip });
       if (clipsX && style.textOverflow === "ellipsis") {
         const contentRight = right - (Number.parseFloat(style.paddingRight) || 0);
@@ -567,7 +572,10 @@ export async function renderTablePng(table: HTMLTableElement): Promise<Blob> {
       if (child instanceof Element) visitElement(child, scope);
       else if (child instanceof Text) visitText(child, scope);
     }
-    if (clip) contentOps.push({ kind: "unclip" });
+    if (clip) {
+      blockOps.push({ kind: "unclip" });
+      contentOps.push({ kind: "unclip" });
+    }
   };
 
   // The backdrop: the nearest opaque background behind the table and every layer above it.

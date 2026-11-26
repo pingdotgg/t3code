@@ -186,6 +186,7 @@ describe("copying a table as PNG", () => {
       await userEvent.click(page.getByRole("menuitem", { name: "Copy as PNG" }));
       await expect.element(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
 
+      expect(items).toHaveLength(1);
       const [item] = items;
       expect(item?.types).toEqual(["image/png"]);
       const png = await item!.getType("image/png");
@@ -193,8 +194,8 @@ describe("copying a table as PNG", () => {
       const table = screen.container.querySelector("table")!.getBoundingClientRect();
       const bitmap = await createImageBitmap(png);
       // The table plus a 16px margin on each side, at the screen's pixel density.
-      expect(bitmap.width / devicePixelRatio).toBeCloseTo(table.width + 32, 0);
-      expect(bitmap.height / devicePixelRatio).toBeCloseTo(table.height + 32, 0);
+      expect(bitmap.width).toBe(Math.floor((table.width + 32) * devicePixelRatio));
+      expect(bitmap.height).toBe(Math.floor((table.height + 32) * devicePixelRatio));
     } finally {
       write.mockRestore();
     }

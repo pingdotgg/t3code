@@ -76,8 +76,8 @@ describe("renderTablePng", () => {
     );
     const { table } = mounted;
     const pixels = await readPng(await renderTablePng(table), table);
-    expect(pixels.width).toBe(Math.round((pixels.origin.width + MARGIN * 2) * devicePixelRatio));
-    expect(pixels.height).toBe(Math.round((pixels.origin.height + MARGIN * 2) * devicePixelRatio));
+    expect(pixels.width).toBe(Math.floor((pixels.origin.width + MARGIN * 2) * devicePixelRatio));
+    expect(pixels.height).toBe(Math.floor((pixels.origin.height + MARGIN * 2) * devicePixelRatio));
     expect(pixels.cornerAlpha).toBe(255);
 
     // The margin shows the backdrop, the rule keeps its color, and the empty cell stays empty.
@@ -123,6 +123,17 @@ describe("renderTablePng", () => {
     expect(pixels.hasInk(tail(chip.top, chip.top + chip.height * 0.45))).toBe(false);
     expect(pixels.hasInk(tail(chip.top + chip.height * 0.45, chip.bottom))).toBe(true);
     expect(pixels.hasInk(new DOMRect(chip.right, chip.top, 50, chip.height))).toBe(false);
+  });
+
+  it("clips a block's background to the box that hides its overflow", async () => {
+    using mounted = mountTable(
+      `<tr><td><div id="clip" style="width: 60px; overflow: hidden"><div style="width: 120px; height: 20px; background: rgb(255, 0, 0)"></div></div></td><td style="padding-left: 80px">x</td></tr>`,
+    );
+    const { table } = mounted;
+    const pixels = await readPng(await renderTablePng(table), table);
+    const clip = document.getElementById("clip")!.getBoundingClientRect();
+    expect(pixels.at(clip.left + 30, clip.top + 10)).toEqual([255, 0, 0]);
+    expect(pixels.hasInk(new DOMRect(clip.right + 1, clip.top, 50, clip.height))).toBe(false);
   });
 
   it("draws a sprite icon from the shared symbol it points at", async () => {
