@@ -40,7 +40,7 @@ import {
   MonitorIcon,
   StarIcon,
   Trash2Icon,
-  UnlinkIcon,
+  UnplugIcon,
   XIcon,
 } from "lucide-react";
 import { Badge } from "../ui/badge";
@@ -66,6 +66,7 @@ import { languageLabel } from "./SpeechLanguageSelect";
 import { preferredSpeechLanguages } from "../../speech/preferredSpeechLanguages";
 import { ReadAloudKeyDialog } from "./ReadAloudKeyDialog";
 import { SpeechProviderIcon } from "./SpeechProviderIcon";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 
@@ -97,6 +98,9 @@ function LocalSpeechModel({
   const [error, setError] = useState("");
   const install = model.install;
   const downloading = install?.state === "downloading" || install?.state === "verifying";
+  const removeLabel = install?.linkedFrom
+    ? gt("Stop using your {name} file; the file stays on disk", { name: model.name })
+    : gt("Delete {name}", { name: model.name });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Poll the environment's download progress while it runs.
   useEffect(() => {
     if ((!downloading && !requesting) || refreshing) return;
@@ -229,19 +233,20 @@ function LocalSpeechModel({
             </Button>
           )}
           {install.state === "installed" && (
-            <Button
-              size="icon-sm"
-              variant="outline"
-              disabled={!canManage || requesting}
-              aria-label={
-                install.linkedFrom
-                  ? gt("Stop using your {name} file; the file stays on disk", { name: model.name })
-                  : gt("Delete {name}", { name: model.name })
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  disabled={!canManage || requesting}
+                  aria-label={removeLabel}
+                  onClick={() => void run("remove")}
+                />
               }
-              onClick={() => void run("remove")}
+              label={removeLabel}
             >
-              {install.linkedFrom ? <UnlinkIcon /> : <Trash2Icon />}
-            </Button>
+              {install.linkedFrom ? <UnplugIcon /> : <Trash2Icon />}
+            </SharedTooltipTrigger>
           )}
         </div>
       </div>

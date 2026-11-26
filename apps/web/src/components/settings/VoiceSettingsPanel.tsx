@@ -51,7 +51,7 @@ import {
   RefreshCwIcon,
   StarIcon,
   Trash2Icon,
-  UnlinkIcon,
+  UnplugIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -198,6 +198,9 @@ function ModelCard(props: ModelCardProps) {
   const locale = useLocale();
   const { model } = props;
   const downloading = model.state === "downloading" || model.state === "verifying";
+  const removeLabel = model.linkedFrom
+    ? gt("Stop using your {name} file; the file stays on disk", { name: model.name })
+    : gt("Delete {name}", { name: model.name });
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   return (
     <div className="@container/model px-3 py-3">
@@ -333,19 +336,20 @@ function ModelCard(props: ModelCardProps) {
             </Button>
           )}
           {model.state === "installed" ? (
-            <Button
-              size="icon-sm"
-              variant="outline"
-              disabled={props.busy}
-              aria-label={
-                model.linkedFrom
-                  ? gt("Stop using your {name} file; the file stays on disk", { name: model.name })
-                  : gt("Delete {name}", { name: model.name })
+            <SharedTooltipTrigger
+              render={
+                <Button
+                  size="icon-sm"
+                  variant="outline"
+                  disabled={props.busy}
+                  aria-label={removeLabel}
+                  onClick={props.onDelete}
+                />
               }
-              onClick={props.onDelete}
+              label={removeLabel}
             >
-              {model.linkedFrom ? <UnlinkIcon /> : <Trash2Icon />}
-            </Button>
+              {model.linkedFrom ? <UnplugIcon /> : <Trash2Icon />}
+            </SharedTooltipTrigger>
           ) : null}
         </div>
       </div>
