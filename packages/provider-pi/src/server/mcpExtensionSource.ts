@@ -1,6 +1,7 @@
 // No T3 imports inside the string; resolve Pi and typebox from the user's Pi install.
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
+import { T3_MCP_TOOLS_ASKED_BY_T3 } from "@t3tools/shared/t3McpToolPresentation";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
 
@@ -30,6 +31,7 @@ const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
+const TOOLS_ASKED_BY_T3 = new Set(${JSON.stringify(T3_MCP_TOOLS_ASKED_BY_T3)});
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
@@ -351,12 +353,19 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     typeof pi.getAllTools === "function" &&
     pi.getAllTools().some((tool) => tool.name === "tool_search" && BUILTIN_TOOL_SEARCH_PATHS.has(tool.sourceInfo?.path ?? ""));
 
+  // T3's server asks the person about some of its tools itself, naming what the call would do,
+  // and holds them until the person answers. Asking here too would ask twice.
   const readOnlyMcpTools = new Set<string>();
-  const isReadOnlyMcpTool = (name: string) => {
+  const mcpToolsAskedByT3 = new Set<string>();
+  const isUnpromptedMcpTool = (name: string) => {
     const extensionPath = env(EXTENSION_PATH_ENV);
-    if (extensionPath === undefined || !readOnlyMcpTools.has(name) || typeof pi.getAllTools !== "function") return false;
+    if (
+      extensionPath === undefined ||
+      !(readOnlyMcpTools.has(name) || mcpToolsAskedByT3.has(name)) ||
+      typeof pi.getAllTools !== "function"
+    ) return false;
     // A user extension may own the same name. Only our registered HTTP bridge
-    // may inherit the canonical T3 server's read-only annotation.
+    // may inherit what the canonical T3 server says about its own tool.
     return pi.getAllTools().some((tool) => tool.name === name &&
       typeof tool.sourceInfo?.path === "string" &&
       NodePath.resolve(tool.sourceInfo.path) === NodePath.resolve(extensionPath));
@@ -365,7 +374,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     const mode = runtimeMode();
     if (mode === "full-access") return;
-    if ((event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) || isReadOnlyMcpTool(event.toolName)) {
+    if ((event.toolName === "tool_search" ? hasBuiltinToolSearch() : READ_ONLY_TOOLS.has(event.toolName)) || isUnpromptedMcpTool(event.toolName)) {
       return;
     }
     if (mode === "auto-accept-edits" && FILE_CHANGE_TOOLS.has(event.toolName)) {
@@ -420,11 +429,13 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     // model-only keeps it out of codemode; it hides its own declaration.
     const prefixes = supportsExposure ? ["mcp__t3-code__", ALIAS_PREFIX] : ["mcp__t3-code__"];
     readOnlyMcpTools.clear();
+    mcpToolsAskedByT3.clear();
     for (const tool of catalog) {
       const name = tool.name;
       for (const prefix of prefixes) {
         const toolName = \`\${prefix}\${name}\`;
         if (tool.annotations?.readOnlyHint === true) readOnlyMcpTools.add(toolName);
+        if (TOOLS_ASKED_BY_T3.has(name)) mcpToolsAskedByT3.add(toolName);
         const isAlias = prefix === ALIAS_PREFIX;
         const exposure = isAlias ? "model-only" : isDeferred(name) ? "deferred" : "direct";
         pi.registerTool({

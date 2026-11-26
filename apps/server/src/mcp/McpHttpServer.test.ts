@@ -62,6 +62,8 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import { FEEDBACK_CLI_CLIENT_LABEL } from "../feedback/FeedbackReport.ts";
 import * as Feedback from "../feedback/FeedbackService.ts";
 import * as FeedbackHandlers from "./toolkits/feedback/handlers.ts";
@@ -104,6 +106,13 @@ const layerTest = McpHttpServer.layerPreviewToolkit.pipe(
   Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
+  // Only an upload below Full access reads the thread's folders.
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(ProjectStore.ProjectStoreV2)({}),
+      Layer.mock(WorkspaceFolders.WorkspaceFolders)({}),
+    ),
+  ),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" })),
   Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );

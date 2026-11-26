@@ -47,6 +47,7 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import { listThreadPullRequests } from "./handlers.ts";
 import * as PullRequestsHandlers from "./handlers.ts";
+import { T3_MCP_TOOLS_ASKED_BY_T3 } from "@t3tools/shared/t3McpToolPresentation";
 import { CHILD_PULL_REQUEST_REPORT_NEXT, PullRequestsToolkit } from "./tools.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
@@ -231,6 +232,8 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
               : { runtimeMode: thread.runtimeMode, interactionMode: thread.interactionMode },
           ),
         ),
+      // No turn is running here, so there is nowhere to show a request the server raises.
+      getThreadRecords: () => Effect.succeed({ runs: [] } as never),
     }),
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
@@ -1649,35 +1652,44 @@ describe("source control tools", () => {
     it.effect.each([
       ["whose adapter keeps no record of the person's answer", true, false],
       ["whose client cannot ask a person", false, true],
-    ] as const)("a thread %s is told so and writes nothing", ([, elicitation, keepsRecord]) =>
-      Effect.gen(function* () {
-        const sessions = yield* McpProviderSessions.McpProviderSessions;
-        if (keepsRecord) yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
-        const forge = recordingForge();
-        const hooked = checkout(() => ({ digest: "digest-1" }));
-        const harness = yield* makeHarness({
-          thread: lowerThread(),
-          pullRequests: forge.pullRequests,
-          git: hooked.git,
-        });
-        for (const [name, params] of [
-          ...WRITES,
-          ["pull_request_create", { title: "Add tools", body: "Adds tools." }],
-        ] as const) {
-          const client = asClient(undefined, elicitation);
-          const refused = yield* harness
-            .call(name, params as never)
-            .pipe(client.provide(sessions), Effect.flip);
-          expect(refused).toMatchObject({ code: "capability_denied" });
-          expect((refused as { readonly message: string }).message).toMatch(
-            /^Not done: ".+" needs the user's approval below Full access, and this agent's client cannot ask for it\. Tell the user; they can do it themselves or switch this thread to Full access\.$/,
-          );
-          expect(Ref.getUnsafe(client.request)).toBeUndefined();
-        }
-        expect(forge.writes).toEqual([]);
-        expect(hooked.attempts).toEqual([]);
-      }).pipe(Effect.provide(McpProviderSessions.layer)),
+    ] as const)(
+      "a thread %s, with no turn running to ask in, is told so and writes nothing",
+      ([, elicitation, keepsRecord]) =>
+        Effect.gen(function* () {
+          const sessions = yield* McpProviderSessions.McpProviderSessions;
+          if (keepsRecord) yield* sessions.showsApprovalRequests(ProviderInstanceId.make("codex"));
+          const forge = recordingForge();
+          const hooked = checkout(() => ({ digest: "digest-1" }));
+          const harness = yield* makeHarness({
+            thread: lowerThread(),
+            pullRequests: forge.pullRequests,
+            git: hooked.git,
+          });
+          for (const [name, params] of [
+            ...WRITES,
+            ["pull_request_create", { title: "Add tools", body: "Adds tools." }],
+          ] as const) {
+            const client = asClient(undefined, elicitation);
+            const refused = yield* harness
+              .call(name, params as never)
+              .pipe(client.provide(sessions), Effect.flip);
+            expect(refused).toMatchObject({ code: "capability_denied" });
+            expect((refused as { readonly message: string }).message).toMatch(
+              /^Not done: ".+" needs the user's approval below Full access, and this agent's client cannot ask for it\. Tell the user; they can do it themselves or switch this thread to Full access\.$/,
+            );
+            expect(Ref.getUnsafe(client.request)).toBeUndefined();
+          }
+          expect(forge.writes).toEqual([]);
+          expect(hooked.attempts).toEqual([]);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
     );
+
+    // A provider client that asks about tool calls itself leaves the listed ones to this request.
+    it("the tools listed as asked by T3 Code are the ones shown to ask above", () => {
+      expect(
+        T3_MCP_TOOLS_ASKED_BY_T3.filter((name) => name in PullRequestsToolkit.tools).toSorted(),
+      ).toEqual([...new Set([...WRITES.map(([name]) => name), "pull_request_create"])].toSorted());
+    });
 
     describe("pull_request_create", () => {
       const args = { title: "Add tools", body: "Adds tools." };

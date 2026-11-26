@@ -38,6 +38,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
 import * as IssuesHandlers from "./handlers.ts";
+import { T3_MCP_TOOLS_ASKED_BY_T3 } from "@t3tools/shared/t3McpToolPresentation";
 import { IssuesToolkit } from "./tools.ts";
 
 const PROJECT_ID = ProjectId.make("project-1");
@@ -594,6 +595,13 @@ describe("issue writes below Full access", () => {
       }
     }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
+
+  // A provider client that asks about tool calls itself leaves the listed ones to this request.
+  it("the tools listed as asked by T3 Code are the ones shown to ask above", () => {
+    expect(
+      T3_MCP_TOOLS_ASKED_BY_T3.filter((name) => name in IssuesToolkit.tools).toSorted(),
+    ).toEqual([...new Set(WRITES.map(([name]) => name))].toSorted());
+  });
 
   it.effect("a Full access thread writes without asking anyone", () =>
     Effect.gen(function* () {

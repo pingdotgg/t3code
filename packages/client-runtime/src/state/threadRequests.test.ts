@@ -201,9 +201,9 @@ describe("an approval to act outside the thread", () => {
     host: "github.com",
   };
   const prompt = "Merge pull request #5 in org/repo? (request 1a2b3c4d)";
-  const pending = (item: object) =>
+  const pending = (item: object, request: object = {}) =>
     derivePendingThreadRequests({
-      runtimeRequests: [{ ...projection.runtimeRequests[0]!, kind: "mcp-elicitation" }],
+      runtimeRequests: [{ ...projection.runtimeRequests[0]!, kind: "mcp-elicitation", ...request }],
       turnItems: [
         {
           id: TurnItemId.make("tool-action-approval-item"),
@@ -236,6 +236,15 @@ describe("an approval to act outside the thread", () => {
     expect(own.pushHooks).toEqual(pushHooks);
     expect(own.detail).toBe(prompt);
     expect(pending({ appName: "deploys" })).not.toHaveProperty("toolAction");
+  });
+
+  it("is the same request, answered the same way, when the server raised it itself", () => {
+    const live = { type: "live", providerSessionId: ProviderSessionId.make("session") } as const;
+    const fromAdapter = pending({ toolAction }, { responseCapability: live });
+    expect(fromAdapter.responseCapability).toBe("live");
+    expect(pending({ toolAction }, { responseCapability: { ...live, recordOnly: true } })).toEqual(
+      fromAdapter,
+    );
   });
 
   it("asks in the server's words and lists where it acts, then the tool", () => {

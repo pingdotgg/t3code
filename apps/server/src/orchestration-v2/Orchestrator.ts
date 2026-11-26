@@ -717,6 +717,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.created.record":
       return command.parentThreadId;
     case "secret_request.record":
+    case "approval_request.record":
     case "link_request.record":
     case "feedback_request.record":
       return command.threadId;
@@ -11133,6 +11134,134 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     },
   );
 
+  /**
+   * Raises an approval one of T3 Code's own tools asks for, as the request, node and card an
+   * adapter would send for it, so every client shows and answers it like any other approval.
+   */
+  const dispatchApprovalRequestRecord = Effect.fn("orchestrationV2.dispatch.approvalRequestRecord")(
+    function* (
+      command: Extract<
+        OrchestrationV2InternalCommand,
+        { readonly type: "approval_request.record" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    ) {
+      const fail = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      const projection = yield* projectionStore
+        .getRunProviderRecords(command.threadId, command.runId, command.nodeId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined || !threadHasUnfinishedWork({ runs: [run], runtimeRequests: [] })) {
+        return yield* fail(`Run ${command.runId} is not running.`);
+      }
+      if (run.rootNodeId !== command.nodeId) {
+        return yield* fail(`Node ${command.nodeId} is not the root of run ${command.runId}.`);
+      }
+      const providerSessionId = projection.providerThreads.find(
+        (candidate) => candidate.id === run.providerThreadId,
+      )?.providerSessionId;
+      if (providerSessionId == null) {
+        return yield* fail(`Run ${command.runId} has no provider session.`);
+      }
+      const existing = yield* projectionStore
+        .getRuntimeRequest(command.threadId, command.requestId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      if (existing !== undefined) return;
+      const now = yield* DateTime.now;
+      const nodeId = idAllocator.derive.approvalNode({ requestId: command.requestId });
+      const providerTurnId = providerTurnForRun(projection, run)?.id ?? null;
+      const emitEvent = emit(events, command);
+      const base = {
+        threadId: command.threadId,
+        runId: command.runId,
+        nodeId,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+      };
+      yield* emitEvent({
+        ...base,
+        type: "node.updated",
+        payload: {
+          id: nodeId,
+          threadId: command.threadId,
+          runId: command.runId,
+          parentNodeId: command.nodeId,
+          rootNodeId: command.nodeId,
+          kind: "approval_request",
+          status: "waiting",
+          countsForRun: false,
+          providerThreadId: run.providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          runtimeRequestId: command.requestId,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: null,
+        },
+      });
+      yield* emitEvent({
+        ...base,
+        type: "runtime-request.updated",
+        payload: {
+          id: command.requestId,
+          nodeId,
+          providerTurnId,
+          nativeRequestRef: null,
+          kind: "mcp-elicitation",
+          status: "pending",
+          responseCapability: { type: "live", providerSessionId, recordOnly: true },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
+      yield* emitEvent({
+        ...base,
+        type: "turn-item.updated",
+        payload: {
+          id: idAllocator.derive.approvalTurnItem({ requestId: command.requestId }),
+          threadId: command.threadId,
+          runId: command.runId,
+          nodeId,
+          providerThreadId: run.providerThreadId,
+          providerTurnId,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: yield* nextTurnItemOrdinal(projection),
+          status: "waiting",
+          title: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "approval_request",
+          requestId: command.requestId,
+          requestKind: "mcp-elicitation",
+          prompt: command.prompt,
+          toolAction: command.toolAction,
+          ...(command.pushHooks === undefined ? {} : { pushHooks: command.pushHooks }),
+          // What the Claude and Codex adapters offer for the same request: no "always allow".
+          options: [
+            { decision: "cancel", label: "Cancel" },
+            { decision: "decline", label: "Decline" },
+            { decision: "accept", label: "Approve" },
+          ],
+        },
+      });
+    },
+  );
+
   const dispatchSecretRequestRecord = Effect.fn("orchestrationV2.dispatch.secretRequestRecord")(
     function* (
       command: Extract<OrchestrationV2InternalCommand, { readonly type: "secret_request.record" }>,
@@ -11949,6 +12078,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* recordSubagentFollowup(answer, events).pipe(mapDispatchError(answer));
       }
       if (providerSessionId === null) return;
+      // The tool that asked reads the answer from the request itself.
+      if (
+        runtimeRequest.responseCapability.type === "live" &&
+        runtimeRequest.responseCapability.recordOnly === true
+      )
+        return;
       if (runtimeRequest.kind === "user_input" && resolvedNodeStatus === "completed") {
         const thread = yield* projectionStore
           .getThread(command.threadId)
@@ -16466,6 +16601,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "secret_request.record":
         yield* dispatchSecretRequestRecord(command, events);
+        break;
+      case "approval_request.record":
+        yield* dispatchApprovalRequestRecord(command, events);
         break;
       case "feedback_request.record":
         yield* dispatchFeedbackRequestRecord(command, events);

@@ -129,9 +129,27 @@ model.
   ends it. A reply of "accept" for a request the person did not approve, or one that is gone
   because the server restarted or the thread's session was replaced, does nothing: the tool
   fails saying T3 Code has no approval, and the next call asks again.
-  Where no such record can exist, nothing is asked and the call is refused: a thread whose
-  adapter does not pass on the person's answer, whatever its client replies, and an MCP client
-  from outside, which has no thread to show a request in and so needs full access.
+  A thread whose adapter does not pass on the person's answer, or whose client takes no
+  elicitation, is asked by a request the server raises itself
+  ([`McpThreadApproval`](../../apps/server/src/mcp/McpThreadApproval.ts)): the same
+  `approval_request` item and runtime request an adapter would send for the question, recorded
+  by an internal command and marked `recordOnly`, so every client shows and answers it as it
+  does any other approval while the answer stays in the projection and nothing is delivered to
+  the provider session. No provider client is trusted for it: the approval is the request's
+  recorded decision, which only `runtime-request.respond` sets. A call waits a bounded time for
+  the answer, since T3 Code does not set these clients' tool-call limits, and then fails saying
+  the person has not answered; the request stays, kept with the thread's MCP session under its
+  state, so the same call made again waits on it or finds its answer, and reading an answer
+  ends it. It closes when the turn that asked ends or is restarted, and expires with a server
+  restart like any pending request. An agent client that prompts for tool calls on its own
+  (Pi's extension) leaves the tools in `T3_MCP_TOOLS_ASKED_BY_T3` to this request.
+  Only where there is nowhere to show a request is the call refused: a thread with no turn
+  running, and an MCP client from outside, which has no thread and so needs full access.
+  `preview_act` asks through the same gate (`actsAsCallerAsking`) for an upload alone, and only
+  for files that are not the thread's own: each path is resolved through links and compared
+  with the thread's folders, resolved the same way, and with its attachments, and a path that
+  cannot be resolved or placed is outside. The request names those files and the origin of the
+  page they go to; both are in its state, so a page that has moved on asks again.
   A call bound for a linked environment is asked about here, where the person is, from its
   arguments alone, since what they resolve to is there. Once approved it is forwarded with the
   person's access for that one call (`PeerForwarding.ForwardOptions`) in place of the agent's

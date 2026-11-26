@@ -63,6 +63,8 @@ export async function loadMcpBridge(
     readonly allowsTool?: (name: string) => boolean;
     readonly runtimeMode?: string;
     readonly inputSchema?: Record<string, unknown>;
+    /** More tools in the server's catalog, by name. */
+    readonly extraTools?: ReadonlyArray<string>;
   } = {},
 ) {
   const handlers = new Map<string, AgentStartHook>();
@@ -89,6 +91,7 @@ export async function loadMcpBridge(
       annotations: { readOnlyHint: false },
     },
     { name: "preview_snapshot", description: "Inspect the collaborative browser." },
+    ...(options.extraTools ?? []).map((name) => ({ name, description: name })),
   ].map((tool) => ({
     ...tool,
     inputSchema: options.inputSchema ?? { type: "object", properties: {} },

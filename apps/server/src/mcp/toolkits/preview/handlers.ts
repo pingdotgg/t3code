@@ -12,6 +12,8 @@ import {
   OrchestratorMcpFailure,
   type ToolActivityIcon,
   type ThreadId,
+  type OrchestrationV2ThreadShell,
+  type PreviewAutomationUploadInput,
   type PreviewAutomationOperation,
   type PreviewAutomationOpenInput,
   type PreviewAutomationRecordingStatus,
@@ -34,6 +36,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
+import { filesOutsideThread } from "./uploadPlacement.ts";
 import { PreviewSnapshotToolkit, PreviewStandardToolkit, PreviewToolkit } from "./tools.ts";
 
 /** Whether a preview the agent
@@ -189,6 +192,46 @@ export const claimPreviewRecording = Effect.fn("PreviewToolkit.claimRecording")(
   return { ...recording, id: finalId, path: finalPath };
 });
 
+const invalidAct = (cause: Schema.SchemaError) =>
+  new OrchestratorMcpFailure({ code: "invalid_request", message: cause.message });
+const decodeUpload = Schema.decodeUnknownEffect(PreviewAutomationActInputs.upload);
+
+/** The page a tab shows, as the address bar would name where a file goes. */
+const pageOrigin = (url: string | null | undefined) => {
+  if (!url) return "a page T3 Code could not read";
+  const origin = URL.canParse(url) ? new URL(url).origin : "null";
+  return origin === "null" ? url.slice(0, 200) : origin;
+};
+
+/**
+ * What an upload sends out of the thread: the files that are not its own, and the page they go
+ * to. Nothing when every file is in the thread's folders or one of its attachments.
+ */
+const uploadLeavingThread = Effect.fn("PreviewToolkit.uploadLeavingThread")(function* (
+  thread: OrchestrationV2ThreadShell,
+  upload: PreviewAutomationUploadInput,
+) {
+  const outside = yield* filesOutsideThread(thread, upload.paths);
+  if (outside.length === 0) return undefined;
+  const scope = yield* McpInvocationContext.requireThreadMcpCapability("preview");
+  const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+  const page = yield* broker
+    .invoke<PreviewAutomationStatus>({
+      scope,
+      operation: "status",
+      input: {},
+      timeoutMs: 500,
+      updateCurrentTab: false,
+      ...(upload.tabId === undefined ? {} : { tabId: upload.tabId }),
+    })
+    .pipe(Effect.orElseSucceed(() => null));
+  return {
+    action: "Upload",
+    target: outside.join(", "),
+    origin: pageOrigin(page?.url),
+  } satisfies McpToolAccess.OutsideAction;
+});
+
 const handlers = {
   preview_dialog: McpToolAccess.actsAsCaller((input) =>
     invokeTargeted<PreviewAutomationStatus>("dialog", input),
@@ -233,19 +276,26 @@ const handlers = {
       },
     );
   }),
-  preview_act: McpToolAccess.actsAsCaller(({ action, ...input }) =>
-    decodeActInput[action](input).pipe(
-      Effect.mapError(
-        (cause) => new OrchestratorMcpFailure({ code: "invalid_request", message: cause.message }),
-      ),
-      Effect.flatMap((decoded) =>
-        invokeTargeted<object>(
-          action,
-          decoded,
-          "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
+  preview_act: McpToolAccess.actsAsCallerAsking(
+    "preview_act",
+    ({ action, ...input }, thread) =>
+      action === "upload"
+        ? decodeUpload(input).pipe(
+            Effect.mapError(invalidAct),
+            Effect.flatMap((upload) => uploadLeavingThread(thread, upload)),
+          )
+        : Effect.undefined,
+    ({ action, ...input }) =>
+      decodeActInput[action](input).pipe(
+        Effect.mapError(invalidAct),
+        Effect.flatMap((decoded) =>
+          invokeTargeted<object>(
+            action,
+            decoded,
+            "timeoutMs" in decoded ? decoded.timeoutMs : undefined,
+          ),
         ),
       ),
-    ),
   ),
   preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
     invoke<unknown>("evaluate", input, undefined, tabId).pipe(

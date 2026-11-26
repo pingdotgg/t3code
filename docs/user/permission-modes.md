@@ -41,10 +41,15 @@ the hook is not caught. With husky 9 and Vite+ that is the hook's script, such a
 those go on to run or read, such as a package script or another file a hook sources
 (`.husky/_/husky.sh` with husky 8), so a change there is not asked about.
 
-With Claude and Codex the request appears in T3 Code and the tool waits for your answer there.
-An agent of another provider is told that T3 Code could not ask you and does nothing: do the
-action yourself, or switch the thread to **Full access**. An MCP client from outside T3 Code has
-no thread to ask you in, so it needs full access for these tools.
+The request appears in the thread whichever provider the agent runs on, and nothing happens
+until you answer it. If you take a while, the agent is told you have not answered yet and can
+keep waiting; a request you leave unanswered closes when the agent's turn ends. An MCP client
+from outside T3 Code has no thread to ask you in, so it needs full access for these tools.
+
+T3 Code asks in the same way before an agent below **Full access** uploads a file to a page in
+the browser preview, when the file is not in one of the thread's folders and is not one of its
+attachments. The request names the file, as the path it really is after following any links,
+and the site it would go to. Uploads of the thread's own files are not asked about.
 
 These requests are for T3 Code's own tools only. An agent that runs `git push` or a command such
 as `gh pr create` itself, in its own shell, goes through its provider's approval for commands as

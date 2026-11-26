@@ -480,6 +480,50 @@ describe("Pi tool discovery permissions", () => {
     },
   );
 
+  it.each(["approval-required", "auto-accept-edits", "auto"])(
+    "leaves a tool T3 Code asks about itself to that one request in %s",
+    async (runtimeMode) => {
+      const bridge = await loadMcpBridge({
+        modern: true,
+        runtimeMode,
+        extraTools: ["pull_request_merge"],
+      });
+      const hook = bridge.handlers.get("tool_call") as unknown as (
+        event: { toolName: string; input: unknown },
+        ctx: { ui: { confirm: (title: string) => Promise<boolean> } },
+      ) => Promise<{ block: true; reason: string } | undefined>;
+      const confirmations: string[] = [];
+      const ctx = {
+        ui: {
+          confirm: async (title: string) => {
+            confirmations.push(title);
+            return false;
+          },
+        },
+      };
+      for (const prefix of ["mcp__t3-code__", "mcp__t3_code__"]) {
+        assert.isUndefined(
+          await hook({ toolName: prefix + "pull_request_merge", input: { number: 5 } }, ctx),
+        );
+      }
+      assert.deepEqual(confirmations, []);
+      // Another server's tool of that name, or an extension that took T3's name, is Pi's to ask.
+      assert.equal(
+        (await hook({ toolName: "mcp__other__pull_request_merge", input: {} }, ctx))?.block,
+        true,
+      );
+      bridge.setBridgeSourcePath("/user/extensions/replacement.ts");
+      assert.equal(
+        (await hook({ toolName: "mcp__t3-code__pull_request_merge", input: {} }, ctx))?.block,
+        true,
+      );
+      assert.deepEqual(confirmations, [
+        "Allow mcp__other__pull_request_merge?",
+        "Allow mcp__t3-code__pull_request_merge?",
+      ]);
+    },
+  );
+
   it("allows discovery without confirmation and still gates the discovered tool", async () => {
     type ToolCallHook = (
       event: { toolName: string; input: unknown },

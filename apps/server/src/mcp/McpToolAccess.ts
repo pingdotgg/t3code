@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   isRuntimeModeAbove,
   type OrchestrationV2LinkOrigin,
+  type OrchestrationV2ThreadShell,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   type ProviderApprovalPushHooks,
@@ -36,6 +37,7 @@ import {
 } from "./linkOrigin.ts";
 import * as McpClientInput from "./McpClientInput.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as McpThreadApproval from "./McpThreadApproval.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import {
   assertBroadestAccess,
@@ -174,6 +176,33 @@ export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A,
   );
 
 /**
+ * Acts for its own thread like `actsAsCaller`, and below Full access asks the person first when
+ * `leaves` names something the call would send out of the thread, as a page upload of a file
+ * from elsewhere does. A call that sends nothing out runs unasked.
+ */
+export const actsAsCallerAsking = <P, A, E, R, E2, R2>(
+  tool: string,
+  leaves: (
+    params: P,
+    caller: OrchestrationV2ThreadShell,
+  ) => Effect.Effect<OutsideAction | undefined, E2, R2>,
+  handle: (params: P) => Effect.Effect<A, E, R>,
+) =>
+  declare(
+    (params: P) =>
+      Effect.gen(function* () {
+        yield* requireThreadCaller;
+        const caller = yield* writingCaller;
+        if (!hasFullAccess(caller) && caller.caller !== undefined) {
+          const asks = yield* leaves(params, caller.caller);
+          if (asks !== undefined) yield* personApproves(caller, tool, params, asks);
+        }
+        return yield* handle(params);
+      }),
+    undefined,
+  );
+
+/**
  * Changes something that belongs to no thread, such as a pending upload or a
  * scheduled task. Work a linked environment started may not: none of it
  * carries the link's origin, so none of it is that link's.
@@ -266,8 +295,8 @@ const personApproved: unique symbol = Symbol("t3/mcp/McpToolAccess/personApprove
 /**
  * Below Full access, ends unless the person approved exactly this: the tool, its arguments and
  * what they resolved to. The approval is read from the server's own record of the person's
- * answer, so only a thread whose adapter keeps that record can be asked. Anything that differs
- * on the call that brings the answer is another request, and asks again.
+ * answer in the thread, never from the client's word. Anything that differs on the call that
+ * brings the answer is another request, and asks again.
  */
 const personApproves = Effect.fnUntraced(function* (
   caller: Caller,
@@ -285,18 +314,23 @@ const personApproves = Effect.fnUntraced(function* (
   const cannotAsk = outsideActionRefused(
     `Not done: "${sentence}" needs the user's approval below Full access, and this agent's client cannot ask for it. Tell the user; they can do it themselves or switch this thread to Full access.`,
   );
-  if (!(yield* McpClientInput.asksThePerson)) return yield* cannotAsk;
   const { also: _also, pushHooks, ...named } = asks;
   const request = hashToolInput({ tool, params, asks });
-  const answer = yield* McpClientInput.askApproval({
-    key: OUTSIDE_ACTION_KEY,
+  const asking = {
     state: `${tool} ${request}`,
     // The start of the request's own name ends the question, so two requests never read alike
     // and an answer in the app is recorded for the one it was given to.
     message: `${sentence}? (request ${request.slice(0, 8)})`,
     toolAction: { tool, ...named },
     pushHooks,
-  });
+  };
+  // By elicitation where the thread's adapter passes on what the person answered; anywhere
+  // else, and where that client takes no elicitation, in a request the server shows itself.
+  const elicited = (yield* McpClientInput.asksThePerson)
+    ? yield* McpClientInput.askApproval({ key: OUTSIDE_ACTION_KEY, ...asking })
+    : "unavailable";
+  const answer =
+    elicited === "unavailable" ? yield* McpThreadApproval.ask(caller, asking) : elicited;
   switch (answer) {
     case "accepted":
       return personApproved;
@@ -308,6 +342,10 @@ const personApproves = Effect.fnUntraced(function* (
       );
     case "unavailable":
       return yield* cannotAsk;
+    case "waiting":
+      return yield* outsideActionRefused(
+        `Not done yet: T3 Code is asking the user to approve "${sentence}" in this thread, and they have not answered. Call again with the same arguments to wait for their answer.`,
+      );
     case "asked":
       // Never read: the question is this call's answer.
       return yield* outsideActionRefused("Waiting for the user's approval.");

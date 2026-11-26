@@ -445,6 +445,23 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
 
 export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));
 
+/**
+ * The tools T3 Code itself asks the person about on every call below Full access, in a request
+ * that names what the call would do. A provider client that asks about tool calls on its own
+ * leaves these to that request, so the person is asked once.
+ */
+export const T3_MCP_TOOLS_ASKED_BY_T3: ReadonlyArray<string> = [
+  "pull_request_create",
+  "pull_request_update",
+  "pull_request_respond",
+  "pull_request_review",
+  "pull_request_merge",
+  "ci_rerun",
+  "create_issue",
+  "comment_on_issue",
+  "set_issue_state",
+];
+
 function normalizeT3McpToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
 }
