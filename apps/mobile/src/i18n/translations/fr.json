@@ -1,4 +1,5 @@
 {
+  "035aab5e99159bd8": "{count, plural, one {… {hidden} caractère au milieu n’est pas affiché.} other {… {hidden} caractères au milieu ne sont pas affichés.}} Le texte se termine par :",
   "4bcfa3b976a421cf": "Discussion annexe",
   "23be753133ae6950": "Fil",
   "0001ae5846061bb6": "Fil sur {machine}",
@@ -4602,7 +4603,7 @@
   "55b562c00e37321b": "Impossible de forcer l’arrêt de l’agent",
   "ede15a83eedec569": "Tour arrêté ; l’agent est encore en train de s’arrêter",
   "f360accf1ccac178": "Tour arrêté ; le processus de l’agent continue de tourner",
-  "967f83de030790dd": "{count, plural, =0 {Il est partagé avec d’autres fils en cours. Arrêtez-les pour le libérer.} one {Il est partagé avec {count} fil en cours. Arrêtez-le pour le libérer.} other {Il est partagé avec {count} fils en cours. Arrêtez-les pour le libérer.}}",
+  "72e41eb83e88cefa": "{count, plural, =0 {Il est partagé avec d’autres fils en cours. Arrêtez-les pour le libérer.} one {Il est partagé avec {count} fil en cours. Arrêtez-le pour le libérer.} other {Il est partagé avec {count} fils en cours. Arrêtez-les pour le libérer.}}",
   "5536ab75119ee3f9": "Impossible de mettre à jour le fil",
   "04c7bba52daa6f53": "Impossible de mettre à jour l’objectif",
   "f5f145b33e2a9380": "Arrêt...",
