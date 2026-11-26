@@ -12999,5 +12999,26 @@
   "92e129bf413a1220": "withdrawn",
   "800966eb58181745": "Checking which languages the model supports…",
   "410dded6e21c280d": "Stash is full",
-  "1af8d12ac21cb183": "The stash holds {max} prompts. Restore or delete one to make room; the composer was left as-is."
+  "1af8d12ac21cb183": "The stash holds {max} prompts. Restore or delete one to make room; the composer was left as-is.",
+  "381ceed77cb8b2b3": "Stop {name}",
+  "5b9fda36b610d25c": "Stop",
+  "1d372f6d555dde3c": "Stop all devices",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more in Linked items"
+  ]
 }

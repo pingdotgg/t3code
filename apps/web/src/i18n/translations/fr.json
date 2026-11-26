@@ -12990,5 +12990,26 @@
   "92e129bf413a1220": "retirée",
   "800966eb58181745": "Vérification des langues prises en charge par le modèle…",
   "410dded6e21c280d": "La réserve est pleine",
-  "1af8d12ac21cb183": "La réserve contient {max} prompts. Restaurez-en ou supprimez-en un pour faire de la place ; la zone de saisie a été laissée telle quelle."
+  "1af8d12ac21cb183": "La réserve contient {max} prompts. Restaurez-en ou supprimez-en un pour faire de la place ; la zone de saisie a été laissée telle quelle.",
+  "381ceed77cb8b2b3": "Arrêter {name}",
+  "5b9fda36b610d25c": "Arrêter",
+  "1d372f6d555dde3c": "Arrêter tous les appareils",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " de plus"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " de plus dans Éléments associés"
+  ]
 }

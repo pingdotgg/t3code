@@ -12990,5 +12990,26 @@
   "92e129bf413a1220": "retirada",
   "800966eb58181745": "Verificando quais idiomas o modelo suporta…",
   "410dded6e21c280d": "Os guardados estão cheios",
-  "1af8d12ac21cb183": "Os guardados comportam {max} prompts. Restaure ou exclua um para abrir espaço; o campo de texto ficou como estava."
+  "1af8d12ac21cb183": "Os guardados comportam {max} prompts. Restaure ou exclua um para abrir espaço; o campo de texto ficou como estava.",
+  "381ceed77cb8b2b3": "Parar {name}",
+  "5b9fda36b610d25c": "Parar",
+  "1d372f6d555dde3c": "Parar todos os dispositivos",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " mais"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " mais em Itens vinculados"
+  ]
 }

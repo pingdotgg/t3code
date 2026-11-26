@@ -12997,5 +12997,26 @@
   "92e129bf413a1220": "återkallad",
   "800966eb58181745": "Kontrollerar vilka språk modellen stöder…",
   "410dded6e21c280d": "Undanlagringen är full",
-  "1af8d12ac21cb183": "Du kan lägga undan högst {max} promptar. Återställ eller ta bort en för att göra plats; inmatningsfältet lämnades som det var."
+  "1af8d12ac21cb183": "Du kan lägga undan högst {max} promptar. Återställ eller ta bort en för att göra plats; inmatningsfältet lämnades som det var.",
+  "381ceed77cb8b2b3": "Stoppa {name}",
+  "5b9fda36b610d25c": "Stoppa",
+  "1d372f6d555dde3c": "Stoppa alla enheter",
+  "06d3fe3e6b255d15": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " till"
+  ],
+  "f1b18820c0ab93ac": [
+    "+",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " till i Länkade objekt"
+  ]
 }
