@@ -29,6 +29,15 @@ export interface ArchiveEntry {
   directory: boolean;
 }
 
+type ArchiveRowOrder = Pick<ArchiveEntry, "path" | "directory">;
+let archiveNameCollator: Intl.Collator | undefined;
+
+export function compareArchiveRows(a: ArchiveRowOrder, b: ArchiveRowOrder): number {
+  if (a.directory !== b.directory) return a.directory ? -1 : 1;
+  archiveNameCollator ??= new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  return archiveNameCollator.compare(a.path, b.path);
+}
+
 export type BinaryWorkerRequest =
   | { type: "open"; kind: "archive" | "sqlite"; name: string; bytes: ArrayBuffer }
   | { type: "entry"; path: string }
