@@ -1,3 +1,5 @@
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
+
 export function formatDiagnosticsDuration(value: number): string {
   const milliseconds = Math.round(value);
   if (milliseconds < 1_000) return `${milliseconds} ms`;
@@ -14,5 +16,7 @@ export function formatProcessName(command: string): string {
 
 export function formatShortProcessName(command: string): string {
   const name = formatProcessName(command);
-  return name.length > 42 ? `${name.slice(0, 39)}...` : name;
+  if (name.length <= 42) return name;
+  // Never end on the first half of an emoji.
+  return `${name.slice(0, splitsSurrogatePair(name, 39) ? 38 : 39)}...`;
 }
