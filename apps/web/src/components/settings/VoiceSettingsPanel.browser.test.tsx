@@ -556,16 +556,15 @@ it("caps progress while downloading, recovers from a failed poll, and reports a 
   const unavailable = () => new Response(null, { status: 503 });
   const installed = deferred<Response>();
   const readModels = vi
-    .fn((_withBenchmarks: boolean) => unavailable())
-    .mockImplementationOnce(() => Response.json({ models: [model] }))
-    .mockImplementationOnce(unavailable)
+    .fn(async (_withBenchmarks: boolean) => unavailable())
+    .mockResolvedValueOnce(Response.json({ models: [model] }))
+    .mockResolvedValueOnce(unavailable())
     .mockImplementationOnce(() => installed.promise);
   const fetch = globalThis.fetch;
   using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.href);
     if (url.pathname === "/api/voice/status") return Promise.resolve(Response.json(status));
-    if (url.pathname === "/api/voice/models")
-      return Promise.resolve(readModels(url.searchParams.has("benchmarks")));
+    if (url.pathname === "/api/voice/models") return readModels(url.searchParams.has("benchmarks"));
     return fetch(input, init);
   });
   using notify = vi.spyOn(toastManager, "add").mockReturnValue("test");
