@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
   contextUsageForHandoff,
+  DEFAULT_HANDOFF_TOKEN_CAP,
   handoffBudget,
   handoffCoverage,
   historyCost,
@@ -181,6 +182,34 @@ describe("handoff budget", () => {
     assert.deepEqual(selected.messages, messages);
     assert.equal(selected.omittedItems, 2);
     assert.isAtMost(historyCost(selected.messages, selected.context), 3_000);
+  });
+
+  it("keeps a long latest assistant reply instead of backfilling with command output", () => {
+    const command = (id: string, output: string): OrchestrationV2HistoricalMessage => ({
+      ...message(id, "assistant", `Command: git grep plan\nExit code: 0\n${output}`),
+      kind: "command_execution",
+    });
+    const plan = message(
+      "turn:1:assistant:0",
+      "assistant",
+      "## Step\n- Update the handoff budget and keep the reply.\n".repeat(270),
+    );
+    assert.isAbove(plan.text.length, 14_000);
+    const selected = selectHistory({
+      messages: [
+        message("turn:1:user:0", "user", "Write a detailed implementation plan."),
+        command("turn:1:command:0", "Preparing workspace"),
+        command("turn:1:command:1", "src/a.ts:1: match\n".repeat(500)),
+        command("turn:1:command:2", "src/b.ts:2: match\n".repeat(110)),
+        plan,
+      ],
+      coverage: handoffCoverage({ threadId, coveredRunOrdinals: { from: 1, to: 1 }, items: [] }),
+      budget: DEFAULT_HANDOFF_TOKEN_CAP,
+    });
+    assert.include(
+      selected.messages.map((selectedMessage) => selectedMessage.itemId),
+      plan.itemId,
+    );
   });
 
   it("points history recovery at the omitted items instead of a read from the thread's start", () => {
