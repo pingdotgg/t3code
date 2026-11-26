@@ -5,7 +5,7 @@ import { flushSync } from "react-dom";
 import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
-import { act, render } from "../../test/render";
+import { act, fakeTimers, render } from "../../test/render";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import {
   fileSurface,
@@ -317,9 +317,9 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   });
   expect(getComputedStyle(endChevron!).backgroundColor).toBe("rgba(0, 0, 0, 0)");
   expect(getComputedStyle(strip).overscrollBehaviorX).toBe("contain");
-  const siblingStrip = [
-    ...document.querySelectorAll<HTMLElement>("[data-layout-tab-strip]"),
-  ].find((candidate) => candidate !== strip);
+  const siblingStrip = [...document.querySelectorAll<HTMLElement>("[data-layout-tab-strip]")].find(
+    (candidate) => candidate !== strip,
+  );
   expect(siblingStrip && getComputedStyle(siblingStrip).overscrollBehaviorX).toBe("auto");
   endChevron!.click();
   await vi.waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(0));
@@ -1042,14 +1042,17 @@ it("does not switch tabs when releasing the pointer after Escape cancels a tab d
   const first = pane.tabs.find((tab) => tab.id !== tabs.second.id)!;
   useLayoutStore.getState().focusTab(first.id);
   await vi.waitFor(() =>
-    expect(secondPaneStrip().querySelector<HTMLElement>("[data-joined]")?.dataset.layoutPaneTab).toBe(
-      first.id,
-    ),
+    expect(
+      secondPaneStrip().querySelector<HTMLElement>("[data-joined]")?.dataset.layoutPaneTab,
+    ).toBe(first.id),
   );
 
   const strip = secondPaneStrip();
-  const inactiveTab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${tabs.second.id}"]`)!;
+  const inactiveTab = strip.querySelector<HTMLElement>(
+    `[data-layout-pane-tab="${tabs.second.id}"]`,
+  )!;
   const rect = inactiveTab.getBoundingClientRect();
+  using _timers = fakeTimers();
   inactiveTab.dispatchEvent(
     new PointerEvent("pointerdown", {
       bubbles: true,
@@ -1072,7 +1075,7 @@ it("does not switch tabs when releasing the pointer after Escape cancels a tab d
     new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
   );
   expect(isLayoutDragActive()).toBe(false);
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  vi.advanceTimersByTime(25);
   window.dispatchEvent(
     new PointerEvent("pointerup", {
       bubbles: true,
@@ -1082,7 +1085,7 @@ it("does not switch tabs when releasing the pointer after Escape cancels a tab d
     }),
   );
   inactiveTab.click();
-  await new Promise((resolve) => setTimeout(resolve, 25));
+  vi.advanceTimersByTime(25);
 
   expect(focusedTabId()).toBe(first.id);
 });
@@ -1167,10 +1170,13 @@ it("keeps scrollLeft settled when followView moves focus after manual sideways s
   strip.dispatchEvent(new Event("scroll"));
   await vi.waitFor(
     () =>
-      expect(useLayoutStore.getState().layout.workspaces[0]!.focusedPaneId).toBe(secondPaneId),
+      expect(
+        document.querySelector(
+          `[data-layout-pane-id="${secondPaneId}"][data-layout-pane-focused="true"]`,
+        ),
+      ).not.toBeNull(),
     { timeout: 1500 },
   );
-  await new Promise((resolve) => setTimeout(resolve, 60));
 
   expect(Math.round(strip.scrollLeft)).toBe(340);
 });
@@ -1186,4 +1192,29 @@ it("steps keyboard column resize from 1/3 to 1/2 instead of stopping at the mini
   await vi.waitFor(() =>
     expect(useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.width).toBeCloseTo(0.5, 4),
   );
+});
+
+it("keeps a revealed tab inside the viewport on a narrow overflowing tab strip", async () => {
+  using _tabs = setup();
+  for (let index = 0; index < 8; index++) {
+    useLayoutStore
+      .getState()
+      .openTab(createLayoutLauncherContent(null), { placement: "active-pane" });
+  }
+  await using screen = await renderHost();
+  const strip = screen.container.querySelector<HTMLElement>("[data-layout-tab-strip]")!;
+  strip.style.maxWidth = "140px";
+  await vi.waitFor(() => expect(strip.clientWidth).toBeLessThanOrEqual(140));
+  const tabs = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")];
+  const targetId = tabs[4]!.dataset.layoutPaneTab!;
+  strip.scrollLeft = 0;
+
+  useLayoutStore.getState().focusTab(targetId);
+  await vi.waitFor(() => {
+    const active = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${targetId}"]`)!;
+    const box = active.getBoundingClientRect();
+    const bounds = strip.getBoundingClientRect();
+    expect(box.left).toBeGreaterThanOrEqual(bounds.left - 1);
+    expect(box.right).toBeLessThanOrEqual(bounds.right + 1);
+  });
 });

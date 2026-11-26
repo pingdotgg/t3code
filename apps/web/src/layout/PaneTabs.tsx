@@ -1006,7 +1006,8 @@ function scrollStripFromGap(event: WheelEvent, strip: HTMLElement): void {
 
 /** Reveal the active tab in a strip wider than its pane, keeping the joined tab's ears inside. */
 function revealPaneTab(strip: HTMLElement, tabId: string | null): number | null {
-  const tab = findStripTab(strip, tabId);
+  const tab =
+    findStripTab(strip, tabId) ?? strip.querySelector<HTMLElement>("[data-active-tab='true']");
   if (!tab) return null;
   const bounds = strip.getBoundingClientRect();
   const rect = tab.getBoundingClientRect();
@@ -1017,8 +1018,12 @@ function revealPaneTab(strip: HTMLElement, tabId: string | null): number | null 
     ? PANE_JOIN_EAR_PX
     : 0;
   const chevron = hasFinePointer() ? PANE_STRIP_CHEVRON_PX : 0;
-  const start = bounds.left + clipped + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX + chevron;
-  const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX - PANE_STRIP_FADE_PX - chevron;
+  let start = bounds.left + clipped + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX + chevron;
+  let end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX - PANE_STRIP_FADE_PX - chevron;
+  if (start > end) {
+    start = bounds.left;
+    end = bounds.right;
+  }
   // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
   if (rect.width > end - start && tab.dataset.layoutTabReveal === "end") return rect.right - end;
   if (rect.left < start) return rect.left - start;
