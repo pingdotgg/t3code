@@ -2,7 +2,52 @@ import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 import { serializeAssistantCitation } from "./assistantCitations.ts";
 import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "./composerContextReferences.ts";
+import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanText.ts";
 import { searchableMessageSegments, searchablePlanSegments } from "./threadFindText.ts";
+
+it("uses plan headings outside fenced code", () => {
+  for (const [fence, inner] of [
+    ["```bash", "~~~"],
+    ["~~~bash", "```"],
+    ["````bash", "```"],
+  ] as const) {
+    const code = `Run script:\n\n${fence}\n# Back up database\npg_dump db\n${inner}\n# Still code\n${fence.slice(0, -4)}\n`;
+    expect(proposedPlanTitle(`${code}\n## Real Plan Title\n`)).toBe("Real Plan Title");
+    expect(proposedPlanTitle(code.replace(/\n# Still code[\s\S]*/, ""))).toBeNull();
+  }
+  expect(proposedPlanTitle("\t# Back up database\n\n## Real Plan Title")).toBe("Real Plan Title");
+  expect(stripDisplayedPlanMarkdown("\t# Back up database")).toBe("\t# Back up database");
+  expect(stripDisplayedPlanMarkdown("# My Plan\n\t## Summary")).toBe("\t## Summary");
+});
+
+it("ignores empty plan headings without crossing line endings", () => {
+  expect(proposedPlanTitle("#   \r\n## Real Title\r\nBody")).toBe("Real Title");
+  expect(proposedPlanTitle("#\t\n#   \nBody")).toBeNull();
+});
+
+it("strips the displayed plan title and summary after leading blank lines", () => {
+  const markdown = "\n# My Plan\n\n## Summary\n\nBody text";
+  expect(proposedPlanTitle(markdown)).toBe("My Plan");
+  expect(stripDisplayedPlanMarkdown(markdown)).toBe("Body text");
+  expect(stripDisplayedPlanMarkdown("\r\n\r\n# My Plan\r\n\r\nBody text")).toBe("Body text");
+  for (const newline of ["\n", "\r\n"]) {
+    const emptyHeadings = [
+      "",
+      "#   ",
+      "",
+      "###\t",
+      "##",
+      "",
+      "## Real Title",
+      "",
+      "## Summary",
+      "",
+      "Body text",
+    ].join(newline);
+    expect(proposedPlanTitle(emptyHeadings)).toBe("Real Title");
+    expect(stripDisplayedPlanMarkdown(emptyHeadings)).toBe("Body text");
+  }
+});
 
 it("excludes review attachments rendered as context chips", () => {
   const text = [
