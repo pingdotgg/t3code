@@ -29,6 +29,7 @@ const NOTEBOOK_OUTPUT_HEADING = "\nOutput:\n";
 const NOTEBOOK_OUTPUT_TEXT = /[^\s\0]/u;
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
+const TRAILING_HIGH_SURROGATE = /[\uD800-\uDBFF]$/;
 // Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
 // phonetic guides, paragraph properties such as tab-stop definitions, drawing anchor layout
 // values and encoded field data.
@@ -1205,10 +1206,14 @@ export async function extractDocumentText(path: string, extension: string): Prom
         let pending: string | undefined = "";
         for (const output of part.notebookOutput) {
           if (pending !== undefined) {
-            const firstText = output.slice(0, remaining).search(NOTEBOOK_OUTPUT_TEXT);
-            if (firstText !== -1) {
-              if (firstText >= remaining - NOTEBOOK_OUTPUT_HEADING.length)
-                throw new Truncation("Output budget");
+            if (NOTEBOOK_OUTPUT_TEXT.test(output.slice(0, remaining))) {
+              const roomAfterHeading = Math.max(0, remaining - NOTEBOOK_OUTPUT_HEADING.length);
+              const fittingOutput = output
+                .slice(0, roomAfterHeading)
+                .replaceAll("\0", "")
+                .trimEnd()
+                .replace(TRAILING_HIGH_SURROGATE, "");
+              if (!NOTEBOOK_OUTPUT_TEXT.test(fittingOutput)) throw new Truncation("Output budget");
               result += takeRaw(NOTEBOOK_OUTPUT_HEADING) + pending;
               pending = undefined;
               midLine = false;
@@ -1282,5 +1287,5 @@ export async function extractDocumentText(path: string, extension: string): Prom
   }
   result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
   if (!result && !truncated) throw new Error("No text extracted");
-  return truncated ? result.replace(/[\uD800-\uDBFF]$/, "").trimEnd() + TRUNCATED : result;
+  return truncated ? result.replace(TRAILING_HIGH_SURROGATE, "").trimEnd() + TRUNCATED : result;
 }
