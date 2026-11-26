@@ -455,6 +455,10 @@
       "types": "./src/commandOutput.ts",
       "import": "./src/commandOutput.ts"
     },
+    "./controlCharacters": {
+      "types": "./src/controlCharacters.ts",
+      "import": "./src/controlCharacters.ts"
+    },
     "./claudeCompaction": {
       "types": "./src/claudeCompaction.ts",
       "import": "./src/claudeCompaction.ts"
