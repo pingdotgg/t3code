@@ -56,11 +56,13 @@ describe("team sidecar migrations", () => {
         "team_workspaces",
       ]);
 
-      // Upstream migration ledger stays untouched.
+      // Upstream migration ledger stays untouched and foreign keys remain intact.
       const upstreamAfter = yield* sql<{ readonly count: number }>`
         SELECT COUNT(*) AS count FROM effect_sql_migrations
       `;
       expect(upstreamAfter[0]?.count).toBe(upstreamBefore[0]?.count);
+      const fkViolations = yield* sql`PRAGMA foreign_key_check`;
+      expect(fkViolations).toEqual([]);
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 

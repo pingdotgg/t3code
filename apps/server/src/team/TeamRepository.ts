@@ -720,6 +720,10 @@ export class TeamRepository extends Context.Service<
     readonly deleteThreadAttribution: (
       threadId: ThreadId,
     ) => Effect.Effect<void, TeamRepositoryError>;
+    readonly deleteTurnAttribution: (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+    }) => Effect.Effect<void, TeamRepositoryError>;
     readonly listThreadAttributions: (
       teamId: TeamId,
     ) => Effect.Effect<ReadonlyArray<TeamThreadAttribution>, TeamRepositoryError>;
@@ -1992,11 +1996,31 @@ const make = Effect.gen(function* () {
             Effect.gen(function* () {
               yield* sql`DELETE FROM team_thread_meta WHERE thread_id = ${threadId}`;
               yield* sql`DELETE FROM team_thread_env_labels WHERE thread_id = ${threadId}`;
+              yield* sql`DELETE FROM team_turn_meta WHERE thread_id = ${threadId}`;
+              yield* sql`DELETE FROM team_automation_turn_scopes WHERE thread_id = ${threadId}`;
             }),
           ),
         );
       },
     ),
+
+    deleteTurnAttribution: Effect.fn("TeamRepository.deleteTurnAttribution")(function* (input) {
+      yield* runSql(
+        "deleteTurnAttribution",
+        sql.withTransaction(
+          Effect.gen(function* () {
+            yield* sql`
+              DELETE FROM team_turn_meta
+              WHERE thread_id = ${input.threadId} AND turn_id = ${input.turnId}
+            `;
+            yield* sql`
+              DELETE FROM team_automation_turn_scopes
+              WHERE thread_id = ${input.threadId} AND turn_id = ${input.turnId}
+            `;
+          }),
+        ),
+      );
+    }),
 
     listThreadAttributions: Effect.fn("TeamRepository.listThreadAttributions")(function* (teamId) {
       const rows = yield* runSql(

@@ -190,6 +190,42 @@ export const filterAccessibleEnvironmentIds = Effect.fn(
   );
 });
 
+export const getMinimalAutomationProjectId = Effect.fn(
+  "TeamMcpAccess.getMinimalAutomationProjectId",
+)(function* () {
+  const caller = yield* resolveTeamMcpCaller();
+  if (
+    Option.isSome(caller) &&
+    caller.value.teamAutomation !== null &&
+    caller.value.teamAutomation.mcpAccessLevel === "minimal"
+  ) {
+    return Option.some(caller.value.teamAutomation.projectId);
+  }
+  return Option.none<ProjectId>();
+});
+
+export const assertCanAccessProject = Effect.fn("TeamMcpAccess.assertCanAccessProject")(function* (
+  projectId: ProjectId,
+) {
+  const scopedProjectId = yield* getMinimalAutomationProjectId();
+  if (Option.isSome(scopedProjectId) && scopedProjectId.value !== projectId) {
+    return yield* forbiddenFailure(
+      "Minimal team automations can only access their configured project.",
+    );
+  }
+});
+
+export const assertCanUseScratchProject = Effect.fn("TeamMcpAccess.assertCanUseScratchProject")(
+  function* () {
+    const scopedProjectId = yield* getMinimalAutomationProjectId();
+    if (Option.isSome(scopedProjectId)) {
+      return yield* forbiddenFailure(
+        "Minimal team automations cannot launch threads in the Scratch project.",
+      );
+    }
+  },
+);
+
 export const canSteerActiveTurn = Effect.fn("TeamMcpAccess.canSteerActiveTurn")(function* (
   threadId: ThreadId,
 ) {

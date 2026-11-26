@@ -3634,6 +3634,250 @@ describe("TeamService", () => {
             team.assertCanInterruptThread(modoSession.sessionId, autoThreadId, "run-m8-1"),
           ))._tag,
         ).toBe("Failure");
+
+        // Webhook delivery logs follow the same visibility rules as the live webhook URL.
+        yield* team.assertCanReadScheduledTaskWebhooks(modoSession.sessionId, minTaskId);
+        yield* team.assertCanReadScheduledTaskWebhooks(ownerSession.sessionId, elevTaskId);
+        expect(
+          (yield* Effect.exit(
+            team.assertCanReadScheduledTaskWebhooks(regularSession.sessionId, minTaskId),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertCanReadScheduledTaskWebhooks(modoSession.sessionId, elevTaskId),
+          ))._tag,
+        ).toBe("Failure");
+
+        // Unattributed scheduled tasks (missing sidecar meta) fail closed to owner/admin only.
+        const legacyTaskId = ScheduledTaskId.make("task-m8-legacy-unattributed");
+        const legacyTask = mkTask(legacyTaskId, "Pre-M8 Admin Task");
+        expect(
+          yield* team.filterReadableScheduledTasks(modoSession.sessionId, [legacyTask]),
+        ).toEqual([]);
+        expect(
+          yield* team.filterReadableScheduledTasks(regularSession.sessionId, [legacyTask]),
+        ).toEqual([]);
+        expect(
+          yield* team.filterReadableScheduledTasks(ownerSession.sessionId, [legacyTask]),
+        ).toHaveLength(1);
+        expect(
+          (yield* Effect.exit(
+            team.assertCanMutateScheduledTask(modoSession.sessionId, legacyTaskId),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertCanReadScheduledTaskWebhooks(modoSession.sessionId, legacyTaskId),
+          ))._tag,
+        ).toBe("Failure");
+
+        // Bound-thread RBAC: once an admin locks a bound thread, modo cannot edit (even omitting
+        // threadId), unbind, toggle, delete, rotate, or see webhook deliveries for that task.
+        const boundThreadId = ThreadId.make("thread-m8-bound");
+        yield* team.recordThreadCreated({
+          sessionId: modoSession.sessionId,
+          threadId: boundThreadId,
+          viewId: init.team.defaultViewId,
+        });
+        const boundTaskId = ScheduledTaskId.make("task-m8-bound");
+        const boundAuth = yield* team.authorizeScheduledTaskUpsert({
+          sessionId: modoSession.sessionId,
+          input: { ...baseTaskInput, threadId: boundThreadId },
+          existingTask: null,
+        });
+        yield* team.saveScheduledTaskMeta({
+          ...Option.getOrThrow(boundAuth),
+          taskId: boundTaskId,
+        });
+        const boundExistingTask: ScheduledTask = {
+          ...mkTask(boundTaskId, "Bound Task"),
+          threadId: boundThreadId,
+          threadMode: "continue",
+        };
+        yield* team.setThreadLocked({
+          sessionId: ownerSession.sessionId,
+          payload: { threadId: boundThreadId, locked: true },
+        });
+        // Omitted threadId retains boundThreadId -> must fail for modo.
+        expect(
+          (yield* Effect.exit(
+            team.authorizeScheduledTaskUpsert({
+              sessionId: modoSession.sessionId,
+              input: { ...baseTaskInput, id: boundTaskId, threadId: undefined },
+              existingTask: boundExistingTask,
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        // Explicit unbind on locked thread -> must also fail for modo.
+        expect(
+          (yield* Effect.exit(
+            team.authorizeScheduledTaskUpsert({
+              sessionId: modoSession.sessionId,
+              input: { ...baseTaskInput, id: boundTaskId, threadId: null, unbindThread: true },
+              existingTask: boundExistingTask,
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        // Non-runNow mutations (setEnabled/delete/rotate) & webhook logs must fail for modo.
+        expect(
+          (yield* Effect.exit(
+            team.assertCanMutateScheduledTask(modoSession.sessionId, boundTaskId, boundThreadId),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertCanReadScheduledTaskWebhooks(
+              modoSession.sessionId,
+              boundTaskId,
+              boundThreadId,
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        const modoBoundList = yield* team.filterReadableScheduledTasks(modoSession.sessionId, [
+          boundExistingTask,
+        ]);
+        expect(modoBoundList[0]?.webhook).toBeUndefined();
+        // Owner can still edit/mutate the locked-thread task.
+        yield* team.assertCanMutateScheduledTask(
+          ownerSession.sessionId,
+          boundTaskId,
+          boundThreadId,
+        );
+
+        // Spoofing teamMeta.environmentId to bypass host environment ACLs is rejected.
+        const remoteEnvId = EnvironmentId.make("env-m8-remote");
+        yield* team.attachEnvironment({
+          sessionId: ownerSession.sessionId,
+          payload: {
+            environmentId: remoteEnvId,
+            name: "Remote Modo Env",
+            accessRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+          },
+        });
+        const ownerState = yield* team.getState(ownerSession.sessionId);
+        const hostEnvRecord = (ownerState.environments ?? []).find(
+          (env) => env.environmentId !== remoteEnvId,
+        );
+        expect(hostEnvRecord).toBeDefined();
+        yield* team.updateEnvironment({
+          sessionId: ownerSession.sessionId,
+          payload: {
+            environmentId: hostEnvRecord!.environmentId,
+            accessRule: { roles: ["owner", "admin"], memberIds: [] },
+          },
+        });
+        expect(
+          (yield* Effect.exit(
+            team.authorizeScheduledTaskUpsert({
+              sessionId: modoSession.sessionId,
+              input: { ...baseTaskInput, teamMeta: { environmentId: remoteEnvId } },
+              existingTask: null,
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(team.assertCanMutateScheduledTask(modoSession.sessionId, minTaskId)))
+            ._tag,
+        ).toBe("Failure");
+
+        // Child threads spawned from a locked scheduled-task thread inherit `locked: true`.
+        const lockedParentThreadId = ThreadId.make("thread-m8-locked-parent");
+        yield* team.prepareTeamAutomationThreadAttribution({
+          taskId: elevTaskId,
+          threadId: lockedParentThreadId,
+          projectId,
+        });
+        const lockedChildThreadId = ThreadId.make("thread-m8-locked-child");
+        const childPrincipal = {
+          taskId: elevTaskId,
+          teamId: init.team.id,
+          projectId,
+          environmentId: hostEnvRecord!.environmentId,
+          viewId: init.team.defaultViewId,
+          mcpAccessLevel: "elevated" as const,
+        };
+        yield* team.prepareThreadInheritedFromParent({
+          parentThreadId: lockedParentThreadId,
+          threadId: lockedChildThreadId,
+          teamAutomation: childPrincipal,
+        });
+        const lockedChildAttr = Option.getOrThrow(
+          yield* repo.getThreadAttribution(lockedChildThreadId),
+        );
+        expect(lockedChildAttr.ownerKind).toBe("team");
+        expect(lockedChildAttr.locked).toBe(true);
+
+        // Rollback removes thread_meta, turn_meta, and automation_turn_scopes cleanly.
+        const rollbackThreadId = ThreadId.make("thread-m8-rollback");
+        yield* team.prepareTeamAutomationThreadAttribution({
+          taskId: minTaskId,
+          threadId: rollbackThreadId,
+          projectId,
+        });
+        yield* team.recordTeamAutomationTurn({
+          threadId: rollbackThreadId,
+          turnId: "msg:rollback-1",
+          taskId: minTaskId,
+          projectId,
+        });
+        yield* team.rollbackPreparedThreadAttribution(rollbackThreadId);
+        expect(Option.isNone(yield* repo.getThreadAttribution(rollbackThreadId))).toBe(true);
+        expect(Option.isNone(yield* repo.getTurnAttribution("msg:rollback-1"))).toBe(true);
+        expect(Option.isNone(yield* repo.getAutomationTurnScope("msg:rollback-1"))).toBe(true);
+
+        yield* team.recordTeamAutomationTurn({
+          threadId: autoThreadId,
+          turnId: "msg:bound-fail-1",
+          taskId: elevTaskId,
+          projectId,
+        });
+        yield* team.rollbackRecordedTurnAttribution({
+          threadId: autoThreadId,
+          turnId: "msg:bound-fail-1",
+        });
+        expect(Option.isNone(yield* repo.getTurnAttribution("msg:bound-fail-1"))).toBe(true);
+        expect(Option.isNone(yield* repo.getAutomationTurnScope("msg:bound-fail-1"))).toBe(true);
+
+        // Minimal automation is rejected on unattributed threads & wrong projectId task reads.
+        const minimalActor: TeamService.TeamActor = {
+          kind: "team_automation",
+          principal: {
+            taskId: minTaskId,
+            teamId: init.team.id,
+            projectId,
+            environmentId: hostEnvRecord!.environmentId,
+            viewId: init.team.defaultViewId,
+            mcpAccessLevel: "minimal",
+          },
+        };
+        const unattributedThreadId = ThreadId.make("thread-m8-unattributed");
+        expect(
+          (yield* Effect.exit(
+            team.assertActorCanPromoteQueuedRun(minimalActor, unattributedThreadId),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertActorCanInterruptThread(minimalActor, unattributedThreadId),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertActorCanManageQueuedRun(minimalActor, unattributedThreadId, "run-x"),
+          ))._tag,
+        ).toBe("Failure");
+        yield* team.assertActorCanReadScheduledTask(minimalActor, minTaskId, null, projectId);
+        expect(
+          (yield* Effect.exit(
+            team.assertActorCanReadScheduledTask(
+              minimalActor,
+              minTaskId,
+              null,
+              ProjectId.make("proj-other"),
+            ),
+          ))._tag,
+        ).toBe("Failure");
       }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
   );
 });

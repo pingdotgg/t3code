@@ -511,6 +511,7 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
         PRAGMA table_info(team_thread_meta)
       `;
       if (!threadMetaColumns.some((column) => column.name === "owner_kind")) {
+        yield* sql`DROP TABLE IF EXISTS team_thread_meta_v8`;
         yield* sql`
           CREATE TABLE team_thread_meta_v8 (
             thread_id TEXT PRIMARY KEY,
@@ -556,6 +557,7 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
         PRAGMA table_info(team_turn_meta)
       `;
       if (!turnMetaColumns.some((column) => column.name === "author_kind")) {
+        yield* sql`DROP TABLE IF EXISTS team_turn_meta_v8`;
         yield* sql`
           CREATE TABLE team_turn_meta_v8 (
             turn_id TEXT PRIMARY KEY,

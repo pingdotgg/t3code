@@ -114,45 +114,47 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
-  run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
-    Effect.gen(function* () {
-      yield* assertLocalAgentMcpExecutionAllowed;
-      const scheduler = yield* ScheduledTasks.ScheduledTaskService;
-      const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
-      const targetTask = tasks.find((task) => task.id === input.taskId);
-      if (targetTask === undefined)
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message: "The scheduled task was not found.",
-        });
-      yield* TeamMcpAccess.assertCanMutateScheduledTask(
-        targetTask.id,
-        targetTask.threadId === null ? null : ThreadId.make(targetTask.threadId),
-        { isRunNow: true },
-      );
-      const { task, threadId } = yield* scheduler
-        .runNow({ id: input.taskId })
-        .pipe(
-          Effect.mapError(
-            (error) =>
-              new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
-          ),
+  run_scheduled_task_now: McpToolAccess.writesEnvironment(
+    (input) =>
+      Effect.gen(function* () {
+        yield* assertLocalAgentMcpExecutionAllowed;
+        const scheduler = yield* ScheduledTasks.ScheduledTaskService;
+        const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
+        const targetTask = tasks.find((task) => task.id === input.taskId);
+        if (targetTask === undefined)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "The scheduled task was not found.",
+          });
+        yield* TeamMcpAccess.assertCanMutateScheduledTask(
+          targetTask.id,
+          targetTask.threadId === null ? null : ThreadId.make(targetTask.threadId),
+          { isRunNow: true },
         );
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      return {
-        taskId: task.id,
-        threadId,
-        ...(threadId === null
-          ? {}
-          : {
-              link: McpInvocationContext.threadLinkFor(scope, threadId),
-            }),
-        lastRunStatus: task.lastRunStatus,
-        lastRunError: task.lastRunError,
-        runCount: task.runCount,
-        nextRunAt: task.nextRunAt,
-      };
-    }),
+        const { task, threadId } = yield* scheduler
+          .runNow({ id: input.taskId })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new OrchestratorMcpFailure({ code: "orchestration_error", message: error.message }),
+            ),
+          );
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        return {
+          taskId: task.id,
+          threadId,
+          ...(threadId === null
+            ? {}
+            : {
+                link: McpInvocationContext.threadLinkFor(scope, threadId),
+              }),
+          lastRunStatus: task.lastRunStatus,
+          lastRunError: task.lastRunError,
+          runCount: task.runCount,
+          nextRunAt: task.nextRunAt,
+        };
+      }),
+    { teamAccess: "scheduled_tasks" },
   ),
   t3_thread_search: McpToolAccess.reads((input) =>
     Effect.gen(function* () {

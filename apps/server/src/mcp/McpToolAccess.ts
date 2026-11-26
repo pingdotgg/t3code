@@ -370,15 +370,19 @@ export const writesEnvironment = <P, A, E, R>(
      * everything already here as it was.
      */
     readonly linkedCallers?: "allowed";
+    /** Team role requirement for this environment action (default: owner/admin). */
+    readonly teamAccess?: "admin" | "scheduled_tasks";
   },
 ) => {
+  const assertTeamAccess = () =>
+    options?.teamAccess === "scheduled_tasks"
+      ? TeamMcpAccess.assertCanUseScheduledTasks()
+      : TeamMcpAccess.assertIsAdmin(
+          "Only owner and admin members can change team projects or environment settings.",
+          "team:environment:write",
+        );
   const check = orchestratingCaller.pipe(
-    Effect.tap(() =>
-      TeamMcpAccess.assertIsAdmin(
-        "Only owner and admin members can change team projects or environment settings.",
-        "team:environment:write",
-      ),
-    ),
+    Effect.tap(assertTeamAccess),
     Effect.tap((caller) =>
       options?.linkedCallers === "allowed"
         ? Effect.void
@@ -393,12 +397,7 @@ export const writesEnvironment = <P, A, E, R>(
     // Linked work never reaches a link at all; that is checked as the call goes.
     () =>
       orchestratingCaller.pipe(
-        Effect.tap(() =>
-          TeamMcpAccess.assertIsAdmin(
-            "Only owner and admin members can change team projects or environment settings.",
-            "team:environment:write",
-          ),
-        ),
+        Effect.tap(assertTeamAccess),
         Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
       ),
   );

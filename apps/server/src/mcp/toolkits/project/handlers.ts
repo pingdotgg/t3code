@@ -272,6 +272,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "scratch:true picks its own project and folder; omit projectId and workspaceStrategy.",
           });
+        if (input.scratch === true) {
+          yield* TeamMcpAccess.assertCanUseScratchProject();
+        }
         const projectId =
           input.scratch === true
             ? (yield* ManagedProjectFolders.ManagedProjectFolders.pipe(
@@ -285,6 +288,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 ),
               )).projectId
             : yield* resolveProjectId(context, input.projectId);
+        yield* TeamMcpAccess.assertCanAccessProject(projectId);
         // A retry of an accepted launch replays it: it keeps the model it started
         // with and skips the checks only a new launch needs, which the project
         // may no longer pass, such as a base branch deleted since.
@@ -717,6 +721,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const projects = yield* access;
+      const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId();
+      if (Option.isSome(scopedProjectId)) {
+        const cursor = input.cursor ?? 0;
+        if (cursor > 0) {
+          return { projects: [], nextCursor: null };
+        }
+        const scoped = yield* projects
+          .getById(scopedProjectId.value)
+          .pipe(Effect.mapError(unavailable));
+        const format = yield* withSavedProjectSettings;
+        return {
+          projects: Option.isSome(scoped) ? [format(scoped.value)] : [],
+          nextCursor: null,
+        };
+      }
       // Identities are resolved: linked environments find this side's project by repository.
       const page = yield* projects
         .listPage({ cursor: input.cursor ?? 0, limit: input.limit ?? 20 })
@@ -726,6 +745,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   ),
   t3_project_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
+      yield* TeamMcpAccess.assertCanAccessProject(input.projectId);
       const projects = yield* access;
       const result = yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable));
       if (Option.isNone(result))

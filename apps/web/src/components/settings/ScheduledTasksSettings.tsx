@@ -1030,10 +1030,12 @@ function ScheduledTaskRow({
                 {canMutate ? <T>Edit</T> : <T>View</T>}
               </MenuItem>
               {isWebhook ? (
-                <MenuItem onClick={() => setDeliveriesOpen(true)}>
-                  <InboxIcon />
-                  <T>Deliveries</T>
-                </MenuItem>
+                canMutate && task.webhook !== undefined ? (
+                  <MenuItem onClick={() => setDeliveriesOpen(true)}>
+                    <InboxIcon />
+                    <T>Deliveries</T>
+                  </MenuItem>
+                ) : null
               ) : canMutate ? (
                 <MenuItem onClick={() => void act("run")}>
                   <PlayIcon />
@@ -1688,6 +1690,9 @@ function ScheduledTaskEditorForm({
     draft.teamViewId && accessibleTeamViews.some((view) => view.id === draft.teamViewId)
       ? draft.teamViewId
       : (taskMeta?.viewId ?? defaultTeamView?.id ?? accessibleTeamViews[0]?.id ?? "");
+  const effectiveTeamLocked = draft.teamLocked ?? taskMeta?.locked ?? false;
+  const effectiveTeamMcpAccessLevel =
+    draft.teamMcpAccessLevel ?? taskMeta?.mcpAccessLevel ?? "minimal";
   const effectiveTeamView =
     teamState?.viewById.get(effectiveTeamViewId as TeamViewId) ??
     accessibleTeamViews.find((view) => view.id === effectiveTeamViewId) ??
@@ -1889,8 +1894,12 @@ function ScheduledTaskEditorForm({
               viewId: effectiveTeamViewId as TeamViewId,
               ...(isPrivilegedTeamRole
                 ? {
-                    locked: draft.teamLocked,
-                    mcpAccessLevel: draft.teamMcpAccessLevel,
+                    ...((draft.teamLocked ?? taskMeta?.locked) !== undefined
+                      ? { locked: draft.teamLocked ?? taskMeta!.locked }
+                      : {}),
+                    ...((draft.teamMcpAccessLevel ?? taskMeta?.mcpAccessLevel) !== undefined
+                      ? { mcpAccessLevel: draft.teamMcpAccessLevel ?? taskMeta!.mcpAccessLevel }
+                      : {}),
                   }
                 : {}),
             },
@@ -2618,7 +2627,7 @@ function ScheduledTaskEditorForm({
                     <Switch
                       id="scheduled-task-team-locked"
                       data-testid="scheduled-task-team-locked"
-                      checked={draft.teamLocked}
+                      checked={effectiveTeamLocked}
                       disabled={saving || readOnly}
                       onCheckedChange={(teamLocked) =>
                         setDraft((current) => ({ ...current, teamLocked }))
@@ -2627,7 +2636,7 @@ function ScheduledTaskEditorForm({
                   </div>
                   <Field label={gt("MCP access level")} htmlFor="scheduled-task-team-mcp-access">
                     <Select
-                      value={draft.teamMcpAccessLevel}
+                      value={effectiveTeamMcpAccessLevel}
                       disabled={saving || readOnly}
                       onValueChange={(value) => {
                         if (value === "minimal" || value === "elevated") {
@@ -2644,7 +2653,7 @@ function ScheduledTaskEditorForm({
                         data-testid="scheduled-task-team-mcp-access"
                       >
                         <SelectValue>
-                          {draft.teamMcpAccessLevel === "elevated"
+                          {effectiveTeamMcpAccessLevel === "elevated"
                             ? gt("Elevated (admin MCP access)")
                             : gt("Minimal (scoped to view & project)")}
                         </SelectValue>

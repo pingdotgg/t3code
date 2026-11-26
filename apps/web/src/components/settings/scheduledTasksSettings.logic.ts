@@ -155,8 +155,8 @@ export interface DraftState {
   /** The filter rows the form opened with. */
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
   readonly teamViewId: string;
-  readonly teamLocked: boolean;
-  readonly teamMcpAccessLevel: TeamScheduledTaskMcpAccessLevel;
+  readonly teamLocked: boolean | null;
+  readonly teamMcpAccessLevel: TeamScheduledTaskMcpAccessLevel | null;
 }
 
 export const WEBHOOK_SIGNATURE_DEFAULTS = {
@@ -375,8 +375,8 @@ export function taskToDraft(
     filters,
     savedFilters: filters,
     teamViewId: teamMeta?.viewId ?? "",
-    teamLocked: teamMeta?.locked ?? false,
-    teamMcpAccessLevel: teamMeta?.mcpAccessLevel ?? "minimal",
+    teamLocked: teamMeta ? teamMeta.locked : null,
+    teamMcpAccessLevel: teamMeta ? teamMeta.mcpAccessLevel : null,
   };
 }
 

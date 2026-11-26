@@ -3130,13 +3130,10 @@ export const layerWsRpc = (
             input.projectId,
             input.modelSelection.instanceId,
           );
-          const saved = yield* scheduledTasks.upsert(input);
-          if (Option.isSome(teamMetaPlan)) {
-            yield* teamService.saveScheduledTaskMeta({
-              taskId: saved.task.id,
-              ...teamMetaPlan.value,
-            });
-          }
+          const saved = yield* scheduledTasks.upsert(
+            input,
+            Option.isSome(teamMetaPlan) ? { teamMeta: teamMetaPlan.value } : undefined,
+          );
           return saved;
         }),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
@@ -3233,7 +3230,7 @@ export const layerWsRpc = (
                 const existing = (yield* scheduledTasks.list()).tasks.find(
                   (candidate) => candidate.id === input.id,
                 );
-                yield* teamService.assertCanReadScheduledTask(
+                yield* teamService.assertCanReadScheduledTaskWebhooks(
                   currentSessionId,
                   input.id,
                   existing?.threadId ? ThreadId.make(existing.threadId) : null,
@@ -3249,7 +3246,7 @@ export const layerWsRpc = (
                 const existing = (yield* scheduledTasks.list()).tasks.find(
                   (candidate) => candidate.id === input.id,
                 );
-                yield* teamService.assertCanReadScheduledTask(
+                yield* teamService.assertCanReadScheduledTaskWebhooks(
                   currentSessionId,
                   input.id,
                   existing?.threadId ? ThreadId.make(existing.threadId) : null,

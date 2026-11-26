@@ -45,9 +45,11 @@ import {
   EnvironmentAuthorizationError,
   EnvironmentId,
   formatAcceptedTeamNoteForPrompt,
+  isTeamOwnedThreadAttribution,
   isTeamProviderInstanceId,
   isValidTeamPseudo,
   normalizeTeamPseudo,
+  resolveScheduledTaskEffectiveThreadId,
   resolveTeamDisplayName,
   resolveTeamThreadEnvironmentAccess,
   resolveTeamThreadPostBlockReason,
@@ -536,8 +538,20 @@ export class TeamService extends Context.Service<
       actor: TeamActor,
       taskId: ScheduledTaskId,
       boundThreadId?: ThreadId | null,
+      projectId?: ProjectId | null,
     ) => Effect.Effect<void, EnvironmentAuthorizationError>;
     readonly assertCanReadScheduledTask: (
+      sessionId: AuthSessionId,
+      taskId: ScheduledTaskId,
+      boundThreadId?: ThreadId | null,
+      projectId?: ProjectId | null,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertActorCanReadScheduledTaskWebhooks: (
+      actor: TeamActor,
+      taskId: ScheduledTaskId,
+      boundThreadId?: ThreadId | null,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertCanReadScheduledTaskWebhooks: (
       sessionId: AuthSessionId,
       taskId: ScheduledTaskId,
       boundThreadId?: ThreadId | null,
@@ -558,9 +572,13 @@ export class TeamService extends Context.Service<
       Option.Option<AuthorizedTeamScheduledTaskUpsert>,
       EnvironmentAuthorizationError
     >;
+    readonly persistScheduledTaskMeta: (
+      input: AuthorizedTeamScheduledTaskUpsert & { readonly taskId: ScheduledTaskId },
+    ) => Effect.Effect<TeamScheduledTaskMeta, TeamRepository.TeamRepositoryError>;
+    readonly publishScheduledTaskMeta: (meta: TeamScheduledTaskMeta) => Effect.Effect<void>;
     readonly saveScheduledTaskMeta: (
       input: AuthorizedTeamScheduledTaskUpsert & { readonly taskId: ScheduledTaskId },
-    ) => Effect.Effect<Option.Option<TeamScheduledTaskMeta>>;
+    ) => Effect.Effect<TeamScheduledTaskMeta, TeamRepository.TeamRepositoryError>;
     readonly deleteScheduledTaskMeta: (taskId: ScheduledTaskId) => Effect.Effect<void>;
     readonly assertActorCanMutateScheduledTask: (
       actor: TeamActor,
@@ -647,6 +665,10 @@ export class TeamService extends Context.Service<
       readonly principal?: McpTeamAutomationPrincipal;
     }) => Effect.Effect<Option.Option<McpTeamAutomationPrincipal>>;
     readonly rollbackPreparedThreadAttribution: (threadId: ThreadId) => Effect.Effect<void>;
+    readonly rollbackRecordedTurnAttribution: (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+    }) => Effect.Effect<void>;
     readonly recordTurnAuthored: (input: {
       readonly sessionId: AuthSessionId;
       readonly threadId: ThreadId;
@@ -3258,6 +3280,24 @@ const make = Effect.gen(function* () {
     return threadEnvId === principal.environmentId;
   });
 
+  const canMinimalAutomationPostInThread = Effect.fn(
+    "TeamService.canMinimalAutomationPostInThread",
+  )(function* (
+    principal: McpTeamAutomationPrincipal,
+    threadId: ThreadId,
+    attribution: TeamThreadAttribution,
+    projectId: ProjectId | undefined,
+  ) {
+    const inScope = yield* matchesMinimalAutomationThreadScope(principal, attribution, projectId);
+    if (!inScope) return false;
+    if (!attribution.locked) return true;
+    if (isTeamOwnedThreadAttribution(attribution)) return true;
+    const latestScope = yield* repository
+      .getLatestAutomationTurnScopeForThread(threadId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    return Option.isSome(latestScope) && latestScope.value.taskId === principal.taskId;
+  });
+
   const canActorReadThread = Effect.fn("TeamService.canActorReadThread")(function* (
     actor: TeamActor,
     threadId: ThreadId,
@@ -3272,9 +3312,6 @@ const make = Effect.gen(function* () {
         // Post-team unattributed threads fail closed for non-admin members; pre-team legacy threads stay readable.
         return ctx.isLegacyPreTeam || isTeamAdminOrOwner(ctx.member);
       }
-      if (!canMemberReadTeamThread({ member: ctx.member, view: ctx.view })) {
-        return false;
-      }
       if (isMinimalAutomationActor(actor)) {
         const projectIdOption = yield* repository.getThreadProjectIdInProjection(threadId);
         return yield* matchesMinimalAutomationThreadScope(
@@ -3282,6 +3319,9 @@ const make = Effect.gen(function* () {
           ctx.attribution,
           Option.getOrUndefined(projectIdOption),
         );
+      }
+      if (!canMemberReadTeamThread({ member: ctx.member, view: ctx.view })) {
+        return false;
       }
       return true;
     }).pipe(
@@ -3427,10 +3467,6 @@ const make = Effect.gen(function* () {
             }
             continue;
           }
-          const view = viewById.get(attribution.viewId) ?? defaultView;
-          if (!canMemberReadTeamThread({ member, view })) {
-            continue;
-          }
           if (isMinimalAutomationActor(actor)) {
             const threadEnvId = attribution.executionEnvironmentId ?? localEnv!.environmentId;
             if (
@@ -3441,6 +3477,12 @@ const make = Effect.gen(function* () {
             ) {
               continue;
             }
+            allowed.add(threadId);
+            continue;
+          }
+          const view = viewById.get(attribution.viewId) ?? defaultView;
+          if (!canMemberReadTeamThread({ member, view })) {
+            continue;
           }
           allowed.add(threadId);
         }
@@ -3474,12 +3516,12 @@ const make = Effect.gen(function* () {
       }
       if (isMinimalAutomationActor(actor)) {
         const projectIdOption = yield* repository.getThreadProjectIdInProjection(threadId);
-        const inScope = yield* matchesMinimalAutomationThreadScope(
+        return yield* canMinimalAutomationPostInThread(
           actor.principal,
+          threadId,
           ctx.attribution,
           Option.getOrUndefined(projectIdOption),
         );
-        if (!inScope) return false;
       }
       return (
         resolveTeamThreadPostBlockReason({
@@ -3540,16 +3582,20 @@ const make = Effect.gen(function* () {
       const projectIdOption = yield* repository
         .getThreadProjectIdInProjection(threadId)
         .pipe(Effect.mapError(() => teamPostAuthError()));
-      const inScope = yield* matchesMinimalAutomationThreadScope(
+      const canPost = yield* canMinimalAutomationPostInThread(
         actor.principal,
+        threadId,
         ctx.attribution,
         Option.getOrUndefined(projectIdOption),
       );
-      if (!inScope) {
+      if (!canPost) {
         return yield* teamPostAuthError(
-          "Minimal team automations can only act on threads within their configured project, environment, and view.",
+          ctx.attribution.locked
+            ? "Minimal team automations cannot post into another member's locked thread."
+            : "Minimal team automations can only act on threads within their configured project, environment, and view.",
         );
       }
+      return;
     }
     const reason = resolveTeamThreadPostBlockReason({
       member: ctx.member,
@@ -3637,6 +3683,11 @@ const make = Effect.gen(function* () {
         return yield* teamPostAuthError("Only the thread creator can send a queued message now.");
       }
       if (ctx.kind === "unattributed") {
+        if (isMinimalAutomationActor(actor)) {
+          return yield* teamPostAuthError(
+            "Minimal team automations cannot promote queued messages on unattributed threads.",
+          );
+        }
         if (!ctx.member || ctx.member.status !== "active") {
           return yield* teamPostAuthError("This session is not bound to an active team member.");
         }
@@ -3689,6 +3740,11 @@ const make = Effect.gen(function* () {
         );
       }
       if (ctx.kind === "unattributed") {
+        if (isMinimalAutomationActor(actor)) {
+          return yield* teamPostAuthError(
+            "Minimal team automations cannot interrupt unattributed threads.",
+          );
+        }
         if (!ctx.member || ctx.member.status !== "active") {
           return yield* teamPostAuthError("This session is not bound to an active team member.");
         }
@@ -3757,6 +3813,11 @@ const make = Effect.gen(function* () {
         );
       }
       if (ctx.kind === "unattributed") {
+        if (isMinimalAutomationActor(actor)) {
+          return yield* teamPostAuthError(
+            "Minimal team automations cannot manage queued messages on unattributed threads.",
+          );
+        }
         if (!ctx.member || ctx.member.status !== "active") {
           return yield* teamPostAuthError("This session is not bound to an active team member.");
         }
@@ -4055,12 +4116,24 @@ const make = Effect.gen(function* () {
           : new Set<ThreadId>();
 
       const result: Array<ScheduledTask> = [];
+      const localEnvironment = envById.get(localEnv.environmentId) ?? null;
       for (const task of tasks) {
         const meta = metaByTaskId.get(task.id);
-        const environmentId = meta?.environmentId ?? localEnv.environmentId;
-        const viewId = meta?.viewId ?? team.defaultViewId;
-        const locked = meta?.locked ?? false;
-        const mcpAccessLevel = meta?.mcpAccessLevel ?? "minimal";
+        if (!meta) {
+          // Pre-Milestone 8 / unattributed team tasks fail closed to owner/admin only.
+          if (isMinimalAutomationActor(actor) || !isTeamAdminOrOwner(member)) {
+            continue;
+          }
+          if (task.threadId !== null && !readableBoundThreads.has(ThreadId.make(task.threadId))) {
+            continue;
+          }
+          result.push(task);
+          continue;
+        }
+        const environmentId = meta.environmentId;
+        const viewId = meta.viewId;
+        const locked = meta.locked;
+        const mcpAccessLevel = meta.mcpAccessLevel;
         if (isMinimalAutomationActor(actor)) {
           if (
             task.projectId !== actor.principal.projectId ||
@@ -4069,6 +4142,16 @@ const make = Effect.gen(function* () {
           ) {
             continue;
           }
+          if (task.threadId !== null && !readableBoundThreads.has(ThreadId.make(task.threadId))) {
+            continue;
+          }
+          if (task.webhook !== undefined) {
+            const { webhook: _redacted, ...withoutWebhook } = task;
+            result.push(withoutWebhook);
+          } else {
+            result.push(task);
+          }
+          continue;
         }
         const environment = envById.get(environmentId) ?? null;
         const view = viewById.get(viewId) ?? defaultView;
@@ -4078,14 +4161,25 @@ const make = Effect.gen(function* () {
         if (task.threadId !== null && !readableBoundThreads.has(ThreadId.make(task.threadId))) {
           continue;
         }
-        const canSeeWebhook =
-          !isMinimalAutomationActor(actor) &&
+        let canSeeWebhook =
+          canMemberAccessTeamEnvironment(member, localEnvironment) &&
           canMemberSeeTeamScheduledTaskWebhook({
             member,
             environment,
             view,
             meta: { locked, mcpAccessLevel },
           });
+        if (canSeeWebhook && task.threadId !== null && !isTeamAdminOrOwner(member)) {
+          const boundThreadId = ThreadId.make(task.threadId);
+          const canPostBound = yield* canActorPostInThread(actor, boundThreadId);
+          const canExecBound = canPostBound
+            ? yield* assertActorCanExecuteOnThreadEnvironment(actor, boundThreadId).pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              )
+            : false;
+          canSeeWebhook = canPostBound && canExecBound;
+        }
         if (!canSeeWebhook && task.webhook !== undefined) {
           const { webhook: _redacted, ...withoutWebhook } = task;
           result.push(withoutWebhook);
@@ -4113,7 +4207,12 @@ const make = Effect.gen(function* () {
   ) => filterReadableScheduledTasksForActor(sessionActor(sessionId), tasks);
 
   const assertActorCanReadScheduledTask = Effect.fn("TeamService.assertActorCanReadScheduledTask")(
-    function* (actor: TeamActor, taskId: ScheduledTaskId, boundThreadId?: ThreadId | null) {
+    function* (
+      actor: TeamActor,
+      taskId: ScheduledTaskId,
+      boundThreadId?: ThreadId | null,
+      projectId?: ProjectId | null,
+    ) {
       const workspaceOption = yield* repository
         .getWorkspace()
         .pipe(Effect.mapError(() => teamReadAuthError("You cannot view this scheduled task.")));
@@ -4130,22 +4229,38 @@ const make = Effect.gen(function* () {
         return yield* teamReadAuthError("This caller is not bound to an active team member.");
       }
       yield* ensureDefaultEnvironmentForTeam(team).pipe(Effect.ignore);
-      const [metaOption, localEnv] = yield* Effect.all([
-        repository
-          .getScheduledTaskMeta(taskId)
-          .pipe(Effect.mapError(() => teamReadAuthError("You cannot view this scheduled task."))),
-        resolveLocalEnvironmentIdentity(),
-      ]);
+      const metaOption = yield* repository
+        .getScheduledTaskMeta(taskId)
+        .pipe(Effect.mapError(() => teamReadAuthError("You cannot view this scheduled task.")));
       const meta =
         Option.isSome(metaOption) && metaOption.value.teamId === team.id ? metaOption.value : null;
-      const environmentId = meta?.environmentId ?? localEnv.environmentId;
-      const viewId = meta?.viewId ?? team.defaultViewId;
+      if (meta === null) {
+        if (isMinimalAutomationActor(actor) || !isTeamAdminOrOwner(member)) {
+          return yield* teamReadAuthError(
+            "You do not have permission to view this scheduled task.",
+          );
+        }
+        if (boundThreadId !== undefined && boundThreadId !== null) {
+          yield* assertActorCanReadThread(actor, boundThreadId);
+        }
+        return;
+      }
+      const environmentId = meta.environmentId;
+      const viewId = meta.viewId;
       if (isMinimalAutomationActor(actor)) {
-        if (environmentId !== actor.principal.environmentId || viewId !== actor.principal.viewId) {
+        if (
+          environmentId !== actor.principal.environmentId ||
+          viewId !== actor.principal.viewId ||
+          (projectId !== undefined && projectId !== actor.principal.projectId)
+        ) {
           return yield* teamReadAuthError(
             "Minimal team automations can only view scheduled tasks in their configured scope.",
           );
         }
+        if (boundThreadId !== undefined && boundThreadId !== null) {
+          yield* assertActorCanReadThread(actor, boundThreadId);
+        }
+        return;
       }
       const [envOption, viewOption, defaultViewOption] = yield* Effect.all([
         repository
@@ -4177,7 +4292,128 @@ const make = Effect.gen(function* () {
     sessionId: AuthSessionId,
     taskId: ScheduledTaskId,
     boundThreadId?: ThreadId | null,
-  ) => assertActorCanReadScheduledTask(sessionActor(sessionId), taskId, boundThreadId);
+    projectId?: ProjectId | null,
+  ) => assertActorCanReadScheduledTask(sessionActor(sessionId), taskId, boundThreadId, projectId);
+
+  const assertActorCanReadScheduledTaskWebhooks = Effect.fn(
+    "TeamService.assertActorCanReadScheduledTaskWebhooks",
+  )(function* (actor: TeamActor, taskId: ScheduledTaskId, boundThreadId?: ThreadId | null) {
+    const workspaceOption = yield* repository
+      .getWorkspace()
+      .pipe(
+        Effect.mapError(() =>
+          teamReadAuthError("You cannot view webhook deliveries for this scheduled task."),
+        ),
+      );
+    if (Option.isNone(workspaceOption)) return;
+    const team = workspaceOption.value;
+    if (isMinimalAutomationActor(actor)) {
+      return yield* teamReadAuthError(
+        "Minimal team automations cannot inspect scheduled task webhook deliveries.",
+      );
+    }
+    const memberOption = yield* resolveMemberForActor(actor).pipe(
+      Effect.mapError(() =>
+        teamReadAuthError("You cannot view webhook deliveries for this scheduled task."),
+      ),
+    );
+    const member =
+      Option.isSome(memberOption) && memberOption.value.teamId === team.id
+        ? memberOption.value
+        : null;
+    if (!member || member.status !== "active") {
+      return yield* teamReadAuthError("This caller is not bound to an active team member.");
+    }
+    yield* ensureDefaultEnvironmentForTeam(team).pipe(Effect.ignore);
+    const [metaOption, localEnv] = yield* Effect.all([
+      repository
+        .getScheduledTaskMeta(taskId)
+        .pipe(
+          Effect.mapError(() =>
+            teamReadAuthError("You cannot view webhook deliveries for this scheduled task."),
+          ),
+        ),
+      resolveLocalEnvironmentIdentity(),
+    ]);
+    const meta =
+      Option.isSome(metaOption) && metaOption.value.teamId === team.id ? metaOption.value : null;
+    if (meta === null) {
+      if (!isTeamAdminOrOwner(member)) {
+        return yield* teamReadAuthError(
+          "You do not have permission to view webhook deliveries for this scheduled task.",
+        );
+      }
+      if (boundThreadId !== undefined && boundThreadId !== null) {
+        yield* assertActorCanReadThread(actor, boundThreadId);
+      }
+      return;
+    }
+    const [localEnvOpt, metaEnvOpt, viewOption, defaultViewOption] = yield* Effect.all([
+      repository
+        .getEnvironmentByEnvironmentId({ teamId: team.id, environmentId: localEnv.environmentId })
+        .pipe(
+          Effect.mapError(() =>
+            teamReadAuthError("You cannot view webhook deliveries for this scheduled task."),
+          ),
+        ),
+      meta.environmentId === localEnv.environmentId
+        ? Effect.succeed(Option.none<TeamEnvironment>())
+        : repository
+            .getEnvironmentByEnvironmentId({ teamId: team.id, environmentId: meta.environmentId })
+            .pipe(
+              Effect.mapError(() =>
+                teamReadAuthError("You cannot view webhook deliveries for this scheduled task."),
+              ),
+            ),
+      repository
+        .getViewById(meta.viewId)
+        .pipe(
+          Effect.mapError(() =>
+            teamReadAuthError("You cannot view webhook deliveries for this scheduled task."),
+          ),
+        ),
+      meta.viewId === team.defaultViewId
+        ? Effect.succeed(Option.none<TeamView>())
+        : repository
+            .getViewById(team.defaultViewId)
+            .pipe(
+              Effect.mapError(() =>
+                teamReadAuthError("You cannot view webhook deliveries for this scheduled task."),
+              ),
+            ),
+    ]);
+    const localEnvironment = Option.getOrNull(localEnvOpt);
+    const metaEnvironment =
+      meta.environmentId === localEnv.environmentId
+        ? localEnvironment
+        : Option.getOrNull(metaEnvOpt);
+    const view = Option.getOrNull(viewOption) ?? Option.getOrNull(defaultViewOption);
+    if (
+      !canMemberAccessTeamEnvironment(member, localEnvironment) ||
+      !canMemberSeeTeamScheduledTaskWebhook({
+        member,
+        environment: metaEnvironment,
+        view,
+        meta,
+      })
+    ) {
+      return yield* teamAdminAuthError(
+        "You do not have permission to view webhook deliveries for this scheduled task.",
+        "team:scheduled_tasks:webhook",
+      );
+    }
+    if (boundThreadId !== undefined && boundThreadId !== null) {
+      yield* assertActorCanReadThread(actor, boundThreadId);
+      yield* assertActorCanPostInThread(actor, boundThreadId);
+      yield* assertActorCanExecuteOnThreadEnvironment(actor, boundThreadId);
+    }
+  });
+
+  const assertCanReadScheduledTaskWebhooks = (
+    sessionId: AuthSessionId,
+    taskId: ScheduledTaskId,
+    boundThreadId?: ThreadId | null,
+  ) => assertActorCanReadScheduledTaskWebhooks(sessionActor(sessionId), taskId, boundThreadId);
 
   const authorizeScheduledTaskUpsertForActor = Effect.fn(
     "TeamService.authorizeScheduledTaskUpsertForActor",
@@ -4224,6 +4460,27 @@ const make = Effect.gen(function* () {
     }
     yield* ensureDefaultEnvironmentForTeam(team).pipe(Effect.ignore);
     const localEnv = yield* resolveLocalEnvironmentIdentity();
+    if (
+      args.input.teamMeta?.environmentId !== undefined &&
+      args.input.teamMeta.environmentId !== localEnv.environmentId
+    ) {
+      return yield* teamPostAuthError(
+        "Scheduled tasks can only be configured for the host environment handling this request.",
+      );
+    }
+    const localEnvOpt = yield* repository
+      .getEnvironmentByEnvironmentId({ teamId: team.id, environmentId: localEnv.environmentId })
+      .pipe(
+        Effect.mapError(() =>
+          teamPostAuthError("Could not verify host environment permissions for scheduled task."),
+        ),
+      );
+    const targetEnv = Option.getOrNull(localEnvOpt);
+    if (targetEnv === null || !canMemberAccessTeamEnvironment(member, targetEnv)) {
+      return yield* teamPostAuthError(
+        "You do not have permission to schedule tasks on this team environment.",
+      );
+    }
     const existingMetaOption =
       args.existingTask !== null
         ? yield* repository
@@ -4240,66 +4497,67 @@ const make = Effect.gen(function* () {
         : null;
 
     if (args.existingTask !== null) {
-      const existingEnvId = existingMeta?.environmentId ?? localEnv.environmentId;
-      const existingViewId = existingMeta?.viewId ?? team.defaultViewId;
-      const [existingEnvOpt, existingViewOpt, defaultViewOpt] = yield* Effect.all([
-        repository
-          .getEnvironmentByEnvironmentId({ teamId: team.id, environmentId: existingEnvId })
-          .pipe(
-            Effect.mapError(() =>
-              teamPostAuthError("Could not verify existing scheduled task environment."),
-            ),
-          ),
-        repository
-          .getViewById(existingViewId)
-          .pipe(
-            Effect.mapError(() =>
-              teamPostAuthError("Could not verify existing scheduled task view."),
-            ),
-          ),
-        existingViewId === team.defaultViewId
-          ? Effect.succeed(Option.none<TeamView>())
-          : repository
-              .getViewById(team.defaultViewId)
-              .pipe(
-                Effect.mapError(() =>
-                  teamPostAuthError("Could not verify existing scheduled task default view."),
+      if (existingMeta === null) {
+        if (!isTeamAdminOrOwner(member)) {
+          return yield* teamAdminAuthError(
+            "Only owner and admin members can modify unattributed scheduled tasks.",
+            "team:scheduled_tasks:write",
+          );
+        }
+      } else {
+        const existingEnvId = existingMeta.environmentId;
+        const existingViewId = existingMeta.viewId;
+        const [existingEnvOpt, existingViewOpt, defaultViewOpt] = yield* Effect.all([
+          existingEnvId === localEnv.environmentId
+            ? Effect.succeed(localEnvOpt)
+            : repository
+                .getEnvironmentByEnvironmentId({ teamId: team.id, environmentId: existingEnvId })
+                .pipe(
+                  Effect.mapError(() =>
+                    teamPostAuthError("Could not verify existing scheduled task environment."),
+                  ),
                 ),
+          repository
+            .getViewById(existingViewId)
+            .pipe(
+              Effect.mapError(() =>
+                teamPostAuthError("Could not verify existing scheduled task view."),
               ),
-      ]);
-      const existingEnv = Option.getOrNull(existingEnvOpt);
-      const existingView = Option.getOrNull(existingViewOpt) ?? Option.getOrNull(defaultViewOpt);
-      if (
-        !canMemberMutateTeamScheduledTask({
-          member,
-          environment: existingEnv,
-          view: existingView,
-          existingMeta,
-        })
-      ) {
-        return yield* teamAdminAuthError(
-          existingMeta?.locked === true || existingMeta?.mcpAccessLevel === "elevated"
-            ? "Only owner and admin members can modify locked or elevated scheduled tasks."
-            : "You do not have permission to edit this team scheduled task.",
-          "team:scheduled_tasks:write",
-        );
+            ),
+          existingViewId === team.defaultViewId
+            ? Effect.succeed(Option.none<TeamView>())
+            : repository
+                .getViewById(team.defaultViewId)
+                .pipe(
+                  Effect.mapError(() =>
+                    teamPostAuthError("Could not verify existing scheduled task default view."),
+                  ),
+                ),
+        ]);
+        const existingEnv = Option.getOrNull(existingEnvOpt);
+        const existingView = Option.getOrNull(existingViewOpt) ?? Option.getOrNull(defaultViewOpt);
+        if (
+          !canMemberMutateTeamScheduledTask({
+            member,
+            environment: existingEnv,
+            view: existingView,
+            existingMeta,
+          })
+        ) {
+          return yield* teamAdminAuthError(
+            existingMeta.locked === true || existingMeta.mcpAccessLevel === "elevated"
+              ? "Only owner and admin members can modify locked or elevated scheduled tasks."
+              : "You do not have permission to edit this team scheduled task.",
+            "team:scheduled_tasks:write",
+          );
+        }
       }
-    }
-
-    const targetEnvId =
-      args.input.teamMeta?.environmentId ?? existingMeta?.environmentId ?? localEnv.environmentId;
-    const targetEnvOpt = yield* repository
-      .getEnvironmentByEnvironmentId({ teamId: team.id, environmentId: targetEnvId })
-      .pipe(
-        Effect.mapError(() =>
-          teamPostAuthError("Could not verify target environment for scheduled task."),
-        ),
-      );
-    const targetEnv = Option.getOrNull(targetEnvOpt);
-    if (targetEnv === null || !canMemberAccessTeamEnvironment(member, targetEnv)) {
-      return yield* teamPostAuthError(
-        "You do not have permission to schedule tasks on this team environment.",
-      );
+      if (args.existingTask.threadId !== null) {
+        const existingBoundThreadId = ThreadId.make(args.existingTask.threadId);
+        yield* assertActorCanReadThread(args.actor, existingBoundThreadId);
+        yield* assertActorCanPostInThread(args.actor, existingBoundThreadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(args.actor, existingBoundThreadId);
+      }
     }
 
     const resolvedViewId =
@@ -4336,8 +4594,13 @@ const make = Effect.gen(function* () {
       );
     }
 
-    if (args.input.threadId !== undefined && args.input.threadId !== null) {
-      const boundThreadId = ThreadId.make(args.input.threadId);
+    const effectiveBoundThreadId = resolveScheduledTaskEffectiveThreadId(
+      args.input,
+      args.existingTask,
+    );
+    if (effectiveBoundThreadId !== null && effectiveBoundThreadId !== args.existingTask?.threadId) {
+      const boundThreadId = ThreadId.make(effectiveBoundThreadId);
+      yield* assertActorCanReadThread(args.actor, boundThreadId);
       yield* assertActorCanPostInThread(args.actor, boundThreadId);
       yield* assertActorCanExecuteOnThreadEnvironment(args.actor, boundThreadId);
     }
@@ -4363,39 +4626,41 @@ const make = Effect.gen(function* () {
       existingTask: input.existingTask,
     });
 
+  const persistScheduledTaskMeta = Effect.fn("TeamService.persistScheduledTaskMeta")(function* (
+    input: AuthorizedTeamScheduledTaskUpsert & { readonly taskId: ScheduledTaskId },
+  ) {
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    return yield* repository.upsertScheduledTaskMeta({
+      taskId: input.taskId,
+      teamId: input.teamId,
+      environmentId: input.environmentId,
+      viewId: input.viewId,
+      locked: input.locked,
+      mcpAccessLevel: input.mcpAccessLevel,
+      createdByMemberId: input.actorMemberId,
+      updatedByMemberId: input.actorMemberId,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+  });
+
+  const publishScheduledTaskMeta = Effect.fn("TeamService.publishScheduledTaskMeta")(function* (
+    meta: TeamScheduledTaskMeta,
+  ) {
+    yield* publish({
+      version: 1,
+      type: "scheduledTaskMetaUpserted",
+      payload: meta,
+    });
+    yield* publishAccessChange({ type: "scheduledTaskMeta", taskId: meta.taskId });
+  });
+
   const saveScheduledTaskMeta = Effect.fn("TeamService.saveScheduledTaskMeta")(function* (
     input: AuthorizedTeamScheduledTaskUpsert & { readonly taskId: ScheduledTaskId },
   ) {
-    return yield* Effect.gen(function* () {
-      const nowIso = DateTime.formatIso(yield* DateTime.now);
-      const saved = yield* repository.upsertScheduledTaskMeta({
-        taskId: input.taskId,
-        teamId: input.teamId,
-        environmentId: input.environmentId,
-        viewId: input.viewId,
-        locked: input.locked,
-        mcpAccessLevel: input.mcpAccessLevel,
-        createdByMemberId: input.actorMemberId,
-        updatedByMemberId: input.actorMemberId,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      });
-      yield* publish({
-        version: 1,
-        type: "scheduledTaskMetaUpserted",
-        payload: saved,
-      });
-      yield* publishAccessChange({ type: "scheduledTaskMeta", taskId: input.taskId });
-      return Option.some(saved);
-    }).pipe(
-      Effect.tapError((cause) =>
-        Effect.logWarning("TeamService.saveScheduledTaskMeta failed", {
-          taskId: input.taskId,
-          cause,
-        }),
-      ),
-      Effect.orElseSucceed(() => Option.none<TeamScheduledTaskMeta>()),
-    );
+    const saved = yield* persistScheduledTaskMeta(input);
+    yield* publishScheduledTaskMeta(saved);
+    return saved;
   });
 
   const deleteScheduledTaskMeta = Effect.fn("TeamService.deleteScheduledTaskMeta")(function* (
@@ -4420,7 +4685,7 @@ const make = Effect.gen(function* () {
     actor: TeamActor,
     taskId: ScheduledTaskId,
     boundThreadId?: ThreadId | null,
-    options?: { readonly isRunNow?: boolean },
+    _options?: { readonly isRunNow?: boolean },
   ) {
     const workspaceOption = yield* repository
       .getWorkspace()
@@ -4464,18 +4729,48 @@ const make = Effect.gen(function* () {
         ),
       resolveLocalEnvironmentIdentity(),
     ]);
+    const localEnvOption = yield* repository
+      .getEnvironmentByEnvironmentId({ teamId: team.id, environmentId: localEnv.environmentId })
+      .pipe(
+        Effect.mapError(() =>
+          teamPostAuthError("Could not verify host environment permissions for scheduled task."),
+        ),
+      );
+    const localEnvironment = Option.getOrNull(localEnvOption);
+    if (!canMemberAccessTeamEnvironment(member, localEnvironment)) {
+      return yield* teamAdminAuthError(
+        "You do not have permission to manage scheduled tasks on this team environment.",
+        "team:scheduled_tasks:write",
+      );
+    }
     const meta =
       Option.isSome(metaOption) && metaOption.value.teamId === team.id ? metaOption.value : null;
-    const environmentId = meta?.environmentId ?? localEnv.environmentId;
-    const viewId = meta?.viewId ?? team.defaultViewId;
+    if (meta === null) {
+      if (!isTeamAdminOrOwner(member)) {
+        return yield* teamAdminAuthError(
+          "Only owner and admin members can manage unattributed scheduled tasks.",
+          "team:scheduled_tasks:write",
+        );
+      }
+      if (boundThreadId !== undefined && boundThreadId !== null) {
+        yield* assertActorCanReadThread(actor, boundThreadId);
+        yield* assertActorCanPostInThread(actor, boundThreadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, boundThreadId);
+      }
+      return;
+    }
+    const environmentId = meta.environmentId;
+    const viewId = meta.viewId;
     const [envOption, viewOption, defaultViewOption] = yield* Effect.all([
-      repository
-        .getEnvironmentByEnvironmentId({ teamId: team.id, environmentId })
-        .pipe(
-          Effect.mapError(() =>
-            teamPostAuthError("Could not verify scheduled task environment permissions."),
-          ),
-        ),
+      environmentId === localEnv.environmentId
+        ? Effect.succeed(localEnvOption)
+        : repository
+            .getEnvironmentByEnvironmentId({ teamId: team.id, environmentId })
+            .pipe(
+              Effect.mapError(() =>
+                teamPostAuthError("Could not verify scheduled task environment permissions."),
+              ),
+            ),
       repository
         .getViewById(viewId)
         .pipe(
@@ -4504,13 +4799,14 @@ const make = Effect.gen(function* () {
       })
     ) {
       return yield* teamAdminAuthError(
-        meta?.locked === true || meta?.mcpAccessLevel === "elevated"
+        meta.locked === true || meta.mcpAccessLevel === "elevated"
           ? "Only owner and admin members can manage locked or elevated scheduled tasks."
           : "You do not have permission to manage this team scheduled task.",
         "team:scheduled_tasks:write",
       );
     }
-    if (options?.isRunNow === true && boundThreadId !== undefined && boundThreadId !== null) {
+    if (boundThreadId !== undefined && boundThreadId !== null) {
+      yield* assertActorCanReadThread(actor, boundThreadId);
       yield* assertActorCanPostInThread(actor, boundThreadId);
       yield* assertActorCanExecuteOnThreadEnvironment(actor, boundThreadId);
     }
@@ -4558,9 +4854,6 @@ const make = Effect.gen(function* () {
     if (!member || member.status !== "active") {
       return yield* teamPostAuthError("This session is not bound to an active team member.");
     }
-    if (input.locked === true && !canToggleTeamThreadLock(member.role)) {
-      return yield* teamPostAuthError("Only owner and admin members can create locked threads.");
-    }
     const targetViewId = input.viewId ?? team.defaultViewId;
     if (isMinimalAutomationActor(input.actor)) {
       if (targetViewId !== input.actor.principal.viewId) {
@@ -4573,6 +4866,24 @@ const make = Effect.gen(function* () {
           "Minimal team automations can only launch threads in their configured project.",
         );
       }
+      const viewOption = yield* repository.getViewById(targetViewId).pipe(
+        Effect.tapError((cause) =>
+          Effect.logWarning("TeamService.assertActorCanCreateThreadInView view lookup failed", {
+            targetViewId,
+            cause,
+          }),
+        ),
+        Effect.mapError(() => teamPostAuthError()),
+      );
+      if (Option.isNone(viewOption) || viewOption.value.teamId !== team.id) {
+        return yield* teamPostAuthError(
+          "You do not have permission to create a thread in this view.",
+        );
+      }
+      return;
+    }
+    if (input.locked === true && !canToggleTeamThreadLock(member.role)) {
+      return yield* teamPostAuthError("Only owner and admin members can create locked threads.");
     }
     const viewOption = yield* repository.getViewById(targetViewId).pipe(
       Effect.tapError((cause) =>
@@ -5681,6 +5992,8 @@ const make = Effect.gen(function* () {
       let ownerKind: "member" | "team" = "member";
       let creatorMemberId: TeamMemberId | null = null;
       let viewId = team.defaultViewId;
+      let parentLocked = false;
+      let parentLockedByMemberId: TeamMemberId | null = null;
       let executionEnvironmentId: EnvironmentId | null = null;
       let executionEnvironmentLabel: string | null = null;
       if (Option.isSome(parentAttribution) && parentAttribution.value.teamId === team.id) {
@@ -5689,6 +6002,10 @@ const make = Effect.gen(function* () {
           (parentAttribution.value.creatorMemberId === null ? "team" : "member");
         creatorMemberId = parentAttribution.value.creatorMemberId;
         viewId = parentAttribution.value.viewId;
+        parentLocked = parentAttribution.value.locked;
+        parentLockedByMemberId = parentAttribution.value.locked
+          ? parentAttribution.value.lockedByMemberId
+          : null;
         executionEnvironmentId = parentAttribution.value.executionEnvironmentId ?? null;
         executionEnvironmentLabel = parentAttribution.value.executionEnvironmentLabel ?? null;
       }
@@ -5702,6 +6019,12 @@ const make = Effect.gen(function* () {
           viewId = input.teamAutomation.viewId;
         }
         executionEnvironmentId = input.teamAutomation.environmentId;
+        if (Option.isNone(parentAttribution)) {
+          const taskMetaOpt = yield* repository.getScheduledTaskMeta(input.teamAutomation.taskId);
+          if (Option.isSome(taskMetaOpt) && taskMetaOpt.value.teamId === team.id) {
+            parentLocked = taskMetaOpt.value.locked;
+          }
+        }
       } else if (input.creatorMemberId !== undefined) {
         const actorOption = yield* repository.getMemberById(input.creatorMemberId);
         if (
@@ -5725,6 +6048,8 @@ const make = Effect.gen(function* () {
         ownerKind = "member";
         creatorMemberId = actorOption.value.id;
       }
+      const locked = ownerKind === "team" ? parentLocked : false;
+      const lockedByMemberId = locked ? parentLockedByMemberId : null;
       if (ownerKind === "member" && creatorMemberId === null) {
         // Pre-team legacy parents legitimately lack attribution; anchor their MCP children to Default View.
         const parentCreatedAt = yield* repository.getThreadCreatedAtInProjection(
@@ -5750,6 +6075,8 @@ const make = Effect.gen(function* () {
         ownerKind,
         creatorMemberId: ownerKind === "team" ? null : creatorMemberId,
         viewId,
+        locked,
+        lockedByMemberId,
         ...(executionEnvironmentId !== null ? { executionEnvironmentId } : {}),
         ...(executionEnvironmentLabel !== null ? { executionEnvironmentLabel } : {}),
         createdAt: nowIso,
@@ -5801,7 +6128,7 @@ const make = Effect.gen(function* () {
         input.viewId ??
         taskMeta?.viewId ??
         (yield* resolveDefaultViewIdForProject(team, input.projectId));
-      const locked = input.locked ?? taskMeta?.locked ?? false;
+      const locked = input.locked ?? taskMeta?.locked ?? true;
       const localEnv = yield* resolveLocalEnvironmentIdentity();
       const executionEnvironmentId =
         input.environmentId ?? taskMeta?.environmentId ?? localEnv.environmentId;
@@ -5971,6 +6298,12 @@ const make = Effect.gen(function* () {
   )(function* (threadId: ThreadId) {
     yield* repository.deleteThreadAttribution(threadId).pipe(Effect.ignore);
   });
+
+  const rollbackRecordedTurnAttribution = Effect.fn("TeamService.rollbackRecordedTurnAttribution")(
+    function* (input: { readonly threadId: ThreadId; readonly turnId: string }) {
+      yield* repository.deleteTurnAttribution(input).pipe(Effect.ignore);
+    },
+  );
 
   const recordTurnAuthoredByMember = Effect.fn("TeamService.recordTurnAuthoredByMember")(
     function* (input: {
@@ -6193,6 +6526,8 @@ const make = Effect.gen(function* () {
       let inheritedCreatorMemberId: TeamMemberId | null = null;
       let inheritedCreatorPseudo: TeamPseudo | null = null;
       let inheritedViewId: TeamViewId = team.defaultViewId;
+      let inheritedParentLocked = false;
+      let inheritedParentLockedByMemberId: TeamMemberId | null = null;
       let inheritedExecutionEnvironmentId: EnvironmentId | null = null;
       let inheritedExecutionEnvironmentLabel: string | null = null;
       if (Option.isSome(parentAttribution) && parentAttribution.value.teamId === team.id) {
@@ -6202,6 +6537,10 @@ const make = Effect.gen(function* () {
         inheritedCreatorMemberId = parentAttribution.value.creatorMemberId;
         inheritedCreatorPseudo = parentAttribution.value.creatorPseudo;
         inheritedViewId = parentAttribution.value.viewId;
+        inheritedParentLocked = parentAttribution.value.locked;
+        inheritedParentLockedByMemberId = parentAttribution.value.locked
+          ? parentAttribution.value.lockedByMemberId
+          : null;
         inheritedExecutionEnvironmentId = parentAttribution.value.executionEnvironmentId ?? null;
         inheritedExecutionEnvironmentLabel =
           parentAttribution.value.executionEnvironmentLabel ?? null;
@@ -6232,6 +6571,14 @@ const make = Effect.gen(function* () {
           inheritedViewId = input.teamAutomation.viewId;
         }
         inheritedExecutionEnvironmentId = input.teamAutomation.environmentId;
+        if (Option.isNone(parentAttribution)) {
+          const taskMetaOpt = yield* repository
+            .getScheduledTaskMeta(input.teamAutomation.taskId)
+            .pipe(Effect.orElseSucceed(() => Option.none<TeamScheduledTaskMeta>()));
+          if (Option.isSome(taskMetaOpt) && taskMetaOpt.value.teamId === team.id) {
+            inheritedParentLocked = taskMetaOpt.value.locked;
+          }
+        }
       } else if (input.creatorMemberId !== undefined) {
         const explicitMember = yield* repository
           .getMemberById(input.creatorMemberId)
@@ -6247,6 +6594,8 @@ const make = Effect.gen(function* () {
         inheritedCreatorMemberId = explicitMember.value.id;
         inheritedCreatorPseudo = explicitMember.value.pseudo;
       }
+      const inheritedLocked = inheritedOwnerKind === "team" ? inheritedParentLocked : false;
+      const inheritedLockedByMemberId = inheritedLocked ? inheritedParentLockedByMemberId : null;
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       const attribution = yield* repository
         .recordThreadAttribution({
@@ -6255,6 +6604,8 @@ const make = Effect.gen(function* () {
           ownerKind: inheritedOwnerKind,
           creatorMemberId: inheritedOwnerKind === "team" ? null : inheritedCreatorMemberId,
           viewId: inheritedViewId,
+          locked: inheritedLocked,
+          lockedByMemberId: inheritedLockedByMemberId,
           ...(inheritedExecutionEnvironmentId !== null
             ? { executionEnvironmentId: inheritedExecutionEnvironmentId }
             : {}),
@@ -6851,14 +7202,14 @@ const make = Effect.gen(function* () {
           ? memberOption.value
           : null;
       if (!member || member.status !== "active") return false;
-      if (isMinimalAutomationActor(actor) && environmentId !== actor.principal.environmentId) {
-        return false;
-      }
       yield* ensureDefaultEnvironmentForTeam(team).pipe(Effect.ignore);
       const envOption = yield* repository.getEnvironmentByEnvironmentId({
         teamId: team.id,
         environmentId,
       });
+      if (isMinimalAutomationActor(actor)) {
+        return environmentId === actor.principal.environmentId && Option.isSome(envOption);
+      }
       if (Option.isNone(envOption)) {
         // Unregistered peer environments are restricted to owner/admin only (fail closed for regular/modo).
         return isTeamAdminOrOwner(member);
@@ -6916,7 +7267,10 @@ const make = Effect.gen(function* () {
       const envById = new Map(envs.map((env) => [env.environmentId, env] as const));
       const allowed = new Set<EnvironmentId>();
       for (const envId of environmentIds) {
-        if (isMinimalAutomationActor(actor) && envId !== actor.principal.environmentId) {
+        if (isMinimalAutomationActor(actor)) {
+          if (envId === actor.principal.environmentId && envById.has(envId)) {
+            allowed.add(envId);
+          }
           continue;
         }
         const registered = envById.get(envId);
@@ -6986,6 +7340,11 @@ const make = Effect.gen(function* () {
       return yield* teamPostAuthError("This session is not bound to an active team member.");
     }
     if (Option.isNone(attributionOption)) {
+      if (isMinimalAutomationActor(actor)) {
+        return yield* teamPostAuthError(
+          "Minimal team automations can only execute on attributed threads within their configured environment.",
+        );
+      }
       const localEnv = yield* resolveLocalEnvironmentIdentity();
       yield* assertActorCanAccessEnvironment(actor, localEnv.environmentId);
       return;
@@ -7006,6 +7365,19 @@ const make = Effect.gen(function* () {
     const environments = yield* repository
       .listEnvironments(team.id)
       .pipe(failClosed("listEnvironments"));
+    if (isMinimalAutomationActor(actor)) {
+      const localEnv = yield* resolveLocalEnvironmentIdentity();
+      const threadEnvId = attribution.executionEnvironmentId ?? localEnv.environmentId;
+      if (
+        threadEnvId !== actor.principal.environmentId ||
+        !environments.some((env) => env.environmentId === threadEnvId)
+      ) {
+        return yield* teamPostAuthError(
+          "Minimal team automations can only execute on their configured environment.",
+        );
+      }
+      return;
+    }
     const access = resolveTeamThreadEnvironmentAccess({
       member,
       attribution,
@@ -7017,15 +7389,6 @@ const make = Effect.gen(function* () {
           ? formatUpstreamCompatRemoteEnvironmentBlockedMessage(access.environmentLabel)
           : `You do not have permission to execute turns on environment "${access.environmentLabel}". Fork the thread or leave a note instead.`,
       );
-    }
-    if (isMinimalAutomationActor(actor)) {
-      const localEnv = yield* resolveLocalEnvironmentIdentity();
-      const threadEnvId = attribution.executionEnvironmentId ?? localEnv.environmentId;
-      if (threadEnvId !== actor.principal.environmentId) {
-        return yield* teamPostAuthError(
-          "Minimal team automations can only execute on their configured environment.",
-        );
-      }
     }
   });
 
@@ -9331,8 +9694,12 @@ const make = Effect.gen(function* () {
     filterReadableScheduledTasks,
     assertActorCanReadScheduledTask,
     assertCanReadScheduledTask,
+    assertActorCanReadScheduledTaskWebhooks,
+    assertCanReadScheduledTaskWebhooks,
     authorizeScheduledTaskUpsertForActor,
     authorizeScheduledTaskUpsert,
+    persistScheduledTaskMeta,
+    publishScheduledTaskMeta,
     saveScheduledTaskMeta,
     deleteScheduledTaskMeta,
     assertActorCanMutateScheduledTask,
@@ -9353,6 +9720,7 @@ const make = Effect.gen(function* () {
     publishTeamAutomationThreadAttributed,
     recordTeamAutomationTurn,
     rollbackPreparedThreadAttribution,
+    rollbackRecordedTurnAttribution,
     recordTurnAuthored,
     recordTurnAuthoredByMember,
     requireTurnAuthoredBySession,

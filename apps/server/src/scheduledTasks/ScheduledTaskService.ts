@@ -275,6 +275,7 @@ export class ScheduledTaskService extends Context.Service<
     readonly subscribeList: () => Stream.Stream<ScheduledTaskListResult, ScheduledTaskError>;
     readonly upsert: (
       input: ScheduledTaskUpsertInput,
+      options?: { readonly teamMeta?: TeamService.AuthorizedTeamScheduledTaskUpsert },
     ) => Effect.Effect<ScheduledTaskMutationResult, ScheduledTaskError>;
     readonly setEnabled: (
       input: ScheduledTaskSetEnabledInput,
@@ -1148,12 +1149,20 @@ export const layer = Layer.effect(
                         taskId: active.id,
                         projectId: active.projectId,
                       });
-                    yield* teamServiceForRun.recordTeamAutomationTurn({
-                      threadId: allocatedThreadId,
-                      turnId: `msg:${messageId}`,
-                      taskId: active.id,
-                      projectId: active.projectId,
-                    });
+                    yield* teamServiceForRun
+                      .recordTeamAutomationTurn({
+                        threadId: allocatedThreadId,
+                        turnId: `msg:${messageId}`,
+                        taskId: active.id,
+                        projectId: active.projectId,
+                      })
+                      .pipe(
+                        Effect.onError(() =>
+                          preparedTeamThread && allocatedThreadId !== undefined
+                            ? teamServiceForRun.rollbackPreparedThreadAttribution(allocatedThreadId)
+                            : Effect.void,
+                        ),
+                      );
                   }
                   const launched = yield* threadLaunch
                     .launch({
@@ -1207,7 +1216,16 @@ export const layer = Layer.effect(
                   }
                   // The stored selection only seeds fresh threads. A bound run
                   // follows the thread's current provider, so it passes none.
-                  yield* sendBound(targetThreadId, active.projectId, 2);
+                  yield* sendBound(targetThreadId, active.projectId, 2).pipe(
+                    Effect.onError(() =>
+                      teamServiceForRun !== null
+                        ? teamServiceForRun.rollbackRecordedTurnAttribution({
+                            threadId: targetThreadId,
+                            turnId: `msg:${messageId}`,
+                          })
+                        : Effect.void,
+                    ),
+                  );
                   return targetThreadId;
                 }),
               );
@@ -1519,7 +1537,7 @@ export const layer = Layer.effect(
 
     const upsert: ScheduledTaskService["Service"]["upsert"] = Effect.fn(
       "ScheduledTaskService.upsert",
-    )(function* (input) {
+    )(function* (input, options) {
       // A webhook task the policy blocks can still be edited while it is off.
       if (input.enabled && input.schedule.type === "webhook" && webhookPolicyBlock !== undefined) {
         return yield* taskError(
@@ -1677,13 +1695,46 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      yield* saveTask(
-        task,
-        input.requireExisting === true,
-        scheduleUnchanged ? existingTask.schedule : null,
-        threadId === null && input.unbindThread === true ? (existingTask?.threadId ?? null) : null,
-        webhook,
-      );
+      const savedTeamMeta = yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* saveTask(
+              task,
+              input.requireExisting === true,
+              scheduleUnchanged ? existingTask.schedule : null,
+              threadId === null && input.unbindThread === true
+                ? (existingTask?.threadId ?? null)
+                : null,
+              webhook,
+            );
+            if (options?.teamMeta !== undefined && Option.isSome(teamServiceOption)) {
+              return yield* teamServiceOption.value
+                .persistScheduledTaskMeta({
+                  taskId: task.id,
+                  ...options.teamMeta,
+                })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    taskError("Could not save team scheduled task metadata.", {
+                      taskId: task.id,
+                      cause,
+                    }),
+                  ),
+                );
+            }
+            return null;
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            isScheduledTaskError(cause)
+              ? cause
+              : taskError("Could not save schedule task.", { taskId: task.id, cause }),
+          ),
+        );
+      if (savedTeamMeta !== null && Option.isSome(teamServiceOption)) {
+        yield* teamServiceOption.value.publishScheduledTaskMeta(savedTeamMeta);
+      }
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });

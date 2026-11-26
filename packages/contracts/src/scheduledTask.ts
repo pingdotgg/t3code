@@ -239,6 +239,26 @@ export function scheduledTaskThreadMode(
   return task.threadMode ?? (task.threadId === null ? "new_thread" : "continue");
 }
 
+/** Resolves the destination thread id that `ScheduledTaskService.upsert` will persist. */
+export function resolveScheduledTaskEffectiveThreadId(
+  input: Pick<ScheduledTaskUpsertInput, "projectId" | "threadId" | "threadMode" | "unbindThread">,
+  existing: Pick<ScheduledTask, "projectId" | "threadId" | "threadMode"> | null,
+): ThreadId | null {
+  const threadMode =
+    input.threadMode ??
+    (() => {
+      const stored = existing === null ? "new_thread" : scheduledTaskThreadMode(existing);
+      return stored === "new_thread" && input.threadId != null ? "continue" : stored;
+    })();
+  const keptThreadId =
+    input.threadId ?? (input.unbindThread === true ? null : (existing?.threadId ?? null));
+  const movedOffThread =
+    existing !== null &&
+    existing.projectId !== input.projectId &&
+    keptThreadId === existing.threadId;
+  return threadMode === "new_thread" || movedOffThread ? null : keptThreadId;
+}
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
