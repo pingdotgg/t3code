@@ -453,7 +453,10 @@ export function ReadAloudSection() {
           }
           onClose={() => setSheet(null)}
         >
-          <ScrollView contentContainerClassName="gap-3 px-5 pb-8">
+          <ScrollView
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerClassName="gap-3 px-5 pt-2 pb-8"
+          >
             {sheet === "source" ? (
               <>
                 <ListSection>
