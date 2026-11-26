@@ -186,7 +186,7 @@ function readLinkDefinitions(lines: readonly string[], start: number) {
     const lastLine = start + to.line - 1;
     definitions.set(firstLine, {
       // Keep the indentation so tabs in the label expand to the same width.
-      text: text.slice(from.offset - from.column + 1, to.offset),
+      text: lines[firstLine]!.slice(0, from.column - 1) + text.slice(from.offset, to.offset),
       end: lastLine,
       identifier: node.identifier,
     });
