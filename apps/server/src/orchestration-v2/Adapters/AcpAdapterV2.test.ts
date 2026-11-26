@@ -31,6 +31,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderThreadId,
   RunId,
   ThreadId,
   type OrchestrationV2ProviderThread,
@@ -116,6 +117,7 @@ import {
 } from "@t3tools/provider-acp-registry/testing";
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
+const CLAUDE_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "claude-acp" });
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
 const DEVIN_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "devin" });
 const OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
@@ -5929,35 +5931,28 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live("creates a fresh ACP identity when recovering an exhausted target", () =>
+  it.effect("creates a fresh ACP identity when recovering an exhausted target", () =>
     Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const selfInvocation = yield* resolveSelfInvocation();
-      const mockAgentPath = yield* bundledMockAgentPath;
-      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const agents = yield* Effect.forEach(["original", "replacement"], (sessionId) =>
+        replaySession(`exhausted-target-${sessionId}`, [
+          request("initialize"),
+          response("initialize", { protocolVersion: 1, agentCapabilities: {}, authMethods: [] }),
+          request("session/new"),
+          response("session/new", { sessionId }),
+          request("session/prompt"),
+          response("session/prompt", { stopReason: "end_turn" }),
+        ]),
+      );
       const instanceId = ProviderInstanceId.make("acp-test-exhausted-target");
+      let nextAgent = 0;
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
-          makeRuntime: makeMockRuntime({
-            childProcessSpawner,
-            mockAgentPath,
-            protocolEvents,
-            wrapRuntime: (runtime, ordinal) => ({
-              ...runtime,
-              start: () =>
-                runtime.start().pipe(
-                  Effect.map((started) => ({
-                    ...started,
-                    sessionId: `mock-recovery-session-${ordinal}`,
-                  })),
-                ),
-            }),
-          }),
+          makeRuntime: (input) => agents[nextAgent++]!.makeRuntime(input),
         },
-        selfInvocation,
+        selfInvocation: yield* resolveSelfInvocation(),
       });
       const threadId = ThreadId.make("thread-acp-exhausted-target");
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -6014,8 +6009,7 @@ describe("AcpAdapterV2", () => {
       assert.isTrue(
         events.some((event) => event.type === "turn.terminal" && event.status === "completed"),
       );
-      const methods = yield* pollProtocolMethods(protocolEvents);
-      assert.equal(methods.filter((method) => method === "session/new").length, 2);
+      for (const agent of agents) yield* agent.verify;
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -10337,7 +10331,12 @@ describe("AcpAdapterV2", () => {
     type: "emit_inbound" as const,
     frame: { kind: "response", method, result },
   });
-  const notifySession = (sessionId: string, update: EffectAcpSchema.SessionUpdate) => ({
+  const notifySession = (
+    sessionId: string,
+    update:
+      | EffectAcpSchema.SessionUpdate
+      | ({ sessionUpdate: "subagent_update" | "session_message" } & Record<string, unknown>),
+  ) => ({
     type: "emit_inbound" as const,
     frame: { kind: "notification", method: "session/update", params: { sessionId, update } },
   });
@@ -10652,7 +10651,7 @@ describe("AcpAdapterV2", () => {
   it.effect.each([
     { protocolVersion: 1, method: "resume" },
     { protocolVersion: 1, method: "load" },
-    { protocolVersion: 2, method: "load" },
+    { protocolVersion: 2, method: "resume" },
   ] as const)(
     "offers a live wake before any prompt after ACP v$protocolVersion $method",
     ({ protocolVersion, method }) =>
@@ -10660,7 +10659,7 @@ describe("AcpAdapterV2", () => {
         const sessionId = "resumed-session";
         const instanceId = ProviderInstanceId.make("acp-live-wake");
         const threadId = ThreadId.make("thread-live-wake");
-        const wireMethod = protocolVersion === 2 ? "session/resume" : `session/${method}`;
+        const wireMethod = `session/${method}`;
         const replay = yield* replaySession("resume-live-wake", [
           request("initialize"),
           response(
@@ -10678,6 +10677,34 @@ describe("AcpAdapterV2", () => {
                 },
           ),
           request(wireMethod),
+          notifySession(sessionId, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "history",
+            content: { type: "text", text: "replayed reply" },
+          }),
+          notifySession(sessionId, {
+            sessionUpdate: "config_option_update",
+            configOptions: [
+              {
+                ...(protocolVersion === 2
+                  ? { configId: "replayed-option" }
+                  : { id: "replayed-option" }),
+                name: "Replayed",
+                type: "select",
+                currentValue: "a",
+                options: [{ value: "a", name: "A" }],
+              } as EffectAcpSchema.SessionConfigOption,
+            ],
+          }),
+          ...(protocolVersion === 2
+            ? [
+                notifySession(sessionId, {
+                  sessionUpdate: "compaction_update",
+                  compactionId: "replayed-compaction",
+                  status: "completed",
+                }),
+              ]
+            : []),
           response(wireMethod, {}),
           request("_test/wake"),
           notifySession(sessionId, {
@@ -10707,11 +10734,28 @@ describe("AcpAdapterV2", () => {
                   stopReason: "end_turn",
                 }),
                 response("_test/continue", {}),
+                request("session/resume"),
+                notifySession(sessionId, { sessionUpdate: "usage_update", used: 37, size: 100 }),
+                notifySession("other-session", {
+                  sessionUpdate: "agent_message_chunk",
+                  messageId: "other-history",
+                  content: { type: "text", text: "other replayed reply" },
+                }),
+                response("session/resume", {}),
+                request("_test/switched"),
+                notifySession("other-session", {
+                  sessionUpdate: "agent_message_chunk",
+                  messageId: "other-wake",
+                  content: { type: "text", text: "wake on other session" },
+                }),
+                notifySession(sessionId, { sessionUpdate: "usage_update", used: 38, size: 100 }),
+                response("_test/switched", {}),
               ]
             : []),
         ]);
         const native = yield* Deferred.make<AcpSessionRuntime.AcpSessionRuntime["Service"]>();
         const offers: ProviderContinuationRequests.ProviderContinuationRequest[] = [];
+        const publishedOptions: string[][] = [];
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
@@ -10726,6 +10770,10 @@ describe("AcpAdapterV2", () => {
             capabilities: AcpProviderCapabilitiesV2,
             enablePostSettleContinuation: protocolVersion === 1,
             followAgentWorkState: protocolVersion === 2,
+            onSessionConfigurationUpdate: (options) =>
+              Effect.sync(() => {
+                publishedOptions.push(options.map((option) => option.id));
+              }),
             makeRuntime: (input) => {
               const options = { ...input, resumeMethod: method };
               return replay
@@ -10748,13 +10796,25 @@ describe("AcpAdapterV2", () => {
           initialNativeThreadId: sessionId,
         });
         const acp = yield* Deferred.await(native);
-        yield* acp.request("_test/wake", {});
         yield* acp.drainEvents;
-        const providerThread = yield* runtime.ensureThread({
+        assert.isEmpty(offers);
+        const initialThread = yield* runtime.ensureThread({
           threadId,
           modelSelection,
           runtimePolicy,
         });
+        const initialSnapshot = yield* runtime.readThreadSnapshot({
+          providerThread: initialThread,
+        });
+        assert.deepEqual(
+          initialSnapshot.messages.map((message) => [message.role, message.text]),
+          [["assistant", "replayed reply"]],
+        );
+        assert.lengthOf(publishedOptions, 1);
+        assert.deepEqual(publishedOptions[0], ["replayed-option"]);
+        yield* acp.request("_test/wake", {});
+        yield* acp.drainEvents;
+        const providerThread = initialThread;
         assert.deepEqual(
           offers.map((wake) => [wake.threadId, wake.providerThreadId]),
           [[threadId, providerThread.id]],
@@ -10771,6 +10831,22 @@ describe("AcpAdapterV2", () => {
             ...turn,
             message: { ...turn.message, createdBy: "agent", creationSource: "provider" },
           });
+          const other = {
+            ...providerThread,
+            id: ProviderThreadId.make("other-provider-thread"),
+            appThreadId: ThreadId.make("other-thread"),
+            nativeThreadRef: {
+              driver: ACP_TEST_DRIVER,
+              nativeId: "other-session",
+              strength: "strong" as const,
+            },
+          };
+          const snapshot = runtime.readThreadSnapshot({ providerThread: other });
+          assert.nestedPropertyVal(
+            yield* snapshot.pipe(Effect.flip),
+            "cause.reason",
+            "previous_turn_active",
+          );
           yield* acp.request("_test/continue", {});
           const events = yield* runtime.events.pipe(
             Stream.takeUntil((e) => e.type === "turn.terminal"),
@@ -10788,6 +10864,26 @@ describe("AcpAdapterV2", () => {
           );
           assert.isTrue(
             items.some((item) => item.type === "compaction" && item.status === "completed"),
+          );
+          const loaded = yield* snapshot;
+          assert.equal(loaded.providerThread.nativeThreadRef?.nativeId, "other-session");
+          assert.deepEqual(
+            loaded.messages.map((message) => [message.role, message.text]),
+            [["assistant", "other replayed reply"]],
+          );
+          yield* acp.request("_test/switched", {});
+          yield* acp.drainEvents;
+          assert.lengthOf(offers, 1, "the snapshot session has no continuation route");
+          const usage = yield* runtime.events.pipe(
+            Stream.filter((e) => e.type === "provider_thread.updated"),
+            Stream.takeUntil((e) => e.providerThread.contextUsage?.usedTokens === 38),
+            Stream.runCollect,
+          );
+          assert.deepEqual(
+            usage
+              .filter((e) => e.providerThread.id === providerThread.id)
+              .map((e) => e.providerThread.contextUsage?.usedTokens),
+            [37, 38],
           );
         }
         yield* replay.verify;
@@ -10807,11 +10903,11 @@ describe("AcpAdapterV2", () => {
       >();
     const send = (update: EffectAcpSchema.SessionUpdate) =>
       Deferred.await(notify).pipe(Effect.flatMap((handler) => handler({ sessionId, update })));
-    const complete = (taskId?: string) =>
+    const complete = (taskId?: string, status: "completed" | "failed" = "completed") =>
       send({
         sessionUpdate: "tool_call_update",
         toolCallId,
-        status: "completed",
+        status,
         ...(taskId === undefined ? {} : { rawInput: { taskId } }),
       });
     const promptSettled = yield* Queue.unbounded<void>();
@@ -10921,7 +11017,7 @@ describe("AcpAdapterV2", () => {
     events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
     toolCallId: string,
     runId: RunId,
-    status: "running" | "completed",
+    status: "running" | "completed" | "failed",
   ) {
     const nodes = events.flatMap((e) =>
       e.type === "node.updated" && e.node.nativeItemRef?.nativeId === toolCallId ? [e.node] : [],
@@ -10948,8 +11044,10 @@ describe("AcpAdapterV2", () => {
 
   it.effect("preserves both runs in SQLite when ACP reuses a tool call ID", () =>
     Effect.gen(function* () {
-      const toolCallId = "shared-tool-1";
-      const sessionId = "reused-session";
+      // The permission's native item ID is also the tool's formerly derived identity.
+      const sessionId = "tool";
+      const permissionToolId = "shared-tool-1";
+      const toolCallId = `question:${permissionToolId}`;
       const taskId = "shared-subagent";
       const threadId = ThreadId.make("reused-tool-thread");
       const instanceId = ProviderInstanceId.make("reused-tool-instance");
@@ -10974,7 +11072,7 @@ describe("AcpAdapterV2", () => {
               method: "session/request_permission",
               params: {
                 sessionId,
-                toolCall: { toolCallId },
+                toolCall: { toolCallId: permissionToolId },
                 options: [{ optionId: "yes", name: "Yes", kind: "allow_once" }],
               },
             },
@@ -10988,7 +11086,7 @@ describe("AcpAdapterV2", () => {
             },
           },
           notifySession(sessionId, {
-            sessionUpdate: "tool_call",
+            sessionUpdate: ordinal === 2 ? "tool_call_update" : "tool_call",
             toolCallId: taskId,
             title: "Spawn",
             rawOutput: `child-${ordinal}`,
@@ -11006,10 +11104,21 @@ describe("AcpAdapterV2", () => {
             content: { type: "text", text: `child reply ${ordinal}` },
           }),
           notifySession(sessionId, {
-            sessionUpdate: "tool_call_update",
-            toolCallId: taskId,
+            sessionUpdate: "tool_call",
+            toolCallId: `${taskId}:child-root`,
+            title: "Reuse known child",
+            rawOutput: "known-child",
             status: "completed",
           }),
+          ...(ordinal === 2
+            ? ["child-1", sessionId].map((id) =>
+                notifySession(id, {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: taskId,
+                  status: "completed",
+                }),
+              )
+            : []),
           response("session/prompt", { stopReason: "end_turn" }),
         ]),
       ]);
@@ -11028,9 +11137,9 @@ describe("AcpAdapterV2", () => {
                 : undefined,
           }),
           extractSubagentUpdate: (tool) =>
-            tool.toolCallId === taskId
+            tool.toolCallId === taskId || tool.toolCallId === `${taskId}:child-root`
               ? {
-                  nativeTaskId: taskId,
+                  nativeTaskId: tool.toolCallId,
                   childSessionId:
                     typeof tool.data.rawOutput === "string" ? tool.data.rawOutput : null,
                   prompt: "Inspect",
@@ -11099,6 +11208,26 @@ describe("AcpAdapterV2", () => {
       });
       yield* store.apply({ ...event(), type: "thread.created", payload: first.input.appThread });
       const second = yield* run(2);
+      const [originalChild, reusedChild] = [first, second].map(({ events }) =>
+        events
+          .filter((e) => e.type === "provider_thread.updated")
+          .map((e) => e.providerThread)
+          .find((thread) => thread.nativeThreadRef?.nativeId === "known-child"),
+      );
+      assert.isDefined(originalChild);
+      assert.isDefined(reusedChild);
+      assert.equal(
+        originalChild.forkedFrom?.providerTurnId,
+        first.events.find((e) => e.type === "turn.terminal")!.providerTurnId,
+      );
+      assert.deepEqual(reusedChild.forkedFrom, originalChild.forkedFrom);
+      assert.equal(reusedChild.appThreadId, originalChild.appThreadId);
+      assert.lengthOf(
+        [...first.events, ...second.events].filter(
+          (e) => e.type === "app_thread.created" && e.appThread.id === originalChild.appThreadId,
+        ),
+        1,
+      );
       for (const { input, events } of [first, second]) {
         const { runId, rootNodeId, modelSelection } = input;
         yield* store.apply({
@@ -11142,7 +11271,7 @@ describe("AcpAdapterV2", () => {
           } else if (update.type === "subagent.updated") {
             yield* store.apply({
               ...event(),
-              runId,
+              runId: update.subagent.runId ?? undefined,
               nodeId: update.subagent.id,
               type: "subagent.updated",
               payload: update.subagent,
@@ -11182,7 +11311,11 @@ describe("AcpAdapterV2", () => {
       }
       assert.notEqual(a.nodeId, b.nodeId);
       assert.notEqual(a.itemId, b.itemId);
-      for (const nativeId of [`${sessionId}:question:${toolCallId}`, taskId]) {
+      for (const nativeId of [
+        `${sessionId}:question:${permissionToolId}`,
+        taskId,
+        `${taskId}:child-root`,
+      ]) {
         const nodes = projection.nodes.filter((node) => node.nativeItemRef?.nativeId === nativeId);
         const items = projection.turnItems.filter(
           (item) => item.nativeItemRef?.nativeId === nativeId,
@@ -11210,23 +11343,22 @@ describe("AcpAdapterV2", () => {
       assert.sameDeepMembers(
         [...ownership],
         [first, second].flatMap(({ input: { runId } }) =>
-          ["tool_call", "user_input_request", "subagent"].map((kind) => ({
+          ["tool_call", "user_input_request", "subagent", "subagent"].map((kind) => ({
             kind,
             node_run: runId,
             item_run: runId,
           })),
         ),
       );
-      assert.lengthOf(projection.subagents, 2);
-      assert.notEqual(
-        projection.subagents[0]!.childThreadId,
-        projection.subagents[1]!.childThreadId,
-      );
+      assert.lengthOf(projection.subagents, 4);
+      const reused = projection.subagents.filter((task) => task.nativeTaskRef?.nativeId === taskId);
+      assert.lengthOf(reused, 2);
+      assert.notEqual(reused[0]!.childThreadId, reused[1]!.childThreadId);
       for (const [ordinal, turn] of [
         [1, first],
         [2, second],
       ] as const) {
-        const task = projection.subagents.find((task) => task.runId === turn.input.runId);
+        const task = reused.find((task) => task.runId === turn.input.runId);
         assert.equal(task?.status, "completed");
         const child = yield* store.getThreadProjection(task!.childThreadId!);
         assert.sameMembers(
@@ -11251,9 +11383,141 @@ describe("AcpAdapterV2", () => {
     ),
   );
 
-  it.effect.each(["before", "during", "after"] as const)(
-    "routes detached commands sharing a tool ID when the first completion arrives %s the second run",
-    (ordering) =>
+  it.effect(
+    "keeps descendant tool rows distinct when their session and call IDs contain delimiters",
+    () =>
+      Effect.gen(function* () {
+        const childState = (parent: string, child: string, state: string) =>
+          notifySession(parent, {
+            sessionUpdate: "subagent_update",
+            sessionId: child,
+            state: { state },
+          });
+        const replay = yield* replaySession("descendant-tool-ids", [
+          request("initialize"),
+          response("initialize", {
+            protocolVersion: 2,
+            info: { name: "claude", version: "1" },
+            capabilities: { session: {} },
+          }),
+          request("session/new"),
+          response("session/new", { sessionId: "root" }),
+          request("session/prompt"),
+          notifySession("root", {
+            sessionUpdate: "user_message",
+            messageId: "user-1",
+            content: [{ type: "text", text: "test prompt" }],
+          }),
+          response("session/prompt", { messageId: "user-1" }),
+          notifySession("root", { sessionUpdate: "state_update", state: "running" }),
+          notifySession("root", {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "spawn",
+            name: "Agent",
+            status: "in_progress",
+            rawInput: { prompt: "Inspect" },
+          }),
+          childState("root", "child", "running"),
+          notifySession("child", {
+            sessionUpdate: "session_message",
+            messageId: "spawn",
+            senderSessionId: "root",
+            content: [{ type: "text", text: "Inspect" }],
+          }),
+          ...(
+            [
+              ["a", "b:tool:c"],
+              ["a:tool:b", "c"],
+            ] as const
+          ).flatMap(([sessionId, toolCallId]) => [
+            childState("child", sessionId, "running"),
+            notifySession(sessionId, {
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              name: "Read",
+              status: "completed",
+              rawOutput: sessionId,
+            }),
+            childState("child", sessionId, "idle"),
+          ]),
+          childState("root", "child", "idle"),
+          notifySession("root", {
+            sessionUpdate: "state_update",
+            state: "idle",
+            stopReason: "end_turn",
+          }),
+        ]);
+        const instanceId = ProviderInstanceId.make("nested-tools");
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          settings: CLAUDE_SETTINGS,
+          environment: {},
+          continuationRequests: { offer: () => Effect.void },
+          makeRuntime: replay.makeRuntime,
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AcpRegistryCatalog)({ resolve: () => Effect.die("runtime is injected") }),
+          ),
+        );
+        const threadId = ThreadId.make("nested-tools");
+        const modelSelection = { instanceId, model: "default" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: replay.directory,
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          providerSessionId: ProviderSessionId.make("nested-tools"),
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((e) => e.type === "turn.terminal"),
+          Stream.runCollect,
+        );
+        const child = events.find((e) => e.type === "app_thread.created");
+        assert.isDefined(child);
+        const rows = events.flatMap((e) =>
+          e.type === "turn_item.updated" &&
+          e.turnItem.type === "dynamic_tool" &&
+          e.turnItem.threadId === child.appThread.id
+            ? [e.turnItem]
+            : [],
+        );
+        assert.sameMembers(
+          rows.map((row) => row.output),
+          ["a", "a:tool:b"],
+        );
+        assert.notEqual(rows[0]!.id, rows[1]!.id);
+        assert.notEqual(rows[0]!.ordinal, rows[1]!.ordinal);
+        yield* replay.verify;
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    { ordering: "before", status: "completed" },
+    { ordering: "before", status: "failed" },
+    { ordering: "during", status: "completed" },
+    { ordering: "after", status: "completed" },
+  ] as const)(
+    "routes detached commands sharing a tool ID when $status arrives $ordering the second run",
+    ({ ordering, status }) =>
       Effect.gen(function* () {
         const toolCallId = "shared-bg-tool-1";
         const session = yield* openReusedCommandSession(toolCallId, ordering);
@@ -11274,13 +11538,23 @@ describe("AcpAdapterV2", () => {
               Stream.runCollect,
             );
           });
+        const assertNoToolRows = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+          assert.isEmpty(
+            events.filter(
+              (event) =>
+                (event.type === "node.updated" &&
+                  event.node.nativeItemRef?.nativeId === toolCallId) ||
+                (event.type === "turn_item.updated" &&
+                  event.turnItem.nativeItemRef?.nativeId === toolCallId),
+            ),
+          );
         if (ordering === "before") {
           assert.deepEqual(
             toolRows(
-              yield* collectUpdate(session.complete()),
+              yield* collectUpdate(session.complete(undefined, status)),
               toolCallId,
               first.input.runId,
-              "completed",
+              status,
             ),
             original,
           );
@@ -11289,11 +11563,32 @@ describe("AcpAdapterV2", () => {
             session.send({
               sessionUpdate: "tool_call_update",
               toolCallId,
-              status: "completed",
+              status,
               rawOutput: { stdout: "late output" },
             }),
           );
-          assert.deepEqual(toolRows(late, toolCallId, first.input.runId, "completed"), original);
+          assert.deepEqual(toolRows(late, toolCallId, first.input.runId, status), original);
+          const command = late.findLast(
+            (e) => e.type === "turn_item.updated" && e.turnItem.id === original.itemId,
+          );
+          assert.include(
+            command?.type === "turn_item.updated" && command.turnItem.type === "command_execution"
+              ? command.turnItem.output
+              : "",
+            "late output",
+          );
+          assertNoToolRows(yield* collectUpdate(session.complete(undefined, status)));
+          if (status === "completed") {
+            assert.deepEqual(
+              toolRows(
+                yield* collectUpdate(session.complete(undefined, "failed")),
+                toolCallId,
+                first.input.runId,
+                "failed",
+              ),
+              original,
+            );
+          }
           assert.isEmpty(session.continuations);
         }
         const second = yield* session.run(2);
@@ -11320,12 +11615,7 @@ describe("AcpAdapterV2", () => {
         assert.notEqual(original.itemId, reused.itemId);
         if (ordering === "after") {
           const unknown = yield* collectUpdate(session.complete("unknown-task"));
-          assert.isFalse(
-            unknown.some(
-              (e) =>
-                e.type === "turn_item.updated" && e.turnItem.nativeItemRef?.nativeId === toolCallId,
-            ),
-          );
+          assertNoToolRows(unknown);
           const progress = (title: string) =>
             collectUpdate(
               session.send({
@@ -11335,15 +11625,9 @@ describe("AcpAdapterV2", () => {
                 status: "in_progress",
               }),
             );
-          assert.deepEqual(
-            toolRows(
-              yield* progress("Newest running command"),
-              toolCallId,
-              second.input.runId,
-              "running",
-            ),
-            reused,
-          );
+          const offers = session.continuations.length;
+          assertNoToolRows(yield* progress("Newest running command"));
+          assert.lengthOf(session.continuations, offers);
           assert.deepEqual(
             toolRows(
               yield* collectUpdate(session.complete("task-2")),
