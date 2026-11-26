@@ -1,6 +1,5 @@
 /* oxlint-disable react/no-array-index-key -- Text spans retain their order within an immutable page. */
 /* oxlint-disable react/no-unstable-nested-components -- These callbacks return overlays, and are invoked as render functions. */
-import { Tooltip, TooltipTrigger, TooltipPopup } from "~/components/ui/tooltip";
 import { msg } from "gt-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { m } from "~/i18n/messages";
@@ -16,6 +15,7 @@ import {
   type WordSpan,
   type WordLink,
 } from "./word-protocol";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 type Opened = {
   pages: readonly WordPageSize[];
@@ -201,14 +201,7 @@ function WordTextLayer(props: {
         );
         return (
           <Fragment key={index}>
-            {span.title ? (
-              <Tooltip>
-                <TooltipTrigger render={text} />
-                <TooltipPopup>{span.title}</TooltipPopup>
-              </Tooltip>
-            ) : (
-              text
-            )}
+            {span.title ? <SharedTooltipTrigger render={text} label={span.title} /> : text}
             {span.after === "br" ? <br /> : span.after === "tab" ? "\t" : null}
           </Fragment>
         );

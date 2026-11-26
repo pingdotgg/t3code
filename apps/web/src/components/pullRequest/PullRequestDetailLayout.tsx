@@ -6,19 +6,17 @@ import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { PullRequestMetaLine } from "./pullRequestPresentation";
 
 export function PullRequestPrivateMark({ className }: { className?: string }) {
   const gt = useGT();
   const label = gt("Private");
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<LockIcon role="img" aria-label={label} className={cn("shrink-0", className)} />}
-      />
-      <TooltipPopup side="top">{label}</TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={<LockIcon role="img" aria-label={label} className={cn("shrink-0", className)} />}
+      label={label}
+    />
   );
 }
 

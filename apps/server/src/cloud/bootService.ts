@@ -1129,6 +1129,28 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     runner.run({ command, args, timeout: Duration.seconds(5) }).pipe(Effect.option);
   const succeeded = (result: Option.Option<ProcessRunner.ProcessRunOutput>) =>
     Option.isSome(result) && result.value.code === 0;
+  const launchdJobLoaded = probe("launchctl", [
+    "print",
+    `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`,
+  ]).pipe(Effect.map(succeeded));
+  const readLaunchdProblems = Effect.fn("cloud.boot_service.read_launchd_problems")(function* () {
+    const [loaded, disabled] = yield* Effect.all(
+      [launchdJobLoaded, probe("launchctl", ["print-disabled", `gui/${uid}`])],
+      { concurrency: "unbounded" },
+    );
+    const problems: BootServiceProblem[] = [];
+    if (
+      Option.isSome(disabled) &&
+      disabled.value.code === 0 &&
+      // Older macOS versions print `true` instead of `disabled`.
+      (disabled.value.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => disabled`) ||
+        disabled.value.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => true`))
+    ) {
+      problems.push("service-disabled");
+    }
+    if (!loaded) problems.push("service-stopped");
+    return problems;
+  });
   const lingerArgs = [
     "show-user",
     ...(uid === undefined ? [] : [String(uid)]),
@@ -1554,9 +1576,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
               (problems) =>
                 !problems.includes("service-disabled") || !problems.includes("service-stopped"),
             )
-          : succeeded(
-              yield* probe("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`]),
-            );
+          : yield* launchdJobLoaded;
     return yield* Effect.acquireUseRelease(
       // Require every stop before repair when restoring, so the server releases the database.
       // Otherwise stops are best-effort; launchd rejects bootout of an unloaded job.
@@ -1624,7 +1644,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         ? [...(yield* readSystemdProblems(true))]
         : manager.kind === "schtasks"
           ? [...(yield* readSchtasksProblems(Option.some(unit)))]
-          : [];
+          : [...(yield* readLaunchdProblems())];
     if (yield* fs.exists(restartPendingPath)) problems.push("restart-pending");
     return {
       supported: true,
