@@ -179,20 +179,46 @@ describe("command permissions", () => {
     }),
   );
 
-  it.effect.each([WS_METHODS.serverCheckOtlpEndpoint, WS_METHODS.serverCheckSecretSource])(
-    "requires the destination settings grant for %s",
-    (method) =>
+  it.effect("requires the destination settings grant for server.checkOtlpEndpoint", () =>
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const check = createCommandPermissions(runtime, WS_METHODS.serverCheckOtlpEndpoint);
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      expect(registry.get(check.permissionAtom(env))).toBe(false);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({
+          ...grant(false),
+          scopes: [AuthSettingsWriteScope],
+          permissions: [AuthSettingsWriteScope],
+        }),
+      );
+      expect(registry.get(check.permissionAtom(env))).toBe(true);
+      yield* check.authorize(registry, env);
+    }),
+  );
+
+  it.effect(
+    "requires both settings and provider management grants for server.checkSecretSource",
+    () =>
       Effect.gen(function* () {
         const registry = yield* setup;
-        const check = createCommandPermissions(runtime, method);
-        registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(check.permissionAtom(env))).toBe(false);
+        const check = createCommandPermissions(runtime, WS_METHODS.serverCheckSecretSource);
         registry.set(
           sessions(env),
           AsyncResult.success({
             ...grant(false),
             scopes: [AuthSettingsWriteScope],
             permissions: [AuthSettingsWriteScope],
+          }),
+        );
+        expect(registry.get(check.permissionAtom(env))).toBe(false);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthSettingsWriteScope, AuthProvidersManageScope],
+            permissions: [AuthSettingsWriteScope, AuthProvidersManageScope],
           }),
         );
         expect(registry.get(check.permissionAtom(env))).toBe(true);
