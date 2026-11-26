@@ -386,7 +386,10 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
       return true;
     }
   }
-  return matchesLabelPosition(splitFilePathPosition(trimmed));
+  return (
+    matchesLabelPosition(splitFilePathPosition(trimmed)) ||
+    (trimmed.length > 0 && matchesLabelPosition(splitFilePathPosition(label)))
+  );
 }
 
 export function isRelativeFilePath(path: string): boolean {
