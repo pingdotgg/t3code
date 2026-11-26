@@ -267,21 +267,13 @@ it.effect("places ElevenLabs word timings of later pieces after the earlier piec
       ),
       Effect.provideService(FetchHttpClient.Fetch, upstream),
     );
-    // The opening sentence is its own piece, then the rest splits at the length limit.
-    const pieces = upstream.mock.calls.map(
-      (call) => (JSON.parse(String(call[1]?.body)) as { text: string }).text,
-    );
-    expect(pieces[0]).toBe("w0.");
-    expect(pieces.length).toBeGreaterThan(2);
+    expect(upstream).toHaveBeenCalledTimes(2);
     expect(words.map((word) => text.slice(word.start, word.end))).toEqual(text.split(" "));
-    // Each piece's words start after the audio of every piece before it.
-    pieces.forEach((piece, index) => {
-      const first = words.find((word) => word.start === text.indexOf(piece));
-      expect(first?.startSeconds).toBeCloseTo(index * pieceSeconds, 6);
-    });
-    const last = pieces.at(-1)!;
+    const second = (JSON.parse(String(upstream.mock.calls[1]?.[1]?.body)) as { text: string }).text;
+    const first = words.find((word) => word.start === text.indexOf(second));
+    expect(first?.startSeconds).toBeCloseTo(pieceSeconds, 6);
     expect(words.at(-1)?.startSeconds).toBeCloseTo(
-      (pieces.length - 1) * pieceSeconds + (last.length - last.split(" ").at(-1)!.length) / 100,
+      pieceSeconds + (second.length - second.split(" ").at(-1)!.length) / 100,
       6,
     );
   }),
@@ -294,9 +286,9 @@ it.effect.each(["xai", "openrouter"] as const)(
       const openRouterModels = [
         { id: "google/gemini-test-tts", name: "Speech", supported_voices: ["reader"] },
         {
-          id: "google/gemini-3.8-flash-tts",
-          name: "Gemini 3.8 Flash TTS",
-          supported_voices: ["Zephyr"],
+          id: "speechify/simba-3.5",
+          name: "Simba 3.5",
+          supported_voices: ["geffen_32"],
         },
         { id: "minimax/speech-test:free", supported_voices: null },
       ];
@@ -397,7 +389,7 @@ it.effect.each(["xai", "openrouter"] as const)(
         const catalog = yield* service.synthesisModels(provider);
         expect(catalog).toMatchObject({
           apiKeyProvider: provider,
-          defaultModel: provider === "xai" ? "grok-tts" : "google/gemini-3.8-flash-tts",
+          defaultModel: provider === "xai" ? "grok-tts" : "speechify/simba-3.5",
           speedAppliedByProvider: provider !== "openrouter",
           supportsModelSelection: true,
           supportsVoiceSelection: true,
@@ -408,9 +400,9 @@ it.effect.each(["xai", "openrouter"] as const)(
             : [
                 { id: "google/gemini-test-tts", name: "Speech", voices: ["reader"] },
                 {
-                  id: "google/gemini-3.8-flash-tts",
-                  name: "Gemini 3.8 Flash TTS",
-                  voices: ["Zephyr"],
+                  id: "speechify/simba-3.5",
+                  name: "Simba 3.5",
+                  voices: ["geffen_32"],
                 },
                 { id: "minimax/speech-test:free", name: "minimax/speech-test:free", voices: [] },
               ],
@@ -421,11 +413,12 @@ it.effect.each(["xai", "openrouter"] as const)(
           );
         }
         if (provider === "openrouter") {
+          upstream.mockResolvedValueOnce(new Response(Uint8Array.of(73, 68, 51, 1)));
           yield* synthesize(provider, { ...request, model: catalog.defaultModel, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body))).toMatchObject({
-            model: "google/gemini-3.8-flash-tts",
-            voice: "Zephyr",
-            response_format: "pcm",
+            model: "speechify/simba-3.5",
+            voice: "geffen_32",
+            response_format: "mp3",
           });
           yield* synthesize(provider, { ...request, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).voice).toBe("reader");

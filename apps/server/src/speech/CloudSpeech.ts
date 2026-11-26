@@ -154,7 +154,7 @@ const OpenRouterCatalog = Schema.Struct({
   data: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.optionalKey(Schema.String) })),
 });
 
-const OPENROUTER_DEFAULT_SYNTHESIS_MODEL = "google/gemini-3.8-flash-tts";
+const OPENROUTER_DEFAULT_SYNTHESIS_MODEL = "speechify/simba-3.5";
 
 function openRouterSpeechFormat(model: string) {
   return model.startsWith("google/gemini-") || model.startsWith("heygen/") ? "pcm" : "mp3";
@@ -166,27 +166,6 @@ function synthesisErrorReason(status: number): SpeechSynthesisError["reason"] {
     : status === 429
       ? "rate-limit"
       : "unavailable";
-}
-
-// The opening sentence is spoken on its own when it is short, so a provider that returns audio
-// only once a piece is done still starts reading quickly.
-const LEADING_SPAN_LIMIT = 200;
-
-function leadingSpans(
-  spans: ReadonlyArray<{ readonly start: number; readonly text: string }>,
-): ReadonlyArray<{ readonly start: number; readonly text: string }> {
-  const [first, ...rest] = spans;
-  if (!first) return spans;
-  const end = /[.!?。！？](?=\s)|\n/u.exec(first.text);
-  const at = end ? end.index + end[0].length : -1;
-  const tail = at > 0 ? first.text.slice(at) : "";
-  if (at <= 0 || at > LEADING_SPAN_LIMIT || !tail.trim()) return spans;
-  const skipped = tail.length - tail.trimStart().length;
-  return [
-    { start: first.start, text: first.text.slice(0, at).trimEnd() },
-    { start: first.start + at + skipped, text: tail.trimStart() },
-    ...rest,
-  ];
 }
 
 type SynthesisBackend = {
@@ -751,7 +730,7 @@ export const layer = Layer.effect(
       Stream.suspend(() => {
         let elapsed = 0;
         return Stream.fromIterable(
-          leadingSpans(splitReadAloudSpans(request.text, CLOUD_SYNTHESIS_TEXT_LIMIT)),
+          splitReadAloudSpans(request.text, CLOUD_SYNTHESIS_TEXT_LIMIT),
         ).pipe(
           // Some providers return audio only once a whole piece is spoken, so the next piece is
           // requested while this one plays.
