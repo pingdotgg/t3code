@@ -50,6 +50,10 @@ type MarkdownImageHastNode = {
 // Whole tags, attributes, and comments, so closing-anchor text inside them never counts as a tag.
 const RAW_HTML_TAG_PATTERN = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
 
+/**
+ * Follows raw anchors the way the browser will: a bare `<a>` that never closes stays text, and
+ * text inside any other open anchor already belongs to a link.
+ */
 function scanRawHtmlAnchors(rawType: "raw" | "html") {
   return (tree: MarkdownImageHastNode) => {
     const anchors: Array<MarkdownImageHastNode | null> = [];
@@ -92,17 +96,20 @@ function scanRawHtmlAnchors(rawType: "raw" | "html") {
     };
 
     visit(tree);
-    for (const anchor of anchors) {
-      if (rawType === "raw" && anchor) anchor.type = "text";
-    }
-    const bare = new Set(anchors.filter(Boolean));
-    return (node: MarkdownImageHastNode) => anchorAt.has(node) && !bare.has(anchorAt.get(node)!);
+    const bare = new Set(anchors.filter((anchor) => anchor !== null));
+    return {
+      bare,
+      insideAnchor: (node: MarkdownImageHastNode) =>
+        anchorAt.has(node) && !bare.has(anchorAt.get(node)!),
+    };
   };
 }
 
-const rehypePreserveBareAnchorPlaceholders = () => (tree: MarkdownImageHastNode) => {
-  scanRawHtmlAnchors("raw")(tree);
-};
+function rehypePreserveBareAnchorPlaceholders() {
+  return (tree: MarkdownImageHastNode) => {
+    for (const anchor of scanRawHtmlAnchors("raw")(tree).bare) anchor.type = "text";
+  };
+}
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
@@ -550,11 +557,11 @@ function remarkEndAutolinksAtScriptPunctuation(this: Processor): Transformer<Roo
 function remarkLinkAbsoluteFilePaths(): Transformer<Root> {
   return (tree) => {
     // Raw `<a>` tags are sibling html nodes, so text inside one is not under a link node.
-    const insideRawAnchor = scanRawHtmlAnchors("html")(tree);
+    const { insideAnchor } = scanRawHtmlAnchors("html")(tree);
     const visit = (node: Root | RootContent) => {
       if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
       node.children = node.children.flatMap((child): typeof node.children => {
-        if (child.type !== "text" || insideRawAnchor(child)) {
+        if (child.type !== "text" || insideAnchor(child)) {
           visit(child);
           return [child];
         }

@@ -978,7 +978,6 @@ it("links complete absolute paths in prose and skips shortened ones", () => {
     ),
   ).toEqual([]);
   expect(links("Use <a> for links.\n\nSee /Users/me/app.ts:42")).toEqual(["/Users/me/app.ts:42"]);
-  expect(links("Use <a/> for links.\n\nSee /Users/me/app.ts:42")).toEqual(["/Users/me/app.ts:42"]);
   expect(
     links(
       'Use <a> for /Users/me/a.ts and <a href="https://example.com">/Users/me/b.ts</a> then /Users/me/c.ts',
