@@ -1057,8 +1057,11 @@ it("marks block and linked <picture> images standalone but not inline ones", () 
   type Node = { tagName?: string; properties?: Record<string, unknown>; children?: Node[] };
   const images = (node: Node): Node[] =>
     node.tagName === "img" ? [node] : (node.children ?? []).flatMap(images);
-  const tree = processor.runSync(
-    processor.parse(
+  const imageProperties = (markdown: string) =>
+    images(processor.runSync(processor.parse(markdown)) as Node).map((image) => image.properties);
+
+  expect(
+    imageProperties(
       [
         "# Heading",
         "",
@@ -1066,36 +1069,93 @@ it("marks block and linked <picture> images standalone but not inline ones", () 
         '<img src="missing.png" alt="Block">',
         "</picture>",
         "",
-        "<picture>",
-        '<img src="trailing.png" alt="Trailing">',
-        "</picture> text",
-        "",
-        "<picture>",
-        '<img src="caption.png" alt="Caption">',
-        "</picture> <em>caption</em>",
-        "",
-        "<picture>",
-        '<img src="adjacent-em.png" alt="Adjacent">',
-        "</picture><em>inline</em>",
-        "",
-        '<div align="center"><a href="https://example.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Linked"></picture></a></div>',
-        "",
-        'Inline <picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Badge"></picture> icon',
+        "Paragraph",
       ].join("\n"),
     ),
-  ) as Node;
+  ).toEqual([{ src: "missing.png", alt: "Block", dataStandalone: true }]);
 
-  expect(images(tree).map((image) => image.properties)).toEqual([
-    { src: "missing.png", alt: "Block", dataStandalone: true },
-    { src: "trailing.png", alt: "Trailing" },
-    { src: "caption.png", alt: "Caption" },
-    { src: "adjacent-em.png", alt: "Adjacent" },
+  expect(
+    imageProperties(
+      [
+        "<picture>",
+        '<img src="empty-span.png" alt="EmptySpan">',
+        "</picture><span></span>",
+        "",
+        "Paragraph",
+      ].join("\n"),
+    ),
+  ).toEqual([{ src: "empty-span.png", alt: "EmptySpan", dataStandalone: true }]);
+
+  expect(
+    imageProperties(
+      ["<picture>", '<img src="trailing.png" alt="Trailing">', "</picture> text"].join("\n"),
+    ),
+  ).toEqual([{ src: "trailing.png", alt: "Trailing" }]);
+
+  expect(
+    imageProperties(
+      ["<picture>", '<img src="caption.png" alt="Caption">', "</picture> <em>caption</em>"].join(
+        "\n",
+      ),
+    ),
+  ).toEqual([{ src: "caption.png", alt: "Caption" }]);
+
+  expect(
+    imageProperties(
+      ["<picture>", '<img src="adjacent-em.png" alt="Adjacent">', "</picture><em>inline</em>"].join(
+        "\n",
+      ),
+    ),
+  ).toEqual([{ src: "adjacent-em.png", alt: "Adjacent" }]);
+
+  expect(
+    imageProperties(
+      [
+        "<picture>",
+        '<img src="span-caption.png" alt="SpanCaption">',
+        "</picture><span></span>caption",
+      ].join("\n"),
+    ),
+  ).toEqual([{ src: "span-caption.png", alt: "SpanCaption" }]);
+
+  expect(
+    imageProperties(
+      ["<picture>", '<img src="br-caption.png" alt="BrCaption">', "</picture><br>caption"].join(
+        "\n",
+      ),
+    ),
+  ).toEqual([{ src: "br-caption.png", alt: "BrCaption" }]);
+
+  expect(
+    imageProperties(
+      [
+        "<span>",
+        "prefix",
+        "</span><span></span><picture>",
+        '<img src="prefix.png" alt="Prefix">',
+        "</picture>",
+      ].join("\n"),
+    ),
+  ).toEqual([{ src: "prefix.png", alt: "Prefix" }]);
+
+  expect(
+    imageProperties(
+      '<div align="center"><a href="https://example.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Linked"></picture></a></div>',
+    ),
+  ).toEqual([
     {
       src: "https://example.com/light.png",
       alt: "Linked",
       dataDarkSrc: "https://example.com/dark.png",
       dataStandalone: true,
     },
+  ]);
+
+  expect(
+    imageProperties(
+      'Inline <picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.png"><img src="https://example.com/light.png" alt="Badge"></picture> icon',
+    ),
+  ).toEqual([
     {
       src: "https://example.com/light.png",
       alt: "Badge",

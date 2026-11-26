@@ -71,13 +71,19 @@ function hasVisibleText(node: MarkdownImageHastNode): boolean {
   return (node.children ?? []).some(hasVisibleText);
 }
 
-function isInlineTextSibling(node: MarkdownImageHastNode | undefined): boolean {
-  if (!node) return false;
-  if (node.type === "text") return Boolean(node.value?.trim());
-  if (node.type !== "element" || !node.tagName || ROOT_BLOCK_ELEMENTS.has(node.tagName)) {
-    return false;
+function isRootBlockElement(node: MarkdownImageHastNode): boolean {
+  return node.type === "element" && Boolean(node.tagName && ROOT_BLOCK_ELEMENTS.has(node.tagName));
+}
+
+function hasInlineTextSibling(children: readonly MarkdownImageHastNode[], index: number): boolean {
+  for (const step of [-1, 1] as const) {
+    for (let cursor = index + step; cursor >= 0 && cursor < children.length; cursor += step) {
+      const sibling = children[cursor];
+      if (!sibling || isRootBlockElement(sibling)) break;
+      if (hasVisibleText(sibling)) return true;
+    }
   }
-  return hasVisibleText(node);
+  return false;
 }
 
 function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode | undefined {
@@ -104,8 +110,7 @@ function markStandaloneImages(node: MarkdownImageHastNode) {
     const children = meaningfulHastChildren(node);
     children.forEach((child, index) => {
       if (child.tagName !== "picture") return;
-      const besideText = [children[index - 1], children[index + 1]].some(isInlineTextSibling);
-      const image = besideText ? undefined : soleImageDescendant(child);
+      const image = hasInlineTextSibling(children, index) ? undefined : soleImageDescendant(child);
       if (image) image.properties = { ...image.properties, dataStandalone: true };
     });
   }
