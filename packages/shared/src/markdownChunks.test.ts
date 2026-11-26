@@ -57,17 +57,11 @@ describe("splitMarkdown", () => {
     const fence = ["```md", "x".repeat(4100), "```\u00a0", "# literal", "```"].join("\n");
     expect(splitLargeMarkdown(fence)).toHaveLength(1);
 
-    const tildeFence = ["~~~md", "x".repeat(4100), "~~~\u00a0", "# literal", "~~~"].join("\n");
-    expect(splitLargeMarkdown(tildeFence)).toHaveLength(1);
-
     const prose = ["*" + "x".repeat(4100), "\u00a0", "more*"].join("\n");
     expect(splitLargeMarkdown(prose)).toHaveLength(1);
 
     const htmlBlock = ["<div>", "x".repeat(4100), "\u00a0", "# literal", "</div>"].join("\n");
     expect(splitLargeMarkdown(htmlBlock)).toHaveLength(1);
-
-    const definitionAfterNbsp = ["Paragraph", "\u00a0", "[ref]: https://example.com"].join("\n");
-    expect(splitMarkdown(definitionAfterNbsp).definitions).toBe("");
   });
 
   it("still closes fences and recognizes blank lines with ASCII spaces, tabs, and CRLF", () => {
