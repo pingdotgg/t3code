@@ -482,14 +482,17 @@ function markdownLinkTailScanner(markdown: string) {
   // Escape pairs (`\"`, `\\`) match so the finder can skip them.
   const doubleQuoteEnd = markdownRunEndFinder(markdown, /\\[\\"]|"|\n[ \t\r]*\n/g);
   const singleQuoteEnd = markdownRunEndFinder(markdown, /\\[\\']|'|\n[ \t\r]*\n/g);
+  const parenthesisEnd = markdownRunEndFinder(markdown, /\\[\\()]|[()]|\n[ \t\r]*\n/g);
   const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
   return (start: number) => {
     const end = whitespaceEnd(start);
     const quote = markdown[end];
     if (quote === ")") return end + 1;
-    if (end === start || (quote !== '"' && quote !== "'")) return null;
-    const quoteEnd = (quote === '"' ? doubleQuoteEnd : singleQuoteEnd)(end + 1);
-    if (markdown[quoteEnd] !== quote) return null;
+    if (end === start || (quote !== '"' && quote !== "'" && quote !== "(")) return null;
+    const titleEnd =
+      quote === '"' ? doubleQuoteEnd : quote === "'" ? singleQuoteEnd : parenthesisEnd;
+    const quoteEnd = titleEnd(end + 1);
+    if (markdown[quoteEnd] !== (quote === "(" ? ")" : quote)) return null;
     const close = titleWhitespaceEnd(quoteEnd + 1);
     return markdown[close] === ")" ? close + 1 : null;
   };
@@ -521,7 +524,7 @@ function bareMarkdownLinkDestinationEnd(markdown: string, start: number): number
 
 function markdownLinkDestinationScanner(markdown: string) {
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S/g);
-  const angleEnd = markdownRunEndFinder(markdown, /[>\n]/g);
+  const angleEnd = markdownRunEndFinder(markdown, /\\[\\<>]|[<>\r\n]/g);
   // Separate caches keep scans moving forward when angle destinations fall back to bare ones.
   const angleTail = markdownLinkTailScanner(markdown);
   const bareTail = markdownLinkTailScanner(markdown);

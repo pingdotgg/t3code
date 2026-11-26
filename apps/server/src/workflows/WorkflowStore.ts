@@ -957,15 +957,16 @@ export const make = Effect.gen(function* () {
         INSERT INTO workflow_waits (
           run_id, name, workflow, token, key, schema_json, request_json, watch_json, deadline,
           opened_at
-        ) VALUES (
+        ) SELECT
           ${wait.runId}, ${wait.name}, ${wait.workflow}, ${wait.token}, ${wait.key ?? null},
           ${wait.schemaJson}, ${wait.requestJson}, ${wait.watchJson}, ${wait.deadline}, ${at}
-        )
+        FROM workflow_runs WHERE run_id = ${wait.runId} AND ended_at IS NULL
         ON CONFLICT (run_id, name) DO NOTHING
         RETURNING name
       `.pipe(Effect.orDie);
+      if (opened.length === 0) return;
       yield* PubSub.publish(changes, wait.runId);
-      if (opened.length === 0 || wait.requestJson === null) return;
+      if (wait.requestJson === null) return;
       yield* tell(wait.runId, `${wait.runId}:${wait.name}:${at}`, at, {
         type: "workflow.needs_input",
         step: wait.name,
@@ -1545,7 +1546,12 @@ export const make = Effect.gen(function* () {
     referenceNoted: Effect.fn("WorkflowStore.referenceNoted")(function* (runId, step, reference) {
       const at = yield* now;
       const addressJson = jsonText(reference.address);
-      const title = reference.title.slice(0, REFERENCE_TITLE_KEPT);
+      const title = reference.title.slice(
+        0,
+        splitsSurrogatePair(reference.title, REFERENCE_TITLE_KEPT)
+          ? REFERENCE_TITLE_KEPT - 1
+          : REFERENCE_TITLE_KEPT,
+      );
       const changed = yield* sql
         .withTransaction(
           Effect.gen(function* () {

@@ -213,10 +213,31 @@ describe("extractMarkdownLinkHrefs", () => {
 
   it.each([
     [
+      String.raw`[one](<./a/doc\> final.ts>) [two](<./b/doc\> final.ts>)`,
+      [String.raw`./a/doc\> final.ts`, String.raw`./b/doc\> final.ts`],
+    ],
+    [
+      String.raw`[one](<./a/doc\\> "title") [two](<./b/doc\\> (title))`,
+      [String.raw`./a/doc\\`, String.raw`./b/doc\\`],
+    ],
+    [
+      String.raw`[bad](<./x/dir\> text) [one](<./a/doc\\\> final.ts> "title") [two](<./b/doc\< final.ts>)`,
+      [String.raw`./a/doc\\\> final.ts`, String.raw`./b/doc\< final.ts`],
+    ],
+    [
       "[a](/x/app/(a)/page.tsx) [b](/x/app/(b)/page.tsx)",
       ["/x/app/(a)/page.tsx", "/x/app/(b)/page.tsx"],
     ],
     ['[a](/tmp/a(1).txt "title") after', ["/tmp/a(1).txt"]],
+    ["[a.ts](a/a.ts (first)) [a.ts](b/a.ts (second))", ["a/a.ts", "b/a.ts"]],
+    [
+      String.raw`[a](<a/a.ts> (escaped \(first\) and \\)) [b](b/a.ts (second))`,
+      ["a/a.ts", "b/a.ts"],
+    ],
+    [
+      "[a](a.ts (nested (title))) [b](b.ts (missing close) [c](c.ts (blank\n\nline)) [d](ok)",
+      ["ok"],
+    ],
     [`[a](a.ts "it's a title") [b](b.ts 'a "quoted" title') [c](ok)`, ["a.ts", "b.ts", "ok"]],
     [`[a.ts](src/a.ts "say \\"hello\\"") [a.ts](lib/a.ts)`, ["src/a.ts", "lib/a.ts"]],
     [`[a](a.ts 'it\\'s') [b](b.ts "ends in \\\\") [c](ok)`, ["a.ts", "b.ts", "ok"]],

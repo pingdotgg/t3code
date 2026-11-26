@@ -924,7 +924,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(started);
-      assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
+      assert.include(yield* Fiber.join(terminal), { status: "interrupted", promptDropped: true });
       assert.lengthOf(prompts, 0);
     }),
   );

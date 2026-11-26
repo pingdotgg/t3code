@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
+import { speechModelDownloadPercent } from "@t3tools/shared/speech";
 import { useGT } from "gt-react-native";
 
 import * as Dialog from "../../components/ui/Dialog";
@@ -42,7 +43,7 @@ export function useDeviceVoiceModels() {
               ? "downloadable"
               : state.kind,
         ...(state?.kind === "downloading"
-          ? { downloaded: (model.size * state.percent) / 100 }
+          ? { downloaded: Math.ceil((model.size * state.percent) / 100) }
           : {}),
       };
     })
@@ -94,7 +95,7 @@ export function DeviceVoiceEngineSection() {
   if (pending?.state === "downloading") {
     detail = gt("Downloading {model} · {percent}%", {
       model: pending.name,
-      percent: Math.round(((pending.downloaded ?? 0) / pending.size) * 100),
+      percent: speechModelDownloadPercent(pending.downloaded ?? 0, pending.size),
     });
   } else if (pending?.state === "verifying") {
     detail = gt("Verifying {model}…", { model: pending.name });
