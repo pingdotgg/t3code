@@ -1,7 +1,9 @@
 import type { BrowserImportSourceId, BrowserImportSourceProfile } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -9,6 +11,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as SqlClient from "effect/sql/SqlClient";
+
+import { decodeWindowsWrappedKey, type KeychainCredentialCandidate } from "./ChromiumKeys.ts";
 
 export type BrowserImportEngine = "chromium" | "firefox" | "safari";
 
@@ -31,7 +35,9 @@ export interface BrowserImportSourceDefinition {
   readonly alternateLinuxRoots?: (context: BrowserImportPathContext) => ReadonlyArray<string>;
   readonly keychainService?: string;
   readonly keychainAccount?: string;
+  readonly keychainCandidates?: ReadonlyArray<KeychainCredentialCandidate>;
   readonly linuxSecretApplication?: string;
+  readonly linuxSecretApplications?: ReadonlyArray<string>;
 }
 
 const macApplicationSupport = (
@@ -47,6 +53,7 @@ const chromiumSource = (input: {
   readonly macSegments: ReadonlyArray<string>;
   readonly linuxSegments?: ReadonlyArray<string>;
   readonly linuxSecretApplication?: string;
+  readonly linuxSecretApplications?: ReadonlyArray<string>;
   readonly windowsSegments?: ReadonlyArray<string>;
 }): BrowserImportSourceDefinition => ({
   id: input.id,
@@ -62,6 +69,9 @@ const chromiumSource = (input: {
   ...(input.linuxSecretApplication === undefined
     ? {}
     : { linuxSecretApplication: input.linuxSecretApplication }),
+  ...(input.linuxSecretApplications === undefined
+    ? {}
+    : { linuxSecretApplications: input.linuxSecretApplications }),
   userDataDirectory: (context) => {
     if (context.platform === "darwin") return macApplicationSupport(context, ...input.macSegments);
     if (context.platform === "win32") {
@@ -143,6 +153,23 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainService: "Arc Safe Storage",
     keychainAccount: "Arc",
     macSegments: ["Arc", "User Data"],
+  }),
+  chromiumSource({
+    id: "dia",
+    name: "Dia",
+    keychainService: "Dia Safe Storage",
+    keychainAccount: "Dia",
+    macSegments: ["Dia", "User Data"],
+  }),
+  chromiumSource({
+    id: "ardia",
+    name: "Ardia",
+    keychainService: "Ardia Safe Storage",
+    keychainAccount: "Ardia",
+    macSegments: ["com.ardia.browser", "Chromium"],
+    linuxSegments: ["ardia"],
+    linuxSecretApplication: "ardia",
+    linuxSecretApplications: ["ardia", "chromium", "chrome"],
   }),
   chromiumSource({
     id: "helium",
@@ -771,4 +798,596 @@ export const isSourceInstalled = Effect.fn("BrowserImportSources.isSourceInstall
     ),
   );
   return found.some(Boolean);
+});
+
+const MAX_NESTED_SCAN_ENTRIES = 64;
+
+const IGNORED_DISCOVERY_NAMES = new Set([
+  "addressbook",
+  "apple",
+  "caches",
+  "callhistorydb",
+  "callhistorytransactions",
+  "clouddocs",
+  "crashdumps",
+  "crashreporter",
+  "d3dscache",
+  "ebwebview",
+  "edgewebview",
+  "electron",
+  "elevateddiagnostics",
+  "facetime",
+  "fileprovider",
+  "icloud",
+  "knowledge",
+  "logs",
+  "mobilesync",
+  "node_modules",
+  "npm-cache",
+  "nuget",
+  "packages",
+  "pnpm",
+  "programs",
+  "squirreltemp",
+  "syncservices",
+  "t3 code",
+  "t3 code (beta)",
+  "t3 code (nightly)",
+  "t3-code",
+  "t3code",
+  "temp",
+  "ubiquity",
+  "webview2",
+]);
+
+const IGNORED_LINUX_HOME_DOTDIRS = new Set([
+  ".cache",
+  ".cargo",
+  ".config",
+  ".git",
+  ".gnupg",
+  ".local",
+  ".npm",
+  ".nvm",
+  ".pnpm",
+  ".rustup",
+  ".snap",
+  ".ssh",
+  ".t3",
+  ".var",
+]);
+
+const GENERIC_CONTAINER_SEGMENTS = new Set([
+  "browser",
+  "chromium",
+  "config",
+  "data",
+  "profile",
+  "profiles",
+  "user data",
+]);
+
+const GENERIC_BUNDLE_TAILS = new Set(["app", "browser", "client", "desktop", "mac", "macos"]);
+
+const REVERSE_DNS_TLDS = new Set(["app", "com", "dev", "io", "net", "org"]);
+
+const KNOWN_KEYCHAIN_BRAND_PREFIXES: ReadonlyArray<readonly [prefix: string, brand: string]> = [
+  ["chrome", "Chrome"],
+  ["brave", "Brave"],
+  ["edge", "Microsoft Edge"],
+  ["microsoft edge", "Microsoft Edge"],
+  ["opera", "Opera"],
+  ["vivaldi", "Vivaldi"],
+];
+
+const shouldSkipDirectoryName = (name: string): boolean => {
+  const lower = name.toLowerCase();
+  return (
+    name.startsWith(".") ||
+    lower.startsWith("com.apple.") ||
+    lower.startsWith("com.t3tools.") ||
+    IGNORED_DISCOVERY_NAMES.has(lower)
+  );
+};
+
+const formatDisplayToken = (token: string): string => {
+  const words = token
+    .replace(/[-_]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length > 0);
+  if (words.length === 0) return "";
+  return words
+    .map((word) => (word === word.toLowerCase() ? word[0]!.toUpperCase() + word.slice(1) : word))
+    .join(" ");
+};
+
+const stripReverseDns = (segment: string): string => {
+  const parts = segment.split(".").filter((part) => part.length > 0);
+  if (parts.length < 3 || !REVERSE_DNS_TLDS.has(parts[0]!.toLowerCase())) return segment;
+  const last = parts[parts.length - 1]!;
+  if (GENERIC_BUNDLE_TAILS.has(last.toLowerCase()) && parts.length >= 3) {
+    return parts[parts.length - 2]!;
+  }
+  return last;
+};
+
+export function deriveDiscoveredBrowserName(segments: ReadonlyArray<string>): string | undefined {
+  const cleaned = segments.map((segment) => segment.trim()).filter((segment) => segment.length > 0);
+  while (
+    cleaned.length > 1 &&
+    GENERIC_CONTAINER_SEGMENTS.has(cleaned[cleaned.length - 1]!.toLowerCase())
+  ) {
+    cleaned.pop();
+  }
+  const leaf = cleaned[cleaned.length - 1];
+  if (!leaf) return undefined;
+  const unhidden = leaf.replace(/^\.+/, "");
+  if (!unhidden) return undefined;
+  const name = formatDisplayToken(stripReverseDns(unhidden));
+  if (!name || IGNORED_DISCOVERY_NAMES.has(name.toLowerCase())) return undefined;
+  return name;
+}
+
+export function discoveredChromiumKeychainCandidates(
+  name: string,
+): ReadonlyArray<KeychainCredentialCandidate> {
+  const candidates: Array<KeychainCredentialCandidate> = [];
+  const seen = new Set<string>();
+  const push = (service: string, account: string) => {
+    const key = `${service}\0${account}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push({ service, account });
+  };
+
+  push(`${name} Safe Storage`, name);
+  push(`${name} Safe Storage`, "Chrome");
+  push(`${name} Storage Key`, name);
+
+  const lower = name.toLowerCase();
+  for (const [prefix, brand] of KNOWN_KEYCHAIN_BRAND_PREFIXES) {
+    if (lower.startsWith(prefix) && brand.toLowerCase() !== lower) {
+      push(`${brand} Safe Storage`, brand);
+    }
+  }
+
+  push("Chromium Safe Storage", "Chromium");
+  return candidates;
+}
+
+export function discoveredLinuxSecretApplications(
+  segments: ReadonlyArray<string>,
+  name: string,
+): ReadonlyArray<string> {
+  const apps: Array<string> = [];
+  const seen = new Set<string>();
+  const push = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    apps.push(normalized);
+  };
+
+  const leaf = segments[segments.length - 1]?.replace(/^\.+/, "") ?? "";
+  if (leaf) {
+    push(leaf);
+    const stripped = stripReverseDns(leaf);
+    push(stripped);
+    const firstToken = stripped.split(/[-_\s]+/)[0];
+    if (firstToken) push(firstToken);
+  }
+  push(name.replace(/\s+/g, "-"));
+  const firstWord = name.split(/\s+/)[0];
+  if (firstWord) push(firstWord);
+  push("chromium");
+  push("chrome");
+  return apps;
+}
+
+const normalizeRootKey = (context: BrowserImportPathContext, directory: string): string => {
+  const resolved = context.path.resolve(directory);
+  return context.platform === "darwin" || context.platform === "win32"
+    ? resolved.toLowerCase()
+    : resolved;
+};
+
+// Per-directory discovery helpers run in tight loops inside the traced `discoverBrowserImportSources` span.
+const directoryExists = Effect.fnUntraced(function* (path: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return yield* fileSystem.stat(path).pipe(
+    Effect.map((info) => info.type === "Directory"),
+    Effect.orElseSucceed(() => false),
+  );
+});
+
+const readSubdirectories = Effect.fnUntraced(function* (
+  base: string,
+  context: BrowserImportPathContext,
+  options?: { readonly allowHidden?: boolean; readonly skip?: (entry: string) => boolean },
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const entries = yield* fileSystem
+    .readDirectory(base)
+    .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+  const dirs: Array<{ readonly name: string; readonly fullPath: string }> = [];
+  for (const entry of entries) {
+    if (options?.skip?.(entry)) continue;
+    if (!options?.allowHidden && shouldSkipDirectoryName(entry)) continue;
+    const fullPath = context.path.join(base, entry);
+    if (yield* directoryExists(fullPath)) {
+      dirs.push({ name: entry, fullPath });
+    }
+  }
+  return dirs;
+});
+
+type RootDetectionResult =
+  | { readonly kind: "browser"; readonly engine: "chromium" | "firefox" }
+  | { readonly kind: "terminal" }
+  | { readonly kind: "none" };
+
+const detectBrowserEngineAtRoot = Effect.fnUntraced(function* (
+  root: string,
+  context: BrowserImportPathContext,
+): Effect.fn.Return<RootDetectionResult, never, FileSystem.FileSystem> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  let sawAppRootMarker = false;
+
+  // Check Firefox first (`profiles.ini` is small and unambiguous).
+  const profilesIniPath = context.path.join(root, "profiles.ini");
+  if (yield* databaseFileExists(profilesIniPath)) {
+    sawAppRootMarker = true;
+    const ini = yield* fileSystem
+      .readFileString(profilesIniPath)
+      .pipe(Effect.orElseSucceed(() => ""));
+    const parsed = parseFirefoxProfiles(ini, context.path, root);
+    for (const profile of parsed) {
+      const profilePath = context.path.isAbsolute(profile.directory)
+        ? profile.directory
+        : context.path.join(root, profile.directory);
+      if (yield* databaseFileExists(context.path.join(profilePath, "cookies.sqlite"))) {
+        return { kind: "browser", engine: "firefox" };
+      }
+    }
+  }
+
+  // Require `Local State` with `profile.info_cache` so Electron apps are excluded.
+  const localStatePath = context.path.join(root, "Local State");
+  if (yield* databaseFileExists(localStatePath)) {
+    sawAppRootMarker = true;
+    const contents = yield* fileSystem
+      .readFileString(localStatePath)
+      .pipe(Effect.orElseSucceed(() => ""));
+    if (context.platform === "win32") {
+      const dpapiSupported = yield* decodeWindowsWrappedKey(contents).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!dpapiSupported) return { kind: "terminal" };
+    }
+    const profileDirs = yield* decodeLocalState(contents).pipe(
+      Effect.map((state) =>
+        Object.keys(state.profile?.info_cache ?? {}).filter(isSafeProfileDirectory),
+      ),
+      Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+    );
+    for (const dir of profileDirs) {
+      if (
+        (yield* databaseFileExists(context.path.join(root, dir, "Network", "Cookies"))) ||
+        (yield* databaseFileExists(context.path.join(root, dir, "Cookies")))
+      ) {
+        return { kind: "browser", engine: "chromium" };
+      }
+    }
+  }
+
+  return sawAppRootMarker ? { kind: "terminal" } : { kind: "none" };
+});
+
+interface DiscoveredCandidate {
+  readonly engine: "chromium" | "firefox";
+  readonly root: string;
+  readonly segments: ReadonlyArray<string>;
+  readonly flatpak?: boolean;
+}
+
+const scanBaseDirectory = Effect.fnUntraced(function* (
+  base: string,
+  context: BrowserImportPathContext,
+  knownRoots: ReadonlySet<string>,
+  seenRoots: Set<string>,
+  options: {
+    readonly allowChromium: boolean;
+    readonly allowFirefox: boolean;
+    readonly checkWindowsUserData?: boolean;
+  },
+): Effect.fn.Return<ReadonlyArray<DiscoveredCandidate>, never, FileSystem.FileSystem> {
+  const candidates: Array<DiscoveredCandidate> = [];
+
+  const tryRoot = Effect.fnUntraced(function* (
+    root: string,
+    segments: ReadonlyArray<string>,
+  ): Effect.fn.Return<boolean, never, FileSystem.FileSystem> {
+    const key = normalizeRootKey(context, root);
+    if (knownRoots.has(key) || seenRoots.has(key)) return true;
+    const detection = yield* detectBrowserEngineAtRoot(root, context);
+    if (detection.kind === "none") return false;
+    if (detection.kind === "terminal") return true;
+    seenRoots.add(key);
+    if (
+      (detection.engine === "chromium" && options.allowChromium) ||
+      (detection.engine === "firefox" && options.allowFirefox)
+    ) {
+      candidates.push({ engine: detection.engine, root, segments });
+    }
+    return true;
+  });
+
+  const level1 = yield* readSubdirectories(base, context);
+  for (const dir1 of level1) {
+    if (yield* tryRoot(dir1.fullPath, [dir1.name])) continue;
+    const level2 = yield* readSubdirectories(dir1.fullPath, context);
+    if (level2.length > MAX_NESTED_SCAN_ENTRIES) continue;
+    for (const dir2 of level2) {
+      if (yield* tryRoot(dir2.fullPath, [dir1.name, dir2.name])) continue;
+      if (options.checkWindowsUserData) {
+        const userData = context.path.join(dir2.fullPath, "User Data");
+        if (yield* directoryExists(userData)) {
+          yield* tryRoot(userData, [dir1.name, dir2.name, "User Data"]);
+        }
+      }
+    }
+  }
+  return candidates;
+});
+
+const scanLinuxDotAndFlatpakRoots = Effect.fnUntraced(function* (
+  context: BrowserImportPathContext,
+  knownRoots: ReadonlySet<string>,
+  seenRoots: Set<string>,
+): Effect.fn.Return<ReadonlyArray<DiscoveredCandidate>, never, FileSystem.FileSystem> {
+  const candidates: Array<DiscoveredCandidate> = [];
+
+  const tryRoot = Effect.fnUntraced(function* (
+    root: string,
+    segments: ReadonlyArray<string>,
+    allowChromium: boolean,
+    flatpak = false,
+  ): Effect.fn.Return<void, never, FileSystem.FileSystem> {
+    const key = normalizeRootKey(context, root);
+    if (knownRoots.has(key) || seenRoots.has(key)) return;
+    const detection = yield* detectBrowserEngineAtRoot(root, context);
+    if (detection.kind !== "browser") return;
+    if (detection.engine === "chromium" && !allowChromium) return;
+    seenRoots.add(key);
+    candidates.push({ engine: detection.engine, root, segments, ...(flatpak ? { flatpak } : {}) });
+  });
+
+  // Home dotfiles for Firefox-based forks (e.g. ~/.librewolf, ~/.waterfox, ~/.floorp, ~/.mozilla/*).
+  if (context.home) {
+    const dotDirs = yield* readSubdirectories(context.home, context, {
+      allowHidden: true,
+      skip: (entry) => !entry.startsWith(".") || IGNORED_LINUX_HOME_DOTDIRS.has(entry),
+    });
+    for (const dir of dotDirs) {
+      yield* tryRoot(dir.fullPath, [dir.name], false);
+      if (dir.name === ".mozilla") {
+        const nested = yield* readSubdirectories(dir.fullPath, context);
+        if (nested.length <= MAX_NESTED_SCAN_ENTRIES) {
+          for (const child of nested) {
+            yield* tryRoot(child.fullPath, [dir.name, child.name], false);
+          }
+        }
+      }
+    }
+
+    // Flatpak sandboxes under ~/.var/app/<appId>.
+    const flatpakBase = context.path.join(context.home, ".var", "app");
+    const flatpakApps = yield* readSubdirectories(flatpakBase, context);
+    for (const app of flatpakApps) {
+      const children = yield* readSubdirectories(app.fullPath, context, {
+        allowHidden: true,
+        skip: (entry) => entry === "cache" || entry === "data" || entry === ".ld.so",
+      });
+      if (children.length > MAX_NESTED_SCAN_ENTRIES) continue;
+      for (const child of children) {
+        if (child.name === "config") {
+          const nested = yield* scanBaseDirectory(child.fullPath, context, knownRoots, seenRoots, {
+            allowChromium: true,
+            allowFirefox: true,
+          });
+          for (const candidate of nested) {
+            candidates.push({
+              ...candidate,
+              segments: [app.name, ...candidate.segments],
+              flatpak: true,
+            });
+          }
+          continue;
+        }
+        yield* tryRoot(child.fullPath, [app.name, child.name], false, true);
+        if (child.name === ".mozilla") {
+          const mozillaChildren = yield* readSubdirectories(child.fullPath, context);
+          if (mozillaChildren.length <= MAX_NESTED_SCAN_ENTRIES) {
+            for (const sub of mozillaChildren) {
+              yield* tryRoot(sub.fullPath, [app.name, child.name, sub.name], false, true);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return candidates;
+});
+
+const buildDiscoveredSourceId = Effect.fnUntraced(function* (
+  engine: "chromium" | "firefox",
+  normalizedRootKey: string,
+): Effect.fn.Return<BrowserImportSourceId | undefined, never, Digest.Digest> {
+  const crypto = yield* Digest.Digest;
+  const bytes = new TextEncoder().encode(`${engine}\0${normalizedRootKey}`);
+  return yield* crypto.digest(Digest.sha256, bytes).pipe(
+    Effect.map(
+      (hashed): BrowserImportSourceId => `discovered:${engine}:${Hex.encode(hashed).slice(0, 16)}`,
+    ),
+    Effect.orElseSucceed(() => undefined),
+  );
+});
+
+/** Return known sources followed by auto-discovered Chromium and Firefox-based browsers. */
+export const discoverBrowserImportSources = Effect.fn(
+  "BrowserImportSources.discoverBrowserImportSources",
+)(function* (
+  context: BrowserImportPathContext,
+): Effect.fn.Return<
+  ReadonlyArray<BrowserImportSourceDefinition>,
+  never,
+  FileSystem.FileSystem | Digest.Digest
+> {
+  const knownRoots = new Set<string>();
+  for (const source of BROWSER_IMPORT_SOURCES) {
+    const root = source.userDataDirectory(context);
+    if (root !== undefined) knownRoots.add(normalizeRootKey(context, root));
+    if (context.platform === "linux" && source.alternateLinuxRoots) {
+      for (const alt of source.alternateLinuxRoots(context)) {
+        knownRoots.add(normalizeRootKey(context, alt));
+      }
+    }
+  }
+
+  const seenRoots = new Set<string>();
+  const rawCandidates: Array<DiscoveredCandidate> = [];
+
+  if (context.platform === "darwin" && context.home) {
+    rawCandidates.push(
+      ...(yield* scanBaseDirectory(macApplicationSupport(context), context, knownRoots, seenRoots, {
+        allowChromium: true,
+        allowFirefox: true,
+      })),
+    );
+  } else if (context.platform === "linux") {
+    const configBases = [
+      context.linuxConfigHome,
+      ...(context.linuxChromeConfigHome !== context.linuxConfigHome
+        ? [context.linuxChromeConfigHome]
+        : []),
+    ];
+    for (const base of configBases) {
+      if (!base) continue;
+      rawCandidates.push(
+        ...(yield* scanBaseDirectory(base, context, knownRoots, seenRoots, {
+          allowChromium: true,
+          allowFirefox: true,
+        })),
+      );
+    }
+    rawCandidates.push(...(yield* scanLinuxDotAndFlatpakRoots(context, knownRoots, seenRoots)));
+  } else if (context.platform === "win32") {
+    if (context.appData) {
+      rawCandidates.push(
+        ...(yield* scanBaseDirectory(context.appData, context, knownRoots, seenRoots, {
+          allowChromium: false,
+          allowFirefox: true,
+        })),
+      );
+    }
+    if (context.localAppData) {
+      rawCandidates.push(
+        ...(yield* scanBaseDirectory(context.localAppData, context, knownRoots, seenRoots, {
+          allowChromium: true,
+          allowFirefox: false,
+          checkWindowsUserData: true,
+        })),
+      );
+    }
+  }
+
+  // Avoid duplicating a known browser that is already installed (e.g. a migrated legacy folder).
+  const knownByEngineAndName = new Map<string, BrowserImportSourceDefinition>();
+  for (const source of BROWSER_IMPORT_SOURCES) {
+    if (source.platforms.includes(context.platform)) {
+      knownByEngineAndName.set(`${source.engine}:${source.name.toLowerCase()}`, source);
+    }
+  }
+  const installedKnownCache = new Map<string, boolean>();
+  const discovered: Array<BrowserImportSourceDefinition> = [];
+
+  const namedCandidates: Array<{
+    readonly candidate: DiscoveredCandidate;
+    readonly baseName: string;
+  }> = [];
+  const nameCounts = new Map<string, number>();
+
+  for (const candidate of rawCandidates) {
+    const baseName = deriveDiscoveredBrowserName(candidate.segments);
+    if (baseName === undefined) continue;
+
+    const collisionKey = `${candidate.engine}:${baseName.toLowerCase()}`;
+    const matchingKnown = knownByEngineAndName.get(collisionKey);
+    if (matchingKnown !== undefined) {
+      let knownInstalled = installedKnownCache.get(collisionKey);
+      if (knownInstalled === undefined) {
+        knownInstalled = yield* isSourceInstalled(matchingKnown, context);
+        installedKnownCache.set(collisionKey, knownInstalled);
+      }
+      if (knownInstalled) continue;
+    }
+
+    namedCandidates.push({ candidate, baseName });
+    nameCounts.set(collisionKey, (nameCounts.get(collisionKey) ?? 0) + 1);
+  }
+
+  for (const { candidate, baseName } of namedCandidates) {
+    const id = yield* buildDiscoveredSourceId(
+      candidate.engine,
+      normalizeRootKey(context, candidate.root),
+    );
+    if (id === undefined) continue;
+    const collisionKey = `${candidate.engine}:${baseName.toLowerCase()}`;
+    const name =
+      candidate.flatpak && (nameCounts.get(collisionKey) ?? 0) > 1
+        ? `${baseName} (Flatpak)`
+        : baseName;
+    const rootPath = candidate.root;
+    if (candidate.engine === "firefox") {
+      discovered.push({
+        id,
+        name,
+        engine: "firefox",
+        platforms: [context.platform],
+        userDataDirectory: () => rootPath,
+      });
+    } else {
+      const keychainCandidates = discoveredChromiumKeychainCandidates(baseName);
+      const linuxSecretApplications = discoveredLinuxSecretApplications(
+        candidate.segments,
+        baseName,
+      );
+      const primaryKeychain = keychainCandidates[0];
+      const primaryLinuxApp = linuxSecretApplications[0];
+      discovered.push({
+        id,
+        name,
+        engine: "chromium",
+        platforms: [context.platform],
+        userDataDirectory: () => rootPath,
+        ...(primaryKeychain === undefined
+          ? {}
+          : {
+              keychainService: primaryKeychain.service,
+              keychainAccount: primaryKeychain.account,
+            }),
+        keychainCandidates,
+        ...(primaryLinuxApp === undefined ? {} : { linuxSecretApplication: primaryLinuxApp }),
+        linuxSecretApplications,
+      });
+    }
+  }
+
+  discovered.sort(
+    (left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
+  );
+  return [...BROWSER_IMPORT_SOURCES, ...discovered];
 });

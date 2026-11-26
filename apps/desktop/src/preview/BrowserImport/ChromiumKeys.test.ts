@@ -19,8 +19,9 @@ import {
 import { LinuxBrowserSecretPath } from "./LinuxBrowserSecret.ts";
 import { BROWSER_IMPORT_SOURCES } from "./Sources.ts";
 
-const { getPassword } = vi.hoisted(() => ({
+const { getPassword, constructed } = vi.hoisted(() => ({
   getPassword: vi.fn<() => Promise<string | undefined>>(),
+  constructed: [] as Array<readonly [service: string, account: string]>,
 }));
 
 vi.mock("@napi-rs/keyring", () => ({
@@ -30,12 +31,16 @@ vi.mock("@napi-rs/keyring", () => ({
     }
   },
   AsyncEntry: class {
+    constructor(service: string, account: string) {
+      constructed.push([service, account]);
+    }
     getPassword = getPassword;
   },
 }));
 
 beforeEach(() => {
   getPassword.mockReset();
+  constructed.length = 0;
 });
 
 type CapturedCommand = {
@@ -119,6 +124,43 @@ describe("macOS Chromium secrets", () => {
       const error = yield* resolveChromiumKeys(request).pipe(Effect.flip);
       expect(error.reason).toBe("needsKeychainApproval");
       expect(error.cause).toBe(denied);
+    }).pipe(Effect.provide(layerNoProcesses)),
+  );
+
+  it.effect("tries keychain candidates on missing items and stops immediately on denial", () =>
+    Effect.gen(function* () {
+      getPassword.mockResolvedValueOnce(undefined).mockResolvedValueOnce("macos-secret");
+      const keys = yield* resolveChromiumKeys({
+        platform: "darwin",
+        keychainService: undefined,
+        keychainAccount: undefined,
+        keychainCandidates: [
+          { service: "Chrome Canary Safe Storage", account: "Chrome Canary" },
+          { service: "Chrome Safe Storage", account: "Chrome" },
+          { service: "Chromium Safe Storage", account: "Chromium" },
+        ],
+        linuxSecretApplication: undefined,
+      });
+      expect(keys.cbcV10?.toString("hex")).toBe("3df7306fb1eac353289565a2f6b64f74");
+      expect(constructed).toEqual([
+        ["Chrome Canary Safe Storage", "Chrome Canary"],
+        ["Chrome Safe Storage", "Chrome"],
+      ]);
+
+      constructed.length = 0;
+      getPassword.mockRejectedValueOnce(new Error("User denied access"));
+      const denied = yield* resolveChromiumKeys({
+        platform: "darwin",
+        keychainService: undefined,
+        keychainAccount: undefined,
+        keychainCandidates: [
+          { service: "Comet Safe Storage", account: "Comet" },
+          { service: "Chromium Safe Storage", account: "Chromium" },
+        ],
+        linuxSecretApplication: undefined,
+      }).pipe(Effect.flip);
+      expect(denied.reason).toBe("needsKeychainApproval");
+      expect(constructed).toEqual([["Comet Safe Storage", "Comet"]]);
     }).pipe(Effect.provide(layerNoProcesses)),
   );
 });
@@ -224,6 +266,47 @@ describe("Linux Chromium secrets", () => {
       );
     },
   );
+
+  it.effect("falls through missing Linux secret applications until one matches", () => {
+    const seen: Array<string> = [];
+    const layerFallbackHelper = Layer.merge(
+      Layer.succeed(LinuxBrowserSecretPath, "/bundled/browser-secret/t3-browser-secret"),
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make((command) => {
+          const app = (command as CapturedCommand).args[0] ?? "";
+          seen.push(app);
+          const found = app === "chromium";
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(found ? 0 : 2)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.encodeText(Stream.make(found ? "linux-secret \t\n" : "")),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const keys = yield* resolveChromiumKeys({
+        platform: "linux",
+        keychainService: undefined,
+        keychainAccount: undefined,
+        linuxSecretApplication: undefined,
+        linuxSecretApplications: ["thorium", "chromium", "chrome"],
+      });
+      expect(seen).toEqual(["thorium", "chromium"]);
+      expect(keys.cbcV11?.toString("hex")).toBe("95aa769d6a5beca14d5d90ae655db112");
+    }).pipe(Effect.provide(layerFallbackHelper));
+  });
 });
 
 describe("Windows Chromium secrets", () => {

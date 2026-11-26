@@ -17,6 +17,7 @@ import {
   readWindowsKey,
   resolveChromiumKeys,
   type ChromiumKeyMaterial,
+  type KeychainCredentialCandidate,
 } from "./ChromiumKeys.ts";
 import {
   bareHost,
@@ -261,7 +262,9 @@ export interface ChromiumCookieSource {
   readonly cookieDatabasePath: string;
   readonly keychainService: string | undefined;
   readonly keychainAccount: string | undefined;
+  readonly keychainCandidates?: ReadonlyArray<KeychainCredentialCandidate> | undefined;
   readonly linuxSecretApplication: string | undefined;
+  readonly linuxSecretApplications?: ReadonlyArray<string> | undefined;
   readonly windowsLocalStatePath?: string;
   readonly platform: NodeJS.Platform;
 }
@@ -280,7 +283,9 @@ export const readChromiumCookies = Effect.fn("ChromiumCookies.readChromiumCookie
           platform: source.platform,
           keychainService: source.keychainService,
           keychainAccount: source.keychainAccount,
+          keychainCandidates: source.keychainCandidates,
           linuxSecretApplication: source.linuxSecretApplication,
+          linuxSecretApplications: source.linuxSecretApplications,
         })
   ).pipe(
     Effect.mapError(

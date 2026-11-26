@@ -227,11 +227,18 @@ export const readWindowsKey = Effect.fn("ChromiumKeys.readWindowsKey")(function*
   return yield* unwrapWindowsDpapiKey(yield* decodeWindowsWrappedKey(contents));
 });
 
+export interface KeychainCredentialCandidate {
+  readonly service: string;
+  readonly account: string;
+}
+
 export interface ChromiumKeyRequest {
   readonly platform: NodeJS.Platform;
   readonly keychainService: string | undefined;
   readonly keychainAccount: string | undefined;
+  readonly keychainCandidates?: ReadonlyArray<KeychainCredentialCandidate> | undefined;
   readonly linuxSecretApplication: string | undefined;
+  readonly linuxSecretApplications?: ReadonlyArray<string> | undefined;
 }
 
 export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")(function* (
@@ -242,24 +249,55 @@ export const resolveChromiumKeys = Effect.fn("ChromiumKeys.resolveChromiumKeys")
   ChildProcessSpawner.ChildProcessSpawner
 > {
   if (request.platform === "darwin") {
-    if (!request.keychainService || !request.keychainAccount) {
+    const candidates: ReadonlyArray<KeychainCredentialCandidate> =
+      request.keychainCandidates && request.keychainCandidates.length > 0
+        ? request.keychainCandidates
+        : request.keychainService && request.keychainAccount
+          ? [{ service: request.keychainService, account: request.keychainAccount }]
+          : [];
+    if (candidates.length === 0) {
       return yield* new ChromiumKeyError({ reason: "unsupportedPlatform" });
     }
-    const secret = yield* readKeychainSecret(request.keychainService, request.keychainAccount);
-    return { cbcV10: derive(secret, MAC_KEY_ITERATIONS) };
+    let missingError: ChromiumKeyError | undefined;
+    for (const candidate of candidates) {
+      const attempt = yield* readKeychainSecret(candidate.service, candidate.account).pipe(
+        Effect.catchIf(
+          (error) => error.reason === "keychainItemMissing",
+          (error) => Effect.succeed(error),
+        ),
+      );
+      if (typeof attempt === "string") {
+        return { cbcV10: derive(attempt, MAC_KEY_ITERATIONS) };
+      }
+      missingError = attempt;
+    }
+    return yield* missingError ?? new ChromiumKeyError({ reason: "keychainItemMissing" });
   }
 
   if (request.platform === "linux") {
     // v10 always uses the fallback passphrase; a keyring secret additionally unlocks v11.
-    const keyringSecret = request.linuxSecretApplication
-      ? yield* readLinuxSecret(request.linuxSecretApplication).pipe(
-          // Missing Secret Service or keys must not block v10; explicit denial, lock, or cancellation remains a consent failure.
-          Effect.catchIf(
-            (error) => error.reason !== "needsKeychainApproval",
-            (error) => Effect.succeed(error),
-          ),
-        )
-      : undefined;
+    const applications: ReadonlyArray<string> =
+      request.linuxSecretApplications && request.linuxSecretApplications.length > 0
+        ? request.linuxSecretApplications
+        : request.linuxSecretApplication
+          ? [request.linuxSecretApplication]
+          : [];
+    let keyringSecret: string | ChromiumKeyError | undefined;
+    for (const application of applications) {
+      const attempt = yield* readLinuxSecret(application).pipe(
+        // Missing Secret Service or keys must not block v10; explicit denial, lock, or cancellation remains a consent failure.
+        Effect.catchIf(
+          (error) => error.reason !== "needsKeychainApproval",
+          (error) => Effect.succeed(error),
+        ),
+      );
+      if (typeof attempt === "string") {
+        keyringSecret = attempt;
+        break;
+      }
+      keyringSecret = attempt;
+      if (attempt.reason !== "keychainItemMissing") break;
+    }
     return {
       cbcV10: derive(LINUX_FALLBACK_PASSPHRASE, LINUX_KEY_ITERATIONS),
       ...(typeof keyringSecret === "string"

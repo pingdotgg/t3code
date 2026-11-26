@@ -10,6 +10,7 @@ import {
   managedPolicyDeniedMessage,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import type { Session } from "electron";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -30,6 +31,7 @@ import { FirefoxCookieReadError, readFirefoxCookies } from "./FirefoxCookies.ts"
 import { readSafariCookies, safariAccessDenied, SafariCookieReadError } from "./SafariCookies.ts";
 import {
   BROWSER_IMPORT_SOURCES,
+  discoverBrowserImportSources,
   resolveCookieDatabase,
   isSourceInstalled,
   isSourceRunning,
@@ -212,23 +214,26 @@ export const make = Effect.gen(function* BrowserImportMake() {
   const platform = yield* HostProcess.Platform;
   const executablePath = yield* HostProcess.ExecutablePath;
   const platformServices = yield* Effect.context<
-    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner | Digest.Digest
   >();
   const pathContext = yield* sourcePathContext;
 
-  const listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>> = Effect.forEach(
-    BROWSER_IMPORT_SOURCES,
-    Effect.fnUntraced(function* (definition) {
-      const unavailable = yield* unavailableReason(definition, pathContext);
-      return {
-        id: definition.id,
-        name: definition.name,
-        profiles:
-          unavailable === undefined ? yield* listSourceProfiles(definition, pathContext) : [],
-        ...(unavailable === undefined ? {} : { unavailable }),
-      } satisfies BrowserImportSource;
-    }),
-  ).pipe(Effect.provide(platformServices));
+  const listSources: Effect.Effect<ReadonlyArray<BrowserImportSource>> = Effect.gen(function* () {
+    const definitions = yield* discoverBrowserImportSources(pathContext);
+    return yield* Effect.forEach(
+      definitions,
+      Effect.fnUntraced(function* (definition) {
+        const unavailable = yield* unavailableReason(definition, pathContext);
+        return {
+          id: definition.id,
+          name: definition.name,
+          profiles:
+            unavailable === undefined ? yield* listSourceProfiles(definition, pathContext) : [],
+          ...(unavailable === undefined ? {} : { unavailable }),
+        } satisfies BrowserImportSource;
+      }),
+    );
+  }).pipe(Effect.provide(platformServices));
 
   const importCookies = Effect.fn("BrowserImport.importCookies")(function* (input: {
     readonly input: BrowserImportInput;
@@ -237,9 +242,11 @@ export const make = Effect.gen(function* BrowserImportMake() {
     readonly namespace?: BrowserSession.BrowserSessionPartitionNamespace;
   }) {
     yield* checkBrowserImportPolicy(managedPolicy.read);
-    const definition = BROWSER_IMPORT_SOURCES.find(
-      (candidate) => candidate.id === input.input.sourceId,
-    );
+    const definition =
+      BROWSER_IMPORT_SOURCES.find((candidate) => candidate.id === input.input.sourceId) ??
+      (yield* discoverBrowserImportSources(pathContext).pipe(
+        Effect.provide(platformServices),
+      )).find((candidate) => candidate.id === input.input.sourceId);
     if (!definition) {
       return yield* new BrowserImportFailedError({
         sourceId: input.input.sourceId,
@@ -304,7 +311,9 @@ export const make = Effect.gen(function* BrowserImportMake() {
               cookieDatabasePath: databasePath,
               keychainService: definition.keychainService,
               keychainAccount: definition.keychainAccount,
+              keychainCandidates: definition.keychainCandidates,
               linuxSecretApplication: definition.linuxSecretApplication,
+              linuxSecretApplications: definition.linuxSecretApplications,
               ...(platform === "win32" && userDataDirectory !== undefined
                 ? {
                     windowsLocalStatePath: pathContext.path.join(userDataDirectory, "Local State"),

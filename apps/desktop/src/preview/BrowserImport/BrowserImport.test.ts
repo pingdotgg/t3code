@@ -84,6 +84,7 @@ const withImporter = Effect.fnUntraced(function* () {
         Layer.provide(layerEnvironment),
         Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
         Layer.provide(Layer.succeed(HostProcess.ExecutablePath, "/Applications/T3 Code.app")),
+        Layer.provide(NodeCrypto.layerDigest),
         Layer.provide(NodeServices.layer),
       ),
     ),
@@ -170,6 +171,7 @@ describe("BrowserImport.importCookies", () => {
               Layer.provide(Layer.succeed(HostProcess.Environment, { HOME: home })),
               Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
               Layer.provide(Layer.succeed(HostProcess.ExecutablePath, "/fixture/t3code")),
+              Layer.provide(NodeCrypto.layerDigest),
               Layer.provide(NodeServices.layer),
             ),
           ),
@@ -262,6 +264,178 @@ describe("BrowserImport.importCookies", () => {
         assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
         assert.equal(error.reason, "browserRunning");
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("discovers and imports cookies from unlisted Chromium and Firefox browsers", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-autodiscover-" });
+      const appSupport = `${home}/Library/Application Support`;
+
+      // Auto-discovered Chromium browser (uses fallback Chromium Safe Storage key from mock).
+      const cometRoot = `${appSupport}/Comet`;
+      yield* fileSystem.makeDirectory(`${cometRoot}/Default/Network`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${cometRoot}/Local State`,
+        JSON.stringify({ profile: { info_cache: { Default: { name: "Work" } } } }),
+      );
+      const kdf = yield* Kdf.Kdf;
+      const cipher = yield* Cipher.Cipher;
+      const keyBytes = yield* kdf.derive(
+        Kdf.pbkdf2({ hash: Digest.sha1, iterations: 1003 }),
+        Buffer.from(chromiumKeychainSecret),
+        { salt: Buffer.from("saltysalt"), length: 16 },
+      );
+      const key = yield* Cipher.key(Cipher.aes128Cbc, keyBytes);
+      const ciphertext = yield* cipher.encrypt(key, Buffer.from("comet-session"), {
+        iv: Buffer.alloc(16, 0x20),
+      });
+      yield* Effect.sync(() => {
+        using database = new NodeSqlite.DatabaseSync(`${cometRoot}/Default/Network/Cookies`);
+        database.exec(`
+          create table meta (key text primary key, value text not null);
+          insert into meta values ('version', '23');
+          create table cookies (
+            host_key text, name text, value text, encrypted_value blob, path text,
+            expires_utc integer, is_secure integer, is_httponly integer, samesite integer,
+            top_frame_site_key text not null default ''
+          );
+        `);
+        database
+          .prepare("insert into cookies values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(
+            "comet.example",
+            "sid",
+            "",
+            Buffer.concat([Buffer.from("v10"), ciphertext]),
+            "/",
+            0,
+            1,
+            1,
+            1,
+            "",
+          );
+      });
+
+      // Auto-discovered Firefox-based browser (LibreWolf).
+      const librewolfRoot = `${appSupport}/LibreWolf`;
+      yield* fileSystem.makeDirectory(`${librewolfRoot}/Profiles/main.default`, {
+        recursive: true,
+      });
+      yield* fileSystem.writeFileString(
+        `${librewolfRoot}/profiles.ini`,
+        ["[Profile0]", "Name=Default", "IsRelative=1", "Path=Profiles/main.default"].join("\n"),
+      );
+      yield* Effect.sync(() => {
+        using database = new NodeSqlite.DatabaseSync(
+          `${librewolfRoot}/Profiles/main.default/cookies.sqlite`,
+        );
+        database.exec(`
+          pragma user_version = 15;
+          create table moz_cookies (
+            host text, name text, value text, path text, expiry integer,
+            isSecure integer, isHttpOnly integer, sameSite integer,
+            originAttributes text not null default ''
+          );
+        `);
+        database
+          .prepare("insert into moz_cookies values (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .run("librewolf.example", "token", "lw-value", "/", 0, 1, 1, 1, "");
+      });
+
+      const written: Electron.CookiesSetDetails[] = [];
+      const session = {
+        cookies: {
+          set: (cookie: Electron.CookiesSetDetails) => {
+            written.push(cookie);
+            return Promise.resolve();
+          },
+          flushStore: () => Promise.resolve(),
+        },
+      } as unknown as Session;
+
+      const importer = yield* BrowserImport.BrowserImport.pipe(
+        Effect.provide(
+          BrowserImport.layer.pipe(
+            Layer.provide(
+              Layer.succeed(BrowserSession.BrowserSession, {
+                getPartition: () => Effect.die("getPartition must not be reached"),
+                isPartition: () => false,
+                getSession: () => Effect.succeed(session),
+                clearCookies: () => Effect.die("clearCookies must not be reached"),
+                cookiesCleared: () => Effect.die("cookiesCleared must not be reached"),
+                clearCache: () => Effect.die("clearCache must not be reached"),
+              }),
+            ),
+            Layer.provide(DesktopManagedPolicy.layerTest()),
+            Layer.provide(Layer.succeed(HostProcess.Environment, { HOME: home })),
+            Layer.provide(Layer.succeed(HostProcess.Platform, "darwin")),
+            Layer.provide(Layer.succeed(HostProcess.ExecutablePath, "/fixture/t3code")),
+            Layer.provide(NodeCrypto.layerDigest),
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
+      );
+
+      const sources = yield* importer.listSources;
+      const comet = sources.find((candidate) => candidate.name === "Comet");
+      const librewolf = sources.find((candidate) => candidate.name === "LibreWolf");
+      assert.isDefined(comet);
+      assert.isDefined(librewolf);
+      assert.match(comet!.id, /^discovered:chromium:[0-9a-f]{16}$/);
+      assert.match(librewolf!.id, /^discovered:firefox:[0-9a-f]{16}$/);
+      assert.deepEqual(yield* decodeImportSource(comet!), {
+        id: comet!.id,
+        name: "Comet",
+        profiles: [{ directory: "Default", name: "Work", cookieCount: 1 }],
+      });
+      assert.deepEqual(yield* decodeImportSource(librewolf!), {
+        id: librewolf!.id,
+        name: "LibreWolf",
+        profiles: [{ directory: "Profiles/main.default", name: "Default", cookieCount: 1 }],
+      });
+
+      assert.deepEqual(
+        yield* importer.importCookies({
+          input: {
+            sourceId: comet!.id,
+            sourceProfileDirectory: "Default",
+            targetProfileId: "default",
+          },
+          scope: "persist:t3code-preview-test",
+          persistent: true,
+        }),
+        { imported: 1, skipped: 0, skippedDomains: [] },
+      );
+      assert.deepEqual(
+        yield* importer.importCookies({
+          input: {
+            sourceId: librewolf!.id,
+            sourceProfileDirectory: "Profiles/main.default",
+            targetProfileId: "default",
+          },
+          scope: "persist:t3code-preview-test",
+          persistent: true,
+        }),
+        { imported: 1, skipped: 0, skippedDomains: [] },
+      );
+
+      assert.deepEqual(
+        written.map((entry) => [entry.url, entry.name, entry.value]),
+        [
+          ["https://comet.example/", "sid", "comet-session"],
+          ["https://librewolf.example/", "token", "lw-value"],
+        ],
+      );
+    }).pipe(
+      Effect.provide([
+        NodeServices.layer,
+        NodeCrypto.layerDigest,
+        NodeCrypto.layerKdf,
+        NodeCrypto.layerCipher,
+      ]),
+      Effect.scoped,
+    ),
   );
 });
 

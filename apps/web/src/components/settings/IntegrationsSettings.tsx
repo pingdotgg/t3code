@@ -1337,6 +1337,11 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
     (source) =>
       source.unavailable !== "notInstalled" && source.unavailable !== "unsupportedPlatform",
   );
+  const supportsAllChromium = !(
+    sources?.some(
+      (source) => source.id === "chrome" && source.unavailable === "unsupportedPlatform",
+    ) ?? false
+  );
 
   const loadSources = () => {
     if (!previewBridge) return;
@@ -1422,7 +1427,7 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             <MenuSeparator />
             <MenuGroup>
               <MenuGroupLabel>
-                <T>Import from</T>
+                <T>Import from installed browsers</T>
               </MenuGroupLabel>
               {cookieImportDenial !== undefined ? (
                 <MenuItem disabled>{cookieImportDenial}</MenuItem>
@@ -1463,6 +1468,18 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                   ) : null}
                 </>
               )}
+              {cookieImportDenial === undefined && sources !== null ? (
+                <p className="max-w-56 px-2 pt-1.5 pb-1 text-xs leading-snug text-muted-foreground">
+                  {supportsAllChromium ? (
+                    <T>Chromium and Firefox browsers appear here automatically when installed.</T>
+                  ) : (
+                    <T>
+                      Firefox and compatible Chromium browsers appear here automatically when
+                      installed.
+                    </T>
+                  )}
+                </p>
+              ) : null}
             </MenuGroup>
           </MenuPopup>
         </Menu>
