@@ -18,33 +18,24 @@ import { resolveNewDraftStartFromOrigin } from "./chatThreadActions";
 import { peekT3ProjectFile, readT3ProjectFile } from "./t3ProjectFileDefaults";
 
 interface PendingWorkspaceDefault {
-  readonly projectRef: ScopedProjectRef;
   readonly envMode: DraftSessionState["envMode"];
   readonly openedManual: boolean;
   readonly settled: Promise<void>;
+  readonly superseded: PromiseWithResolvers<false>;
   readonly branchActions: Set<Promise<void>>;
 }
 
+// Keyed by draft, not project: load balancing moves a draft between machines of the same
+// project without retargeting its workspace, and the file's default must still land.
 const pendingWorkspaceDefaults = new Map<DraftId, PendingWorkspaceDefault>();
-
-function isDraftInProject(
-  draft: DraftSessionState | null,
-  projectRef: ScopedProjectRef,
-): draft is DraftSessionState {
-  return (
-    draft !== null &&
-    draft.promotedTo == null &&
-    draft.environmentId === projectRef.environmentId &&
-    draft.projectId === projectRef.projectId
-  );
-}
 
 function keepsProvisionalWorkspace(
   draft: DraftSessionState | null,
   pending: PendingWorkspaceDefault,
 ): draft is DraftSessionState {
   return (
-    isDraftInProject(draft, pending.projectRef) &&
+    draft !== null &&
+    draft.promotedTo == null &&
     draft.envMode === pending.envMode &&
     draft.worktreePath === null &&
     !draft.workspaceExplicit &&
@@ -52,20 +43,21 @@ function keepsProvisionalWorkspace(
   );
 }
 
-/** A waiting send can proceed only if this draft stayed in the same project. */
+/** Resolves false when the user moves the draft before the default lands, so the send stops. */
 export function readPendingWorkspaceDefault(draftId: DraftId): Promise<boolean> | null {
   const pending = pendingWorkspaceDefaults.get(draftId);
   if (!pending) return null;
   const draft = useComposerDraftStore.getState().getDraftSession(draftId);
   if (!keepsProvisionalWorkspace(draft, pending)) return null;
-  const moved = Promise.withResolvers<boolean>();
-  const unsubscribe = useComposerDraftStore.subscribe((store) => {
-    if (!isDraftInProject(store.getDraftSession(draftId), pending.projectRef)) moved.resolve(false);
-  });
-  return Promise.race([pending.settled.then(() => true), moved.promise]).finally(unsubscribe);
+  return Promise.race([pending.settled.then(() => true), pending.superseded.promise]);
 }
 
 function clearPendingWorkspaceDefault(draftId: DraftId): void {
+  pendingWorkspaceDefaults.delete(draftId);
+}
+
+function supersedePendingWorkspaceDefault(draftId: DraftId): void {
+  pendingWorkspaceDefaults.get(draftId)?.superseded.resolve(false);
   pendingWorkspaceDefaults.delete(draftId);
 }
 
@@ -134,7 +126,7 @@ export function prepareDraftWorkspaceDefault(
     : null;
   const workspace = workspaceFor(projectFile ?? null);
   if (!consultProjectFile || projectFile !== undefined) {
-    return { workspace, applyProjectFile: clearPendingWorkspaceDefault };
+    return { workspace, applyProjectFile: supersedePendingWorkspaceDefault };
   }
 
   return {
@@ -173,12 +165,13 @@ export function prepareDraftWorkspaceDefault(
           }
         });
       const pending = {
-        projectRef,
         envMode: workspace.envMode,
         openedManual,
         settled,
+        superseded: Promise.withResolvers<false>(),
         branchActions,
       };
+      supersedePendingWorkspaceDefault(draftId);
       pendingWorkspaceDefaults.set(draftId, pending);
     },
   };
@@ -194,7 +187,7 @@ export function retargetDraftWorkspace(
   project: EnvironmentProject,
 ) {
   return draft.workspaceExplicit || draft.worktreePath !== null
-    ? { workspace: {}, applyProjectFile: clearPendingWorkspaceDefault }
+    ? { workspace: {}, applyProjectFile: supersedePendingWorkspaceDefault }
     : prepareDraftWorkspaceDefault(
         projectRef,
         project,

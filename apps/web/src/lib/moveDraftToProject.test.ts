@@ -92,6 +92,26 @@ describe("moveDraftToProject", () => {
     expect(store.getDraftSession(draftId)?.envMode).toBe("local");
   });
 
+  it("applies the destination file default after load balancing picks another machine", async () => {
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(draftId, "Plan the next project");
+    const read = Promise.withResolvers<T3ProjectFile | null>();
+    vi.mocked(readT3ProjectFile).mockReturnValueOnce(read.promise);
+    const otherMachine = EnvironmentId.make("environment-remote");
+
+    moveDraftToProject(draftId, added);
+    const pending = readPendingWorkspaceDefault(draftId);
+    store.setDraftThreadContext(draftId, {
+      projectRef: scopeProjectRef(otherMachine, added.id),
+      environmentSelection: "auto",
+      loadBalancedEnvironmentId: otherMachine,
+    });
+
+    read.resolve({ defaultThreadEnvMode: "worktree" });
+    expect(await pending).toBe(true);
+    expect(store.getDraftSession(draftId)?.envMode).toBe("worktree");
+  });
+
   it("ignores a previous visit's file result when the draft returns to the same project", async () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(draftId, "Plan the next project");
