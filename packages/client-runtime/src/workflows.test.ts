@@ -770,13 +770,15 @@ describe("workflowOneLine", () => {
       workflowOneLine("> > ~~~sh\n> > > ~~~\n> > printf sample\n> > ~~~\n\nBuild passed."),
     ).toBe("Build passed.");
     expect(workflowOneLine("> ```sh\n> printf sample\n\nBuild passed.")).toBe("Build passed.");
-    expect(
-      workflowOneLine(
-        "> ```sh\n> printf sample\n> ```\n>\n> # Report\n> | a | b |\n>     code\n> Build passed.",
-      ),
-    ).toBe("Build passed.");
+    expect(workflowOneLine("> ```sh\n> printf sample\n> ```\n>\n>     code\n> Build passed.")).toBe(
+      "Build passed.",
+    );
     expect(workflowOneLine("> ```sh\n> printf sample\n> ```\n>Build passed.")).toBe(
       "Build passed.",
+    );
+    expect(workflowOneLine("> #123 is fixed.\nTests pass.")).toBe("#123 is fixed.");
+    expect(workflowOneLine("> |x| is the absolute value of x.\nFallback.")).toBe(
+      "|x| is the absolute value of x.",
     );
     expect(workflowOneLine("````md\n```ts\nconst x = 1;\n```\n````\nDone.")).toBe("Done.");
     expect(workflowOneLine("```ts\nconst a = 1;\nStill inside an unclosed fence.")).toBe("");
