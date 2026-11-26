@@ -10,7 +10,6 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-  chatMarkdownImageSources,
   remarkAssistantInsights,
   remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
@@ -954,8 +953,6 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
   ];
   const images = (node: Node): Node[] =>
     node.tagName === "img" ? [node] : (node.children ?? []).flatMap(images);
-  const nbspPicture =
-    '<picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/a\u00a0b.png 2x"><img src="https://example.com/light.png"></picture>';
   const tree = processor.runSync(
     processor.parse(
       [
@@ -970,7 +967,7 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
         "",
         String.raw`<picture><source media="(prefers-color-scheme: dark)" srcset="C:\shots\dark.png"><img src="C:\shots\light.png"></picture>`,
         "",
-        nbspPicture,
+        '<picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/a\u00a0b.png 2x"><img src="https://example.com/light.png"></picture>',
         "",
         '<picture><source media="(prefers-color-scheme: light)" srcset=" \thttps://example.com/\u00a0light\u00a0v2.png,\thttps://example.com/2x.png 2x"><img src="https://example.com/dark.png"></picture>',
       ].join("\n"),
@@ -1002,10 +999,6 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
       src: "https://example.com/dark.png",
       dataLightSrc: "https://example.com/\u00a0light\u00a0v2.png",
     },
-  ]);
-  expect(chatMarkdownImageSources(nbspPicture)).toEqual([
-    "https://example.com/light.png",
-    "https://example.com/a\u00a0b.png",
   ]);
 });
 
