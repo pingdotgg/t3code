@@ -1174,3 +1174,16 @@ it("keeps scrollLeft settled when followView moves focus after manual sideways s
 
   expect(Math.round(strip.scrollLeft)).toBe(340);
 });
+
+it("steps keyboard column resize from 1/3 to 1/2 instead of stopping at the minimum width clamp", async () => {
+  using _tabs = setup(1 / 3);
+  await using screen = await renderHost({ viewport: 1000 });
+  const handle = screen.container.querySelector<HTMLElement>('[role="separator"]')!;
+  handle.focus();
+  handle.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
+  );
+  await vi.waitFor(() =>
+    expect(useLayoutStore.getState().layout.workspaces[0]!.columns[0]!.width).toBeCloseTo(0.5, 4),
+  );
+});

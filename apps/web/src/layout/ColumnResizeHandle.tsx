@@ -72,6 +72,7 @@ function stepPreset(
   const presets =
     direction === 1 ? LAYOUT_COLUMN_WIDTH_PRESETS : LAYOUT_COLUMN_WIDTH_PRESETS.toReversed();
   for (const preset of presets) {
+    if ((preset - value) * direction <= 0) continue;
     const next = clampToBounds(preset, bounds);
     if ((next - value) * direction * extentPx >= MIN_KEYBOARD_STEP_PX) return next;
   }
@@ -476,13 +477,14 @@ export function LayoutResizeHandles({
         onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
           if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
           event.preventDefault();
+          const extent = scrollerRef.current?.clientWidth || unitWidth;
           const step = stepPreset(
             width,
             event.key === "ArrowRight" ? 1 : -1,
-            columnBounds(unitWidth),
-            unitWidth,
+            columnBounds(extent),
+            extent,
           );
-          useLayoutStore.getState().resizeColumnEdge(column.id, step, unitWidth);
+          useLayoutStore.getState().resizeColumnEdge(column.id, step, extent);
         }}
       />,
     );
