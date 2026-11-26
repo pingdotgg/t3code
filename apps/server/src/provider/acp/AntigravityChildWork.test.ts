@@ -1127,6 +1127,9 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
           "tool",
           "assistant_message",
         ]);
+        // A lone child's ids and key already name it, so a sibling appearing later renames nothing.
+        expect(detached.every((entry) => entry.childKey === CHILD)).toBe(true);
+        expect(detached.every((entry) => entry.itemId.startsWith(`${CHILD}:`))).toBe(true);
 
         // Direct childSessionId fallback works even when no subagents/ inbox record exists (e.g. swarm worker).
         const direct = yield* readAntigravitySubagentTranscript({

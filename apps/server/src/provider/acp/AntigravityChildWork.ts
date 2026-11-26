@@ -1091,12 +1091,13 @@ export const readAntigravitySubagentTranscript = Effect.fn("readAntigravitySubag
           );
           if (raw === undefined || raw.contents.length === 0) return [];
           const launch = launches[index];
+          // Prefix even a lone child, so its item ids hold when a sibling appears later.
           return transcriptToSubagentEntries(raw.contents, {
             prompt: launch?.prompt ?? input.launch.prompt,
-            childPrefix: multiChild ? `${child.conversationId}:` : "",
+            childPrefix: `${child.conversationId}:`,
             childLabel: multiChild ? launch?.role || child.conversationId : undefined,
             finalize: input.finalize,
-          });
+          }).map((entry) => ({ ...entry, childKey: child.conversationId }));
         }),
       );
       if (!multiChild) return perChild.flat();

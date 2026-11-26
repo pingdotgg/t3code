@@ -864,7 +864,7 @@ export interface AcpAdapterV2SubagentUpdate {
   readonly suppressNormalTool?: boolean;
 }
 
-export type AcpSubagentTranscriptEntry =
+export type AcpSubagentTranscriptEntry = (
   | {
       readonly kind: "reasoning";
       readonly itemId: string;
@@ -897,7 +897,11 @@ export type AcpSubagentTranscriptEntry =
       readonly itemId: string;
       readonly message: string;
       readonly createdAt?: DateTime.Utc | undefined;
-    };
+    }
+) & {
+  /** Names the transcript an entry came from when one subagent call runs several children. */
+  readonly childKey?: string | undefined;
+};
 
 export interface AcpAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
@@ -2056,7 +2060,7 @@ interface ActiveAcpSubagent {
   readonly transcriptEntryFingerprints: Map<string, string>;
   readonly transcriptStartedAt: Map<string, DateTime.Utc>;
   readonly transcriptOpenEntries: Map<string, AcpSubagentTranscriptEntry>;
-  lastTranscriptEntryKind: AcpSubagentTranscriptEntry["kind"] | undefined;
+  readonly lastTranscriptEntryKinds: Map<string, AcpSubagentTranscriptEntry["kind"]>;
   readonly transcriptDrainPermit: Semaphore.Semaphore;
   transcriptFollowerStop: Deferred.Deferred<void> | undefined;
   transcriptFollowerStarted: boolean;
@@ -2290,6 +2294,12 @@ function buildAcpStandardToolTurnItem(input: {
         ...(rawOutput === undefined ? {} : { output: rawOutput }),
       };
   }
+}
+
+// Every child's transcript ends in a reply, so no closing reply is still to come.
+function subagentTranscriptRepliesSettled(subagent: ActiveAcpSubagent): boolean {
+  const kinds = [...subagent.lastTranscriptEntryKinds.values()];
+  return kinds.length > 0 && kinds.every((kind) => kind === "assistant_message");
 }
 
 function acpSubagentStatusIsTerminal(status: OrchestrationV2Subagent["status"]): boolean {
@@ -4435,7 +4445,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
               }
               if (entries.length > 0) {
-                subagent.lastTranscriptEntryKind = entries.at(-1)?.kind;
+                for (const entry of entries) {
+                  subagent.lastTranscriptEntryKinds.set(entry.childKey ?? "", entry.kind);
+                }
               }
               if (finalize && subagent.transcriptOpenEntries.size > 0) {
                 // Settle open entries that scrolled out of the transcript tail cap before finishing.
@@ -4484,7 +4496,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.readSubagentTranscript === undefined ||
             subagent.transcriptTrailingDrainStarted ||
             (status !== "idle" && status !== "completed") ||
-            subagent.lastTranscriptEntryKind === "assistant_message"
+            subagentTranscriptRepliesSettled(subagent)
           ) {
             return;
           }
@@ -4517,7 +4529,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   subagent: subagent.task,
                 });
               }
-              if (subagent.lastTranscriptEntryKind === "assistant_message") break;
+              if (subagentTranscriptRepliesSettled(subagent)) break;
             }
           }).pipe(
             Effect.ignoreCause,
@@ -4677,7 +4689,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             transcriptEntryFingerprints: new Map(),
             transcriptStartedAt: new Map(),
             transcriptOpenEntries: new Map(),
-            lastTranscriptEntryKind: undefined,
+            lastTranscriptEntryKinds: new Map(),
             transcriptDrainPermit: yield* Semaphore.make(1),
             transcriptFollowerStop: undefined,
             transcriptFollowerStarted: false,
