@@ -460,6 +460,7 @@ export interface ThreadListV2ProjectFolderListItem {
   readonly type: "v2-project-folder";
   readonly key: string;
   readonly projectKey: string;
+  readonly project: HomeProjectScope["representative"];
   readonly title: string;
   readonly count: number;
   readonly expanded: boolean;
@@ -544,6 +545,7 @@ export function threadListV2ListItemsAreEqual(
       return (
         previous.type === "v2-project-folder" &&
         previous.key === item.key &&
+        previous.project === item.project &&
         previous.title === item.title &&
         previous.count === item.count &&
         previous.expanded === item.expanded
@@ -660,6 +662,7 @@ function groupActiveThreadRows(
         type: "v2-project-folder",
         key: `v2-project-folder:${scope.key}`,
         projectKey: scope.key,
+        project: scope.representative,
         title: scope.title,
         count: folderRows.length,
         expanded,

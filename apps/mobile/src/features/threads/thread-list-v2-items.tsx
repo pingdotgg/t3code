@@ -396,7 +396,7 @@ export function ThreadListV2ProjectFolder(props: {
   readonly onToggle: (projectKey: string) => void;
 }) {
   const gt = useGT();
-  const { count, expanded, projectKey, title } = props.item;
+  const { count, expanded, project, projectKey, title } = props.item;
   const sidebar = props.pane === "sidebar";
   const tint = sidebar ? "accent-drawer-foreground-muted" : "accent-foreground-muted";
   const label = expanded || count === 0 ? title : gt("{label} ({count})", { label: title, count });
@@ -416,7 +416,15 @@ export function ThreadListV2ProjectFolder(props: {
         size={10}
         tintColorClassName={tint}
       />
-      <SymbolView name="folder.fill" size={16} tintColorClassName={tint} />
+      <ProjectFavicon
+        environmentId={project.environmentId}
+        faviconPath={project.faviconPath}
+        open={expanded}
+        projectIcon={project.projectIcon}
+        projectTitle={project.title}
+        size={16}
+        workspaceRoot={project.workspaceRoot}
+      />
       <Text
         className={cn(
           "min-w-0 flex-1 text-sm font-t3-medium",
