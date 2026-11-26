@@ -918,9 +918,7 @@ it("adds only the typed indentation, and renders what follows it as without it",
   ];
   for (const indent of ["", " ", "   ", "\t", " \t"]) {
     for (const start of starts) {
-      // Without the indentation, an image alone on a CRLF line breaks twice: the image-line break
-      // leaves the CR behind, which breaks again.
-      const joins = start.startsWith("!") ? ["\n", "  \n", "\\\n"] : ["\n", "\r\n", "  \n", "\\\n"];
+      const joins = ["\n", "\r\n", "  \n", "\\\n"];
       const markdowns = [
         ...joins.flatMap((join) => lines.map((line) => line(indent, start, join))),
         // A paragraph's first line takes at most three spaces before it reads as code.
