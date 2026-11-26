@@ -3153,7 +3153,6 @@
   "2bc714a245998c04": "Neutra",
   "b28db58c44b25db3": "{passed} de {total}",
   "8e64d98f747bf650": "{count, plural, one {{count} verificação falhando} other {{count} verificações falhando}}",
-  "ff4514103a353d8e": "{count, plural, one {{count} precisa de atenção} other {{count} precisam de atenção}}",
   "078bb63ea2f3ee40": "As verificações precisam de atenção",
   "fd63b391898889f9": "{count, plural, one {{count} aguardando ação} other {{count} aguardando ação}}",
   "a39948e68089494f": "{count, plural, one {{count} pendente} other {{count} pendentes}}",
@@ -5399,7 +5398,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} parada} other {{count} paradas}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} parada} other {{count} paradas}}",
   "9830004326e7d8c0": "{count, plural, one {em {count} arquivo} other {em {count} arquivos}}",
   "e6035bad35419efa": "Opções do guia",
   "4d7635a2bf1f5816": "Reescrever guia",

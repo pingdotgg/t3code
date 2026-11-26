@@ -3154,7 +3154,6 @@
   "2bc714a245998c04": "中性",
   "b28db58c44b25db3": "{passed}/{total}",
   "8e64d98f747bf650": "{count, plural, other {{count} 项检查失败}}",
-  "ff4514103a353d8e": "{count, plural, other {{count} 个需要关注}}",
   "078bb63ea2f3ee40": "检查需要处理",
   "fd63b391898889f9": "{count, plural, other {{count} 个等待操作}}",
   "a39948e68089494f": "{count, plural, other {{count} 个待定}}",
@@ -5387,7 +5386,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, other {{count} 个站点}}",
+  "e093a6c02ff2c19f": "{count, plural, other {{count} 个站点}}",
   "9830004326e7d8c0": "{count, plural, other {涵盖 {count} 个文件}}",
   "e6035bad35419efa": "导览选项",
   "4d7635a2bf1f5816": "重写导览",

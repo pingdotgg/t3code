@@ -3158,7 +3158,6 @@
   "2bc714a245998c04": "Neutral",
   "b28db58c44b25db3": "{passed} von {total}",
   "8e64d98f747bf650": "{count, plural, one {{count} Check fehlgeschlagen} other {{count} Checks fehlgeschlagen}}",
-  "ff4514103a353d8e": "{count, plural, one {{count} braucht Aufmerksamkeit} other {{count} brauchen Aufmerksamkeit}}",
   "078bb63ea2f3ee40": "Checks erfordern Aufmerksamkeit",
   "fd63b391898889f9": "{count, plural, one {{count} wartet auf Aktion} other {{count} warten auf Aktion}}",
   "a39948e68089494f": "{count, plural, one {{count} ausstehend} other {{count} ausstehend}}",
@@ -5405,7 +5404,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} Stopp} other {{count} Stopps}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} Stopp} other {{count} Stopps}}",
   "9830004326e7d8c0": "{count, plural, one {durch {count} Datei} other {durch {count} Dateien}}",
   "e6035bad35419efa": "Leitfaden-Optionen",
   "4d7635a2bf1f5816": "Leitfaden neu schreiben",

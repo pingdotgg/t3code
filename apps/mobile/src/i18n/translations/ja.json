@@ -3150,7 +3150,6 @@
   "2bc714a245998c04": "中立",
   "b28db58c44b25db3": "{passed} / {total}",
   "8e64d98f747bf650": "{count, plural, other {{count} 件のチェックが失敗}}",
-  "ff4514103a353d8e": "{count, plural, other {{count} 件の確認が必要}}",
   "078bb63ea2f3ee40": "チェックに対応が必要です",
   "fd63b391898889f9": "{count, plural, other {{count} 件が操作待ち}}",
   "a39948e68089494f": "{count, plural, other {{count} 件が保留中}}",
@@ -5378,7 +5377,7 @@
     " ",
     "に開始"
   ],
-  "ffd7529d1f50e0a6": "{count, plural, other {{count} 回停止}}",
+  "e093a6c02ff2c19f": "{count, plural, other {{count} 件のストップ}}",
   "9830004326e7d8c0": "{count, plural, other {{count} 個のファイルを対象}}",
   "e6035bad35419efa": "ガイドのオプション",
   "4d7635a2bf1f5816": "ガイドを書き直す",

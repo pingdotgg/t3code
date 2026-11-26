@@ -3159,7 +3159,6 @@
   "2bc714a245998c04": "Neutral",
   "b28db58c44b25db3": "{passed} av {total}",
   "8e64d98f747bf650": "{count, plural, one {{count} kontroll misslyckas} other {{count} kontroller misslyckas}}",
-  "ff4514103a353d8e": "{count, plural, one {{count} behöver uppmärksamhet} other {{count} behöver uppmärksamhet}}",
   "078bb63ea2f3ee40": "Kontroller behöver åtgärdas",
   "fd63b391898889f9": "{count, plural, one {{count} väntar på åtgärd} other {{count} väntar på åtgärd}}",
   "a39948e68089494f": "{count, plural, one {{count} väntande} other {{count} väntande}}",
@@ -5405,7 +5404,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} stopp} other {{count} stopp}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} stopp} other {{count} stopp}}",
   "9830004326e7d8c0": "{count, plural, one {genom {count} fil} other {genom {count} filer}}",
   "e6035bad35419efa": "Guidealternativ",
   "4d7635a2bf1f5816": "Skriv om guide",
