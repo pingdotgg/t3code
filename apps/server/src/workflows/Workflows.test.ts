@@ -20,15 +20,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import {
-  checkTriggers,
-  daily,
-  every,
-  Tick,
-  type Trigger,
-  webhook,
-  WebhookRequest,
-} from "./triggers.ts";
+import { checkTriggers, daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
 import { cancel, runs, signalAll, start, withdraw } from "./stepServices.ts";
 import {
@@ -2277,38 +2269,6 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
-it.effect("a daily time an older server kept under the id as written still starts its run", () =>
-  Effect.gen(function* () {
-    const { boot, database } = yield* harness();
-    const standup = workflow(
-      "standup",
-      { version: 1, payload: Tick, triggers: [daily("9:00")] },
-      () => Effect.void,
-    );
-    yield* Effect.provide(
-      Effect.flatMap(
-        SqlClient.SqlClient,
-        (sql) =>
-          sql`INSERT INTO workflow_triggers (trigger_id, next_at) VALUES ('standup/daily:9:00:all', '1970-01-01T09:00:00.000Z')`,
-      ),
-      database,
-    );
-    yield* TestClock.adjust("545 minutes");
-    const runs = yield* boot(
-      Effect.gen(function* () {
-        const workflows = yield* Workflows.Workflows;
-        yield* workflows.sweep;
-        return yield* workflows.list();
-      }),
-      [standup],
-    );
-    assert.deepStrictEqual(
-      runs.map((run) => run.workflow),
-      ["standup"],
-    );
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-);
-
 it.effect("an issue opened after the workflow loaded starts one run, which can comment on it", () =>
   Effect.gen(function* () {
     const starts: Array<string> = [];
@@ -2437,20 +2397,22 @@ it("every accepts bigint nanoseconds and names short ones in its error", () => {
   assert.throws(() => every(1_000n), /^every\(1000n\) is shorter than the shortest, one minute\.$/);
 });
 
-it("daily gives schedules that fire at the same times one id", () => {
-  const id = (trigger: Trigger<Tick>) => (trigger.kind === "webhook" ? undefined : trigger.id);
-  assert.equal(id(daily(" 9:00 ")), id(daily("09:00")));
-  assert.equal(
-    id(daily("09:00", { weekdays: [3, 1, 1] })),
-    id(daily("09:00", { weekdays: [1, 3] })),
-  );
-  assert.equal(id(daily("09:00", { weekdays: [] })), id(daily("09:00")));
-  assert.equal(id(daily("09:00", { weekdays: [6, 5, 4, 3, 2, 1, 0] })), id(daily("09:00")));
-  assert.notEqual(id(daily("09:00", { weekdays: [1] })), id(daily("09:00")));
+it("a workflow refuses two daily schedules that fire at the same times", () => {
+  const twice = /^workflow\("standup"\) lists the same schedule twice\. List it once\.$/;
+  assert.throws(() => checkTriggers("standup", [daily("9:00"), daily("09:00")]), twice);
   assert.throws(
-    () => checkTriggers("standup", [daily("9:00"), daily("09:00", { weekdays: [] })]),
-    /^workflow\("standup"\) lists the same schedule twice\. List it once\.$/,
+    () => checkTriggers("standup", [daily("09:00"), daily("09:00", { weekdays: [] })]),
+    twice,
   );
+  assert.throws(
+    () =>
+      checkTriggers("standup", [
+        daily("09:00", { weekdays: [3, 1, 1] }),
+        daily("09:00", { weekdays: [1, 3] }),
+      ]),
+    twice,
+  );
+  checkTriggers("standup", [daily("09:00", { weekdays: [1] }), daily("09:00")]);
 });
 
 it.effect("the sweep deletes skipped runs past the number the settings keep", () =>

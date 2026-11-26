@@ -3,7 +3,7 @@
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
-import { parseTimeOfDay } from "../scheduledTasks/Schedule.ts";
+import { isSameSchedule, parseTimeOfDay } from "../scheduledTasks/Schedule.ts";
 import { checkOptions, durationOf } from "./options.ts";
 import type { Issue, PullRequest } from "./WorkflowForge.ts";
 
@@ -24,8 +24,6 @@ export interface ScheduleTrigger {
   readonly kind: "schedule";
   /** Stable across restarts: where this trigger's next time is kept. */
   readonly id: string;
-  /** Where an older server kept this trigger's next time, carried over so an upgrade misses no run. */
-  readonly formerId?: string;
   readonly schedule:
     | { readonly type: "interval"; readonly everyMs: number }
     | {
@@ -75,24 +73,15 @@ export const daily = (
   checkOptions(`daily("${timeOfDay}")`, options, ["weekdays"]);
   const weekdays = options?.weekdays;
   // Read once here: a time the schedule cannot read would otherwise never fire, without a word.
-  const time = parseTimeOfDay(timeOfDay);
-  if (time === null) {
+  if (parseTimeOfDay(timeOfDay) === null) {
     throw new Error(`daily("${timeOfDay}") needs a 24-hour time such as "09:00".`);
   }
-  const days = [...new Set(weekdays?.toSorted())];
-  if (days.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
-    throw new Error(
-      `daily's weekdays are 0 (Sunday) to 6 (Saturday), not ${weekdays?.join(", ")}.`,
-    );
+  if (weekdays?.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
+    throw new Error(`daily's weekdays are 0 (Sunday) to 6 (Saturday), not ${weekdays.join(", ")}.`);
   }
-  // Equivalent spellings share one id: the schedule reads no days or all seven as every day.
-  const at = `${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`;
-  const id = `daily:${at}:${days.length === 0 || days.length === 7 ? "all" : days.join(",")}`;
-  const formerId = `daily:${timeOfDay}:${weekdays?.toSorted().join(",") ?? "all"}`;
   return {
     kind: "schedule",
-    id,
-    ...(formerId === id ? {} : { formerId }),
+    id: `daily:${timeOfDay}:${weekdays?.toSorted().join(",") ?? "all"}`,
     schedule: { type: "fixed_time", timeOfDay, ...(weekdays === undefined ? {} : { weekdays }) },
   };
 };
@@ -116,9 +105,14 @@ export const checkTriggers = (
   triggers: ReadonlyArray<ScheduleTrigger | WebhookTrigger | OpenedTrigger>,
 ) => {
   const seen = new Set<string>();
+  const schedules: Array<ScheduleTrigger["schedule"]> = [];
   for (const trigger of triggers) {
     const id = trigger.kind === "webhook" ? `webhook:${trigger.name}` : trigger.id;
-    if (seen.has(id)) {
+    // Ids keep the spelling as written, since saved next times are kept under them.
+    const sameSchedule =
+      trigger.kind === "schedule" &&
+      schedules.some((schedule) => isSameSchedule(schedule, trigger.schedule));
+    if (seen.has(id) || sameSchedule) {
       throw new Error(
         trigger.kind === "webhook"
           ? `workflow("${workflow}") has two hooks named "${trigger.name}". Give each its own name.`
@@ -126,6 +120,7 @@ export const checkTriggers = (
       );
     }
     seen.add(id);
+    if (trigger.kind === "schedule") schedules.push(trigger.schedule);
   }
 };
 
