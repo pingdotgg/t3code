@@ -197,16 +197,18 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     const result = yield* attempt(route);
     if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     if (result.failure.reason === "unsupported") return yield* result.failure;
+    // A route that never answered cannot explain why a host that answered refused.
+    if (blocked !== undefined) transient = undefined;
   }
   return yield* (
     transient ??
-      blocked ??
-      new ConnectionTransientError({
-        reason: "endpoint-unavailable",
-        ...translatableDetail(
-          msg("{host} did not answer on any saved route.", { host: entry.target.label }),
-        ),
-      })
+    blocked ??
+    new ConnectionTransientError({
+      reason: "endpoint-unavailable",
+      ...translatableDetail(
+        msg("{host} did not answer on any saved route.", { host: entry.target.label }),
+      ),
+    })
   );
 });
 

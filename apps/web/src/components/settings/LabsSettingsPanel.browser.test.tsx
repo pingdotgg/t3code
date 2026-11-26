@@ -29,7 +29,7 @@ vi.mock(import("./settingsLayout"), async (original) => ({
 import { WorkflowSkippedRunsRow } from "./LabsSettingsPanel";
 
 describe("WorkflowSkippedRunsRow", () => {
-  it("saves the number of skipped runs kept when the field is left", async () => {
+  it("saves the number of skipped runs kept on blur and on Enter", async () => {
     state.workflowsEnabled = true;
     state.mixed = false;
     state.updateSettings.mockReset();
@@ -41,6 +41,11 @@ describe("WorkflowSkippedRunsRow", () => {
     await userEvent.type(field, "50");
     await userEvent.tab();
     expect(state.updateSettings).toHaveBeenCalledWith({ workflowSkippedRunsKept: 50 });
+    await userEvent.clear(field);
+    await userEvent.type(field, "40");
+    await userEvent.keyboard("{Enter}");
+    expect(state.updateSettings).toHaveBeenLastCalledWith({ workflowSkippedRunsKept: 40 });
+    await expect.element(field).toHaveFocus();
   });
 
   it("saves to every target when they hold different numbers, even the first one's", async () => {

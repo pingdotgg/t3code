@@ -11,6 +11,7 @@ import {
   type PreviewStreamInput,
   type PreviewStreamMouseButton,
   type PreviewStreamPointer,
+  type PreviewStreamSelectMenu,
   type PreviewStreamViewport,
   previewStreamHostSetupMessage,
 } from "@t3tools/client-runtime/preview/server-browser-stream";
@@ -38,6 +39,7 @@ import { AgentCursorMark } from "~/components/preview/AgentBrowserCursor";
 import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
@@ -192,6 +194,7 @@ export function ServerBrowserSurface(props: {
   const [fileChooser, setFileChooser] = useState<PreviewStreamFileChooser | null>(null);
   const [agentCursor, setAgentCursor] = useState<AgentCursorPlacement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectMenu, setSelectMenu] = useState<PreviewStreamSelectMenu | null>(null);
   const answerFileChooser = (files: ReadonlyArray<File>) => {
     const chooser = fileChooser;
     if (!chooser) return;
@@ -420,6 +423,7 @@ export function ServerBrowserSurface(props: {
         onDownload: offerDownload,
         onPopup: popupOpened,
         onFileChooser: setFileChooser,
+        onSelectMenu: setSelectMenu,
         onViewport: (viewport) => {
           viewportRef.current = viewport;
           viewportChanged(viewport);
@@ -435,6 +439,7 @@ export function ServerBrowserSurface(props: {
           )
             setPromptText(next.dialog?.defaultValue ?? "");
           if (next.controller !== "you") {
+            setSelectMenu(null);
             clearInput();
           } else if (previous?.controller !== "you") {
             const size = sizeRef.current;
@@ -851,6 +856,38 @@ export function ServerBrowserSurface(props: {
             if (text) send({ type: "text", text });
           }}
         />
+        {selectMenu && control?.controller === "you" ? (
+          <Menu open modal={false} onOpenChange={(open) => !open && setSelectMenu(null)}>
+            <MenuPopup
+              anchor={() => selectMenuAnchor(selectMenu, canvasRef.current, viewportRef.current)}
+              align="start"
+              sideOffset={0}
+              finalFocus={inputRef}
+              aria-label={gt("Page select options")}
+            >
+              <MenuRadioGroup
+                value={selectMenu.selectedIndex}
+                onValueChange={(index: number) => {
+                  setSelectMenu(null);
+                  send({ type: "selectMenu", id: selectMenu.id, index });
+                }}
+              >
+                {selectMenu.options
+                  .map((option, index) => ({ ...option, index }))
+                  .map((option) => (
+                    <MenuRadioItem
+                      key={option.index}
+                      value={option.index}
+                      disabled={option.disabled}
+                      closeOnClick
+                    >
+                      {option.label}
+                    </MenuRadioItem>
+                  ))}
+              </MenuRadioGroup>
+            </MenuPopup>
+          </Menu>
+        ) : null}
         {visible && framesStalled && !pdfUrl ? (
           <div className="absolute inset-0 flex items-center justify-center bg-background p-4 text-center">
             <p role="alert" className="max-w-sm text-sm text-muted-foreground">
@@ -974,6 +1011,28 @@ export function ServerBrowserSurface(props: {
       ) : null}
     </div>
   );
+}
+
+function selectMenuAnchor(
+  menu: PreviewStreamSelectMenu,
+  canvas: HTMLCanvasElement | null,
+  viewport: PreviewStreamViewport | null,
+) {
+  if (!canvas || !viewport || canvas.width < 1 || canvas.height < 1) return null;
+  return {
+    getBoundingClientRect: () => {
+      const rect = canvas.getBoundingClientRect();
+      const fit = Math.min(rect.width / canvas.width, rect.height / canvas.height);
+      const scaleX = (canvas.width * fit) / viewport.width;
+      const scaleY = (canvas.height * fit) / viewport.height;
+      return DOMRect.fromRect({
+        x: rect.left + (rect.width - canvas.width * fit) / 2 + menu.x * scaleX,
+        y: rect.top + (rect.height - canvas.height * fit) / 2 + menu.y * scaleY,
+        width: menu.width * scaleX,
+        height: menu.height * scaleY,
+      });
+    },
+  };
 }
 
 interface AgentCursorPlacement {

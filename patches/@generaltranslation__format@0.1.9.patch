@@ -1,84 +1,98 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 205502bd60b7aec8f2609468986c6b0d010afd61..36436381cc4956d8b7c0486b5f8f21b42550f682 100644
+index 205502bd60b7aec8f2609468986c6b0d010afd61..496c86af28701ebf749d023be7c13a0843ac8ed7 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -1039,6 +1039,13 @@ function _resolveAliasLocale(locale, customMapping) {
- * translation credentials. It only stores locale metadata needed to resolve
- * aliases, choose formatting fallbacks, and format values with Intl.
+@@ -246,7 +246,7 @@ const isCustomLanguage = (language) => {
+ * @returns {boolean} True if the BCP 47 code is valid, false otherwise.
+ * @internal
  */
-+// Patched for the T3 Code fork: every useGT/useMessages render calls
-+// requiresTranslation with the configured locales, and each answer validated
-+// both locales through Intl (getCanonicalLocales, DisplayNames), which is slow
-+// on Hermes. Cache answers per resolution scope (rebuilt when locales change);
-+// a custom mapping can change in place, so a non-empty one skips the cache
-+// (gt-i18n always passes one, empty by default).
-+const requiresTranslationCaches = /* @__PURE__ */ new WeakMap();
- var LocaleConfig = class {
- 	getResolutionScope() {
- 		if (this.resolutionScope && this.isResolutionScopeCurrent(this.resolutionScope)) return this.resolutionScope;
-@@ -1169,7 +1176,22 @@ var LocaleConfig = class {
+-const _isValidLocale = (locale, customMapping) => {
++const _isValidLocaleUncached = (locale, customMapping) => {
+ 	locale = getCustomLocaleCode(customMapping, locale) || locale;
+ 	try {
+ 		const localeObject = require_IntlCache.intlCache.get("Locale", locale);
+@@ -265,6 +265,19 @@ const _isValidLocale = (locale, customMapping) => {
+ 		return false;
  	}
- 	requiresTranslation(targetLocale, sourceLocale = this.defaultLocale, approvedLocales = this.locales.length ? this.locales : void 0) {
- 		const approvedScope = approvedLocales ? approvedLocales === this.locales ? this.getResolutionScope().approved : _prepareApprovedLocales(approvedLocales.map((locale) => this.resolveCanonicalLocale(locale)), this.customMapping) : void 0;
--		return _requiresTranslationWithScope(this.resolveCanonicalLocale(sourceLocale), this.resolveCanonicalLocale(targetLocale), approvedScope, this.customMapping);
-+		const source = this.resolveCanonicalLocale(sourceLocale);
-+		const target = this.resolveCanonicalLocale(targetLocale);
-+		if (this.customMapping && Object.keys(this.customMapping).length > 0 || approvedLocales !== void 0 && approvedLocales !== this.locales) return _requiresTranslationWithScope(source, target, approvedScope, this.customMapping);
-+		const owner = approvedScope ?? this;
-+		let results = requiresTranslationCaches.get(owner);
-+		if (results === void 0) {
-+			results = /* @__PURE__ */ new Map();
-+			requiresTranslationCaches.set(owner, results);
-+		}
-+		const key = source + "\u0000" + target;
-+		let result = results.get(key);
-+		if (result === void 0) {
-+			result = _requiresTranslationWithScope(source, target, approvedScope, this.customMapping);
-+			results.set(key, result);
-+		}
-+		return result;
- 	}
- 	/**
- 	* NOTE: consider moving LocaleCandidates type to this package, and
+ };
++// T3 patch: validity is a pure function of the locale and mapping, and useGT asks on every render.
++const validLocaleCache = new Map();
++const validLocaleCacheByMapping = new WeakMap();
++const _isValidLocale = (locale, customMapping) => {
++	let cache = validLocaleCache;
++	if (customMapping) {
++		cache = validLocaleCacheByMapping.get(customMapping);
++		if (!cache) validLocaleCacheByMapping.set(customMapping, cache = new Map());
++	}
++	let valid = cache.get(locale);
++	if (valid === void 0) cache.set(locale, valid = _isValidLocaleUncached(locale, customMapping));
++	return valid;
++};
+ /**
+ * Standardizes a BCP 47 locale to ensure correct formatting.
+ * @param {string} locale - The BCP 47 locale to standardize.
+@@ -319,7 +332,15 @@ function _prepareApprovedLocales(approvedLocales, customMapping) {
+ * "en-GB" and "en-US" would be different.
+ * @internal
+ */
++// T3 patch: same reasoning as _isValidLocale; the comparison only depends on the locale strings.
++const sameDialectCache = new Map();
+ function _isSameDialect(...locales) {
++	const key = JSON.stringify(locales.flat());
++	let same = sameDialectCache.get(key);
++	if (same === void 0) sameDialectCache.set(key, same = _isSameDialectUncached(...locales));
++	return same;
++}
++function _isSameDialectUncached(...locales) {
+ 	try {
+ 		const localeObjects = locales.flat().map((locale) => require_IntlCache.intlCache.get("Locale", _standardizeLocale(locale)));
+ 		const [firstLocale] = localeObjects;
 diff --git a/dist/index.mjs b/dist/index.mjs
-index e36debccece9da0c1f015a1ffaa8bc3f5f01a055..16b0406941afcb13daeb9823b553167b5e180be5 100644
+index e36debccece9da0c1f015a1ffaa8bc3f5f01a055..17619a9a9ce46e7bd85da7c5f8461e7377db6dfb 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
-@@ -1038,6 +1038,13 @@ function _resolveAliasLocale(locale, customMapping) {
- * translation credentials. It only stores locale metadata needed to resolve
- * aliases, choose formatting fallbacks, and format values with Intl.
+@@ -245,7 +245,7 @@ const isCustomLanguage = (language) => {
+ * @returns {boolean} True if the BCP 47 code is valid, false otherwise.
+ * @internal
  */
-+// Patched for the T3 Code fork: every useGT/useMessages render calls
-+// requiresTranslation with the configured locales, and each answer validated
-+// both locales through Intl (getCanonicalLocales, DisplayNames), which is slow
-+// on Hermes. Cache answers per resolution scope (rebuilt when locales change);
-+// a custom mapping can change in place, so a non-empty one skips the cache
-+// (gt-i18n always passes one, empty by default).
-+const requiresTranslationCaches = /* @__PURE__ */ new WeakMap();
- var LocaleConfig = class {
- 	getResolutionScope() {
- 		if (this.resolutionScope && this.isResolutionScopeCurrent(this.resolutionScope)) return this.resolutionScope;
-@@ -1168,7 +1175,22 @@ var LocaleConfig = class {
+-const _isValidLocale = (locale, customMapping) => {
++const _isValidLocaleUncached = (locale, customMapping) => {
+ 	locale = getCustomLocaleCode(customMapping, locale) || locale;
+ 	try {
+ 		const localeObject = intlCache.get("Locale", locale);
+@@ -264,6 +264,19 @@ const _isValidLocale = (locale, customMapping) => {
+ 		return false;
  	}
- 	requiresTranslation(targetLocale, sourceLocale = this.defaultLocale, approvedLocales = this.locales.length ? this.locales : void 0) {
- 		const approvedScope = approvedLocales ? approvedLocales === this.locales ? this.getResolutionScope().approved : _prepareApprovedLocales(approvedLocales.map((locale) => this.resolveCanonicalLocale(locale)), this.customMapping) : void 0;
--		return _requiresTranslationWithScope(this.resolveCanonicalLocale(sourceLocale), this.resolveCanonicalLocale(targetLocale), approvedScope, this.customMapping);
-+		const source = this.resolveCanonicalLocale(sourceLocale);
-+		const target = this.resolveCanonicalLocale(targetLocale);
-+		if (this.customMapping && Object.keys(this.customMapping).length > 0 || approvedLocales !== void 0 && approvedLocales !== this.locales) return _requiresTranslationWithScope(source, target, approvedScope, this.customMapping);
-+		const owner = approvedScope ?? this;
-+		let results = requiresTranslationCaches.get(owner);
-+		if (results === void 0) {
-+			results = /* @__PURE__ */ new Map();
-+			requiresTranslationCaches.set(owner, results);
-+		}
-+		const key = source + "\u0000" + target;
-+		let result = results.get(key);
-+		if (result === void 0) {
-+			result = _requiresTranslationWithScope(source, target, approvedScope, this.customMapping);
-+			results.set(key, result);
-+		}
-+		return result;
- 	}
- 	/**
- 	* NOTE: consider moving LocaleCandidates type to this package, and
+ };
++// T3 patch: validity is a pure function of the locale and mapping, and useGT asks on every render.
++const validLocaleCache = new Map();
++const validLocaleCacheByMapping = new WeakMap();
++const _isValidLocale = (locale, customMapping) => {
++	let cache = validLocaleCache;
++	if (customMapping) {
++		cache = validLocaleCacheByMapping.get(customMapping);
++		if (!cache) validLocaleCacheByMapping.set(customMapping, cache = new Map());
++	}
++	let valid = cache.get(locale);
++	if (valid === void 0) cache.set(locale, valid = _isValidLocaleUncached(locale, customMapping));
++	return valid;
++};
+ /**
+ * Standardizes a BCP 47 locale to ensure correct formatting.
+ * @param {string} locale - The BCP 47 locale to standardize.
+@@ -318,7 +331,15 @@ function _prepareApprovedLocales(approvedLocales, customMapping) {
+ * "en-GB" and "en-US" would be different.
+ * @internal
+ */
++// T3 patch: same reasoning as _isValidLocale; the comparison only depends on the locale strings.
++const sameDialectCache = new Map();
+ function _isSameDialect(...locales) {
++	const key = JSON.stringify(locales.flat());
++	let same = sameDialectCache.get(key);
++	if (same === void 0) sameDialectCache.set(key, same = _isSameDialectUncached(...locales));
++	return same;
++}
++function _isSameDialectUncached(...locales) {
+ 	try {
+ 		const localeObjects = locales.flat().map((locale) => intlCache.get("Locale", _standardizeLocale(locale)));
+ 		const [firstLocale] = localeObjects;

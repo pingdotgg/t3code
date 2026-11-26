@@ -1,62 +1,82 @@
 diff --git a/dist/versionId-BDwkPmu8.mjs b/dist/versionId-BDwkPmu8.mjs
-index 48cc2687aec4b8ba06db2295bec60e95dfaf624f..fe1779483f38da7fd19a9664294b31a2dd388e96 100644
+index 48cc2687aec4b8ba06db2295bec60e95dfaf624f..714172248fd680ae708de7524fd89e1a674bd649 100644
 --- a/dist/versionId-BDwkPmu8.mjs
 +++ b/dist/versionId-BDwkPmu8.mjs
-@@ -637,9 +637,26 @@ function resolveCanonicalLocale$1(locale) {
+@@ -398,8 +398,11 @@ function formatMessage$1(encodedMsg, variables, locales, dataFormat) {
+ * @param {TranslationOptions} options - The options to interpolate.
+ * @returns {string} - The interpolated message.
+ */
++// T3 patch: text without ICU syntax formats to itself, so skip parsing it on every render.
++const ICU_SYNTAX = /[{}<]|''/;
+ function interpolateIcuMessage(encodedMsg, options) {
+ 	if (!encodedMsg) return encodedMsg;
++	if (typeof encodedMsg === "string" && options.$maxChars == null && !ICU_SYNTAX.test(encodedMsg)) return encodedMsg;
+ 	const source = options.$_fallback;
+ 	const variables = extractVariables(options);
+ 	try {
+@@ -637,16 +640,23 @@ function resolveCanonicalLocale$1(locale) {
  /**
  * Hash a message string
  */
-+// Patched for the T3 Code fork: msg() and every translation lookup hash the
-+// message source on each call (SHA-256 in JS), many times per render on Hermes.
-+// The hash depends only on the fields in the key below, so cache it.
-+const HASH_MESSAGE_CACHE_LIMIT = 5e3;
-+const hashMessageCache = /* @__PURE__ */ new Map();
++// T3 patch: msg() hashes its template on every render; the hash ignores variable values.
++const messageHashCache = new Map();
  function hashMessage(message, options) {
  	const metadataOptions = options;
  	if (metadataOptions.$_hash != null) return metadataOptions.$_hash;
-+	if (typeof message !== "string") return hashMessageUncached(message, options);
-+	const key = `${options.$format}\u0000${metadataOptions.$context || ""}\u0000${metadataOptions.$maxChars == null ? "" : Math.abs(metadataOptions.$maxChars)}\u0000${metadataOptions.$requiresReview === true}\u0000${message}`;
-+	let hash = hashMessageCache.get(key);
-+	if (hash === void 0) {
-+		hash = hashMessageUncached(message, options);
-+		if (hashMessageCache.size >= HASH_MESSAGE_CACHE_LIMIT) hashMessageCache.clear();
-+		hashMessageCache.set(key, hash);
-+	}
-+	return hash;
-+}
-+function hashMessageUncached(message, options) {
-+	const metadataOptions = options;
- 	return hashSource({
+-	return hashSource({
++	const cacheKey = [message, metadataOptions.$context ?? "", metadataOptions.$maxChars ?? "", metadataOptions.$requiresReview === true, options.$format ?? ""].join("\0");
++	const cachedHash = messageHashCache.get(cacheKey);
++	if (cachedHash !== void 0) return cachedHash;
++	const hash = hashSource({
  		source: options.$format === "ICU" ? indexVars(message) : message,
  		...metadataOptions.$context && { context: metadataOptions.$context },
+ 		...metadataOptions.$maxChars != null && { maxChars: Math.abs(metadataOptions.$maxChars) },
+ 		...metadataOptions.$requiresReview === true && { requiresReview: true },
+ 		dataFormat: options.$format
+ 	});
++	messageHashCache.set(cacheKey, hash);
++	return hash;
+ }
+ //#endregion
+ //#region src/helpers/versionId.ts
 diff --git a/dist/versionId-WIgaTRdx.cjs b/dist/versionId-WIgaTRdx.cjs
-index 6626b2916861acaf5c2094f88e730feaebacd188..6221cd6fceb3a051a415c0f04714d2d2f0818a80 100644
+index 6626b2916861acaf5c2094f88e730feaebacd188..3c7cbcbf375bf1c729af2932e9aa50f28586a2e2 100644
 --- a/dist/versionId-WIgaTRdx.cjs
 +++ b/dist/versionId-WIgaTRdx.cjs
-@@ -637,9 +637,26 @@ function resolveCanonicalLocale(locale) {
+@@ -398,8 +398,11 @@ function formatMessage(encodedMsg, variables, locales, dataFormat) {
+ * @param {TranslationOptions} options - The options to interpolate.
+ * @returns {string} - The interpolated message.
+ */
++// T3 patch: text without ICU syntax formats to itself, so skip parsing it on every render.
++const ICU_SYNTAX = /[{}<]|''/;
+ function interpolateIcuMessage(encodedMsg, options) {
+ 	if (!encodedMsg) return encodedMsg;
++	if (typeof encodedMsg === "string" && options.$maxChars == null && !ICU_SYNTAX.test(encodedMsg)) return encodedMsg;
+ 	const source = options.$_fallback;
+ 	const variables = extractVariables(options);
+ 	try {
+@@ -637,16 +640,23 @@ function resolveCanonicalLocale(locale) {
  /**
  * Hash a message string
  */
-+// Patched for the T3 Code fork: msg() and every translation lookup hash the
-+// message source on each call (SHA-256 in JS), many times per render on Hermes.
-+// The hash depends only on the fields in the key below, so cache it.
-+const HASH_MESSAGE_CACHE_LIMIT = 5e3;
-+const hashMessageCache = /* @__PURE__ */ new Map();
++// T3 patch: msg() hashes its template on every render; the hash ignores variable values.
++const messageHashCache = new Map();
  function hashMessage(message, options) {
  	const metadataOptions = options;
  	if (metadataOptions.$_hash != null) return metadataOptions.$_hash;
-+	if (typeof message !== "string") return hashMessageUncached(message, options);
-+	const key = `${options.$format}\u0000${metadataOptions.$context || ""}\u0000${metadataOptions.$maxChars == null ? "" : Math.abs(metadataOptions.$maxChars)}\u0000${metadataOptions.$requiresReview === true}\u0000${message}`;
-+	let hash = hashMessageCache.get(key);
-+	if (hash === void 0) {
-+		hash = hashMessageUncached(message, options);
-+		if (hashMessageCache.size >= HASH_MESSAGE_CACHE_LIMIT) hashMessageCache.clear();
-+		hashMessageCache.set(key, hash);
-+	}
-+	return hash;
-+}
-+function hashMessageUncached(message, options) {
-+	const metadataOptions = options;
- 	return (0, generaltranslation_id.hashSource)({
+-	return (0, generaltranslation_id.hashSource)({
++	const cacheKey = [message, metadataOptions.$context ?? "", metadataOptions.$maxChars ?? "", metadataOptions.$requiresReview === true, options.$format ?? ""].join("\0");
++	const cachedHash = messageHashCache.get(cacheKey);
++	if (cachedHash !== void 0) return cachedHash;
++	const hash = (0, generaltranslation_id.hashSource)({
  		source: options.$format === "ICU" ? (0, generaltranslation_internal.indexVars)(message) : message,
  		...metadataOptions.$context && { context: metadataOptions.$context },
+ 		...metadataOptions.$maxChars != null && { maxChars: Math.abs(metadataOptions.$maxChars) },
+ 		...metadataOptions.$requiresReview === true && { requiresReview: true },
+ 		dataFormat: options.$format
+ 	});
++	messageHashCache.set(cacheKey, hash);
++	return hash;
+ }
+ //#endregion
+ //#region src/helpers/versionId.ts
