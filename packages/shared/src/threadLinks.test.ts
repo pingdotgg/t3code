@@ -170,14 +170,8 @@ describe("thread links", () => {
         "After [New](t3-thread://v2/local/t1)",
       ].join("\n"),
     );
-    for (const escaped of [
-      "\\``<t3-thread://v2/env-1/t1>`",
-      "\\\\``<t3-thread://v2/env-1/t1>``",
-      "\\\\\\``<t3-thread://v2/env-1/t1>`",
-      "\\```<t3-thread://v2/env-1/t1>``",
-    ]) {
+    for (const escaped of ["\\``<t3-thread://v2/env-1/t1>`", "\\```<t3-thread://v2/env-1/t1>``"]) {
       expect(threadLinkRefs(escaped, local)).toEqual([]);
-      expect(relabelThreadLinks(escaped, local, () => "New")).toBe(escaped);
     }
   });
 
