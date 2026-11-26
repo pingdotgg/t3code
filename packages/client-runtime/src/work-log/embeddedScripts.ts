@@ -53,7 +53,7 @@ const flagIn =
 
 const SHELL: Interpreter = {
   language: "shellscript",
-  inline: (flag) => /^-[a-z]*c[a-z]*$/u.test(flag),
+  inline: (flag) => /^-[a-zA-Z]*c[a-zA-Z]*$/u.test(flag),
   valueOptions: new Set(["-o", "-O", "--rcfile", "--init-file"]),
   stdin: "without-script-file",
 };
