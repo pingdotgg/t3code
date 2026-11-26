@@ -5,6 +5,7 @@ import { useRef, type KeyboardEventHandler } from "react";
 import { Spinner } from "~/components/ui/spinner";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
+  joinMarkdownChunks,
   LARGE_MARKDOWN_CHUNK_MAX_CHARS,
   type MarkdownChunk,
   withMarkdownDefinitions,
@@ -74,7 +75,7 @@ export function ChunkedMarkdown(props: {
         const list = event.currentTarget.firstElementChild;
         if (!list || !window.getSelection()?.containsNode(list)) return;
         event.preventDefault();
-        event.clipboardData.setData("text/plain", chunks.map((chunk) => chunk.text).join("\n"));
+        event.clipboardData.setData("text/plain", joinMarkdownChunks(chunks));
       }}
     >
       <LegendList<ChunkItem>
