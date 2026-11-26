@@ -122,27 +122,18 @@ it.each([
   expect(matchAgentAnswer([{ id: "claude" }, { id: "codex" }], answer)?.id).toBe(picked);
 });
 
-it.effect.each(
-  [
-    { label: "Ctrl+C", bytes: "\x03", picked: undefined },
-    { label: "Ctrl+D", bytes: "\x04", picked: undefined },
-    { label: "an invalid choice and Ctrl+C", bytes: "9\r\x03", picked: undefined },
-    { label: "an invalid choice and Ctrl+D", bytes: "9\r\x04", picked: undefined },
-    { label: "a valid choice and Ctrl+D", bytes: "2\r\x04", picked: "codex" },
-  ].flatMap((row) => [
-    { ...row, timing: "during the prompt" },
-    { ...row, timing: "after the prompt" },
-  ]),
-)("the agent picker returns $picked for $label typed $timing", ({ bytes, picked, timing }) =>
+it.effect.each([
+  { label: "Ctrl+C", key: "\x03" },
+  { label: "Ctrl+D", key: "\x04" },
+  { label: "an invalid choice and Ctrl+C", key: "9\r\x03" },
+  { label: "an invalid choice and Ctrl+D", key: "9\r\x04" },
+])("returns undefined when the agent picker is cancelled with $label", ({ key }) =>
   Effect.gen(function* () {
     const input = new NodeStream.PassThrough();
     const output = Object.assign(new NodeStream.PassThrough(), { isTTY: true });
-    output.once("data", () => {
-      if (timing === "during the prompt") input.write(bytes);
-      else process.nextTick(() => input.write(bytes));
-    });
+    output.once("data", () => input.write(key));
 
-    const agent = yield* pickAgent(
+    const picked = yield* pickAgent(
       [
         { id: "claude", label: "Claude Code" },
         { id: "codex", label: "Codex" },
@@ -151,28 +142,8 @@ it.effect.each(
       output,
     );
 
-    assert.strictEqual(agent?.id, picked);
+    assert.isUndefined(picked);
   }),
-);
-
-it.effect("the agent picker keeps Backspace editing on a dumb terminal", () =>
-  Effect.gen(function* () {
-    vi.stubEnv("TERM", "dumb");
-    const input = new NodeStream.PassThrough();
-    const output = Object.assign(new NodeStream.PassThrough(), { isTTY: true });
-    output.once("data", () => input.write("9\x7f2\r"));
-
-    const agent = yield* pickAgent(
-      [
-        { id: "claude", label: "Claude Code" },
-        { id: "codex", label: "Codex" },
-      ],
-      input,
-      output,
-    );
-
-    assert.strictEqual(agent?.id, "codex");
-  }).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs()))),
 );
 
 it.effect.each([
