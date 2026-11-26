@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { codexFileCitationMarkdown, resolveCodexFileCitationLink } from "./codexFileCitations.ts";
-import { isMarkdownFileLinkLabel, parseMarkdownFileLink } from "./markdownLinks.ts";
+import { sanitizeChatHast } from "./markdownHast.ts";
+import {
+  isMarkdownFileLinkLabel,
+  parseMarkdownFileLink,
+  resolveMarkdownFileLink,
+} from "./markdownLinks.ts";
 
 describe("resolveCodexFileCitationLink", () => {
   it("resolves the attributes emitted by Codex", () => {
@@ -76,6 +81,56 @@ describe("resolveCodexFileCitationLink", () => {
       label: "100% #1? draft.md",
       lineRangeStart: 7,
     });
+  });
+
+  it.each([
+    [
+      "notes:final.txt",
+      "7",
+      "./notes:final.txt#L7",
+      { path: "/workspace/notes:final.txt", line: 7 },
+    ],
+    ["a:b/c.txt", undefined, "./a:b/c.txt", { path: "/workspace/a:b/c.txt" }],
+    ["file:notes.txt", undefined, "./file:notes.txt", { path: "/workspace/file:notes.txt" }],
+  ])(
+    "disambiguates relative colon-bearing paths: %s (line %s)",
+    (path, lineRangeStart, expectedHref, expectedPosition) => {
+      const citation = resolveCodexFileCitationLink({
+        path,
+        ...(lineRangeStart === undefined ? {} : { line_range_start: lineRangeStart }),
+      });
+      expect(citation?.href).toBe(expectedHref);
+      const sanitized = sanitizeChatHast({
+        type: "root",
+        children: [
+          {
+            type: "element",
+            tagName: "a",
+            properties: { href: citation?.href },
+            children: [{ type: "text", value: citation?.label ?? "" }],
+          },
+        ],
+      });
+      const sanitizedHref =
+        sanitized.children[0]?.type === "element"
+          ? sanitized.children[0].properties.href
+          : undefined;
+      expect(sanitizedHref).toBe(expectedHref);
+      expect(resolveMarkdownFileLink(String(sanitizedHref), "/workspace")?.position).toEqual(
+        expectedPosition,
+      );
+    },
+  );
+
+  it.each([
+    "https://example.com/report.pdf",
+    "file:/workspace/notes.txt",
+    "sandbox:/mnt/data/report.pdf",
+    "/workspace/notes:final.txt",
+    "C:\\Users\\test\\report.md",
+    "C:/Users/test/report.md",
+  ])("preserves supported URIs, absolute paths, and Windows drive paths: %s", (path) => {
+    expect(resolveCodexFileCitationLink({ path })?.href).toBe(path);
   });
 });
 
