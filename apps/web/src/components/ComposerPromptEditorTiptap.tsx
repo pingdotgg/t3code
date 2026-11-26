@@ -459,7 +459,7 @@ function citationResumePlugin() {
   return new Plugin({
     key: citationResumeKey,
     state: {
-      init: () => null,
+      init: (): { from: number; to: number } | null => null,
       apply(tr, pending) {
         const resume = tr.getMeta(citationResumeKey) as number | null | undefined;
         if (resume !== undefined) return resume === null ? null : { from: resume, to: resume };

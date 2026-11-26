@@ -221,7 +221,8 @@ it.each([
         await expect.element(composer).not.toHaveFocus();
         break;
       case "moving the caret and returning":
-        await userEvent.keyboard("{ArrowRight}{ArrowLeft}");
+        await act(async () => editorRef.current?.focusAtEnd());
+        await userEvent.keyboard("{ArrowLeft>6/}");
         await userEvent.keyboard(text);
         break;
       case "pasting": {
