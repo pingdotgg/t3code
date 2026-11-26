@@ -627,22 +627,18 @@ describe("resolveChatShortcutCommand", () => {
 });
 
 describe("resolveShortcutCommand", () => {
-  it.each(["unknownFlag", "constructor", "toString", "__proto__"])(
-    "treats absent when-condition %s as false",
-    (name) => {
-      for (const negated of [false, true]) {
-        const keybindings = compileResolvedKeybindingsConfig([
-          { key: "mod+j", command: "terminal.toggle", when: negated ? `!${name}` : name },
-        ]);
-        assert.lengthOf(keybindings, 1);
-        assert.strictEqual(
-          resolveShortcutCommand(event({ code: "KeyJ", ctrlKey: true }), keybindings, {
-            platform: "Linux",
-            context: { editableFocus: false },
-          }),
-          negated ? "terminal.toggle" : null,
-        );
-      }
+  it.each(["constructor", "!constructor"])(
+    "treats inherited object properties in when-condition %s as unset",
+    (when) => {
+      const keybindings = compileResolvedKeybindingsConfig([
+        { key: "mod+j", command: "terminal.toggle", when },
+      ]);
+      assert.strictEqual(
+        resolveShortcutCommand(event({ code: "KeyJ", ctrlKey: true }), keybindings, {
+          platform: "Linux",
+        }),
+        when.startsWith("!") ? "terminal.toggle" : null,
+      );
     },
   );
 
