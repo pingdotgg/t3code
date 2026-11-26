@@ -34,6 +34,11 @@ const FOCUSED_CROSS_SITE_FRAME = `(() => {
 /** Electron runs editing commands only for CDP keys; exclude clipboard commands to preserve the user's clipboard. */
 const EDITING_COMMANDS = new Set(["selectAll", "undo", "redo"]);
 
+const editingCommands = (params: Record<string, unknown>) =>
+  Array.isArray(params["commands"])
+    ? params["commands"].filter((command) => EDITING_COMMANDS.has(command))
+    : undefined;
+
 const CROSS_SITE_FOCUS_MESSAGE =
   "The page's focus is inside a cross-site frame, which takes typed input only while the preview has focus. Click the field first.";
 
@@ -163,7 +168,7 @@ interface FrameRoute {
 export type PointerRoute = (params: Record<string, unknown>) => Promise<FrameRoute | null>;
 
 const FRAME_GONE_MESSAGE =
-  "The frame this input was for went away before it took this input. Check the page before retrying.";
+  "The frame went away before it took this input. Check the page before retrying.";
 
 const MAX_FRAME_DEPTH = 8;
 const ROUTE_DEADLINE = "1 second";
@@ -216,9 +221,7 @@ export const routeKeysToFrame =
     );
     if (!sessionId || ![...frameSessions.values()].includes(sessionId)) return null;
     // The frame's session runs CDP editing commands itself; clipboard ones stay dropped.
-    const commands = Array.isArray(params["commands"])
-      ? params["commands"].filter((command) => EDITING_COMMANDS.has(command))
-      : undefined;
+    const commands = editingCommands(params);
     return {
       params: commands === undefined ? params : { ...params, commands },
       sessionId,
@@ -422,9 +425,7 @@ export const sendPageCommand = async (
       return {};
     case "Input.dispatchKeyEvent": {
       for (const event of toKeyboardInputEvents(params)) webContents.sendInputEvent(event);
-      const commands = Array.isArray(params["commands"])
-        ? params["commands"].filter((command) => EDITING_COMMANDS.has(command))
-        : [];
+      const commands = editingCommands(params) ?? [];
       // Runs after the page handles the keys, so the reply also waits for them.
       await evaluate(
         debuggee,
