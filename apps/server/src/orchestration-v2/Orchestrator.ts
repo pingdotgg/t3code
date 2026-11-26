@@ -10507,6 +10507,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       result: null,
     };
     const emitEvent = emit(events, command);
+    // Stop disposed the results owed at the time; a follow-up started after it is owed a wake again.
+    if (owner.delegatedCompletion?.disposition === "stopped") {
+      yield* emitEvent({
+        type: "run.updated",
+        threadId: parentThreadId,
+        runId: owner.id,
+        nodeId: owner.rootNodeId,
+        providerInstanceId: owner.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...owner,
+          delegatedCompletion: { ...owner.delegatedCompletion, disposition: "open" },
+        },
+      });
+    }
     yield* emitEvent({
       type: "run.updated",
       threadId: child.id,
