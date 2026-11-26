@@ -9614,6 +9614,7 @@
   "9bc60e1d0ef816cf": "Octets de stockage",
   "85de927f664ee3cb": "Octets logiques",
   "ec1f81bc9b395fb9": "Tous les octets d’E/S",
+  "9fd31461cee8ff82": "{count, plural, one {{count} processus} other {{count} processus}}",
   "7905928d59208450": "Lecture",
   "637254a20a8e24a5": "Écriture",
   "ab9f29f78275f7bd": "Disponible quand cette page s’exécute dans l’app de bureau.",
