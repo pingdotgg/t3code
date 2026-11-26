@@ -114,7 +114,10 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
         detail: "Choose managed setup to install Codex in T3 Code.",
       });
     }
-    if (managedOnly && config.binaryPath && (!isCodex || config.binaryPath !== "codex")) {
+    const usesCustomBinary = Boolean(
+      config.binaryPath && (!isCodex || config.binaryPath !== "codex"),
+    );
+    if (managedOnly && usesCustomBinary) {
       return yield* new ProviderSetupError({
         instanceId,
         operation,
@@ -122,7 +125,7 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
           "This instance uses a custom executable. Clear its binary path to manage installation in T3 Code.",
       });
     }
-    return { installation, driver: instance.driverKind };
+    return { installation, driver: instance.driverKind, usesCustomBinary };
   });
 
   const failure =
@@ -200,15 +203,17 @@ const make = Effect.fn("makeProviderInstallation")(function* () {
   const subscribe = (input: ProviderSetupInput) =>
     Stream.unwrap(
       requireInstance(input.instanceId, "observe-install").pipe(
-        Effect.tap(({ installation }) =>
-          settings.getSettings.pipe(
-            Effect.flatMap((current) =>
-              current.enableProviderUpdateChecks
-                ? Effect.forkDetach(installation.checkForUpdate)
-                : Effect.void,
-            ),
-            Effect.ignore,
-          ),
+        Effect.tap(({ installation, usesCustomBinary }) =>
+          usesCustomBinary
+            ? Effect.void
+            : settings.getSettings.pipe(
+                Effect.flatMap((current) =>
+                  current.enableProviderUpdateChecks
+                    ? Effect.forkDetach(installation.checkForUpdate)
+                    : Effect.void,
+                ),
+                Effect.ignore,
+              ),
         ),
         Effect.map(({ installation }) => installation.changes),
       ),

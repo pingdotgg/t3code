@@ -138,6 +138,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
   options: {
     readonly auth?: { readonly type: string; readonly label: string };
     readonly enabled?: boolean;
+    readonly binaryPath?: string;
     readonly safe?: boolean;
     readonly rememberedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   } = {},
@@ -151,7 +152,11 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
   );
   const safety = yield* Ref.make<Effect.Effect<boolean>>(Effect.succeed(options.safe ?? true));
   const provider = yield* makeAntigravityProvider(
-    decodeSettings({ enabled: options.enabled ?? true, customModels: ["do-not-seed-me"] }),
+    decodeSettings({
+      enabled: options.enabled ?? true,
+      ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
+      customModels: ["do-not-seed-me"],
+    }),
     {
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
       ...(options.auth ? { auth: options.auth } : {}),
@@ -379,6 +384,14 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       });
       expect(yield* Ref.get(harness.probeCalls)).toBe(0);
       expect(yield* Ref.get(harness.safetyCalls)).toBe(0);
+    }),
+  );
+
+  it.effect("disables managed installation setup when a custom binary path is configured", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ enabled: false, binaryPath: "/custom/agy" });
+      const snapshot = yield* harness.provider.snapshot.refresh;
+      expect(snapshot.setup).toEqual({ canAuthenticate: true, canInstall: false });
     }),
   );
 
