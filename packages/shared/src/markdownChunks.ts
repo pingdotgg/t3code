@@ -104,7 +104,7 @@ const hasFrontmatterClose = (lines: readonly string[]) =>
 // Footnotes are left alone so each piece does not grow a footnote section.
 const LINK_DEFINITION_START = /^ {0,3}\[(?!\^)/;
 const LINK_LABEL_MAX_CHARS = 999;
-const LINK_TITLE_START = /^[ \t]*["'(]/;
+const LINK_TITLE_START = /^[ \t]*(["'(])/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
 const definitionParser = unified().use(remarkParse);
@@ -134,23 +134,41 @@ function hasDefinitionLabel(lines: readonly string[], start: number): boolean {
   return false;
 }
 
+function endsDefinitionRun(line: string) {
+  // Plain Remark does not recognize the preview's display math blocks.
+  return (
+    BLANK_LINE.test(line) ||
+    ATX_HEADING.test(line) ||
+    THEMATIC_BREAK.test(line) ||
+    FENCE_OPEN.test(line) ||
+    DISPLAY_MATH_OPEN.test(line)
+  );
+}
+
+function findTitleEnd(lines: readonly string[], start: number, opener: RegExpExecArray) {
+  const closer = opener[1] === "(" ? ")" : opener[1];
+  let column = opener[0].length;
+  for (let index = start; index < lines.length; index++) {
+    const line = lines[index]!;
+    if (endsDefinitionRun(line)) return;
+    for (; column < line.length; column++) {
+      const char = line[column];
+      if (char === closer) return BLANK_LINE.test(line.slice(column + 1)) ? index : undefined;
+      if (char === "\\" && (line[column + 1] === closer || line[column + 1] === "\\")) column++;
+    }
+    column = 0;
+  }
+}
+
 function readLinkDefinitions(lines: readonly string[], start: number) {
-  const definitions = new Map<number, { text: string; end: number }>();
+  const definitions = new Map<number, { text?: string; end: number; identifier: string }>();
   let chars = lines[start]!.length;
   if (chars >= SHARED_DEFINITIONS_MAX_CHARS) return definitions;
   let end = start + 1;
   let capped = false;
   for (; end < lines.length; end++) {
     const line = lines[end]!;
-    // The preview treats display math as a block even when plain Remark would consume its opener.
-    if (
-      BLANK_LINE.test(line) ||
-      ATX_HEADING.test(line) ||
-      THEMATIC_BREAK.test(line) ||
-      FENCE_OPEN.test(line) ||
-      DISPLAY_MATH_OPEN.test(line)
-    )
-      break;
+    if (endsDefinitionRun(line)) break;
     chars += line.length + 1;
     if (chars >= SHARED_DEFINITIONS_MAX_CHARS) {
       capped = true;
@@ -169,15 +187,30 @@ function readLinkDefinitions(lines: readonly string[], start: number) {
     definitions.set(firstLine, {
       text: text.slice(from.offset, to.offset),
       end: lastLine,
+      identifier: node.identifier,
     });
     partialTitleStart =
       capped && node.title == null && LINK_TITLE_START.test(lines[lastLine + 1] ?? "")
         ? firstLine
         : undefined;
   }
-  // Retry a cutoff title from its label. If the batch already started there, it cannot fit.
   if (partialTitleStart !== undefined) {
-    definitions.delete(partialTitleStart);
+    const candidate = definitions.get(partialTitleStart)!;
+    const titleStart = candidate.end + 1;
+    const opener = LINK_TITLE_START.exec(lines[titleStart] ?? "")!;
+    // Retry at the candidate's label before looking beyond the batch limit.
+    if (partialTitleStart !== start) {
+      definitions.delete(partialTitleStart);
+    } else {
+      const titleEnd = findTitleEnd(lines, titleStart, opener);
+      if (titleEnd !== undefined && titleEnd >= end) {
+        const full = definitionParser.parse(lines.slice(start, titleEnd + 1).join("\n"))
+          .children[0];
+        if (full?.type === "definition" && full.title != null) {
+          definitions.set(start, { end: titleEnd, identifier: full.identifier });
+        }
+      }
+    }
   }
   return definitions;
 }
@@ -196,6 +229,7 @@ export interface SplitMarkdown {
 export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): SplitMarkdown {
   const chunks: MarkdownChunk[] = [];
   const definitions: string[] = [];
+  const omittedDefinitions = new Set<string>();
   let lines: string[] = [];
   let first = true;
   let chars = 0;
@@ -248,9 +282,16 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         }
         if (definition) {
           definitionEnd = definition.end;
-          if (definitionChars + definition.text.length < SHARED_DEFINITIONS_MAX_CHARS) {
-            definitions.push(definition.text);
-            definitionChars += definition.text.length + 1;
+          if (!omittedDefinitions.has(definition.identifier)) {
+            if (
+              definition.text !== undefined &&
+              definitionChars + definition.text.length < SHARED_DEFINITIONS_MAX_CHARS
+            ) {
+              definitions.push(definition.text);
+              definitionChars += definition.text.length + 1;
+            } else {
+              omittedDefinitions.add(definition.identifier);
+            }
           }
         }
       }

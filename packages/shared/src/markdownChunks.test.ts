@@ -370,13 +370,24 @@ describe("withMarkdownDefinitions", () => {
 
   it("leaves oversized titles with their source definitions", () => {
     const title = "t".repeat(16 * 1024);
-    const text = `[id]\n\n[id]:\n  /first\n  "${title}"\n\n# Next`;
+    const text = `[id]\n\n[id]:\n  /first\n  "${title}"\n\n# Next\n[ID]: /later\n\n[id]`;
     const { chunks, definitions } = splitMarkdown(text);
-    expect(definitions).toBe("");
-    expect(html(withMarkdownDefinitions(chunks[0]!.text, definitions))).toContain(
-      `title="${title}"`,
-    );
+    expect(chunks).toHaveLength(2);
+    const first = html(withMarkdownDefinitions(chunks[0]!.text, definitions));
+    expect(first).toContain('href="/first"');
+    expect(first).toContain(`title="${title}"`);
   });
+
+  it.each(["", '" trailing text', '\\"'])(
+    "shares a complete definition before a long quote-led paragraph ending in %j",
+    (suffix) => {
+      const text = `[id]:\n  /first\n  "${"x".repeat(16 * 1024)}${suffix}\n\n# Next\n[id]: /later\n\n[id]`;
+      const { chunks, definitions } = splitMarkdown(text);
+      expect(chunks).toHaveLength(2);
+      const rendered = html(withMarkdownDefinitions(chunks[1]!.text, definitions));
+      expect(rendered).toContain('href="/first"');
+    },
+  );
 
   it.each([
     ["inline links", "[a](/x)".repeat(2000), "\n\n", 64],
