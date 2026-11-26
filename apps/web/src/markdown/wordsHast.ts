@@ -415,11 +415,13 @@ function utf16Offsets(source: string): (byte: number) => number {
 const sourceOf = (node: Element, source: string) =>
   node.position ? source.slice(node.position.start.offset, node.position.end.offset) : "";
 
-const textOf = (node: ElementContent): string =>
+const textOf = (node: ElementContent, math?: ReadonlyMap<string, Element>): string =>
   node.type === "text"
     ? node.value
     : node.type === "element"
-      ? node.children.map(textOf).join("")
+      ? (math?.get(String(node.properties.id)) ?? node).children
+          .map((child) => textOf(child, math))
+          .join("")
       : "";
 
 /** A directive's attributes, as strings; anything else Words would never write reads as none. */
@@ -460,7 +462,7 @@ function codexDirective(node: Element, walk: Walk, inLink: boolean): ElementCont
     };
   }
   if (name === "codex-followup") {
-    if (!attributes.prompt?.trim() || !node.children.map(textOf).join("").trim()) return asText();
+    if (!attributes.prompt?.trim() || !textOf(node, walk.math).trim()) return asText();
     return { type: "element", tagName: "span", properties: {}, children: node.children };
   }
   const template = resolveCodexArtifactTemplate(attributes);
