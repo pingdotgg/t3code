@@ -209,6 +209,51 @@ it.effect("plays the lead-in at once when no model can time the word picked", ()
   }),
 );
 
+it.effect("answers loudness levels in batches only to reads that ask for them", () =>
+  Effect.gen(function* () {
+    const source = yield* Queue.unbounded<
+      CloudSpeech.SpeechSynthesisPart,
+      SpeechSynthesisError | Cause.Done
+    >();
+    const frame = Uint8Array.from({ length: 208 }, (_, index) =>
+      index === 0 ? 0xff : index === 1 ? 0xfb : index === 2 ? 0x50 : 0,
+    );
+    // Three seconds at full scale, then the encoder's last second of silence.
+    const loud = new Int16Array(3 * 24_000).fill(0x4000);
+    yield* Effect.gen(function* () {
+      const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+      yield* Queue.offerAll(source, [
+        { pcm: loud, rate: 24_000, startSeconds: 0, span: { start: 0, end: 16 } },
+        frame,
+      ]);
+      const token = yield* streams.start("xai", request);
+      const first = yield* streams.timings(token, 0, 0);
+      expect(first.levels?.windowSeconds).toBe(0.05);
+      expect(first.levels?.start).toBe(0);
+      expect(first.levels?.values.slice(1)).toEqual(Array(59).fill(20));
+      const waiting = yield* Effect.forkChild(streams.timings(token, 0, 60));
+      yield* Queue.offer(source, {
+        pcm: new Int16Array(24_000),
+        rate: 24_000,
+        startSeconds: 3,
+        span: { start: 0, end: 16 },
+      });
+      yield* Queue.end(source);
+      const last = yield* Fiber.join(waiting);
+      expect(last.levels?.start).toBe(60);
+      expect(last.levels?.values.at(-1)).toBe(0);
+      // Reads that do not ask, such as the web player's, get words alone.
+      expect(yield* streams.timings(token, 0)).toEqual({
+        words: [],
+        done: true,
+        durationSeconds: 1152 / 44100,
+      });
+    }).pipe(
+      Effect.provide(withSource(Stream.fromQueue(source), { session: () => Effect.undefined })),
+    );
+  }),
+);
+
 it.effect.each([
   [
     "a provider error",

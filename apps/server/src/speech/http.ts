@@ -216,7 +216,11 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "synthesisTimings",
         Effect.fn("environment.voice.synthesisTimings")(function* (args) {
           yield* guard(args.endpoint.name);
-          return yield* synthesisStreams.timings(args.payload.token, args.payload.after);
+          return yield* synthesisStreams.timings(
+            args.payload.token,
+            args.payload.after,
+            args.payload.levelsAfter,
+          );
         }),
       )
       .handle(

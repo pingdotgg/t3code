@@ -25,6 +25,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechAligner from "./SpeechAligner.ts";
+import { SPEECH_LEVEL_WINDOW_SECONDS, speechLevels } from "./synthesisLevels.ts";
 import { mp3Duration, mp3FrameAt } from "./synthesisTimings.ts";
 
 // A started stream nobody opens is abandoned.
@@ -35,6 +36,8 @@ const RECONNECT_GRACE: Duration.Input = "5 seconds";
 const FINISHED_RETENTION: Duration.Input = "2 minutes";
 // A timings read answers by then even when nothing changed, so a lost client is not held.
 const TIMINGS_WAIT: Duration.Input = "10 seconds";
+// New levels answer a timings read once this many exist, so a client is not woken per chunk.
+const LEVELS_BATCH = 40;
 
 const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
 
@@ -52,9 +55,12 @@ type Job = {
   readonly chunks: Uint8Array[];
   readonly words: SpeechSynthesisWord[];
   readonly duration: ReturnType<typeof mp3Duration>;
+  readonly levels: ReturnType<typeof speechLevels>;
   readonly progress: SubscriptionRef.SubscriptionRef<{
     readonly count: number;
     readonly words: number;
+    /** Loudness windows measured so far. */
+    readonly levels: number;
     readonly done: boolean;
     /** Every word is timed; can trail `done` while the last audio is aligned. */
     readonly timed: boolean;
@@ -77,8 +83,15 @@ export class SpeechSynthesisStreams extends Context.Service<
     ) => Effect.Effect<string, SpeechSynthesisError | ServerSettingsError>;
     /** The audio from its start, then live as it is produced; `undefined` once expired. */
     readonly read: (token: string) => Effect.Effect<Stream.Stream<Uint8Array> | undefined>;
-    /** Words after the first `after`, once there are any or synthesis ends. */
-    readonly timings: (token: string, after: number) => Effect.Effect<SpeechSynthesisTimings>;
+    /**
+     * Words after the first `after`, once there are any or synthesis ends. With `levelsAfter`,
+     * also the loudness levels after that many, answering once a batch of them exists.
+     */
+    readonly timings: (
+      token: string,
+      after: number,
+      levelsAfter?: number,
+    ) => Effect.Effect<SpeechSynthesisTimings>;
   }
 >()("t3/speech/synthesisStreams/SpeechSynthesisStreams") {}
 
@@ -110,11 +123,24 @@ const make = Effect.gen(function* () {
       SpeechSynthesisError | ServerSettingsError
     > = provider === "local" ? local.stream(request) : cloud.stream(provider, request);
     const first = yield* Deferred.make<void, SpeechSynthesisError | ServerSettingsError>();
+    // Speech that starts at a word is made from its sentence's start for context. Its audio is
+    // held until that word is timed, then released from the frame it starts in, with the
+    // earlier words dropped and later ones shifted to the released audio's clock.
+    const from =
+      request.from !== undefined && request.from < request.text.length ? request.from : 0;
     const job: Job = {
       chunks: [],
       words: [],
       duration: mp3Duration(),
-      progress: yield* SubscriptionRef.make({ count: 0, words: 0, done: false, timed: false }),
+      // Measured on the whole synthesis; a lead-in is cut from them where its audio is.
+      levels: speechLevels(from > 0),
+      progress: yield* SubscriptionRef.make({
+        count: 0,
+        words: 0,
+        levels: 0,
+        done: false,
+        timed: false,
+      }),
       failed: false,
       readers: 0,
       everRead: false,
@@ -131,6 +157,10 @@ const make = Effect.gen(function* () {
             ),
           )
         : Effect.void;
+    const publishLevels = SubscriptionRef.update(job.progress, (progress) => ({
+      ...progress,
+      levels: job.levels.count,
+    }));
     const publishChunk = (chunk: Uint8Array) =>
       Effect.sync(() => {
         job.chunks.push(chunk);
@@ -140,15 +170,11 @@ const make = Effect.gen(function* () {
           SubscriptionRef.update(job.progress, (progress) => ({
             ...progress,
             count: job.chunks.length,
+            levels: job.levels.count,
           })),
         ),
         Effect.andThen(Deferred.succeed(first, undefined)),
       );
-    // Speech that starts at a word is made from its sentence's start for context. Its audio is
-    // held until that word is timed, then released from the frame it starts in, with the
-    // earlier words dropped and later ones shifted to the released audio's clock.
-    const from =
-      request.from !== undefined && request.from < request.text.length ? request.from : 0;
     const lead =
       from > 0
         ? {
@@ -179,6 +205,7 @@ const make = Effect.gen(function* () {
           (force ? { offset: 0, seconds: 0 } : undefined);
         if (!frame) return Effect.void;
         lead.cut = frame.seconds;
+        job.levels.start(frame.seconds);
         const words = shifted(lead.words, frame.seconds);
         lead.held = [];
         lead.words = [];
@@ -227,12 +254,17 @@ const make = Effect.gen(function* () {
     );
     job.fiber = yield* source.pipe(
       Stream.runForEach((part) => {
-        if ("pcm" in part) return Queue.offer(pcm, part);
+        if ("pcm" in part) {
+          job.levels.pushPcm(part.pcm, part.rate, part.startSeconds);
+          return Queue.offer(pcm, part).pipe(Effect.andThen(publishLevels));
+        }
         if (!(part instanceof Uint8Array)) return addWords(part.words);
+        job.levels.pushMp3(part);
         return addChunk(part);
       }),
       Effect.onExit((exit) => {
         job.failed = Exit.isFailure(exit);
+        job.levels.finish();
         Queue.endUnsafe(pcm);
         const alignment = job.alignment;
         // Held audio is released by the alignment once it has timed the last of it.
@@ -242,6 +274,7 @@ const make = Effect.gen(function* () {
             SubscriptionRef.update(job.progress, (progress) => ({
               ...progress,
               count: job.chunks.length,
+              levels: job.levels.count,
               done: true,
             })).pipe(
               Effect.andThen(
@@ -314,19 +347,34 @@ const make = Effect.gen(function* () {
   const timings = Effect.fn("SpeechSynthesisStreams.timings")(function* (
     token: string,
     after: number,
+    levelsAfter?: number,
   ) {
     const job = jobs.get(token);
     if (!job) return { words: [], done: true };
+    const newLevels = (progress: { readonly levels: number; readonly done: boolean }) =>
+      levelsAfter !== undefined &&
+      (progress.levels >= levelsAfter + LEVELS_BATCH ||
+        (progress.done && progress.levels > levelsAfter));
     yield* SubscriptionRef.changes(job.progress).pipe(
-      Stream.filter((progress) => progress.timed || progress.words > after),
+      Stream.filter((progress) => progress.timed || progress.words > after || newLevels(progress)),
       Stream.runHead,
       Effect.timeoutOption(TIMINGS_WAIT),
     );
     const { timed } = yield* SubscriptionRef.get(job.progress);
+    const levels = levelsAfter === undefined ? [] : job.levels.slice(levelsAfter);
     return {
       words: job.words.slice(after),
       done: timed,
       ...(timed && !job.failed ? { durationSeconds: job.duration.seconds } : {}),
+      ...(levelsAfter !== undefined && levels.length
+        ? {
+            levels: {
+              windowSeconds: SPEECH_LEVEL_WINDOW_SECONDS,
+              start: levelsAfter,
+              values: levels,
+            },
+          }
+        : {}),
     };
   });
 
