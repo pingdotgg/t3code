@@ -1150,7 +1150,7 @@ export const layer = Layer.effect(
                         projectId: active.projectId,
                       });
                     yield* teamServiceForRun
-                      .recordTeamAutomationTurn({
+                      .requireTeamAutomationTurn({
                         threadId: allocatedThreadId,
                         turnId: `msg:${messageId}`,
                         taskId: active.id,
@@ -1207,7 +1207,7 @@ export const layer = Layer.effect(
                 Effect.gen(function* () {
                   const targetThreadId = ThreadId.make(active.threadId!);
                   if (teamServiceForRun !== null) {
-                    yield* teamServiceForRun.recordTeamAutomationTurn({
+                    yield* teamServiceForRun.requireTeamAutomationTurn({
                       threadId: targetThreadId,
                       turnId: `msg:${messageId}`,
                       taskId: active.id,

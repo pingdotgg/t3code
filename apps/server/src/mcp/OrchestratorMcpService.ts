@@ -3156,11 +3156,20 @@ const make = Effect.gen(function* () {
           if (Option.isSome(teamChildAuth)) {
             const derivedChildMessageId = deriveOrchestrationId.delegatedTaskMessage({ commandId });
             if (teamChildAuth.value.teamAutomation !== null) {
-              yield* teamChildAuth.value.teamService.recordTeamAutomationTurn({
-                threadId: derivedChildThreadId,
-                turnId: `msg:${derivedChildMessageId}`,
-                principal: teamChildAuth.value.teamAutomation,
-              });
+              yield* teamChildAuth.value.teamService
+                .requireTeamAutomationTurn({
+                  threadId: derivedChildThreadId,
+                  turnId: `msg:${derivedChildMessageId}`,
+                  principal: teamChildAuth.value.teamAutomation,
+                })
+                .pipe(
+                  Effect.mapError((error) =>
+                    failure(
+                      "capability_denied",
+                      `Unable to record delegated automation turn scope: ${error.message}`,
+                    ),
+                  ),
+                );
             } else if (teamChildAuth.value.memberId !== null) {
               yield* teamChildAuth.value.teamService
                 .requireTurnAuthoredByMember({
@@ -3591,11 +3600,13 @@ const make = Effect.gen(function* () {
                 : false;
               if (initialMessage !== undefined && Option.isSome(teamChildAuth)) {
                 if (teamChildAuth.value.teamAutomation !== null) {
-                  yield* teamChildAuth.value.teamService.recordTeamAutomationTurn({
-                    threadId,
-                    turnId: `msg:${initialMessage.messageId}`,
-                    principal: teamChildAuth.value.teamAutomation,
-                  });
+                  yield* teamChildAuth.value.teamService
+                    .requireTeamAutomationTurn({
+                      threadId,
+                      turnId: `msg:${initialMessage.messageId}`,
+                      principal: teamChildAuth.value.teamAutomation,
+                    })
+                    .pipe(Effect.mapError((error) => failure("capability_denied", error.message)));
                 } else if (teamChildAuth.value.memberId !== null) {
                   yield* teamChildAuth.value.teamService
                     .requireTurnAuthoredByMember({

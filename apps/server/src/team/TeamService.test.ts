@@ -3878,6 +3878,137 @@ describe("TeamService", () => {
             ),
           ))._tag,
         ).toBe("Failure");
+
+        // No cross-turn scope fallback: if a turn in team_turn_meta lacks its own scope row on a
+        // thread previously used by an elevated task, resolveTurnPrincipal MUST fail closed (None).
+        yield* team.requireTeamAutomationTurn({
+          threadId: lockedParentThreadId,
+          turnId: "run-elev-prev",
+          taskId: elevTaskId,
+          projectId,
+        });
+        yield* repo.recordTurnAttribution({
+          turnId: "run-missing-scope",
+          threadId: lockedParentThreadId,
+          authorKind: "team_automation",
+          authorMemberId: null,
+          createdAt: "2026-01-02T00:00:00.000Z",
+        });
+        expect(
+          Option.isNone(
+            yield* team.resolveTurnPrincipal({
+              threadId: lockedParentThreadId,
+              runId: "run-missing-scope",
+            }),
+          ),
+        ).toBe(true);
+
+        // Cross-task locked thread boundary: minimal taskA CANNOT post into another task's locked
+        // team-owned thread in the same (project, env, view), while owning minimal task CAN post
+        // into its own locked thread and interrupt/manage its own automation runs.
+        const sql = yield* SqlClient.SqlClient;
+        const nowIso = "2026-01-02T00:00:00.000Z";
+        const lockedOwnedMinTaskId = ScheduledTaskId.make("task-m8-locked-min-owned");
+        yield* team.saveScheduledTaskMeta({
+          taskId: lockedOwnedMinTaskId,
+          teamId: init.team.id,
+          environmentId: hostEnvRecord!.environmentId,
+          viewId: init.team.defaultViewId,
+          locked: true,
+          mcpAccessLevel: "minimal",
+          actorMemberId: init.owner.id,
+        });
+        const lockedOwnedMinThreadId = ThreadId.make("thread-m8-locked-min-owned");
+        const lockedOwnedMinChildId = ThreadId.make("thread-m8-locked-min-child");
+        for (const tid of [lockedParentThreadId, lockedOwnedMinThreadId, lockedOwnedMinChildId]) {
+          yield* sql`
+            INSERT OR IGNORE INTO orchestration_v2_projection_threads (
+              thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+              active_provider_thread_id, created_at, updated_at, archived_at, deleted_at, payload_json
+            ) VALUES (
+              ${tid}, ${projectId}, ${tid}, 'devReplay', 'full-access', 'default',
+              NULL, ${nowIso}, ${nowIso}, NULL, NULL, '{}'
+            )
+          `;
+        }
+        yield* team.prepareTeamAutomationThreadAttribution({
+          taskId: lockedOwnedMinTaskId,
+          threadId: lockedOwnedMinThreadId,
+          projectId,
+        });
+        const ownedMinPrincipal = {
+          taskId: lockedOwnedMinTaskId,
+          teamId: init.team.id,
+          projectId,
+          environmentId: hostEnvRecord!.environmentId,
+          viewId: init.team.defaultViewId,
+          mcpAccessLevel: "minimal" as const,
+        };
+        const ownedMinActor: TeamService.TeamActor = {
+          kind: "team_automation",
+          principal: ownedMinPrincipal,
+        };
+        // Minimal actor for `minTaskId` CANNOT post into locked `elevTaskId` thread OR locked `lockedOwnedMinTaskId` thread.
+        expect(
+          (yield* Effect.exit(team.assertActorCanPostInThread(minimalActor, lockedParentThreadId)))
+            ._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertActorCanPostInThread(minimalActor, lockedOwnedMinThreadId),
+          ))._tag,
+        ).toBe("Failure");
+        // Owning minimal task CAN post into its own locked thread AND idle locked child thread.
+        yield* team.assertActorCanPostInThread(ownedMinActor, lockedOwnedMinThreadId);
+        yield* team.prepareThreadInheritedFromParent({
+          parentThreadId: lockedOwnedMinThreadId,
+          threadId: lockedOwnedMinChildId,
+          teamAutomation: ownedMinPrincipal,
+        });
+        yield* team.assertActorCanPostInThread(ownedMinActor, lockedOwnedMinChildId);
+        // Minimal task CAN interrupt/manage its own automation runs, NOT another task's runs.
+        yield* sql`
+          INSERT OR IGNORE INTO orchestration_v2_projection_runs (
+            run_id, thread_id, ordinal, provider, provider_thread_id,
+            status, requested_at, completed_at, payload_json
+          ) VALUES (
+            'run-owned-min-active', ${lockedOwnedMinChildId}, 1, 'devReplay', NULL,
+            'running', ${nowIso}, NULL, '{"userMessageId":"msg-owned-min-1"}'
+          )
+        `;
+        yield* team.requireTeamAutomationTurn({
+          threadId: lockedOwnedMinChildId,
+          turnId: "run-owned-min-active",
+          principal: ownedMinPrincipal,
+        });
+        yield* team.assertActorCanInterruptThread(
+          ownedMinActor,
+          lockedOwnedMinChildId,
+          "run-owned-min-active",
+        );
+        yield* team.assertActorCanManageQueuedRun(
+          ownedMinActor,
+          lockedOwnedMinChildId,
+          "run-owned-min-active",
+        );
+        expect(
+          (yield* Effect.exit(
+            team.assertActorCanInterruptThread(
+              minimalActor,
+              lockedOwnedMinChildId,
+              "run-owned-min-active",
+            ),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.assertActorCanManageQueuedRun(
+              minimalActor,
+              lockedOwnedMinChildId,
+              "run-owned-min-active",
+            ),
+          ))._tag,
+        ).toBe("Failure");
       }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
   );
 });

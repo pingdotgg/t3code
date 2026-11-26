@@ -135,6 +135,7 @@ function ThreadAutomationsPanelContent(props: {
       teamState,
       taskId: task.id,
       environmentId: props.environmentId,
+      boundThreadId: task.threadId,
     });
 
   const toggleEnabled = async (task: ScheduledTask, enabled: boolean) => {

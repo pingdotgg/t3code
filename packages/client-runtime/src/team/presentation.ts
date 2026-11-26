@@ -839,25 +839,57 @@ export function canCurrentMemberMutateTeamScheduledTask(input: {
   readonly teamState: TeamEnvironmentState | null | undefined;
   readonly taskId: ScheduledTaskId;
   readonly environmentId?: EnvironmentId | null;
+  readonly boundThreadId?: ThreadId | null;
 }): boolean {
-  const { teamState, taskId, environmentId } = input;
+  const { teamState, taskId, environmentId, boundThreadId } = input;
   if (!teamState || teamState.team === null) return true;
   const member = teamState.currentMember;
   if (member === null || member.status !== "active") return false;
   const meta = teamState.scheduledTaskMetaByTaskId.get(taskId) ?? null;
-  const targetEnvId = meta?.environmentId ?? environmentId ?? null;
-  const environment =
-    targetEnvId !== null
-      ? (teamState.environmentById.get(targetEnvId) ??
+  if (meta === null) {
+    // Match server fail-closed rule: unattributed/unhydrated team tasks are owner/admin-only.
+    return isTeamAdminRole(member.role);
+  }
+  const hostEnvironment =
+    environmentId != null
+      ? (teamState.environmentById.get(environmentId) ??
         teamState.environments.find((env) => env.isDefault) ??
         null)
       : (teamState.environments.find((env) => env.isDefault) ?? null);
-  const viewId = meta?.viewId ?? teamState.team.defaultViewId;
-  const view = teamState.viewById.get(viewId) ?? resolveTeamDefaultView(teamState);
-  return canMemberMutateTeamScheduledTask({
-    member,
-    environment,
-    view,
-    existingMeta: meta ? { locked: meta.locked, mcpAccessLevel: meta.mcpAccessLevel } : null,
-  });
+  if (hostEnvironment !== null && !canMemberAccessTeamEnvironment(member, hostEnvironment)) {
+    return false;
+  }
+  const metaEnvironment =
+    teamState.environmentById.get(meta.environmentId) ?? hostEnvironment ?? null;
+  const view = teamState.viewById.get(meta.viewId) ?? resolveTeamDefaultView(teamState);
+  if (
+    !canMemberMutateTeamScheduledTask({
+      member,
+      environment: metaEnvironment,
+      view,
+      existingMeta: { locked: meta.locked, mcpAccessLevel: meta.mcpAccessLevel },
+    })
+  ) {
+    return false;
+  }
+  if (boundThreadId != null) {
+    const attribution = teamState.attributionByThreadId.get(boundThreadId) ?? null;
+    if (attribution === null) {
+      return isTeamAdminRole(member.role);
+    }
+    const threadView =
+      teamState.viewById.get(attribution.viewId) ?? resolveTeamDefaultView(teamState);
+    if (resolveTeamThreadPostBlockReason({ member, attribution, view: threadView }) !== "ok") {
+      return false;
+    }
+    const envAccess = resolveTeamThreadEnvironmentAccess({
+      member,
+      attribution,
+      environments: teamState.environments,
+    });
+    if (!envAccess.canExecute) {
+      return false;
+    }
+  }
+  return true;
 }

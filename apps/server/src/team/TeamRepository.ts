@@ -1009,6 +1009,12 @@ export class TeamRepository extends Context.Service<
     readonly recordAutomationTurnScope: (
       scope: StoredTeamAutomationTurnScope,
     ) => Effect.Effect<boolean, TeamRepositoryError>;
+    readonly recordAutomationTurnWithScope: (input: {
+      readonly scope: StoredTeamAutomationTurnScope;
+    }) => Effect.Effect<
+      { readonly turnInserted: boolean; readonly scopeInserted: boolean },
+      TeamRepositoryError
+    >;
     readonly getAutomationTurnScope: (
       turnId: string,
     ) => Effect.Effect<Option.Option<StoredTeamAutomationTurnScope>, TeamRepositoryError>;
@@ -3536,6 +3542,53 @@ const make = Effect.gen(function* () {
           `,
         );
         return rows.length > 0;
+      },
+    ),
+
+    recordAutomationTurnWithScope: Effect.fn("TeamRepository.recordAutomationTurnWithScope")(
+      function* ({ scope }) {
+        return yield* runSql(
+          "recordAutomationTurnWithScope",
+          sql.withTransaction(
+            Effect.gen(function* () {
+              const turnRows = yield* sql<{ readonly turn_id: string }>`
+                INSERT OR IGNORE INTO team_turn_meta (
+                  turn_id, thread_id, author_kind, author_member_id, created_at
+                )
+                VALUES (
+                  ${scope.turnId},
+                  ${scope.threadId},
+                  'team_automation',
+                  NULL,
+                  ${scope.createdAt}
+                )
+                RETURNING turn_id
+              `;
+              const scopeRows = yield* sql<{ readonly turn_id: string }>`
+                INSERT OR IGNORE INTO team_automation_turn_scopes (
+                  turn_id, thread_id, task_id, team_id, project_id, environment_id, view_id,
+                  mcp_access_level, created_at
+                )
+                VALUES (
+                  ${scope.turnId},
+                  ${scope.threadId},
+                  ${scope.taskId},
+                  ${scope.teamId},
+                  ${scope.projectId},
+                  ${scope.environmentId},
+                  ${scope.viewId},
+                  ${scope.mcpAccessLevel},
+                  ${scope.createdAt}
+                )
+                RETURNING turn_id
+              `;
+              return {
+                turnInserted: turnRows.length > 0,
+                scopeInserted: scopeRows.length > 0,
+              };
+            }),
+          ),
+        );
       },
     ),
 

@@ -900,6 +900,7 @@ function ScheduledTaskRow({
       teamState,
       taskId: task.id,
       environmentId,
+      boundThreadId: task.threadId,
     });
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const [busy, setBusy] = useState(false);
@@ -1684,6 +1685,9 @@ function ScheduledTaskEditorForm({
           teamState,
           taskId: draft.editingId as ScheduledTaskId,
           environmentId,
+          boundThreadId: draft.savedThreadId
+            ? (draft.savedThreadId as ThreadId)
+            : (task?.threadId ?? null),
         }));
   const readOnly = !canMutateThisTask;
   const effectiveTeamViewId =
@@ -1887,11 +1891,14 @@ function ScheduledTaskEditorForm({
         draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
-      ...(isTeamEnv && effectiveTeamViewId
+      ...(isTeamEnv
         ? {
             teamMeta: {
               environmentId,
-              viewId: effectiveTeamViewId as TeamViewId,
+              ...((draft.editingId === null || taskMeta !== null || draft.teamViewId !== "") &&
+              effectiveTeamViewId
+                ? { viewId: effectiveTeamViewId as TeamViewId }
+                : {}),
               ...(isPrivilegedTeamRole
                 ? {
                     ...((draft.teamLocked ?? taskMeta?.locked) !== undefined

@@ -581,11 +581,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           Option.isSome(teamChildAuth)
         ) {
           if (teamChildAuth.value.teamAutomation !== null) {
-            yield* teamChildAuth.value.teamService.recordTeamAutomationTurn({
-              threadId,
-              turnId: `msg:${messageId}`,
-              principal: teamChildAuth.value.teamAutomation,
-            });
+            yield* teamChildAuth.value.teamService
+              .requireTeamAutomationTurn({
+                threadId,
+                turnId: `msg:${messageId}`,
+                principal: teamChildAuth.value.teamAutomation,
+              })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new OrchestratorMcpFailure({
+                      code: "capability_denied",
+                      message: error.message,
+                    }),
+                ),
+              );
           } else if (teamChildAuth.value.memberId !== null) {
             yield* teamChildAuth.value.teamService
               .requireTurnAuthoredByMember({

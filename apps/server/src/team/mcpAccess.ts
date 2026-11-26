@@ -450,11 +450,13 @@ export const recordTurnAuthoredByCaller = Effect.fn("TeamMcpAccess.recordTurnAut
     const caller = yield* resolveTeamMcpCaller();
     if (Option.isNone(caller)) return;
     if (caller.value.teamAutomation !== null) {
-      yield* caller.value.teamService.recordTeamAutomationTurn({
-        threadId: input.threadId,
-        turnId: input.turnId,
-        principal: caller.value.teamAutomation,
-      });
+      yield* caller.value.teamService
+        .requireTeamAutomationTurn({
+          threadId: input.threadId,
+          turnId: input.turnId,
+          principal: caller.value.teamAutomation,
+        })
+        .pipe(Effect.mapError(toMcpForbidden));
       return;
     }
     if (caller.value.memberId === null) {

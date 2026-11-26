@@ -1221,7 +1221,24 @@ export const layer: Layer.Layer<
           Option.isSome(resolvedPrincipal) &&
           resolvedPrincipal.value.kind === "team_automation"
         ) {
-          if (typeof teamServiceOption.value.recordTeamAutomationTurn === "function") {
+          if (typeof teamServiceOption.value.requireTeamAutomationTurn === "function") {
+            const persisted = yield* Effect.result(
+              teamServiceOption.value.requireTeamAutomationTurn({
+                threadId: projection.thread.id,
+                turnId: run.id,
+                principal: resolvedPrincipal.value.principal,
+              }),
+            );
+            if (persisted._tag === "Failure") {
+              yield* settleStartFailure({
+                signal: "team-turn-attribution-persist-failed",
+                title: "Unable to persist team automation turn attribution",
+                error: persisted.failure,
+                message: persisted.failure.message,
+              });
+              return;
+            }
+          } else if (typeof teamServiceOption.value.recordTeamAutomationTurn === "function") {
             yield* teamServiceOption.value.recordTeamAutomationTurn({
               threadId: projection.thread.id,
               turnId: run.id,
@@ -1235,23 +1252,54 @@ export const layer: Layer.Layer<
           };
         } else if (scheduledAutomationTaskId !== null) {
           // Scheduled automation turns (and their continuations) execute under synthetic team_automation.
-          const persistedPrincipal =
-            typeof teamServiceOption.value.recordTeamAutomationTurn === "function"
-              ? yield* teamServiceOption.value.recordTeamAutomationTurn({
-                  threadId: projection.thread.id,
-                  turnId: run.id,
-                  taskId: scheduledAutomationTaskId,
-                  projectId: projection.thread.projectId,
-                })
-              : Option.none<McpTeamAutomationPrincipal>();
-          if (Option.isSome(persistedPrincipal)) {
-            teamAutomation = persistedPrincipal.value;
+          if (typeof teamServiceOption.value.requireTeamAutomationTurn === "function") {
+            const persisted = yield* Effect.result(
+              teamServiceOption.value.requireTeamAutomationTurn({
+                threadId: projection.thread.id,
+                turnId: run.id,
+                taskId: scheduledAutomationTaskId,
+                projectId: projection.thread.projectId,
+              }),
+            );
+            if (persisted._tag === "Failure" || Option.isNone(persisted.success)) {
+              const failure =
+                persisted._tag === "Failure"
+                  ? persisted.failure
+                  : new Error(
+                      `Unable to resolve team automation turn scope for task ${scheduledAutomationTaskId}.`,
+                    );
+              yield* settleStartFailure({
+                signal: "team-turn-attribution-persist-failed",
+                title: "Unable to persist team automation turn attribution",
+                error: failure,
+                message: failure.message,
+              });
+              return;
+            }
+            teamAutomation = persisted.success.value;
             teamTurnPrincipal = {
               kind: "team_automation",
-              principal: persistedPrincipal.value,
+              principal: persisted.success.value,
             };
           } else {
-            teamTurnPrincipal = { kind: "team_automation" };
+            const persistedPrincipal =
+              typeof teamServiceOption.value.recordTeamAutomationTurn === "function"
+                ? yield* teamServiceOption.value.recordTeamAutomationTurn({
+                    threadId: projection.thread.id,
+                    turnId: run.id,
+                    taskId: scheduledAutomationTaskId,
+                    projectId: projection.thread.projectId,
+                  })
+                : Option.none<McpTeamAutomationPrincipal>();
+            if (Option.isSome(persistedPrincipal)) {
+              teamAutomation = persistedPrincipal.value;
+              teamTurnPrincipal = {
+                kind: "team_automation",
+                principal: persistedPrincipal.value,
+              };
+            } else {
+              teamTurnPrincipal = { kind: "team_automation" };
+            }
           }
         } else {
           yield* settleStartFailure({

@@ -1528,6 +1528,43 @@ describe("team client-runtime state and presentation", () => {
         environmentId: envId,
       }),
     ).toBe(false);
+    // Unhydrated / unattributed task fails closed for modo.
+    expect(
+      canCurrentMemberMutateTeamScheduledTask({
+        teamState: state,
+        taskId: ScheduledTaskId.make("task-unhydrated"),
+        environmentId: envId,
+      }),
+    ).toBe(false);
+    // Unlocked minimal task bound to a locked thread is NOT mutable by modo.
+    const lockedThreadId = ThreadId.make("thread-m8-locked-bound");
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "threadAttributed",
+      payload: {
+        threadId: lockedThreadId,
+        teamId,
+        ownerKind: "team",
+        creatorMemberId: null,
+        creatorPseudo: null,
+        teamDisplayName: "Ops Bot",
+        viewId,
+        locked: true,
+        lockedByMemberId: null,
+        executionEnvironmentId: envId,
+        executionEnvironmentLabel: "Main Server",
+        isLocalSynced: false,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    expect(
+      canCurrentMemberMutateTeamScheduledTask({
+        teamState: state,
+        taskId: taskMinId,
+        environmentId: envId,
+        boundThreadId: lockedThreadId,
+      }),
+    ).toBe(false);
 
     // View deletion reassigns scheduledTaskMeta to fallback view; scheduledTaskMetaDeleted removes it.
     state = applyTeamStreamEvent(state, {

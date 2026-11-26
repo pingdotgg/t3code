@@ -45,7 +45,6 @@ import {
   EnvironmentAuthorizationError,
   EnvironmentId,
   formatAcceptedTeamNoteForPrompt,
-  isTeamOwnedThreadAttribution,
   isTeamProviderInstanceId,
   isValidTeamPseudo,
   normalizeTeamPseudo,
@@ -664,6 +663,13 @@ export class TeamService extends Context.Service<
       readonly projectId?: ProjectId;
       readonly principal?: McpTeamAutomationPrincipal;
     }) => Effect.Effect<Option.Option<McpTeamAutomationPrincipal>>;
+    readonly requireTeamAutomationTurn: (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+      readonly taskId?: ScheduledTaskId;
+      readonly projectId?: ProjectId;
+      readonly principal?: McpTeamAutomationPrincipal;
+    }) => Effect.Effect<Option.Option<McpTeamAutomationPrincipal>, EnvironmentAuthorizationError>;
     readonly rollbackPreparedThreadAttribution: (threadId: ThreadId) => Effect.Effect<void>;
     readonly rollbackRecordedTurnAttribution: (input: {
       readonly threadId: ThreadId;
@@ -3023,17 +3029,7 @@ const make = Effect.gen(function* () {
             });
           }
         }
-        const threadScope = yield* repository.getLatestAutomationTurnScopeForThread(input.threadId);
-        if (Option.isSome(threadScope)) {
-          return Option.some<McpTeamAutomationPrincipal>({
-            taskId: threadScope.value.taskId,
-            teamId: threadScope.value.teamId,
-            projectId: threadScope.value.projectId,
-            environmentId: threadScope.value.environmentId,
-            viewId: threadScope.value.viewId,
-            mcpAccessLevel: threadScope.value.mcpAccessLevel,
-          });
-        }
+        // Fail closed: never inherit another turn's scope from the same thread.
         return Option.none<McpTeamAutomationPrincipal>();
       });
       const resolveByRunOrMessage = Effect.fnUntraced(function* (
@@ -3291,11 +3287,25 @@ const make = Effect.gen(function* () {
     const inScope = yield* matchesMinimalAutomationThreadScope(principal, attribution, projectId);
     if (!inScope) return false;
     if (!attribution.locked) return true;
-    if (isTeamOwnedThreadAttribution(attribution)) return true;
     const latestScope = yield* repository
       .getLatestAutomationTurnScopeForThread(threadId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
-    return Option.isSome(latestScope) && latestScope.value.taskId === principal.taskId;
+    if (
+      Option.isSome(latestScope) &&
+      latestScope.value.taskId === principal.taskId &&
+      latestScope.value.mcpAccessLevel === "minimal"
+    ) {
+      return true;
+    }
+    const ownerScope = yield* repository
+      .getAutomationTurnScope(`thread-owner:${threadId}`)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    return (
+      Option.isSome(ownerScope) &&
+      ownerScope.value.threadId === threadId &&
+      ownerScope.value.taskId === principal.taskId &&
+      ownerScope.value.mcpAccessLevel === "minimal"
+    );
   });
 
   const canActorReadThread = Effect.fn("TeamService.canActorReadThread")(function* (
@@ -3755,6 +3765,47 @@ const make = Effect.gen(function* () {
         }
         return;
       }
+      if (isMinimalAutomationActor(actor)) {
+        const projectIdOption = yield* repository
+          .getThreadProjectIdInProjection(threadId)
+          .pipe(Effect.orElseSucceed(() => Option.none<ProjectId>()));
+        const inScope = yield* matchesMinimalAutomationThreadScope(
+          actor.principal,
+          ctx.attribution,
+          Option.getOrUndefined(projectIdOption),
+        );
+        if (!inScope) {
+          return yield* teamPostAuthError(
+            "Minimal team automations can only interrupt runs within their configured scope.",
+          );
+        }
+        let activePrincipal: Option.Option<TeamTurnPrincipal> = Option.none();
+        if (runId != null) {
+          const targetRun = yield* repository
+            .getRunInProjection(threadId, runId)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isSome(targetRun) && ACTIVE_RUN_STATUSES.has(targetRun.value.status)) {
+            activePrincipal = yield* resolveTurnPrincipal({
+              threadId,
+              runId: targetRun.value.runId,
+              userMessageId: targetRun.value.userMessageId,
+            });
+          }
+        } else {
+          activePrincipal = yield* resolveTurnPrincipal({ threadId });
+        }
+        if (
+          Option.isNone(activePrincipal) ||
+          activePrincipal.value.kind !== "team_automation" ||
+          activePrincipal.value.principal.taskId !== actor.principal.taskId ||
+          activePrincipal.value.principal.mcpAccessLevel !== "minimal"
+        ) {
+          return yield* teamPostAuthError(
+            "Minimal team automations can only interrupt their own automation runs.",
+          );
+        }
+        return;
+      }
       let activeTurnAuthorOption: Option.Option<TeamMemberId> = Option.none();
       if (runId != null) {
         const targetRun = yield* repository
@@ -3824,6 +3875,33 @@ const make = Effect.gen(function* () {
         if (!ctx.isLegacyPreTeam && !isTeamAdminOrOwner(ctx.member)) {
           return yield* teamPostAuthError(
             "You do not have permission to modify this queued message.",
+          );
+        }
+        return;
+      }
+      if (isMinimalAutomationActor(actor)) {
+        const projectIdOption = yield* repository
+          .getThreadProjectIdInProjection(threadId)
+          .pipe(Effect.orElseSucceed(() => Option.none<ProjectId>()));
+        const inScope = yield* matchesMinimalAutomationThreadScope(
+          actor.principal,
+          ctx.attribution,
+          Option.getOrUndefined(projectIdOption),
+        );
+        if (!inScope) {
+          return yield* teamPostAuthError(
+            "Minimal team automations can only manage queued runs within their configured scope.",
+          );
+        }
+        const queuedPrincipal = yield* resolveTurnPrincipal({ threadId, runId });
+        if (
+          Option.isNone(queuedPrincipal) ||
+          queuedPrincipal.value.kind !== "team_automation" ||
+          queuedPrincipal.value.principal.taskId !== actor.principal.taskId ||
+          queuedPrincipal.value.principal.mcpAccessLevel !== "minimal"
+        ) {
+          return yield* teamPostAuthError(
+            "Minimal team automations can only edit or cancel their own queued runs.",
           );
         }
         return;
@@ -6084,6 +6162,19 @@ const make = Effect.gen(function* () {
       if (Option.isNone(inserted)) {
         return yield* teamPostAuthError("Failed to prepare inherited team thread attribution.");
       }
+      if (locked && input.teamAutomation !== undefined) {
+        yield* repository.recordAutomationTurnScope({
+          turnId: `thread-owner:${input.threadId}`,
+          threadId: input.threadId,
+          taskId: input.teamAutomation.taskId,
+          teamId: team.id,
+          projectId: input.teamAutomation.projectId,
+          environmentId: executionEnvironmentId ?? input.teamAutomation.environmentId,
+          viewId,
+          mcpAccessLevel: input.teamAutomation.mcpAccessLevel,
+          createdAt: nowIso,
+        });
+      }
       return true;
     }).pipe(
       Effect.tapError((cause) =>
@@ -6156,6 +6247,19 @@ const make = Effect.gen(function* () {
       if (Option.isNone(inserted)) {
         return yield* teamPostAuthError("Failed to prepare team automation thread attribution.");
       }
+      if (locked) {
+        yield* repository.recordAutomationTurnScope({
+          turnId: `thread-owner:${input.threadId}`,
+          threadId: input.threadId,
+          taskId: input.taskId,
+          teamId: team.id,
+          projectId: input.projectId,
+          environmentId: executionEnvironmentId,
+          viewId: resolvedViewId,
+          mcpAccessLevel: taskMeta?.mcpAccessLevel ?? "minimal",
+          createdAt: nowIso,
+        });
+      }
       return true;
     }).pipe(
       Effect.tapError((cause) =>
@@ -6191,7 +6295,7 @@ const make = Effect.gen(function* () {
     }
   });
 
-  const recordTeamAutomationTurn = Effect.fn("TeamService.recordTeamAutomationTurn")(
+  const persistTeamAutomationTurn = Effect.fn("TeamService.persistTeamAutomationTurn")(
     function* (input: {
       readonly threadId: ThreadId;
       readonly turnId: string;
@@ -6199,62 +6303,55 @@ const make = Effect.gen(function* () {
       readonly projectId?: ProjectId;
       readonly principal?: McpTeamAutomationPrincipal;
     }) {
-      return yield* Effect.gen(function* () {
-        const workspaceOption = yield* repository.getWorkspace();
-        if (Option.isNone(workspaceOption)) return Option.none<McpTeamAutomationPrincipal>();
-        const team = workspaceOption.value;
-        let principal = input.principal;
-        if (principal !== undefined) {
-          if (principal.teamId !== team.id) {
-            return Option.none<McpTeamAutomationPrincipal>();
-          }
-        } else {
-          const taskId = input.taskId;
-          if (taskId === undefined) return Option.none<McpTeamAutomationPrincipal>();
-          const [taskMetaOpt, threadAttrOpt, threadProjectOpt] = yield* Effect.all([
-            repository.getScheduledTaskMeta(taskId),
-            repository.getThreadAttribution(input.threadId),
-            input.projectId !== undefined
-              ? Effect.succeedSome(input.projectId)
-              : repository.getThreadProjectIdInProjection(input.threadId),
-          ]);
-          const taskMeta =
-            Option.isSome(taskMetaOpt) && taskMetaOpt.value.teamId === team.id
-              ? taskMetaOpt.value
-              : null;
-          const localEnv = yield* resolveLocalEnvironmentIdentity();
-          const projectId = Option.getOrUndefined(threadProjectOpt);
-          if (projectId === undefined) {
-            return Option.none<McpTeamAutomationPrincipal>();
-          }
-          const viewId =
-            taskMeta?.viewId ??
-            (Option.isSome(threadAttrOpt) && threadAttrOpt.value.teamId === team.id
-              ? threadAttrOpt.value.viewId
-              : team.defaultViewId);
-          const environmentId =
-            taskMeta?.environmentId ??
-            (Option.isSome(threadAttrOpt) && threadAttrOpt.value.executionEnvironmentId
-              ? threadAttrOpt.value.executionEnvironmentId
-              : localEnv.environmentId);
-          principal = {
-            taskId,
-            teamId: team.id,
-            projectId,
-            environmentId,
-            viewId,
-            mcpAccessLevel: taskMeta?.mcpAccessLevel ?? "minimal",
-          };
+      const workspaceOption = yield* repository.getWorkspace();
+      if (Option.isNone(workspaceOption)) return Option.none<McpTeamAutomationPrincipal>();
+      const team = workspaceOption.value;
+      let principal = input.principal;
+      if (principal !== undefined) {
+        if (principal.teamId !== team.id) {
+          return Option.none<McpTeamAutomationPrincipal>();
         }
-        const nowIso = DateTime.formatIso(yield* DateTime.now);
-        const inserted = yield* repository.recordTurnAttribution({
-          turnId: input.turnId,
-          threadId: input.threadId,
-          authorKind: "team_automation",
-          authorMemberId: null,
-          createdAt: nowIso,
-        });
-        yield* repository.recordAutomationTurnScope({
+      } else {
+        const taskId = input.taskId;
+        if (taskId === undefined) return Option.none<McpTeamAutomationPrincipal>();
+        const [taskMetaOpt, threadAttrOpt, threadProjectOpt] = yield* Effect.all([
+          repository.getScheduledTaskMeta(taskId),
+          repository.getThreadAttribution(input.threadId),
+          input.projectId !== undefined
+            ? Effect.succeedSome(input.projectId)
+            : repository.getThreadProjectIdInProjection(input.threadId),
+        ]);
+        const taskMeta =
+          Option.isSome(taskMetaOpt) && taskMetaOpt.value.teamId === team.id
+            ? taskMetaOpt.value
+            : null;
+        const localEnv = yield* resolveLocalEnvironmentIdentity();
+        const projectId = Option.getOrUndefined(threadProjectOpt);
+        if (projectId === undefined) {
+          return Option.none<McpTeamAutomationPrincipal>();
+        }
+        const viewId =
+          taskMeta?.viewId ??
+          (Option.isSome(threadAttrOpt) && threadAttrOpt.value.teamId === team.id
+            ? threadAttrOpt.value.viewId
+            : team.defaultViewId);
+        const environmentId =
+          taskMeta?.environmentId ??
+          (Option.isSome(threadAttrOpt) && threadAttrOpt.value.executionEnvironmentId
+            ? threadAttrOpt.value.executionEnvironmentId
+            : localEnv.environmentId);
+        principal = {
+          taskId,
+          teamId: team.id,
+          projectId,
+          environmentId,
+          viewId,
+          mcpAccessLevel: taskMeta?.mcpAccessLevel ?? "minimal",
+        };
+      }
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      const { turnInserted } = yield* repository.recordAutomationTurnWithScope({
+        scope: {
           turnId: input.turnId,
           threadId: input.threadId,
           taskId: principal.taskId,
@@ -6264,23 +6361,35 @@ const make = Effect.gen(function* () {
           viewId: principal.viewId,
           mcpAccessLevel: principal.mcpAccessLevel,
           createdAt: nowIso,
+        },
+      });
+      if (turnInserted && !input.turnId.startsWith("msg:")) {
+        yield* publish({
+          version: 1,
+          type: "turnAttributed",
+          payload: {
+            turnId: input.turnId,
+            threadId: input.threadId,
+            authorKind: "team_automation",
+            authorMemberId: null,
+            authorPseudo: null,
+            createdAt: nowIso,
+          },
         });
-        if (inserted && !input.turnId.startsWith("msg:")) {
-          yield* publish({
-            version: 1,
-            type: "turnAttributed",
-            payload: {
-              turnId: input.turnId,
-              threadId: input.threadId,
-              authorKind: "team_automation",
-              authorMemberId: null,
-              authorPseudo: null,
-              createdAt: nowIso,
-            },
-          });
-        }
-        return Option.some(principal);
-      }).pipe(
+      }
+      return Option.some(principal);
+    },
+  );
+
+  const recordTeamAutomationTurn = Effect.fn("TeamService.recordTeamAutomationTurn")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+      readonly taskId?: ScheduledTaskId;
+      readonly projectId?: ProjectId;
+      readonly principal?: McpTeamAutomationPrincipal;
+    }) {
+      return yield* persistTeamAutomationTurn(input).pipe(
         Effect.tapError((cause) =>
           Effect.logWarning("TeamService.recordTeamAutomationTurn failed", {
             threadId: input.threadId,
@@ -6290,6 +6399,36 @@ const make = Effect.gen(function* () {
         ),
         Effect.orElseSucceed(() => Option.none<McpTeamAutomationPrincipal>()),
       );
+    },
+  );
+
+  const requireTeamAutomationTurn = Effect.fn("TeamService.requireTeamAutomationTurn")(
+    function* (input: {
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+      readonly taskId?: ScheduledTaskId;
+      readonly projectId?: ProjectId;
+      readonly principal?: McpTeamAutomationPrincipal;
+    }) {
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(
+          Effect.mapError(() =>
+            teamPostAuthError("Unable to verify team workspace for automation turn attribution."),
+          ),
+        );
+      if (Option.isNone(workspaceOption)) return Option.none<McpTeamAutomationPrincipal>();
+      const persisted = yield* persistTeamAutomationTurn(input).pipe(
+        Effect.mapError(() =>
+          teamPostAuthError("Unable to persist authoritative team automation turn scope."),
+        ),
+      );
+      if (Option.isNone(persisted)) {
+        return yield* teamPostAuthError(
+          "Unable to resolve authoritative team automation turn scope.",
+        );
+      }
+      return persisted;
     },
   );
 
@@ -9719,6 +9858,7 @@ const make = Effect.gen(function* () {
     prepareTeamAutomationThreadAttribution,
     publishTeamAutomationThreadAttributed,
     recordTeamAutomationTurn,
+    requireTeamAutomationTurn,
     rollbackPreparedThreadAttribution,
     rollbackRecordedTurnAttribution,
     recordTurnAuthored,

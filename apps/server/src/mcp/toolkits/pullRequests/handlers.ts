@@ -363,9 +363,15 @@ const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => null),
             Effect.map((shell) => shell ?? undefined),
           );
-    const known = yield* projects
+    const allKnown = yield* projects
       .listShells()
       .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
+    const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId().pipe(
+      Effect.mapError((cause) => new PullRequestListFailedError({ cause })),
+    );
+    const known = Option.isSome(scopedProjectId)
+      ? allKnown.filter((project) => project.id === scopedProjectId.value)
+      : allKnown;
     const callerProject =
       callerThread === undefined
         ? undefined
@@ -939,6 +945,18 @@ const make = Effect.gen(function* () {
                   }).message,
                 };
               }
+              const projectAccess = yield* Effect.result(
+                TeamMcpAccess.assertCanAccessProject(entry.project.id),
+              );
+              if (projectAccess._tag === "Failure") {
+                return {
+                  ...identity,
+                  outcome: "failed" as const,
+                  detail: new PullRequestProjectNotFoundError({
+                    repository: entry.target.repository,
+                  }).message,
+                };
+              }
               return yield* reviewGuides.generate(guideReference(entry.project, entry.target)).pipe(
                 Effect.map((result) => ({
                   ...identity,
@@ -965,14 +983,25 @@ const make = Effect.gen(function* () {
         if (entry !== undefined && entry.target === null) {
           return yield* new PullRequestGuideFailedError({ detail: entry.failure ?? "" });
         }
+        const scopedProjectId = yield* TeamMcpAccess.getMinimalAutomationProjectId().pipe(
+          Effect.mapError((cause) => new PullRequestGuideFailedError({ detail: cause.message })),
+        );
         // Hosts readable without a checkout (GitHub, Bitbucket, Forgejo) are read through the
-        // caller's project; PullRequestService decides whether the host allows that.
-        const project = entry?.project ?? entry?.callerProject;
+        // caller's project; PullRequestService decides whether the host allows that. Minimal
+        // automations must match their single scoped project and cannot fall back to arbitrary repos.
+        const project = Option.isSome(scopedProjectId)
+          ? entry?.project
+          : (entry?.project ?? entry?.callerProject);
         if (entry === undefined || entry.target === null || project === undefined) {
           return yield* new PullRequestProjectNotFoundError({
             repository: entry?.target.repository ?? input.repository ?? "",
           });
         }
+        yield* TeamMcpAccess.assertCanAccessProject(project.id).pipe(
+          Effect.mapError(
+            () => new PullRequestProjectNotFoundError({ repository: entry.target!.repository }),
+          ),
+        );
         const target = entry.target;
         const result = yield* reviewGuides.get(guideReference(project, target)).pipe(
           Effect.mapError((error) =>
