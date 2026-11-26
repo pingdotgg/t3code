@@ -68,6 +68,9 @@ describe("embeddedScripts", () => {
     [`ruby -e 'puts 1'`, "ruby", "puts 1"],
     [`ruby -I lib -e 'puts 1'`, "ruby", "puts 1"],
     [`perl -E 'say 1'`, "perl", "say 1"],
+    [`perl -pe 's/foo/bar/' input.txt`, "perl", "s/foo/bar/"],
+    [`perl -0777ne 'print length' input.txt`, "perl", "print length"],
+    [`perl -I lib -Mstrict -pe 's/foo/bar/' input.txt`, "perl", "s/foo/bar/"],
     [`sqlite3 app.db "select * from users"`, "sql", "select * from users"],
     [`pwsh -NoProfile -Command "Get-ChildItem"`, "powershell", "Get-ChildItem"],
     [`env FOO=1 sudo -u bob python3 -c 'print(1)'`, "python", "print(1)"],
@@ -109,6 +112,7 @@ describe("embeddedScripts", () => {
     ["plain commands", `rg -n "foo" src && git status`],
     ["an unnamed heredoc into a plain command", `git commit -F - <<'EOF'\nfix: x\nEOF`],
     ["an empty script", `bash -lc '   '`],
+    ["a perl -i backup suffix of e", `perl -pie 's/foo/bar/' input.txt`],
     ["a shell whose -c has no script, before a heredoc", `sh -c -- <<'EOF'\necho hi\nEOF`],
     ["a heredoc `cat` sends to stdout while stderr goes to a file", `cat 2>log.ts <<'EOF'\nx\nEOF`],
   ])("finds nothing for %s", (_case, command) => {
