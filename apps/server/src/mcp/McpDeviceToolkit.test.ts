@@ -562,6 +562,18 @@ describe("device targeting across hosts", () => {
     ),
   );
 
+  it.effect("refuses a local device another thread already has open", () =>
+    run(
+      [{ ...session("local", "UDID-1", "ios"), threadId: ThreadId.make("other-thread") }],
+      ({ opened, call }) =>
+        Effect.gen(function* () {
+          const result = yield* call("device_open", { deviceId: "UDID-1", hostId: "local" });
+          expect(result.isError).toBe(true);
+          expect(opened).toEqual([]);
+        }),
+    ),
+  );
+
   it.effect("refuses a device id that exists on two hosts and names both", () =>
     run(
       [],
