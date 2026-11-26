@@ -750,7 +750,7 @@ export function appendTerminalOutput(
 export function terminalOutputResumeText(state: TerminalOutputState): string {
   const { screen } = state;
   const lastRow = screen.lines.length - 1;
-  // Count live rows from the end because the retained tail may omit early rows.
+  // Moves are relative to the last line, and a viewer only holds the lines in `text`.
   let reachable = 0;
   let cursor = state.text.length;
   while (reachable < lastRow && cursor > 0) {
