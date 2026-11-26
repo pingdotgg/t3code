@@ -1254,15 +1254,18 @@ const scanned: OpenCode2Workspace = {
 };
 
 it.effect(
-  "reads a loaded OpenCode 2 directory listing no commands again once its scan has ended",
+  "waits for the scan of an OpenCode 2 directory that lists built-ins before T3 saw its scan end",
   () =>
     Effect.gen(function* () {
-      const reads: Array<OpenCode2Workspace> = [{ commands: [], skills: [] }, scanned];
+      const reads: Array<OpenCode2Workspace> = [
+        { commands: builtinCommands, skills: builtinSkills },
+        scanned,
+      ];
       const scanEnded = yield* Deferred.make<void>();
       const load = yield* loadOpenCode2Workspace(
         Effect.sync(() => reads.shift()!),
         Deferred.await(scanEnded),
-        Effect.succeed(true),
+        false,
       ).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
       NodeAssert.equal(reads.length, 1);
@@ -1271,30 +1274,13 @@ it.effect(
     }),
 );
 
-it.effect("waits for the scan of a cold OpenCode 2 directory that first lists only built-ins", () =>
-  Effect.gen(function* () {
-    const calls: Array<string> = [];
-    const reads: Array<OpenCode2Workspace> = [
-      { commands: builtinCommands, skills: builtinSkills },
-      scanned,
-    ];
-    const workspace = yield* loadOpenCode2Workspace(
-      Effect.sync(() => (calls.push("read"), reads.shift()!)),
-      Effect.sync(() => void calls.push("scanned")),
-      Effect.sync(() => (calls.push("loaded"), false)),
-    );
-    NodeAssert.deepEqual(workspace, scanned);
-    NodeAssert.deepEqual(calls, ["loaded", "read", "scanned", "read"]);
-  }),
-);
-
-it.effect("reads an already loaded OpenCode 2 directory once without waiting for a scan", () =>
+it.effect("reads an OpenCode 2 directory whose scan T3 saw end once without waiting", () =>
   Effect.gen(function* () {
     const calls: Array<string> = [];
     const workspace = yield* loadOpenCode2Workspace(
       Effect.sync(() => (calls.push("read"), scanned)),
       Effect.sync(() => void calls.push("scanned")),
-      Effect.succeed(true),
+      true,
     );
     NodeAssert.deepEqual(workspace, scanned);
     NodeAssert.deepEqual(calls, ["read"]);
@@ -1355,6 +1341,24 @@ it.effect("publishes the catalog OpenCode lists after its startup snapshot had s
     yield* Queue.offer(events, { type: "model.updated" });
     yield* TestClock.adjust("1 second");
     NodeAssert.deepEqual(seen.at(-1), live);
+  }),
+);
+
+it.effect("lists a newly followed server's catalog once its startup snapshot has passed", () =>
+  Effect.gen(function* () {
+    const startup = [model("startup-only")];
+    const live = [model("live-only")];
+    const listings = [[], [], startup];
+    const read = Effect.sync(() => listings.shift() ?? live);
+    const watch = yield* makeOpenCode2CatalogWatch();
+    const seen: Array<ReadonlyArray<OpenCode2Model> | undefined> = [];
+    yield* Stream.runForEach(watch.changes, (catalog) =>
+      Effect.sync(() => seen.push(catalog)),
+    ).pipe(Effect.forkScoped);
+
+    yield* watch.follow("server", Effect.succeed(Stream.never), read);
+    yield* TestClock.adjust("3 seconds");
+    NodeAssert.deepEqual(seen, [undefined, live]);
   }),
 );
 
@@ -1449,7 +1453,8 @@ it.effect("reads later changes after a catalog read that never answered", () =>
       Effect.sync(() => seen.push(catalog)),
     ).pipe(Effect.forkScoped);
     yield* watch.follow("server", Effect.succeed(Stream.fromQueue(events)), read);
-    yield* TestClock.adjust("31 seconds");
+    // The new server's settle gives up after 5 seconds, then the queued re-read hangs for 30.
+    yield* TestClock.adjust("36 seconds");
     answering = true;
     yield* Queue.offer(events, { type: "model.updated" });
     yield* TestClock.adjust("1 second");

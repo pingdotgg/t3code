@@ -913,4 +913,60 @@ describe("IssueService with a standalone tracker", () => {
       });
     }),
   );
+
+  it.effect("orders merged entries by createdAt when sort is created and updatedAt otherwise", () =>
+    Effect.gen(function* () {
+      const seenSorts: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({ id: "web", repository: "acme/web" }),
+          project({ id: "api", repository: "acme/api" }),
+        ],
+        trackers: [
+          fakeTracker({
+            listIssues: (input) => {
+              seenSorts.push(input.sort);
+              if (input.scope === "acme/web") {
+                return Effect.succeed({
+                  items: [
+                    {
+                      ...issue("old-created-recent-update"),
+                      createdAt: "2026-07-06T01:00:00+02:00",
+                      updatedAt: "2026-07-10T00:00:00Z",
+                    },
+                  ],
+                  nextCursor: null,
+                });
+              }
+              return Effect.succeed({
+                items: [
+                  {
+                    ...issue("new-created-older-update"),
+                    createdAt: "2026-07-05T23:30:00Z",
+                    updatedAt: "2026-07-06T00:00:00Z",
+                  },
+                ],
+                nextCursor: null,
+              });
+            },
+          }),
+        ],
+      });
+
+      const byCreated = yield* service.list({ state: "open", sort: "created" });
+      expect(seenSorts).toEqual(["created", "created"]);
+      expect(byCreated.entries.map((entry) => entry.key)).toEqual([
+        "new-created-older-update",
+        "old-created-recent-update",
+      ]);
+
+      seenSorts.length = 0;
+      const byUpdated = yield* service.list({ state: "open" });
+      expect(seenSorts).toEqual(["updated", "updated"]);
+      expect(byUpdated.entries.map((entry) => entry.key)).toEqual([
+        "old-created-recent-update",
+        "new-created-older-update",
+      ]);
+    }),
+  );
 });

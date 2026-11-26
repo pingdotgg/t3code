@@ -15,6 +15,7 @@ import * as Path from "effect/Path";
 import type { ShellEnvironmentPatch } from "@t3tools/contracts";
 import * as HostProcess from "./HostProcess.ts";
 import * as Context from "effect/Context";
+import { routineSpan } from "./observability.ts";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
@@ -312,7 +313,14 @@ export function windowsEnvironmentValueCommand(name: string): string {
       ") | Where-Object { $_ }) -join ';'"
     );
   }
-  return `$value = [Environment]::GetEnvironmentVariable('${name}')`;
+  // A variable saved after this process started is only in the User or Machine registry scope.
+  return (
+    "$value = @(" +
+    `[Environment]::GetEnvironmentVariable('${name}','Process'),` +
+    `[Environment]::GetEnvironmentVariable('${name}','User'),` +
+    `[Environment]::GetEnvironmentVariable('${name}','Machine')` +
+    ") | Where-Object { $_ } | Select-Object -First 1"
+  );
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
@@ -850,7 +858,9 @@ const findOnPath = Effect.fnUntraced(function* (
   return matches;
 });
 
-const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform")(function* (
+const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform", {
+  attributes: routineSpan,
+})(function* (
   command: string,
   options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
 ): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
@@ -906,10 +916,9 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
   return resolvedPath;
 });
 
-export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function* (
-  command: string,
-  options: CommandAvailabilityOptions = {},
-) {
+export const resolveCommandPath = Effect.fn("shell.resolveCommandPath", {
+  attributes: routineSpan,
+})(function* (command: string, options: CommandAvailabilityOptions = {}) {
   return yield* resolveCommandPathForPlatform(command, {
     env: options.env ?? (yield* HostProcess.Environment),
     platform: yield* HostProcess.Platform,
@@ -917,7 +926,9 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
 });
 
 // Matches for a bare command in PATH order, up to the first one `until` accepts; not cached.
-export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(function* (
+export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths", {
+  attributes: routineSpan,
+})(function* (
   command: string,
   options: CommandAvailabilityOptions & { readonly until: (match: string) => boolean },
 ) {

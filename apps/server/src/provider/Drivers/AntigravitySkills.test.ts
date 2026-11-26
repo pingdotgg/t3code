@@ -81,8 +81,8 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       ];
       const expected = [];
       for (const [index, root] of roots.entries()) {
-        const name = `review-${index}`;
-        const description = `Review changes in root ${index}.`;
+        const name = index === 0 ? "2026" : `review-${index}`;
+        const description = index === 1 ? "1.0" : `Review changes in root ${index}.`;
         const skillPath = yield* writeSkill(
           path.join(root.directory, name),
           `---\nname: ${name}\ndescription: ${description}\n---\n# Review\n`,
@@ -115,8 +115,11 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       const input = { ...workspace, profileDirectory };
 
       assert.deepEqual(
-        (yield* discoverAntigravitySkills(input)).map((skill) => skill.name),
-        ["demo-skill"],
+        (yield* discoverAntigravitySkills(input)).map(({ name, displayName }) => ({
+          name,
+          displayName,
+        })),
+        [{ name: "demo-skill", displayName: "demo:demo-skill" }],
       );
     }),
   );
@@ -149,21 +152,27 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
-  it.effect("loads a root skill without scanning its children", () =>
+  it.effect("keeps child skills visible under a project root SKILL.md", () =>
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const input = yield* makeWorkspace();
-      const root = path.join(input.cwd, ".agents", "skills");
-      const skillPath = yield* writeSkill(root, "---\nname: root-skill\n---\n");
-      yield* writeSkill(path.join(root, "child"), "---\nname: child-skill\n---\n");
+      const agentsRoot = path.join(input.cwd, ".agents", "skills");
+      const legacyRoot = path.join(input.cwd, ".agent", "skills");
+      yield* writeSkill(agentsRoot, "---\nname: root-skill\n---\n");
+      yield* writeSkill(legacyRoot, "---\nname: legacy-root-skill\n---\n");
+      const child = yield* writeSkill(
+        path.join(agentsRoot, "child"),
+        "---\nname: child-skill\n---\n",
+      );
+      const legacyChild = yield* writeSkill(
+        path.join(legacyRoot, "child"),
+        "---\nname: legacy-child-skill\n---\n",
+      );
 
       assert.deepEqual(yield* discoverAntigravitySkills(input), [
-        { name: "root-skill", path: skillPath, scope: "project", enabled: true },
+        { name: "child-skill", path: child, scope: "project", enabled: true },
+        { name: "legacy-child-skill", path: legacyChild, scope: "project", enabled: true },
       ]);
-
-      yield* fileSystem.writeFileString(skillPath, "---\nname: [invalid\n---\n");
-      assert.deepEqual(yield* discoverAntigravitySkills(input), []);
     }),
   );
 
@@ -230,6 +239,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       );
       yield* fileSystem.makeDirectory(path.join(root, ".not-a-skill"));
       yield* fileSystem.writeFileString(path.join(root, "README.md"), "Not a skill.");
+      yield* fileSystem.writeFileString(path.join(root, "SKILL.MD"), "---\nname: uppercase\n---\n");
       const skillPath = yield* writeSkill(
         path.join(root, ".native-hidden-skill"),
         "---\nname: native-name\ndescription: >\n  Review the code\n  and run tests.\n---\n",
@@ -405,6 +415,9 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
           "---\nname: release\n---\n",
         );
         yield* writeSkill(path.join(projectSkills, "excluded"), "---\nname: excluded-root\n---\n");
+        const explicitRoot = path.join(projectSkills, "explicit");
+        yield* writeSkill(path.join(explicitRoot, "child"), "---\nname: not-discovered\n---\n");
+        yield* fileSystem.writeFileString(path.join(explicitRoot, "SKILL.MD"), "---\n---\n");
 
         // agy does not expand ~, so a ~/ entry loads nothing.
         yield* writeSkill(
@@ -450,6 +463,7 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
               { path: "tools/skills/public", include_only: ["public"] },
               { path: "tools/skills/excluded", exclude: ["excluded"] },
               { path: "tools/skills/excluded", include_only: ["public"] },
+              { path: "tools/skills/explicit" },
             ],
           }),
         );

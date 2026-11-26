@@ -9,6 +9,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Command } from "effect/cli";
+import * as TestConsole from "effect/testing/TestConsole";
 
 import { cli } from "../binCli.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
@@ -59,11 +60,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) => {
     }),
   );
 
-  it.effect("templates reads a ~/ --policy file from the home directory", () =>
+  it.effect("templates expands ~/ in the output directory and --policy file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-policy-templates-" });
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-policy-templates-cwd-" });
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const previous = process.cwd();
+          process.chdir(cwd);
+          return previous;
+        }),
+        (previous) => Effect.sync(() => process.chdir(previous)),
+      );
       yield* fs.writeFileString(
         path.join(home, "policy.json"),
         JSON.stringify({ schemaVersion: 1, organization: "Tilde Corp" }),
@@ -72,7 +82,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) => {
       yield* Command.runWith(cli, { version: "0.0.0" })([
         "policy",
         "templates",
-        home,
+        "~/out",
         "--policy=~/policy.json",
       ]).pipe(
         Effect.provideService(HostProcess.HomeDirectory, home),
@@ -80,9 +90,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))((it) => {
       );
 
       assert.include(
-        yield* fs.readFileString(path.join(home, "macos", "t3code.mobileconfig")),
+        yield* fs.readFileString(path.join(home, "out", "macos", "t3code.mobileconfig")),
         "Tilde Corp",
       );
     }),
+  );
+
+  it.effect("check reads a ~/ policy file from the home directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-policy-check-" });
+      const file = path.join(home, "policy.json");
+      yield* fs.writeFileString(
+        file,
+        JSON.stringify({ schemaVersion: 1, organization: "Tilde Corp" }),
+      );
+
+      yield* Command.runWith(cli, { version: "0.0.0" })(["policy", "check", "~/policy.json"]).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, home),
+        Effect.provide(NetService.layer),
+      );
+
+      assert.include((yield* TestConsole.logLines).join("\n"), `Managed by Tilde Corp (${file}`);
+    }).pipe(Effect.provide(Layer.fresh(TestConsole.layer))),
   );
 });
