@@ -2068,6 +2068,15 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     Effect.asVoid,
   );
 
+  // Replay idle does not prove history is over: a prompt waits for the pending
+  // session/load to answer, or for its load timeout, before it goes out.
+  const awaitLateSessionLoad = Effect.gen(function* () {
+    const late = yield* Ref.get(lateSessionLoadRef);
+    if (Option.isNone(late)) return undefined;
+    yield* Fiber.await(late.value.response);
+    return late.value.response;
+  });
+
   // Adopts the agent's real session/load response after a replay-idle start.
   // Anything that changed the session or its configuration in between is newer
   // than this response, so the response is dropped instead of applied.
@@ -2899,35 +2908,44 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       promptSerializationSemaphore
         .withPermit(
           Effect.acquireUseRelease(
-            promptDispatchSemaphore.withPermit(
-              Effect.gen(function* () {
-                const started = yield* getStartedState;
-                yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
-                yield* Ref.set(assistantUpdatesOpenRef, true);
-                yield* Ref.set(lateLoadReplaySessionIdRef, null);
-                const requestPayload = {
-                  sessionId: started.sessionId,
-                  ...payload,
-                } satisfies EffectAcpSchema.PromptRequest;
-                const completed = yield* Deferred.make<void>();
-                const queued = yield* Deferred.make<void>();
-                const fiber = yield* runLoggedRequest(
-                  "session/prompt",
-                  requestPayload,
-                  acp.agent
-                    .prompt(requestPayload)
-                    .pipe(
-                      Effect.provideService(EffectAcpProtocol.AcpOutgoingQueued, queued),
-                      Effect.ensuring(Deferred.succeed(queued, undefined)),
-                    ),
-                ).pipe(Effect.forkIn(runtimeScope));
-                const active = { fiber, completed, queued } satisfies AcpActivePrompt;
-                yield* Ref.set(activePromptRef, Option.some(active));
-                if (promptOptions?.dispatched) {
-                  yield* Deferred.succeed(promptOptions.dispatched, undefined);
-                }
-                return active;
-              }).pipe(notificationSemaphore.withPermit),
+            awaitLateSessionLoad.pipe(
+              Effect.flatMap((settledLoad) =>
+                promptDispatchSemaphore.withPermit(
+                  Effect.gen(function* () {
+                    const started = yield* getStartedState;
+                    yield* closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef });
+                    yield* Ref.set(assistantUpdatesOpenRef, true);
+                    if (settledLoad !== undefined) {
+                      const late = yield* Ref.get(lateSessionLoadRef);
+                      if (Option.isNone(late) || late.value.response === settledLoad) {
+                        yield* Ref.set(lateLoadReplaySessionIdRef, null);
+                      }
+                    }
+                    const requestPayload = {
+                      sessionId: started.sessionId,
+                      ...payload,
+                    } satisfies EffectAcpSchema.PromptRequest;
+                    const completed = yield* Deferred.make<void>();
+                    const queued = yield* Deferred.make<void>();
+                    const fiber = yield* runLoggedRequest(
+                      "session/prompt",
+                      requestPayload,
+                      acp.agent
+                        .prompt(requestPayload)
+                        .pipe(
+                          Effect.provideService(EffectAcpProtocol.AcpOutgoingQueued, queued),
+                          Effect.ensuring(Deferred.succeed(queued, undefined)),
+                        ),
+                    ).pipe(Effect.forkIn(runtimeScope));
+                    const active = { fiber, completed, queued } satisfies AcpActivePrompt;
+                    yield* Ref.set(activePromptRef, Option.some(active));
+                    if (promptOptions?.dispatched) {
+                      yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                    }
+                    return active;
+                  }).pipe(notificationSemaphore.withPermit),
+                ),
+              ),
             ),
             (activePrompt) => {
               const settled = joinPrompt(activePrompt.fiber).pipe(

@@ -10454,6 +10454,14 @@ describe("AcpAdapterV2", () => {
           ...history("before-prompt"),
           ...(newerConfig ? [finishLoad] : []),
           response("_test/before-prompt", {}),
+          ...(!newerConfig
+            ? [
+                request("_test/after-prompt"),
+                ...history("after-prompt"),
+                finishLoad,
+                response("_test/after-prompt", {}),
+              ]
+            : []),
           request("session/prompt"),
           notifySession(sessionId, {
             sessionUpdate: "agent_message_chunk",
@@ -10461,9 +10469,6 @@ describe("AcpAdapterV2", () => {
             content: { type: "text", text: "fresh reply" },
           }),
           response("session/prompt", { stopReason: "end_turn" }),
-          ...(!newerConfig
-            ? [request("_test/finish-load"), finishLoad, response("_test/finish-load", {})]
-            : []),
         ]);
         const native = yield* Deferred.make<AcpSessionRuntime.AcpSessionRuntime["Service"]>();
         const releaseReplay = (method: string) =>
@@ -10515,7 +10520,11 @@ describe("AcpAdapterV2", () => {
                       yield* releaseReplay("_test/before-prompt");
                       if (newerConfig) yield* Queue.take(loadResponses);
                       assert.equal(yield* runtime.isSessionLoadInFlight!(sessionId), !newerConfig);
-                      return yield* runtime.prompt(payload, promptOptions);
+                      const prompting = yield* runtime
+                        .prompt(payload, promptOptions)
+                        .pipe(Effect.forkChild);
+                      if (!newerConfig) yield* releaseReplay("_test/after-prompt");
+                      return yield* Fiber.join(prompting);
                     }),
                 })),
               );
@@ -10616,7 +10625,7 @@ describe("AcpAdapterV2", () => {
         assert.isEmpty(continuations);
         assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
         const snapshot = yield* runtime.readThreadSnapshot({ providerThread });
-        const phases = ["load", "idle", "before-prompt"];
+        const phases = ["load", "idle", "before-prompt", ...(newerConfig ? [] : ["after-prompt"])];
         assert.sameDeepMembers(
           snapshot.messages.map((message) => [message.role, message.text]),
           [
@@ -10630,7 +10639,6 @@ describe("AcpAdapterV2", () => {
         );
         assert.notInclude(runtimeTools, "tool-1");
         if (!newerConfig) {
-          yield* releaseReplay("_test/finish-load");
           yield* Queue.take(loadResponses);
           yield* (yield* Deferred.await(native)).drainEvents;
           assert.include(publishedOptions.flat(), "response-option");
