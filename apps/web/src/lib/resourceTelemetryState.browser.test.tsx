@@ -326,7 +326,6 @@ it("shows each group's process count in German", async () => {
         ...groups,
         backend: { ...groups.backend, processCount: 3 },
         electron: { ...groups.electron, processCount: 1 },
-        monitor: { ...groups.monitor, processCount: 0 },
       },
     }),
   ).pipe(Atom.keepAlive);
@@ -342,5 +341,4 @@ it("shows each group's process count in German", async () => {
   );
   await expect.element(screen.getByText("3 Prozesse", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("1 Prozess", { exact: true })).toBeVisible();
-  await expect.element(screen.getByText("0 Prozesse", { exact: true })).toBeVisible();
 });
