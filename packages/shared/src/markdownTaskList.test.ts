@@ -7,6 +7,7 @@ describe("taskListMarkerOffset", () => {
   it("finds the marker on the line after a bare bullet", () => {
     expect(taskListMarkerOffset("-\n  [ ] Task", 0)).toBe(4);
     expect(taskListMarkerOffset("-\r\n  [ ] Task", 0)).toBe(5);
+    expect(taskListMarkerOffset("-\r  [ ] Task", 0)).toBe(4);
     expect(taskListMarkerOffset("> > 1.\n> >    [ ] Task", 4)).toBe(14);
     expect(taskListMarkerOffset("- First\n- Second", 0)).toBeNull();
   });

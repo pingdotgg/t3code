@@ -1,6 +1,7 @@
 // Callers pass the start of an item remark-gfm parsed as a task, so this only locates the marker:
 // after the bullet, or on the next line (past any blockquote prefix) when the bullet stands alone.
-const taskMarker = /[ \t]*(?:[-+*]|\d+[.)])(?:[ \t]+|[ \t]*\r?\n(?:[ \t]*>)*[ \t]*)\[[ xX]\]/y;
+const taskMarker =
+  /[ \t]*(?:[-+*]|\d+[.)])(?:[ \t]+|[ \t]*(?:\r\n?|\n)(?:[ \t]*>)*[ \t]*)\[[ xX]\]/y;
 
 /** Offset of the `[ ]` marker of the task list item starting at `listItemStart`. */
 export function taskListMarkerOffset(markdown: string, listItemStart: number): number | null {
