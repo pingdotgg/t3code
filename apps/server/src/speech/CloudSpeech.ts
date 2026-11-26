@@ -157,7 +157,11 @@ const OpenRouterCatalog = Schema.Struct({
 const OPENROUTER_DEFAULT_SYNTHESIS_MODEL = "qwen/qwen-audio-3.0-tts-flash";
 
 function openRouterSpeechFormat(model: string) {
-  return model.startsWith("google/gemini-") || model.startsWith("heygen/") ? "pcm" : "mp3";
+  return model.startsWith("google/gemini-") ||
+    model.startsWith("heygen/") ||
+    model.startsWith("qwen/")
+    ? "pcm"
+    : "mp3";
 }
 
 function synthesisErrorReason(status: number): SpeechSynthesisError["reason"] {

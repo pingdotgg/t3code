@@ -135,6 +135,7 @@ export function createTimedWords(input: {
   const loading = new AbortController();
   const listeners = new Set<(word: SpokenWord | null) => void>();
   let words: ReadonlyArray<SpeechSynthesisWord> = [];
+  let estimated = false;
   let current = -1;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const refresh = () => {
@@ -168,8 +169,10 @@ export function createTimedWords(input: {
       const timings = await input.load(received.length, loading.signal);
       received.push(...timings.words);
       words = received;
-      if (timings.done && words.length === 0 && timings.durationSeconds)
+      if (timings.done && words.length === 0 && timings.durationSeconds) {
         words = estimateWordTimings(input.text, timings.durationSeconds);
+        estimated = true;
+      }
       refresh();
       if (timings.done) return;
     }
@@ -186,6 +189,8 @@ export function createTimedWords(input: {
     refresh,
     /** When the word holding offset `at` starts, once its timing has arrived. */
     secondsAt: (at: number) => {
+      // An estimate can land words early or late, so seeking to one skips or repeats speech.
+      if (estimated) return undefined;
       const index = words.findIndex((word) => word.end > at);
       return index === -1 ? undefined : words[index]!.startSeconds;
     },

@@ -415,6 +415,7 @@ it("follows the environment's word timings on the audio clock and estimates them
     seconds = 0.98;
     provider.refresh();
     expect(heard.at(-1)).toEqual({ start: 4, end: 7 });
+    expect(provider.secondsAt(5)).toBe(1);
     provider.stop();
 
     seconds = 2.5;
@@ -427,6 +428,8 @@ it("follows the environment's word timings on the audio clock and estimates them
     estimated.subscribe((word) => guessed.push(word));
     await vi.advanceTimersByTimeAsync(0);
     expect(guessed).toEqual([{ start: 8, end: 14 }]);
+    // Estimated times only highlight; a seek reads again from the word instead of guessing.
+    expect(estimated.secondsAt(4)).toBeUndefined();
     estimated.stop();
   } finally {
     vi.useRealTimers();

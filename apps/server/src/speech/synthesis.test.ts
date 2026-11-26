@@ -423,11 +423,15 @@ it.effect.each(["xai", "openrouter"] as const)(
           );
         }
         if (provider === "openrouter") {
+          upstream.mockResolvedValueOnce(
+            new Response(Uint8Array.of(0, 1), { headers: { "content-type": "audio/pcm" } }),
+          );
           yield* synthesize(provider, { ...request, model: catalog.defaultModel, voice: "" });
+          // Raw audio, so the environment can time each word for highlighting and seeking.
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body))).toMatchObject({
             model: "qwen/qwen-audio-3.0-tts-flash",
             voice: "Cherry",
-            response_format: "mp3",
+            response_format: "pcm",
           });
           yield* synthesize(provider, { ...request, voice: "" });
           expect(JSON.parse(String(upstream.mock.calls.at(-1)?.[1]?.body)).voice).toBe("reader");
