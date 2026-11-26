@@ -957,15 +957,16 @@ export const make = Effect.gen(function* () {
         INSERT INTO workflow_waits (
           run_id, name, workflow, token, key, schema_json, request_json, watch_json, deadline,
           opened_at
-        ) VALUES (
+        ) SELECT
           ${wait.runId}, ${wait.name}, ${wait.workflow}, ${wait.token}, ${wait.key ?? null},
           ${wait.schemaJson}, ${wait.requestJson}, ${wait.watchJson}, ${wait.deadline}, ${at}
-        )
+        FROM workflow_runs WHERE run_id = ${wait.runId} AND ended_at IS NULL
         ON CONFLICT (run_id, name) DO NOTHING
         RETURNING name
       `.pipe(Effect.orDie);
+      if (opened.length === 0) return;
       yield* PubSub.publish(changes, wait.runId);
-      if (opened.length === 0 || wait.requestJson === null) return;
+      if (wait.requestJson === null) return;
       yield* tell(wait.runId, `${wait.runId}:${wait.name}:${at}`, at, {
         type: "workflow.needs_input",
         step: wait.name,

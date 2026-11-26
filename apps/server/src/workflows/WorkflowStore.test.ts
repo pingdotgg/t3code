@@ -493,6 +493,14 @@ it.effect.each([999, 1000])("buffered mail with a 1s TTL claimed after %i ms", (
     Effect.gen(function* () {
       const store = yield* WorkflowStore.WorkflowStore;
       const address = { workflow: "gate", channel: "ready" };
+      yield* store.runStarted({
+        runId: "r1",
+        workflow: address.workflow,
+        version: 1,
+        engineTag: `${address.workflow}@1`,
+        idempotencyKey: "r1",
+        input: {},
+      });
       yield* store.waitOpened({
         runId: "r1",
         name: "go",
@@ -918,6 +926,62 @@ it.effect("a run waiting on you is listed however many runs started after it", (
       const listed = new Set((yield* store.runs(undefined)).map((run) => run.run_id));
       assert.isTrue(listed.has("old"));
       assert.isTrue(listed.has("paused"));
+    }),
+  ),
+);
+
+it.effect("an ended run opens no waits or questions", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const hub = yield* MilestoneHub.MilestoneHub;
+      const sql = yield* SqlClient.SqlClient;
+      const start = (runId: string) =>
+        store.runStarted({
+          runId,
+          workflow: "review",
+          version: 1,
+          engineTag: "review@1",
+          idempotencyKey: runId,
+          input: {},
+        });
+      yield* start("ended");
+      yield* start("live");
+      yield* store.runEnded("ended", "cancelled", "stopped", null);
+      yield* store.waitOpened({
+        runId: "ended",
+        name: "approve",
+        workflow: "review",
+        key: "deploy",
+        token: "token-ended",
+        schemaJson: "{}",
+        requestJson: '{"title":"Ship it?"}',
+        watchJson: null,
+        deadline: null,
+      });
+      yield* store.waitOpened({
+        runId: "live",
+        name: "approve",
+        workflow: "review",
+        key: "deploy",
+        token: "token-live",
+        schemaJson: "{}",
+        requestJson: null,
+        watchJson: null,
+        deadline: null,
+      });
+      assert.lengthOf(yield* sql`SELECT name FROM workflow_waits WHERE run_id = 'ended'`, 0);
+      assert.isUndefined(yield* store.waitAt({ runId: "ended", wait: "approve" }));
+      assert.equal(
+        (yield* store.waitAt({ workflow: "review", channel: "deploy" }))?.run_id,
+        "live",
+      );
+      assert.deepStrictEqual(yield* store.requests, []);
+      assert.deepStrictEqual(yield* store.counts, { needsYou: 0, active: 1, total: 2 });
+      assert.deepStrictEqual(
+        (yield* hub.recent()).events.filter((event) => event.type === "workflow.needs_input"),
+        [],
+      );
     }),
   ),
 );
