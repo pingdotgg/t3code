@@ -243,17 +243,17 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
         destinationPath: destinationPath.trim(),
         files: [...selectedFiles.keys()],
       });
-      if (useRequest.getState().request !== request) return;
-      const targetRef = scopeProjectRef(target.environmentId, projectId);
-      silenceProjectCloneToasts(targetRef);
-      close();
-      openClonedProject(targetRef);
+      if (useRequest.getState().request === request) {
+        const targetRef = scopeProjectRef(target.environmentId, projectId);
+        silenceProjectCloneToasts(targetRef);
+        close();
+        openClonedProject(targetRef);
+      }
     } catch (cause) {
       setError(thrownErrorMessage(cause, m) ?? gt("Could not start the clone."));
       setSubmitting(false);
-    } finally {
-      releaseToastHold();
     }
+    releaseToastHold();
   };
 
   return (
