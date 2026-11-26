@@ -723,6 +723,17 @@ describe("question answer paths", () => {
           },
           expected: ["Map of the river\nFigure 1. River crossings\nWater levels rose in May."],
         },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Departure information.<aside>Check local time.</aside>Board promptly.</div><div>Keep <aside></aside>walking.</div></body></html>',
+          },
+          expected: ["Departure information.\nCheck local time.\nBoard promptly.\nKeep walking."],
+        },
         // A prefixed span attribute is foreign markup, not an XHTML span.
         {
           ext: "epub",
