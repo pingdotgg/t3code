@@ -1617,6 +1617,12 @@ it.layer(
         const cacheDir = yield* ServerConfig.ServerConfig.pipe(
           Effect.map((config) => config.providerStatusCacheDir),
         );
+        const removedModel = {
+          slug: "openai/gpt-5",
+          name: "GPT-5",
+          isCustom: false,
+          capabilities: null,
+        } as const;
         const cachedProvider = {
           instanceId: ProviderInstanceId.make("claudeAgent-gateway"),
           driver: ProviderDriverKind.make("claudeAgent"),
@@ -1632,8 +1638,8 @@ it.layer(
               name: "Sonnet 4.5",
               isCustom: false,
               capabilities: null,
-            },
-            { slug: "openai/gpt-5", name: "GPT-5", isCustom: false, capabilities: null },
+            } as const,
+            removedModel,
           ],
           slashCommands: [],
           skills: [],
@@ -1641,7 +1647,7 @@ it.layer(
         const refreshedProvider = {
           ...cachedProvider,
           checkedAt: "2026-11-26T00:01:00.000Z",
-          models: [cachedProvider.models[0]],
+          models: [cachedProvider.models[0]!],
         } satisfies ServerProvider;
         const filePath = yield* resolveProviderStatusCachePath({
           cacheDir,
