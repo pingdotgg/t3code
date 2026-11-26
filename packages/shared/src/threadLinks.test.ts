@@ -265,6 +265,9 @@ describe("thread links", () => {
       ]),
       `Note \`\n<!-- comment --> \`\n${link} \``,
       `Note \`\n<!--\n\`\n-->\n${link} \``,
+      ...["\r", "\r\n"].map((newline) =>
+        ["Note `", "<!--", "`", "-->", "More `", `# ${link} \``].join(newline),
+      ),
       `Note \`\n<!--\n\`\`\`\n-->\n${link} \``,
       `> Note \`\n> <!--\n> \`\n> -->\n> ${link} \``,
       `> Note \`\n> <!-- \`\n${link} \``,
