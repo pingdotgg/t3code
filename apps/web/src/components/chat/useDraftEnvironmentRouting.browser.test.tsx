@@ -434,6 +434,9 @@ it.each(["deleted", "moved"] as const)(
       <Harness input={{ ...input, automaticEnvironment: false }} />,
     );
     const connectedIds = environmentSummaries.connectedEnvironmentIdsAtom;
+    if (!Atom.isWritable<readonly EnvironmentId[], readonly EnvironmentId[]>(connectedIds)) {
+      throw new Error("Expected writable test connection state");
+    }
     using _connected = { [Symbol.dispose]: appAtomRegistry.mount(connectedIds) };
     await act(async () => appAtomRegistry.set(connectedIds, [b]));
     await screen.getByRole("button", { name: `Switch to ${b}` }).click();
