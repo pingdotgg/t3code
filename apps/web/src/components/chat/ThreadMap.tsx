@@ -367,7 +367,7 @@ function ThreadMapCanvas({
         ref={setCanvas}
         data-dragging={dragging || undefined}
         data-glide={glide || undefined}
-        className="relative min-h-48 flex-1 cursor-grab touch-none overflow-clip select-none data-dragging:cursor-grabbing data-glide:transition-[background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
+        className="relative min-h-0 flex-1 cursor-grab touch-none overflow-clip select-none data-dragging:cursor-grabbing data-glide:transition-[background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
         style={
           view === null
             ? undefined
