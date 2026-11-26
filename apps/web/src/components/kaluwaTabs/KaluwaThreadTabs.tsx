@@ -12,7 +12,9 @@ import {
 } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { useGT } from "gt-react";
-import { PlusIcon, XIcon } from "lucide-react";
+import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { FolderIcon, PlusIcon, XIcon } from "lucide-react";
 import {
   useEffect,
   useRef,
@@ -45,7 +47,7 @@ import {
 } from "../../kaluwa/kaluwaTabsSettings";
 import { observeResize } from "../../lib/observeResize";
 import { cn } from "../../lib/utils";
-import { useThreadShell } from "../../state/entities";
+import { useProjects, useThreadShell } from "../../state/entities";
 import {
   useEnvironmentMachines,
   useEnvironments,
@@ -66,7 +68,11 @@ import {
   resolveSidebarRowStatus,
   resolveThreadLastVisitedAt,
 } from "../Sidebar.logic";
-import { KaluwaThreadAvatar } from "../sidebar/KaluwaThreadAvatar";
+import type { KaluwaThreadAvatar } from "../sidebar/KaluwaThreadAvatar";
+import { ProjectFavicon } from "../ProjectFavicon";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
+import { kaluwaInstanceAccent } from "../../kaluwa/kaluwaAccent";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -81,6 +87,7 @@ import {
   registerThreadTabStrip,
   syncThreadTabRoute,
   threadTabKeyForRouteTarget,
+  threadTabProjectKey,
   updateThreadTabs,
   useLiveThreadTabs,
 } from "./threadTabActions";
@@ -193,6 +200,7 @@ function KaluwaThreadTabStrip({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const machines = useEnvironmentMachines();
   const { environments } = useEnvironments();
+  const projects = useProjects();
   const dragRef = useRef<TabDrag | null>(null);
   const suppressClickRef = useRef(false);
   const [renaming, setRenaming] = useState<Renaming>(null);
@@ -226,7 +234,14 @@ function KaluwaThreadTabStrip({
   const environmentLabel = (environmentId: EnvironmentId) =>
     environments.find((environment) => environment.environmentId === environmentId)?.label ?? null;
 
-  const menuContext: ThreadTabMenuContext = { router, startRename: setRenaming };
+  const menuContext: ThreadTabMenuContext = {
+    router,
+    startRename: setRenaming,
+    projectName: (project) =>
+      projects.find(
+        (candidate) => threadTabProjectKey(candidate.environmentId, candidate.id) === project,
+      )?.title ?? null,
+  };
 
   const handleTabContextMenu = (event: ReactMouseEvent, key: ThreadTabKey) => {
     event.preventDefault();
@@ -414,6 +429,11 @@ function KaluwaThreadTabStrip({
   const closeLabel = closeTabShortcut
     ? gt("Close tab ({shortcut})", { shortcut: closeTabShortcut })
     : gt("Close tab");
+  const projectByKey = new Map(
+    projects.map((project) => [threadTabProjectKey(project.environmentId, project.id), project]),
+  );
+  const projectFor: ProjectLookup = (environmentId, projectId) =>
+    projectByKey.get(threadTabProjectKey(environmentId, projectId)) ?? null;
   const groupsById = new Map(state.groups.map((group) => [group.id, group]));
   const items: ReactNode[] = [];
   const chippedGroups = new Set<string>();
@@ -427,6 +447,7 @@ function KaluwaThreadTabStrip({
         <ThreadTabGroupChip
           key={`group:${group.id}`}
           group={group}
+          project={group.project === undefined ? null : (projectByKey.get(group.project) ?? null)}
           count={state.tabs.filter((tab) => state.groupOf[tab] === group.id).length}
           renaming={renaming?.kind === "group" && renaming.id === group.id}
           onToggle={() => {
@@ -475,6 +496,7 @@ function KaluwaThreadTabStrip({
       primaryEnvironmentId,
       machineOf: (environmentId) => machines.get(environmentId) ?? "server",
       environmentLabel,
+      projectFor,
     };
     items.push(
       target.kind === "thread" ? (
@@ -587,9 +609,12 @@ function RenameInput(props: {
   );
 }
 
+type ProjectLookup = (environmentId: string, projectId: string) => EnvironmentProject | null;
+
 function ThreadTabGroupChip(
   props: PointerHandlers & {
     readonly group: ThreadTabGroup;
+    readonly project: EnvironmentProject | null;
     readonly count: number;
     readonly renaming: boolean;
     readonly onToggle: () => void;
@@ -599,8 +624,9 @@ function ThreadTabGroupChip(
   },
 ) {
   const gt = useGT();
-  const { group } = props;
-  const label = group.name.length > 0 ? group.name : gt("Unnamed group");
+  const { group, project } = props;
+  const name = project?.title ?? group.name;
+  const label = name.length > 0 ? name : gt("Unnamed group");
   if (props.renaming) {
     return (
       <span
@@ -619,29 +645,56 @@ function ThreadTabGroupChip(
     );
   }
   return (
-    <button
-      type="button"
-      className="kaluwa-tab-group-chip max-md:hidden"
-      data-kaluwa-group-chip={group.id}
-      data-kaluwa-group-color={group.color}
-      data-collapsed={group.collapsed || undefined}
-      data-unnamed={group.name.length === 0 || undefined}
-      aria-expanded={!group.collapsed}
-      aria-label={
-        group.collapsed
-          ? gt("Expand group {name}", { name: label })
-          : gt("Collapse group {name}", { name: label })
-      }
-      onClick={props.onToggle}
-      onContextMenu={props.onContextMenu}
-      onPointerDown={props.onPointerDown}
-      onPointerMove={props.onPointerMove}
-      onPointerUp={props.onPointerUp}
-      onPointerCancel={props.onPointerCancel}
-    >
-      {group.name.length > 0 ? <span className="kaluwa-tab-group-name">{group.name}</span> : null}
-      {group.collapsed ? <span className="kaluwa-tab-group-count">{props.count}</span> : null}
-    </button>
+    <Tooltip>
+      <TooltipTrigger
+        delay={500}
+        render={
+          <button
+            type="button"
+            className="kaluwa-tab-group-chip max-md:hidden"
+            data-kaluwa-group-chip={group.id}
+            data-kaluwa-group-color={group.color}
+            data-collapsed={group.collapsed || undefined}
+            data-unnamed={name.length === 0 || undefined}
+            data-project-group={project !== null || undefined}
+            aria-expanded={!group.collapsed}
+            aria-label={
+              group.collapsed
+                ? gt("Expand group {name}", { name: label })
+                : gt("Collapse group {name}", { name: label })
+            }
+            onClick={props.onToggle}
+            onContextMenu={props.onContextMenu}
+            onPointerDown={props.onPointerDown}
+            onPointerMove={props.onPointerMove}
+            onPointerUp={props.onPointerUp}
+            onPointerCancel={props.onPointerCancel}
+          />
+        }
+      >
+        {project !== null ? (
+          <ProjectFavicon project={project} className="kaluwa-folder-icon kaluwa-tab-group-icon" />
+        ) : null}
+        {name.length > 0 ? <span className="kaluwa-tab-group-name">{name}</span> : null}
+        {group.collapsed ? <span className="kaluwa-tab-group-count">{props.count}</span> : null}
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        <span className="kaluwa-tab-card">
+          <span className="kaluwa-tab-card-row">
+            {project !== null ? (
+              <ProjectFavicon
+                project={project}
+                className="kaluwa-folder-icon kaluwa-tab-card-icon"
+              />
+            ) : null}
+            <span className="kaluwa-tab-card-title">{label}</span>
+          </span>
+          <span className="kaluwa-tab-card-meta">
+            {gt("{count, plural, one {{count} tab} other {{count} tabs}}", { count: props.count })}
+          </span>
+        </span>
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -663,9 +716,80 @@ type TabProps = PointerHandlers & {
     environmentId: EnvironmentId,
   ) => ComponentProps<typeof EnvironmentMachineIcon>["kind"];
   readonly environmentLabel: (environmentId: EnvironmentId) => string | null;
+  readonly projectFor: ProjectLookup;
 };
 
 type TabAvatarStatus = ComponentProps<typeof KaluwaThreadAvatar>["status"];
+type TabProvider = NonNullable<ReturnType<typeof useThreadTabProvider>>;
+
+const PIP_STATUSES = new Set<TabAvatarStatus>(["approval", "input", "request", "failed", "done"]);
+
+/** The project's icon, its provider as a badge on the bottom corner, and the status ring. */
+function TabIdentity(props: {
+  readonly project: EnvironmentProject | null;
+  readonly provider: TabProvider | null;
+  readonly status: TabAvatarStatus;
+  readonly draft: boolean;
+}) {
+  const { provider, status } = props;
+  return (
+    <span aria-hidden className="kaluwa-av kaluwa-tab-ident" data-kaluwa-status={status ?? "idle"}>
+      {status ? <span className="kaluwa-av-ring" /> : null}
+      {/* Only `transform` animates, so the spinner stays on the compositor. */}
+      {status === "working" ? <span className="kaluwa-av-spin" /> : null}
+      {props.project !== null ? (
+        <ProjectFavicon project={props.project} className="kaluwa-folder-icon kaluwa-tab-project" />
+      ) : (
+        <FolderIcon className="kaluwa-tab-project kaluwa-tab-project-fallback" />
+      )}
+      {provider !== null ? (
+        <span className="kaluwa-tab-provider">
+          <ProviderInstanceIcon
+            driverKind={provider.entry.driverKind}
+            displayName={provider.entry.displayName}
+            accentColor={provider.entry.accentColor}
+            acpRegistryAgentId={provider.entry.acpRegistryAgentId}
+            acpRegistryIconUrl={provider.entry.acpRegistryIconUrl}
+            // Fork: the owner wants the subscription's initials on every tab, not only when a
+            // provider has several instances.
+            showBadge
+            size="compact"
+            className="kaluwa-av-logo"
+            iconClassName="kaluwa-av-icon"
+            badgeClassName="kaluwa-av-badge"
+          />
+        </span>
+      ) : props.draft ? (
+        <span className="kaluwa-tab-provider kaluwa-tab-provider-new">
+          <PlusIcon />
+        </span>
+      ) : null}
+      {status && PIP_STATUSES.has(status) ? <span className="kaluwa-av-pip" /> : null}
+    </span>
+  );
+}
+
+function useStatusLabel(status: TabAvatarStatus): string | null {
+  const gt = useGT();
+  switch (status) {
+    case "working":
+      return gt("Working", { $context: "thread status" });
+    case "waiting":
+      return gt("Waiting", { $context: "thread status" });
+    case "approval":
+      return gt("Approval", { $context: "thread status: needs approval" });
+    case "input":
+      return gt("Input", { $context: "thread status: needs user input" });
+    case "request":
+      return gt("Request", { $context: "thread status: guest request" });
+    case "failed":
+      return gt("Failed", { $context: "thread status" });
+    case "done":
+      return gt("Done", { $context: "thread status" });
+    default:
+      return null;
+  }
+}
 
 function ServerThreadTab({
   threadRef,
@@ -695,19 +819,25 @@ function ServerThreadTab({
               : null
             : rowStatus;
   }
+  const model = thread
+    ? provider?.entry.models.find((candidate) => candidate.slug === thread.modelSelection.model)
+    : undefined;
+  const modelLabel = thread
+    ? model
+      ? getTriggerDisplayModelName(model, provider?.entry.driverKind)
+      : thread.modelSelection.model
+    : null;
+  const project = thread ? props.projectFor(thread.environmentId, thread.projectId) : null;
   return (
     <ThreadTabFrame
       {...props}
       title={thread?.title ?? gt("Loading thread")}
       environmentId={threadRef.environmentId}
-      avatar={
-        <KaluwaThreadAvatar
-          providerEntry={provider?.entry ?? null}
-          showInstanceBadge={provider?.showBadge ?? false}
-          status={status}
-          recede={false}
-        />
-      }
+      project={project}
+      provider={provider}
+      status={status}
+      modelLabel={modelLabel}
+      draft={false}
     />
   );
 }
@@ -717,12 +847,23 @@ function DraftThreadTab({ draftId, ...props }: TabProps & { readonly draftId: st
   const environmentId = useComposerDraftStore(
     (store) => store.draftThreadsByThreadKey[draftId]?.environmentId ?? null,
   );
+  const projectId = useComposerDraftStore(
+    (store) => store.draftThreadsByThreadKey[draftId]?.projectId ?? null,
+  );
   return (
     <ThreadTabFrame
       {...props}
       title={gt("New thread")}
       environmentId={environmentId}
-      avatar={<PlusIcon aria-hidden className="kaluwa-tab-draft-icon" />}
+      project={
+        environmentId !== null && projectId !== null
+          ? props.projectFor(environmentId, projectId)
+          : null
+      }
+      provider={null}
+      status={null}
+      modelLabel={null}
+      draft
     />
   );
 }
@@ -731,16 +872,24 @@ function ThreadTabFrame(
   props: TabProps & {
     readonly title: string;
     readonly environmentId: EnvironmentId | null;
-    readonly avatar: ReactNode;
+    readonly project: EnvironmentProject | null;
+    readonly provider: TabProvider | null;
+    readonly status: TabAvatarStatus;
+    readonly modelLabel: string | null;
+    readonly draft: boolean;
   },
 ) {
   const gt = useGT();
-  const { environmentId, primaryEnvironmentId } = props;
+  const { environmentId, primaryEnvironmentId, project, provider } = props;
   const remote =
     environmentId !== null &&
     primaryEnvironmentId !== null &&
     environmentId !== primaryEnvironmentId;
   const machineLabel = remote ? props.environmentLabel(environmentId) : null;
+  // Inside its project's group the chip already names the project.
+  const showProjectName = project !== null && props.group?.project === undefined;
+  const statusLabel = useStatusLabel(props.status);
+  const accent = provider ? kaluwaInstanceAccent(provider.entry.accentColor) : undefined;
 
   const tabRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the newly active tab into the visible part of the strip
@@ -775,7 +924,7 @@ function ThreadTabFrame(
             data-kaluwa-group-color={props.group?.color}
             data-pinned={props.pinned || undefined}
             aria-selected={props.active}
-            aria-label={props.pinned ? props.title : undefined}
+            aria-label={project !== null ? `${project.title} · ${props.title}` : props.title}
             tabIndex={props.active ? 0 : -1}
             className={cn("kaluwa-tab", !props.active && "max-md:hidden")}
             onClick={props.onClick}
@@ -792,7 +941,12 @@ function ThreadTabFrame(
           />
         }
       >
-        {props.avatar}
+        <TabIdentity
+          project={project}
+          provider={provider}
+          status={props.status}
+          draft={props.draft}
+        />
         {props.renaming ? (
           <RenameInput
             initial={props.title}
@@ -802,8 +956,13 @@ function ThreadTabFrame(
             onCancel={props.onCancelRename}
           />
         ) : (
-          <span className="kaluwa-tab-title" dir={textDirection(props.title)}>
-            {props.title}
+          <span className="kaluwa-tab-label">
+            {showProjectName ? (
+              <span className="kaluwa-tab-project-name">{project.title}</span>
+            ) : null}
+            <span className="kaluwa-tab-title" dir={textDirection(props.title)}>
+              {props.title}
+            </span>
           </span>
         )}
         {remote && environmentId !== null ? (
@@ -833,12 +992,54 @@ function ThreadTabFrame(
         </button>
       </TooltipTrigger>
       <TooltipPopup side="bottom">
-        <span className="block max-w-80 truncate">{props.title}</span>
-        {machineLabel ? (
-          <span className="block text-muted-foreground">
-            {gt("Runs on {machine}", { machine: machineLabel })}
+        <span className="kaluwa-tab-card">
+          {project !== null ? (
+            <span className="kaluwa-tab-card-row kaluwa-tab-card-meta">
+              <ProjectFavicon
+                project={project}
+                className="kaluwa-folder-icon kaluwa-tab-card-icon"
+              />
+              <span className="kaluwa-tab-card-project">{project.title}</span>
+              {machineLabel ? <span>{gt("on {machine}", { machine: machineLabel })}</span> : null}
+            </span>
+          ) : null}
+          <span className="kaluwa-tab-card-title" dir={textDirection(props.title)}>
+            {props.title}
           </span>
-        ) : null}
+          {provider !== null ? (
+            <span className="kaluwa-tab-card-row">
+              <ProviderInstanceIcon
+                driverKind={provider.entry.driverKind}
+                displayName={provider.entry.displayName}
+                accentColor={provider.entry.accentColor}
+                acpRegistryAgentId={provider.entry.acpRegistryAgentId}
+                acpRegistryIconUrl={provider.entry.acpRegistryIconUrl}
+                size="compact"
+              />
+              <span
+                className="kaluwa-tab-card-provider"
+                style={accent ? { color: accent } : undefined}
+              >
+                {provider.entry.displayName}
+              </span>
+              <span
+                className="kaluwa-tab-card-initials"
+                style={accent ? { backgroundColor: accent } : undefined}
+              >
+                {providerInstanceInitials(provider.entry.displayName)}
+              </span>
+              {props.modelLabel ? (
+                <span className="kaluwa-tab-card-meta">{props.modelLabel}</span>
+              ) : null}
+            </span>
+          ) : null}
+          {statusLabel !== null ? (
+            <span className="kaluwa-tab-card-row kaluwa-tab-card-meta">
+              <span className="kaluwa-tab-card-dot" data-kaluwa-status={props.status ?? "idle"} />
+              {statusLabel}
+            </span>
+          ) : null}
+        </span>
       </TooltipPopup>
     </Tooltip>
   );

@@ -46,6 +46,8 @@ export type ThreadTabMenuContext = {
           readonly id: string;
         },
   ) => void;
+  /** The name of a project group's project. */
+  readonly projectName: (project: string) => string | null;
 };
 
 type MenuPlacement = {
@@ -64,6 +66,10 @@ const GROUP_COLOR_FALLBACKS: Record<ThreadTabGroupColor, string> = {
   lagoon: "#6fb3b8",
   dusk: "#8f95d6",
   ash: "#a8a29e",
+  accent: "#f2683a",
+  sand: "#d8c48f",
+  moss: "#9cae74",
+  slate: "#8796ad",
 };
 
 const swatchIcons = new Map<string, string>();
@@ -95,8 +101,10 @@ function newGroupId(): string {
   return `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
-function groupLabel(group: ThreadTabGroup): string {
-  return group.name.length > 0 ? group.name : m(msg("Unnamed group"));
+function groupLabel(context: ThreadTabMenuContext, group: ThreadTabGroup): string {
+  const name =
+    group.project === undefined ? group.name : (context.projectName(group.project) ?? "");
+  return name.length > 0 ? name : m(msg("Unnamed group"));
 }
 
 type TabMenuAction =
@@ -161,7 +169,7 @@ export async function showThreadTabMenu(
             label: m(msg("Add tab to group")),
             children: otherGroups.map((group) => ({
               id: `group:${group.id}` as const,
-              label: groupLabel(group),
+              label: groupLabel(context, group),
               ...(swatchIcon(group.color) ? { iconImage: swatchIcon(group.color)! } : {}),
             })),
           },
@@ -279,18 +287,23 @@ export async function showThreadTabGroupMenu(
 ): Promise<void> {
   const api = readLocalApi();
   if (!api) return;
+  // A project's group is named and coloured after the project.
   const items: ContextMenuItem<GroupMenuAction>[] = [
-    { id: "rename", label: m(msg("Rename group")) },
-    {
-      id: "color:",
-      label: m(msg("Group color")),
-      children: THREAD_TAB_GROUP_COLORS.map((color) => ({
-        id: `color:${color}` as const,
-        label: m(KALUWA_SWATCH_LABELS[color]),
-        checked: group.color === color,
-        ...(swatchIcon(color) ? { iconImage: swatchIcon(color)! } : {}),
-      })),
-    },
+    ...(group.project !== undefined
+      ? []
+      : [
+          { id: "rename" as const, label: m(msg("Rename group")) },
+          {
+            id: "color:" as const,
+            label: m(msg("Group color")),
+            children: THREAD_TAB_GROUP_COLORS.map((color) => ({
+              id: `color:${color}` as const,
+              label: m(KALUWA_SWATCH_LABELS[color]),
+              checked: group.color === color,
+              ...(swatchIcon(color) ? { iconImage: swatchIcon(color)! } : {}),
+            })),
+          },
+        ]),
     {
       id: "toggle",
       label: group.collapsed ? m(msg("Expand group")) : m(msg("Collapse group")),

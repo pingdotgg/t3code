@@ -3554,7 +3554,8 @@ html.dark[data-kaluwa-look]
 .kaluwa-tabs {
   --kaluwa-tab-fill: var(--card);
   --kaluwa-tab-hover: color-mix(in srgb, var(--foreground) 6%, transparent);
-  --kaluwa-avatar: 13px;
+  --kaluwa-avatar: 16px;
+  --kaluwa-proj-icon: 16px;
   display: flex;
   flex: 1;
   align-self: stretch;
@@ -3600,10 +3601,10 @@ html.dark[data-kaluwa-look]
   --sidebar: var(--background);
   position: relative;
   display: flex;
-  flex: 0 1 190px;
+  flex: 0 1 200px;
   align-items: center;
   gap: 7px;
-  min-width: 7.5rem;
+  min-width: 8.5rem;
   height: var(--kaluwa-tab-height, 30px);
   padding: 0 6px 0 10px;
   border-radius: var(--kaluwa-tab-radius, 8px);
@@ -3641,12 +3642,6 @@ html.dark[data-kaluwa-look]
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: left;
-}
-.kaluwa-tab-draft-icon {
-  flex: none;
-  width: var(--kaluwa-avatar);
-  height: var(--kaluwa-avatar);
-  color: var(--muted-foreground);
 }
 .kaluwa-tab-env {
   display: grid;
@@ -3828,7 +3823,7 @@ html.dark[data-kaluwa-look]
   width: calc(var(--kaluwa-tab-height, 30px) + 4px);
   padding: 0;
 }
-.kaluwa-tab[data-pinned] :is(.kaluwa-tab-title, .kaluwa-tab-env, .kaluwa-tab-close) {
+.kaluwa-tab[data-pinned] :is(.kaluwa-tab-label, .kaluwa-tab-env, .kaluwa-tab-close) {
   display: none;
 }
 
@@ -3859,6 +3854,18 @@ html.dark[data-kaluwa-look]
 }
 [data-kaluwa-group-color="ash"] {
   --kaluwa-group: var(--kaluwa-swatch-ash, #a8a29e);
+}
+[data-kaluwa-group-color="accent"] {
+  --kaluwa-group: var(--kaluwa-swatch-accent, #f2683a);
+}
+[data-kaluwa-group-color="sand"] {
+  --kaluwa-group: var(--kaluwa-swatch-sand, #d8c48f);
+}
+[data-kaluwa-group-color="moss"] {
+  --kaluwa-group: var(--kaluwa-swatch-moss, #9cae74);
+}
+[data-kaluwa-group-color="slate"] {
+  --kaluwa-group: var(--kaluwa-swatch-slate, #8796ad);
 }
 .kaluwa-tab[data-kaluwa-group-color] {
   background-image: linear-gradient(var(--kaluwa-group), var(--kaluwa-group));
@@ -3975,4 +3982,128 @@ html[data-kaluwa-shadow] [data-slot="composer-host"] {
       rgb(0 0 0 / calc(var(--kaluwa-shadow) * var(--kaluwa-shadow-ink) * 70%)),
     0 calc(var(--kaluwa-shadow) * 3px) calc(var(--kaluwa-shadow) * 8px)
       rgb(0 0 0 / calc(var(--kaluwa-shadow) * var(--kaluwa-shadow-ink) * 30%));
+}
+
+/* Tab identity: the project's icon leads, its provider sits as a badge on the bottom corner, and
+   the status ring wraps the project tile. */
+.kaluwa-tab-ident .kaluwa-av-ring {
+  border-radius: 32%;
+}
+.kaluwa-tab-project {
+  position: relative;
+  z-index: 1;
+}
+.kaluwa-tab-project-fallback {
+  width: var(--kaluwa-proj-icon);
+  height: var(--kaluwa-proj-icon);
+  color: var(--muted-foreground);
+}
+.kaluwa-tab-provider {
+  --kaluwa-avatar: 10px;
+  --kaluwa-badge-font: 6px;
+  position: absolute;
+  right: -5px;
+  bottom: -4px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--sidebar);
+  box-shadow: 0 0 0 1px var(--sidebar);
+}
+.kaluwa-tab-provider .kaluwa-av-logo {
+  width: 10px;
+  height: 10px;
+}
+.kaluwa-tab-provider-new {
+  color: var(--muted-foreground);
+}
+.kaluwa-tab-provider-new svg {
+  width: 9px;
+  height: 9px;
+}
+.kaluwa-tab-label {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  margin-left: 2px;
+  overflow: hidden;
+}
+/* The title keeps its room as a tab narrows; the project name gives way first. */
+.kaluwa-tab-label .kaluwa-tab-title {
+  flex: 1 1 auto;
+  min-width: 3.5em;
+}
+.kaluwa-tab-project-name {
+  flex: 0 4 auto;
+  min-width: 1.5em;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+.kaluwa-tab-project-name + .kaluwa-tab-title::before {
+  content: "·";
+  margin-right: 5px;
+  color: var(--muted-foreground);
+}
+.kaluwa-tab-group-chip[data-project-group] {
+  padding-left: 4px;
+}
+.kaluwa-tab-group-icon {
+  --kaluwa-proj-icon: 13px;
+}
+
+/* The hover card on tabs and group chips. */
+.kaluwa-tab-card {
+  display: grid;
+  gap: 4px;
+  max-width: 22rem;
+  text-align: left;
+  --kaluwa-proj-icon: 14px;
+}
+.kaluwa-tab-card-icon {
+  flex: none;
+}
+.kaluwa-tab-card-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.kaluwa-tab-card-title {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kaluwa-tab-card-project {
+  font-weight: 500;
+  color: var(--foreground);
+}
+.kaluwa-tab-card-meta {
+  color: var(--muted-foreground);
+}
+.kaluwa-tab-card-provider {
+  font-weight: 500;
+}
+.kaluwa-tab-card-initials {
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--background);
+  background: var(--muted-foreground);
+}
+.kaluwa-tab-card-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--kaluwa-st, var(--muted-foreground));
 }

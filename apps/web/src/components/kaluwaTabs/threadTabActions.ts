@@ -6,6 +6,10 @@ import { selectProjectGroupingSettings } from "@t3tools/client-runtime/state/pro
 import { THREAD_TAB_JUMP_KEYBINDING_COMMANDS, type ScopedThreadRef } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 
 import { isCommandPaletteOpen, openCommandPalette } from "../../commandPaletteBus";
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -15,8 +19,14 @@ import {
   resolveDefaultProjectRef,
 } from "../../hooks/useHandleNewThread";
 import { getClientSettings } from "../../hooks/useSettings";
-import { readKaluwaTabsSettings } from "../../kaluwa/kaluwaTabsSettings";
+import { readKaluwaTabsSettings, useKaluwaTabsSettings } from "../../kaluwa/kaluwaTabsSettings";
+import { KALUWA_PROJECT_COLOR_SWATCHES } from "../../kaluwa/kaluwaPalette";
+import { deriveProjectIdentity } from "../../projectIdentity";
 import {
+  THREAD_TAB_GROUP_COLORS,
+  groupThreadTabsByProject,
+  type ProjectGroupingInput,
+  type ThreadTabGroupColor,
   closeThreadTabs,
   parseThreadTabKey,
   pruneThreadTabs,
@@ -41,7 +51,14 @@ import { markKaluwaThreadTabStripMounted } from "../../kaluwa/kaluwaThreadTabSho
 import { startNewThreadFromContext } from "../../lib/chatThreadActions";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { registerCommands, type CommandHandler } from "../../shortcuts/dispatcher";
-import { readProjects, readThreadShell, useThreadRefs } from "../../state/entities";
+import {
+  readProjects,
+  readThreadShell,
+  readThreadShells,
+  useProjects,
+  useQuietThreadShells,
+  useThreadRefs,
+} from "../../state/entities";
 import { defaultProjectFallbackReadyAtom } from "../../state/projects";
 import { liveShellEnvironmentIdsAtom } from "../../state/shell";
 import { environmentThreadShells } from "../../state/threads";
@@ -82,7 +99,7 @@ function livenessInput(
 /** The stored tabs minus any whose thread or draft is gone, read now. */
 export function readLiveThreadTabs(): ThreadTabsState {
   const drafts = useComposerDraftStore.getState();
-  return pruneThreadTabs(
+  const pruned = pruneThreadTabs(
     readThreadTabs(),
     livenessInput(
       appAtomRegistry.get(environmentThreadShells.threadRefsAtom),
@@ -91,6 +108,64 @@ export function readLiveThreadTabs(): ThreadTabsState {
       drafts.promotedDraftRedirects,
     ),
   );
+  return groupThreadTabsByProject(
+    pruned,
+    projectGroupingInput(
+      readKaluwaTabsSettings().groupByProject,
+      readThreadShells(),
+      drafts.draftThreadsByThreadKey,
+      readProjects(),
+    ),
+  );
+}
+
+/** The scoped key a tab's project is grouped by. */
+export function threadTabProjectKey(environmentId: string, projectId: string): string {
+  return `${environmentId}:${projectId}`;
+}
+
+/** A project's group colour: its icon colour's palette swatch, or one picked from its name. */
+function threadTabProjectColor(project: EnvironmentProject): ThreadTabGroupColor {
+  const icon = project.projectIcon;
+  const color =
+    icon && "color" in icon && typeof icon.color === "string"
+      ? icon.color
+      : deriveProjectIdentity(project.title).color;
+  const slot = KALUWA_PROJECT_COLOR_SWATCHES[color];
+  return THREAD_TAB_GROUP_COLORS.find((candidate) => candidate === slot) ?? "steel";
+}
+
+function projectGroupingInput(
+  enabled: boolean,
+  shells: ReadonlyArray<EnvironmentThreadShell>,
+  draftThreadsByThreadKey: Readonly<
+    Record<string, { readonly environmentId: string; readonly projectId: string }>
+  >,
+  projects: ReadonlyArray<EnvironmentProject>,
+): ProjectGroupingInput {
+  const projectByThreadKey = new Map(
+    shells.map((shell) => [
+      `${shell.environmentId}:${shell.id}`,
+      threadTabProjectKey(shell.environmentId, shell.projectId),
+    ]),
+  );
+  const projectByKey = new Map(
+    projects.map((project) => [threadTabProjectKey(project.environmentId, project.id), project]),
+  );
+  return {
+    enabled,
+    projectOf: (key) => {
+      const target = parseThreadTabKey(key);
+      if (target === null) return null;
+      if (target.kind === "thread") return projectByThreadKey.get(scopedThreadKey(target.ref));
+      const draft = draftThreadsByThreadKey[target.draftId];
+      return draft ? threadTabProjectKey(draft.environmentId, draft.projectId) : undefined;
+    },
+    colorOf: (project) => {
+      const found = projectByKey.get(project);
+      return found ? threadTabProjectColor(found) : "steel";
+    },
+  };
 }
 
 /** The same list as `readLiveThreadTabs`, re-rendering when a tab's thread or draft goes. */
@@ -100,9 +175,16 @@ export function useLiveThreadTabs(): ThreadTabsState {
   const liveEnvironmentIds = useAtomValue(liveShellEnvironmentIdsAtom);
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const promotedDraftRedirects = useComposerDraftStore((store) => store.promotedDraftRedirects);
-  return pruneThreadTabs(
+  const { groupByProject } = useKaluwaTabsSettings();
+  const shells = useQuietThreadShells();
+  const projects = useProjects();
+  const pruned = pruneThreadTabs(
     stored,
     livenessInput(threadRefs, liveEnvironmentIds, draftThreadsByThreadKey, promotedDraftRedirects),
+  );
+  return groupThreadTabsByProject(
+    pruned,
+    projectGroupingInput(groupByProject, shells, draftThreadsByThreadKey, projects),
   );
 }
 
@@ -129,11 +211,14 @@ export function syncThreadTabRoute(router: AnyRouter): void {
     openInNewTab: readKaluwaTabsSettings().openIn === "new-tab",
     replaceActive: isActiveDraftSentAs(live, key),
   });
+  // Saved with project groups applied, so a new tab is stored in its project's group.
+  writeThreadTabs(readLiveThreadTabs());
 }
 
 /** Applies a change to the live tab list. */
 export function updateThreadTabs(change: (state: ThreadTabsState) => ThreadTabsState): void {
   writeThreadTabs(change(readLiveThreadTabs()));
+  writeThreadTabs(readLiveThreadTabs());
 }
 
 function navigateToThreadTab(router: AnyRouter, key: ThreadTabKey): void {

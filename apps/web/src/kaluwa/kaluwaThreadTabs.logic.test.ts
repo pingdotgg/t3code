@@ -11,6 +11,8 @@ import {
   dropThreadTab,
   encodeThreadTabs,
   followThreadTabRoute,
+  groupThreadTabsByProject,
+  projectThreadTabGroupId,
   moveThreadTabGroup,
   moveThreadTabToEdge,
   nextThreadTabGroupColor,
@@ -29,6 +31,7 @@ import {
   unpinThreadTab,
   unpinnedThreadTabs,
   updateThreadTabGroup,
+  type ProjectGroupingInput,
   type ThreadTabLivenessInput,
   type ThreadTabsState,
 } from "./kaluwaThreadTabs.logic";
@@ -366,5 +369,114 @@ describe("pruneThreadTabs", () => {
     expect(
       pruneThreadTabs(tabs([a, draft], a), input({ promotedTo: () => ref(local, "a") })),
     ).toEqual(tabs([a], a));
+  });
+});
+
+describe("groupThreadTabsByProject", () => {
+  // a, b, c are in project "p1"; d and e in "p2".
+  const projectOfKey: Record<string, string> = {
+    [a]: "p1",
+    [b]: "p1",
+    [c]: "p1",
+    [d]: "p2",
+    [e]: "p2",
+  };
+  const byProject = (overrides: Partial<ProjectGroupingInput> = {}): ProjectGroupingInput => ({
+    enabled: true,
+    projectOf: (key) => projectOfKey[key] ?? null,
+    colorOf: (project) => (project === "p1" ? "sage" : "plum"),
+    ...overrides,
+  });
+  const p1 = projectThreadTabGroupId("p1");
+  const p2 = projectThreadTabGroupId("p2");
+  const grouped = (state: ThreadTabsState, input = byProject()) =>
+    groupThreadTabsByProject(state, input);
+
+  it("groups two or more tabs of a project where its first tab is", () => {
+    const state = grouped(tabs([a, d, b, e], a));
+    expect(state.tabs).toEqual([a, b, d, e]);
+    expect(state.groupOf).toEqual({ [a]: p1, [b]: p1, [d]: p2, [e]: p2 });
+    expect(state.groups).toEqual([
+      { id: p1, name: "", color: "sage", collapsed: false, project: "p1" },
+      { id: p2, name: "", color: "plum", collapsed: false, project: "p2" },
+    ]);
+  });
+
+  it("leaves a project's only tab ungrouped", () => {
+    const state = tabs([a, d], a);
+    expect(grouped(state)).toBe(state);
+  });
+
+  it("puts a newly opened tab in its project's group", () => {
+    let state = grouped(tabs([a, b, d], d));
+    state = grouped(followThreadTabRoute(state, c, { newTab: true }));
+    expect(state.tabs).toEqual([a, b, c, d]);
+    expect(state.groupOf[c]).toBe(p1);
+  });
+
+  it("does not let another project's new tab join a project group", () => {
+    const state = followThreadTabRoute(grouped(tabs([a, b], b)), d, { newTab: true });
+    expect(state.groupOf[d]).toBeUndefined();
+  });
+
+  it("dissolves a project group when one tab is left, keeping it collapsed state otherwise", () => {
+    let state = grouped(tabs([a, b, d], d));
+    state = updateThreadTabGroup(state, p1, { collapsed: true });
+    expect(grouped(state).groups[0]?.collapsed).toBe(true);
+    state = grouped(closeThreadTab(state, b).state);
+    expect(state.groups).toEqual([]);
+    expect(state.groupOf).toEqual({});
+  });
+
+  it("respects a tab the user dragged out", () => {
+    let state = grouped(tabs([a, b, c, d], d));
+    state = grouped(dropThreadTab(state, a, d, "after"));
+    expect(state.tabs).toEqual([b, c, d, a]);
+    expect(state.groupOf[a]).toBeUndefined();
+    expect(state.ungrouped).toEqual([a]);
+    // Dragging it back between its project's tabs rejoins.
+    state = grouped(dropThreadTab(state, a, b, "after"));
+    expect(state.groupOf[a]).toBe(p1);
+    expect(state.ungrouped).toEqual([]);
+  });
+
+  it("respects removing a tab from its project group and ungrouping it", () => {
+    let state = grouped(tabs([a, b, c], a));
+    state = grouped(removeThreadTabFromGroup(state, c));
+    expect(state.groupOf[c]).toBeUndefined();
+    state = grouped(ungroupThreadTabs(state, p1));
+    expect(state.groups).toEqual([]);
+    expect(new Set(state.ungrouped)).toEqual(new Set([a, b, c]));
+  });
+
+  it("leaves pinned tabs and manual groups alone", () => {
+    let state = pinThreadTab(tabs([a, b, c, d], d), a);
+    state = createThreadTabGroup(state, [b], { id: "mine", color: "steel" });
+    state = grouped(state);
+    expect(state.groupOf).toEqual({ [b]: "mine" });
+    expect(state.pinned).toEqual([a]);
+  });
+
+  it("keeps a tab in its group while its project is not known yet", () => {
+    const state = grouped(tabs([a, b], a));
+    const unknown = byProject({ projectOf: (key) => (key === a ? undefined : projectOfKey[key]) });
+    expect(grouped(state, unknown)).toBe(state);
+  });
+
+  it("dissolves project groups when turned off", () => {
+    const state = grouped(tabs([a, b], a));
+    expect(grouped(state, byProject({ enabled: false }))).toMatchObject({
+      groups: [],
+      groupOf: {},
+    });
+    const plain = tabs([a, b], a);
+    expect(grouped(plain, byProject({ enabled: false }))).toBe(plain);
+  });
+
+  it("groups tabs saved before grouping existed, and round-trips", () => {
+    const loaded = decodeThreadTabs(JSON.stringify({ tabs: [a, d, b], active: a }));
+    const state = grouped(loaded);
+    expect(state.tabs).toEqual([a, b, d]);
+    expect(decodeThreadTabs(encodeThreadTabs(state))).toEqual(state);
   });
 });

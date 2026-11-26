@@ -1,7 +1,6 @@
-// Fork: the tab model behind Kaluwa's titlebar tabs. Pure, so the store, the shortcuts and the
-// tests share one set of rules. A tab is a thread ("thread:<env>:<id>") or a new-thread draft
-// ("draft:<id>"). Pinned tabs come first; a group's tabs sit together; closed tabs are kept in
-// batches so they can be reopened.
+// Fork: the pure tab model behind Kaluwa's titlebar tabs. A tab is a thread or a new-thread draft;
+// pinned tabs come first, a group's tabs sit together, closes are kept for Reopen, and a project's
+// tabs can group themselves, except tabs the user took out.
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
@@ -18,6 +17,10 @@ export const THREAD_TAB_GROUP_COLORS = [
   "lagoon",
   "dusk",
   "ash",
+  "accent",
+  "sand",
+  "moss",
+  "slate",
 ] as const;
 export type ThreadTabGroupColor = (typeof THREAD_TAB_GROUP_COLORS)[number];
 
@@ -26,6 +29,8 @@ export interface ThreadTabGroup {
   readonly name: string;
   readonly color: ThreadTabGroupColor;
   readonly collapsed: boolean;
+  /** Set on a project's automatic group: the project's scoped key. */
+  readonly project?: string;
 }
 
 interface ClosedThreadTab {
@@ -43,6 +48,8 @@ export interface ThreadTabsState {
   readonly groups: ReadonlyArray<ThreadTabGroup>;
   /** Batches of closed tabs, newest last; one close action is one batch. */
   readonly closed: ReadonlyArray<ReadonlyArray<ClosedThreadTab>>;
+  /** Tabs the user took out of their project's group, which grouping by project leaves alone. */
+  readonly ungrouped: ReadonlyArray<ThreadTabKey>;
 }
 
 export type ThreadTabTarget =
@@ -56,6 +63,7 @@ export const EMPTY_THREAD_TABS: ThreadTabsState = {
   groupOf: {},
   groups: [],
   closed: [],
+  ungrouped: [],
 };
 
 const THREAD_PREFIX = "thread:";
@@ -128,6 +136,7 @@ function normalize(state: ThreadTabsState): ThreadTabsState {
     groupOf,
     groups: state.groups.filter((group) => emittedGroups.has(group.id)),
     closed: state.closed.slice(-MAX_CLOSED_BATCHES),
+    ungrouped: state.ungrouped.filter((key) => present.has(key) && groupOf[key] === undefined),
   };
 }
 
@@ -141,6 +150,9 @@ function decodeGroup(value: unknown): ThreadTabGroup | null {
     name: typeof group.name === "string" ? group.name.slice(0, MAX_GROUP_NAME) : "",
     color,
     collapsed: group.collapsed === true,
+    ...(typeof group.project === "string" && group.project.length > 0
+      ? { project: group.project }
+      : {}),
   };
 }
 
@@ -198,6 +210,9 @@ export function decodeThreadTabs(raw: string | null): ThreadTabsState {
     closed: (Array.isArray(value.closed) ? value.closed : [])
       .map(decodeClosedBatch)
       .filter((batch) => batch.length > 0),
+    ungrouped: Array.isArray(value.ungrouped)
+      ? value.ungrouped.filter((key): key is string => typeof key === "string")
+      : [],
   });
 }
 
@@ -251,8 +266,10 @@ export function followThreadTabRoute(
   const tabs = [...state.tabs];
   const insertAt = activePinned ? state.pinned.length : activeIndex + 1;
   tabs.splice(insertAt, 0, key);
+  // A project's group is joined by its own tabs only; grouping by project places the new tab.
   const groupId = state.groupOf[active];
-  const groupOf = groupId === undefined ? state.groupOf : { ...state.groupOf, [key]: groupId };
+  const joinable = groupId !== undefined && groupById(state, groupId)?.project === undefined;
+  const groupOf = joinable ? { ...state.groupOf, [key]: groupId } : state.groupOf;
   return normalize({ ...state, tabs, active: key, groupOf });
 }
 
@@ -359,6 +376,7 @@ export function reopenClosedThreadTabs(state: ThreadTabsState): {
       groupOf,
       groups,
       closed: state.closed.slice(0, -1),
+      ungrouped: state.ungrouped,
     }),
     activate,
   };
@@ -438,6 +456,17 @@ export function createThreadTabGroup(
   });
 }
 
+/** Remembers that the user took `key` out of its project's group, if that is where it was. */
+function keptOutOfProjectGroup(
+  state: ThreadTabsState,
+  key: ThreadTabKey,
+  fromGroupId: string | undefined,
+): ReadonlyArray<ThreadTabKey> {
+  return groupById(state, fromGroupId)?.project === undefined
+    ? state.ungrouped
+    : [...state.ungrouped.filter((tab) => tab !== key), key];
+}
+
 export function threadTabGroupMembers(state: ThreadTabsState, groupId: string): ThreadTabKey[] {
   return state.tabs.filter((key) => state.groupOf[key] === groupId);
 }
@@ -454,7 +483,12 @@ export function addThreadTabToGroup(
   const tabs = unpinned.tabs.filter((tab) => tab !== key);
   const last = members.at(-1);
   tabs.splice(last === undefined ? tabs.length : tabs.indexOf(last) + 1, 0, key);
-  return normalize({ ...unpinned, tabs, groupOf: { ...unpinned.groupOf, [key]: groupId } });
+  return normalize({
+    ...unpinned,
+    tabs,
+    groupOf: { ...unpinned.groupOf, [key]: groupId },
+    ungrouped: unpinned.ungrouped.filter((tab) => tab !== key),
+  });
 }
 
 /** Takes `key` out of its group, placing it right after the group. */
@@ -471,7 +505,12 @@ export function removeThreadTabFromGroup(
   else tabs.splice(state.tabs.indexOf(key), 0, key);
   const groupOf = { ...state.groupOf };
   delete groupOf[key];
-  return normalize({ ...state, tabs, groupOf });
+  return normalize({
+    ...state,
+    tabs,
+    groupOf,
+    ungrouped: keptOutOfProjectGroup(state, key, groupId),
+  });
 }
 
 export function updateThreadTabGroup(
@@ -495,7 +534,13 @@ export function updateThreadTabGroup(
 
 /** Dissolves a group; its tabs stay where they are. */
 export function ungroupThreadTabs(state: ThreadTabsState, groupId: string): ThreadTabsState {
-  return normalize({ ...state, groups: state.groups.filter((group) => group.id !== groupId) });
+  const isProject = groupById(state, groupId)?.project !== undefined;
+  const members = isProject ? threadTabGroupMembers(state, groupId) : [];
+  return normalize({
+    ...state,
+    groups: state.groups.filter((group) => group.id !== groupId),
+    ungrouped: [...state.ungrouped.filter((tab) => !members.includes(tab)), ...members],
+  });
 }
 
 /**
@@ -527,7 +572,13 @@ export function dropThreadTab(
     if (leftGroup !== undefined && leftGroup === rightGroup) groupOf[key] = leftGroup;
     else if (own !== undefined && (leftGroup === own || rightGroup === own)) groupOf[key] = own;
   }
-  return normalize({ ...state, tabs, groupOf });
+  const ungrouped =
+    groupOf[key] !== undefined
+      ? state.ungrouped.filter((tab) => tab !== key)
+      : own !== undefined
+        ? keptOutOfProjectGroup(state, key, own)
+        : state.ungrouped;
+  return normalize({ ...state, tabs, groupOf, ungrouped });
 }
 
 /** Moves a tab to the start or end of its section, out of any group. */
@@ -545,7 +596,12 @@ export function moveThreadTabToEdge(
   tabs.splice(index, 0, key);
   const groupOf = { ...state.groupOf };
   delete groupOf[key];
-  return normalize({ ...state, tabs, groupOf });
+  return normalize({
+    ...state,
+    tabs,
+    groupOf,
+    ungrouped: keptOutOfProjectGroup(state, key, state.groupOf[key]),
+  });
 }
 
 /**
@@ -625,4 +681,69 @@ export function pruneThreadTabs(
   }
   if (!changed) return state;
   return normalize({ ...state, tabs, pinned, groupOf });
+}
+
+export interface ProjectGroupingInput {
+  readonly enabled: boolean;
+  /** The tab's project key; null when it has none, undefined while not known yet. */
+  readonly projectOf: (key: ThreadTabKey) => string | null | undefined;
+  readonly colorOf: (project: string) => ThreadTabGroupColor;
+}
+
+export function projectThreadTabGroupId(project: string): string {
+  return `project:${project}`;
+}
+
+/**
+ * Groups tabs by project: two or more unpinned tabs of one project share that project's group,
+ * which dissolves when one is left. Manual groups, pinned tabs and tabs the user took out of
+ * their project's group are left alone. Off, project groups dissolve.
+ */
+export function groupThreadTabsByProject(
+  state: ThreadTabsState,
+  input: ProjectGroupingInput,
+): ThreadTabsState {
+  if (!input.enabled) {
+    if (!state.groups.some((group) => group.project !== undefined)) return state;
+    return normalize({
+      ...state,
+      groups: state.groups.filter((group) => group.project === undefined),
+    });
+  }
+  const pinned = new Set(state.pinned);
+  const ungrouped = new Set(state.ungrouped);
+  const byProject = new Map<string, ThreadTabKey[]>();
+  for (const key of state.tabs) {
+    if (pinned.has(key) || ungrouped.has(key)) continue;
+    const current = groupById(state, state.groupOf[key]);
+    if (current !== null && current.project === undefined) continue;
+    const known = input.projectOf(key);
+    const project = known === undefined ? current?.project : known;
+    if (project === undefined || project === null) continue;
+    if (current !== null && current.project !== project) continue;
+    byProject.set(project, [...(byProject.get(project) ?? []), key]);
+  }
+  const groupOf: Record<ThreadTabKey, string> = { ...state.groupOf };
+  const groups: ThreadTabGroup[] = state.groups.filter((group) => group.project === undefined);
+  for (const [project, members] of byProject) {
+    const id = projectThreadTabGroupId(project);
+    if (members.length < 2) {
+      for (const key of members) if (groupOf[key] === id) delete groupOf[key];
+      continue;
+    }
+    const existing = state.groups.find((group) => group.id === id);
+    groups.push({
+      id,
+      name: "",
+      color: input.colorOf(project),
+      collapsed: existing?.collapsed ?? false,
+      project,
+    });
+    for (const key of members) groupOf[key] = id;
+  }
+  const next = normalize({ ...state, groupOf, groups });
+  const same =
+    next.tabs.join("\n") === state.tabs.join("\n") &&
+    JSON.stringify([next.groups, next.groupOf]) === JSON.stringify([state.groups, state.groupOf]);
+  return same ? state : next;
 }

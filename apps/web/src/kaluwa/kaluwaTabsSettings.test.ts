@@ -20,7 +20,14 @@ describe("parseKaluwaTabsSettings", () => {
       parseKaluwaTabsSettings(
         JSON.stringify({ enabled: true, style: "folder", radius: 99, height: 10.6 }),
       ),
-    ).toEqual({ enabled: true, style: "folder", radius: 16, height: 24, openIn: "new-tab" });
+    ).toEqual({
+      enabled: true,
+      style: "folder",
+      radius: 16,
+      height: 24,
+      openIn: "new-tab",
+      groupByProject: true,
+    });
     expect(parseKaluwaTabsSettings(JSON.stringify({ style: "tabs", enabled: "yes" }))).toEqual(
       DEFAULT_KALUWA_TABS_SETTINGS,
     );
@@ -35,6 +42,7 @@ describe("parseKaluwaTabsSettings", () => {
         radius: 16,
         height: 24,
         openIn: "new-tab",
+        groupByProject: true,
       }),
     ).toEqual({ "--kaluwa-tab-radius": "12px", "--kaluwa-tab-height": "24px" });
   });

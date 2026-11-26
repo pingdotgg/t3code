@@ -23,6 +23,8 @@ export type KaluwaTabsSettings = Readonly<{
   /** Tab height in px. */
   height: number;
   openIn: KaluwaTabOpenMode;
+  /** Put two or more tabs of one project in a group of their own. */
+  groupByProject: boolean;
 }>;
 
 export const DEFAULT_KALUWA_TABS_SETTINGS: KaluwaTabsSettings = {
@@ -31,6 +33,7 @@ export const DEFAULT_KALUWA_TABS_SETTINGS: KaluwaTabsSettings = {
   radius: 8,
   height: 30,
   openIn: "new-tab",
+  groupByProject: true,
 };
 
 const STORAGE_KEY = "kaluwa:tabs:v1";
@@ -56,6 +59,8 @@ export function parseKaluwaTabsSettings(raw: string | null): KaluwaTabsSettings 
     radius: clampInteger(value.radius, KALUWA_TAB_RADIUS_LIMITS, d.radius),
     height: clampInteger(value.height, KALUWA_TAB_HEIGHT_LIMITS, d.height),
     openIn: KALUWA_TAB_OPEN_MODES.find((mode) => mode === value.openIn) ?? d.openIn,
+    groupByProject:
+      typeof value.groupByProject === "boolean" ? value.groupByProject : d.groupByProject,
   };
 }
 

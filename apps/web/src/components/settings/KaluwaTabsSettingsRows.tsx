@@ -125,6 +125,30 @@ function OpenInRow({ settings }: { readonly settings: KaluwaTabsSettings }) {
   );
 }
 
+function GroupByProjectRow({ settings }: { readonly settings: KaluwaTabsSettings }) {
+  const gt = useGT();
+  const title = gt("Group tabs by project");
+  return (
+    <SettingsRow
+      devicePreference
+      title={title}
+      description={gt(
+        "Two or more tabs of one project share a group named after it. A tab you drag out stays out.",
+      )}
+      resetAction={<ResetAction field="groupByProject" title={title} settings={settings} />}
+      control={
+        <Switch
+          checked={settings.groupByProject}
+          onCheckedChange={(checked) =>
+            updateKaluwaTabsSettings({ groupByProject: Boolean(checked) })
+          }
+          aria-label={title}
+        />
+      }
+    />
+  );
+}
+
 export function KaluwaTabsSettingsRows() {
   const gt = useGT();
   const settings = useKaluwaTabsSettings();
@@ -153,6 +177,7 @@ export function KaluwaTabsSettingsRows() {
         }
       />
       <OpenInRow settings={settings} />
+      <GroupByProjectRow settings={settings} />
       <SettingsRow
         devicePreference
         title={styleTitle}

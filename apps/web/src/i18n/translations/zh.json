@@ -13595,5 +13595,8 @@
   "382dcc85d648b2df": "Import",
   "f7216eb17e664c81": "Fonts and sizes",
   "b855cb80d4a14558": "Interface, prompt, code and terminal fonts and their sizes. The theme's own UI font is under Shape and type.",
-  "3d23cd149d88da6b": "Open Typography"
+  "3d23cd149d88da6b": "Open Typography",
+  "cf08ef3286f46f4f": "{count, plural, one {{count} tab} other {{count} tabs}}",
+  "9d78401cd0284734": "Group tabs by project",
+  "115812179d35e591": "Two or more tabs of one project share a group named after it. A tab you drag out stays out."
 }
