@@ -4937,8 +4937,6 @@
   "3f5c37167aa5034f": "Webbläsarens lagring avvisade skrivningen, så inmatningsfältet lämnades som det var. Frigör webbplatsdata och försök igen.",
   "41ba6c0b5c5e8b22": "Den undanlagda prompten överlever inte en omladdning",
   "94d7f150b3f7b291": "Webbläsarens lagring är inte tillgänglig, så undanlagda promptar finns bara i minnet under den här sessionen.",
-  "f421c24666cd8c71": "Den äldsta undanlagda prompten kastades",
-  "1123f816ea2a6e3e": "Du kan lägga undan högst {max} promptar; den äldsta togs bort för att göra plats.",
   "c3a8f9b1b2e7d588": "Undanlagda bilder sparades inte",
   "fc3feba263971bce": "Prompten lades undan, men webbläsarens lagring avvisade dess bilder. De saknas om du laddar om.",
   "9e36559d0fa0cca8": "Undanlagda bilder bifogades inte",
@@ -12997,5 +12995,7 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "92e129bf413a1220": "återkallad",
-  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…"
+  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…",
+  "410dded6e21c280d": "Undanlagringen är full",
+  "1af8d12ac21cb183": "Du kan lägga undan högst {max} promptar. Återställ eller ta bort en för att göra plats; inmatningsfältet lämnades som det var."
 }

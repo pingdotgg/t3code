@@ -4936,8 +4936,6 @@
   "3f5c37167aa5034f": "O armazenamento do navegador rejeitou a gravação, então o editor de mensagens ficou como estava. Libere dados do site e tente novamente.",
   "41ba6c0b5c5e8b22": "O prompt guardado não vai sobreviver a uma recarga",
   "94d7f150b3f7b291": "O armazenamento do navegador não está disponível, então estes guardados ficam só na memória durante esta sessão.",
-  "f421c24666cd8c71": "Prompt guardado mais antigo descartado",
-  "1123f816ea2a6e3e": "Os guardados comportam {max} prompts; o mais antigo foi removido para abrir espaço.",
   "c3a8f9b1b2e7d588": "As imagens guardadas não foram salvas",
   "fc3feba263971bce": "O prompt foi guardado, mas o armazenamento do navegador rejeitou as imagens. Elas vão faltar se você recarregar.",
   "9e36559d0fa0cca8": "As imagens guardadas não foram anexadas",
@@ -12990,5 +12988,7 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "92e129bf413a1220": "retirada",
-  "800966eb58181745": "Verificando quais idiomas o modelo suporta…"
+  "800966eb58181745": "Verificando quais idiomas o modelo suporta…",
+  "410dded6e21c280d": "Os guardados estão cheios",
+  "1af8d12ac21cb183": "Os guardados comportam {max} prompts. Restaure ou exclua um para abrir espaço; o campo de texto ficou como estava."
 }
