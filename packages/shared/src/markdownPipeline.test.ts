@@ -949,40 +949,49 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
   ]);
 });
 
-it("links complete absolute paths in prose and skips shortened ones", () => {
-  const path =
-    "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md";
-  const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
-  const links = (markdown: string) => {
-    const urls: string[] = [];
-    const visit = (node: Root | RootContent) => {
-      if (node.type === "link") urls.push(node.url);
-      if ("children" in node) node.children.forEach(visit);
+it.each([
+  ["default", CHAT_MARKDOWN_REMARK_PLUGINS],
+  ["with breaks", CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
+] as const)(
+  "links complete absolute paths in prose and skips shortened ones (%s)",
+  (_, plugins) => {
+    const path =
+      "/tmp/claude-1000/-home-user--t3-worktrees-app-t3-abc123/session/scratchpad/notes.md";
+    const processor = unified().use(remarkParse).use(plugins);
+    const links = (markdown: string) => {
+      const urls: string[] = [];
+      const visit = (node: Root | RootContent) => {
+        if (node.type === "link") urls.push(node.url);
+        if ("children" in node) node.children.forEach(visit);
+      };
+      visit(processor.runSync(processor.parse(markdown), markdown) as Root);
+      return urls;
     };
-    visit(processor.runSync(processor.parse(markdown), markdown) as Root);
-    return urls;
-  };
-  expect(links(`Saved to ${path} and /tmp/other.txt.`)).toEqual([path, "/tmp/other.txt"]);
-  expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
-  expect(links("See /tmp/report(1).txt. and /tmp/app/[id]/page.tsx.")).toEqual([
-    "/tmp/report(1).txt",
-    "/tmp/app/[id]/page.tsx",
-  ]);
-  expect(links("(see /tmp/claude-1000/...). and /tmp/claude-1000/….")).toEqual([]);
-  expect(links("Served at /index.html; GET /api/users.json; see /tmp/x.md:3.")).toEqual([
-    "/tmp/x.md:3",
-  ]);
-  expect(
-    links(
-      '<a title="</a>" href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**',
-    ),
-  ).toEqual([]);
-  expect(
-    links("Config lives in /Users/me/Library/Application Support/T3 Code/settings.json now."),
-  ).toEqual([]);
-  expect(links(`/chat/settings and https://example.com${path}`)).toEqual([
-    `https://example.com${path}`,
-  ]);
-  expect(links(`[notes](${path}) and \`${path}\``)).toEqual([path]);
-  expect(links(`\`\`\`\n${path}\n\`\`\``)).toEqual([]);
-});
+    expect(links(`Saved to ${path} and /tmp/other.txt.`)).toEqual([path, "/tmp/other.txt"]);
+    expect(links("-       /Users/me/app.ts:42")).toEqual(["/Users/me/app.ts:42"]);
+    expect(links("-       `/Users/me/app.ts:42`")).toEqual([]);
+    expect(links("    /Users/me/code.ts:42")).toEqual([]);
+    expect(links(`See (${path}:12).`)).toEqual([`${path}:12`]);
+    expect(links("See /tmp/report(1).txt. and /tmp/app/[id]/page.tsx.")).toEqual([
+      "/tmp/report(1).txt",
+      "/tmp/app/[id]/page.tsx",
+    ]);
+    expect(links("(see /tmp/claude-1000/...). and /tmp/claude-1000/….")).toEqual([]);
+    expect(links("Served at /index.html; GET /api/users.json; see /tmp/x.md:3.")).toEqual([
+      "/tmp/x.md:3",
+    ]);
+    expect(
+      links(
+        '<a title="</a>" href="https://example.com">/tmp/notes.md</a> and **<a href="x">/tmp/a.md</a>**',
+      ),
+    ).toEqual([]);
+    expect(
+      links("Config lives in /Users/me/Library/Application Support/T3 Code/settings.json now."),
+    ).toEqual([]);
+    expect(links(`/chat/settings and https://example.com${path}`)).toEqual([
+      `https://example.com${path}`,
+    ]);
+    expect(links(`[notes](${path}) and \`${path}\``)).toEqual([path]);
+    expect(links(`\`\`\`\n${path}\n\`\`\``)).toEqual([]);
+  },
+);

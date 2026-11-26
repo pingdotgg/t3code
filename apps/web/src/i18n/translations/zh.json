@@ -10076,6 +10076,7 @@
   "7f11b5e6dfa0bc56": "自定义",
   "aea25315995268e1": "继承上层设置",
   "c8d6af8aaa94a464": "默认",
+  "652e3aad21933d17": "{summary} · {count, plural, other {{count} 个项目覆盖}}",
   "0a39976ec0fb3e49": "{overrideSummary}。显示此值的来源",
   "99af2d06aa2b6d12": "重置此项",
   "7e9fca5fb426044a": "全部重置",
