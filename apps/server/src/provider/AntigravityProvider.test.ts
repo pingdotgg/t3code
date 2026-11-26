@@ -29,6 +29,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProvider } from "@t3tools/contracts";
 import {
+  AntigravityProbeIncompatibility,
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
@@ -132,7 +133,7 @@ const makeLayerTest = (runBackgroundWork: boolean) =>
   );
 const layerTest = makeLayerTest(false);
 
-type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
+type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError | AntigravityProbeIncompatibility;
 
 const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
   options: {
@@ -830,6 +831,25 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       expect(snapshot.models).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
       expect(snapshot.slashCommands).toEqual(expectedCommands);
       expect(snapshot.workspaceSnapshots?.[0]?.cwd).toBe("/workspace");
+    }),
+  );
+
+  it.effect("replaces the last working version when the managed runtime is incompatible", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      yield* harness.provider.onSessionStarted(started);
+      const detail = "Update it in Antigravity setup";
+      yield* Ref.set(
+        harness.probe,
+        Effect.fail(new AntigravityProbeIncompatibility({ version: "1.5.0", detail })),
+      );
+      expect(yield* harness.provider.snapshot.refresh).toMatchObject({
+        installed: true,
+        status: "error",
+        version: "1.5.0",
+        message: detail,
+      });
     }),
   );
 
