@@ -578,6 +578,56 @@ it("clears the pane's top corners so a joined tab's rim runs round them", async 
   }
 });
 
+it("marks a hovered first tab's corner without reading layout on pointer moves", async () => {
+  using _tabs = setup();
+  await using _screen = await renderHost({ insetSidebar: true });
+  const header = inSecondPane("[data-pane-header]");
+  const pane = header.closest<HTMLElement>("[data-layout-pane-id]")!;
+  const paneModel = useLayoutStore.getState().layout.workspaces[0]!.columns[1]!.panes[0]!;
+  const [first, second] = paneModel.tabs;
+  expect(first).toBeDefined();
+  expect(second).toBeDefined();
+  useLayoutStore.getState().focusPane(pane.dataset.layoutPaneId!);
+  useLayoutStore.getState().focusTab(second!.id);
+  const strip = secondPaneStrip();
+  await vi.waitFor(() => {
+    expect(
+      strip.querySelector(`[data-layout-pane-tab="${second!.id}"]`)?.hasAttribute("data-joined"),
+    ).toBe(true);
+    expect(pane.querySelector("[data-pane-notch-unfocused]")).toBeNull();
+  });
+
+  const firstTab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${first!.id}"]`)!;
+  const secondTab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${second!.id}"]`)!;
+  const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+  try {
+    firstTab.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(header.hasAttribute("data-pane-hover-start")).toBe(true);
+    expect(pane.hasAttribute("data-pane-hovered-start")).toBe(true);
+    expect(rectSpy).not.toHaveBeenCalled();
+
+    const setAttrSpy = vi.spyOn(Element.prototype, "setAttribute");
+    const removeAttrSpy = vi.spyOn(Element.prototype, "removeAttribute");
+    try {
+      (firstTab.firstElementChild ?? firstTab).dispatchEvent(
+        new PointerEvent("pointerover", { bubbles: true }),
+      );
+      expect(setAttrSpy).not.toHaveBeenCalled();
+      expect(removeAttrSpy).not.toHaveBeenCalled();
+    } finally {
+      setAttrSpy.mockRestore();
+      removeAttrSpy.mockRestore();
+    }
+
+    secondTab.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(header.hasAttribute("data-pane-hover-start")).toBe(false);
+    expect(pane.hasAttribute("data-pane-hovered-start")).toBe(false);
+    expect(rectSpy).not.toHaveBeenCalled();
+  } finally {
+    rectSpy.mockRestore();
+  }
+});
+
 const threadRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("chat"));
 const pullRequestThreadRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("pr"));
 const sideChatRef = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("side"));

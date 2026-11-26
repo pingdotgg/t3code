@@ -152,6 +152,7 @@ interface PaneStrip {
   overflowing: boolean;
   canStart: boolean;
   canEnd: boolean;
+  hoveredTab: HTMLElement | null;
   readonly overflowListeners: Set<() => void>;
   scrollButtons: { start: HTMLButtonElement | null; end: HTMLButtonElement | null };
 }
@@ -392,6 +393,7 @@ function createPaneStrip(role?: "panel"): PaneStrip {
     overflowing: false,
     canStart: false,
     canEnd: false,
+    hoveredTab: null,
     overflowListeners: new Set(),
     scrollButtons: { start: null, end: null },
   };
@@ -443,8 +445,10 @@ function createPaneStrip(role?: "panel"): PaneStrip {
     if (strip.scrollWidth <= strip.clientWidth) return;
     scrollFocusedTabIntoClearRange(strip, target);
   });
-  strip.addEventListener("pointerover", () => markHoverAtStart(strip, true));
-  strip.addEventListener("pointerleave", () => markHoverAtStart(strip, false));
+  strip.addEventListener("pointerover", (event) =>
+    markHoverAtStart(entry, hoveredOutlineTab(strip, event.target)),
+  );
+  strip.addEventListener("pointerleave", () => markHoverAtStart(entry, null));
   setWheelScroller(strip, () => strip.scrollWidth > strip.clientWidth);
   // A tab opening, closing or changing size moves the others without a render here.
   // Not observeResize: no React state changes, and its flushSync would force the
@@ -501,6 +505,7 @@ function markStripOverflow(strip: HTMLElement): void {
     for (const listener of entry.overflowListeners) listener();
   }
   markJoinAtStart(entry);
+  if (entry.hoveredTab) markHoverAtStart(entry, entry.hoveredTab, true);
   markPaneLit(entry, scrollLeft);
 }
 
@@ -553,29 +558,40 @@ function markPaneJoinedAtStart(pane: HTMLElement | null): void {
 
 /** What a strip's hovered tab last marked. The strip moves between its pane's headers. */
 const hoverStartMarks = new WeakMap<HTMLElement, readonly [name: string, element: HTMLElement][]>();
-const HOVERED_OUTLINE_TAB_SELECTOR =
-  ":is([data-layout-pane-tab], [data-tab-key]):not([data-joined]):is(:hover, .group\\/tab:hover > *)";
+
+function hoveredOutlineTab(strip: HTMLElement, target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof Element)) return null;
+  const tab =
+    target.closest<HTMLElement>(STRIP_TAB_SELECTOR) ??
+    target.closest<HTMLElement>(".group\\/tab")?.querySelector<HTMLElement>(STRIP_TAB_SELECTOR) ??
+    null;
+  return tab && strip.contains(tab) ? tab : null;
+}
 
 /**
  * A hovered tab's outline (index.css) runs straight down the pane's edge when
  * the tab sits on it, so the pane's corner under it takes the outline's fill.
  * Attributes, as the joined tab's are: a `:has()` would restyle the whole pane.
+ * Uses the geometry cached by measurePaneLit/markStripOverflow so hover reads no layout.
  */
-function markHoverAtStart(strip: HTMLElement, hovering: boolean): void {
-  const row = strip.closest<HTMLElement>("[data-pane-header]");
-  const tab =
-    hovering && strip.closest('[data-pane-notch=""]:not([data-pane-notch-unfocused])')
-      ? strip.querySelector<HTMLElement>(HOVERED_OUTLINE_TAB_SELECTOR)
-      : null;
+function markHoverAtStart(entry: PaneStrip, tab: HTMLElement | null, force = false): void {
+  if (!force && tab === entry.hoveredTab) return;
+  entry.hoveredTab = tab;
+  const { strip } = entry;
   const next: [name: string, element: HTMLElement][] = [];
   // A scrolled strip fades its start, and the outline with it.
-  if (row && tab && strip.scrollLeft < 1) {
-    const rowLeft = row.getBoundingClientRect().left;
-    if (Math.abs(tab.getBoundingClientRect().left - rowLeft) < 1) {
+  if (tab && !tab.hasAttribute("data-joined") && !entry.canStart && entry.atPaneEdge) {
+    const row = strip.closest<HTMLElement>("[data-pane-header]");
+    if (
+      row &&
+      entry.footOffset !== null &&
+      Math.abs(entry.footOffset + PANE_JOIN_EAR_PX) < 1 &&
+      strip.closest('[data-pane-notch=""]:not([data-pane-notch-unfocused])') &&
+      strip.querySelector<HTMLElement>(STRIP_TAB_SELECTOR) === tab
+    ) {
       next.push(["data-pane-hover-start", row]);
-      const pane = row.closest<HTMLElement>("[data-layout-tab-id]");
-      if (pane && Math.abs(pane.getBoundingClientRect().left - rowLeft) < 1) {
-        next.push(["data-pane-hovered-start", pane]);
+      if (entry.lit && Math.abs(entry.lit.offset + PANE_JOIN_EAR_PX) < 1) {
+        next.push(["data-pane-hovered-start", entry.lit.host]);
       }
     }
   }
@@ -831,6 +847,7 @@ function markJoinedLabel(entry: PaneStrip): void {
     const joined = entry.joinedId !== null && stripTabId(tab) === entry.joinedId;
     if (tab.hasAttribute("data-joined") !== joined) tab.toggleAttribute("data-joined", joined);
   }
+  if (entry.hoveredTab) markHoverAtStart(entry, entry.hoveredTab, true);
 }
 
 function stripBoxOf(strip: HTMLElement, tab: HTMLElement): { x: number; w: number } | null {
@@ -1123,6 +1140,7 @@ export function LayoutPaneTabStrip({
     const inset = new ResizeObserver(() => {
       measurePaneLit(entry);
       markJoinAtStart(entry);
+      if (entry.hoveredTab) markHoverAtStart(entry, entry.hoveredTab, true);
       markPaneLit(entry, stripScrollLeft(entry));
     });
     if (row) inset.observe(row);
@@ -1132,6 +1150,7 @@ export function LayoutPaneTabStrip({
       inset.disconnect();
       row?.removeEventListener("wheel", wheel);
       row?.removeAttribute("data-tab-row-overflow");
+      if (entry.hoveredTab) markHoverAtStart(entry, null);
       if (row?.hasAttribute("data-pane-join-start")) {
         row.removeAttribute("data-pane-join-start");
         markPaneJoinedAtStart(pane);
