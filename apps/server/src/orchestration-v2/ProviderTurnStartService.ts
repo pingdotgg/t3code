@@ -85,6 +85,7 @@ import {
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as TeamGitHubBroker from "../team/TeamGitHubBroker.ts";
 import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import * as TeamService from "../team/TeamService.ts";
 import {
@@ -331,6 +332,7 @@ export const layer: Layer.Layer<
     const teamProviderManagerOption = yield* Effect.serviceOption(
       TeamProviderManager.TeamProviderManager,
     );
+    const teamGitHubBrokerOption = yield* Effect.serviceOption(TeamGitHubBroker.TeamGitHubBroker);
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
@@ -2474,80 +2476,108 @@ export const layer: Layer.Layer<
         carriesPendingContext || carriesTeamTurnInstructions
           ? makeDeliverySession(session, startWithHandoffs)
           : session;
-      return runExecution.startRootRun({
-        commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
-        appThread: projection.thread,
-        providerSessionId: activeProviderSessionId,
-        session: deliverySession,
-        run: runningRun,
-        rootNode: runningRootNode,
-        checkpointScope,
-        providerThread: runningProviderThread,
-        attempt: runningAttempt,
-        attemptId: attempt.id,
-        baseline,
-        loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
-        relatedThreadIds: routableSubagents.flatMap((subagent) =>
-          subagent.childThreadId === null ? [] : [subagent.childThreadId],
+      const activateGitHubTurnLease =
+        Option.isSome(teamGitHubBrokerOption) &&
+        Option.isSome(teamServiceOption) &&
+        (yield* teamServiceOption.value.isTeamConfigured())
+          ? teamGitHubBrokerOption.value
+              .activateLocalTurnLease({
+                threadId: projection.thread.id,
+                turnId: run.id,
+                providerSessionId: activeProviderSessionId,
+                authorKind: actingMemberId !== undefined ? "member" : "team_automation",
+                authorMemberId: actingMemberId ?? null,
+              })
+              .pipe(Effect.ignore)
+          : Effect.void;
+      return activateGitHubTurnLease.pipe(
+        Effect.andThen(
+          runExecution.startRootRun({
+            commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
+            appThread: projection.thread,
+            providerSessionId: activeProviderSessionId,
+            session: deliverySession,
+            run: runningRun,
+            rootNode: runningRootNode,
+            checkpointScope,
+            providerThread: runningProviderThread,
+            attempt: runningAttempt,
+            attemptId: attempt.id,
+            baseline,
+            loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
+            relatedThreadIds: routableSubagents.flatMap((subagent) =>
+              subagent.childThreadId === null ? [] : [subagent.childThreadId],
+            ),
+            relatedProviderThreadIds: routableSubagents.flatMap((subagent) =>
+              subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
+            ),
+            providerTurnOrdinal:
+              Math.max(
+                0,
+                ...projection.providerTurns
+                  .filter((turn) => turn.providerThreadId === providerThread.id)
+                  .map((turn) => turn.ordinal),
+              ) + 1,
+            resume: manualResume && unsentResumeMessage === undefined,
+            nativeThreadHasTurns:
+              nativeInputRunIds.size > 0 ||
+              (legacyInputRunIds.size > 0 &&
+                sameNativeThread &&
+                !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
+            shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+            shouldFinalizeRun: runControls.shouldFinalizeRun,
+            hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
+            loadRunInterruptReason: runControls.loadRunInterruptReason,
+            hasWorkspaceMoved: runControls.hasWorkspaceMoved,
+            loadDroppedInlineHandoffs: () =>
+              inlineDeliveryLock.withPermits(1)(
+                Effect.sync(() => {
+                  promptDroppedOnTerminal = true;
+                  return inlineDeliveredHandoffs;
+                }),
+              ),
+            loadUnsettledWork: runControls.loadUnsettledWork,
+            message: {
+              messageId: message.id,
+              text: userText,
+              attachments: providerMessage.attachments,
+              createdBy: message.createdBy,
+              creationSource: message.creationSource,
+              ...(message.scheduledTaskId === undefined
+                ? {}
+                : { scheduledTaskId: message.scheduledTaskId }),
+              ...(message.senderThreadId === undefined
+                ? {}
+                : { senderThreadId: message.senderThreadId }),
+            },
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+            ...(actingMemberId === undefined ? {} : { actingMemberId }),
+            recycleSession: () =>
+              providerSessions
+                .release({
+                  providerSessionId: activeProviderSessionId,
+                  threadId: projection.thread.id,
+                  ...(actingMemberId === undefined ? {} : { actingMemberId }),
+                  reason: "manual_shutdown",
+                  detail:
+                    "Team OAuth lease rotated during active turn; recycling warm provider session.",
+                  preserveTeamEphemeralTokens: true,
+                })
+                .pipe(Effect.ignore),
+          }),
         ),
-        relatedProviderThreadIds: routableSubagents.flatMap((subagent) =>
-          subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
+        Effect.onError(() =>
+          Option.isSome(teamGitHubBrokerOption)
+            ? teamGitHubBrokerOption.value
+                .revokeTurnLease({
+                  threadId: projection.thread.id,
+                  turnId: run.id,
+                })
+                .pipe(Effect.ignore)
+            : Effect.void,
         ),
-        providerTurnOrdinal:
-          Math.max(
-            0,
-            ...projection.providerTurns
-              .filter((turn) => turn.providerThreadId === providerThread.id)
-              .map((turn) => turn.ordinal),
-          ) + 1,
-        resume: manualResume && unsentResumeMessage === undefined,
-        nativeThreadHasTurns:
-          nativeInputRunIds.size > 0 ||
-          (legacyInputRunIds.size > 0 &&
-            sameNativeThread &&
-            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
-        shouldStartProviderTurn: runControls.shouldStartProviderTurn,
-        shouldFinalizeRun: runControls.shouldFinalizeRun,
-        hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
-        loadRunInterruptReason: runControls.loadRunInterruptReason,
-        hasWorkspaceMoved: runControls.hasWorkspaceMoved,
-        loadDroppedInlineHandoffs: () =>
-          inlineDeliveryLock.withPermits(1)(
-            Effect.sync(() => {
-              promptDroppedOnTerminal = true;
-              return inlineDeliveredHandoffs;
-            }),
-          ),
-        loadUnsettledWork: runControls.loadUnsettledWork,
-        message: {
-          messageId: message.id,
-          text: userText,
-          attachments: providerMessage.attachments,
-          createdBy: message.createdBy,
-          creationSource: message.creationSource,
-          ...(message.scheduledTaskId === undefined
-            ? {}
-            : { scheduledTaskId: message.scheduledTaskId }),
-          ...(message.senderThreadId === undefined
-            ? {}
-            : { senderThreadId: message.senderThreadId }),
-        },
-        modelSelection: run.modelSelection,
-        runtimePolicy: resolvedRuntimePolicy,
-        ...(actingMemberId === undefined ? {} : { actingMemberId }),
-        recycleSession: () =>
-          providerSessions
-            .release({
-              providerSessionId: activeProviderSessionId,
-              threadId: projection.thread.id,
-              ...(actingMemberId === undefined ? {} : { actingMemberId }),
-              reason: "manual_shutdown",
-              detail:
-                "Team OAuth lease rotated during active turn; recycling warm provider session.",
-              preserveTeamEphemeralTokens: true,
-            })
-            .pipe(Effect.ignore),
-      });
+      );
     });
 
     const startWithWorkspaceLease: ProviderTurnStartServiceV2Shape["start"] = Effect.fn(

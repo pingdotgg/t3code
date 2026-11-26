@@ -183,6 +183,8 @@ describe("team notification gating helpers", () => {
       skills: [],
       preprompts: [],
       assetsRevision: 0,
+      myGitHubIdentity: null,
+      automationGitHubIdentity: null,
       ...overrides,
     };
   };

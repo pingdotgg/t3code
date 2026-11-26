@@ -2347,7 +2347,26 @@ export const layerWsRpc = (
                                       runId: effectiveCommand.targetRunId,
                                       reason: "promote_to_steer",
                                     })
-                                  : Effect.void,
+                                  : effectiveCommand.type === "queued-run.start"
+                                    ? teamService.notifyTurnInterrupted({
+                                        actor: { kind: "session", sessionId: currentSessionId },
+                                        threadId: effectiveCommand.threadId,
+                                        reason: "promote_to_steer",
+                                      })
+                                    : effectiveCommand.type === "message.dispatch" &&
+                                        (effectiveCommand.dispatchMode.type === "steer_active" ||
+                                          effectiveCommand.dispatchMode.type === "restart_active" ||
+                                          effectiveCommand.deliveryIntent === "steer" ||
+                                          effectiveCommand.deliveryIntent === "restart")
+                                      ? teamService.notifyTurnInterrupted({
+                                          actor: { kind: "session", sessionId: currentSessionId },
+                                          threadId: effectiveCommand.threadId,
+                                          ...(effectiveCommand.dispatchMode.type === "steer_active"
+                                            ? { runId: effectiveCommand.dispatchMode.targetRunId }
+                                            : {}),
+                                          reason: "promote_to_steer",
+                                        })
+                                      : Effect.void,
                           ),
                           Effect.andThen(recordClientCommandAnalytics(effectiveCommand)),
                         ),

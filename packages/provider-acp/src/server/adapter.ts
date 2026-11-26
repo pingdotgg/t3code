@@ -3051,6 +3051,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : {
                   processEnvironment: {
                     ...mcpContext.processEnvironment,
+                    ...(input.sessionEnvironmentOverride !== undefined &&
+                    "T3_TEAM_GH_BROKER_TOKEN" in input.sessionEnvironmentOverride
+                      ? {
+                          GH_TOKEN: undefined,
+                          GITHUB_TOKEN: undefined,
+                          ...(!("GIT_AUTHOR_NAME" in input.sessionEnvironmentOverride)
+                            ? {
+                                GIT_AUTHOR_NAME: undefined,
+                                GIT_AUTHOR_EMAIL: undefined,
+                                GIT_COMMITTER_NAME: undefined,
+                                GIT_COMMITTER_EMAIL: undefined,
+                              }
+                            : {}),
+                        }
+                      : {}),
                     ...input.sessionEnvironmentOverride,
                   },
                 }),

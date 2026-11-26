@@ -63,6 +63,7 @@ import {
 import { makeInterruptResultTurnItem } from "./runInterruptResult.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as TeamGitHubBroker from "../team/TeamGitHubBroker.ts";
 import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -741,6 +742,7 @@ export const layer: Layer.Layer<
     const teamProviderManagerOption = yield* Effect.serviceOption(
       TeamProviderManager.TeamProviderManager,
     );
+    const teamGitHubBrokerOption = yield* Effect.serviceOption(TeamGitHubBroker.TeamGitHubBroker);
     const continuationRequestsOption = yield* Effect.serviceOption(
       ProviderContinuationRequests.ProviderContinuationRequests,
     );
@@ -1091,6 +1093,14 @@ export const layer: Layer.Layer<
           }
         } else {
           yield* eventSink.writeWithEffects(finalization);
+        }
+        if (Option.isSome(teamGitHubBrokerOption)) {
+          yield* teamGitHubBrokerOption.value
+            .revokeTurnLease({
+              threadId: input.run.threadId,
+              turnId: input.run.id,
+            })
+            .pipe(Effect.ignore);
         }
         yield* turnAnalytics.runSettled({
           runId: input.run.id,
@@ -2327,6 +2337,16 @@ export const layer: Layer.Layer<
             ),
             Effect.ensuring(endPreviewActivity),
             Effect.ensuring(eventSubscription.close),
+            Effect.ensuring(
+              Option.isSome(teamGitHubBrokerOption)
+                ? teamGitHubBrokerOption.value
+                    .revokeTurnLease({
+                      threadId: input.run.threadId,
+                      turnId: input.run.id,
+                    })
+                    .pipe(Effect.ignore)
+                : Effect.void,
+            ),
             Effect.forkDetach,
           );
 

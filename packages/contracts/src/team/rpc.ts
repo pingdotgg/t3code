@@ -11,6 +11,9 @@ import {
 import {
   TeamAssignProjectInput,
   TeamAttachEnvironmentInput,
+  TeamAutomationGitHubIdentity,
+  TeamClearAutomationGitHubResult,
+  TeamConnectMyGitHubInput,
   TeamConsumeAcceptedNotesInput,
   TeamConsumeAcceptedNotesResult,
   TeamCreateInviteInput,
@@ -28,8 +31,10 @@ import {
   TeamDeleteViewResult,
   TeamDetachEnvironmentInput,
   TeamDetachEnvironmentResult,
+  TeamDisconnectMyGitHubResult,
   TeamEditThreadNoteInput,
   TeamEnvironment,
+  TeamGitHubIdentity,
   TeamInitializeInput,
   TeamInitializeResult,
   TeamInviteCreatedResult,
@@ -55,6 +60,7 @@ import {
   TeamResolveThreadNoteInput,
   TeamRevokeInviteInput,
   TeamRevokeInviteResult,
+  TeamSetAutomationGitHubInput,
   TeamSetThreadLockedInput,
   TeamSetThreadViewInput,
   TeamSkill,
@@ -124,6 +130,10 @@ export const TEAM_WS_METHODS = {
   teamSyncLocalBinding: "team.syncLocalBinding",
   teamRemoveLocalBinding: "team.removeLocalBinding",
   teamNotifyLocalAssetsUpdated: "team.notifyLocalAssetsUpdated",
+  teamConnectMyGitHub: "team.connectMyGitHub",
+  teamDisconnectMyGitHub: "team.disconnectMyGitHub",
+  teamSetAutomationGitHub: "team.setAutomationGitHub",
+  teamClearAutomationGitHub: "team.clearAutomationGitHub",
 } as const;
 
 export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
@@ -163,6 +173,10 @@ export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamSyncLocalBinding]: AuthProvidersManageScope,
   [TEAM_WS_METHODS.teamRemoveLocalBinding]: AuthProvidersManageScope,
   [TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated]: AuthProvidersManageScope,
+  [TEAM_WS_METHODS.teamConnectMyGitHub]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamDisconnectMyGitHub]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamSetAutomationGitHub]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamClearAutomationGitHub]: AuthAccessWriteScope,
 } as const;
 
 export const TEAM_RPC_REQUIRED_SCOPES = {
@@ -430,6 +444,30 @@ const WsTeamNotifyLocalAssetsUpdatedRpc = Rpc.make(TEAM_WS_METHODS.teamNotifyLoc
   error: TeamRpcError,
 });
 
+const WsTeamConnectMyGitHubRpc = Rpc.make(TEAM_WS_METHODS.teamConnectMyGitHub, {
+  payload: TeamConnectMyGitHubInput,
+  success: TeamGitHubIdentity,
+  error: TeamRpcError,
+});
+
+const WsTeamDisconnectMyGitHubRpc = Rpc.make(TEAM_WS_METHODS.teamDisconnectMyGitHub, {
+  payload: Schema.Struct({}),
+  success: TeamDisconnectMyGitHubResult,
+  error: TeamRpcError,
+});
+
+const WsTeamSetAutomationGitHubRpc = Rpc.make(TEAM_WS_METHODS.teamSetAutomationGitHub, {
+  payload: TeamSetAutomationGitHubInput,
+  success: TeamAutomationGitHubIdentity,
+  error: TeamRpcError,
+});
+
+const WsTeamClearAutomationGitHubRpc = Rpc.make(TEAM_WS_METHODS.teamClearAutomationGitHub, {
+  payload: Schema.Struct({}),
+  success: TeamClearAutomationGitHubResult,
+  error: TeamRpcError,
+});
+
 export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamGetStateRpc,
   WsTeamSubscribeStateRpc,
@@ -473,4 +511,8 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamSyncLocalBindingRpc,
   WsTeamRemoveLocalBindingRpc,
   WsTeamNotifyLocalAssetsUpdatedRpc,
+  WsTeamConnectMyGitHubRpc,
+  WsTeamDisconnectMyGitHubRpc,
+  WsTeamSetAutomationGitHubRpc,
+  WsTeamClearAutomationGitHubRpc,
 );

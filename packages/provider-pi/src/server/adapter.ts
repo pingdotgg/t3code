@@ -49,7 +49,10 @@ import { providerMessageTextWithAttachmentPaths } from "@t3tools/provider-core/s
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { parsePiCompactCommand, type PiCompactCommand } from "./commands.ts";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  applyProviderSessionEnvironmentOverride,
+  mergeProviderInstanceEnvironment,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -546,8 +549,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             launchArgs: resolvedLaunchArgs.args,
             // PortScanner.AGENT_THREAD_ENV, as a literal because this package cannot reach apps/server.
             environment: {
-              ...options.environment,
-              ...input.sessionEnvironmentOverride,
+              ...applyProviderSessionEnvironmentOverride(
+                options.environment,
+                input.sessionEnvironmentOverride,
+              ),
               T3CODE_THREAD_ID: input.threadId,
             },
             mcpSession,

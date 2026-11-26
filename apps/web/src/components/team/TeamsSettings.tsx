@@ -49,6 +49,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "../settings
 import { formatTeamRoleLabel } from "./TeamJoinForm";
 import { openTeamJoinDialog } from "./teamJoinDialogState";
 import { TeamEnvironmentsSettingsSection } from "./TeamEnvironmentsSettingsSection";
+import { TeamGitHubSettingsSection } from "./TeamGitHubSettingsSection";
 import { TeamMembersSettingsSection } from "./TeamMembersSettingsSection";
 import { TeamProvidersSettingsSection } from "./TeamProvidersSettingsSection";
 import { TeamSkillsAndPrepromptsSettingsSection } from "./TeamSkillsAndPrepromptsSettingsSection";
@@ -759,6 +760,13 @@ export function TeamsSettings() {
 
           {selectedEnvironmentId !== null ? (
             <>
+              <TeamGitHubSettingsSection
+                environmentId={selectedEnvironmentId}
+                currentMember={currentMember}
+                memberById={teamState.memberById}
+                myGitHubIdentity={teamState.myGitHubIdentity}
+                automationGitHubIdentity={teamState.automationGitHubIdentity}
+              />
               <TeamProvidersSettingsSection
                 environmentId={selectedEnvironmentId}
                 currentMember={currentMember}

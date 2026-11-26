@@ -19,17 +19,24 @@ import { TeamsSettings } from "./TeamsSettings";
 
 const envA = EnvironmentId.make("env-team-a");
 const envB = EnvironmentId.make("env-team-b");
+const envC = EnvironmentId.make("env-team-c");
 const urlA = "https://team-a.example.com";
 const urlB = "https://team-b.example.com";
+const urlC = "https://team-c.example.com";
 
-const makeTeamState = (id: string, name: string, pseudo: string): TeamEnvironmentState => {
+const makeTeamState = (
+  id: string,
+  name: string,
+  pseudo: string,
+  role: "owner" | "regular" = "owner",
+): TeamEnvironmentState => {
   const teamId = TeamId.make(`team-${id}`);
   const memberId = TeamMemberId.make(`member-${id}`);
   const member = {
     id: memberId,
     teamId,
     pseudo: pseudo as TeamPseudo,
-    role: "owner" as const,
+    role,
     status: "active" as const,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
@@ -75,11 +82,14 @@ const makeTeamState = (id: string, name: string, pseudo: string): TeamEnvironmen
     skills: [],
     preprompts: [],
     assetsRevision: 0,
+    myGitHubIdentity: null,
+    automationGitHubIdentity: null,
   };
 };
 
-const teamStateA = makeTeamState("a", "Team Alpha", "alice");
-const teamStateB = makeTeamState("b", "Team Beta", "alice");
+const teamStateA = makeTeamState("a", "Team Alpha", "alice", "owner");
+const teamStateB = makeTeamState("b", "Team Beta", "alice", "owner");
+const teamStateC = makeTeamState("c", "Team Gamma", "bob", "regular");
 
 const mockState = vi.hoisted(() => ({
   createInviteHandler:
@@ -109,11 +119,23 @@ vi.mock(import("../../state/environments"), async (original) => ({
         displayUrl: urlB,
         connection: { phase: "connected" },
       },
+      {
+        environmentId: envC,
+        label: "Server C",
+        displayUrl: urlC,
+        connection: { phase: "connected" },
+      },
     ],
   })) as never,
   usePrimaryEnvironmentId: (() => envA) as never,
   useEnvironmentHttpBaseUrl: ((environmentId: EnvironmentId | null) =>
-    environmentId === envA ? urlA : environmentId === envB ? urlB : null) as never,
+    environmentId === envA
+      ? urlA
+      : environmentId === envB
+        ? urlB
+        : environmentId === envC
+          ? urlC
+          : null) as never,
 }));
 
 vi.mock(import("../../state/team"), async (original) => ({
@@ -123,9 +145,10 @@ vi.mock(import("../../state/team"), async (original) => ({
     new Map<EnvironmentId, TeamEnvironmentState>([
       [envA, teamStateA],
       [envB, teamStateB],
+      [envC, teamStateC],
     ]),
   useTeamEnvironmentState: (environmentId: EnvironmentId | null) =>
-    environmentId === envB ? teamStateB : teamStateA,
+    environmentId === envC ? teamStateC : environmentId === envB ? teamStateB : teamStateA,
   teamEnvironment: {
     initialize: { permissionAtom: () => alwaysAllowedAtom },
     updateMyPseudo: { permissionAtom: () => alwaysAllowedAtom },
@@ -148,6 +171,10 @@ vi.mock(import("../../state/team"), async (original) => ({
     deleteSkill: { permissionAtom: () => alwaysAllowedAtom },
     upsertPreprompt: { permissionAtom: () => alwaysAllowedAtom },
     deletePreprompt: { permissionAtom: () => alwaysAllowedAtom },
+    connectMyGitHub: { permissionAtom: () => alwaysAllowedAtom },
+    disconnectMyGitHub: { permissionAtom: () => alwaysAllowedAtom },
+    setAutomationGitHub: { permissionAtom: () => alwaysAllowedAtom },
+    clearAutomationGitHub: { permissionAtom: () => alwaysAllowedAtom },
   } as never,
 }));
 
@@ -242,5 +269,20 @@ describe("TeamsSettings", () => {
       .toHaveValue(
         `t3code://team/join?server=${encodeURIComponent(urlA)}&token=t3team_server_a_inflight`,
       );
+  });
+
+  it("shows member GitHub identity controls for all roles and restricts team automation GitHub to owner/admin", async () => {
+    await using screen = await render(<TeamsSettings />);
+
+    // Server A is owner -> sees both personal member GitHub identity and admin-only automation account.
+    await expect.element(screen.getByTestId("team-my-github-token-input")).toBeVisible();
+    await expect.element(screen.getByTestId("team-automation-github-token-input")).toBeVisible();
+
+    // Switch to Server C where current member is regular -> still sees personal GitHub, NEVER automation.
+    await screen.getByTestId("team-server-select").click();
+    await screen.getByRole("option", { name: /Server C/ }).click();
+
+    await expect.element(screen.getByTestId("team-my-github-token-input")).toBeVisible();
+    expect(screen.getByTestId("team-automation-github-token-input").query()).toBeNull();
   });
 });

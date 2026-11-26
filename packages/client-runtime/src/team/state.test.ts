@@ -1214,4 +1214,101 @@ describe("team client-runtime state and presentation", () => {
       }),
     ).toEqual([personalEntry]);
   });
+
+  it("applies member-scoped myGitHubIdentityUpdated and automationGitHubIdentityUpdated stream events", () => {
+    const teamId = TeamId.make("team-gh");
+    const aliceId = TeamMemberId.make("m-alice");
+    const bobId = TeamMemberId.make("m-bob");
+    const viewId = TeamViewId.make("v-default");
+    const now = IsoDateTime.make("2026-11-26T12:00:00.000Z");
+
+    let state = applyTeamStreamEvent(EMPTY_TEAM_ENVIRONMENT_STATE, {
+      version: 1,
+      type: "snapshot",
+      payload: {
+        team: { id: teamId, name: "Acme", defaultViewId: viewId, createdAt: now, updatedAt: now },
+        currentMember: {
+          id: aliceId,
+          teamId,
+          pseudo: "alice" as never,
+          role: "owner",
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+        },
+        members: [],
+        invites: [],
+        views: [],
+        threadAttributions: [],
+        followedThreadIds: [],
+        latestTurnAttributions: [],
+        myGitHubIdentity: null,
+        automationGitHubIdentity: null,
+      },
+    });
+
+    // Event for another member is ignored client-side too (defense in depth)
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "myGitHubIdentityUpdated",
+      payload: {
+        memberId: bobId,
+        identity: {
+          authMethod: "pat",
+          githubLogin: "bob-gh",
+          githubName: "Bob",
+          githubEmail: "bob@acme.dev",
+          apiBaseUrl: "https://api.github.com",
+          connectedAt: now,
+          updatedAt: now,
+        },
+      },
+    });
+    expect(state.myGitHubIdentity).toBeNull();
+
+    // Event for currentMember updates myGitHubIdentity
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "myGitHubIdentityUpdated",
+      payload: {
+        memberId: aliceId,
+        identity: {
+          authMethod: "pat",
+          githubLogin: "alice-gh",
+          githubName: "Alice",
+          githubEmail: "alice@acme.dev",
+          apiBaseUrl: "https://api.github.com",
+          connectedAt: now,
+          updatedAt: now,
+        },
+      },
+    });
+    expect(state.myGitHubIdentity?.githubLogin).toBe("alice-gh");
+
+    // Automation account updated and cleared
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "automationGitHubIdentityUpdated",
+      payload: {
+        identity: {
+          authMethod: "github_app",
+          githubLogin: "acme-bot",
+          githubName: "Acme Bot",
+          githubEmail: "bot@acme.dev",
+          apiBaseUrl: "https://api.github.com",
+          updatedByMemberId: aliceId,
+          connectedAt: now,
+          updatedAt: now,
+        },
+      },
+    });
+    expect(state.automationGitHubIdentity?.githubLogin).toBe("acme-bot");
+
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "automationGitHubIdentityUpdated",
+      payload: { identity: null },
+    });
+    expect(state.automationGitHubIdentity).toBeNull();
+  });
 });
