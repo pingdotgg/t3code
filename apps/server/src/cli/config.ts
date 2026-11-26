@@ -1,4 +1,5 @@
 import * as NetService from "@t3tools/shared/Net";
+import { isWildcardHost, normalizeHostname } from "@t3tools/shared/hostClassification";
 import {
   OtlpHeadersFromString,
   OtlpProtocol,
@@ -434,7 +435,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     normalizedFlags.host,
     Option.fromUndefinedOr(env.host),
     Option.fromUndefinedOr(bootstrap?.host),
-  );
+  ).pipe(Option.map((host) => (isWildcardHost(host) ? normalizeHostname(host) : host)));
   // Private networks only, so clients learn a LAN address and prefer it over
   // T3 Connect. `t3 service install` writes T3CODE_LAN=false for a new
   // service; one installed before T3CODE_LAN existed keeps listening.

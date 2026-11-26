@@ -16,6 +16,7 @@ import {
   SheetTitle,
 } from "~/components/ui/sheet";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -746,12 +747,7 @@ function SidebarRail({
   );
   if (canResize && resolvedResizable.collapseOnResize) return rail;
 
-  return (
-    <Tooltip>
-      <TooltipTrigger render={rail} />
-      <TooltipPopup side="right">{railTitle}</TooltipPopup>
-    </Tooltip>
-  );
+  return <SharedTooltipTrigger render={rail} label={railTitle} side="right" />;
 }
 
 function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {

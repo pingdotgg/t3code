@@ -279,6 +279,32 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it.each(["\u3000", "\u00a0"])("detects completion after Unicode space %j", (space) => {
+    for (const [token, kind, query] of [
+      ["@src", "path", "src"],
+      ["#123", "pull-request", "123"],
+      ["$review", "skill", "review"],
+      ["/model", "slash-command", "model"],
+    ]) {
+      const prefix = `日本語${space}`;
+      const text = `${prefix}${token}`;
+      expect(detectComposerTrigger(text, text.length)).toEqual({
+        kind,
+        query,
+        rangeStart: prefix.length,
+        rangeEnd: text.length,
+      });
+    }
+  });
+
+  it.each([
+    ["Run /tmp/build.sh", "Run /tmp/build.sh".length],
+    ["/etc/hosts", "/etc/hosts".length],
+    ["Use /etc/hosts now", "Use /et".length],
+  ])("keeps the path in %j out of the slash menu", (text, cursor) => {
+    expect(detectComposerTrigger(text, cursor)).toBeNull();
+  });
+
   it.each(["Use ", "Use\t", "Use\n  "])("detects inline slash skills after %j", (prefix) => {
     const text = `${prefix}/skill:review later`;
     const cursor = `${prefix}/skill:review`.length;

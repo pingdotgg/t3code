@@ -91,6 +91,7 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 import { useOpenInPreferredEditor } from "~/editorPreferences";
 import {
   useGitStackedAction,
@@ -397,18 +398,16 @@ function GitActionProgressButtonContent({
         )}
       >
         <div className="min-h-0 overflow-hidden">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <p className="truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
-              }
-            >
-              {progress.output}
-            </TooltipTrigger>
-            <TooltipPopup side="bottom" className="max-w-96 break-words">
-              {progress.output}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <p className="truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
+            }
+            label={progress.output}
+            side="bottom"
+            className="max-w-96 break-words"
+          >
+            {progress.output}
+          </SharedTooltipTrigger>
         </div>
       </div>
     </div>
@@ -435,18 +434,16 @@ function GitActionSuccessButtonContent({ success }: { success: InlineGitActionSu
         )}
       >
         <div className="min-h-0 overflow-hidden">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <p className="truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
-              }
-            >
-              {success.description}
-            </TooltipTrigger>
-            <TooltipPopup side="bottom" className="max-w-96 break-words">
-              {success.description}
-            </TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            render={
+              <p className="truncate pt-0.5 text-left text-2xs font-normal text-muted-foreground" />
+            }
+            label={success.description}
+            side="bottom"
+            className="max-w-96 break-words"
+          >
+            {success.description}
+          </SharedTooltipTrigger>
         </div>
       </div>
     </div>
@@ -671,29 +668,26 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                         {option.label}
                       </span>
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              variant="warning-outline"
-                              size="micro"
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                openSourceControlSettings();
-                              }}
-                            >
-                              <T>Setup Required</T>
-                            </Button>
-                          }
-                        />
-                        <TooltipPopup side="top" align="end">
-                          {readiness.hint ??
-                            gt(
-                              "Open Settings -> Source control & issues to configure this provider.",
-                            )}
-                        </TooltipPopup>
-                      </Tooltip>
+                      <SharedTooltipTrigger
+                        render={
+                          <Button
+                            variant="warning-outline"
+                            size="micro"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              openSourceControlSettings();
+                            }}
+                          >
+                            <T>Setup Required</T>
+                          </Button>
+                        }
+                        label={
+                          readiness.hint ??
+                          gt("Open Settings -> Source control & issues to configure this provider.")
+                        }
+                        align="end"
+                      />
                     </div>
                   );
                 }
@@ -1120,12 +1114,18 @@ function CheckoutGitActionsControl({
       : gt("vs {ref}", { ref: resolvedChangesTotals.baseRef })
     : null;
 
+  const [selectionBranch, setSelectionBranch] = useState(gitStatusForActions?.refName ?? null);
+  if (gitStatusForActions && selectionBranch !== gitStatusForActions.refName) {
+    setSelectionBranch(gitStatusForActions.refName);
+    setExcludedFiles(new Set());
+  }
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   // Changed-file paths are repository-relative, so they must resolve against
   // the worktree root from the same status snapshot, not the project cwd.
   const workingTreeRoot = gitStatusForActions?.workingTree.rootPath ?? null;
+  // A stash can temporarily hide excluded paths. Only current files affect the commit.
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
-  const allSelected = excludedFiles.size === 0;
+  const allSelected = selectedFiles.length === allFiles.length;
   const noneSelected = selectedFiles.length === 0;
 
   const initAction = useVcsInitAction(sourceControlScope);
@@ -1288,6 +1288,9 @@ function CheckoutGitActionsControl({
     }
 
     const actionResult = result.value;
+    if (actionResult.commit.status === "created") {
+      setExcludedFiles((current) => (current === excludedFiles ? new Set() : current));
+    }
     const branchUpdate = resolveThreadBranchUpdate(actionResult);
     if (branchUpdate) branchFollower?.follow(branchUpdate.branch);
     const createdPullRequest = actionResult.pr.status === "created";
@@ -1319,28 +1322,25 @@ function CheckoutGitActionsControl({
     });
   };
 
-  // Keep a typed message for the retry unless the user already started a new one.
-  const restoreDialogCommitMessageOnFailure = (commitMessage: string) => (committed: boolean) => {
-    if (committed || !commitMessage) return;
-    setDialogCommitMessage((current) => current || commitMessage);
-  };
-
-  const runDialogActionOnNewBranch = () => {
+  const runDialogAction = async (featureBranch: boolean) => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
 
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
-    setExcludedFiles(new Set());
     setIsEditingFiles(false);
 
-    void runGitActionWithToast({
+    const committed = await runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
       ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
-      featureBranch: true,
-      skipDefaultBranchPrompt: true,
-    }).then(restoreDialogCommitMessageOnFailure(commitMessage));
+      featureBranch,
+      skipDefaultBranchPrompt: featureBranch,
+    });
+    if (!committed && commitMessage) {
+      // Keep a typed message for the retry unless the user already started a new one.
+      setDialogCommitMessage((current) => current || commitMessage);
+    }
   };
 
   const runQuickAction = () => {
@@ -1413,23 +1413,8 @@ function CheckoutGitActionsControl({
       void runGitActionWithToast({ action: "create_pr" });
       return;
     }
-    setExcludedFiles(new Set());
     setIsEditingFiles(false);
     setIsCommitDialogOpen(true);
-  };
-
-  const runDialogAction = () => {
-    if (!isCommitDialogOpen) return;
-    const commitMessage = dialogCommitMessage.trim();
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-    void runGitActionWithToast({
-      action: "commit",
-      ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
-    }).then(restoreDialogCommitMessageOnFailure(commitMessage));
   };
 
   const openChangedFileInEditor = (filePath: string) => {
@@ -1715,36 +1700,34 @@ function CheckoutGitActionsControl({
               </PopoverPopup>
             </Popover>
           ) : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    data-toolbar-control=""
-                    variant="ghost"
-                    size="xs"
-                    part="primary"
-                    panel
-                    disabled={!canWriteSourceControl || isGitActionRunning || quickAction.disabled}
-                    onClick={runQuickAction}
-                  />
-                }
-              >
-                <GitQuickActionIcon
-                  quickAction={quickAction}
-                  SourceControlIcon={SourceControlIcon}
-                  className={THREAD_DETAILS_PANEL_ICON_CLASS}
+            <SharedTooltipTrigger
+              render={
+                <ThreadDetailsControl
+                  data-toolbar-control=""
+                  variant="ghost"
+                  size="xs"
+                  part="primary"
+                  panel
+                  disabled={!canWriteSourceControl || isGitActionRunning || quickAction.disabled}
+                  onClick={runQuickAction}
                 />
-                <span
-                  className={cn(
-                    "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-                    cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
-                  )}
-                >
-                  {quickAction.label}
-                </span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">{quickAction.label}</TooltipPopup>
-            </Tooltip>
+              }
+              label={quickAction.label}
+            >
+              <GitQuickActionIcon
+                quickAction={quickAction}
+                SourceControlIcon={SourceControlIcon}
+                className={THREAD_DETAILS_PANEL_ICON_CLASS}
+              />
+              <span
+                className={cn(
+                  "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
+                  cn("not-sr-only ml-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
+                )}
+              >
+                {quickAction.label}
+              </span>
+            </SharedTooltipTrigger>
           )}
           {!gitActionProgress ? (
             <>
@@ -1756,33 +1739,33 @@ function CheckoutGitActionsControl({
                   }
                 }}
               >
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <MenuTrigger
-                        render={
-                          <ThreadDetailsControl
-                            aria-label={gt("Git action options")}
-                            data-toolbar-control=""
-                            size="sm"
-                            variant="ghost"
-                            part="secondary"
-                            panel
-                          />
-                        }
-                        disabled={isGitActionRunning || !hasGitMenuContent}
-                      />
-                    }
-                  >
-                    <ChevronDownIcon
-                      aria-hidden="true"
-                      className={THREAD_DETAILS_PANEL_CHEVRON_CLASS}
+                <SharedTooltipTrigger
+                  render={
+                    <MenuTrigger
+                      render={
+                        <ThreadDetailsControl
+                          aria-label={gt("Git action options")}
+                          data-toolbar-control=""
+                          size="sm"
+                          variant="ghost"
+                          part="secondary"
+                          panel
+                        />
+                      }
+                      disabled={isGitActionRunning || !hasGitMenuContent}
                     />
-                  </TooltipTrigger>
-                  <TooltipPopup side="top">
-                    <T>Git action options</T>
-                  </TooltipPopup>
-                </Tooltip>
+                  }
+                  label={
+                    <>
+                      <T>Git action options</T>
+                    </>
+                  }
+                >
+                  <ChevronDownIcon
+                    aria-hidden="true"
+                    className={THREAD_DETAILS_PANEL_CHEVRON_CLASS}
+                  />
+                </SharedTooltipTrigger>
                 <MenuPopup align="end" anchor={panelAnchorRef} className="w-(--anchor-width)">
                   {gitItems}
                 </MenuPopup>
@@ -1812,18 +1795,15 @@ function CheckoutGitActionsControl({
                 <T>Changes</T>
               </span>
               {changesBaseLabel ? (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className="pointer-events-auto min-w-0 truncate font-normal text-muted-foreground" />
-                    }
-                  >
-                    {changesBaseLabel}
-                  </TooltipTrigger>
-                  <TooltipPopup side="top" className="max-w-96 break-words">
-                    {changesBaseLabel}
-                  </TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger
+                  render={
+                    <span className="pointer-events-auto min-w-0 truncate font-normal text-muted-foreground" />
+                  }
+                  label={changesBaseLabel}
+                  className="max-w-96 break-words"
+                >
+                  {changesBaseLabel}
+                </SharedTooltipTrigger>
               ) : null}
               <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
                 <span
@@ -2063,7 +2043,7 @@ function CheckoutGitActionsControl({
               variant="outline"
               size="sm"
               disabled={!canCreateFeatureBranch || noneSelected}
-              onClick={runDialogActionOnNewBranch}
+              onClick={() => void runDialogAction(true)}
             >
               {vcsTerminology.systemName === "Jujutsu" ? (
                 gt("{changeNounTitle} on new {refNoun}", {
@@ -2077,7 +2057,7 @@ function CheckoutGitActionsControl({
             <Button
               size="sm"
               disabled={!canWriteSourceControl || noneSelected}
-              onClick={runDialogAction}
+              onClick={() => void runDialogAction(false)}
             >
               <T context="verb">Commit</T>
             </Button>

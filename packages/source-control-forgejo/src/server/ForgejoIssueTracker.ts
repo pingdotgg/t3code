@@ -83,6 +83,7 @@ function parsePage(cursor: string | undefined): number | null {
 function reasonFor(error: ForgejoCli.ForgejoCliError): IssueTrackerError["reason"] {
   switch (error.reason) {
     case "missing-cli":
+    case "wrong-cli":
       return "missing-tool";
     case "authentication":
       return "unauthenticated";

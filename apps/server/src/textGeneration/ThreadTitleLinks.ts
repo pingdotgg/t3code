@@ -30,8 +30,8 @@ export const resolveThreadTitleLinks = Effect.fn("resolveThreadTitleLinks")(func
       lookup.pipe(
         Effect.flatMap((subject) =>
           encodeSubject({
-            title: subject.title.slice(0, 300),
-            body: subject.body?.slice(0, 1_200) ?? "",
+            title: subject.title.slice(0, 300).replace(/\p{Surrogate}$/u, ""),
+            body: subject.body?.slice(0, 1_200).replace(/\p{Surrogate}$/u, "") ?? "",
           }),
         ),
         Effect.map((summary) => `${url}\n${summary}`),
