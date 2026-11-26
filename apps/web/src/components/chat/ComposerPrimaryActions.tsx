@@ -318,7 +318,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               variant="outline"
               {...pointerFocusProps}
               onClick={onPreviousPendingQuestion}
-              disabled={pendingAction.isResponding || pendingAction.questionIndex === 0}
+              disabled={
+                pendingAction.isResponding || voiceInputActive || pendingAction.questionIndex === 0
+              }
               aria-label={gt("Previous question")}
             >
               <ChevronLeftIcon className="size-3.5" />
@@ -328,7 +330,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               variant="outline"
               {...pointerFocusProps}
               onClick={onNextPendingQuestion}
-              disabled={pendingAction.isResponding || pendingAction.isLastQuestion}
+              disabled={
+                pendingAction.isResponding || voiceInputActive || pendingAction.isLastQuestion
+              }
               aria-label={gt("Show next question")}
             >
               <ChevronRightIcon className="size-3.5" />

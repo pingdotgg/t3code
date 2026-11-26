@@ -4031,6 +4031,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       compact
                       canOperateThread={canOperateThread}
                       pendingAction={pendingPrimaryAction}
+                      voiceInputActive={voiceInputActive}
                       isRunning={false}
                       canInterrupt={false}
                       isSendBusy={isSendBusy}

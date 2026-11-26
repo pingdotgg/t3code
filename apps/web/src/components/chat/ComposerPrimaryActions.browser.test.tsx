@@ -208,10 +208,11 @@ it.each([true, false])(
       isResponding: false,
       isComplete: false,
     });
-    const view = (questionIndex: number, isLastQuestion: boolean) => (
+    const view = (questionIndex: number, isLastQuestion: boolean, voiceInputActive = false) => (
       <ComposerPrimaryActions
         {...props}
         compact={compact}
+        voiceInputActive={voiceInputActive}
         isRunning={false}
         canInterrupt={false}
         pendingAction={pendingAction(questionIndex, isLastQuestion)}
@@ -229,6 +230,11 @@ it.each([true, false])(
     await expect.element(next()).toBeDisabled();
     await userEvent.click(previous());
     expect(props.onPreviousPendingQuestion).toHaveBeenCalledTimes(1);
+
+    // Dictation belongs to the current question; switching questions would drop the recording.
+    await screen.rerender(view(1, false, true));
+    await expect.element(previous()).toBeDisabled();
+    await expect.element(next()).toBeDisabled();
 
     await screen.rerender(view(0, true));
     expect(previous().query()).toBeNull();
