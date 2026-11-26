@@ -231,10 +231,6 @@ const make = Effect.gen(function* () {
     }));
   };
 
-  /**
-   * Where a project's issues live: its bound standalone tracker, its git host's, or both. The
-   * tracker bound in Settings leads, as the one the user chose for the project.
-   */
   // A tracked folder deeper inside another repository is plain files, not a repository of its own.
   const trackedRepositories = (project: OrchestrationProjectShell) =>
     Effect.filter(
@@ -244,6 +240,11 @@ const make = Effect.gen(function* () {
       { concurrency: SCOPE_CONCURRENCY },
     );
 
+  /**
+   * Where a project's issues live: its bound standalone tracker, its git host's, or both. The
+   * tracker bound in Settings leads, as the one the user chose for the project. Tracked folders
+   * that are repositories of their own add their git host's, read through their own checkout.
+   */
   const resolveProjectTracker = (
     project: OrchestrationProjectShell,
     binding: IssueTrackerProjectBinding | undefined,
