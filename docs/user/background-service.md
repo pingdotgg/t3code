@@ -19,6 +19,7 @@ Install the `t3` CLI first ([Command line](./install.md#command-line)), then run
 
 - Pairing codes are never written to logs; run `t3 pair` or `t3 up` on the host to connect a device.
 - `t3 update` asks before restarting (pass `--yes` in scripts). Pin a version with `t3 update 0.0.42`, switch tracks with `--channel nightly`, or downgrade with `--allow-downgrade`.
+- Only one server can use a T3 home. To use the desktop app on the same machine, turn off **Settings → Environments → Local environment** and pair the app with the service. If the app opens while the service owns the home, choose **Use the running server** to do this.
 
 ## Local network access
 
