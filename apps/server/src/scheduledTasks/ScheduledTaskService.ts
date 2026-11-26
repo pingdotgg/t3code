@@ -1,10 +1,14 @@
 import {
   CommandId,
   MessageId,
+  ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type ModelSelection,
   type ProjectId,
+  type RunId,
   ScheduledTask,
   ScheduledTaskError,
+  ScheduledTaskFallbackModelSelections,
   ScheduledTaskId,
   ThreadId,
   ScheduledTaskWebhookDeliveryId,
@@ -25,6 +29,8 @@ import {
   type ScheduledTaskThreadMode,
   type ScheduledTaskUpsertInput,
   managedPolicyDeniedMessage,
+  scheduledTaskFallbackModelIssue,
+  scheduledTaskFallbackModelKey,
   scheduledTaskThreadMode,
   managedRuntimeModeDenial,
 } from "@t3tools/contracts";
@@ -89,6 +95,44 @@ export const scheduledTaskIdForCommand = (commandId: CommandId) =>
   ScheduledTaskId.make(`scheduled-task:${commandId}`);
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 const isOrchestratorDispatchError = Schema.is(OrchestratorDispatchError);
+const isThreadNotFoundError = Schema.is(
+  ThreadManagementService.ThreadManagementThreadNotFoundError,
+);
+const isThreadArchivedError = Schema.is(
+  ThreadManagementService.ThreadManagementThreadArchivedError,
+);
+const isWorktreeRestoreError = Schema.is(
+  ThreadManagementService.ThreadManagementWorktreeRestoreError,
+);
+
+function isNonFallbackBoundDispatchFailure(cause: Cause.Cause<unknown>): boolean {
+  if (Cause.hasInterruptsOnly(cause)) return true;
+  const squashed = Cause.squash(cause);
+  return (
+    isThreadNotFoundError(squashed) ||
+    isThreadArchivedError(squashed) ||
+    isWorktreeRestoreError(squashed)
+  );
+}
+
+function attemptIds(fireKey: string, attemptIndex: number) {
+  return {
+    commandId: CommandId.make(
+      attemptIndex === 0
+        ? `scheduled-task:${fireKey}`
+        : `scheduled-task:${fireKey}:fallback:${attemptIndex}`,
+    ),
+    messageId: MessageId.make(
+      attemptIndex === 0
+        ? `scheduled-task-message:${fireKey}`
+        : `scheduled-task-message:${fireKey}:fallback:${attemptIndex}`,
+    ),
+  };
+}
+
+function formatFallbackExhaustedError(error: string, fallbacksTried: number): string {
+  return fallbacksTried > 0 ? `All fallback models failed. Last error: ${error}` : error;
+}
 const PROMPT_TOO_LONG = "The filled-in prompt is too long.";
 const WEBHOOK_DELIVERY_RETENTION = 50;
 const WEBHOOK_DEDUPE_DELIVERY_RETENTION = 20;
@@ -204,6 +248,9 @@ const decodeWorkspaceStrategyJson = Schema.decodeUnknownEffect(
 const decodeModelSelectionJson = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ScheduledTask.fields.modelSelection),
 );
+const decodeFallbackModelSelectionsJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(ScheduledTaskFallbackModelSelections),
+);
 const HeadersJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const MissingFieldsJson = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeHeadersJson = Schema.decodeUnknownOption(HeadersJson);
@@ -235,6 +282,7 @@ interface ScheduledTaskRow {
   readonly thread_mode: string;
   readonly workspace_strategy_json: string;
   readonly model_selection_json: string;
+  readonly fallback_model_selections_json: string;
   readonly runtime_mode: string;
   readonly interaction_mode: string;
   readonly created_by: string;
@@ -415,6 +463,10 @@ const decodeRow = Effect.fnUntraced(
     const webhook = schedule.type === "webhook" ? webhookEndpoint(row, origin) : undefined;
     const workspaceStrategy = yield* decodeWorkspaceStrategyJson(row.workspace_strategy_json);
     const modelSelection = yield* decodeModelSelectionJson(row.model_selection_json);
+    const fallbackModelSelections =
+      row.fallback_model_selections_json && row.fallback_model_selections_json !== "[]"
+        ? yield* decodeFallbackModelSelectionsJson(row.fallback_model_selections_json)
+        : [];
     return yield* decodeTask({
       id: row.task_id,
       title: row.title,
@@ -426,6 +478,7 @@ const decodeRow = Effect.fnUntraced(
       threadMode: row.thread_mode,
       workspaceStrategy,
       modelSelection,
+      ...(fallbackModelSelections.length === 0 ? {} : { fallbackModelSelections }),
       runtimeMode: row.runtime_mode,
       interactionMode: row.interaction_mode,
       createdBy: row.created_by,
@@ -550,6 +603,7 @@ export const layer = Layer.effect(
         thread_mode,
         workspace_strategy_json,
         model_selection_json,
+        fallback_model_selections_json,
         runtime_mode,
         interaction_mode,
         created_by,
@@ -592,6 +646,7 @@ export const layer = Layer.effect(
         thread_mode,
         workspace_strategy_json,
         model_selection_json,
+        fallback_model_selections_json,
         runtime_mode,
         interaction_mode,
         created_by,
@@ -672,6 +727,7 @@ export const layer = Layer.effect(
           thread_mode,
           workspace_strategy_json,
           model_selection_json,
+          fallback_model_selections_json,
           runtime_mode,
           interaction_mode,
           created_by,
@@ -697,6 +753,7 @@ export const layer = Layer.effect(
           ${scheduledTaskThreadMode(task)},
           ${JSON.stringify(task.workspaceStrategy)},
           ${JSON.stringify(task.modelSelection)},
+          ${JSON.stringify(task.fallbackModelSelections ?? [])},
           ${task.runtimeMode},
           ${task.interactionMode},
           ${task.createdBy},
@@ -729,6 +786,7 @@ export const layer = Layer.effect(
           thread_mode = excluded.thread_mode,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
+          fallback_model_selections_json = excluded.fallback_model_selections_json,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
           creation_source = excluded.creation_source,
@@ -909,69 +967,213 @@ export const layer = Layer.effect(
       ),
     );
 
-    // A dispatch is recorded once the message is accepted; the provider can still
-    // reject the turn after that, so follow the run and record its failure. A one-time
-    // task whose turn completed at or after its runAt is spent, so it is removed; its
-    // thread stays. A paused task always has a NULL next_run_at, so that alone proves nothing.
-    const recordRunOutcome = Effect.fn("ScheduledTaskService.recordRunOutcome")(function* (
-      taskId: ScheduledTaskId,
-      startedAtIso: string,
-      threadId: ThreadId,
-      messageId: MessageId,
-    ) {
-      const shell = yield* threadManagement.getThreadShell(threadId);
-      if (shell === null) return;
-      const thread = { projectId: shell.projectId, threadId };
-      const { runs } = yield* threadManagement.getProjectThreadRecords(thread, ["runs"]);
-      const dispatched = runs.find((run) => run.userMessageId === messageId);
-      if (dispatched === undefined) return;
-      const { run } = yield* threadManagement.waitForThread({
-        ...thread,
-        runId: dispatched.id,
-        timeoutMs: RUN_OUTCOME_WAIT_MS,
-      });
-      if (run === null || !ThreadManagementService.isTerminalRunStatus(run.status)) return;
-      if (run.status === "completed") {
-        const removed = yield* sql`
-          DELETE FROM scheduled_tasks
-          WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
-            AND last_run_status = 'succeeded' AND next_run_at IS NULL
-            AND json_extract(schedule_json, '$.type') = 'once'
-            AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
+    // A bound thread can move to another project (No project to a project) while
+    // this fires. Follow it; one move needs at most two retries. Same ids replay safely.
+    const sendToTaskThread = (input: {
+      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
+      readonly commandId: CommandId;
+      readonly messageId: MessageId;
+      readonly taskId: ScheduledTaskId;
+      readonly prompt: string;
+      readonly modelSelection?: ModelSelection;
+      readonly freshContext: boolean;
+      readonly createdBy: ScheduledTask["createdBy"];
+      readonly creationSource: ScheduledTask["creationSource"];
+      readonly retries: number;
+    }): ReturnType<typeof threadManagement.sendToThread> =>
+      threadManagement
+        .sendToThread({
+          projectId: input.projectId,
+          commandId: input.commandId,
+          threadId: input.threadId,
+          messageId: input.messageId,
+          scheduledTaskId: input.taskId,
+          text: input.prompt,
+          attachments: [],
+          ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+          mode: "queue",
+          ...(input.freshContext ? { freshContext: true } : {}),
+          createdBy: input.createdBy,
+          creationSource: input.creationSource,
+        })
+        .pipe(
+          Effect.catchTags({
+            ThreadManagementThreadNotFoundError: (error) =>
+              input.retries === 0
+                ? Effect.fail(error)
+                : threadManagement.getThreadShell(input.threadId).pipe(
+                    Effect.orElseSucceed(() => null),
+                    Effect.flatMap((shell) =>
+                      shell === null || shell.projectId === input.projectId
+                        ? Effect.fail(error)
+                        : sendToTaskThread({
+                            ...input,
+                            projectId: shell.projectId,
+                            retries: input.retries - 1,
+                          }),
+                    ),
+                  ),
+          }),
+        );
+
+    // Follow an accepted run to retry configured fallbacks on failure and record the final outcome.
+    // A spent one-time task is removed only on completion; a paused task's NULL next_run_at proves nothing.
+    const recordRunOutcome = Effect.fn("ScheduledTaskService.recordRunOutcome")(function* (input: {
+      readonly taskId: ScheduledTaskId;
+      readonly startedAtIso: string;
+      readonly threadId: ThreadId;
+      readonly messageId: MessageId;
+      readonly initialRunId?: RunId;
+      readonly fireKey: string;
+      readonly prompt: string;
+      readonly threadMode: ScheduledTaskThreadMode;
+      readonly createdBy: ScheduledTask["createdBy"];
+      readonly creationSource: ScheduledTask["creationSource"];
+      readonly remainingFallbacks: ReadonlyArray<ModelSelection>;
+      readonly triedKeys: ReadonlySet<string>;
+      readonly nextAttemptIndex: number;
+      readonly initialFallbacksTried: number;
+    }) {
+      const remaining = [...input.remainingFallbacks];
+      const triedKeys = new Set(input.triedKeys);
+      let nextAttemptIndex = input.nextAttemptIndex;
+      let fallbacksTried = input.initialFallbacksTried;
+      let currentMessageId = input.messageId;
+      let currentRunId = input.initialRunId;
+
+      while (true) {
+        const shell = yield* threadManagement.getThreadShell(input.threadId);
+        if (shell === null || shell.deletedAt != null) return;
+        const thread = { projectId: shell.projectId, threadId: input.threadId };
+        let runId = currentRunId;
+        if (runId === undefined) {
+          const { runs } = yield* threadManagement.getProjectThreadRecords(thread, ["runs"]);
+          const dispatched = runs.find((candidate) => candidate.userMessageId === currentMessageId);
+          if (dispatched === undefined) return;
+          runId = dispatched.id;
+        }
+        const { run } = yield* threadManagement.waitForThread({
+          ...thread,
+          runId,
+          timeoutMs: RUN_OUTCOME_WAIT_MS,
+        });
+        if (run === null || !ThreadManagementService.isTerminalRunStatus(run.status)) return;
+        if (run.status === "completed") {
+          const removed = yield* sql`
+            DELETE FROM scheduled_tasks
+            WHERE task_id = ${input.taskId} AND last_run_at = ${input.startedAtIso}
+              AND last_run_status = 'succeeded' AND next_run_at IS NULL
+              AND json_extract(schedule_json, '$.type') = 'once'
+              AND julianday(last_run_at) >= julianday(json_extract(schedule_json, '$.runAt'))
+            RETURNING task_id
+          `;
+          if (removed.length > 0) yield* notifyChanged;
+          return;
+        }
+        // Only the run's failed errors feed latestRootProviderFailure; a long-lived task
+        // thread holds tens of thousands of items.
+        const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(
+          thread,
+          ["turnItems", "messages"],
+          {
+            messageIds: [currentMessageId],
+            turnItemRunId: run.id,
+            turnItemTypes: ["error"],
+            turnItemStatuses: ["failed"],
+          },
+        );
+        // A queued message promoted to a steer cancels its run and joins the active one.
+        if (
+          run.status === "cancelled" &&
+          messages.find((message) => message.id === currentMessageId)?.runId !== run.id
+        )
+          return;
+        const rootFailure = latestRootProviderFailure(run, turnItems);
+        let lastError = rootFailure?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
+        if (run.modelSelection !== undefined) {
+          triedKeys.add(scheduledTaskFallbackModelKey(run.modelSelection));
+        }
+
+        const canRetryFallback =
+          run.status === "failed" &&
+          rootFailure?.code !== ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE &&
+          remaining.length > 0 &&
+          shell.archivedAt == null;
+        if (canRetryFallback) {
+          const activeOccurrence = yield* sql<{ task_id: string }>`
+            SELECT task_id FROM scheduled_tasks
+            WHERE task_id = ${input.taskId} AND last_run_at = ${input.startedAtIso}
+              AND (last_run_status = 'succeeded'
+                OR (last_run_status = 'failed' AND last_run_error = ${HELD_OCCURRENCE_ERROR}))
+          `.pipe(NodeSqliteClient.readOnly);
+          if (activeOccurrence.length > 0) {
+            let dispatchedNext = false;
+            while (remaining.length > 0) {
+              const nextModel = remaining.shift()!;
+              const modelKey = scheduledTaskFallbackModelKey(nextModel);
+              if (triedKeys.has(modelKey)) continue;
+              triedKeys.add(modelKey);
+              const attemptIndex = nextAttemptIndex++;
+              const { commandId, messageId } = attemptIds(input.fireKey, attemptIndex);
+              yield* Effect.logInfo("Scheduled task run failed; retrying with fallback model", {
+                taskId: input.taskId,
+                threadId: input.threadId,
+                attemptIndex,
+                fallbackInstanceId: nextModel.instanceId,
+                fallbackModel: nextModel.model,
+              });
+              const fallbackExit = yield* Effect.exit(
+                sendToTaskThread({
+                  threadId: input.threadId,
+                  projectId: shell.projectId,
+                  commandId,
+                  messageId,
+                  taskId: input.taskId,
+                  prompt: input.prompt,
+                  modelSelection: nextModel,
+                  freshContext: input.threadMode !== "continue",
+                  createdBy: input.createdBy,
+                  creationSource: input.creationSource,
+                  retries: 2,
+                }),
+              );
+              if (Exit.isSuccess(fallbackExit)) {
+                fallbacksTried += 1;
+                currentMessageId = messageId;
+                currentRunId = fallbackExit.value?.run?.id;
+                dispatchedNext = true;
+                break;
+              }
+              if (Cause.hasInterruptsOnly(fallbackExit.cause)) return;
+              fallbacksTried += 1;
+              lastError = dispatchErrorMessage(fallbackExit.cause);
+              yield* Effect.logWarning("Scheduled task fallback dispatch failed", {
+                taskId: input.taskId,
+                threadId: input.threadId,
+                attemptIndex,
+                fallbackInstanceId: nextModel.instanceId,
+                fallbackModel: nextModel.model,
+                error: lastError,
+              });
+              if (isNonFallbackBoundDispatchFailure(fallbackExit.cause)) break;
+            }
+            if (dispatchedNext) continue;
+          }
+        }
+
+        const error = formatFallbackExhaustedError(lastError, fallbacksTried);
+        const updated = yield* sql`
+          UPDATE scheduled_tasks
+          SET last_run_status = 'failed', last_run_error = ${error}
+          WHERE task_id = ${input.taskId} AND last_run_at = ${input.startedAtIso}
+            AND (last_run_status = 'succeeded'
+              OR (last_run_status = 'failed' AND last_run_error = ${HELD_OCCURRENCE_ERROR}))
           RETURNING task_id
         `;
-        if (removed.length > 0) yield* notifyChanged;
+        if (updated.length > 0) yield* notifyChanged;
         return;
       }
-      // Only the run's failed errors feed latestRootProviderFailure; a long-lived task
-      // thread holds tens of thousands of items.
-      const { turnItems, messages } = yield* threadManagement.getProjectThreadRecords(
-        thread,
-        ["turnItems", "messages"],
-        {
-          messageIds: [messageId],
-          turnItemRunId: run.id,
-          turnItemTypes: ["error"],
-          turnItemStatuses: ["failed"],
-        },
-      );
-      // A queued message promoted to a steer cancels its run and joins the active one.
-      if (
-        run.status === "cancelled" &&
-        messages.find((message) => message.id === messageId)?.runId !== run.id
-      )
-        return;
-      const error =
-        latestRootProviderFailure(run, turnItems)?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
-      const updated = yield* sql`
-        UPDATE scheduled_tasks
-        SET last_run_status = 'failed', last_run_error = ${error}
-        WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
-          AND (last_run_status = 'succeeded'
-            OR (last_run_status = 'failed' AND last_run_error = ${HELD_OCCURRENCE_ERROR}))
-        RETURNING task_id
-      `;
-      if (updated.length > 0) yield* notifyChanged;
     });
 
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
@@ -1079,91 +1281,142 @@ export const layer = Layer.effect(
           webhook === undefined
             ? `${active.id}:${DateTime.toEpochMillis(startedAt)}:${trigger}`
             : `${active.id}:webhook:${webhook.deliveryId}`;
-        const commandId = CommandId.make(`scheduled-task:${fireKey}`);
-        const messageId = MessageId.make(`scheduled-task-message:${fireKey}`);
         const prompt = webhook?.prompt ?? active.prompt;
         const threadMode = scheduledTaskThreadMode(active);
-
-        // A bound thread can move to another project (No project to a project) while
-        // this fires. Follow it; one move needs at most two retries. Same ids replay safely.
-        const sendBound = (
-          threadId: ThreadId,
-          projectId: ProjectId,
-          retries: number,
-        ): ReturnType<typeof threadManagement.sendToThread> =>
-          threadManagement
-            .sendToThread({
-              projectId,
-              commandId,
-              threadId,
-              messageId,
-              scheduledTaskId: active.id,
-              text: prompt,
-              attachments: [],
-              mode: "queue",
-              ...(threadMode === "fresh_session" ? { freshContext: true } : {}),
-              createdBy: active.createdBy,
-              creationSource: active.creationSource,
-            })
-            .pipe(
-              Effect.catchTags({
-                ThreadManagementThreadNotFoundError: (error) =>
-                  retries === 0
-                    ? Effect.fail(error)
-                    : threadManagement.getThreadShell(threadId).pipe(
-                        Effect.orElseSucceed(() => null),
-                        Effect.flatMap((shell) =>
-                          shell === null || shell.projectId === projectId
-                            ? Effect.fail(error)
-                            : sendBound(threadId, shell.projectId, retries - 1),
-                        ),
-                      ),
-              }),
-            );
+        const configuredFallbacks = active.fallbackModelSelections ?? [];
+        const triedKeys = new Set<string>();
+        let dispatchedThreadId: ThreadId | null = null;
+        let dispatchedMessageId = attemptIds(fireKey, 0).messageId;
+        let dispatchedRunId: RunId | undefined;
+        let remainingFallbacks: ReadonlyArray<ModelSelection> = configuredFallbacks;
+        let nextAttemptIndex = 1;
+        let fallbacksTried = 0;
+        let lastDispatchCause: Cause.Cause<unknown> | null = null;
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
-        const result =
-          active.threadId === null
-            ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(
-                    Effect.map((launched) => launched.threadId),
-                    Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
-                    ),
+        if (active.threadId === null) {
+          const candidates: ModelSelection[] = [];
+          const seenKeys = new Set<string>();
+          for (const candidate of [active.modelSelection, ...configuredFallbacks]) {
+            const key = scheduledTaskFallbackModelKey(candidate);
+            if (seenKeys.has(key)) continue;
+            seenKeys.add(key);
+            candidates.push(candidate);
+          }
+          for (let attemptIndex = 0; attemptIndex < candidates.length; attemptIndex++) {
+            const candidate = candidates[attemptIndex]!;
+            triedKeys.add(scheduledTaskFallbackModelKey(candidate));
+            const { commandId, messageId } = attemptIds(fireKey, attemptIndex);
+            const exit = yield* Effect.exit(
+              threadLaunch
+                .launch({
+                  commandId,
+                  projectId: active.projectId,
+                  title: active.title,
+                  modelSelection: candidate,
+                  runtimeMode: active.runtimeMode,
+                  interactionMode: active.interactionMode,
+                  workspaceStrategy: active.workspaceStrategy,
+                  initialMessage: {
+                    messageId,
+                    scheduledTaskId: active.id,
+                    text: prompt,
+                    attachments: [],
+                  },
+                  createdBy: active.createdBy,
+                  creationSource: active.creationSource,
+                })
+                .pipe(
+                  Effect.map((launched) => launched.threadId),
+                  Effect.tap((threadId) =>
+                    threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
                   ),
-              )
-            : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.as(ThreadId.make(active.threadId)),
                 ),
-              );
+            );
+            if (Exit.isSuccess(exit)) {
+              dispatchedThreadId = exit.value;
+              dispatchedMessageId = messageId;
+              remainingFallbacks = candidates.slice(attemptIndex + 1);
+              nextAttemptIndex = attemptIndex + 1;
+              fallbacksTried = attemptIndex;
+              break;
+            }
+            lastDispatchCause = exit.cause;
+            fallbacksTried = attemptIndex;
+            if (Cause.hasInterruptsOnly(exit.cause)) break;
+            if (attemptIndex + 1 < candidates.length) {
+              yield* Effect.logInfo("Scheduled task launch failed; trying next fallback model", {
+                taskId: active.id,
+                attemptIndex,
+                failedInstanceId: candidate.instanceId,
+                failedModel: candidate.model,
+              });
+            }
+          }
+        } else {
+          const boundThreadId = ThreadId.make(active.threadId);
+          // The stored selection only seeds fresh threads. Attempt 0 follows the
+          // thread's current provider; fallback attempts override with their model.
+          const boundCandidates: ReadonlyArray<ModelSelection | undefined> = [
+            undefined,
+            ...configuredFallbacks,
+          ];
+          for (let attemptIndex = 0; attemptIndex < boundCandidates.length; attemptIndex++) {
+            const candidate = boundCandidates[attemptIndex];
+            if (candidate !== undefined) {
+              triedKeys.add(scheduledTaskFallbackModelKey(candidate));
+            }
+            const { commandId, messageId } = attemptIds(fireKey, attemptIndex);
+            const exit = yield* Effect.exit(
+              sendToTaskThread({
+                threadId: boundThreadId,
+                projectId: active.projectId,
+                commandId,
+                messageId,
+                taskId: active.id,
+                prompt,
+                ...(candidate === undefined ? {} : { modelSelection: candidate }),
+                freshContext: threadMode === "fresh_session",
+                createdBy: active.createdBy,
+                creationSource: active.creationSource,
+                retries: 2,
+              }),
+            );
+            if (Exit.isSuccess(exit)) {
+              dispatchedThreadId = boundThreadId;
+              dispatchedMessageId = messageId;
+              dispatchedRunId = exit.value?.run?.id;
+              remainingFallbacks = configuredFallbacks.slice(attemptIndex);
+              nextAttemptIndex = attemptIndex + 1;
+              fallbacksTried = attemptIndex;
+              break;
+            }
+            lastDispatchCause = exit.cause;
+            fallbacksTried = attemptIndex;
+            if (isNonFallbackBoundDispatchFailure(exit.cause)) break;
+            if (attemptIndex + 1 < boundCandidates.length) {
+              yield* Effect.logInfo("Scheduled task send failed; trying next fallback model", {
+                taskId: active.id,
+                threadId: boundThreadId,
+                attemptIndex,
+              });
+            }
+          }
+        }
 
-        const runSucceeded = result._tag === "Success";
+        const runSucceeded = dispatchedThreadId !== null;
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
         const completedAt = yield* localNow;
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
-        const lastRunError = runSucceeded ? null : dispatchErrorMessage(result.cause);
-        const threadId = runSucceeded ? result.value : null;
+        const lastRunError = runSucceeded
+          ? null
+          : formatFallbackExhaustedError(
+              lastDispatchCause === null
+                ? "The run failed to start."
+                : dispatchErrorMessage(lastDispatchCause),
+              fallbacksTried,
+            );
+        const threadId = dispatchedThreadId;
         // One transaction, so an edit cannot land between reading the schedule and
         // writing the next run computed from it. The origin is read first: it reads
         // files, and the transaction holds SQLite's writer lock.
@@ -1229,7 +1482,22 @@ export const layer = Layer.effect(
           );
         if (written) yield* notifyChanged;
         if (written && threadId !== null) {
-          yield* recordRunOutcome(active.id, startedAtIso, threadId, messageId).pipe(
+          yield* recordRunOutcome({
+            taskId: active.id,
+            startedAtIso,
+            threadId,
+            messageId: dispatchedMessageId,
+            ...(dispatchedRunId === undefined ? {} : { initialRunId: dispatchedRunId }),
+            fireKey,
+            prompt,
+            threadMode,
+            createdBy: active.createdBy,
+            creationSource: active.creationSource,
+            remainingFallbacks,
+            triedKeys,
+            nextAttemptIndex,
+            initialFallbacksTried: fallbacksTried,
+          }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not record scheduled run outcome", {
                 taskId: active.id,
@@ -1600,6 +1868,34 @@ export const layer = Layer.effect(
         isSameSchedule(existingTask.schedule, schedule);
       if (!scheduleUnchanged)
         yield* requireFutureOnce({ enabled: input.enabled, schedule }, now, id);
+      // Omitted keeps stored fallbacks so older clients do not clear them;
+      // drop a stored fallback only if a legacy save moved the primary onto it.
+      const primaryKey =
+        threadId === null ? scheduledTaskFallbackModelKey(input.modelSelection) : null;
+      const fallbackModelSelections =
+        input.fallbackModelSelections !== undefined
+          ? input.fallbackModelSelections
+          : (existingTask?.fallbackModelSelections ?? []).filter(
+              (candidate) =>
+                primaryKey === null || scheduledTaskFallbackModelKey(candidate) !== primaryKey,
+            );
+      const fallbackIssue = scheduledTaskFallbackModelIssue(
+        fallbackModelSelections,
+        threadId === null ? input.modelSelection : null,
+      );
+      if (fallbackIssue !== null) {
+        const message =
+          fallbackIssue === "duplicate_primary"
+            ? "A fallback model cannot match the primary model."
+            : fallbackIssue === "duplicate_fallback"
+              ? "Fallback models must be distinct."
+              : fallbackIssue === "too_many_models"
+                ? "At most 6 fallback models are allowed."
+                : fallbackIssue === "too_many_families"
+                  ? "At most 3 fallback model families are allowed."
+                  : "At most 2 fallback models per family are allowed.";
+        return yield* taskError(message, { taskId: id });
+      }
       const task: ScheduledTask = {
         id,
         title: input.title,
@@ -1611,6 +1907,7 @@ export const layer = Layer.effect(
         threadMode,
         workspaceStrategy,
         modelSelection: input.modelSelection,
+        ...(fallbackModelSelections.length === 0 ? {} : { fallbackModelSelections }),
         runtimeMode: input.runtimeMode,
         interactionMode: input.interactionMode,
         createdBy: existingTask?.createdBy ?? input.createdBy ?? "user",

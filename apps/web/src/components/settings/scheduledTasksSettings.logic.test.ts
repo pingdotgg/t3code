@@ -20,7 +20,11 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
+  fallbackModelDisabledReason,
   matchesScheduledTaskScope,
+  moveFallbackModel,
+  nextScheduledTaskFallbackModel,
+  pruneFallbackMatchingPrimary,
   scheduleFromDraft,
   scheduleLabel,
   taskToDraft,
@@ -469,4 +473,75 @@ it("shows schedule times in the Time format setting", () => {
     }).format(runAt);
     expect(scheduleLabel(once, hour12 ? "12-hour" : "24-hour")).toBe(`Once, ${dateTime}`);
   }
+});
+
+describe("scheduled task fallback models", () => {
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const codex = ProviderInstanceId.make("codex");
+  const antigravity = ProviderInstanceId.make("antigravity");
+  const cursor = ProviderInstanceId.make("cursor");
+  const primary = { instanceId: claude, model: "fable" };
+  const opus = { instanceId: claude, model: "opus" };
+  const astra = { instanceId: codex, model: "astra" };
+  const sol = { instanceId: codex, model: "sol" };
+  const neo = { instanceId: antigravity, model: "neo" };
+
+  it("round-trips fallback models in drafts, reorders them, and prunes duplicates of primary", () => {
+    const draft = taskToDraft({ ...legacyTask, fallbackModelSelections: [opus, astra, sol] });
+    expect(draft.fallbackModelSelections).toEqual([opus, astra, sol]);
+    expect(moveFallbackModel([opus, astra, sol], 2, -1)).toEqual([opus, sol, astra]);
+    expect(moveFallbackModel([opus, astra, sol], 0, 1)).toEqual([astra, opus, sol]);
+    expect(pruneFallbackMatchingPrimary([opus, astra], opus)).toEqual([astra]);
+  });
+
+  it("explains disabled models and suggests the next valid fallback", () => {
+    const fallbacks = [opus, astra, sol, neo];
+    expect(fallbackModelDisabledReason(primary, primary, fallbacks, 3)).toBe(
+      "Already selected as the primary model",
+    );
+    expect(fallbackModelDisabledReason(opus, primary, fallbacks, 3)).toBe(
+      "Already in the fallback list",
+    );
+    expect(
+      fallbackModelDisabledReason({ instanceId: codex, model: "terra" }, primary, fallbacks, 3),
+    ).toBe("Up to 2 fallback models per family");
+    expect(
+      fallbackModelDisabledReason(
+        { instanceId: cursor, model: "auto" },
+        primary,
+        [opus, astra, neo, { instanceId: antigravity, model: "flash" }],
+        3,
+      ),
+    ).toBe("Up to 3 fallback model families");
+
+    const entries = deriveProviderInstanceEntries([
+      {
+        instanceId: claude,
+        driver: "claudeAgent",
+        displayName: "Claude",
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        models: [
+          { slug: "fable", name: "Fable", isCustom: false, capabilities: null },
+          { slug: "opus", name: "Opus", isCustom: false, capabilities: null },
+        ],
+      },
+      {
+        instanceId: codex,
+        driver: "codex",
+        displayName: "Codex",
+        enabled: true,
+        installed: true,
+        status: "ready",
+        auth: { status: "authenticated" },
+        models: [{ slug: "astra", name: "Astra", isCustom: false, capabilities: null }],
+      },
+    ] as unknown as ServerConfig["providers"]);
+
+    expect(nextScheduledTaskFallbackModel(entries, primary, [])).toEqual(opus);
+    expect(nextScheduledTaskFallbackModel(entries, primary, [opus])).toEqual(astra);
+    expect(nextScheduledTaskFallbackModel(entries, primary, [opus, astra])).toBeNull();
+  });
 });

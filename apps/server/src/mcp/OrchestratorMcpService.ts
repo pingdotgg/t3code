@@ -298,6 +298,9 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     projectId: task.projectId,
     boundThreadId: task.threadId,
     freshSession: scheduledTaskThreadMode(task) === "fresh_session",
+    ...(task.fallbackModelSelections?.length
+      ? { fallbackModelSelections: task.fallbackModelSelections }
+      : {}),
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
@@ -2503,6 +2506,9 @@ const make = Effect.gen(function* () {
             : "new_thread",
         workspaceStrategy: yield* scheduledTaskWorkspaceStrategy(bindToCurrentThread, projectId),
         modelSelection,
+        ...(input.fallbackModelSelections === undefined
+          ? {}
+          : { fallbackModelSelections: input.fallbackModelSelections }),
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
         createdBy: "agent",
@@ -2616,6 +2622,9 @@ const make = Effect.gen(function* () {
                   : "continue",
           workspaceStrategy,
           modelSelection: existing.modelSelection,
+          ...(input.fallbackModelSelections === undefined
+            ? {}
+            : { fallbackModelSelections: input.fallbackModelSelections }),
           runtimeMode: existing.runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,

@@ -5,10 +5,12 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CommandId,
+  ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE,
   ProjectId,
   ProviderInstanceId,
   ScheduledTaskError,
   ScheduledTaskId,
+  type ModelSelection,
   type ScheduledTaskUpsertInput,
   SecretRef,
   ThreadId,
@@ -1225,4 +1227,412 @@ it.effect("a run interrupted right after it reserves the task does not block the
       assert.equal(yield* Ref.get(launches), 1);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "persists fallback models, keeps them on omitted edits, clears on [], and rejects primary duplicates",
+  () =>
+    Effect.gen(function* () {
+      const layer = ScheduledTaskService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ManagedPolicy.layerTest(),
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+              isScratchProject: () => Effect.succeed(false),
+            }),
+            NodeCrypto.layer,
+            Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const fable: ModelSelection = {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-fable",
+        };
+        const opus: ModelSelection = {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-opus-5-5",
+        };
+        const astra: ModelSelection = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-6-astra",
+        };
+        const base: ScheduledTaskUpsertInput = {
+          id: ScheduledTaskId.make("task:fallbacks"),
+          title: "Nightly audit",
+          prompt: "Audit changes",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId: ProjectId.make("project:test"),
+          workspaceStrategy: { type: "root" },
+          modelSelection: fable,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        };
+
+        const duplicateError = yield* service
+          .upsert({ ...base, fallbackModelSelections: [fable] })
+          .pipe(Effect.flip);
+        assert.equal(duplicateError.message, "A fallback model cannot match the primary model.");
+
+        const created = yield* service.upsert({
+          ...base,
+          fallbackModelSelections: [opus, astra],
+        });
+        assert.deepEqual(created.task.fallbackModelSelections, [opus, astra]);
+
+        // An edit from an older client that omits fallbackModelSelections keeps stored fallbacks.
+        const kept = yield* service.upsert({ ...base, title: "Renamed" });
+        assert.deepEqual(kept.task.fallbackModelSelections, [opus, astra]);
+
+        // Passing [] clears them.
+        const cleared = yield* service.upsert({ ...base, fallbackModelSelections: [] });
+        assert.isUndefined(cleared.task.fallbackModelSelections);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("walks the fallback chain across launch dispatch failures and async rate limits", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:test");
+    const launchedThread = ThreadId.make("thread:fallback-chain");
+    const fable: ModelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-fable",
+    };
+    const opus: ModelSelection = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+    };
+    const astra: ModelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-6-astra",
+    };
+    const sol: ModelSelection = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "gpt-5.6-sol",
+    };
+    const neo: ModelSelection = {
+      instanceId: ProviderInstanceId.make("antigravity"),
+      model: "gemini-4-neon",
+    };
+
+    const launchAttempts = yield* Ref.make<Array<string>>([]);
+    const sendAttempts = yield* Ref.make<Array<{ model: string; freshContext?: boolean }>>([]);
+    const runsByMessage = yield* Ref.make<
+      Array<{ id: string; userMessageId: string; status: string; modelSelection: ModelSelection }>
+    >([]);
+    const completedNeo = yield* Deferred.make<void>();
+
+    const layer = ScheduledTaskService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          ManagedPolicy.layerTest(),
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            launch: (input) =>
+              Ref.update(launchAttempts, (all) => [...all, input.modelSelection.model]).pipe(
+                Effect.andThen(() => {
+                  // Primary (Fable) fails synchronously at launch; Opus launches the thread.
+                  if (input.modelSelection.model === fable.model) {
+                    return Effect.fail(
+                      new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+                        projectId,
+                        instanceId: fable.instanceId,
+                      }),
+                    );
+                  }
+                  const messageId = input.initialMessage?.messageId ?? "";
+                  return Ref.update(runsByMessage, (all) => [
+                    ...all,
+                    {
+                      id: "run:opus",
+                      userMessageId: messageId,
+                      status: "failed",
+                      modelSelection: input.modelSelection,
+                    },
+                  ]).pipe(Effect.as({ threadId: launchedThread, resumed: false } as never));
+                }),
+              ),
+          }),
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadShell: () => Effect.succeed(threadShell(projectId)),
+            sendToThread: (input) => {
+              const selected = input.modelSelection!;
+              return Ref.update(sendAttempts, (all) => [
+                ...all,
+                {
+                  model: selected.model,
+                  ...(input.freshContext === undefined ? {} : { freshContext: input.freshContext }),
+                },
+              ]).pipe(
+                Effect.andThen(() => {
+                  // Astra fails synchronously (provider disabled); SOL fails async with usage limit; Neo completes!
+                  if (selected.model === astra.model) {
+                    return Effect.fail(
+                      new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+                        projectId,
+                        instanceId: astra.instanceId,
+                      }),
+                    );
+                  }
+                  const runId = `run:${selected.model}`;
+                  const status = selected.model === neo.model ? "completed" : "failed";
+                  return Ref.update(runsByMessage, (all) => [
+                    ...all,
+                    { id: runId, userMessageId: input.messageId, status, modelSelection: selected },
+                  ]).pipe(Effect.as({ run: { id: runId } } as never));
+                }),
+              );
+            },
+            getProjectThreadRecords: () =>
+              Ref.get(runsByMessage).pipe(
+                Effect.map(
+                  (runs) =>
+                    ({
+                      runs: runs.map((entry) => ({ ...entry, rootNodeId: "node:root" })),
+                      messages: runs.map((entry) => ({ id: entry.userMessageId, runId: entry.id })),
+                      turnItems: runs
+                        .filter((entry) => entry.status === "failed")
+                        .map((entry) => ({
+                          type: "error",
+                          status: "failed",
+                          runId: entry.id,
+                          nodeId: "node:root",
+                          failure: {
+                            class: "usage_limit",
+                            message: `${entry.modelSelection.model} usage limit reached`,
+                          },
+                        })),
+                    }) as never,
+                ),
+              ),
+            waitForThread: (input) =>
+              Ref.get(runsByMessage).pipe(
+                Effect.map((runs) => runs.find((candidate) => candidate.id === input.runId)!),
+                Effect.tap((run) =>
+                  run.status === "completed"
+                    ? Deferred.succeed(completedNeo, undefined)
+                    : Effect.void,
+                ),
+                Effect.map(
+                  (run) =>
+                    ({
+                      threadId: input.threadId,
+                      run: { ...run, rootNodeId: "node:root" },
+                      timedOut: false,
+                    }) as never,
+                ),
+              ),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/projects",
+            isScratchProject: () => Effect.succeed(false),
+          }),
+          NodeCrypto.layer,
+          Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* service.upsert({
+        id: ScheduledTaskId.make("task:chain"),
+        title: "Fallback chain",
+        prompt: "Check alerts",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        workspaceStrategy: { type: "root" },
+        modelSelection: fable,
+        fallbackModelSelections: [opus, astra, sol, neo],
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+
+      const result = yield* service.runNow({ id: task.id });
+      assert.equal(result.threadId, launchedThread);
+      yield* Deferred.await(completedNeo);
+
+      assert.deepEqual(yield* Ref.get(launchAttempts), [fable.model, opus.model]);
+      assert.deepEqual(yield* Ref.get(sendAttempts), [
+        { model: astra.model, freshContext: true },
+        { model: sol.model, freshContext: true },
+        { model: neo.model, freshContext: true },
+      ]);
+
+      const stored = (yield* service.list()).tasks.find((item) => item.id === task.id);
+      assert.equal(stored?.lastRunStatus, "succeeded");
+      assert.isNull(stored?.lastRunError);
+    }).pipe(Effect.provide(layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect(
+  "records exhausted fallback errors and skips fallbacks on workspace preparation failure or interrupt",
+  () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:test");
+      const astra: ModelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-6-astra",
+      };
+      const sol: ModelSelection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.6-sol",
+      };
+      const mode = yield* Ref.make<"exhaust" | "workspace_fail" | "interrupted">("exhaust");
+      const sends = yield* Ref.make<Array<string>>([]);
+      const runRecords = yield* Ref.make<
+        Array<{ id: string; userMessageId: string; status: string }>
+      >([]);
+
+      const layer = ScheduledTaskService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ManagedPolicy.layerTest(),
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              launch: (input) =>
+                Ref.get(mode).pipe(
+                  Effect.flatMap((currentMode) =>
+                    Ref.set(runRecords, [
+                      {
+                        id: "run:primary",
+                        userMessageId: input.initialMessage?.messageId ?? "",
+                        status: currentMode === "interrupted" ? "interrupted" : "failed",
+                      },
+                    ]),
+                  ),
+                  Effect.as({ threadId: ThreadId.make("thread:exhaust"), resumed: false } as never),
+                ),
+            }),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              getThreadShell: () => Effect.succeed(threadShell(projectId)),
+              sendToThread: (input) =>
+                Ref.update(sends, (all) => [...all, input.modelSelection?.model ?? ""]).pipe(
+                  Effect.andThen(
+                    Ref.update(runRecords, (all) => [
+                      ...all,
+                      { id: "run:fallback", userMessageId: input.messageId, status: "failed" },
+                    ]),
+                  ),
+                  Effect.as({ run: { id: "run:fallback" } } as never),
+                ),
+              getProjectThreadRecords: () =>
+                Effect.all([Ref.get(runRecords), Ref.get(mode)]).pipe(
+                  Effect.map(
+                    ([runs, currentMode]) =>
+                      ({
+                        runs: runs.map((entry) => ({ ...entry, rootNodeId: "node:root" })),
+                        messages: runs.map((entry) => ({
+                          id: entry.userMessageId,
+                          runId: entry.id,
+                        })),
+                        turnItems: runs
+                          .filter((entry) => entry.status === "failed")
+                          .map((entry) => ({
+                            type: "error",
+                            status: "failed",
+                            runId: entry.id,
+                            nodeId: "node:root",
+                            failure: {
+                              message:
+                                currentMode === "workspace_fail"
+                                  ? "Base ref missing"
+                                  : entry.id === "run:fallback"
+                                    ? "SOL quota exceeded"
+                                    : "Astra quota exceeded",
+                              code:
+                                currentMode === "workspace_fail"
+                                  ? ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE
+                                  : null,
+                            },
+                          })),
+                      }) as never,
+                  ),
+                ),
+              waitForThread: (input) =>
+                Ref.get(runRecords).pipe(
+                  Effect.map(
+                    (runs) =>
+                      ({
+                        threadId: input.threadId,
+                        run: {
+                          ...runs.find((candidate) => candidate.id === input.runId)!,
+                          rootNodeId: "node:root",
+                        },
+                        timedOut: false,
+                      }) as never,
+                  ),
+                ),
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+              isScratchProject: () => Effect.succeed(false),
+            }),
+            NodeCrypto.layer,
+            Layer.succeed(Scheduler.Scheduler, { register: () => Effect.void }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const { task } = yield* service.upsert({
+          id: ScheduledTaskId.make("task:exhaust"),
+          title: "Exhaust fallbacks",
+          prompt: "Check alerts",
+          enabled: true,
+          schedule: { type: "interval", everyMs: 60_000 },
+          projectId,
+          workspaceStrategy: { type: "root" },
+          modelSelection: astra,
+          fallbackModelSelections: [sol],
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        });
+
+        const waitForError = (expected: string) =>
+          service.subscribeList().pipe(
+            Stream.map(({ tasks }) => tasks.find((item) => item.id === task.id)),
+            Stream.filter(
+              (item) => item?.lastRunStatus === "failed" && item.lastRunError === expected,
+            ),
+            Stream.runHead,
+          );
+
+        const exhausted = yield* Effect.forkChild(
+          waitForError("All fallback models failed. Last error: SOL quota exceeded"),
+        );
+        yield* service.runNow({ id: task.id });
+        assert.isTrue(Option.isSome(yield* Fiber.join(exhausted)));
+        assert.deepEqual(yield* Ref.get(sends), [sol.model]);
+
+        // Workspace preparation failure must not retry fallback models.
+        yield* Ref.set(sends, []);
+        yield* Ref.set(mode, "workspace_fail");
+        yield* TestClock.adjust("1 second");
+        const workspaceFailed = yield* Effect.forkChild(waitForError("Base ref missing"));
+        yield* service.runNow({ id: task.id });
+        assert.isTrue(Option.isSome(yield* Fiber.join(workspaceFailed)));
+        assert.deepEqual(yield* Ref.get(sends), []);
+
+        // User interruption must not retry fallback models.
+        yield* Ref.set(sends, []);
+        yield* Ref.set(mode, "interrupted");
+        yield* TestClock.adjust("1 second");
+        const interrupted = yield* Effect.forkChild(waitForError("The run was stopped."));
+        yield* service.runNow({ id: task.id });
+        assert.isTrue(Option.isSome(yield* Fiber.join(interrupted)));
+        assert.deepEqual(yield* Ref.get(sends), []);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
