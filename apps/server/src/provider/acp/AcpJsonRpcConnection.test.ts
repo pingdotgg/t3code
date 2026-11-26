@@ -1562,6 +1562,47 @@ describe("AcpSessionRuntime", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.live("a prompt waiting for a late session/load also waits out a replacement load", () =>
+    Effect.gen(function* () {
+      const log: string[] = [];
+      const runtime = yield* AcpSessionRuntime.make({
+        authMethodId: "test",
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+          env: { T3_ACP_EMIT_LOAD_REPLAY: "1", T3_ACP_LOAD_NEVER_REPLIES: "1" },
+        },
+        cwd: process.cwd(),
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "50 millis",
+        sessionLoadTimeout: "500 millis",
+        sessionLoadReplayIdleReadiness: true,
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+        requestLogger: (event) =>
+          event.method === "session/prompt" || event.method === "session/load"
+            ? Effect.sync(() => log.push(`${event.method} ${event.status}`))
+            : Effect.void,
+      });
+      yield* runtime.start();
+      const prompting = yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "hi" }] })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* runtime.loadSession("mock-session-1");
+      expect((yield* Fiber.join(prompting)).stopReason).toBe("end_turn");
+      // The replacement answers by replay idle; the prompt waits until its response times out.
+      expect(log).toEqual([
+        "session/load started",
+        "session/load succeeded",
+        "session/load started",
+        "session/load succeeded",
+        "session/load failed",
+        "session/prompt started",
+        "session/prompt succeeded",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.live("treats replay idle as loaded when the agent opts in", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;

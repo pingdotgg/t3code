@@ -2072,19 +2072,31 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   );
 
   // Replay idle does not prove history is over: a prompt waits for the pending
-  // session/load to answer, or for its load timeout, before it goes out.
-  // A stop during that wait has no prompt to cancel yet, so it resolves the wait instead.
+  // session/load to answer, or for its load timeout, before it goes out. A load that
+  // replaces it meanwhile is waited out too. A stop during the wait has no prompt to
+  // cancel yet, so it resolves the wait instead.
   const awaitLateSessionLoad = Effect.gen(function* () {
-    const late = yield* Ref.get(lateSessionLoadRef);
-    if (Option.isNone(late)) return { stopped: false, settledLoad: undefined };
     const stop = yield* Deferred.make<void>();
     yield* Ref.set(waitingPromptStopRef, Option.some(stop));
-    const stopped = yield* Effect.raceFirst(
-      Fiber.await(late.value.response).pipe(Effect.as(false)),
-      Deferred.await(stop).pipe(Effect.as(true)),
-    ).pipe(Effect.ensuring(Ref.set(waitingPromptStopRef, Option.none())));
-    return { stopped, settledLoad: late.value.response };
-  });
+    let settledLoad: Fiber.Fiber<unknown, unknown> | undefined;
+    while (true) {
+      const gate = yield* Ref.get(sessionLoadGateRef);
+      const late = yield* Ref.get(lateSessionLoadRef);
+      let pending: Effect.Effect<unknown> | undefined;
+      if (Option.isSome(gate) && gate.value.active) {
+        pending = sessionLoadSemaphore.withPermits(1)(Effect.void);
+      } else if (Option.isSome(late)) {
+        settledLoad = late.value.response;
+        pending = Fiber.await(late.value.response);
+      }
+      if (pending === undefined) return { stopped: false, settledLoad };
+      const stopped = yield* Effect.raceFirst(
+        pending.pipe(Effect.as(false)),
+        Deferred.await(stop).pipe(Effect.as(true)),
+      );
+      if (stopped) return { stopped, settledLoad };
+    }
+  }).pipe(Effect.ensuring(Ref.set(waitingPromptStopRef, Option.none())));
 
   // Adopts the agent's real session/load response after a replay-idle start.
   // Anything that changed the session or its configuration in between is newer
