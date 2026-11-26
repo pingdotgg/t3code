@@ -11,6 +11,7 @@ import {
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import type * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -19,8 +20,10 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -1215,63 +1218,29 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(SecureRandom.SecureRandom, random),
     );
-    const backgroundProbeKey =
-      effectiveConfig.source === "local" ? `local:${instanceId}` : effectiveConfig.agentId;
-    // Agents advertise project commands and skills only for the session's cwd, so each project is probed.
-    const snapshotForCwd = Effect.fn("AcpRegistryDriver.snapshotForCwd")(function* (cwd: string) {
-      const machineSnapshot = yield* snapshot.getSnapshot;
-      if (!effectiveConfig.enabled || machineSnapshot.auth.status === "unauthenticated") {
-        return machineSnapshot;
-      }
-      // Probing resolves the agent, which may download it; only an agent already present is probed.
-      const inspection = yield* catalog
-        .inspect(effectiveConfig, processEnvironment)
-        .pipe(Effect.option);
-      if (Option.isNone(inspection) || inspection.value.status !== "ready") return machineSnapshot;
-      const probe = probeAcpRegistryConfiguration({
-        instanceId,
-        settings: effectiveConfig,
-        cwd,
-        environment: providerProbeEnvironment(processEnvironment),
-        commandsOnly: true,
-      }).pipe(
-        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(SecureRandom.SecureRandom, random),
-      );
-      const probed = yield* (
-        Option.isSome(runtimeCoordinator)
-          ? runtimeCoordinator.value.runBackgroundProbe(
-              backgroundProbeKey,
-              probe.pipe(
-                Effect.provideService(
-                  AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
-                  runtimeCoordinator.value,
-                ),
-              ),
-            )
-          : probe.pipe(Effect.asSome)
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: `Failed to list ACP Registry commands for '${cwd}'`,
-              cause,
-            }),
-        ),
-      );
-      // A session starting for this agent stopped the probe; the registry keeps what it had and rescans.
-      if (Option.isNone(probed)) return { ...machineSnapshot, slashCommandsPending: true };
+    // Retain reports until the registry subscribes; end its listener on teardown.
+    const workspaceRescans = yield* Queue.unbounded<string, Cause.Done>();
+    yield* Effect.addFinalizer(() => Queue.end(workspaceRescans));
+    // Agents advertise project commands only to a session in that project; probing there would run its hooks and MCP servers.
+    const workspaceCommands = Option.map(runtimeCoordinator, (coordinator) => {
       return {
-        ...machineSnapshot,
-        slashCommands: probed.value.slashCommands,
-        skills: probed.value.skills,
+        rescans: coordinator
+          .availableCommandsCwds(instanceId)
+          .pipe(Stream.runForEach((cwd) => Queue.offer(workspaceRescans, cwd))),
+        snapshotForCwd: (cwd: string) =>
+          Effect.all([
+            snapshot.getSnapshot,
+            coordinator.getWorkspaceAvailableCommands(instanceId, cwd),
+          ]).pipe(
+            Effect.map(([machineSnapshot, commands]) =>
+              applyAcpRegistryAvailableCommands(machineSnapshot, commands),
+            ),
+          ),
       };
     });
+    if (Option.isSome(workspaceCommands)) {
+      yield* workspaceCommands.value.rescans.pipe(Effect.forkScoped({ startImmediately: true }));
+    }
     const auth = {
       ...controller,
       invalidate: (controller.invalidate ?? Effect.void).pipe(
@@ -1295,7 +1264,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
-      snapshotForCwd,
+      ...(Option.isSome(workspaceCommands)
+        ? {
+            snapshotForCwd: workspaceCommands.value.snapshotForCwd,
+            workspaceRescans: Stream.fromQueue(workspaceRescans),
+          }
+        : {}),
       invalidateCaches: liveSnapshotSemaphore
         .withPermit(
           (Option.isSome(runtimeCoordinator)

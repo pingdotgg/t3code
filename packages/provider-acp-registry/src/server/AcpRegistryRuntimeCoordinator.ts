@@ -20,6 +20,7 @@ import type { AcpRegistryAvailableCommands, AcpRegistryLiveConfiguration } from 
 interface AvailableCommandsUpdate {
   readonly instanceId: ProviderInstanceId;
   readonly commands: AcpRegistryAvailableCommands;
+  readonly cwd: string | undefined;
 }
 
 interface LiveConfigurationUpdate {
@@ -74,10 +75,18 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
     readonly publishAvailableCommands: (
       instanceId: ProviderInstanceId,
       commands: AcpRegistryAvailableCommands,
+      cwd?: string,
     ) => Effect.Effect<void>;
     readonly getAvailableCommands: (
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<Option.Option<AcpRegistryAvailableCommands>>;
+    /** What a session in `cwd` last advertised; agents list project commands only for their cwd. */
+    readonly getWorkspaceAvailableCommands: (
+      instanceId: ProviderInstanceId,
+      cwd: string,
+    ) => Effect.Effect<Option.Option<AcpRegistryAvailableCommands>>;
+    /** Cwds whose sessions advertise commands, from subscription on. */
+    readonly availableCommandsCwds: (instanceId: ProviderInstanceId) => Stream.Stream<string>;
     readonly watchAvailableCommands: (
       instanceId: ProviderInstanceId,
       onUpdate: (commands: AcpRegistryAvailableCommands) => Effect.Effect<void>,
@@ -128,6 +137,9 @@ const make = Effect.gen(function* () {
   const availableCommandsUpdates = yield* PubSub.unbounded<AvailableCommandsUpdate>();
   const availableCommandsByInstance = yield* Ref.make(
     new Map<ProviderInstanceId, AcpRegistryAvailableCommands>(),
+  );
+  const availableCommandsByWorkspace = yield* Ref.make(
+    new Map<ProviderInstanceId, ReadonlyMap<string, AcpRegistryAvailableCommands>>(),
   );
   const liveConfigurationUpdates = yield* PubSub.unbounded<LiveConfigurationUpdate>();
   const liveConfigurations = yield* Ref.make<LiveConfigurationState>({
@@ -192,23 +204,57 @@ const make = Effect.gen(function* () {
         const next = new Map(current);
         next.delete(instanceId);
         return next;
-      });
+      }).pipe(
+        Effect.andThen(
+          Ref.update(availableCommandsByWorkspace, (current) => {
+            const next = new Map(current);
+            next.delete(instanceId);
+            return next;
+          }),
+        ),
+      );
 
   const publishAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["publishAvailableCommands"] =
-    (instanceId, commands) =>
+    (instanceId, commands, cwd) =>
       Ref.update(availableCommandsByInstance, (current) => {
         const next = new Map(current);
         next.set(instanceId, commands);
         return next;
       }).pipe(
         Effect.andThen(
+          cwd === undefined
+            ? Effect.void
+            : Ref.update(availableCommandsByWorkspace, (current) => {
+                const next = new Map(current);
+                next.set(instanceId, new Map(current.get(instanceId)).set(cwd, commands));
+                return next;
+              }),
+        ),
+        Effect.andThen(
           PubSub.publish(availableCommandsUpdates, {
             instanceId,
             commands,
+            cwd,
           }),
         ),
         Effect.asVoid,
       );
+
+  const getWorkspaceAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["getWorkspaceAvailableCommands"] =
+    (instanceId, cwd) =>
+      Ref.get(availableCommandsByWorkspace).pipe(
+        Effect.map((current) => Option.fromNullishOr(current.get(instanceId)?.get(cwd))),
+      );
+
+  const availableCommandsCwds: AcpRegistryRuntimeCoordinator["Service"]["availableCommandsCwds"] = (
+    instanceId,
+  ) =>
+    Stream.fromPubSub(availableCommandsUpdates).pipe(
+      Stream.filter((update) => update.instanceId === instanceId),
+      Stream.flatMap((update) =>
+        update.cwd === undefined ? Stream.empty : Stream.succeed(update.cwd),
+      ),
+    );
 
   const getAvailableCommands: AcpRegistryRuntimeCoordinator["Service"]["getAvailableCommands"] =
     Effect.fn("AcpRegistryRuntimeCoordinator.getAvailableCommands")(function* (instanceId) {
@@ -406,6 +452,8 @@ const make = Effect.gen(function* () {
     clearAvailableCommands,
     publishAvailableCommands,
     getAvailableCommands,
+    getWorkspaceAvailableCommands,
+    availableCommandsCwds,
     watchAvailableCommands,
     clearLiveConfiguration,
     clearLiveConfigurationIfRevision,
