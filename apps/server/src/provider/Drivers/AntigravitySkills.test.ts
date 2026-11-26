@@ -124,6 +124,38 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect("reads plugin skills only as the plugin's manifest declares them", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspace = yield* makeWorkspace();
+      const plugins = path.join(workspace.profileDirectory, "config", "plugins");
+      const demo = path.join(plugins, "demo");
+      yield* fileSystem.makeDirectory(path.join(demo, ".antigravity-plugin"), { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(demo, ".antigravity-plugin", "plugin.json"),
+        JSON.stringify({ name: "demo", skills: ["./engineering", "./skills/cat/listed"] }),
+      );
+      for (const [directory, name] of [
+        ["engineering/collected", "collected"],
+        ["skills/cat/listed", "listed"],
+        ["skills/plain", "plain"],
+      ]) {
+        yield* writeSkill(path.join(demo, directory), `---\nname: ${name}\n---\n`);
+      }
+      // agy skips a plugin without a manifest, or whose first manifest does not parse.
+      yield* writeSkill(path.join(plugins, "bare", "skills", "orphan"), "---\nname: orphan\n---\n");
+      yield* fileSystem.makeDirectory(path.join(plugins, "broken"), { recursive: true });
+      yield* fileSystem.writeFileString(path.join(plugins, "broken", "plugin.json"), "{");
+      yield* writeSkill(path.join(plugins, "broken", "skills", "torn"), "---\nname: torn\n---\n");
+
+      assert.deepEqual(
+        (yield* discoverAntigravitySkills(workspace)).map((skill) => skill.displayName),
+        ["demo:collected", "demo:listed", "demo:plain"],
+      );
+    }),
+  );
+
   it.effect("uses native root order for duplicate names", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
