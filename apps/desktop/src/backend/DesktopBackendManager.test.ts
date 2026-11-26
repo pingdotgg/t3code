@@ -485,14 +485,14 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
-  it.effect("records a settled backend before acking it, without waiting for readiness", () =>
+  it.effect("records a backend at spawn and acks it once settled and recorded", () =>
     Effect.gen(function* () {
       assert.equal(
         BACKEND_SETTLED_LINE,
         `${encodeDesktopTelemetryControl({ version: 1, type: "backendSettled" })}\n`,
       );
       const settle = yield* Deferred.make<void>();
-      const recording = yield* Deferred.make<boolean>();
+      const recording = yield* Deferred.make<void>();
       const finishRecording = yield* Deferred.make<void>();
       const ackStream =
         yield* Deferred.make<
@@ -530,8 +530,7 @@ describe("DesktopBackendManager", () => {
         desktopTelemetryStream: Stream.empty,
         onReady: () => Ref.set(ready, true),
         trackProcess: () =>
-          Deferred.isDone(settle).pipe(
-            Effect.flatMap((settled) => Deferred.succeed(recording, settled)),
+          Deferred.succeed(recording, undefined).pipe(
             Effect.andThen(Deferred.await(finishRecording)),
             Effect.as(Ref.set(forgotten, true)),
           ),
@@ -544,23 +543,23 @@ describe("DesktopBackendManager", () => {
         Effect.forkChild,
       );
 
+      // Recorded while the entry may still re-execute, so a desktop killed meanwhile leaves a record.
+      yield* Deferred.await(recording);
       yield* Deferred.succeed(settle, undefined);
-      assert.isTrue(yield* Deferred.await(recording), "recorded before the backend settled");
-      assert.isFalse(yield* Ref.get(ready));
-      assert.isUndefined(ack.pollUnsafe(), "acked before the record was written");
-      // If the backend dies mid-record, its PID may be reused; the run still forgets the record.
-      yield* Deferred.succeed(childExit, ChildProcessSpawner.ExitCode(0));
       // A record the worker could not write resolves the same way, so it acks too.
       yield* Deferred.succeed(finishRecording, undefined);
       assert.equal(yield* Fiber.join(ack), "\u0001");
+      assert.isFalse(yield* Ref.get(ready));
+      yield* Deferred.succeed(childExit, ChildProcessSpawner.ExitCode(0));
       yield* Fiber.join(run);
       assert.isTrue(yield* Ref.get(forgotten));
     }),
   );
 
-  it.effect("stops a frozen backend whose control channel ends before it settles, unrecorded", () =>
+  it.effect("stops a frozen backend whose control channel ends before it settles", () =>
     Effect.gen(function* () {
       const recorded = yield* Ref.make(false);
+      const forgotten = yield* Ref.make(false);
       const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       const killRequested = yield* Deferred.make<void>();
       const layerSpawner = Layer.succeed(
@@ -589,7 +588,7 @@ describe("DesktopBackendManager", () => {
         ...baseConfig,
         settledAckFd: 8,
         desktopTelemetryStream: Stream.empty,
-        trackProcess: () => Ref.set(recorded, true).pipe(Effect.as(Effect.void)),
+        trackProcess: () => Ref.set(recorded, true).pipe(Effect.as(Ref.set(forgotten, true))),
       }).pipe(
         Effect.scoped,
         Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)),
@@ -598,13 +597,15 @@ describe("DesktopBackendManager", () => {
       yield* Deferred.await(killRequested);
       yield* TestClock.adjust(Duration.seconds(5));
       assert.deepEqual((yield* Fiber.join(run)).code, Option.some(137));
-      assert.isFalse(yield* Ref.get(recorded));
+      assert.isTrue(yield* Ref.get(recorded));
+      assert.isTrue(yield* Ref.get(forgotten), "the record outlived the backend it named");
     }),
   );
 
   it.effect("closes the ack without acknowledging when recording is interrupted", () =>
     Effect.gen(function* () {
       const recording = yield* Deferred.make<void>();
+      const controlRead = yield* Deferred.make<void>();
       const ackStream =
         yield* Deferred.make<Stream.Stream<Uint8Array, PlatformError.PlatformError>>();
       const layerSpawner = Layer.succeed(
@@ -620,7 +621,8 @@ describe("DesktopBackendManager", () => {
             return makeProcess({
               getOutputFd: (output) =>
                 output === 5
-                  ? Stream.encodeText(Stream.make(BACKEND_SETTLED_LINE)).pipe(
+                  ? // serverReady after backendSettled shows the run has read the settle.
+                    Stream.encodeText(Stream.make(BACKEND_SETTLED_LINE, `${readyLine}\n`)).pipe(
                       Stream.concat(Stream.never),
                     )
                   : Stream.empty,
@@ -633,6 +635,7 @@ describe("DesktopBackendManager", () => {
         ...baseConfig,
         settledAckFd: 8,
         desktopTelemetryStream: Stream.empty,
+        onReady: () => Deferred.succeed(controlRead, undefined).pipe(Effect.asVoid),
         trackProcess: () =>
           Deferred.succeed(recording, undefined).pipe(
             Effect.andThen(Effect.never),
@@ -649,6 +652,7 @@ describe("DesktopBackendManager", () => {
         Effect.forkChild,
       );
       yield* Deferred.await(recording);
+      yield* Deferred.await(controlRead);
       yield* Fiber.interrupt(run);
       assert.equal(yield* Fiber.join(ack), "");
     }),

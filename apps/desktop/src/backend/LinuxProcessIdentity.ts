@@ -45,6 +45,7 @@ export const linuxProcessIdentity: MacProcessAuditToken = {
     }
   },
   parent: (pid) => readStat(pid)?.parent,
+  started: (pid) => readStat(pid)?.startTime.toString(),
   signal(token, name) {
     const pid = Buffer.from(token, "hex").readUInt32LE(PID_OFFSET);
     // Node has no pidfd signal; checking the start time first leaves only a reuse race of

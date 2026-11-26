@@ -30,6 +30,31 @@ const childCode = `
   });
 `;
 
+// Execs itself in place once recorded, as the macOS backend entry does, then listens as childCode.
+const reexecChildCode = `
+  import { createServer } from "node:net";
+  const listen = () => {
+    const listener = createServer();
+    listener.listen(0, "127.0.0.1", () => process.send(listener.address().port));
+    setTimeout(() => listener.close(), 30_000).unref();
+  };
+  if (process.env.T3_TEST_REEXECUTED) listen();
+  else process.once("message", async () => {
+    const { DataType, load, open, unwrapPointer } = await import("ffi-rs");
+    open({ library: "libSystem", path: "/usr/lib/libSystem.B.dylib" });
+    const call = (retType, funcName, paramsType, paramsValue) =>
+      load({ library: "libSystem", funcName, retType, paramsType, paramsValue });
+    // FIONCLEX keeps the IPC channel (stdio 3) open across the exec. Node drops its variable.
+    call(DataType.I32, "ioctl", [DataType.I32, DataType.I64], [3, 0x20006602]);
+    process.env.NODE_CHANNEL_FD = "3";
+    process.env.T3_TEST_REEXECUTED = "1";
+    const [argv] = unwrapPointer([call(DataType.External, "_NSGetArgv", [], [])]);
+    const [environment] = unwrapPointer([call(DataType.External, "_NSGetEnviron", [], [])]);
+    call(DataType.I32, "execve", [DataType.String, DataType.External, DataType.External], [process.execPath, argv, environment]);
+    throw new Error("execve failed");
+  });
+`;
+
 const launcherCode = `
   import { spawn } from "node:child_process";
   import { once } from "node:events";
@@ -65,6 +90,7 @@ async function spawnTrackedBackend(
   options: {
     readonly execPath?: string;
     readonly backendExecPath?: string;
+    readonly childCode?: string;
     readonly env?: NodeJS.ProcessEnv;
   } = {},
 ) {
@@ -79,7 +105,7 @@ async function spawnTrackedBackend(
       moduleUrl,
       appDataDirectory,
       stateDir,
-      childCode,
+      options.childCode ?? childCode,
       options.backendExecPath ?? execPath,
     ],
     { stdio: ["ignore", "ignore", "inherit", "ipc"], env: options.env ?? NodeProcess.env },
@@ -105,12 +131,14 @@ async function spawnTrackedBackend(
   return { ...backend, token, stopLauncher };
 }
 
-// A hard link keeps the executable path distinct where a symlink would resolve to Node itself.
+// A symlink would resolve to Node itself, and macOS may report a hard link under any of its names.
 async function linkExecutable(path: string) {
   await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
-  await NodeFSP.link(NodeProcess.execPath, path).catch(() =>
-    NodeFSP.copyFile(NodeProcess.execPath, path),
-  );
+  const copy = () =>
+    NodeFSP.copyFile(NodeProcess.execPath, path, NodeFS.constants.COPYFILE_FICLONE);
+  await (NodeProcess.platform === "darwin"
+    ? copy()
+    : NodeFSP.link(NodeProcess.execPath, path).catch(copy));
 }
 
 async function checkPortIsFree(port: number) {
@@ -233,6 +261,43 @@ describe.runIf(NodeProcess.platform === "darwin" || NodeProcess.platform === "li
       await checkPortIsFree(orphan.port);
       assert.equal(native.read(live.pid), live.token);
     });
+
+    it.runIf(NodeProcess.platform === "darwin")(
+      "recovers an orphan that re-executed in place after it was recorded",
+      async () => {
+        await using cleanup = new AsyncDisposableStack();
+        const appDataDirectory = await NodeFSP.realpath(
+          await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-reexec-recovery-")),
+        );
+        cleanup.defer(() => NodeFSP.rm(appDataDirectory, { recursive: true, force: true }));
+        const stateDir = NodePath.join(appDataDirectory, "home");
+        const orphan = await spawnTrackedBackend(appDataDirectory, stateDir, cleanup, {
+          childCode: reexecChildCode,
+        });
+        const records = NodePath.join(appDataDirectory, "t3code-backend-recovery");
+        const [name] = await NodeFSP.readdir(records);
+        const record = JSON.parse(await NodeFSP.readFile(NodePath.join(records, name!), "utf8"));
+        const native = await loadNative();
+        assert.notEqual(orphan.token, record.backend, "the exec kept the recorded audit token");
+        const recovered: number[] = [];
+        const errors: unknown[] = [];
+        const recovery = make({
+          appDataDirectory,
+          stateDir,
+          launcherPid: NodeProcess.pid,
+          onRecovery: (pid) => recovered.push(pid),
+          onError: (_, error) => errors.push(error),
+        });
+
+        NodeProcess.kill(orphan.pid, "SIGSTOP");
+        await orphan.stopLauncher();
+        await recovery.recover();
+        assert.deepEqual(errors, []);
+        assert.deepEqual(recovered, [orphan.pid]);
+        assert.isUndefined(native.read(orphan.pid));
+        await checkPortIsFree(orphan.port);
+      },
+    );
 
     it.runIf(NodeProcess.platform === "linux")(
       "recovers an AppImage orphan after a relaunch mounts the app at a new path",

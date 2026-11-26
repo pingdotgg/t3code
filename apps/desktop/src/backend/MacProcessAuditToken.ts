@@ -9,6 +9,9 @@ const PROC_PIDPATH_MAXSIZE = 4096;
 // sys/proc_info.h: proc_bsdshortinfo begins with the PID and parent PID.
 const PROC_PIDT_SHORTBSDINFO = 13;
 const PROC_PIDT_SHORTBSDINFO_SIZE = 64;
+// sys/proc_info.h: proc_bsdinfo, its PID at byte 12 and its start time at bytes 120-135.
+const PROC_PIDTBSDINFO = 3;
+const PROC_PIDTBSDINFO_SIZE = 136;
 
 export const isProcessAuditToken = (value: unknown): value is string =>
   typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
@@ -20,6 +23,8 @@ export interface MacProcessAuditToken {
   readonly read: (pid: number) => string | undefined;
   readonly executable: (pid: number) => string | undefined;
   readonly parent: (pid: number) => number | undefined;
+  /** When the process started. An exec keeps it, where it changes the macOS audit token. */
+  readonly started: (pid: number) => string | undefined;
   readonly signal: (token: string, signal: "SIGTERM" | "SIGKILL") => void;
 }
 
@@ -101,6 +106,19 @@ export const loadMacProcessAuditToken = (): Promise<MacProcessAuditToken> =>
         });
         return length === info.byteLength && info.readUInt32LE() === pid
           ? info.readUInt32LE(4)
+          : undefined;
+      },
+      started(pid) {
+        const info = Buffer.alloc(PROC_PIDTBSDINFO_SIZE);
+        const length = load({
+          library,
+          funcName: "proc_pidinfo",
+          retType: DataType.I32,
+          paramsType: [DataType.I32, DataType.I32, DataType.BigInt, DataType.U8Array, DataType.I32],
+          paramsValue: [pid, PROC_PIDTBSDINFO, 0n, info, info.byteLength],
+        });
+        return length === info.byteLength && info.readUInt32LE(12) === pid
+          ? `${info.readBigUInt64LE(120)}.${info.readBigUInt64LE(128)}`
           : undefined;
       },
       signal(token, name) {

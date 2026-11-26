@@ -28,6 +28,7 @@ const O_EXLOCK = isDarwin ? 0x20 : 0;
 const observedFileName = /^[0-9a-f]{64}\.[0-9a-f-]{36}\.json$/;
 const scopePattern = /^[0-9a-f]{64}$/;
 const bootIdPattern = /^[0-9a-f-]{36}$/i;
+const startedPattern = /^\d+(?:\.\d+)?$/;
 const terminateGraceMs = 5_000;
 const killGraceMs = 1_000;
 const pollIntervalMs = 250;
@@ -38,6 +39,8 @@ interface RecoveryRecord {
   readonly scope: string;
   readonly launcher: string;
   readonly backend: string;
+  /** Missing from records written before backends re-executed in place. */
+  readonly started?: string;
 }
 
 type RecordReadResult = RecoveryRecord | "incomplete" | undefined;
@@ -52,7 +55,9 @@ function decodeRecord(raw: string): RecordReadResult {
       typeof value.scope !== "string" ||
       !scopePattern.test(value.scope) ||
       !isProcessAuditToken(value.launcher) ||
-      !isProcessAuditToken(value.backend)
+      !isProcessAuditToken(value.backend) ||
+      (value.started !== undefined &&
+        (typeof value.started !== "string" || !startedPattern.test(value.started)))
     ) {
       return undefined;
     }
@@ -67,6 +72,7 @@ function decodeRecord(raw: string): RecordReadResult {
       scope: value.scope,
       launcher: value.launcher,
       backend: value.backend,
+      ...(value.started === undefined ? {} : { started: value.started }),
     };
   } catch {
     return "incomplete";
@@ -136,13 +142,26 @@ async function waitForExit(
   return status(native, token) === "gone";
 }
 
+// The macOS backend entry re-executes in place as the Helper, which gives the recorded process a
+// new audit token. Within the record's boot, the same PID with the same start time is that process.
+function currentBackend(native: MacProcessAuditToken, record: RecoveryRecord): string {
+  if (record.started === undefined || status(native, record.backend) !== "gone") {
+    return record.backend;
+  }
+  const pid = auditTokenPid(record.backend);
+  if (native.started(pid) !== record.started) return record.backend;
+  const token = native.read(pid);
+  return token !== undefined && native.started(pid) === record.started ? token : record.backend;
+}
+
 async function recoverRecord(
   native: MacProcessAuditToken,
-  record: RecoveryRecord,
+  recorded: RecoveryRecord,
   options: { launcherPid: number; signal: AbortSignal; onRecovery: (pid: number) => void },
 ): Promise<boolean> {
-  const backendPid = auditTokenPid(record.backend);
+  const backendPid = auditTokenPid(recorded.backend);
   if (backendPid === options.launcherPid) return false;
+  const record = { ...recorded, backend: currentBackend(native, recorded) };
   // The launch record already binds the executable. Its vnode may be gone after
   // a volume disconnect, but the kernel still knows the recorded audit token.
   const ownsOrphan = () =>
@@ -232,16 +251,19 @@ export function make(input: {
             : undefined,
         ]);
         const launcher = native.read(input.launcherPid);
+        const started = native.started(backendPid);
         const backend = native.read(backendPid);
         const running = native.executable(backendPid);
         // A token and executable alone do not prove this desktop actually spawned this process.
         if (
           launcher === undefined ||
+          started === undefined ||
           backend === undefined ||
           native.parent(backendPid) !== input.launcherPid ||
           running === undefined ||
           (running !== executable && running !== helper) ||
-          native.read(backendPid) !== backend
+          // The backend may re-execute in place meanwhile; its start time shows it is the same.
+          native.started(backendPid) !== started
         ) {
           throw new Error("Could not verify desktop ownership of the backend");
         }
@@ -262,7 +284,7 @@ export function make(input: {
             0o600,
           );
           await file.writeFile(
-            JSON.stringify({ version: 1, bootId, scope: prefix, launcher, backend }),
+            JSON.stringify({ version: 1, bootId, scope: prefix, launcher, backend, started }),
           );
         }
         if (writePath !== path) await NodeFSP.rename(writePath, path);

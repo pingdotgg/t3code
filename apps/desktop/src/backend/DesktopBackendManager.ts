@@ -548,20 +548,19 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
   // The child has a deadline for reading fd 3. Keep recovery bookkeeping off its startup path.
-  // A backend that settles first is recorded in its final process while it waits for the ack.
-  const track = options.trackProcess?.(handle.pid);
-  const tracking =
-    options.settledAckFd === undefined
-      ? track === undefined
-        ? undefined
-        : yield* track.pipe(Effect.forkScoped)
-      : yield* Deferred.await(settled).pipe(
-          Effect.flatMap((isSettled) =>
-            isSettled && track !== undefined ? track : Effect.succeed(Effect.void),
-          ),
-          Effect.onExit((exit) => Deferred.succeed(acknowledged, Exit.isSuccess(exit))),
-          Effect.forkScoped,
-        );
+  const tracking = options.trackProcess
+    ? yield* options.trackProcess(handle.pid).pipe(Effect.forkScoped)
+    : undefined;
+  // A settled backend waits for this ack, so it cannot take the home before it is recorded.
+  if (options.settledAckFd !== undefined) {
+    yield* Deferred.await(settled).pipe(
+      Effect.tap((isSettled) =>
+        isSettled && tracking !== undefined ? Fiber.join(tracking) : Effect.void,
+      ),
+      Effect.onExit((exit) => Deferred.succeed(acknowledged, Exit.isSuccess(exit) && exit.value)),
+      Effect.forkScoped,
+    );
+  }
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
   const serverReady = yield* Deferred.make<void>();
 
