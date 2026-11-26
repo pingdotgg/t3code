@@ -952,7 +952,8 @@ export function workflowStepTime(ms: number): string {
 
 /**
  * The first sentence of a reply, as one line of plain text: a heading, list mark, inline code,
- * emphasis or link reads as its words.
+ * emphasis or link reads as its words. Code keeps its text, and an underscore inside a word, as in
+ * snake_case, is not emphasis.
  */
 export function workflowOneLine(text: string): string {
   const line =
@@ -961,10 +962,13 @@ export function workflowOneLine(text: string): string {
       .map((candidate) => candidate.trim())
       .find((candidate) => candidate !== "" && !/^(#|```|\|)/.test(candidate))
       ?.replace(/^([-*>]|\d+\.)\s+/, "") ?? "";
+  const code: string[] = [];
   const plain = line
+    .replace(/(`+)(.+?)\1(?!`)/g, (_, _ticks, inner: string) => `\0${code.push(inner) - 1}\0`)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/`([^`]*)`/g, "$1")
-    .replace(/(\*\*|__|\*|_)(\S(?:.*?\S)?)\1/g, "$2");
+    .replace(/(?<![\p{L}\p{M}\p{N}_/])(__|_)(\S(?:.*?\S)?)\1(?![\p{L}\p{M}\p{N}_/])/gu, "$2")
+    .replace(/(\*\*|\*)(\S(?:.*?\S)?)\1/g, "$2")
+    .replace(/\0(\d+)\0/g, (match, index: string) => code[Number(index)] ?? match);
   const end = plain.search(/[.!?](\s|$)/);
   return end === -1 ? plain : plain.slice(0, end + 1);
 }
