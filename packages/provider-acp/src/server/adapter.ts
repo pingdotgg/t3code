@@ -1812,6 +1812,8 @@ interface ActiveAcpTurn {
   readonly blockedInputRecoveryKeys: Set<string>;
   /** `${toolCallId}\0${tool}\0${inputHash}` keys already tried for input-only recovery. */
   readonly attemptedInputRecoveryKeys: Set<string>;
+  /** Pages claimed for commands that ran `html_render` where no command line names the tool. */
+  readonly commandHtmlRenders: Map<string, NonNullable<ReturnType<typeof htmlRenderFromToolItem>>>;
   /** Tools the agent failed after Stop; later updates keep them interrupted. */
   readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
@@ -5665,6 +5667,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               toolCall.toolCallId,
             ),
           });
+          // A script can run the terminal fallback where no command line names the tool. The page
+          // its output reports is shown only when this thread's MCP session published it.
+          let commandPage = context.commandHtmlRenders.get(toolCall.toolCallId);
+          if (mcpIdentity === undefined && commandPage === undefined && status === "completed") {
+            const reportedPage = htmlRenderFromToolItem({
+              toolName: HTML_RENDER_TOOL_NAME,
+              output: acpMcpToolCallOutput(rawOutput),
+            });
+            if (reportedPage !== undefined) {
+              commandPage = yield* mcpSessions.takeHtmlRender(
+                context.input.threadId,
+                {},
+                reportedPage,
+              );
+              if (commandPage !== undefined) {
+                context.commandHtmlRenders.set(toolCall.toolCallId, commandPage);
+              }
+            }
+          }
           let turnItem: OrchestrationV2TurnItem;
           if (toolCall.toolCallId.startsWith("acp-compaction:")) {
             const summary =
@@ -5852,6 +5873,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
             yield* rearmDeferredFinalize(context);
             return;
+          } else if (commandPage !== undefined) {
+            turnItem = {
+              ...base,
+              title: null,
+              ...mcpToolPresentation({ serverName: "t3-code", toolName: HTML_RENDER_TOOL_NAME }),
+              type: "dynamic_tool",
+              toolName: `t3-code.${HTML_RENDER_TOOL_NAME}`,
+              input: { title: commandPage.title, height: commandPage.height },
+              output: { htmlRender: commandPage },
+            };
           } else {
             turnItem = buildAcpStandardToolTurnItem({
               base,
@@ -10576,6 +10607,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               drainedToolResultKeys: new Set(),
               blockedInputRecoveryKeys: new Set(),
               attemptedInputRecoveryKeys: new Set(),
+              commandHtmlRenders: new Map(),
               stoppedToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),

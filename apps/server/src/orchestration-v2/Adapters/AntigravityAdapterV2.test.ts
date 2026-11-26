@@ -892,6 +892,32 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     toolCallId: "agy-1.5.8",
                     status: "completed",
                   });
+                  // A script runs the terminal fallback, so no command line names the tool.
+                  yield* mcpSessions.recordHtmlRender(threadId, failed, page("scripted"));
+                  for (const toolCallId of ["scripted", "scripted", "unissued"]) {
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId,
+                      title: "Ran command",
+                      kind: "execute",
+                      status: "in_progress",
+                      rawInput: {
+                        command: `node -e 'cp.execFileSync(node, ["acp-mcp-call", "html_render", payload])'`,
+                      },
+                    });
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId,
+                      status: "completed",
+                      rawOutput: {
+                        output: `Exit code: 0\nCommand output:\n${JSON.stringify({
+                          content: [],
+                          structuredContent: { htmlRender: page(toolCallId) },
+                          isError: false,
+                        })}`,
+                      },
+                    });
+                  }
                   return { stopReason: "end_turn" as const };
                 }),
             })),
@@ -1017,7 +1043,8 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         ),
         [page("report"), page("report"), page("replacement"), page("replacement")],
       );
-      for (const name of ["failed-retry", "error-retry", "agy-1.5.8"]) {
+      assert.deepEqual(tool("unissued"), undefined);
+      for (const name of ["failed-retry", "error-retry", "agy-1.5.8", "scripted"]) {
         assert.deepEqual(tool(name), {
           status: "completed",
           toolName: "t3-code.html_render",
