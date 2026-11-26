@@ -143,6 +143,7 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("node.updated"),
     driver: ProviderDriverKind,
     node: OrchestrationV2ExecutionNode,
+    timelinePlacement: Schema.optional(Schema.Literal("before_run")),
   }),
   Schema.Struct({
     type: Schema.Literal("subagent.updated"),
@@ -153,6 +154,7 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("message.updated"),
     driver: ProviderDriverKind,
     message: OrchestrationV2ConversationMessage,
+    timelinePlacement: Schema.optional(Schema.Literal("before_run")),
   }),
   Schema.Struct({
     type: Schema.Literal("turn_item.updated"),

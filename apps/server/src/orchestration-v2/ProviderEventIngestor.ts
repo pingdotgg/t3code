@@ -464,10 +464,78 @@ export const layer: Layer.Layer<
       return events;
     });
 
+    const restorePriorRunOwnership = Effect.fnUntraced(function* (input: ProviderEventIngestInput) {
+      const { event, runId, nodeId, threadId } = input;
+      const item = event.type === "turn_item.updated" ? event.turnItem : undefined;
+      const message = event.type === "message.updated" ? event.message : undefined;
+      const node = event.type === "node.updated" ? event.node : undefined;
+      const record = item ?? message ?? node;
+      const placement =
+        event.type === "node.updated" || event.type === "message.updated"
+          ? event.timelinePlacement
+          : item?.timelinePlacement;
+      if (
+        placement !== "before_run" ||
+        runId === undefined ||
+        record?.runId !== runId ||
+        record.threadId !== threadId
+      ) {
+        return input;
+      }
+      const prior = yield* projections.getPriorConversationRun(threadId, runId);
+      if (prior === undefined) return input;
+      switch (event.type) {
+        case "node.updated":
+          return {
+            ...input,
+            event: {
+              ...event,
+              node: {
+                ...event.node,
+                runId: prior.runId,
+                parentNodeId: prior.rootNodeId,
+                rootNodeId: prior.rootNodeId,
+                providerTurnId: prior.providerTurnId,
+              },
+            },
+          };
+        case "message.updated":
+          return {
+            ...input,
+            event: {
+              ...event,
+              message: {
+                ...event.message,
+                runId: prior.runId,
+                nodeId: event.message.nodeId === nodeId ? prior.rootNodeId : event.message.nodeId,
+              },
+            },
+          };
+        case "turn_item.updated": {
+          const { timelinePlacement: _timelinePlacement, ...turnItem } = event.turnItem;
+          return {
+            ...input,
+            event: {
+              ...event,
+              turnItem: {
+                ...turnItem,
+                runId: prior.runId,
+                nodeId: turnItem.nodeId === nodeId ? prior.rootNodeId : turnItem.nodeId,
+                providerTurnId: prior.providerTurnId,
+              },
+            },
+          };
+        }
+        default:
+          return input;
+      }
+    });
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
-        function* (input) {
+        function* (routedInput) {
+          const input = yield* restorePriorRunOwnership(routedInput);
           switch (input.event.type) {
             case "app_thread.created": {
               const offered = input.event.appThread;

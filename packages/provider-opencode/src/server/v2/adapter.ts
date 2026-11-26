@@ -1189,10 +1189,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       status: OrchestrationV2ExecutionNode["status"],
       startedAt: DateTime.Utc,
       completedAt: DateTime.Utc | null,
+      timelinePlacement?: "before_run",
     ) =>
       emit({
         type: "node.updated",
         driver,
+        ...(timelinePlacement === undefined ? {} : { timelinePlacement }),
         node: {
           id: idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId: nativeId }),
           threadId: turn.input.threadId,
@@ -1245,7 +1247,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const status = completed ? "completed" : "running";
       const completedAt = completed ? updatedAt : null;
       const nodeKind = kind === "text" ? "assistant_message" : "reasoning";
-      yield* emitNode(state, turn, nativeId, nodeKind, status, entry.startedAt, completedAt);
+      const timelinePlacement = historicalAt === undefined ? undefined : "before_run";
+      yield* emitNode(
+        state,
+        turn,
+        nativeId,
+        nodeKind,
+        status,
+        entry.startedAt,
+        completedAt,
+        timelinePlacement,
+      );
       const base = itemBase(state, turn, nativeId, status, entry.startedAt, completedAt, updatedAt);
       if (kind === "reasoning") {
         yield* emit({
@@ -1273,7 +1285,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         createdAt: entry.startedAt,
         updatedAt,
       };
-      yield* emit({ type: "message.updated", driver, message });
+      const placement = timelinePlacement === undefined ? {} : { timelinePlacement };
+      yield* emit({ type: "message.updated", driver, message, ...placement });
       yield* emit({
         type: "turn_item.updated",
         driver,
@@ -1283,7 +1296,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           messageId,
           text: entry.text,
           streaming: !completed,
-          ...(historicalAt === undefined ? {} : { timelinePlacement: "before_run" as const }),
+          ...placement,
           ...(phase === undefined ? {} : { phase }),
         },
       });
@@ -1335,9 +1348,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         driver,
         nativeItemId: inboxId,
       });
+      const placement =
+        historicalAt === undefined ? {} : { timelinePlacement: "before_run" as const };
       yield* emit({
         type: "message.updated",
         driver,
+        ...placement,
         message: {
           createdBy: "user",
           creationSource: "provider",
@@ -1365,7 +1381,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           inputIntent: "turn_start",
           text,
           attachments: [],
-          ...(historicalAt === undefined ? {} : { timelinePlacement: "before_run" as const }),
+          ...placement,
         },
       });
     });

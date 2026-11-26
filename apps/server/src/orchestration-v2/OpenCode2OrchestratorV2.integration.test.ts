@@ -525,6 +525,14 @@ describe("OpenCode 2 through the orchestrator", () => {
         { name, transcript, commands, steps, projectionThreadIds: [source.threadId, target] },
         OpenCode2OrchestratorReplayHarness,
       ).pipe(provideDeterministicTestRuntime);
+      const original = result.projections.get(source.threadId);
+      assert.isDefined(original);
+      assert.deepEqual(
+        original.visibleTurnItems.flatMap(({ item }) =>
+          item.type === "user_message" || item.type === "assistant_message" ? [item.text] : [],
+        ),
+        [one.text, "ONE", "From the GUI", "GUI_REPLY", two.text, "TWO"],
+      );
       const forked = result.projections.get(target);
       assert.isDefined(forked);
       assert.equal(forked.contextTransfers[0]?.resolution?.strategy, "native_fork");
@@ -537,10 +545,17 @@ describe("OpenCode 2 through the orchestrator", () => {
         forked.runs.map((run) => run.status),
         ["completed"],
       );
-      const visible = forked.visibleTurnItems.flatMap((row) =>
-        row.item.type === "assistant_message" ? [row.item.text] : [],
+      const visible = forked.visibleTurnItems.flatMap(({ item }) =>
+        item.type === "user_message" || item.type === "assistant_message" ? [item.text] : [],
       );
-      assert.deepEqual(visible, ["ONE", "ONE"]);
+      assert.deepEqual(visible, [
+        one.text,
+        "ONE",
+        "From the GUI",
+        "GUI_REPLY",
+        "Reply with exactly: repeat",
+        "ONE",
+      ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );
 

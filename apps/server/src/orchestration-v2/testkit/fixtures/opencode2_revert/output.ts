@@ -24,11 +24,14 @@ export function assertOpenCode2RevertOutput(
   });
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
-  assertVisibleUserMessagesInclude(projection, [OPENCODE2_REVERT_FIRST_PROMPT]);
+  assertVisibleUserMessagesInclude(projection, [OPENCODE2_REVERT_FIRST_PROMPT, "From the GUI"]);
   assertVisibleUserMessagesExclude(projection, [OPENCODE2_REVERT_SECOND_PROMPT]);
-  const kept = projection.providerTurns.find((turn) => turn.ordinal === 1);
+  const visibleReplies = projection.visibleTurnItems.flatMap(({ item }) =>
+    item.type === "assistant_message" ? [item.text] : [],
+  );
+  assert.deepEqual(visibleReplies, ["DONE", "GUI_REPLY"]);
   assert.equal(
     projection.providerThreads[0]?.nativeConversationHeadRef?.nativeId,
-    kept?.nativeTurnRef?.nativeId,
+    "msg_external_prompt",
   );
 }

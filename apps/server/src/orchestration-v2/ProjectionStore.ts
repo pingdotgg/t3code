@@ -837,6 +837,18 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runId: RunId,
   ) => Effect.Effect<OrchestrationV2Run | undefined, ProjectionStoreV2Error>;
+  readonly getPriorConversationRun: (
+    threadId: ThreadId,
+    runId: RunId,
+  ) => Effect.Effect<
+    | {
+        readonly runId: RunId;
+        readonly rootNodeId: NodeId;
+        readonly providerTurnId: ProviderTurnId;
+      }
+    | undefined,
+    ProjectionStoreV2Error
+  >;
   /**
    * One snapshot: the `windowSize` runs that ended last, unfinished runs, the runs of `taskIds` and
    * their wakes. `runsFloor` is set when older runs were left out; every run that ran after it is
@@ -6741,6 +6753,40 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getPriorConversationRun: ProjectionStoreV2Shape["getPriorConversationRun"] = Effect.fn(
+      "ProjectionStore.getPriorConversationRun",
+    )(
+      function* (threadId, runId) {
+        const rows = yield* sql<{
+          readonly runId: RunId;
+          readonly rootNodeId: NodeId;
+          readonly providerTurnId: ProviderTurnId;
+        }>`
+            SELECT prior.run_id AS runId, attempt.root_node_id AS rootNodeId,
+              turn.provider_turn_id AS providerTurnId
+            FROM orchestration_v2_projection_runs AS current
+            JOIN orchestration_v2_projection_runs AS prior
+              ON prior.thread_id = current.thread_id
+              AND prior.provider_thread_id = current.provider_thread_id
+              AND prior.ordinal < current.ordinal
+            JOIN orchestration_v2_projection_run_attempts AS attempt
+              ON attempt.attempt_id = json_extract(prior.payload_json, '$.activeAttemptId')
+            JOIN orchestration_v2_projection_provider_turns AS turn
+              ON turn.provider_thread_id = current.provider_thread_id
+              AND (turn.run_attempt_id = attempt.attempt_id
+                OR turn.provider_turn_id = attempt.provider_turn_id)
+            WHERE current.thread_id = ${threadId} AND current.run_id = ${runId}
+              AND prior.status IN ('completed', 'interrupted', 'failed', 'cancelled')
+              AND json_extract(turn.payload_json, '$.nativeTurnRef.nativeId') IS NOT NULL
+              AND json_extract(turn.payload_json, '$.promptDropped') IS NOT 1
+            ORDER BY prior.ordinal DESC, turn.ordinal DESC
+            LIMIT 1
+          `;
+        return rows[0];
+      },
+      (effect, threadId, _runId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
+    );
+
     const canStartQueuedRun: ProjectionStoreV2Shape["canStartQueuedRun"] = (threadId) =>
       sql
         .withTransaction(
@@ -10000,6 +10046,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getRunMessage: readOnReader(getRunMessage),
       getDelegatedChildControls: readOnReader(getDelegatedChildControls),
       getRun: readOnReader(getRun),
+      getPriorConversationRun: readOnReader(getPriorConversationRun),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getHeldQueuedRuns: readOnReader(getHeldQueuedRuns),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),
