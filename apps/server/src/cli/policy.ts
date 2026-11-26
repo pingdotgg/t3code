@@ -42,14 +42,14 @@ const describePolicy = (
   return `${lines.join("\n")}\n`;
 };
 
-/** Whether the server running from this T3 home loaded the installed policy, which waits for a restart. */
+/** Whether the server running from this Hyakki home loaded the installed policy, which waits for a restart. */
 export const describeRunningServer = Effect.fn("cli.policy.describeRunningServer")(function* (
   statePath: string,
   installed: Effect.Success<ReturnType<typeof ManagedPolicy.loadedPolicy>>,
 ) {
   const state = yield* readPersistedServerRuntimeState(statePath);
   if (Option.isNone(state) || !isProcessAlive(state.value.pid)) {
-    return "No T3 Code server is running from this T3 home. The installed policy applies when one starts.";
+    return "No Hyakki server is running from this Hyakki home. The installed policy applies when one starts.";
   }
   const { pid, startedAt, managedPolicy: loaded } = state.value;
   const server = `The running server (pid ${pid}, started ${startedAt})`;
@@ -65,7 +65,7 @@ export const describeRunningServer = Effect.fn("cli.policy.describeRunningServer
     loaded === null
       ? "no policy"
       : `${loaded.organization}'s policy from ${loaded.source} (fingerprint ${loaded.fingerprint})`;
-  return `${server} loaded ${what}. Restart T3 Code to apply the installed policy.`;
+  return `${server} loaded ${what}. Restart Hyakki to apply the installed policy.`;
 });
 
 const showCommand = Command.make("show", projectLocationFlags).pipe(

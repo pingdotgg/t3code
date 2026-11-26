@@ -1,8 +1,8 @@
-// Dev container for T3 Code. Mirrors CI (ubuntu-24.04, Node 26, Rust stable)
+// Dev container for Hyakki. Mirrors CI (ubuntu-24.04, Node 26, Rust stable)
 // and the canonical setup in docs/operations/00_development.md: global `vp`, `vp i`.
 // Contributor doc: docs/operations/01_devcontainer.md
 {
-  "name": "T3 Code",
+  "name": "Hyakki",
   "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
   "features": {
     // nodeGypDependencies (default true) brings python3/make/g++, which Linux

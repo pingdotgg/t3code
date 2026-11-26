@@ -195,7 +195,7 @@ export class GitManager extends Context.Service<
         readonly includeHeadRepository?: boolean;
       },
     ) => Effect.Effect<GitBranchPullRequest | null, GitManagerServiceError>;
-    /** Whether T3 checked this pull request out onto the branch, which ties it to later threads. */
+    /** Whether Hyakki checked this pull request out onto the branch, which ties it to later threads. */
     readonly checkedOutPullRequest: (input: {
       readonly cwd: string;
       readonly branch: string;
@@ -932,8 +932,8 @@ export const make = Effect.gen(function* () {
         ),
       ),
   );
-  // Hands the base T3 recorded for a branch to the host, whose own tools may keep it elsewhere.
-  // Best-effort: nothing T3 does reads it back from there.
+  // Hands the base Hyakki recorded for a branch to the host, whose own tools may keep it elsewhere.
+  // Best-effort: nothing Hyakki does reads it back from there.
   const shareBranchBase = Effect.fn("GitManager.shareBranchBase")(function* (
     cwd: string,
     branch: string,
@@ -3035,7 +3035,7 @@ export const make = Effect.gen(function* () {
       preferredName: companion.repository.split("/")[0] || "private",
       url: companion.url,
     });
-    // Recorded before the push, so a later push of this branch, by T3 or by plain `git push`,
+    // Recorded before the push, so a later push of this branch, by Hyakki or by plain `git push`,
     // goes to the companion too and never publishes the branch.
     const pushRemoteKey = `branch.${branch}.pushRemote`;
     const readPushRemote = gitCore
@@ -3303,7 +3303,7 @@ export const make = Effect.gen(function* () {
     ) {
       return remembered.value;
     }
-    // invalidateStatus bumps the epoch. A read that started before a T3 git
+    // invalidateStatus bumps the epoch. A read that started before a Hyakki git
     // action, or before a newer read finished, must not replace their state.
     const epoch = prLookupEpoch(cwd);
     const useMemoized =

@@ -1789,13 +1789,13 @@ describe("pathSetupCommand", () => {
   // the registry PATH), macOS bash (several startup files), other shells, and unsafe paths.
   it.each([
     [
-      "/home/theo/.local/bin",
+      "/home/tara/.local/bin",
       "/bin/bash",
       "linux",
-      `printf '\\n%s\\n' 'export PATH="$PATH:/home/theo/.local/bin"' >> ~/.bashrc`,
+      `printf '\\n%s\\n' 'export PATH="$PATH:/home/tara/.local/bin"' >> ~/.bashrc`,
     ],
     [
-      "/Users/theo/.local/bin",
+      "/Users/tara/.local/bin",
       "/usr/bin/fish",
       "linux",
       `mkdir -p ~/.config/fish && printf '\\n%s\\n' 'fish_add_path --append --path $HOME/.local/bin' >> ~/.config/fish/config.fish`,
@@ -1806,34 +1806,34 @@ describe("pathSetupCommand", () => {
       "linux",
       `printf '\\n%s\\n' 'export PATH="$PATH:/opt/t3/bin"' >> ~/.zshrc`,
     ],
-    ["/Users/theo/.local/bin", "/bin/tcsh", "darwin", undefined],
-    ["/Users/theo/.local/bin", "/bin/bash", "darwin", undefined],
-    ["C:\\Users\\theo\\.local\\bin", "pwsh", "win32", undefined],
-    ["/Users/theo/it's here", "/bin/zsh", "darwin", undefined],
+    ["/Users/tara/.local/bin", "/bin/tcsh", "darwin", undefined],
+    ["/Users/tara/.local/bin", "/bin/bash", "darwin", undefined],
+    ["C:\\Users\\tara\\.local\\bin", "pwsh", "win32", undefined],
+    ["/Users/tara/it's here", "/bin/zsh", "darwin", undefined],
     ["/opt/a$PWD/bin", "/bin/zsh", "linux", undefined],
     // Relative: PATH would follow the working directory into any checkout's `bin`.
     ["bin", "/bin/zsh", "linux", undefined],
   ] as const)("%s with %s on %s", (directory, shell, platform, expected) => {
-    expect(pathSetupCommand({ directory, home: "/Users/theo", shell, platform })).toBe(expected);
+    expect(pathSetupCommand({ directory, home: "/Users/tara", shell, platform })).toBe(expected);
   });
 
   it("writes the startup file fish and zsh read, under XDG_CONFIG_HOME or ZDOTDIR", () => {
-    const setup = { directory: "/opt/t3/bin", home: "/home/theo", shell: "/usr/bin/fish" } as const;
-    expect(pathSetup({ ...setup, platform: "linux", configHome: "/home/theo/cfg" })?.file).toBe(
-      "/home/theo/cfg/fish/config.fish",
+    const setup = { directory: "/opt/t3/bin", home: "/home/tara", shell: "/usr/bin/fish" } as const;
+    expect(pathSetup({ ...setup, platform: "linux", configHome: "/home/tara/cfg" })?.file).toBe(
+      "/home/tara/cfg/fish/config.fish",
     );
     expect(pathSetup({ ...setup, platform: "linux" })?.file).toBe("~/.config/fish/config.fish");
     // zsh reads .zshrc from ZDOTDIR when it is set.
     expect(
-      pathSetup({ ...setup, shell: "/bin/zsh", platform: "darwin", zdotdir: "/Users/theo/.zsh" })
+      pathSetup({ ...setup, shell: "/bin/zsh", platform: "darwin", zdotdir: "/Users/tara/.zsh" })
         ?.file,
-    ).toBe("/Users/theo/.zsh/.zshrc");
+    ).toBe("/Users/tara/.zsh/.zshrc");
     // A set folder that cannot be written safely means no setup, never the unread default.
     expect(
-      pathSetup({ ...setup, shell: "/bin/zsh", platform: "darwin", zdotdir: "/Users/theo/my zsh" }),
+      pathSetup({ ...setup, shell: "/bin/zsh", platform: "darwin", zdotdir: "/Users/tara/my zsh" }),
     ).toBeUndefined();
     expect(
-      pathSetup({ ...setup, platform: "linux", configHome: "/home/theo/my cfg" }),
+      pathSetup({ ...setup, platform: "linux", configHome: "/home/tara/my cfg" }),
     ).toBeUndefined();
   });
 });

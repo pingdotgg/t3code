@@ -36,7 +36,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => ({
         ? []
         : [
             { login: "julius", name: "Julius", avatarUrl: null },
-            { login: "theo", name: "Theo", avatarUrl: null },
+            { login: "tara", name: "Tara", avatarUrl: null },
           ],
     references:
       targets.length === 0
@@ -132,11 +132,11 @@ it("completes @mentions and !references on Enter, and Escape closes the list unt
   await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
 
   await userEvent.type(textarea, "and @");
-  await expect.element(page.getByRole("option", { name: /theo/ })).toBeVisible();
+  await expect.element(page.getByRole("option", { name: /tara/ })).toBeVisible();
   await userEvent.keyboard("{Escape}");
   await expect.element(page.getByRole("listbox")).not.toBeInTheDocument();
   await userEvent.type(textarea, "t");
-  await expect.element(page.getByRole("option", { name: /theo/ })).toBeVisible();
+  await expect.element(page.getByRole("option", { name: /tara/ })).toBeVisible();
 
   await userEvent.type(textarea, " fixes !1");
   await expect.element(page.getByRole("option", { name: /Fix/ })).toBeVisible();

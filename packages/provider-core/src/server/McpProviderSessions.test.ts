@@ -285,7 +285,7 @@ describe("McpProviderSessions approval requests", () => {
     }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
 
-  it.effect("knows which provider instances show T3 Code's own requests", () =>
+  it.effect("knows which provider instances show Hyakki's own requests", () =>
     Effect.gen(function* () {
       const sessions = yield* McpProviderSessions.McpProviderSessions;
       const codex = ProviderInstanceId.make("codex");

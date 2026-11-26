@@ -1,6 +1,6 @@
-# T3 Connect
+# Hyakki Connect
 
-T3 Connect uses Clerk for cloud identity. The relay manages environment links, bootstrap
+Hyakki Connect uses Clerk for cloud identity. The relay manages environment links, bootstrap
 credentials, and managed tunnel allocations. Regular HTTP and WebSocket traffic goes directly from
 clients to the environment's tunnel hostname—the relay Worker is not in the data path.
 

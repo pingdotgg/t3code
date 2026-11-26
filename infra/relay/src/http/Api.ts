@@ -98,7 +98,7 @@ const appendRelayCredentialResponseHeaders = HttpEffect.appendPreResponseHandler
     ),
 );
 
-// T3 Code hosts never retry sooner than Retry-After, so during a Cloudflare
+// Hyakki hosts never retry sooner than Retry-After, so during a Cloudflare
 // rate limit they wait out the pause instead of retrying into it.
 const appendCloudflareRetryAfter = (error: unknown) => {
   const retryAfterMillis = ManagedEndpointProvider.cloudflareRetryAfterMillis(error);

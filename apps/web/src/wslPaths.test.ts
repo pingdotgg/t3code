@@ -24,20 +24,20 @@ describe("parseWslUncPath", () => {
 describe("resolveWslProjectSelection", () => {
   it("routes a UNC path to the matching WSL backend", () => {
     expect(
-      resolveWslProjectSelection("\\\\wsl.localhost\\Ubuntu\\home\\theo\\repo", [
+      resolveWslProjectSelection("\\\\wsl.localhost\\Ubuntu\\home\\tara\\repo", [
         { environmentId: "env-debian", backendId: "wsl:Debian", runningDistro: null },
         { environmentId: "env-ubuntu", backendId: "wsl:Ubuntu", runningDistro: null },
       ]),
     ).toEqual({
       distro: "Ubuntu",
       environmentId: "env-ubuntu",
-      linuxPath: "/home/theo/repo",
+      linuxPath: "/home/tara/repo",
     });
   });
 
   it("does not route to a sole WSL backend for a different distro", () => {
     expect(
-      resolveWslProjectSelection("\\\\wsl.localhost\\Debian\\home\\theo\\repo", [
+      resolveWslProjectSelection("\\\\wsl.localhost\\Debian\\home\\tara\\repo", [
         { environmentId: "env-ubuntu", backendId: "wsl:Ubuntu", runningDistro: null },
       ]),
     ).toBeNull();
@@ -49,14 +49,14 @@ describe("resolveWslProjectSelection", () => {
     ];
 
     expect(
-      resolveWslProjectSelection("\\\\wsl.localhost\\Debian\\home\\theo\\repo", candidates),
+      resolveWslProjectSelection("\\\\wsl.localhost\\Debian\\home\\tara\\repo", candidates),
     ).toEqual({
       distro: "Debian",
       environmentId: "env-wsl",
-      linuxPath: "/home/theo/repo",
+      linuxPath: "/home/tara/repo",
     });
     expect(
-      resolveWslProjectSelection("\\\\wsl.localhost\\Ubuntu\\home\\theo\\repo", candidates),
+      resolveWslProjectSelection("\\\\wsl.localhost\\Ubuntu\\home\\tara\\repo", candidates),
     ).toBeNull();
   });
 });
@@ -80,14 +80,14 @@ describe("applyWslEnvironmentConfiguration", () => {
     );
 
     expect(
-      resolveWslProjectSelection("\\\\wsl.localhost\\Ubuntu\\home\\theo\\repo", candidates),
+      resolveWslProjectSelection("\\\\wsl.localhost\\Ubuntu\\home\\tara\\repo", candidates),
     ).toBeNull();
     expect(
-      resolveWslProjectSelection("\\\\wsl.localhost\\Debian\\home\\theo\\repo", candidates),
+      resolveWslProjectSelection("\\\\wsl.localhost\\Debian\\home\\tara\\repo", candidates),
     ).toEqual({
       distro: "Debian",
       environmentId: "env-wsl",
-      linuxPath: "/home/theo/repo",
+      linuxPath: "/home/tara/repo",
     });
   });
 
@@ -117,11 +117,11 @@ describe("applyWslEnvironmentConfiguration", () => {
       { environmentId: "env-primary", backendId: "wsl:default", runningDistro: "Ubuntu" },
     ]);
     expect(
-      resolveWslProjectSelection("\\\\wsl.localhost\\Ubuntu\\home\\theo\\repo", candidates),
+      resolveWslProjectSelection("\\\\wsl.localhost\\Ubuntu\\home\\tara\\repo", candidates),
     ).toEqual({
       distro: "Ubuntu",
       environmentId: "env-primary",
-      linuxPath: "/home/theo/repo",
+      linuxPath: "/home/tara/repo",
     });
   });
 });

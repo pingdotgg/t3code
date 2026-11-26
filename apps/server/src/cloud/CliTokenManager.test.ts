@@ -35,7 +35,7 @@ const encodeTestIdTokenHeader = Schema.encodeSync(TestIdTokenHeaderJson);
 const encodeTestIdTokenPayload = Schema.encodeSync(TestIdTokenPayloadJson);
 const idTokenWithEmail = (() => {
   const header = Base64Url.encode(encodeTestIdTokenHeader({ alg: "none" }));
-  const payload = Base64Url.encode(encodeTestIdTokenPayload({ email: "theo@example.test" }));
+  const payload = Base64Url.encode(encodeTestIdTokenPayload({ email: "tara@example.test" }));
   return `${header}.${payload}.`;
 })();
 
@@ -283,8 +283,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         ]);
         assert.equal(token.accessToken, "access-token-1");
         assert.equal(token.refreshToken, "refresh-token-1");
-        assert.equal(token.identity, "theo@example.test");
-        assert.equal(identity, "theo@example.test");
+        assert.equal(token.identity, "tara@example.test");
+        assert.equal(identity, "tara@example.test");
 
         const authorization = server.requests[0]!;
         assert.equal(authorization.url, "https://clerk.example.test/oauth/device_authorization");

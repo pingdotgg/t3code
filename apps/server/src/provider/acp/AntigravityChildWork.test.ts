@@ -133,12 +133,12 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       const opaque = "35bea692fa95447fbdae6333fec5515f";
       const matched = yield* read(profile, opaque, describeAntigravitySubagentLaunches([LAUNCH]));
       expect(matched.map((child) => child.role)).toEqual([LAUNCH.role]);
-      // T3 knows a second batch with this text that the agent has not recorded yet.
+      // Hyakki knows a second batch with this text that the agent has not recorded yet.
       const twin = { nativeTaskId: "f00d", ...describeAntigravitySubagentLaunches([LAUNCH]) };
       expect(
         yield* read(profile, opaque, describeAntigravitySubagentLaunches([LAUNCH]), [twin]),
       ).toEqual([]);
-      // T3 stores the launch from the bounded tool payload, which keeps only a long prompt's tail.
+      // Hyakki stores the launch from the bounded tool payload, which keeps only a long prompt's tail.
       const stored = antigravitySubagentLaunches(
         sanitizeAntigravityToolPayload({ Subagents: [{ Role: long.role, Prompt: long.prompt }] }),
       );

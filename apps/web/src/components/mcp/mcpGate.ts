@@ -14,13 +14,13 @@ type Unreachable = Extract<EnvironmentConnectReachability, { readonly status: "u
 
 /**
  * What stands between the user and the wizard's steps. Only `open` lets them go on: cloud apps
- * need a public address, so the environment must answer on its T3 Connect tunnel.
+ * need a public address, so the environment must answer on its Hyakki Connect tunnel.
  */
 export type McpGate =
   | { readonly kind: "checking" }
   | { readonly kind: "sign-in" }
   /**
-   * `relay`: T3 Connect reports the saved machine offline, or its list could not be read; both
+   * `relay`: Hyakki Connect reports the saved machine offline, or its list could not be read; both
    * keep a retry. Null when that list shows nothing wrong, so the user should reconnect.
    */
   | { readonly kind: "disconnected"; readonly relay: "offline" | "failed" | null }
@@ -33,7 +33,7 @@ export type McpGate =
 
 export function resolveMcpGate(
   input: {
-    /** Undefined until T3 Connect sign-in has loaded. */
+    /** Undefined until Hyakki Connect sign-in has loaded. */
     readonly signedIn: boolean | undefined;
     readonly connected: boolean;
     /** The environment's `mcpApprovalCodes` capability; undefined until its config loads. */
@@ -43,7 +43,7 @@ export function resolveMcpGate(
     readonly linkStateError: string | null;
     /** A backend this device runs; its link state names its own tunnel. */
     readonly thisMachine: boolean;
-    /** The account's machines on T3 Connect, where a saved machine's address and health come from. */
+    /** The account's machines on Hyakki Connect, where a saved machine's address and health come from. */
     readonly relay:
       | { readonly status: "loading" | "failed" }
       | {
@@ -61,7 +61,7 @@ export function resolveMcpGate(
   const { relay } = input;
   if (!input.connected) {
     if (input.thisMachine) return { kind: "disconnected", relay: null };
-    // T3 Connect checks only its own tunnels; a publish-only link's check always fails.
+    // Hyakki Connect checks only its own tunnels; a publish-only link's check always fails.
     const availability =
       relay.status === "listed" && relay.endpoint?.providerKind === "cloudflare_tunnel"
         ? relay.availability
@@ -85,7 +85,7 @@ export function resolveMcpGate(
   if (!input.thisMachine) {
     if (relay.status === "loading") return { kind: "checking" };
     if (relay.status === "failed")
-      return { kind: "error", message: resolve(msg("Could not reach T3 Connect.")) };
+      return { kind: "error", message: resolve(msg("Could not reach Hyakki Connect.")) };
     if (endpoint === undefined) return { kind: "turn-on" };
   }
   const { reachability } = input;

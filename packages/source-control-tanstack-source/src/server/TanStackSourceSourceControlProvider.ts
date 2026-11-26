@@ -596,7 +596,7 @@ export const make = Effect.gen(function* () {
             args: ["fetch", "--no-tags", remoteName, `+refs/pull/${pull.number}/head:${tracking}`],
           });
           const exists = branches.includes(localBranch);
-          // T3 records which pull request it made `pr-<n>` for, and reuses only that branch, and
+          // Hyakki records which pull request it made `pr-<n>` for, and reuses only that branch, and
           // only while it holds nothing the pull request lacks: an unrelated branch of the name,
           // or local commits, are never switched to, moved or lost.
           const ownerKey = `branch.${localBranch}.t3TanstackSourcePull`;

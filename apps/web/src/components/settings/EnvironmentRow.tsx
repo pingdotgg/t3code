@@ -16,7 +16,7 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { m, type MessageResolver } from "../../i18n/messages";
 
-const T3_CONNECT_NAME = "T3 Connect";
+const T3_CONNECT_NAME = "Hyakki Connect";
 
 export function formatDesktopSshTarget(target: DesktopSshEnvironmentTarget): string {
   const authority = target.username ? `${target.username}@${target.hostname}` : target.hostname;

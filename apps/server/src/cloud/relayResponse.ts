@@ -28,7 +28,7 @@ export function relayRequestError(cause: unknown): RelayRequestError {
     ? cause
     : new RelayRequestError({
         rejection: "unavailable",
-        description: `Could not complete the T3 Connect relay request. ${isHttpClientError(cause) ? `The relay request failed (${cause.reason._tag}).` : "The relay returned an unexpected response."} Check this machine's network connection and relay availability, then retry.`,
+        description: `Could not complete the Hyakki Connect relay request. ${isHttpClientError(cause) ? `The relay request failed (${cause.reason._tag}).` : "The relay returned an unexpected response."} Check this machine's network connection and relay availability, then retry.`,
       });
 }
 
@@ -62,16 +62,16 @@ export function relayRetryAfterMillis(error: unknown): number | undefined {
 function recoveryHint(error: RelayProtectedError): string {
   switch (error._tag) {
     case "RelayEnvironmentLinkLimitExceededError":
-      return "Unlink an unused environment in T3 Connect, then restart T3 Code on this machine.";
+      return "Unlink an unused environment in Hyakki Connect, then restart Hyakki on this machine.";
     case "RelayAuthInvalidError":
-      return "Run `t3 connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `t3 connect logout`, then run `t3 connect` again. Restart T3 Code after signing in.";
+      return "Run `t3 connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `t3 connect logout`, then run `t3 connect` again. Restart Hyakki after signing in.";
     case "RelayEnvironmentLinkProofInvalidError":
       if (error.reason === "environment_key_mismatch") {
-        return "T3 Connect already has this environment linked with a different key. Unlink it in T3 Connect, then restart T3 Code on this machine.";
+        return "Hyakki Connect already has this environment linked with a different key. Unlink it in Hyakki Connect, then restart Hyakki on this machine.";
       }
-      return "Check this machine's date and time, update T3 Code, then restart it.";
+      return "Check this machine's date and time, update Hyakki, then restart it.";
     case "RelayEnvironmentLinkProofExpiredError":
-      return "Check this machine's date and time, update T3 Code, then restart it.";
+      return "Check this machine's date and time, update Hyakki, then restart it.";
     default:
       return "Retry when the relay is available. If this continues, include the trace ID when reporting it.";
   }
@@ -87,8 +87,8 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
   const ray = response.headers["cf-ray"];
   const requestId = ray && /^[a-zA-Z0-9-]{1,128}$/.test(ray) ? ` Cloudflare Ray ID: ${ray}.` : "";
   const description = Option.isSome(decoded)
-    ? `T3 Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
-    : `T3 Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart T3 Code.${requestId}`;
+    ? `Hyakki Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
+    : `Hyakki Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart Hyakki.${requestId}`;
 
   // Only a schema-decoded expired-proof 401 is retryable for clock skew; every other 401 is permanent.
   if (

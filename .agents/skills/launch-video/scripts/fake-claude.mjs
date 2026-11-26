@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// A stand-in `claude` CLI for staged launch videos: T3's real Claude provider runs it, and it
+// A stand-in `claude` CLI for staged launch videos: Hyakki's real Claude provider runs it, and it
 // plays the scripted turns in FAKE_CLAUDE_SCRIPT over the Agent SDK's stream-json protocol.
 // Script format: see the launch-video SKILL.md. FAKE_CLAUDE_LOG records every line.
 import * as NodeChildProcess from "node:child_process";
@@ -62,7 +62,7 @@ const argValue = (name) => {
   return i === -1 ? undefined : process.argv[i + 1];
 };
 
-// `-p --json-schema` is T3's text generation (titles, commit messages, branch names). It answers
+// `-p --json-schema` is Hyakki's text generation (titles, commit messages, branch names). It answers
 // with the first `{ match, json }` turn whose regex matches the schema plus the prompt.
 if (process.argv.includes("-p")) {
   const schema = argValue("--json-schema") ?? "";
@@ -210,7 +210,7 @@ const serverStatuses = () => [
   ...[...signInServers.values()].map(({ name, status }) => ({ name, status, scope: "user" })),
 ];
 
-// One MCP tools/call over streamable HTTP against the server T3 registered.
+// One MCP tools/call over streamable HTTP against the server Hyakki registered.
 async function callTool(name, args) {
   const [serverName, server] = Object.entries(mcpServers).find(([, s]) => s.url) ?? [];
   if (!server) return { serverName: "t3-code", text: `No MCP server for ${name}` };
@@ -292,7 +292,7 @@ async function playTurn(prompt) {
   try {
     for (const raw of turn.steps) {
       const filled = fill(raw, local);
-      // `submit` hands a workflow agent step its typed result through T3's own MCP.
+      // `submit` hands a workflow agent step its typed result through Hyakki's own MCP.
       const step = filled.submit
         ? { ...filled, tool: "t3_submit_output", input: { json: JSON.stringify(filled.submit) } }
         : filled;
@@ -334,7 +334,7 @@ async function playTurn(prompt) {
       }
       if (step.tool) {
         const id = `toolu_${uuid().replaceAll("-", "").slice(0, 24)}`;
-        // `server` names a scripted server whose answer is `output`; otherwise T3's own MCP runs it.
+        // `server` names a scripted server whose answer is `output`; otherwise Hyakki's own MCP runs it.
         const serverName = step.server ?? Object.keys(mcpServers)[0] ?? "t3-code";
         toolUse({
           type: "tool_use",

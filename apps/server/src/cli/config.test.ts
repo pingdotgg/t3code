@@ -195,7 +195,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       Effect.result,
     );
 
-  it.effect("refuses a manual web launch while a lock-aware server owns the T3 home", () =>
+  it.effect("refuses a manual web launch while a lock-aware server owns the Hyakki home", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -213,7 +213,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       const cwd = path.join(baseDir, "project");
       const result = yield* resolveManualWebLaunch(baseDir, cwd);
       assert(Result.isFailure(result));
-      expect(result.failure).toContain("A T3 Code server is already running");
+      expect(result.failure).toContain("A Hyakki server is already running");
       expect(result.failure).toContain(`pid ${child.pid}`);
       expect(yield* fs.exists(cwd)).toBe(false);
     }),

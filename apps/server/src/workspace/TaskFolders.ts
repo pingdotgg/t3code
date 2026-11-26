@@ -225,7 +225,7 @@ export type ProjectCommands = "permitted" | "request-not-permitted" | "agent-bel
 export type ProjectCommandsNow = ProjectCommands | Effect.Effect<ProjectCommands>;
 
 /**
- * A layout command is the project owner's own code. A link paired below full access grants T3's
+ * A layout command is the project owner's own code. A link paired below full access grants Hyakki's
  * tools only (see `mcp/linkOrigin.ts`), so work it started never runs one.
  */
 export const projectCommandsForLink = (

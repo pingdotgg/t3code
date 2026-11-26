@@ -101,7 +101,7 @@ const WSL_FORWARDED_ENV_NAMES = [
   "OTEL_SDK_DISABLED",
   "T3CODE_OTLP_HEADERS",
   "T3CODE_OTLP_PROTOCOL",
-  // Untranslated T3 URLs must override bootstrap endpoints inside WSL, as they do on Windows.
+  // Untranslated Hyakki URLs must override bootstrap endpoints inside WSL, as they do on Windows.
   "T3CODE_OTLP_TRACES_URL",
   "T3CODE_OTLP_METRICS_URL",
   "T3CODE_OTLP_LOGS_URL",

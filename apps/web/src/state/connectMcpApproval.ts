@@ -11,7 +11,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 
 const connectMcpApproval = createConnectMcpApprovalCommand(connectionAtomRuntime);
 
-/** One agent sign-in call to `environmentId`, sent with this account's T3 Connect session. */
+/** One agent sign-in call to `environmentId`, sent with this account's Hyakki Connect session. */
 export async function runConnectMcpApproval(
   environmentId: EnvironmentId,
   call: ConnectMcpApprovalCall,

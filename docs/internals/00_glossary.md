@@ -1,6 +1,6 @@
 # Glossary
 
-Shared vocabulary across T3 Code. Architecture and lifecycle constraints belong in the
+Shared vocabulary across Hyakki. Architecture and lifecycle constraints belong in the
 [architecture](./01_architecture.md).
 
 ## Workspace and conversation
@@ -14,7 +14,7 @@ Shared vocabulary across T3 Code. Architecture and lifecycle constraints belong 
 | Worktree       | A separate Git checkout a thread can use instead of the project's main checkout.                  |
 | Thread         | The durable conversation and work history for a project. Survives provider process exits.         |
 | Turn           | One user-to-agent cycle (a run). Provider work can end before checkpoint and diff work settles.   |
-| T3 home        | The base data directory. Runtime state normally lives under its `userdata` directory.             |
+| Hyakki home    | The base data directory. Runtime state normally lives under its `userdata` directory.             |
 
 ## Orchestration
 
@@ -32,10 +32,10 @@ Shared vocabulary across T3 Code. Architecture and lifecycle constraints belong 
 
 | Term              | Meaning                                                                                                      |
 | ----------------- | ------------------------------------------------------------------------------------------------------------ |
-| Provider          | The agent runtime T3 Code controls, such as Codex or Claude Code.                                            |
+| Provider          | The agent runtime Hyakki controls, such as Codex or Claude Code.                                             |
 | Driver            | The integration for a provider kind.                                                                         |
 | Provider instance | One configured provider, with its own settings and lifecycle. Multiple instances can use the same driver.    |
-| Adapter           | The boundary translating a provider's native protocol into T3 Code operations and events.                    |
+| Adapter           | The boundary translating a provider's native protocol into Hyakki operations and events.                     |
 | Session           | The provider runtime attached to a thread. A session can be stopped and resumed without deleting the thread. |
 | Runtime mode      | The thread's permission policy. See [permission modes](../user/permission-modes.md).                         |
 | Interaction mode  | How the agent approaches the task, such as planning. Separate from permission policy.                        |

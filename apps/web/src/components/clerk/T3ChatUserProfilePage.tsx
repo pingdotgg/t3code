@@ -66,7 +66,7 @@ export function T3ChatUserProfilePage() {
     <ClerkUserProfilePage
       title="T3 Chat"
       description={gt(
-        "Link a paid T3 Chat account for more T3 Connect tunnels: up to {pro} with Pro, {premier} with Premier.",
+        "Link a paid T3 Chat account for more Hyakki Connect tunnels: up to {pro} with Pro, {premier} with Premier.",
         { pro: T3CHAT_PLAN_TUNNEL_LIMITS.pro, premier: T3CHAT_PLAN_TUNNEL_LIMITS.premier },
       )}
       action={
@@ -86,7 +86,7 @@ export function T3ChatUserProfilePage() {
         </div>
       ) : data === null ? null : !data.available ? (
         <p className="border-t py-4 text-xs text-muted-foreground">
-          <T>This T3 Connect server does not support T3 Chat linking.</T>
+          <T>This Hyakki Connect server does not support T3 Chat linking.</T>
         </p>
       ) : (
         <ul className="border-t">

@@ -15,7 +15,7 @@ export const traceRelayRequest = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> => effect.pipe(withRelayClientTracing);
 
-/** Call only after T3 Connect verification to prevent trace injection. Authenticate on the local tracer and record its timing here. */
+/** Call only after Hyakki Connect verification to prevent trace injection. Authenticate on the local tracer and record its timing here. */
 export const traceAuthenticatedRelayRequest = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   authentication: { readonly startTime: bigint; readonly endTime: bigint },

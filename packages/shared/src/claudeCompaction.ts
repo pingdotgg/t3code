@@ -39,7 +39,7 @@ export function claudeResumeCompactionAge(questionAnswer: {
 }
 
 /**
- * Context size below which T3 does not suggest or run a Claude compaction:
+ * Context size below which Hyakki does not suggest or run a Claude compaction:
  * the stale-thread Compact chip and idle compaction. Matches Claude Code's
  * idleCompaction default of 200K.
  */

@@ -35,4 +35,4 @@ Configure defaults in **Settings → Diffs & pull requests**:
 - **Hide whitespace changes**: Ignore whitespace-only edits.
 - **Default diff file state**: Expanded or collapsed by default.
 - **Open pull requests and changes panels proactively**: Automatically open relevant panels when turns finish.
-- **Open pull requests in T3 Code**: Open PR and local commit links inside T3 Code instead of an external browser (`Cmd/Ctrl+Click` always opens in your external browser).
+- **Open pull requests in Hyakki**: Open PR and local commit links inside Hyakki instead of an external browser (`Cmd/Ctrl+Click` always opens in your external browser).

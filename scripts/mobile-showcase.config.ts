@@ -86,7 +86,7 @@ const config: ShowcaseConfig = {
     {
       id: "iphone-6.9",
       platform: "ios",
-      simulator: "T3 Showcase iPhone 17 Pro Max",
+      simulator: "Hyakki Showcase iPhone 17 Pro Max",
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max",
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
@@ -103,7 +103,7 @@ const config: ShowcaseConfig = {
     {
       id: "iphone-6.5",
       platform: "ios",
-      simulator: "T3 Showcase iPhone 14 Plus",
+      simulator: "Hyakki Showcase iPhone 14 Plus",
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-14-Plus",
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,
@@ -120,7 +120,7 @@ const config: ShowcaseConfig = {
     ...(["closed", "open"] as const).map((fold): ShowcaseIosDevice => ({
       id: `iphone-duo-${fold}`,
       platform: "ios",
-      simulator: `T3 Showcase iPhone Duo ${fold}`,
+      simulator: `Hyakki Showcase iPhone Duo ${fold}`,
       simulatorDeviceType: "com.apple.CoreSimulator.SimDeviceType.iPhone-Duo",
       appearance: "dark",
       theme: DEFAULT_SHOWCASE_THEME,

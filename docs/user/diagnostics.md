@@ -1,6 +1,6 @@
 # Maintenance, power, and diagnostics
 
-Control how aggressively T3 Code runs background checks, keep your computer awake while agents work, inspect server health, and analyze local trace files.
+Control how aggressively Hyakki runs background checks, keep your computer awake while agents work, inspect server health, and analyze local trace files.
 
 ## Background activity and power
 

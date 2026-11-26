@@ -446,19 +446,19 @@ describe("resolveSnoozePresets", () => {
   });
 
   it("names the real day gap: a Monday option on Sunday is Tomorrow, a weekday a week out is Next", () => {
-    const theo: ReadonlyArray<SnoozePresetSetting> = [
+    const tara: ReadonlyArray<SnoozePresetSetting> = [
       { kind: "at", day: "tomorrow", time: "21:00" },
       { kind: "at", day: "monday", time: "18:00" },
       { kind: "at", day: "friday", time: "17:00" },
     ];
     // Sunday 14:00.
-    expect(menu(localDate(2026, 8, 30, 14), theo)).toEqual([
+    expect(menu(localDate(2026, 8, 30, 14), tara)).toEqual([
       "Tomorrow 18:00",
       "Tomorrow 21:00",
       "Friday 17:00",
     ]);
     // Friday 10:00: today's 17:00 is a week away.
-    expect(menu(localDate(2026, 9, 4, 10), theo)).toEqual([
+    expect(menu(localDate(2026, 9, 4, 10), tara)).toEqual([
       "Tomorrow 21:00",
       "Next week Mon 18:00",
       "Next Friday 17:00",

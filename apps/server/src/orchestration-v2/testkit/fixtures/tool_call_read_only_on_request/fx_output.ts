@@ -47,5 +47,5 @@ export function assertToolCallReadOnlyOnRequestFxOutput(
     };
     return frame.method === "session/request_permission" ? [frame.params?.toolCall?.kind] : [];
   });
-  assert.deepEqual(permissionKinds, ["edit"], "fx must ask T3 before its own write");
+  assert.deepEqual(permissionKinds, ["edit"], "fx must ask Hyakki before its own write");
 }

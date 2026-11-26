@@ -41,7 +41,7 @@ beforeEach(() => {
   forkMock.mockReset().mockReturnValue(worker);
 });
 
-it("keeps T3 alive when Zoom crashes accessibility extraction", async () => {
+it("keeps Hyakki alive when Zoom crashes accessibility extraction", async () => {
   const process = startSnapShotAccessibilityProcess("accessibility.cjs");
   const read = process.read(request);
   worker.emit("message", "ready");

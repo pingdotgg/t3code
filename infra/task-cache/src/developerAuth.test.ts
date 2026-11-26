@@ -17,7 +17,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       expect(yield* developerIdentity(request(`julius:${token}`), keys)).toBe("julius");
-      expect(yield* developerIdentity(request(`theo:${token}`), keys)).toBeNull();
+      expect(yield* developerIdentity(request(`tara:${token}`), keys)).toBeNull();
       expect(yield* developerIdentity(request(`julius:${token}wrong`), keys)).toBeNull();
       expect(yield* developerIdentity(request(`julius:${token}`), "{}")).toBeNull();
       expect(yield* developerIdentity(request(`julius:${token}`), undefined)).toBeNull();

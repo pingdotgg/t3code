@@ -1,4 +1,4 @@
-// A second T3 server for scenarios that need another machine: its own T3 home, the replay
+// A second Hyakki server for scenarios that need another machine: its own Hyakki home, the replay
 // agent, and a pairing token for Settings > Connections > Add environment.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -16,7 +16,7 @@ import { prepareHome, SCENARIO_MACHINE_ENV, start } from "./start-app.ts";
 
 export const SECOND_HOME = `${T3_HOME}-second-environment`;
 
-/** A second server on its own T3 home, running until interrupted. `--dev-url` admits the web
+/** A second server on its own Hyakki home, running until interrupted. `--dev-url` admits the web
  * origin through CORS and registers the replay agent; `paired` gets the Add environment input. */
 const runSecondServer = Effect.fn("scenario.secondServer")(function* (
   devUrl: string,

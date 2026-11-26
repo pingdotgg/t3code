@@ -1,6 +1,6 @@
 # Cursor
 
-Run Cursor's local agent in T3 Code using your paid Cursor account or `CURSOR_API_KEY`.
+Run Cursor's local agent in Hyakki using your paid Cursor account or `CURSOR_API_KEY`.
 
 ## Prerequisites and sign-in
 
@@ -15,7 +15,7 @@ Each Cursor instance keeps its own login separate from your Cursor editor or CLI
 - Supports streaming text, reasoning, tool activity, plans, image attachments, mid-turn text steering (steers with attachments or mode changes restart the run), and **Edit from here** / checkpoint rewind (rewinding to the first message starts a fresh session).
 - **Subagents**: Cursor `task` subagents appear as read-only child threads; message the parent thread to interact.
 - **Forking**: Uses a [portable handoff](./portable-handoffs.md) into a fresh Cursor session.
-- **Cloud agents**: Not yet supported—runs operate locally in your T3 Code workspace.
+- **Cloud agents**: Not yet supported—runs operate locally in your Hyakki workspace.
 - **Permissions**: **Full access** disables Cursor's sandbox; restricted modes enable it. On Windows, the Cursor SDK has no filesystem sandbox, so **Auto** and **Supervised** run without filesystem isolation when Cursor Auto-review is enabled, while **Auto-accept edits** cannot start on Windows.
 
 ## MCP servers and plugins

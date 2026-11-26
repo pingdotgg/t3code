@@ -72,7 +72,7 @@ describe("issueFilterProjects", () => {
         environmentId,
         title: "t3code",
         workspaceRoot: `/work/${id}`,
-        repositoryIdentity: { canonicalKey: "github.com/pingdotgg/t3code" },
+        repositoryIdentity: { canonicalKey: "github.com/Ryoku-dev/hyakki" },
         isScratch,
       }) as unknown as EnvironmentProject;
     const choices = issueFilterProjects(

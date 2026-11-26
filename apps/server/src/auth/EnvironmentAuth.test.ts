@@ -312,7 +312,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
     );
 
     it.effect(
-      "holds an untrusted T3 Connect device until it is approved, and revocation cuts it off",
+      "holds an untrusted Hyakki Connect device until it is approved, and revocation cuts it off",
       () =>
         Effect.gen(function* () {
           const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -386,8 +386,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           });
           const [oldestDeviceSession, newestDeviceSession] = yield* deviceSessions();
           expect(newestDeviceSession).toBeDefined();
-          // Authorized clients lists T3 Connect sessions under this name.
-          expect(newestDeviceSession?.client.label).toBe("T3 Connect");
+          // Authorized clients lists Hyakki Connect sessions under this name.
+          expect(newestDeviceSession?.client.label).toBe("Hyakki Connect");
           // Revoking any one of the device's sessions ends all of them and its trust.
           expect(
             yield* serverAuth.revokeClientSession(admin.sessionId, oldestDeviceSession!.sessionId),
@@ -496,7 +496,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect(yield* refused(renewed.access_token, other.thumbprint)).toBe(
           "ServerAuthInvalidCredentialError",
         );
-        // Bearer and T3 Connect sessions keep their fixed lifetimes, so unlinking still cuts off.
+        // Bearer and Hyakki Connect sessions keep their fixed lifetimes, so unlinking still cuts off.
         const bearer = yield* pair();
         expect(yield* refused(bearer.access_token, key.thumbprint)).toBe(
           "ServerAuthInvalidCredentialError",
@@ -536,7 +536,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const day = 24 * 60 * 60 * 1000;
         const issue = (peerLink: boolean) =>
           serverAuth.issueMcpClientSession({
-            label: peerLink ? "T3 Code · A" : "ChatGPT",
+            label: peerLink ? "Hyakki · A" : "ChatGPT",
             access: "auto",
             peerLink,
             client: requestMetadata,
@@ -757,7 +757,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const paired = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
           pairing.credential,
           undefined,
-          { ...requestMetadata, label: "T3 Code Desktop" },
+          { ...requestMetadata, label: "Hyakki Desktop" },
         );
         const first = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
           "desktop-bootstrap-token",

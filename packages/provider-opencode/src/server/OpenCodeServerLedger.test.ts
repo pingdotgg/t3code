@@ -242,7 +242,7 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
     }).pipe(provideHost),
   );
 
-  it.live("leaves the servers of a running T3 server alone", () =>
+  it.live("leaves the servers of a running Hyakki server alone", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;

@@ -63,10 +63,10 @@ import * as ServerConfig from "../config.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-/** T3's record of the branch, named as on the host, that a branch was cut from. */
+/** Hyakki's record of the branch, named as on the host, that a branch was cut from. */
 const branchBaseConfigKey = (branch: string) => `branch.${branch}.t3-merge-base`;
 /**
- * Where T3 kept that record before it had a key of its own, for every host alike: the GitHub
+ * Where Hyakki kept that record before it had a key of its own, for every host alike: the GitHub
  * CLI's key, which branches cut before then still carry instead.
  */
 const legacyBranchBaseConfigKey = (branch: string) => `branch.${branch}.gh-merge-base`;
@@ -2212,7 +2212,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
     const repository = yield* resolveRepositoryPaths(cwd);
     if (repository?.worktreeRoot == null) return null;
-    // The cached branch outlives a checkout made outside T3 Code, so it is read fresh.
+    // The cached branch outlives a checkout made outside Hyakki, so it is read fresh.
     const currentBranch = needsCurrentBranch
       ? yield* readCurrentBranch("GitVcsDriver.review.currentBranch", cwd)
       : null;
@@ -2250,7 +2250,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     {
       capacity: 2_048,
-      // A remote added outside T3 Code must show on the next status read, so only a hit is kept.
+      // A remote added outside Hyakki must show on the next status read, so only a hit is kept.
       timeToLive: Exit.match({
         onSuccess: (exists) => (exists ? STATUS_ORIGIN_EXISTS_CACHE_TTL : Duration.zero),
         onFailure: () => Duration.zero,
@@ -5958,7 +5958,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
-  // Git never waits for .git/config.lock, and git run outside T3, such as an agent's, can hold it.
+  // Git never waits for .git/config.lock, and git run outside Hyakki, such as an agent's, can hold it.
   // Only writes that are safe to repeat retry.
   const retryWhileConfigLocked = <A>(effect: Effect.Effect<A, GitCommandError>) =>
     effect.pipe(
@@ -6361,7 +6361,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         };
       }
 
-      // Both caches outlive a checkout made outside T3 Code, so this checkout's branch is read
+      // Both caches outlive a checkout made outside Hyakki, so this checkout's branch is read
       // on every call and replaces whatever the cached snapshot claims for it.
       const [snapshot, currentBranch] = yield* Effect.all(
         [
@@ -6373,7 +6373,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { concurrency: 2 },
       );
       const { worktreeRoot } = repositoryPaths;
-      // The snapshot misses a branch created outside T3 Code until it refreshes. An unborn HEAD
+      // The snapshot misses a branch created outside Hyakki until it refreshes. An unborn HEAD
       // names a branch with no ref yet, so the ref must exist before it is listed.
       const currentBranchUnlisted =
         currentBranch !== null && !snapshot.localBranches.some((ref) => ref.name === currentBranch);
@@ -6482,7 +6482,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   // A checkout stamps most files in the second it writes the index, and Git re-reads every file
   // stamped in the index's own second or later ("racily clean") on each status, diff and add.
-  // T3's own git calls never rewrite a worktree's index, so refresh it once.
+  // Hyakki's own git calls never rewrite a worktree's index, so refresh it once.
   const refreshNewWorktreeIndex = Effect.fn("refreshNewWorktreeIndex")(function* (
     worktreePath: string,
   ) {

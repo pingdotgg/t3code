@@ -818,12 +818,12 @@ it.effect(
 
       const onTunnel = yield* handoff("box.example.ts.net");
       const hosted = new URL(onTunnel.location);
-      expect(`${hosted.origin}${hosted.pathname}`).toBe("https://app.t3.codes/approve-agent");
+      expect(`${hosted.origin}${hosted.pathname}`).toBe("https://hyakki.ryoku.dev/approve-agent");
       expect(hosted.searchParams.get("environment")).toEqual(expect.any(String));
       hosted.searchParams.delete("environment");
       expect(hosted.searchParams.toString()).toBe(onTunnel.query);
 
-      const elsewhere = yield* handoff("other.t3coderelay.com");
+      const elsewhere = yield* handoff("other.relay.hyakki.ryoku.dev");
       expect(elsewhere.location).toBe(`/connect-agent?${elsewhere.query}`);
       const peerLink = yield* handoff("box.example.ts.net", true);
       expect(peerLink.location).toBe(`/connect-agent?${peerLink.query}`);
@@ -900,7 +900,7 @@ it.live("one-click approves only access the browser session holds the scopes for
       );
       expect(new URL(readOnly.redirectTo!).searchParams.get("code")).toEqual(expect.any(String));
 
-      // The hosted app approves with the owner's T3 Connect session, which sends no cookie.
+      // The hosted app approves with the owner's Hyakki Connect session, which sends no cookie.
       const connect = `Bearer ${(yield* auth.issueSession({ scopes: [...AuthStandardClientScopes] })).token}`;
       const connectDetails = yield* details(connect);
       expect(connectDetails.oneClickAccess).toContain("full-access");

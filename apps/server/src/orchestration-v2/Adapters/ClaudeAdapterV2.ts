@@ -1137,7 +1137,7 @@ function withoutForgedMcpApp(output: ClaudeNativeToolOutput): ClaudeNativeToolOu
 }
 
 /**
- * Deliberately broader than Claude's matcher: Claude also matches rules against server aliases T3
+ * Deliberately broader than Claude's matcher: Claude also matches rules against server aliases Hyakki
  * can't list, and an alias may contain `__`, so any `mcp__` rule or wildcard may cover any MCP tool.
  * A false match only refuses a card's call, or asks first.
  */
@@ -1157,7 +1157,7 @@ function claudeRulesMayCoverMcpTools(
 
 /**
  * Claude reports `annotations` as `readOnly`/`destructive`/`openWorld`; apps expect MCP's `*Hint` names.
- * Card calls skip Claude's permission check, so `readOnlyHint`, which skips T3's prompt, needs readable
+ * Card calls skip Claude's permission check, so `readOnlyHint`, which skips Hyakki's prompt, needs readable
  * rules (null when not) with no ask or deny rule that may cover the tool.
  */
 function claudeMcpToolForApps(
@@ -1604,7 +1604,7 @@ const forkClaudeSessionInWorker = Effect.fn("forkClaudeSessionInWorker")(functio
 
 const CLAUDE_CAN_USE_TOOL_SHADOWED_WARNING = "CLAUDE_SDK_CAN_USE_TOOL_SHADOWED";
 
-// query() warns when canUseTool meets bypassPermissions or bare allowedTools. T3 installs
+// query() warns when canUseTool meets bypassPermissions or bare allowedTools. Hyakki installs
 // canUseTool in every mode on purpose (AskUserQuestion, ask rules), so it is per-session noise.
 export function withoutClaudeCanUseToolShadowedWarning<A>(run: () => A): A {
   const emitWarning = process.emitWarning;
@@ -2410,7 +2410,7 @@ export function claudeQueryEnvironment(
 }
 
 // Claude Code's auto tool search sends every MCP schema in full while they fit under a share of the
-// context window, which T3's tools do on 1M models. auto:0 already means on and auto:100 off.
+// context window, which Hyakki's tools do on 1M models. auto:0 already means on and auto:100 off.
 export function claudeToolSearchOverride(value: string | undefined): "true" | undefined {
   if (value === undefined) return undefined;
   if (value === "auto") return "true";
@@ -2505,7 +2505,7 @@ const CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = `
 
 ### Background work you wait on
 
-To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. T3 MCP tools are deferred: load one with ToolSearch before you call it.
+To wait for a background command or Monitor you started (tests, a build), call \`t3_background_wait\` with its task ID before you end your turn. Do not mark work you leave running, or PRs. Hyakki MCP tools are deferred: load one with ToolSearch before you call it.
 `;
 
 // Claude 5.1+ returns text written before a tool call as a progress update, which the API
@@ -2542,7 +2542,7 @@ export function makeClaudeQueryOptions(input: {
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly agentFeedback?: AgentFeedbackMode;
-  /** The thread's T3 MCP session holds the `device` capability. */
+  /** The thread's Hyakki MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
@@ -2650,7 +2650,7 @@ export function makeClaudeQueryOptions(input: {
   const agentFeedback = input.mcpServers === undefined ? "off" : (input.agentFeedback ?? "off");
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
-    // T3 names threads; a supplied title skips Claude's redundant naming request.
+    // Hyakki names threads; a supplied title skips Claude's redundant naming request.
     ...(input.title === undefined ? {} : { title: input.title }),
     tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
     permissionMode:
@@ -2791,7 +2791,7 @@ const decodeClaudeLaunchArgSettings = Schema.decodeUnknownEffect(
  * Reads the --settings launch argument: a value starting with a brace is inline
  * JSON, anything else is a file path that expands a leading ~ and is otherwise
  * relative to the thread's cwd (the project or its worktree).
- * makeClaudeQueryOptions merges the result beneath T3's own settings.
+ * makeClaudeQueryOptions merges the result beneath Hyakki's own settings.
  */
 export const readClaudeLaunchArgSettings = Effect.fn("ClaudeAdapterV2.readLaunchArgSettings")(
   function* (input: {
@@ -2848,13 +2848,13 @@ export const CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = [
   "mcp__t3-code__t3_submit_output",
 ];
 
-// The name this adapter registers T3's MCP server under, and so the one Claude gives for it.
+// The name this adapter registers Hyakki's MCP server under, and so the one Claude gives for it.
 const CLAUDE_T3_MCP_SERVER = "t3-code";
 
 // request_secret can wait an hour; exceed Claude's default 60 s timeout.
 export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 
-// allowedTools pre-approves calls; tools controls availability. Pre-approve T3 tools for headless modes,
+// allowedTools pre-approves calls; tools controls availability. Pre-approve Hyakki tools for headless modes,
 // limited to annotated read-only tools in read-only sandboxes.
 
 export function claudeMcpQueryOverrides(input: {
@@ -3994,7 +3994,7 @@ export const resolveClaudeModeAvailability = Effect.fn("ClaudeAdapterV2.resolveM
     const sources = [resolved.effective, home, remote, launch].map(claudeBypassAvailability);
     const autoDisabledBy = new Set<ProviderRuntimeModeLimitReason>();
     if (claudeBypassAvailability(remote).autoDisabled) autoDisabledBy.add("managed-settings");
-    // T3's own launch arguments and a custom Claude home are the person's, like user settings.
+    // Hyakki's own launch arguments and a custom Claude home are the person's, like user settings.
     if ([home, launch].some((source) => claudeBypassAvailability(source).autoDisabled)) {
       autoDisabledBy.add("user-settings");
     }
@@ -4902,7 +4902,7 @@ export function permissionResultFromDecision(input: {
   readonly toolUseID: string;
   readonly suggestions?: Parameters<CanUseTool>[2]["suggestions"];
   readonly feedback?: string;
-  /** Under an administrator's ceiling, T3 Code's mode is the only one; Claude cannot switch it. */
+  /** Under an administrator's ceiling, Hyakki's mode is the only one; Claude cannot switch it. */
   readonly managedCeiling?: boolean;
 }): PermissionResult {
   if (input.decision === "accept" || input.decision === "acceptForSession") {
@@ -5972,7 +5972,7 @@ function claudeTaskString(value: unknown, key: string): string | undefined {
 }
 
 // A Claude Code mod can hold a tool call until the user acts in its terminal
-// pane. T3 cannot provide the requested pane interaction.
+// pane. Hyakki cannot provide the requested pane interaction.
 // Passive panes never request focus and keep working.
 function claudeFocusRequestedPanePlugin(message: SDKMessage): string | null {
   if (message.type !== "system" || claudeTaskField(message, "subtype") !== "ui_panes") return null;
@@ -6159,7 +6159,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   adapterOptions: ClaudeAdapterV2Options,
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-  // `onElicitation` shows T3 Code's own requests and passes on the person's answer to each.
+  // `onElicitation` shows Hyakki's own requests and passes on the person's answer to each.
   yield* mcpSessions.showsApprovalRequests(adapterOptions.instanceId);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
@@ -6587,8 +6587,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           new Map<string, OrchestrationV2ProviderThread>(),
         );
         const goalsByNativeThread = new Map<string, OrchestrationV2ProviderGoal | null>();
-        // The title T3 last applied to each native session, so a turn renames it only when the
-        // thread title changed. A native `/rename` T3 never applied survives later turns.
+        // The title Hyakki last applied to each native session, so a turn renames it only when the
+        // thread title changed. A native `/rename` Hyakki never applied survives later turns.
         const appliedSessionTitles = new Map<string, string>();
         const goalCheckedTurns = new Set<string>();
         // Background subagents can finish after root settlement; retain their registry for wake evidence and hydration.
@@ -11652,7 +11652,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               failure: makeProviderFailure({
                 class: "provider_error",
                 code: "claude_mod_ui_unsupported",
-                message: `The Claude Code mod "${focusedPlugin}" is waiting for input in its terminal pane, which T3 Code cannot show. Disable the mod for sessions run from T3 Code, or run the task in the Claude Code terminal.`,
+                message: `The Claude Code mod "${focusedPlugin}" is waiting for input in its terminal pane, which Hyakki cannot show. Disable the mod for sessions run from Hyakki, or run the task in the Claude Code terminal.`,
               }),
             });
             // Closing ends the CLI process and abandons the held tool call
@@ -13547,14 +13547,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // request was dismissed and may be asked another way.
             return { action: "cancel" } satisfies ElicitationResult;
           }
-          // T3's own tools leave what they ask with the thread's MCP session while they wait.
-          // A request is T3's when it is one of those, whatever a server calls itself.
+          // Hyakki's own tools leave what they ask with the thread's MCP session while they wait.
+          // A request is Hyakki's when it is one of those, whatever a server calls itself.
           const ownRequest =
             request.serverName === CLAUDE_T3_MCP_SERVER
               ? yield* mcpSessions.findApprovalRequest(context.input.threadId, request.message)
               : undefined;
           const grantKey = `${request.serverName}\u0000${request.message}`;
-          // T3 Code asks only when a person has to answer, so its own request is never answered
+          // Hyakki asks only when a person has to answer, so its own request is never answered
           // from an earlier answer and offers none to remember.
           if (
             ownRequest === undefined &&
@@ -13568,7 +13568,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* releaseHeldRootFrames(context);
           }
 
-          // The SDK's requestId names this control request; T3 allocates its own
+          // The SDK's requestId names this control request; Hyakki allocates its own
           // runtime request id from it.
           const nativeRequestId = `mcp-elicitation:${callbackOptions.requestId}`;
           const artifacts = yield* buildApprovalRequestArtifacts({
@@ -13577,7 +13577,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeRequestId,
             requestKind: "mcp-elicitation",
             prompt: request.message,
-            // T3 Code asking is the app itself, so there is no other app to name.
+            // Hyakki asking is the app itself, so there is no other app to name.
             ...(ownRequest === undefined
               ? { appName: request.displayName ?? request.title ?? request.serverName }
               : { pushHooks: ownRequest.pushHooks }),
@@ -13656,7 +13656,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               runtimeRequest: { ...artifacts.request, status: "cancelled", resolvedAt: now },
             });
           }
-          // The person's answer in the app is what T3 Code's own request goes by, so it is
+          // The person's answer in the app is what Hyakki's own request goes by, so it is
           // left with the request before the CLI carries a reply back.
           if (ownRequest !== undefined) {
             yield* mcpSessions.answerApprovalRequests(
@@ -13909,7 +13909,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         ) {
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           // Claude Code defers its goal Stop hook only for its own background tasks, so a goal
-          // re-prompts in a loop while T3 work that will wake this thread is still running.
+          // re-prompts in a loop while Hyakki work that will wake this thread is still running.
           const onStop: HookCallback = () =>
             runPromise(
               Effect.gen(function* () {
@@ -14632,7 +14632,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }
                 const nativeItemId = `bypass-policy-downgrade:${context.providerTurnId}`;
                 const notice =
-                  "T3 could not confirm Claude bypass permissions here, so Full access is running with approval checks.";
+                  "Hyakki could not confirm Claude bypass permissions here, so Full access is running with approval checks.";
                 yield* emitProviderEvent({
                   type: "turn_item.updated",
                   driver: CLAUDE_PROVIDER,
@@ -15387,7 +15387,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     detail: `Claude session ${nativeThreadId} has no conversation to resume.`,
                   });
                 }
-                // A session imported from the terminal has history but no T3
+                // A session imported from the terminal has history but no Hyakki
                 // provider turns; opening it with sessionId fails "already in use".
                 if (transcript === "conversation") {
                   yield* Ref.update(openedNativeThreads, (current) =>

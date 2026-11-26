@@ -1,7 +1,7 @@
 # Remote architecture
 
 Each connection joins a client to one environment over HTTP and WebSocket. Direct access, Tailscale,
-SSH, and T3 Connect change how the client reaches the server; they do not introduce a different
+SSH, and Hyakki Connect change how the client reaches the server; they do not introduce a different
 execution model.
 
 ## Identity is independent of the route
@@ -26,7 +26,7 @@ by signing in to the target's `/mcp` as an ordinary OAuth client (`t3code-peer-l
 side lists and revokes it in Sharing & access like any other session, and owns its expiry/renewal.
 
 - **Mode ceilings always narrow.** Forwarded calls carry the calling agent's modes in
-  `T3-Mode-Limit`, which the receiving `/mcp` can only intersect downward with the link's approved
+  `Hyakki-Mode-Limit`, which the receiving `/mcp` can only intersect downward with the link's approved
   access.
 - **Non-full-access links are fenced by `linkOrigin`.** Threads launched by a peer link (and their
   derived forks, subagents, and spawned threads) carry an immutable `linkOrigin` stamp enforced in

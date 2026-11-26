@@ -757,8 +757,8 @@ describe("V2 environment commands", () => {
     Effect.gen(function* () {
       const link = {
         host: "github.com",
-        repository: "pingdotgg/t3code",
-        url: "https://github.com/pingdotgg/t3code/pull/7",
+        repository: "Ryoku-dev/hyakki",
+        url: "https://github.com/Ryoku-dev/hyakki/pull/7",
         source: "agent" as const,
         linkedAt: "2026-10-05T00:00:00.000Z",
         snapshot: null,
@@ -799,7 +799,7 @@ describe("V2 environment commands", () => {
           commandId: expect.any(String),
           threadId: v2ThreadId,
           host: "github.com",
-          repository: "pingdotgg/t3code",
+          repository: "Ryoku-dev/hyakki",
           number: 7,
           watching: false,
         },

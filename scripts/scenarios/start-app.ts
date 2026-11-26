@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The app command of e2e.config.ts: starts the dev stack of the checkout it runs in on a fresh
-// T3 home. e2e stops it with a signal, which ends the scope and the processes it started.
+// Hyakki home. e2e stops it with a signal, which ends the scope and the processes it started.
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -244,7 +244,7 @@ const command = Command.make(
         "web: server and Vite. mobile: server on every interface and Metro.",
       ),
     ),
-    home: Argument.String("t3-home").pipe(Argument.withDescription("T3 home to recreate.")),
+    home: Argument.String("t3-home").pipe(Argument.withDescription("Hyakki home to recreate.")),
     ports: Argument.String("port").pipe(
       Argument.withDescription(
         "web: <host> <web-port>. mobile: <server-port> <metro-port> <host>.",

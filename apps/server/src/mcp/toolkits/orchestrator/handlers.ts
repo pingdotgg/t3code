@@ -61,7 +61,7 @@ const handlers = {
         );
       }),
   ),
-  // Claude can start a turn by itself before T3 starts its run, so a live-run check would refuse the mark.
+  // Claude can start a turn by itself before Hyakki starts its run, so a live-run check would refuse the mark.
   t3_background_wait: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const { scope, threads } = yield* readCaller();

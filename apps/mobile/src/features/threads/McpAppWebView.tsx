@@ -50,7 +50,7 @@ import { mcpAppRelayDocument } from "./mcpAppRelayDocument";
 import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppInlineHeight } from "./mcpAppSizing";
 
 const ROW_BOTTOM_MARGIN = 8;
-const PRODUCT_NAME = "T3 Code";
+const PRODUCT_NAME = "Hyakki";
 
 const commandFailure = (result: {
   readonly cause: Parameters<typeof squashAtomCommandFailure>[0]["cause"];
@@ -347,7 +347,7 @@ export function ThreadMcpApp(props: {
         return result.value;
       },
       openLink: async (url) => {
-        // WebViews cannot prove user activation; confirm links to prevent timer-driven navigation out of T3.
+        // WebViews cannot prove user activation; confirm links to prevent timer-driven navigation out of Hyakki.
         if (
           !(await confirm(
             m(msg("Open a link from {server}?", { server: app.server })),

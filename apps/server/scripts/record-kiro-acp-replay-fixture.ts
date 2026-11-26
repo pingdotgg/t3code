@@ -40,7 +40,7 @@ const wallClock = Clock.Clock.defaultValue();
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-// Kiro broadcasts T3 never reads. They carry the account's governance flags,
+// Kiro broadcasts Hyakki never reads. They carry the account's governance flags,
 // the full text of Kiro's bundled steering documents, its powers, the user's
 // hooks, the session roster and memory sync state; the client ignores every
 // one of them (no handler is registered).
@@ -122,7 +122,7 @@ function makeWireTee() {
     };
   };
   // Kiro settles every turn through the session/prompt response, so it is
-  // done once each prompt T3 sent has been answered.
+  // done once each prompt Hyakki sent has been answered.
   const kiroHasPendingWork = () => {
     const pending = new Set<string>();
     for (const wireMessage of wire) {
@@ -194,7 +194,7 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
     const pending = direction === "outgoing" ? agentRequests : t3Requests;
     const method = pending.get(String(message.id));
     if (method === undefined) {
-      // A response to a request T3 never saw; T3's protocol drops it, so replay
+      // A response to a request Hyakki never saw; Hyakki's protocol drops it, so replay
       // never sees it either.
       droppedFrames += 1;
       continue;
@@ -219,14 +219,14 @@ const T3_INSTRUCTIONS_BODY = /<t3_code_instructions>\n[\s\S]*?\n<\/t3_code_instr
 // keeps; its model stays pinned and the linking guidance does not.
 const PULL_REQUEST_LINKING_BODY = /<pull_request_linking>\n[\s\S]*?\n<\/pull_request_linking>/u;
 
-/** Replaces T3-owned request content so prompt wording changes do not invalidate recordings. */
+/** Replaces Hyakki-owned request content so prompt wording changes do not invalidate recordings. */
 function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructions: string) {
   const params = isRecord(frame.params) ? frame.params : undefined;
   if (params === undefined) return frame;
   switch (frame.method) {
     case "initialize":
-      // Pin what T3 advertises (fs and terminal capabilities decide whether
-      // Kiro routes file and shell work through T3); the rest is <any>.
+      // Pin what Hyakki advertises (fs and terminal capabilities decide whether
+      // Kiro routes file and shell work through Hyakki); the rest is <any>.
       return {
         ...frame,
         params: Object.fromEntries(
@@ -558,7 +558,7 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
       generatedBy: "live-kiro-recorder",
       kiroVersion: recorderEnv.T3_KIRO_VERSION ?? "unknown",
       normalization:
-        "Session ids are fixed sess_ UUIDs and other UUIDs (message and request ids) are numbered in first-seen order, the workspace is <workspace>, HOME is /home/kiro-replay and the recording user is kiro-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Kiro's log directory, user-scoped commands and agents, and the _kiro/* broadcasts T3 ignores (governance, steering documents, powers, tools, hooks, MCP status, session roster, memory sync) are removed. Timestamps are kept as recorded.",
+        "Session ids are fixed sess_ UUIDs and other UUIDs (message and request ids) are numbered in first-seen order, the workspace is <workspace>, HOME is /home/kiro-replay and the recording user is kiro-replay. Hyakki-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Kiro's log directory, user-scoped commands and agents, and the _kiro/* broadcasts Hyakki ignores (governance, steering documents, powers, tools, hooks, MCP status, session roster, memory sync) are removed. Timestamps are kept as recorded.",
       droppedFrames,
     },
     entries: [

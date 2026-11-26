@@ -71,7 +71,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   options: {
     readonly config?: Partial<AntigravitySettings>;
     readonly enabled?: boolean;
-    /** Extra instance variables, such as ones a parent T3 turn already exported. */
+    /** Extra instance variables, such as ones a parent Hyakki turn already exported. */
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
   } = {},
 ) {
@@ -421,7 +421,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           },
         ]);
 
-        // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
+        // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and Hyakki answers its requests.
         h.controls.selected = yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" });
         for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
           const requestsBefore = (yield* h.readRequests).length;
@@ -464,7 +464,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
   );
 
   it.effect.skipIf(windowsHost)(
-    "gives a thread session its own T3 thread and MCP fallback environment",
+    "gives a thread session its own Hyakki thread and MCP fallback environment",
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness({
@@ -562,7 +562,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
           }),
         ).pipe(Effect.flip);
-        const message = `Antigravity 1.4.5 does not work with this T3 Code release. Update the Antigravity executable at ${old.executablePath} to >=1.5.12 <2, then retry.`;
+        const message = `Antigravity 1.4.5 does not work with this Hyakki release. Update the Antigravity executable at ${old.executablePath} to >=1.5.12 <2, then retry.`;
         expect(knownProviderFailureMessage(error)).toBe(message);
         expect((yield* h.refresh().pipe(Effect.flip)).detail).toBe(message);
         const methods = (yield* h.readRequests).map((request) => request.method);

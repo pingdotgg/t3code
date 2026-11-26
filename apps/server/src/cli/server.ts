@@ -77,9 +77,9 @@ export const startCommand = Command.make("start", { ...sharedServerCommandFlags 
 const { autoBootstrapProjectFromCwd: _, ...serveCommandFlags } = sharedServerCommandFlags;
 
 export const serveCommand = Command.make("serve", serveCommandFlags).pipe(
-  Command.withShortDescription("Run T3 Code in this terminal, with no browser."),
+  Command.withShortDescription("Run Hyakki in this terminal, with no browser."),
   Command.withDescription(
-    "Run T3 Code in this terminal without opening a browser, and print pairing details. The background service runs this too, without printing them: pair with `t3 pair`. To set up access from your other devices, run `t3 up`.",
+    "Run Hyakki in this terminal without opening a browser, and print pairing details. The background service runs this too, without printing them: pair with `t3 pair`. To set up access from your other devices, run `t3 up`.",
   ),
   Command.withHandler((flags) =>
     runServerCommand(

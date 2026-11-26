@@ -55,7 +55,7 @@ export function extractDevinSubagentUpdate(
   };
 }
 
-// Devin's plan exit offers several allow_once options in no promised order; T3 never answers with bypass.
+// Devin's plan exit offers several allow_once options in no promised order; Hyakki never answers with bypass.
 export function devinAnswerablePermissionOptions(
   request: AcpSchema.RequestPermissionRequest,
 ): ReadonlyArray<AcpSchema.PermissionOption> {

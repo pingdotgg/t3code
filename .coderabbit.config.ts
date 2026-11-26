@@ -40,7 +40,7 @@ const DOC_RULES = [
   {
     files: "docs/internals/06_t3-connect.md",
     applyTo: "{infra/relay/src,apps/server/src/cloud}/**/*.ts",
-    instructions: "Hold relay and T3 Connect changes to docs/internals/06_t3-connect.md.",
+    instructions: "Hold relay and Hyakki Connect changes to docs/internals/06_t3-connect.md.",
   },
   {
     files: "SECURITY.md",
@@ -60,7 +60,7 @@ const DOC_RULES = [
     files: "docs/internals/08_product-analytics.md",
     applyTo: "{apps/server/src/telemetry,apps/server/src/feedback}/**/*.ts",
     instructions:
-      "Hold analytics identity, attribution, and privacy boundaries to docs/internals/08_product-analytics.md.",
+      "Hyakki sends no analytics; hold telemetry and feedback changes to docs/internals/08_product-analytics.md.",
   },
   {
     files: "docs/internals/09_connection-runtime.md",

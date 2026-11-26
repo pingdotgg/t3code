@@ -137,9 +137,9 @@ const container = { width: 1200, height: 800 };
 const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
 const linkedPullRequest: ThreadPullRequestLink = {
   host: "github.com",
-  repository: "pingdotgg/t3code",
+  repository: "Ryoku-dev/hyakki",
   number: 27513,
-  url: "https://github.com/pingdotgg/t3code/pull/27513",
+  url: "https://github.com/Ryoku-dev/hyakki/pull/27513",
   source: "manual",
   linkedAt: "2026-10-30T00:00:00.000Z",
   snapshot: null,
@@ -309,7 +309,7 @@ it("lists the t3.json actions on disk when the actions menu opens again after th
   await chooser.click();
   await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
 
-  // A setup hook rewrites this checkout's t3.json outside T3 Code.
+  // A setup hook rewrites this checkout's t3.json outside Hyakki.
   t3File.disk = t3Json("Dev 4200");
 
   await chooser.click();

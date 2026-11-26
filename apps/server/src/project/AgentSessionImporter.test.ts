@@ -559,7 +559,7 @@ it.effect("does not certify new native history after a partial import retry", ()
     continued.source.size = 200;
     continued.source.mtimeMs = 3;
     continued.thread.messages.push(
-      { role: "user", text: "Continue outside T3", createdAt: timestamp },
+      { role: "user", text: "Continue outside Hyakki", createdAt: timestamp },
       { role: "assistant", text: "Native continuation", createdAt: timestamp },
     );
     // The thread holds only the original messages, so the continued transcript stays unrecorded.

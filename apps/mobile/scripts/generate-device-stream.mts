@@ -16,7 +16,7 @@ async function generateWebViewScript(feature: string, name: string) {
       minify: true,
       lib: {
         entry: NodePath.join(mobileRoot, "src/features", feature, `${stem}.browser.ts`),
-        name: `T3${name}Stream`,
+        name: `Hyakki${name}Stream`,
         formats: ["iife"],
       },
     },

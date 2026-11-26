@@ -559,7 +559,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
               method,
               ...(payload !== undefined ? { params: payload } : {}),
             }).pipe(Effect.withSpan("CodexAppServerProtocol.request.enqueue", { attributes }));
-            // Includes queue/stdin delivery, Codex work and response routing, not just T3 CPU.
+            // Includes queue/stdin delivery, Codex work and response routing, not just Hyakki CPU.
             return yield* Deferred.await(deferred).pipe(
               Effect.withSpan("CodexAppServerProtocol.request.awaitResponse", { attributes }),
             );

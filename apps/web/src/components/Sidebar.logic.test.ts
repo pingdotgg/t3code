@@ -1661,7 +1661,7 @@ describe("resolveSidebarRouteReveal", () => {
 describe("sidebarFolderExpansionKeys", () => {
   it("honors a collapse the legacy sidebar saved under a member's cwd", () => {
     const keys = sidebarFolderExpansionKeys({
-      projectKey: "github.com/pingdotgg/t3code",
+      projectKey: "github.com/Ryoku-dev/hyakki",
       memberProjects: [{ physicalProjectKey: "local:/code/t3code", workspaceRoot: "/code/t3code" }],
     });
     const cwdKey = keys.at(-1)!;

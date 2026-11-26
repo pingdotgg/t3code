@@ -24,7 +24,7 @@ import {
 } from "./connectDeviceApproval";
 
 /**
- * Asks to approve T3 Connect devices waiting on hosts that require it and this phone manages,
+ * Asks to approve Hyakki Connect devices waiting on hosts that require it and this phone manages,
  * and tells it about devices that got in on hosts that do not.
  */
 export function ConnectDeviceApprovalCoordinator() {
@@ -102,14 +102,14 @@ const newDeviceNotices = createApprovalPromptQueue<NewDeviceNotice>((notice, ans
       unseen.length === 1
         ? m(
             msg(
-              "{device} connected through {product}. If this was not you, remove it in Settings → Access in T3 Code on that computer.",
-              { device: firstDevice, product: "T3 Connect" },
+              "{device} connected through {product}. If this was not you, remove it in Settings → Access in Hyakki on that computer.",
+              { device: firstDevice, product: "Hyakki Connect" },
             ),
           )
         : m(
             msg(
-              "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in T3 Code on that computer.",
-              { count: unseen.length, product: "T3 Connect" },
+              "{count, plural, one {{count} device} other {{count} devices}} connected through {product}. If this was not you, remove them in Settings → Access in Hyakki on that computer.",
+              { count: unseen.length, product: "Hyakki Connect" },
             ),
           ),
       [

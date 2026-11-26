@@ -34,7 +34,7 @@ describe("localEnvironmentIdAtom", () => {
     ).toBe(PRIMARY);
   });
 
-  it("uses the connected background service sharing the app's T3 home when there is no primary", () => {
+  it("uses the connected background service sharing the app's Hyakki home when there is no primary", () => {
     expect(localEnvironmentId({ primary: null, host: "service", catalog: [REMOTE, SERVICE] })).toBe(
       SERVICE,
     );

@@ -81,7 +81,7 @@ describe("connection routes", () => {
     expect(connectionRouteLabel(direct("ts-serve", "https://box.tail1234.ts.net/"))).toBe(
       "Tailscale HTTPS",
     );
-    expect(connectionRouteLabel(RELAY)).toBe("T3 Connect");
+    expect(connectionRouteLabel(RELAY)).toBe("Hyakki Connect");
   });
 
   it("knows which addresses reach the same machine on every network", () => {
@@ -113,7 +113,7 @@ describe("connection routes", () => {
     expect(isNearbyAddress("not a url")).toBe(false);
   });
 
-  it("places a new route after faster kinds and ahead of T3 Connect", () => {
+  it("places a new route after faster kinds and ahead of Hyakki Connect", () => {
     expect(insertRoute([RELAY], LAN)).toEqual([LAN, RELAY]);
     expect(insertRoute([LAN, RELAY], TAILNET)).toEqual([LAN, TAILNET, RELAY]);
     expect(insertRoute([TAILNET], LAN)).toEqual([LAN, TAILNET]);
@@ -155,7 +155,7 @@ describe("learned routes", () => {
     routes?.map((route) => connectionRouteId(route.target)) ?? null;
   const profileOf = (route: ConnectionRoute) => Option.getOrThrow(route.profile);
 
-  it("learns a LAN address over T3 Connect, ahead of it, using the T3 Connect credential", () => {
+  it("learns a LAN address over Hyakki Connect, ahead of it, using the Hyakki Connect credential", () => {
     const routes = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,
@@ -231,7 +231,7 @@ describe("learned routes", () => {
       reported: [tailscale, mesh],
       allowInsecure: true,
     })!;
-    expect(first.map(connectionRouteLabel)).toEqual(["Tailscale", "VPN", "T3 Connect"]);
+    expect(first.map(connectionRouteLabel)).toEqual(["Tailscale", "VPN", "Hyakki Connect"]);
 
     const corrected = mergeLearnedRoutes({
       entry: entryWithRoutes(relayOnly, first),
@@ -240,7 +240,7 @@ describe("learned routes", () => {
       allowInsecure: true,
     })!;
     expect(ids(corrected)).toEqual(ids(first));
-    expect(corrected.map(connectionRouteLabel)).toEqual(["VPN", "VPN", "T3 Connect"]);
+    expect(corrected.map(connectionRouteLabel)).toEqual(["VPN", "VPN", "Hyakki Connect"]);
     expect(
       mergeLearnedRoutes({
         entry: entryWithRoutes(relayOnly, corrected),
@@ -320,7 +320,7 @@ describe("learned routes", () => {
       reported: [{ kind: "lan", httpBaseUrl: `${lanOrigin}/` }],
       allowInsecure: true,
     });
-    // The stale route is gone; the address is learned again with T3 Connect's credential.
+    // The stale route is gone; the address is learned again with Hyakki Connect's credential.
     expect(ids(routes)).toEqual([`learned:${ENVIRONMENT_ID}:${lanOrigin}`, "public", "relay"]);
     expect(profileOf(routes![0]!)).toMatchObject({ authorization: "t3-connect" });
   });
@@ -391,7 +391,7 @@ describe("learned routes", () => {
     expect(ids(routesAfterRemoving(overLan, "relay"))).toHaveLength(2);
   });
 
-  it("counts an environment reached only through T3 Connect as removed with it", () => {
+  it("counts an environment reached only through Hyakki Connect as removed with it", () => {
     const learned = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,
@@ -421,7 +421,7 @@ describe("learned routes", () => {
     );
   });
 
-  it("keeps the T3 Connect credential when learning over a learned T3 Connect route", () => {
+  it("keeps the Hyakki Connect credential when learning over a learned Hyakki Connect route", () => {
     const first = mergeLearnedRoutes({
       entry: relayOnly,
       activeRoute: RELAY,

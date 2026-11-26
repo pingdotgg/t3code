@@ -536,7 +536,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   };
   const header = (
     <WorkspaceListHeader
-      accessibilityLabel={gt("{appName}, Threads", { appName: "T3 Code" })}
+      accessibilityLabel={gt("{appName}, Threads", { appName: "Hyakki" })}
       onOpenEnvironments={props.onOpenEnvironmentSettings}
       onOpenSettings={props.onOpenSettings}
       search={{

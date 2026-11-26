@@ -71,7 +71,7 @@ function setup(discoveredEnvironments: Array<Discovery.RelayDiscoveredEnvironmen
 }
 
 describe("CloudEnvironmentConnectRows", () => {
-  it("does not offer a T3 Connect route for the desktop's own WSL backend", async () => {
+  it("does not offer a Hyakki Connect route for the desktop's own WSL backend", async () => {
     setup([
       discovered(primaryEnvironmentId, "This PC"),
       discovered(wslEnvironmentId, "Ubuntu (WSL)"),

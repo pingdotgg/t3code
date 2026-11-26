@@ -91,7 +91,7 @@ export const makeCursorCredentialStore = Effect.fn("makeCursorCredentialStore")(
   return { store, binding: credentials.binding };
 });
 
-/** The unexpired API key from this instance's T3 sign-in, read without loading the SDK. */
+/** The unexpired API key from this instance's Hyakki sign-in, read without loading the SDK. */
 export const readStoredCursorApiKey = Effect.fn("readStoredCursorApiKey")(function* (
   instanceId: ProviderInstanceId,
 ) {

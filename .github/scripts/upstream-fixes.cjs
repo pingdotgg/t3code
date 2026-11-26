@@ -1,6 +1,7 @@
-// Cherry-picks upstream's non-breaking fix and perf commits after the cursor in
-// .github/upstream-fixes/cursor, reports what did not apply, and advances the cursor.
+// Cherry-picks upstream's non-breaking fix and perf commits after the cursor, takes back out
+// any that would undo this fork, reports the rest, and advances the cursor.
 // Usage: node .github/scripts/upstream-fixes.cjs <upstream-ref> [--max N] [--summary FILE]
+//        [--quarantine SHA]
 
 "use strict";
 
@@ -18,6 +19,61 @@ const EXCLUDED_SCOPES = new Set(["mobile", "marketing", "relay", "release", "ci"
 const EXCLUDED_PATHS = [".github/", "apps/mobile/", "apps/marketing/", "infra/"];
 
 const SUBJECT = /^(fix|perf)(?:\(([^)]*)\))?(!)?:\s/;
+
+// Files only this fork writes: its privacy promise, its telemetry no-ops and its branding.
+const PROTECTED_FILES = new Set([
+  "PRIVACY.md",
+  "NOTICE",
+  "LICENSE",
+  "apps/server/src/telemetry/AnalyticsService.ts",
+  "apps/server/src/telemetry/Identify.ts",
+  "packages/shared/src/relayTracing.ts",
+  "apps/mobile/src/features/observability/observe.ts",
+  "apps/web/src/branding.ts",
+  "apps/web/src/legalLinks.ts",
+]);
+const PROTECTED_PREFIXES = ["assets/"];
+
+// Text a fix must not add: upstream's name and hosts, and analytics or tracing services.
+const FORBIDDEN = [
+  { pattern: /\bT3 Code\b/, reason: "upstream's product name", outsideTests: true },
+  { pattern: /t3\.codes|t3tools\.com|t3coderelay\.com/i, reason: "an upstream host" },
+  {
+    pattern: /api\.axiom\.co|posthog|sentry\.io|segment\.io|mixpanel/i,
+    reason: "a telemetry service",
+  },
+  { pattern: /pingdotgg\/t3code/, reason: "upstream's repository", outsideTests: true },
+];
+
+const TEST_FILE = /(^|\/)(test|tests|__tests__|fixtures?)\/|\.test\.[cm]?[jt]sx?$/;
+
+/** Why a picked change would undo this fork, or "" when it is fine. */
+function guard(files, addedLines) {
+  for (const file of files) {
+    if (PROTECTED_FILES.has(file) || PROTECTED_PREFIXES.some((prefix) => file.startsWith(prefix))) {
+      return `changes ${file}, which only this fork writes`;
+    }
+  }
+  for (const { file, line } of addedLines) {
+    for (const rule of FORBIDDEN) {
+      if (rule.outsideTests && TEST_FILE.test(file)) continue;
+      if (rule.pattern.test(line)) return `adds ${rule.reason} to ${file}`;
+    }
+  }
+  return "";
+}
+
+/** Lines a commit adds, with the file each lands in, from `git show -U0` output. */
+function addedLines(patch) {
+  const lines = [];
+  let file = "";
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++ ")) file = line.replace(/^\+\+\+ (b\/)?/, "");
+    else if (line.startsWith("+") && file && file !== "/dev/null")
+      lines.push({ file, line: line.slice(1) });
+  }
+  return lines;
+}
 
 function classify(commit) {
   const match = SUBJECT.exec(commit.subject);
@@ -76,7 +132,9 @@ function readCommit(sha) {
 function main(argv) {
   const upstream = argv[0];
   if (!upstream)
-    throw new Error("usage: upstream-fixes.cjs <upstream-ref> [--max N] [--summary FILE]");
+    throw new Error(
+      "usage: upstream-fixes.cjs <upstream-ref> [--max N] [--summary FILE] [--quarantine SHA]",
+    );
   const option = (name, fallback) => {
     const at = argv.indexOf(name);
     return at >= 0 && argv[at + 1] ? argv[at + 1] : fallback;
@@ -84,7 +142,15 @@ function main(argv) {
   const max = Number(option("--max", "200"));
   const summaryFile = option("--summary", "");
 
+  const quarantine = option("--quarantine", "");
+
   const cursor = fs.readFileSync(CURSOR_FILE, "utf8").trim();
+  // A fix that failed CI on its own is skipped from now on, with a note saying why.
+  if (/^[0-9a-f]{7,40}$/.test(quarantine)) {
+    const note = `${quarantine} # failed CI on its own (${new Date().toISOString().slice(0, 10)})\n`;
+    const current = fs.existsSync(SKIP_FILE) ? fs.readFileSync(SKIP_FILE, "utf8") : "";
+    if (!readSkip(current).has(quarantine)) fs.writeFileSync(SKIP_FILE, current + note);
+  }
   const skip = fs.existsSync(SKIP_FILE) ? readSkip(fs.readFileSync(SKIP_FILE, "utf8")) : new Set();
   const range = git([
     "rev-list",
@@ -98,6 +164,7 @@ function main(argv) {
 
   const picked = [];
   const conflicted = [];
+  const guarded = [];
   const filtered = {};
   let last = cursor;
   for (const sha of range) {
@@ -114,7 +181,16 @@ function main(argv) {
       continue;
     }
     try {
+      const before = git(["rev-parse", "HEAD"]);
       git(["cherry-pick", "-x", "--empty=drop", sha]);
+      if (git(["rev-parse", "HEAD"]) === before) continue;
+      const files = git(["diff", "--name-only", before, "HEAD"]).split("\n").filter(Boolean);
+      const why = guard(files, addedLines(git(["diff", "-U0", before, "HEAD"])));
+      if (why) {
+        git(["reset", "--hard", before]);
+        guarded.push({ ...commit, why });
+        continue;
+      }
       picked.push(commit);
     } catch {
       try {
@@ -126,9 +202,9 @@ function main(argv) {
     }
   }
 
-  if (last !== cursor) {
-    fs.writeFileSync(CURSOR_FILE, `${last}\n`);
-    git(["add", CURSOR_FILE]);
+  if (last !== cursor) fs.writeFileSync(CURSOR_FILE, `${last}\n`);
+  git(["add", CURSOR_FILE, ...(fs.existsSync(SKIP_FILE) ? [SKIP_FILE] : [])]);
+  if (git(["diff", "--cached", "--name-only"])) {
     git(["commit", "-m", `chore(upstream): look at upstream fixes up to ${last.slice(0, 12)}`]);
   }
 
@@ -136,8 +212,10 @@ function main(argv) {
   const lines = [
     `Upstream fixes from \`${cursor.slice(0, 12)}\` to \`${last.slice(0, 12)}\`.`,
     "",
-    `Picked ${picked.length}, did not apply ${conflicted.length}, left out ${Object.values(filtered).reduce((a, b) => a + b, 0)}.`,
+    `Picked ${picked.length}, did not apply ${conflicted.length}, held back ${guarded.length}, left out ${Object.values(filtered).reduce((a, b) => a + b, 0)}.`,
   ];
+  if (quarantine)
+    lines.push("", `Now skipping \`${quarantine.slice(0, 12)}\`: it failed CI on its own.`);
   if (remaining > 0) lines.push("", `${remaining} upstream commits are left for the next run.`);
   if (picked.length) {
     lines.push("", "### Picked", "");
@@ -146,6 +224,11 @@ function main(argv) {
   if (conflicted.length) {
     lines.push("", "### Did not apply (pick by hand, or add to `.github/upstream-fixes/skip`)", "");
     for (const commit of conflicted) lines.push(`- ${commit.sha.slice(0, 12)} ${commit.subject}`);
+  }
+  if (guarded.length) {
+    lines.push("", "### Held back (would undo this fork)", "");
+    for (const commit of guarded)
+      lines.push(`- ${commit.sha.slice(0, 12)} ${commit.subject}: ${commit.why}`);
   }
   if (Object.keys(filtered).length) {
     lines.push("", "### Left out", "");
@@ -157,7 +240,7 @@ function main(argv) {
   return { picked: picked.length, advanced: last !== cursor };
 }
 
-module.exports = { classify, readSkip, skipped };
+module.exports = { addedLines, classify, guard, readSkip, skipped };
 
 if (require.main === module) {
   main(process.argv.slice(2));

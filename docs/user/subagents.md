@@ -1,13 +1,13 @@
 # Subagents and delegation
 
-T3 Code supports running parallel agents—either spawned natively by a provider or delegated through T3 Code's orchestration tools—so a parent thread can split up research, implementation, or reviews across models, worktrees, or machines.
+Hyakki supports running parallel agents—either spawned natively by a provider or delegated through Hyakki's orchestration tools—so a parent thread can split up research, implementation, or reviews across models, worktrees, or machines.
 
 ## Two kinds of subagents
 
-| Type                         | How it starts                                                                                                                                                        | Interactive?                                | Where approvals go                                       |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------- |
-| **T3-delegated subagent**    | Agent calls `delegate_task` (supports choosing another provider/model, an isolated git worktree, or a [linked machine](./remote-access.md#link-another-environment)) | Yes—has its own composer                    | In the child thread (and surfaced via parent)            |
-| **Provider-native subagent** | Spawned internally by Claude, Codex, Cursor, Antigravity, fx, or Pi                                                                                                  | Read-only—message the parent thread instead | Bubbles up to the parent thread with the subagent's name |
+| Type                          | How it starts                                                                                                                                                        | Interactive?                                | Where approvals go                                       |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------- |
+| **Hyakki-delegated subagent** | Agent calls `delegate_task` (supports choosing another provider/model, an isolated git worktree, or a [linked machine](./remote-access.md#link-another-environment)) | Yes—has its own composer                    | In the child thread (and surfaced via parent)            |
+| **Provider-native subagent**  | Spawned internally by Claude, Codex, Cursor, Antigravity, fx, or Pi                                                                                                  | Read-only—message the parent thread instead | Bubbles up to the parent thread with the subagent's name |
 
 > Tip: Type `@` and part of a model name (such as `@opus` or `@opus:opencode`) in your prompt to tell the agent which model to delegate to without changing the current thread's model.
 

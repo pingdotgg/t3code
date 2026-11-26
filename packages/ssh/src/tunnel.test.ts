@@ -337,7 +337,7 @@ describe("ssh tunnel scripts", () => {
           assert.include(result.stderr, "download attempt");
           // A bare curl error does not tell the user that t3 itself could not be downloaded.
           assert.include(result.stderr, ARCHIVE.archiveVersion);
-          assert.include(result.stderr, "https://github.com/pingdotgg/t3code/releases/download");
+          assert.include(result.stderr, "https://github.com/Ryoku-dev/hyakki/releases/download");
         } else {
           assert.notInclude(result.stderr, "download attempt");
           assert.include(result.stderr, "has no t3 release archive.");
@@ -1524,7 +1524,7 @@ server.listen(Number(flag("--port") ?? 0), "127.0.0.1", () => {
       const error = yield* Effect.flip(launch);
       assert.include(
         error.message,
-        `The previous remote T3 server (PID ${pid}) is still shutting down.`,
+        `The previous remote Hyakki server (PID ${pid}) is still shutting down.`,
       );
       assert.isTrue(yield* isRunning(pid), "the launcher signalled the stopping server");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -1807,7 +1807,7 @@ const canBind = (port) =>
 
   // Installs a fake runtime per version so the runner never downloads. The
   // seeded remembered port keeps the test off the default 3773, which a live
-  // T3 on this machine may own.
+  // Hyakki on this machine may own.
   const prepareLaunch = (versions: ReadonlyArray<string>) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

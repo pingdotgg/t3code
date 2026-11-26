@@ -70,7 +70,7 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   sandboxPolicy: Schema.optional(Schema.Unknown),
   /**
    * The administrator's ceiling, when a managed policy sets one. `runtimeMode` is already under
-   * it; adapters use it to refuse native mode choices a user makes beside T3 Code's own.
+   * it; adapters use it to refuse native mode choices a user makes beside Hyakki's own.
    */
   maxRuntimeMode: Schema.optional(RuntimeMode),
   workspace: Schema.optional(ProviderAdapterV2RuntimeWorkspace),
@@ -497,9 +497,9 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
   {
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
-    /** Set when T3 closed the session because this thread detached from it, not the provider. */
+    /** Set when Hyakki closed the session because this thread detached from it, not the provider. */
     detachedThreadId: Schema.optional(ThreadId),
-    /** Set when T3 raised this itself; unset when the adapter reported its runtime failing. */
+    /** Set when Hyakki raised this itself; unset when the adapter reported its runtime failing. */
     raisedByT3: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },

@@ -1658,7 +1658,7 @@ it.effect("SQL queue readiness skips held runs without bypassing active work", (
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("SQL shells flag only an active turn blocked solely on T3 thread waits", () =>
+it.effect("SQL shells flag only an active turn blocked solely on Hyakki thread waits", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* addRolledBackRecoveryCandidate("thread-wait");
@@ -8241,7 +8241,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   );
 
   it.effect.each([
-    ["T3 Code's idle compaction", "agent", "server", undefined, true, "/compact"],
+    ["Hyakki's idle compaction", "agent", "server", undefined, true, "/compact"],
     ["compacting on return", "user", "web", "onReturn", true, "/compact"],
     ["a typed /compact", "user", "mobile", undefined, false, "/compact"],
     ["a normalized idle command", "agent", "server", undefined, true, " \t\u00a0/COMPACT\u3000\n"],
@@ -12016,9 +12016,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       const link = {
         host: "github.com",
-        repository: "pingdotgg/t3code",
+        repository: "Ryoku-dev/hyakki",
         number: 7,
-        url: "https://github.com/pingdotgg/t3code/pull/7",
+        url: "https://github.com/Ryoku-dev/hyakki/pull/7",
         source: "agent" as const,
         linkedAt: DateTime.formatIso(at),
         snapshot: null,
@@ -12062,7 +12062,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ]);
       assert.deepEqual((yield* store.getThreadShell(threadId))?.pendingBackgroundTasks, [
         {
-          taskId: "pull-request-watch:github.com/pingdotgg/t3code#7",
+          taskId: "pull-request-watch:github.com/ryoku-dev/hyakki#7",
           description: "Watching pull request #7",
           kind: "monitor",
           awaited: true,

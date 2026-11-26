@@ -22,7 +22,7 @@ export function kiroSupervisedWriteInput(): OrchestratorFixtureInput {
   };
 }
 
-/** Full access: Kiro still asks before the write; T3 answers it by policy, never the user. */
+/** Full access: Kiro still asks before the write; Hyakki answers it by policy, never the user. */
 export function kiroFullAccessWriteInput(): OrchestratorFixtureInput {
   return {
     runtimeMode: "full-access",

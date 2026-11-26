@@ -62,7 +62,7 @@ export function SettingsLabsRouteScreen() {
           capability="fastWorktreeCheckout"
           setting="fastWorktreeCheckout"
           description={gt(
-            "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
+            "On a Mac, clone new worktrees from a checkout cached in the Hyakki home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
           )}
         />
         <AgentFeedbackSection />
@@ -271,7 +271,11 @@ const AGENT_FEEDBACK_CHOICES: ReadonlyArray<{
   readonly label: string;
   readonly description: string;
 }> = [
-  { mode: "off", label: msg("Off"), description: msg("Agents send no feedback to the T3 team.") },
+  {
+    mode: "off",
+    label: msg("Off"),
+    description: msg("Agents send no feedback to the Hyakki team."),
+  },
   {
     mode: "on-request",
     label: msg("When I ask"),
@@ -280,7 +284,7 @@ const AGENT_FEEDBACK_CHOICES: ReadonlyArray<{
   {
     mode: "auto",
     label: msg("Automatic"),
-    description: msg("Agents also report T3 Code problems they hit on their own."),
+    description: msg("Agents also report Hyakki problems they hit on their own."),
   },
 ];
 
@@ -339,9 +343,9 @@ function AgentFeedbackSection() {
       })}
       <Text className="px-2 text-sm text-foreground-muted">
         <T>
-          Reports go to the T3 team. A report you ask for is shown to you first in a card, with an
-          outline of recent turns. Turn on Include the conversation there to add the messages of the
-          turns the report is about.
+          Reports go to the Hyakki team. A report you ask for is shown to you first in a card, with
+          an outline of recent turns. Turn on Include the conversation there to add the messages of
+          the turns the report is about.
         </T>
       </Text>
     </View>

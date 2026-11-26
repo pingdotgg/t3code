@@ -1,6 +1,6 @@
 # Built-in browser
 
-T3 Code includes a built-in preview browser beside your conversation so you and your agents can inspect local dev servers, annotate UI issues, record flows, and test web apps without leaving the thread.
+Hyakki includes a built-in preview browser beside your conversation so you and your agents can inspect local dev servers, annotate UI issues, record flows, and test web apps without leaving the thread.
 
 ## Open and navigate
 
@@ -24,7 +24,7 @@ Configure defaults in **Settings → Browser**:
 
 ## Agent browser access
 
-Agents can open tabs, navigate, click, type, inspect accessibility snapshots, and take screenshots using T3 Code's `preview_*` tools.
+Agents can open tabs, navigate, click, type, inspect accessibility snapshots, and take screenshots using Hyakki's `preview_*` tools.
 
 - Toggle **Settings → Browser → Agent browser access** (per environment or project override; takes effect when the next agent session starts).
 - **Floating preview**: By default, agent-opened tabs float over chat (**Settings → Browser → Auto-show floating preview**). Turn this off to open them in the right panel instead.

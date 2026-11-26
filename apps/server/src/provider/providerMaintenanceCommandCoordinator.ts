@@ -33,7 +33,7 @@ export const machineLockFile = (lockKey: string) =>
     NodeCrypto.createHash("sha256").update(lockKey).digest("hex").slice(0, 32),
   );
 
-// Other T3 servers on this machine can run the same installation's updater; one replacing its own
+// Other Hyakki servers on this machine can run the same installation's updater; one replacing its own
 // files makes the other's spawn or capability check fail. Without a usable lock directory, run anyway.
 const withMachineLock = <A, E, R>(
   lockKey: string,

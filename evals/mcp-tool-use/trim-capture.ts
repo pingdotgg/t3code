@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * Turns a raw CLIProxyAPI capture of one T3 Code turn into a template in `templates/`. Keeps only
+ * Turns a raw CLIProxyAPI capture of one Hyakki turn into a template in `templates/`. Keeps only
  * what run.ts reads, and drops user data. Usage: `pnpm mcp-tool-use:trim-capture
  * <claude|codex> <capture.json> <out.json.gz>`. Read the output before you commit it.
  */
@@ -103,7 +103,7 @@ const trimClaude = (native: Native) => {
   for (const message of head.slice(1)) {
     if (typeof message.content !== "string") continue;
     let text = message.content;
-    // run.ts appends T3's current text after this marker.
+    // run.ts appends Hyakki's current text after this marker.
     const runtime = text.indexOf("<runtime_info>");
     if (runtime !== -1) text = text.slice(0, runtime + "<runtime_info>".length);
     const agents = "Available agent types for the Agent tool:\n";
@@ -127,7 +127,7 @@ const trimCodex = (native: Native) => {
     if (item.type !== "message" && item.type !== "additional_tools") return [];
     if (item.role === "assistant") return [];
     const text = textOf(item);
-    // T3's own text comes from source, and the prompt from each case.
+    // Hyakki's own text comes from source, and the prompt from each case.
     if (text.includes("<t3_code_")) return [];
     if (item.role === "user") {
       const env = /<environment_context>[\s\S]*?<\/environment_context>/.exec(text)?.[0];

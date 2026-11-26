@@ -15,7 +15,7 @@ describe("providerInstanceInitials", () => {
   it("treats punctuation and camel-case humps as word breaks but keeps apostrophes between letters", () => {
     expect(providerInstanceInitials("Codex (hub)")).toBe("CH");
     expect(providerInstanceInitials("work_codex")).toBe("WC");
-    expect(providerInstanceInitials("Theo's Codex")).toBe("TC");
+    expect(providerInstanceInitials("Tara's Codex")).toBe("TC");
     expect(providerInstanceInitials("Codex 'hub'")).toBe("CH");
     expect(providerInstanceInitials("‘hub’")).toBe("HU");
     expect(providerInstanceInitials("(hub)")).toBe("HU");

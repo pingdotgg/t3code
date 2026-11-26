@@ -42,7 +42,7 @@ export const awaitLauncherLoss = Effect.fn("launcherWatch.awaitLauncherLoss")(fu
 
 /**
  * Interrupts `run` when the launcher is lost, and exits the process if shutdown outlasts the
- * grace period: a stuck cleanup step would otherwise keep holding the T3 home's ownership lock.
+ * grace period: a stuck cleanup step would otherwise keep holding the Hyakki home's ownership lock.
  */
 export const stopOnLauncherLoss = <A, E, R>(
   run: Effect.Effect<A, E, R>,

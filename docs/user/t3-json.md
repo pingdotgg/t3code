@@ -1,6 +1,6 @@
 # Project configuration (`t3.json`) and actions
 
-Check a `t3.json` file into your repository root to share project actions (setup, dev, test, and cleanup scripts), worktree defaults, icons, and multi-repo settings with everyone opening the repo in T3 Code.
+Check a `t3.json` file into your repository root to share project actions (setup, dev, test, and cleanup scripts), worktree defaults, icons, and multi-repo settings with everyone opening the repo in Hyakki.
 
 ## Inheritance order
 
@@ -13,11 +13,11 @@ Settings that `t3.json` can declare resolve in this order (first non-inherited v
 
 ## Schema reference
 
-Add `"$schema": "https://t3.codes/schema/t3.json"` for editor autocomplete and validation:
+Add `"$schema": "https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/schemas/t3.json"` for editor autocomplete and validation:
 
 ```json
 {
-  "$schema": "https://t3.codes/schema/t3.json",
+  "$schema": "https://raw.githubusercontent.com/Ryoku-dev/hyakki/main/schemas/t3.json",
   "iconPath": "assets/logo.svg",
   "defaultThreadEnvMode": "worktree",
   "worktreeSubmodules": "top-level",
@@ -68,7 +68,7 @@ Import `t3.json` scripts or define local actions in **Settings → Projects → 
 | Field                 | Description                                                                                                                               |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`                | Display name in the actions menu.                                                                                                         |
-| `command`             | Shell command run in a T3 terminal at the project root.                                                                                   |
+| `command`             | Shell command run in a Hyakki terminal at the project root.                                                                               |
 | `icon`                | `"play"` (default), `"test"`, `"lint"`, `"configure"`, `"build"`, or `"debug"`.                                                           |
 | `runOnWorktreeCreate` | Runs automatically when a new worktree is created. Skipped for agent-initiated worktrees below **Full access**.                           |
 | `async`               | For `runOnWorktreeCreate` only: `true` (default) starts the agent immediately; `false` waits for the script to finish first.              |

@@ -20,13 +20,13 @@ describe("merge-update-manifests", () => {
       "mac",
       `version: 0.0.4
 files:
-  - url: T3-Code-0.0.4-arm64.zip
+  - url: Hyakki-0.0.4-arm64.zip
     sha512: arm64zip
     size: 125621344
-  - url: T3-Code-0.0.4-arm64.dmg
+  - url: Hyakki-0.0.4-arm64.dmg
     sha512: arm64dmg
     size: 131754935
-path: T3-Code-0.0.4-arm64.zip
+path: Hyakki-0.0.4-arm64.zip
 sha512: arm64zip
 releaseDate: '2026-03-07T10:32:14.587Z'
 `,
@@ -37,13 +37,13 @@ releaseDate: '2026-03-07T10:32:14.587Z'
       "mac",
       `version: 0.0.4
 files:
-  - url: T3-Code-0.0.4-x64.zip
+  - url: Hyakki-0.0.4-x64.zip
     sha512: x64zip
     size: 132000112
-  - url: T3-Code-0.0.4-x64.dmg
+  - url: Hyakki-0.0.4-x64.dmg
     sha512: x64dmg
     size: 138148807
-path: T3-Code-0.0.4-x64.zip
+path: Hyakki-0.0.4-x64.zip
 sha512: x64zip
 releaseDate: '2026-03-07T10:36:07.540Z'
 `,
@@ -57,10 +57,10 @@ releaseDate: '2026-03-07T10:36:07.540Z'
     assert.deepStrictEqual(
       merged.files.map((file) => file.url),
       [
-        "T3-Code-0.0.4-arm64.zip",
-        "T3-Code-0.0.4-arm64.dmg",
-        "T3-Code-0.0.4-x64.zip",
-        "T3-Code-0.0.4-x64.dmg",
+        "Hyakki-0.0.4-arm64.zip",
+        "Hyakki-0.0.4-arm64.dmg",
+        "Hyakki-0.0.4-x64.zip",
+        "Hyakki-0.0.4-x64.dmg",
       ],
     );
 
@@ -74,7 +74,7 @@ releaseDate: '2026-03-07T10:36:07.540Z'
       "win",
       `version: 0.0.4
 files:
-  - url: T3-Code-0.0.4-arm64.exe
+  - url: Hyakki-0.0.4-arm64.exe
     sha512: arm64exe
     size: 1
 releaseDate: '2026-03-07T10:32:14.587Z'
@@ -86,7 +86,7 @@ releaseDate: '2026-03-07T10:32:14.587Z'
       "win",
       `version: 0.0.5
 files:
-  - url: T3-Code-0.0.5-x64.exe
+  - url: Hyakki-0.0.5-x64.exe
     sha512: x64exe
     size: 1
 releaseDate: '2026-03-07T10:36:07.540Z'
@@ -105,7 +105,7 @@ releaseDate: '2026-03-07T10:36:07.540Z'
       "mac",
       `version: '1.0'
 files:
-  - url: T3-Code-1.0-x64.zip
+  - url: Hyakki-1.0-x64.zip
     sha512: zipsha
     size: 1
 releaseName: 'true'
@@ -127,7 +127,7 @@ releaseDate: '2026-03-07T10:36:07.540Z'
       "win",
       `version: '1.0'
 files:
-  - url: T3-Code-1.0-x64.exe
+  - url: Hyakki-1.0-x64.exe
     sha512: exesha
     size: 1
 releaseDate: '2026-03-07T10:36:07.540Z'
@@ -146,26 +146,26 @@ releaseDate: '2026-03-07T10:36:07.540Z'
 it.layer(NodeServices.layer)("merge-update-manifests cli", (it) => {
   const arm64MacManifest = `version: 0.0.4
 files:
-  - url: T3-Code-0.0.4-arm64.zip
+  - url: Hyakki-0.0.4-arm64.zip
     sha512: arm64zip
     size: 125621344
-  - url: T3-Code-0.0.4-arm64.dmg
+  - url: Hyakki-0.0.4-arm64.dmg
     sha512: arm64dmg
     size: 131754935
-path: T3-Code-0.0.4-arm64.zip
+path: Hyakki-0.0.4-arm64.zip
 sha512: arm64zip
 releaseDate: '2026-03-07T10:32:14.587Z'
 `;
 
   const x64MacManifest = `version: 0.0.4
 files:
-  - url: T3-Code-0.0.4-x64.zip
+  - url: Hyakki-0.0.4-x64.zip
     sha512: x64zip
     size: 132000112
-  - url: T3-Code-0.0.4-x64.dmg
+  - url: Hyakki-0.0.4-x64.dmg
     sha512: x64dmg
     size: 138148807
-path: T3-Code-0.0.4-x64.zip
+path: Hyakki-0.0.4-x64.zip
 sha512: x64zip
 releaseDate: '2026-03-07T10:36:07.540Z'
 `;
@@ -186,8 +186,8 @@ releaseDate: '2026-03-07T10:36:07.540Z'
       yield* runCli(["--platform", "mac", primaryPath, secondaryPath]);
 
       const merged = yield* fs.readFileString(primaryPath);
-      assert.ok(merged.includes("T3-Code-0.0.4-arm64.zip"));
-      assert.ok(merged.includes("T3-Code-0.0.4-x64.zip"));
+      assert.ok(merged.includes("Hyakki-0.0.4-arm64.zip"));
+      assert.ok(merged.includes("Hyakki-0.0.4-x64.zip"));
       assert.ok(!merged.includes("path:"));
     }),
   );

@@ -1,4 +1,4 @@
-/** The page a guest link opens. It shows one shared thread to a browser with no T3 session. */
+/** The page a guest link opens. It shows one shared thread to a browser with no Hyakki session. */
 export const GUEST_PAGE_PATH = "/guest";
 
 export function isGuestPage(): boolean {

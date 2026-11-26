@@ -213,7 +213,7 @@ const startSeededApp = Effect.fn("clientMetrics.startSeededApp")(function* (
   const forge = yield* serveFakeGitHub({ detail: pullRequestDetail() });
   const project = path.join(home, "project");
   const git = (args: ReadonlyArray<string>) => run("git", args, { cwd: project });
-  const author = ["-c", "user.email=bench@t3.codes", "-c", "user.name=bench"];
+  const author = ["-c", "user.email=bench@hyakki.ryoku.dev", "-c", "user.name=bench"];
   yield* fs.makeDirectory(path.join(project, "src"), { recursive: true });
   yield* fs.writeFileString(path.join(project, "README.md"), "# bench\n");
   for (let index = 0; index < DIFF_FILES; index++) {

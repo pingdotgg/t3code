@@ -178,7 +178,7 @@ function wireToEntries(wire: ReadonlyArray<WireMessage>): {
   return { entries, droppedFrames };
 }
 
-/** Replaces T3-owned request content. User prompt text, clientCapabilities, and _meta stay. */
+/** Replaces Hyakki-owned request content. User prompt text, clientCapabilities, and _meta stay. */
 function normalizeOutboundFrame(frame: Record<string, unknown>, runtimeInstructions: string) {
   const params = isRecord(frame.params) ? frame.params : undefined;
   if (params === undefined) return frame;
@@ -480,7 +480,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
       generatedBy: "live-fx-recorder",
       fxVersion: initializeAgent.version ?? "unknown",
       normalization:
-        "Session ids are fx-session-NN, the workspace is <workspace>, HOME is /home/fx-replay and the recording user is fx-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. User skill names, emails and token-shaped strings are removed. Timestamps are kept as recorded.",
+        "Session ids are fx-session-NN, the workspace is <workspace>, HOME is /home/fx-replay and the recording user is fx-replay. Hyakki-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. User skill names, emails and token-shaped strings are removed. Timestamps are kept as recorded.",
       droppedFrames,
     },
     entries: [

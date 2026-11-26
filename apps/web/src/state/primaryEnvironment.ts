@@ -18,7 +18,7 @@ export const hostEnvironmentIdAtom = Atom.make<string | null>(null).pipe(
   Atom.withLabel("web-host-environment-id"),
 );
 
-// This computer's environment: the primary, else a connection to the service sharing the app's T3 home.
+// This computer's environment: the primary, else a connection to the service sharing the app's Hyakki home.
 export function createLocalEnvironmentIdAtom(input: {
   readonly primaryEnvironmentIdAtom: Atom.Atom<EnvironmentId | null>;
   readonly hostEnvironmentIdAtom: Atom.Atom<string | null>;

@@ -47,7 +47,7 @@ const resolved = await Effect.gen(function* () {
 }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
 
 export const APP_DIR = resolved.appDir;
-/** T3 homes only scenarios use, recreated on every run. `.t3` is gitignored. */
+/** Hyakki homes only scenarios use, recreated on every run. `.t3` is gitignored. */
 export const T3_HOME = resolved.home;
 export const MOBILE_T3_HOME = `${T3_HOME}-mobile`;
 export const MOBILE = resolved.mobile;
@@ -177,7 +177,7 @@ export default {
         session: "t3-scenarios",
       }),
       app: {
-        bundleId: "com.t3tools.t3code.dev",
+        bundleId: "dev.ryoku.hyakki.dev",
         // Metro starts after the server listens, so it answering means both are up.
         readyUrl: `http://127.0.0.1:${MOBILE.metroPort}/status`,
         command: {

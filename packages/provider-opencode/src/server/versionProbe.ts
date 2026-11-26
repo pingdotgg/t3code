@@ -183,7 +183,7 @@ export const probeOpenCodeRuntime = (
     ? probeOpenCodeServer(settings.serverUrl, settings.serverPassword, environment)
     : probeOpenCodeBinary(settings.binaryPath, environment);
 
-// Only 2.x is kept: 1.x can be upgraded in place while T3 runs, and 2.x converts the shared
+// Only 2.x is kept: 1.x can be upgraded in place while Hyakki runs, and 2.x converts the shared
 // database, so going back is unsupported.
 export const makeOpenCodeRuntimeProbe = <E>(probe: Effect.Effect<ProbedOpenCode, E>) =>
   Effect.map(

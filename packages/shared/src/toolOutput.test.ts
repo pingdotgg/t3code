@@ -12,7 +12,7 @@ import {
 } from "./toolOutput.ts";
 
 describe("compactDynamicToolOutput", () => {
-  it("extracts IDs through the MCP result envelopes used by T3 summaries", () => {
+  it("extracts IDs through the MCP result envelopes used by Hyakki summaries", () => {
     const metadata = { threadId: "thread-1", messageId: "message-1" };
     const json = JSON.stringify({ ...metadata, response: "Private response body" });
     for (const value of [

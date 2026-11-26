@@ -1,6 +1,6 @@
-# Running T3 Code in the background
+# Running Hyakki in the background
 
-Run T3 Code as a background user service on Linux, macOS, or Windows so your host stays reachable without keeping a terminal open.
+Run Hyakki as a background user service on Linux, macOS, or Windows so your host stays reachable without keeping a terminal open.
 
 ## Manage the service
 
@@ -22,11 +22,11 @@ Install the `t3` CLI first ([Command line](./install.md#command-line)), then run
 
 ## Local network access
 
-New services bind to localhost only. Run `t3 up --lan` (sets `T3CODE_LAN=true` in `service.env`) to listen on LAN and Tailscale addresses for direct desktop/mobile connections, or `t3 up --no-lan` to disable it. Anyone on that network can reach the port (gated by pairing). `T3CODE_HOST` overrides `T3CODE_LAN`. Hosted `app.t3.codes` always uses T3 Connect.
+New services bind to localhost only. Run `t3 up --lan` (sets `T3CODE_LAN=true` in `service.env`) to listen on LAN and Tailscale addresses for direct desktop/mobile connections, or `t3 up --no-lan` to disable it. Anyone on that network can reach the port (gated by pairing). `T3CODE_HOST` overrides `T3CODE_LAN`. Hosted `hyakki.ryoku.dev` always uses Hyakki Connect.
 
 ## Configure the service environment
 
-Add `KEY=VALUE` entries to `service.env` in your T3 home directory (`~/.t3/service.env` by default). Values are literal (quote spaces or `#`; no shell expansion) and survive installs and updates.
+Add `KEY=VALUE` entries to `service.env` in your Hyakki home directory (`~/.t3/service.env` by default). Values are literal (quote spaces or `#`; no shell expansion) and survive installs and updates.
 
 ```dotenv
 T3CODE_PORT=3773
@@ -38,11 +38,11 @@ T3CODE_HOST=127.0.0.1
 
 ## Platform support
 
-- **Linux**: Requires systemd user services with lingering enabled so T3 Code starts at boot and survives logout.
-- **macOS**: Starts at login, stops at logout. Keep the Mac logged in and awake for unattended access. If agents can't read Desktop/Documents/Downloads, grant Full Disk Access to the `t3` path in `~/Library/LaunchAgents/com.t3tools.t3code.service.plist`.
+- **Linux**: Requires systemd user services with lingering enabled so Hyakki starts at boot and survives logout.
+- **macOS**: Starts at login, stops at logout. Keep the Mac logged in and awake for unattended access. If agents can't read Desktop/Documents/Downloads, grant Full Disk Access to the `t3` path in `~/Library/LaunchAgents/dev.ryoku.hyakki.service.plist`.
 - **Windows**: Runs windowless via Task Scheduler (`t3code-<domain>-<user>`) while signed in and auto-restarts on exit. Lock the screen instead of signing out for unattended access.
 
-> Note: Signing out of T3 Connect does not stop or uninstall the background service.
+> Note: Signing out of Hyakki Connect does not stop or uninstall the background service.
 
 ## Keep the server responsive under memory pressure (Linux)
 
@@ -58,19 +58,19 @@ It previews system changes, asks for confirmation and `sudo`, and optionally pro
 
 Run `t3 service status` on the host to see the log path and health checks:
 
-| Status                                 | Fix                                                                                                                                             |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `linger-disabled`                      | Run `sudo loginctl enable-linger "$(id -un)"` (or `ssh -t your-server '...'`), then retry setup as your normal user. Never run T3 Code as root. |
-| `linger-unavailable`                   | Check `loginctl show-user "$(id -un)" --property=Linger` and verify `systemd-logind`.                                                           |
-| `user-manager-unavailable`             | Run `systemctl --user status` in a login session to verify systemd user support.                                                                |
-| `service-disabled` / `service-stopped` | Check the log and `systemctl --user status t3code.service`, then run `t3 service install`.                                                      |
-| `restart-pending`                      | Run `t3 service restart` to switch to the newly installed version.                                                                              |
+| Status                                 | Fix                                                                                                                                            |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `linger-disabled`                      | Run `sudo loginctl enable-linger "$(id -un)"` (or `ssh -t your-server '...'`), then retry setup as your normal user. Never run Hyakki as root. |
+| `linger-unavailable`                   | Check `loginctl show-user "$(id -un)" --property=Linger` and verify `systemd-logind`.                                                          |
+| `user-manager-unavailable`             | Run `systemctl --user status` in a login session to verify systemd user support.                                                               |
+| `service-disabled` / `service-stopped` | Check the log and `systemctl --user status t3code.service`, then run `t3 service install`.                                                     |
+| `restart-pending`                      | Run `t3 service restart` to switch to the newly installed version.                                                                             |
 
-For T3 Connect issues, see [T3 Connect troubleshooting](./t3-connect-troubleshooting.md).
+For Hyakki Connect issues, see [Hyakki Connect troubleshooting](./t3-connect-troubleshooting.md).
 
 ## Reclaim database space
 
-T3 Code automatically prunes old internal history while keeping conversations. Older databases that still hold freed space show a **Reclaim** button in **Settings → Maintenance** when at least 1 GiB is reclaimable (pauses the server/agents during repair).
+Hyakki automatically prunes old internal history while keeping conversations. Older databases that still hold freed space show a **Reclaim** button in **Settings → Maintenance** when at least 1 GiB is reclaimable (pauses the server/agents during repair).
 
 For manually started servers (or CLI use), stop any hand-started server or desktop app and run:
 

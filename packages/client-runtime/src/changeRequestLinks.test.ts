@@ -40,7 +40,7 @@ describe("findProjectForChangeRequest", () => {
   it("claims nothing for a lookalike host, which is what keeps a link a link", () => {
     const projects = [
       project({
-        canonicalKey: "github.com/pingdotgg/t3code",
+        canonicalKey: "github.com/Ryoku-dev/hyakki",
         provider: SourceControlProviderKind.make("github"),
         owner: "pingdotgg",
         name: "t3code",
@@ -49,7 +49,7 @@ describe("findProjectForChangeRequest", () => {
     expect(
       findProjectForChangeRequest(projects, {
         host: "github.com-evil.test",
-        repository: "pingdotgg/t3code",
+        repository: "Ryoku-dev/hyakki",
         number: 1,
       }),
     ).toBeUndefined();

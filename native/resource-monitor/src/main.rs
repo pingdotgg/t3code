@@ -437,7 +437,7 @@ impl Collector {
     }
 
     // sysinfo opens every process it lists with PROCESS_VM_READ, which anti-cheat
-    // software flags. List with Toolhelp instead and open only possible T3 descendants.
+    // software flags. List with Toolhelp instead and open only possible Hyakki descendants.
     #[cfg(target_os = "windows")]
     fn discovery_rows(&mut self, config: &CollectorConfig) -> (Vec<(u32, u32, u64)>, usize) {
         let listed = windows_processes::list();

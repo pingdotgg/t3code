@@ -53,7 +53,7 @@ const DETAIL_RESPONSE = JSON.stringify({
                     totalCount: 2,
                     nodes: [
                       { __typename: "User", login: "julius" },
-                      { __typename: "User", login: "theo" },
+                      { __typename: "User", login: "tara" },
                     ],
                   },
                 },
@@ -68,7 +68,7 @@ const DETAIL_RESPONSE = JSON.stringify({
         },
         assignees: {
           pageInfo: { hasNextPage: false, endCursor: null },
-          nodes: [{ login: "theo", name: null, avatarUrl: "https://avatars/julius" }],
+          nodes: [{ login: "tara", name: null, avatarUrl: "https://avatars/julius" }],
         },
         labels: {
           pageInfo: { hasNextPage: true, endCursor: "labels-next" },
@@ -98,7 +98,7 @@ const DETAIL_RESPONSE = JSON.stringify({
               __typename: "LabeledEvent",
               id: "LE_1",
               createdAt: "2026-07-01T01:00:00Z",
-              actor: { __typename: "User", login: "theo", avatarUrl: "https://avatars/theo" },
+              actor: { __typename: "User", login: "tara", avatarUrl: "https://avatars/tara" },
               label: { name: "bug" },
             },
             {
@@ -620,13 +620,13 @@ describe("GitHubIssueTracker", () => {
           state: "open",
           involvement: "all",
           labels: ['needs "repro"'],
-          assignee: "theo",
+          assignee: "tara",
           sort: "created",
           limit: 10,
         })
         .pipe(Effect.exit);
       expect(seen[0]).toMatchObject({
-        q: 'is:issue repo:acme/web is:open label:"needs \\"repro\\"" assignee:"theo" sort:created-desc',
+        q: 'is:issue repo:acme/web is:open label:"needs \\"repro\\"" assignee:"tara" sort:created-desc',
       });
     }),
   );
@@ -640,7 +640,7 @@ describe("GitHubIssueTracker", () => {
 description: Report broken behavior.
 title: "[Bug]: "
 labels: [bug, needs-triage]
-assignees: "octocat, theo"
+assignees: "octocat, tara"
 body:
   - type: markdown
     attributes:
@@ -712,7 +712,7 @@ body:
         about: "Report broken behavior.",
         title: "[Bug]: ",
         labels: ["bug", "needs-triage"],
-        assignees: ["octocat", "theo"],
+        assignees: ["octocat", "tara"],
       });
       expect(result.templates[0]?.body).toBe(`Search existing issues first.
 
@@ -794,7 +794,7 @@ Redact secrets before uploading.`);
           name: "Octo Cat",
           avatarUrl: "https://avatars/octocat",
         },
-        assignees: [{ login: "theo" }],
+        assignees: [{ login: "tara" }],
         labels: [
           { name: "bug", color: "d73a4a" },
           { name: "needs repro", color: "ffffff" },
@@ -813,7 +813,7 @@ Redact secrets before uploading.`);
       });
       // The viewer is left out of `actors` and shown as "You"; an empty group is dropped.
       expect(issue.comments[0]?.reactions).toEqual([
-        { content: "thumbs-up", count: 2, actors: ["theo"], viewerHasReacted: true },
+        { content: "thumbs-up", count: 2, actors: ["tara"], viewerHasReacted: true },
       ]);
       // The closing reference wins over the cross-reference sighting of the same pull request.
       expect(issue.linkedPullRequests).toEqual([

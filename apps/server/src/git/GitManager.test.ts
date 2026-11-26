@@ -1104,7 +1104,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ),
       ).toEqual([]);
 
-      // A remote added outside T3 Code shows on the next read.
+      // A remote added outside Hyakki shows on the next read.
       yield* runGit(repoDir, [
         "remote",
         "add",
@@ -1172,7 +1172,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("a git read in flight during a T3 git action does not outlive it", () =>
+  it.effect("a git read in flight during a Hyakki git action does not outlive it", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -1375,7 +1375,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               {
                 number: 216,
                 title: "Saved branch PR",
-                url: "https://github.com/pingdotgg/t3code/pull/216",
+                url: "https://github.com/Ryoku-dev/hyakki/pull/216",
                 baseRefName: "main",
                 headRefName: "feature/saved-branch",
                 headSha: "a".repeat(40),
@@ -1395,7 +1395,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(pullRequest).toMatchObject({
         number: 216,
         title: "Saved branch PR",
-        url: "https://github.com/pingdotgg/t3code/pull/216",
+        url: "https://github.com/Ryoku-dev/hyakki/pull/216",
         baseRef: "main",
         headRef: "feature/saved-branch",
         headSha: "a".repeat(40),
@@ -1476,7 +1476,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               {
                 number: 217,
                 title: "Deleted local branch PR",
-                url: "https://github.com/pingdotgg/t3code/pull/217",
+                url: "https://github.com/Ryoku-dev/hyakki/pull/217",
                 baseRefName: "main",
                 headRefName: "feature/deleted-local-branch",
                 state: "merged",
@@ -1971,7 +1971,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* configureVisibleRemoteUrlWithLocalRewrite(
           repoDir,
           "origin",
-          "https://github.com/pingdotgg/t3code.git",
+          "https://github.com/Ryoku-dev/hyakki.git",
           remoteDir,
         );
         yield* runGit(repoDir, ["checkout", "-b", "feature/no-upstream"]);
@@ -1988,7 +1988,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 {
                   number: 409,
                   title: "Fork PR",
-                  url: "https://github.com/pingdotgg/t3code/pull/409",
+                  url: "https://github.com/Ryoku-dev/hyakki/pull/409",
                   baseRefName: "main",
                   headRefName: "feature/no-upstream",
                   state: "open",
@@ -2000,7 +2000,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 {
                   number: 410,
                   title: "Warm fork PR",
-                  url: "https://github.com/pingdotgg/t3code/pull/410",
+                  url: "https://github.com/Ryoku-dev/hyakki/pull/410",
                   baseRefName: "main",
                   headRefName: "feature/fork-no-upstream",
                   state: "open",
@@ -2328,7 +2328,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               {
                 number: 215,
                 title: "Merged branch was deleted",
-                url: "https://github.com/pingdotgg/t3code/pull/215",
+                url: "https://github.com/Ryoku-dev/hyakki/pull/215",
                 baseRefName: "main",
                 headRefName: "feature/merged-branch-deleted",
                 state: "merged",
@@ -2346,7 +2346,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       expect(status.pr).toEqual({
         number: 215,
         title: "Merged branch was deleted",
-        url: "https://github.com/pingdotgg/t3code/pull/215",
+        url: "https://github.com/Ryoku-dev/hyakki/pull/215",
         baseRef: "main",
         headRef: "feature/merged-branch-deleted",
         state: "merged",
@@ -2381,7 +2381,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   const squashMergedPr = (branch: string, headSha: string): FakeChangeRequest => ({
     number: 217,
     title: "Feature work",
-    url: "https://github.com/pingdotgg/t3code/pull/217",
+    url: "https://github.com/Ryoku-dev/hyakki/pull/217",
     baseRefName: "main",
     headRefName: branch,
     headSha,
@@ -2847,7 +2847,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 {
                   number: 1661,
                   title: "Fork PR from main",
-                  url: "https://github.com/pingdotgg/t3code/pull/1661",
+                  url: "https://github.com/Ryoku-dev/hyakki/pull/1661",
                   baseRefName: "main",
                   headRefName: "main",
                   state: "open",
@@ -3035,7 +3035,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 {
                   number: 1618,
                   title: "Correct PR",
-                  url: "https://github.com/pingdotgg/t3code/pull/1618",
+                  url: "https://github.com/Ryoku-dev/hyakki/pull/1618",
                   baseRefName: "main",
                   headRefName: "effect-atom",
                   state: "open",
@@ -3046,7 +3046,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 {
                   number: 1518,
                   title: "Wrong PR",
-                  url: "https://github.com/pingdotgg/t3code/pull/1518",
+                  url: "https://github.com/Ryoku-dev/hyakki/pull/1518",
                   baseRefName: "main",
                   headRefName: "upstream/effect-atom",
                   state: "open",
@@ -3062,7 +3062,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(status.pr).toEqual({
           number: 1618,
           title: "Correct PR",
-          url: "https://github.com/pingdotgg/t3code/pull/1618",
+          url: "https://github.com/Ryoku-dev/hyakki/pull/1618",
           baseRef: "main",
           headRef: "effect-atom",
           state: "open",
@@ -4704,7 +4704,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           {
             number: 2284,
             title: "Improve branch mismatch warnings",
-            url: "https://github.com/pingdotgg/t3code/pull/2284",
+            url: "https://github.com/Ryoku-dev/hyakki/pull/2284",
             baseRefName: "main",
             headRefName: "t3code/git-audit-stability",
             state: "open",
@@ -5925,7 +5925,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const result = yield* runStackedAction(manager, { cwd: worktreePath, action: "create_pr" });
         expect(result.pr.status).toBe("created");
 
-        // A branch created outside T3 has only gh's legacy short base setting.
+        // A branch created outside Hyakki has only gh's legacy short base setting.
         yield* runGit(worktreePath, ["checkout", "-b", "feature/legacy-local-base"]);
         yield* runGit(worktreePath, [
           "config",
@@ -6081,7 +6081,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
                 {
                   number: 1661,
                   title: "Fork PR with same branch name",
-                  url: "https://github.com/pingdotgg/t3code/pull/1661",
+                  url: "https://github.com/Ryoku-dev/hyakki/pull/1661",
                   baseRefName: "main",
                   headRefName: "feature/no-fork-match",
                   state: "open",

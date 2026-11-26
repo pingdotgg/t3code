@@ -29,7 +29,7 @@ describe("t3code/no-native-title-tooltip", () => {
 
   rule.valid("allows the svg title child element", `const el = <svg><title>QR code</title></svg>;`);
 
-  rule.valid("allows document.title assignments", `document.title = "Thread · T3 Code";`);
+  rule.valid("allows document.title assignments", `document.title = "Thread · Hyakki";`);
 
   rule.invalid(
     "reports title on a truncating span",

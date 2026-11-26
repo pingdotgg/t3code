@@ -193,7 +193,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       }),
   );
 
-  it.effect("derives concrete Codex turn policies from every T3 runtime mode", () =>
+  it.effect("derives concrete Codex turn policies from every Hyakki runtime mode", () =>
     Effect.gen(function* () {
       const build = (
         runtimeMode: "approval-required" | "auto-accept-edits" | "auto" | "full-access",
@@ -262,7 +262,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
       assert.deepEqual((yield* build("approval-required")).sandboxPolicy, { type: "readOnly" });
       assert.deepEqual((yield* build("full-access")).sandboxPolicy, { type: "dangerFullAccess" });
-      // The folder list reaches the model without T3 Code's MCP tools.
+      // The folder list reaches the model without Hyakki's MCP tools.
       assert.deepEqual(Object.keys(autoAcceptEdits.additionalContext ?? {}), ["t3_code_workspace"]);
       assert.include(
         autoAcceptEdits.additionalContext?.["t3_code_workspace"]?.value,
@@ -713,7 +713,7 @@ function codexReplayPreamble(input: {
         id: 1,
         method: "initialize",
         params: {
-          clientInfo: { name: "T3 Code", title: "T3 Code", version: packageJson.version },
+          clientInfo: { name: "Hyakki", title: "Hyakki", version: packageJson.version },
           capabilities: {
             experimentalApi: true,
             optOutNotificationMethods: ["turn/diff/updated"],
@@ -730,7 +730,7 @@ function codexReplayPreamble(input: {
       frame: {
         id: 1,
         result: {
-          userAgent: "T3 Code/0.156.1",
+          userAgent: "Hyakki/0.156.1",
           codexHome: "/tmp/codex-home",
           platformFamily: "unix",
           platformOs: "macos",
@@ -1362,7 +1362,7 @@ describe("CodexAdapterV2 session initialize", () => {
               frame: {
                 id: 1,
                 result: {
-                  userAgent: "T3 Code/0.144.3 (Mac OS 15.5.0; x86_64) unknown (T3 Code; 0.1.5)",
+                  userAgent: "Hyakki/0.144.3 (Mac OS 15.5.0; x86_64) unknown (Hyakki; 0.1.5)",
                   codexHome: "/tmp/codex-home",
                   platformFamily: "unix",
                   platformOs: "macos",
@@ -1386,7 +1386,7 @@ describe("CodexAdapterV2 session initialize", () => {
       assert.instanceOf(failure.cause, ProviderSetupError);
       assert.equal(
         failure.cause.message,
-        "Codex 0.144.3 does not work with this T3 Code release. Update Codex to >=0.159.0, then retry.",
+        "Codex 0.144.3 does not work with this Hyakki release. Update Codex to >=0.159.0, then retry.",
       );
     }).pipe(
       Effect.scoped,
@@ -1886,11 +1886,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   it.effect.each([
     { serverName: "t3-code", asked: true, expected: { own: true } },
     { serverName: "t3-code-direct", asked: true, expected: { own: true } },
-    // A server T3 Code did not register, or a request T3 Code did not make: named as ever.
+    // A server Hyakki did not register, or a request Hyakki did not make: named as ever.
     { serverName: "deploys", asked: true, expected: { own: false } },
     { serverName: "t3-code", asked: false, expected: { own: false } },
   ] as const)(
-    "shows an approval from $serverName (asked by T3 Code: $asked) as T3 Code's own: $expected.own",
+    "shows an approval from $serverName (asked by Hyakki: $asked) as Hyakki's own: $expected.own",
     ({ serverName, asked, expected }) =>
       Effect.gen(function* () {
         const nativeThreadId = "own-approval-thread";
@@ -1988,8 +1988,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           decision: "accept",
         });
         yield* harness.firstTerminal;
-        // What the person answered in the app stays with the request T3 Code made, and with
-        // no other: a request under T3's server name that T3 Code did not make gets none.
+        // What the person answered in the app stays with the request Hyakki made, and with
+        // no other: a request under Hyakki's server name that Hyakki did not make gets none.
         if (ownAsked !== undefined) {
           const kept = yield* sessions.takeApprovalRequest(harness.threadId, ownAsked);
           if (expected.own) assert.deepInclude(kept, { approved: true });
@@ -2009,7 +2009,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   );
 
   it.effect.each(["plan", "default"] as const)(
-    "shows what T3 Code's own tool asks to the person in a Full access turn (%s mode)",
+    "shows what Hyakki's own tool asks to the person in a Full access turn (%s mode)",
     (interactionMode) =>
       Effect.gen(function* () {
         const nativeThreadId = "own-approval-full-access-thread";
@@ -2061,7 +2061,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           message,
           pushHooks,
         });
-        // Another call's request, answered while this one waits, leaves this one T3 Code's own.
+        // Another call's request, answered while this one waits, leaves this one Hyakki's own.
         const answered = yield* sessions.recordApprovalRequest(harness.threadId, {
           message: "Push docs and run this repository's hook file .husky/pre-push?",
         });
@@ -2084,7 +2084,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const request = yield* Effect.raceFirst(
           Queue.take(pending),
           harness.firstTerminal.pipe(
-            Effect.andThen(Effect.die("T3 Code's own request was answered without the person")),
+            Effect.andThen(Effect.die("Hyakki's own request was answered without the person")),
           ),
         );
         const card = harness.events.findLast(
@@ -3993,7 +3993,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("names the native thread after the T3 title and retries a failed rename", () =>
+  it.effect("names the native thread after the Hyakki title and retries a failed rename", () =>
     Effect.gen(function* () {
       const nativeThreadId = "thread-name-thread";
       const nameSet = (
@@ -4636,7 +4636,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("preserves T3 context on the wire and restores it after compaction", () =>
+  it.effect("preserves Hyakki context on the wire and restores it after compaction", () =>
     Effect.gen(function* () {
       const nativeThreadId = "context-thread";
       const nativeTurnId = "context-turn";
@@ -4777,7 +4777,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.deepEqual(
         wireOrder,
         ["item/completed", "turn/completed", "thread/inject_items"],
-        "restored T3 context while the compacting native turn was still running",
+        "restored Hyakki context while the compacting native turn was still running",
       );
     }).pipe(
       Effect.provide(
@@ -4914,7 +4914,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   item: {
                     type: itemType,
                     id,
-                    ...(itemType === "webSearch" ? { query: "T3 Code", action: null } : {}),
+                    ...(itemType === "webSearch" ? { query: "Hyakki", action: null } : {}),
                   },
                   ...timestamps,
                 },
@@ -5001,7 +5001,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.equal(unfinished[0]?.id, unfinished[1]?.id);
         assert.deepEqual(unfinished[1]?.startedAt, DateTime.makeUnsafe(1782622443000));
         if (unfinished[1]?.type === "web_search") {
-          assert.deepEqual(unfinished[1].patterns, ["T3 Code"]);
+          assert.deepEqual(unfinished[1].patterns, ["Hyakki"]);
           assert.deepEqual(
             harness.events.flatMap((event) =>
               event.type === "node.updated" &&
@@ -6913,7 +6913,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     id: `image-${index}`,
                     status: "completed",
                     result,
-                    revisedPrompt: "A tree shaped like T3",
+                    revisedPrompt: "A tree shaped like Hyakki",
                     transparentBackground: true,
                     ...image,
                   },
@@ -6960,7 +6960,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.strictEqual(item.title, "Generate image");
         if (item.type !== "dynamic_tool") continue;
         assert.deepEqual(item.input, {
-          prompt: "A tree shaped like T3",
+          prompt: "A tree shaped like Hyakki",
           transparent_background: true,
         });
         const image = images[index]!;

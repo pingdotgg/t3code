@@ -1,8 +1,8 @@
 # Security policy
 
-Report security vulnerabilities affecting T3 Code or T3 Tools-operated infrastructure to
-[security@t3.codes](mailto:security@t3.codes). Please do not disclose them publicly until we have had
-a reasonable opportunity to investigate and remediate them.
+Report security vulnerabilities in Hyakki through a
+[private security advisory](https://github.com/Ryoku-dev/hyakki/security/advisories/new). Please do
+not disclose them publicly until we have had a reasonable opportunity to investigate and fix them.
 
-See the [full security policy](https://t3.codes/security-policy) for reporting details, scope,
-and safe harbor terms for good-faith research.
+Vulnerabilities in upstream T3 Code that also affect Hyakki are welcome here too; please report them
+to T3 Code as well.

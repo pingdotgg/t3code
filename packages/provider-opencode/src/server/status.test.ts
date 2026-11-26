@@ -1254,7 +1254,7 @@ const scanned: OpenCode2Workspace = {
 };
 
 it.effect(
-  "waits for the scan of an OpenCode 2 directory that lists built-ins before T3 saw its scan end",
+  "waits for the scan of an OpenCode 2 directory that lists built-ins before Hyakki saw its scan end",
   () =>
     Effect.gen(function* () {
       const reads: Array<OpenCode2Workspace> = [
@@ -1274,7 +1274,7 @@ it.effect(
     }),
 );
 
-it.effect("reads an OpenCode 2 directory whose scan T3 saw end once without waiting", () =>
+it.effect("reads an OpenCode 2 directory whose scan Hyakki saw end once without waiting", () =>
   Effect.gen(function* () {
     const calls: Array<string> = [];
     const workspace = yield* loadOpenCode2Workspace(

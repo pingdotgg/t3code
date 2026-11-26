@@ -262,7 +262,7 @@ describe("buildFleetGraph", () => {
     expect(routeStates(graph, "old")).toEqual({ tailnet: "idle", lan: "idle", relay: "idle" });
   });
 
-  it("adds T3 Connect machines the client has not saved, and only those", () => {
+  it("adds Hyakki Connect machines the client has not saved, and only those", () => {
     const graph = build([environment("cups")], [connectMachine("cups"), connectMachine("gpu")]);
     expect(graph.nodes.map((entry) => `${entry.kind}:${entry.label}`)).toEqual([
       "client:This browser",

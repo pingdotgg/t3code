@@ -1,6 +1,6 @@
-# Threads from older T3 Code versions
+# Threads from older Hyakki versions
 
-On your first V2 launch, T3 Code automatically copies your V1 database (`state.sqlite`) to `statev2.sqlite` in the same data directory and migrates it. V1 and V2 stay independent afterward (changes in one do not sync to the other), while settings, attachments, and workspace files remain shared.
+On your first V2 launch, Hyakki automatically copies your V1 database (`state.sqlite`) to `statev2.sqlite` in the same data directory and migrates it. V1 and V2 stay independent afterward (changes in one do not sync to the other), while settings, attachments, and workspace files remain shared.
 
 ## What migrates
 
@@ -13,7 +13,7 @@ Sending your first message starts a fresh provider session using the [portable h
 
 ## Keeping a recovery copy
 
-T3 Code does not have a whole-thread export command. Before a major server update, stop the server and back up your `userdata` directory (`~/.t3/userdata` by default, or `<base-dir>/userdata`).
+Hyakki does not have a whole-thread export command. Before a major server update, stop the server and back up your `userdata` directory (`~/.t3/userdata` by default, or `<base-dir>/userdata`).
 
 If a migrated transcript is missing, inspect your backup read-only without pointing a server at it:
 

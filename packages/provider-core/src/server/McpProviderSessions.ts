@@ -40,7 +40,7 @@ interface KeptToolResult {
   readonly output: Record<string, unknown>;
 }
 
-/** What one of T3's own MCP tools is asking the person behind a thread to approve. */
+/** What one of Hyakki's own MCP tools is asking the person behind a thread to approve. */
 export interface T3ApprovalRequest {
   /** The whole question, as the provider's client hands it on. */
   readonly message: string;
@@ -49,7 +49,7 @@ export interface T3ApprovalRequest {
   readonly state?: string | undefined;
 }
 
-/** A request T3 is waiting on, and what the person answered once an adapter has shown it. */
+/** A request Hyakki is waiting on, and what the person answered once an adapter has shown it. */
 export interface KeptApprovalRequest extends T3ApprovalRequest {
   readonly id: string;
   readonly approved?: boolean | undefined;
@@ -111,8 +111,8 @@ export class McpProviderSessions extends Context.Service<
     ) => Effect.Effect<Record<string, unknown> | undefined>;
     readonly clearToolResults: (threadId: ThreadId) => Effect.Effect<void>;
     // The provider's client hands an adapter a server name and the message. This is how the
-    // adapter learns a request is T3's own, and what it names, from T3 itself: kept from when
-    // T3 asks until it has the answer. Recording returns the request's own id, and only that id
+    // adapter learns a request is Hyakki's own, and what it names, from Hyakki itself: kept from when
+    // Hyakki asks until it has the answer. Recording returns the request's own id, and only that id
     // forgets it: two calls may ask the same thing at once, and one may outlive its session.
     readonly recordApprovalRequest: (
       threadId: ThreadId,
@@ -123,10 +123,10 @@ export class McpProviderSessions extends Context.Service<
       message: string,
     ) => Effect.Effect<KeptApprovalRequest | undefined>;
     readonly forgetApprovalRequest: (threadId: ThreadId, id: string) => Effect.Effect<void>;
-    // An adapter that shows T3's own requests says so for its provider instance and passes on
+    // An adapter that shows Hyakki's own requests says so for its provider instance and passes on
     // each answer the person gave in the app. It is handed the message and no id, so the answer
     // counts for every request of the thread asking `message` that has none yet. For those
-    // instances that answer, not the client's reply, is what T3 goes by.
+    // instances that answer, not the client's reply, is what Hyakki goes by.
     readonly showsApprovalRequests: (providerInstanceId: ProviderInstanceId) => Effect.Effect<void>;
     readonly areApprovalRequestsShown: (
       providerInstanceId: ProviderInstanceId,

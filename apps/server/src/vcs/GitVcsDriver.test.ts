@@ -107,7 +107,7 @@ runVcsDriverContractSuite<GitVcsDriver.GitVcsDriver, GitContractError>({
 
 it.effect.each([
   {
-    fetchUrl: "https://github.com/pingdotgg/t3code.git",
+    fetchUrl: "https://github.com/Ryoku-dev/hyakki.git",
     pushUrl: "git@github.com:octocat/t3code.git",
     lineEnding: "\n",
   },
@@ -565,7 +565,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       if (lfs.exitCode !== 0) return ctx.skip("Install git-lfs to run this test.");
       const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
       yield* git(["lfs", "install", "--local"]);
-      // Last in the config, git-lfs 3.6 trims the space unless T3's own -c entries follow it.
+      // Last in the config, git-lfs 3.6 trims the space unless Hyakki's own -c entries follow it.
       yield* driver.execute({
         operation: "checkpoint-test",
         cwd,

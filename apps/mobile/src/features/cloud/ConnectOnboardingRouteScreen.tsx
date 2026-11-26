@@ -16,14 +16,10 @@ import { useRemoteConnections } from "../../state/use-remote-environment-registr
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
 import { splitEnvironmentSections } from "../connection/environmentSections";
 import { useConnectionController } from "../connection/useConnectionController";
-import {
-  ConnectionTracesSwitch,
-  connectionTracesAvailable,
-} from "../observability/ConnectionTracesSwitch";
 import { optOutOfConnectOnboarding } from "./connectOnboardingOptOut";
 import { hasCloudPublicConfig } from "./publicConfig";
 
-// Only reachable with cloud config: onboarding is requested after a T3 Connect
+// Only reachable with cloud config: onboarding is requested after a Hyakki Connect
 // sign-in, and appLinking drops the deep link otherwise.
 export function ConnectOnboardingRouteScreen() {
   return hasCloudPublicConfig() ? <ConfiguredConnectOnboardingRouteScreen /> : null;
@@ -66,7 +62,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       <AppBar
-        title={gt("Set up {product}", { product: "T3 Connect" })}
+        title={gt("Set up {product}", { product: "Hyakki Connect" })}
         onClose={handleClose}
         refresh={{
           accessibilityLabel: gt("Refresh environments"),
@@ -98,23 +94,12 @@ function ConfiguredConnectOnboardingRouteScreen() {
         ) : (
           <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
-              {gt("Sign in to your T3 account to set up {product}.", { product: "T3 Connect" })}
+              {gt("Sign in to your Hyakki account to set up {product}.", {
+                product: "Hyakki Connect",
+              })}
             </Text>
           </View>
         )}
-
-        {isSignedIn && connectionTracesAvailable ? (
-          <View collapsable={false} className="gap-2">
-            <View collapsable={false} className="overflow-hidden rounded-[24px] bg-grouped-card">
-              <ConnectionTracesSwitch />
-            </View>
-            <Text className="px-2 text-sm leading-normal text-foreground-muted">
-              {gt(
-                "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
-              )}
-            </Text>
-          </View>
-        ) : null}
 
         {userId ? (
           <Button label={gt("Don't show this again")} tone="text" onPress={handleDontShowAgain} />

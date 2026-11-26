@@ -1,6 +1,6 @@
 # fx
 
-Run [fx](https://fx.sh) in T3 Code using the fx login and backends configured on your server machine. Requires **fx 0.0.13+** (macOS 15+ for releases after 0.0.13).
+Run [fx](https://fx.sh) in Hyakki using the fx login and backends configured on your server machine. Requires **fx 0.0.13+** (macOS 15+ for releases after 0.0.13).
 
 ## Set up and update
 
@@ -30,10 +30,10 @@ All fx instances on a machine share that machine's fx login.
 | **Full access** | Runs all actions without asking (requires **fx 0.0.14+**; refresh provider after upgrading). |
 
 - **Auto-accept edits** is not supported (falls back to Supervised). Changing modes reloads the fx session.
-- On fx 0.0.14+, setting a mode in T3 Code also updates fx's saved default permission mode.
+- On fx 0.0.14+, setting a mode in Hyakki also updates fx's saved default permission mode.
 - Steering into a running turn stops that turn and answers the new message in the same session.
 
 ## Sub-agents and limitations
 
 - **Sub-agents**: Shown as child threads with their task and summarized reply (individual steps are hidden). fx does not forward sub-agent permission prompts—use **Auto** or **Full access** so sub-agents don't stall waiting for approval.
-- **Not supported**: **Auto-accept edits**, and T3 Code text generation (titles, commit messages, PR descriptions, branch names)—pick another provider for those.
+- **Not supported**: **Auto-accept edits**, and Hyakki text generation (titles, commit messages, PR descriptions, branch names)—pick another provider for those.

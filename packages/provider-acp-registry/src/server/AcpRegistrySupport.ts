@@ -1424,7 +1424,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       if (!(yield* isSamePath(globalPrefix, managedPrefix))) {
         return yield* new AcpRegistryError({
           reason: "install_failed",
-          detail: `'${managerPath}' reported global prefix ${globalPrefix} instead of T3's managed prefix ${managedPrefix}. It may be a shim that ignores --prefix; put a real npm first on PATH.`,
+          detail: `'${managerPath}' reported global prefix ${globalPrefix} instead of Hyakki's managed prefix ${managedPrefix}. It may be a shim that ignores --prefix; put a real npm first on PATH.`,
         });
       }
       const packageRoot = path.join(globalRoot, ...packageIdentity.name.split("/"));

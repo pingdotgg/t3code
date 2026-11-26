@@ -69,7 +69,7 @@ it("reproduces the bundled registry byte for byte without upstream requests", as
   }
 });
 
-it("preserves Handy's accelerated balanced pick after filtering T3's offered candidates", () => {
+it("preserves Handy's accelerated balanced pick after filtering Hyakki's offered candidates", () => {
   const offered = generate().models;
   const sources = catalog.models.filter((model) =>
     offered.some(({ id }) => id === model.repository),

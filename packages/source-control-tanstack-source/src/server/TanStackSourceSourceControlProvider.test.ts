@@ -120,7 +120,7 @@ function checkout(options: {
 
 describe("TanStackSourceSourceControlProvider.checkoutChangeRequest", () => {
   it.effect(
-    "refuses a pr-<n> branch T3 did not make for this pull request, and leaves it alone",
+    "refuses a pr-<n> branch Hyakki did not make for this pull request, and leaves it alone",
     () => {
       // An unrelated branch at the pull request's base is an ancestor of its head.
       const { run, git, config } = checkout({ recordedOwner: null, isAncestor: true });

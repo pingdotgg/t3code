@@ -38,7 +38,7 @@ import * as WorkflowAgentThreads from "./WorkflowAgentThreads.ts";
 import * as WorkflowForge from "./WorkflowForge.ts";
 import * as Workflows from "./Workflows.ts";
 
-/** A folder of definition files, or one file, in place of the folder in the T3 home. */
+/** A folder of definition files, or one file, in place of the folder in the Hyakki home. */
 const definitionsOverride = Config.String("T3CODE_WORKFLOWS").pipe(Config.option);
 
 // An editor saves in several writes, and a save from here is followed by its own file event.
@@ -949,7 +949,7 @@ export const gate = Effect.fn("WorkflowRuntime.gate")(function* <E, R>(
 
 /**
  * The workflow service for this server, and its definition files: those in the `workflows`
- * folder of the T3 home, or wherever `T3CODE_WORKFLOWS` points instead. A file that does not
+ * folder of the Hyakki home, or wherever `T3CODE_WORKFLOWS` points instead. A file that does not
  * load is reported and never stops the server. Nothing runs until `workflowsEnabled` is on.
  */
 export const layer = Layer.effectContext(

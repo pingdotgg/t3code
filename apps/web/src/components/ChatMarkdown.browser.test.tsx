@@ -401,7 +401,7 @@ describe("ChatMarkdown favicon privacy", () => {
     }
     await rerender(markdown("https://example.com"));
     expect(container.querySelectorAll("img")).toHaveLength(1);
-    await rerender(markdown("https://github.com/pingdotgg/t3code/pull/1"));
+    await rerender(markdown("https://github.com/Ryoku-dev/hyakki/pull/1"));
     expect(container.querySelectorAll("img")).toHaveLength(0);
     expect(container.querySelector("a svg")).not.toBeNull();
   });

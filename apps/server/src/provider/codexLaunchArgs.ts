@@ -12,7 +12,7 @@ export const resolveCodexLaunchArgs = (
 
 const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
 
-// T3 unsubscribes only when it unloads a thread; Codex's own unload delay would stack on that.
+// Hyakki unsubscribes only when it unloads a thread; Codex's own unload delay would stack on that.
 export const codexAppServerArgs = (launchArgs?: string) => [
   "app-server",
   "-c",

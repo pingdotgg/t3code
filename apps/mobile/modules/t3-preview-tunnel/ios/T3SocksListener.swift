@@ -7,7 +7,7 @@ import Network
 final class T3SocksListener {
   typealias AccessRequest = (@escaping (String?) -> Void) -> Void
 
-  private let queue = DispatchQueue(label: "com.t3tools.preview-tunnel")
+  private let queue = DispatchQueue(label: "dev.ryoku.preview-tunnel")
   private let requestAccess: AccessRequest
   private var listener: NWListener?
   private var connections: [ObjectIdentifier: T3SocksConnection] = [:]

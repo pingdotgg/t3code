@@ -11,9 +11,9 @@ it.effect("decodes a watch saved before passed checks were recorded", () =>
     const [link] = yield* decodeLinks([
       {
         host: "github.com",
-        repository: "pingdotgg/t3code",
+        repository: "Ryoku-dev/hyakki",
         number: 42,
-        url: "https://github.com/pingdotgg/t3code/pull/42",
+        url: "https://github.com/Ryoku-dev/hyakki/pull/42",
         source: "agent",
         linkedAt: "2026-01-01T00:00:00.000Z",
         snapshot: null,

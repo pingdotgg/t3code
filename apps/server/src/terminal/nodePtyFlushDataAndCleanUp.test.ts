@@ -22,7 +22,7 @@ interface FakeAgent {
   _cleanUpProcess: () => void;
 }
 
-// The sockets are stand-ins; the timer logic and _cleanUpProcess are node-pty's own (as patched by T3).
+// The sockets are stand-ins; the timer logic and _cleanUpProcess are node-pty's own (as patched by Hyakki).
 const makeAgent = (): FakeAgent => {
   const agent: FakeAgent = {
     _useConptyDll: false,
@@ -68,7 +68,7 @@ const loopIteration = (ms: number, poll?: () => void) => {
 };
 
 // ConPTY never closes the output pipe after the shell exits, so node-pty ends the session on a timer.
-// T3 shortens it (patches/node-pty@1.2.0-beta.15.patch) so the terminal reports "exited" about 0.9 s sooner.
+// Hyakki shortens it (patches/node-pty@1.2.0-beta.15.patch) so the terminal reports "exited" about 0.9 s sooner.
 describe("node-pty Windows exit flush", () => {
   beforeEach(() => {
     now = 0;

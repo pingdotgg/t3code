@@ -13,7 +13,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 /**
  * Bounds `tailscale status` and `tailscale debug prefs`. Allows the 1.8-2.6 s
- * `tailscale status` has been measured at when T3 Code spawns it on Windows.
+ * `tailscale status` has been measured at when Hyakki spawns it on Windows.
  * A CLI that never answers takes longer than this to fail, because the kill
  * that follows the timeout also takes time (`taskkill` on Windows).
  */
@@ -771,7 +771,7 @@ export const probeTailscaleHttpsEndpoint = Effect.fn("tailscale.probeTailscaleHt
       const response = yield* client
         .execute(HttpClientRequest.get(url.toString()))
         .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
-      // Another app or another T3 server can hold the Serve port; only our own descriptor counts.
+      // Another app or another Hyakki server can hold the Serve port; only our own descriptor counts.
       return yield* HttpClientResponse.schemaBodyJson(ExecutionEnvironmentDescriptor)(response);
     }).pipe(Effect.timeoutOption(input.timeout ?? TAILSCALE_PROBE_TIMEOUT));
 

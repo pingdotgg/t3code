@@ -60,7 +60,7 @@ import { requestUrl } from "../requestUrl.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
-/** Sessions and pairing links T3 Connect minted for a device signed in to the linked account. */
+/** Sessions and pairing links Hyakki Connect minted for a device signed in to the linked account. */
 export const CLOUD_CONNECT_SUBJECT = "cloud-connect";
 
 export interface IssuedPairingLink {
@@ -100,7 +100,7 @@ export interface McpClientSession {
   readonly sessionId: AuthSessionId;
   readonly label: string;
   readonly access: AuthMcpClientAccess;
-  /** Another T3 Code environment's link, whose work here stays within it. */
+  /** Another Hyakki environment's link, whose work here stays within it. */
   readonly peerLink: boolean;
   /** When a peer link's session ends unless it is used again; the linking side keeps this. */
   readonly linkExpiresAt?: DateTime.Utc;
@@ -110,7 +110,7 @@ export interface McpClientSession {
 export const clientSessionLabel = (client: AuthClientMetadata | undefined): string =>
   client?.label ??
   ([client?.browser, client?.os].filter((part) => part !== undefined).join(" on ") ||
-    "T3 Code client");
+    "Hyakki client");
 
 export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
@@ -368,7 +368,7 @@ export class ServerAuthConnectDevicesError extends Schema.TaggedError<ServerAuth
   },
 ) {
   override get message(): string {
-    return "Failed to update T3 Connect devices.";
+    return "Failed to update Hyakki Connect devices.";
   }
 }
 
@@ -467,13 +467,13 @@ export const serverAuthInvalidRequestReason = (
 ): "invalid_scope" | "scope_not_granted" =>
   error._tag === "ServerAuthInvalidScopeError" ? "invalid_scope" : "scope_not_granted";
 
-/** The credential is fine, but the host has not approved this T3 Connect device yet. */
+/** The credential is fine, but the host has not approved this Hyakki Connect device yet. */
 export class ServerAuthConnectApprovalPendingError extends Schema.TaggedError<ServerAuthConnectApprovalPendingError>()(
   "ServerAuthConnectApprovalPendingError",
   {},
 ) {
   override get message(): string {
-    return "This T3 Connect device is waiting for approval.";
+    return "This Hyakki Connect device is waiting for approval.";
   }
 }
 
@@ -555,7 +555,7 @@ export class EnvironmentAuth extends Context.Service<
       ServerAuthInternalError | ManagedLimits.ManagedPolicyRefusedError
     >;
     /**
-     * The one-time credential T3 Connect hands a device. With approval required, an untrusted
+     * The one-time credential Hyakki Connect hands a device. With approval required, an untrusted
      * device key gets one that waits for approval, and keeps it across retries.
      */
     readonly issueConnectCredential: (input: {
@@ -955,7 +955,7 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.getSessionState"),
     );
 
-  // T3 Connect credential issuance, DPoP exchanges and device revocation take turns. Two mints
+  // Hyakki Connect credential issuance, DPoP exchanges and device revocation take turns. Two mints
   // at once would open two requests with one code, and a revoke landing between an exchange
   // spending its credential and trusting the key would be undone by that exchange.
   const connectTrustLock = yield* Semaphore.make(1);
@@ -1056,7 +1056,7 @@ export const make = Effect.gen(function* () {
       readonly requestedScopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
       readonly allowedSubject?: string;
-      /** Shown to approvers when the credential waits on T3 Connect device approval. */
+      /** Shown to approvers when the credential waits on Hyakki Connect device approval. */
       readonly requestMetadata?: AuthClientMetadata;
     },
   ): Effect.Effect<
@@ -1148,7 +1148,7 @@ export const make = Effect.gen(function* () {
           requestMetadata,
           ...(requestedScopes !== undefined ? { requestedScopes } : {}),
         }).pipe(
-          // Every T3 Connect key that gets in is remembered, so turning approval on later
+          // Every Hyakki Connect key that gets in is remembered, so turning approval on later
           // keeps the devices already in use and lists them for review.
           Effect.tap((grant) =>
             grant.subject === CLOUD_CONNECT_SUBJECT && input?.proofKeyThumbprint
@@ -1166,7 +1166,7 @@ export const make = Effect.gen(function* () {
               if (grantedScopes.length === 0) {
                 return yield* new ServerAuthScopeNotGrantedError({});
               }
-              // Only plain pairing links renew. T3 Connect, CLI, desktop and peer sessions keep
+              // Only plain pairing links renew. Hyakki Connect, CLI, desktop and peer sessions keep
               // their own lifetimes, so unlinking Connect or rotating a credential still cuts off.
               const renewable =
                 input?.proofKeyThumbprint !== undefined &&
@@ -1321,7 +1321,7 @@ export const make = Effect.gen(function* () {
       subject: CLOUD_CONNECT_SUBJECT,
       // Long enough for someone to notice the request and approve it.
       ttl: mustWait ? Duration.minutes(10) : Duration.minutes(2),
-      label: "T3 Connect",
+      label: "Hyakki Connect",
       proofKeyThumbprint,
       ...(mustWait ? { requiresConnectApproval: true } : {}),
     });
@@ -1496,7 +1496,7 @@ export const make = Effect.gen(function* () {
   const revokeClient: EnvironmentAuth["Service"]["revokeClient"] = Effect.fn(
     "EnvironmentAuth.revokeClient",
   )(function* (sessionId) {
-    // A T3 Connect device would otherwise mint itself a new session right away.
+    // A Hyakki Connect device would otherwise mint itself a new session right away.
     return yield* Option.match(yield* proofKeyOf(sessionId), {
       onNone: () => revokeSession(sessionId),
       onSome: revokeConnectDevice,

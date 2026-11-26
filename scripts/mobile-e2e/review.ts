@@ -34,7 +34,7 @@ export async function reviewPose(result: PoseResult, outputDirectory: string): P
   if (shots.length === 0) return [];
   const { pose } = result;
   const prompt = [
-    `You are reviewing screenshots of the T3 Code mobile app (a client for coding agents) for visual bugs.`,
+    `You are reviewing screenshots of the Hyakki mobile app (a client for coding agents) for visual bugs.`,
     `Device: ${pose.device} (${pose.platform}, ${pose.form}), ${pose.appearance} appearance${pose.landscape ? ", landscape" : ""}${pose.fold ? `, fold ${pose.fold}` : ""}${pose.textSize ? ", largest accessibility text size" : ""}.`,
     `Read each screenshot below with the Read tool. Each is one step of the same session:`,
     ...shots.map((step) => `- step "${step.name}": ${step.screenshot}`),

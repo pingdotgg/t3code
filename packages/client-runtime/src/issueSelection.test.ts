@@ -27,11 +27,11 @@ describe("issue picker picks", () => {
   });
 
   it("keeps assignees by login and adds new ones by the tracker's id", () => {
-    const detail = { assignees: [person("Julius", "u1"), person("theo", "u2")] };
+    const detail = { assignees: [person("Julius", "u1"), person("tara", "u2")] };
     let draft = emptySelection<ReturnType<typeof person>>();
     draft = toggleSelection(draft, "u1", person("julius", "u1"), true);
     draft = toggleSelection(draft, "u3", person("mark", "u3"), false);
-    expect(issueAssigneesAfterPicks(detail, draft)).toEqual(["theo", "u3"]);
+    expect(issueAssigneesAfterPicks(detail, draft)).toEqual(["tara", "u3"]);
   });
 
   it("builds a second write on the first while the detail has not caught up", () => {

@@ -34,7 +34,7 @@ function readEnvironmentId(): EnvironmentId | null {
   return value ? EnvironmentId.make(value) : null;
 }
 
-/** Sends each call with the owner's T3 Connect session and remembers where the environment is. */
+/** Sends each call with the owner's Hyakki Connect session and remembers where the environment is. */
 function connectTransport(
   environmentId: EnvironmentId,
   onEnvironment: (environment: { readonly url: string; readonly label: string }) => void,
@@ -73,8 +73,8 @@ function connectTransport(
 }
 
 /**
- * The consent screen for an agent sign-in on a T3 Connect environment: the owner signs in to
- * T3 Connect here and approves with that session, so no sign-in code is needed.
+ * The consent screen for an agent sign-in on a Hyakki Connect environment: the owner signs in to
+ * Hyakki Connect here and approves with that session, so no sign-in code is needed.
  */
 export function ApproveAgentSurface() {
   const gt = useGT();
@@ -128,7 +128,9 @@ export function ApproveAgentSurface() {
     return (
       <Message
         title={gt("Could not load sign-in")}
-        description={gt("T3 Connect sign-in did not load. Check your connection, then try again.")}
+        description={gt(
+          "Hyakki Connect sign-in did not load. Check your connection, then try again.",
+        )}
       >
         <div className="mt-6">
           <Button type="button" onClick={retryClerkLoad}>
@@ -144,7 +146,7 @@ export function ApproveAgentSurface() {
       <StandalonePage>
         <StandalonePageHeader
           context={gt("Agent sign-in")}
-          title={gt("Connecting to T3 Connect")}
+          title={gt("Connecting to Hyakki Connect")}
           description={gt("One moment while your account loads.")}
         />
         <Spinner className="mt-6" size="lg" tone="muted" />
@@ -156,7 +158,9 @@ export function ApproveAgentSurface() {
     return (
       <Message
         title={gt("Sign in to approve")}
-        description={gt("Sign in to T3 Connect with the account this environment is linked to.")}
+        description={gt(
+          "Sign in to Hyakki Connect with the account this environment is linked to.",
+        )}
       >
         <div className="mt-6">
           <Button type="button" onClick={openSignIn}>

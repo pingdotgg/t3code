@@ -42,7 +42,7 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const canRespond = props.approval.responseCapability === "live";
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   const [explanationOpen, setExplanationOpen] = useState(false);
-  // T3 Code's own question reads as the app asking: a plain sentence, then what it names.
+  // Hyakki's own question reads as the app asking: a plain sentence, then what it names.
   const { pushHooks } = props.approval;
   return (
     <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">

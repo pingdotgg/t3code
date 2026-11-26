@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @effect-diagnostics nodeBuiltinImport:off globalJsonInEffect:off - writes result files.
 /**
- * Drives the T3 Code iOS dev client on one simulator against an isolated server with scripted
+ * Drives the Hyakki iOS dev client on one simulator against an isolated server with scripted
  * replies, and grades app behavior from the dev-only probe and server state. See README.md.
  */
 import * as NodeFS from "node:fs";

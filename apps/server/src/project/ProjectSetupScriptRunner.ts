@@ -50,7 +50,7 @@ export interface ProjectSetupScriptOutputLine {
 
 /**
  * A thread a link below full access started does not run this project's setup
- * script: the script is the user's own code, and such a link only grants T3's
+ * script: the script is the user's own code, and such a link only grants Hyakki's
  * tools (see `mcp/linkOrigin.ts`).
  */
 export interface ProjectSetupScriptRunnerResultSkippedForLink {

@@ -939,8 +939,8 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
   };
   findCode(parse(text, options));
   const nonce = Math.random().toString(36).slice(2);
-  const marker = new RegExp(String.raw`^\[!T3-INSIGHT-${nonce}-(\d+)\](?:\r?\n)?`);
-  const anywhere = new RegExp(String.raw`\[!T3-INSIGHT-${nonce}-(\d+)\]`, "g");
+  const marker = new RegExp(String.raw`^\[!Hyakki-INSIGHT-${nonce}-(\d+)\](?:\r?\n)?`);
+  const anywhere = new RegExp(String.raw`\[!Hyakki-INSIGHT-${nonce}-(\d+)\]`, "g");
   const lines = text.split(/(?<=\n)/u);
   const skipped = new Set<number>();
   for (;;) {
@@ -961,7 +961,7 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
           if (opening && !skipped.has(lineIndex)) {
             indent = opening[1] ?? "";
             opened++;
-            output = `> [!T3-INSIGHT-${nonce}-${lineIndex}]${ending}`;
+            output = `> [!Hyakki-INSIGHT-${nonce}-${lineIndex}]${ending}`;
           }
         } else {
           const closing = inCode ? null : INSIGHT_CLOSING.exec(value);

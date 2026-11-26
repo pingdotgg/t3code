@@ -1,4 +1,4 @@
-// PID comes from the bus daemon, not from the caller. Never focus a different T3 process.
+// PID comes from the bus daemon, not from the caller. Never focus a different Hyakki process.
 export function findCaptureDestination(windows, pid, title) {
   const owned = windows.filter((window) => window.get_pid() === pid);
   const matching = owned.filter((window) => window.get_title() === title);

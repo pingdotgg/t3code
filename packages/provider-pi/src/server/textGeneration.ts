@@ -55,7 +55,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
             : null;
         const broken =
           version === null
-            ? "T3 Code could not determine the Pi version. Update Pi and try again."
+            ? "Hyakki could not determine the Pi version. Update Pi and try again."
             : brokenVersionDetail({
                 name: "Pi",
                 version,

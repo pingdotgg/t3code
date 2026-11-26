@@ -182,7 +182,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       in them. Absent on servers from before linking, which clients must not
       offer linking for. */
   peerLinks: Schema.optionalKey(Schema.Boolean),
-  /** Server's `/mcp` narrows an OAuth client's modes from `T3-Mode-Limit`, so
+  /** Server's `/mcp` narrows an OAuth client's modes from `Hyakki-Mode-Limit`, so
       a linked environment's calls keep its agent's limits. Another environment
       links to this one only when it is set. */
   mcpModeLimitHeader: Schema.optionalKey(Schema.Boolean),
@@ -201,7 +201,7 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Mints pairing codes that approve one agent sign-in at a set level (`AUTO-…`). */
   mcpApprovalCodes: Schema.optionalKey(Schema.Boolean),
   peerLinkPairingCodes: Schema.optionalKey(Schema.Boolean),
-  /** Agent sign-ins on its T3 Connect address are approved on the hosted app, without a code. */
+  /** Agent sign-ins on its Hyakki Connect address are approved on the hosted app, without a code. */
   mcpHostedApproval: Schema.optionalKey(Schema.Boolean),
   /** Server answers server.prepareTriage. */
   triage: Schema.optionalKey(Schema.Boolean),

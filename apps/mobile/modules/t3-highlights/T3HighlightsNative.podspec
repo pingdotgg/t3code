@@ -5,11 +5,11 @@ package = JSON.parse(File.read(File.join(__dir__, 'package.json')))
 Pod::Spec.new do |s|
   s.name = 'T3HighlightsNative'
   s.version = package['version']
-  s.summary = 'Native @pierre/highlights syntax highlighter for T3 Code mobile.'
+  s.summary = 'Native @pierre/highlights syntax highlighter for Hyakki mobile.'
   s.description = 'Runs the @pierre/highlights lexers, compiled from WebAssembly to C with wasm2c.'
-  s.homepage = 'https://t3tools.com'
+  s.homepage = 'https://github.com/Ryoku-dev/hyakki'
   s.license = { :type => 'UNLICENSED' }
-  s.author = { 'T3 Tools' => 'hello@t3tools.com' }
+  s.author = { 'Hyakki' => 'hyakki@ryoku.dev' }
   s.platforms = { :ios => min_ios_version_supported }
   s.source = { :path => '.' }
   s.source_files = 'cpp/**/*.{c,cpp,h,hpp,inc}', 'Vendor/**/*.{c,h,inc}'

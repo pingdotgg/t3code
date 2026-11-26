@@ -38,7 +38,7 @@ const TOOL_INPUT_CAP = 1_000;
 const MAX_MESSAGE_FILES = 256;
 const MAX_DETACHED_CHILDREN = 64;
 
-/** T3's title for a batch whose launch text it never saw. */
+/** Hyakki's title for a batch whose launch text it never saw. */
 export const ANTIGRAVITY_SUBAGENT_BATCH_TITLE = "Antigravity subagent batch";
 
 interface AntigravityChildLaunch {
@@ -160,7 +160,7 @@ export function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, 
   return fields;
 }
 
-// Keep a leading byte order mark: T3 stores launch text with it.
+// Keep a leading byte order mark: Hyakki stores launch text with it.
 const textDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const messages = (bytes: Uint8Array, field: number) =>
   protoFields(bytes).flatMap(([number, value]) => (number === field ? [value] : []));
@@ -335,7 +335,7 @@ function findInvokeRecord(
     // An unreadable record could be an identical launch, so uniqueness is unproven.
     if (record === undefined) return undefined;
     if (record.toolCallId !== undefined && claimed.has(record.toolCallId)) continue;
-    // T3 stored the launch from the bounded tool payload, so bound the record the same way.
+    // Hyakki stored the launch from the bounded tool payload, so bound the record the same way.
     const described = describeAntigravitySubagentLaunches(
       record.launches.map((launch) => ({
         role: boundAntigravityToolText(launch.role),

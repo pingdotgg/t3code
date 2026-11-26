@@ -220,7 +220,7 @@ describe.runIf(NodeProcess.platform === "darwin" || NodeProcess.platform === "li
         );
         cleanup.defer(() => NodeFSP.rm(appDataDirectory, { recursive: true, force: true }));
         const stateDir = NodePath.join(appDataDirectory, "home");
-        const appImage = NodePath.join(appDataDirectory, "T3-Code.AppImage");
+        const appImage = NodePath.join(appDataDirectory, "Hyakki.AppImage");
         await NodeFSP.writeFile(appImage, "");
         // The previous launch ran from another mount, so its executable path differs from ours.
         const previousMount = NodePath.join(appDataDirectory, "mount-previous");

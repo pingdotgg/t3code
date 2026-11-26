@@ -843,7 +843,7 @@
       "typeSchema": null,
       "notNull": true,
       "dimensions": 0,
-      "default": "'T3 Environment'",
+      "default": "'Hyakki Environment'",
       "generated": null,
       "identity": null,
       "entityType": "columns"

@@ -66,7 +66,7 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "dpop",
   "content-length",
   "accept-encoding",
-  // The client's HTTPS hop makes the hub reject our loopback Origin over T3 Connect.
+  // The client's HTTPS hop makes the hub reject our loopback Origin over Hyakki Connect.
   "x-forwarded-proto",
 ]);
 
@@ -163,7 +163,7 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   const response = yield* httpClient.execute(upstreamRequest);
   const headers: Record<string, string> = {};
   for (const [name, value] of Object.entries(response.headers)) {
-    // A cookie from an upstream such as an Expo Simulators session's preview host would land on T3's origin.
+    // A cookie from an upstream such as an Expo Simulators session's preview host would land on Hyakki's origin.
     // Clear-Site-Data likewise applies to the origin that serves it.
     if (
       name === "content-encoding" ||

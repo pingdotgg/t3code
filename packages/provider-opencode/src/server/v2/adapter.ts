@@ -392,7 +392,7 @@ interface ThreadState {
   >;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
-  /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` the next wake if no report preceded it. */
+  /** Prompts other clients queued while no Hyakki turn ran, shown once delivered; `leads` the next wake if no report preceded it. */
   readonly externalPrompts: Map<string, { readonly text: string; leads: boolean }>;
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
@@ -443,7 +443,7 @@ export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId:
   return `t3-code-${Hex.encode(digest).slice(0, 16)}`;
 });
 
-// Last match wins: deny all threads' T3 servers, then allow only this thread's.
+// Last match wins: deny all threads' Hyakki servers, then allow only this thread's.
 const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
   mcpServerName === null
     ? []
@@ -699,7 +699,7 @@ class OpenCode2ServerExitedError extends Schema.TaggedError<OpenCode2ServerExite
   {},
 ) {}
 const LOST_BACKGROUND =
-  "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
+  "Hyakki lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
 const MCP_TOOL_RELOAD_SETTLE = "250 millis";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
@@ -726,7 +726,7 @@ const deliver = <E>(answer: Effect.Effect<void, E>) =>
 
 type ModelRef = ReturnType<typeof Model.Ref.make>;
 
-// msg_ IDs cannot cross sessions; include session identity because T3 IDs repeat across environments.
+// msg_ IDs cannot cross sessions; include session identity because Hyakki IDs repeat across environments.
 // Pre-acknowledgement IDs also establish fork/rollback boundaries.
 const turnPromptId = (sessionId: string, attemptId: string) =>
   SessionMessage.ID.make(`msg_t3_turn_${sessionId}:${attemptId}`);
@@ -757,7 +757,7 @@ const boundaryAfter = (
       new ProviderAdapter.ProviderAdapterProtocolError({
         driver: OPENCODE_PROVIDER,
         detail:
-          "This OpenCode conversation has turns from an earlier T3 Code version, so it can't be cut there.",
+          "This OpenCode conversation has turns from an earlier Hyakki version, so it can't be cut there.",
       }),
     );
   }
@@ -1039,7 +1039,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     >();
 
-    // A held wake routes its shell launches only when T3 starts its run, so marks wait on the wake.
+    // A held wake routes its shell launches only when Hyakki starts its run, so marks wait on the wake.
     const heldLaunch = (state: ThreadState, taskId: string) =>
       sessionsOf(state)
         .flatMap((session) => session.wakes)
@@ -1315,7 +1315,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       });
     });
 
-    // T3's own prompts are sent while their turn is active, so only other clients reach here.
+    // Hyakki's own prompts are sent while their turn is active, so only other clients reach here.
     const emitExternalPrompt = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
@@ -2556,7 +2556,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* finishTurn(state, {
         status: "failed",
         failure: makeProviderFailure({
-          message: "OpenCode is waiting on a request T3 Code couldn't answer.",
+          message: "OpenCode is waiting on a request Hyakki couldn't answer.",
           class: "provider_error",
         }),
       });
@@ -2573,7 +2573,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return true;
     });
 
-    // The orchestrator already recorded T3-owned answers; only forget them here.
+    // The orchestrator already recorded Hyakki-owned answers; only forget them here.
     const settleRequest = Effect.fnUntraced(function* (
       entry: PendingRequest,
       status: "resolved" | "cancelled",
@@ -2623,7 +2623,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               Effect.ignore({ log: true }),
             );
 
-    // T3 expired pre-load requests and no longer shows them; stop them so OpenCode cannot wait forever.
+    // Hyakki expired pre-load requests and no longer shows them; stop them so OpenCode cannot wait forever.
     const stopLeftoverRequests = Effect.fnUntraced(function* (state: ThreadState) {
       const sessionID = Session.ID.make(state.sessionId);
       const listed = yield* Effect.all([
@@ -2801,7 +2801,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         );
       }
       // Cancel reports user Stop; record failure here and skip that execution end.
-      yield* Effect.logWarning("Declined an OpenCode form T3 Code cannot show.", {
+      yield* Effect.logWarning("Declined an OpenCode form Hyakki cannot show.", {
         reason: mapped.unsupported,
       });
       const cancelled = yield* deliver(
@@ -2814,7 +2814,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* finishTurn(asker, {
         status: "failed",
         failure: makeProviderFailure({
-          message: `OpenCode asked for ${mapped.unsupported}, which T3 Code can't show. The question was declined.`,
+          message: `OpenCode asked for ${mapped.unsupported}, which Hyakki can't show. The question was declined.`,
           class: "provider_error",
         }),
       });
@@ -3604,7 +3604,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         return;
       }
-      // No T3 turn existed while a wake held these, so its user items came from another client.
+      // No Hyakki turn existed while a wake held these, so its user items came from another client.
       if (
         event.type === "session.inbox.enqueued" &&
         event.data.item.type === "user" &&
@@ -3612,7 +3612,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ) {
         const text = event.data.item.payload.text;
         if (state.subagent !== undefined) state.subagent.prompt ??= text;
-        // T3's own prompts can be admitted after a failed submit ended their turn.
+        // Hyakki's own prompts can be admitted after a failed submit ended their turn.
         else if (!isOwnPrompt(event.data.inboxID)) {
           state.externalPrompts.set(event.data.inboxID, {
             text,
@@ -3855,7 +3855,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                       status: "failed",
                       failure: makeProviderFailure({
                         message:
-                          "OpenCode ended the turn with an error while T3 Code was reconnecting.",
+                          "OpenCode ended the turn with an error while Hyakki was reconnecting.",
                         class: "provider_error",
                       }),
                     }
@@ -3951,7 +3951,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       };
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
-      // A restarted server forgot T3's MCP servers; the next turn adds them again.
+      // A restarted server forgot Hyakki's MCP servers; the next turn adds them again.
       // The gap may have started a pending prompt unseen, so none may set a later wake's boundary.
       for (const state of threads.values()) {
         state.mcp = undefined;
@@ -4287,7 +4287,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     });
 
-    // OpenCode 2.0.18 executes even unstaged revert clears; wait so that end cannot settle a T3 turn.
+    // OpenCode 2.0.18 executes even unstaged revert clears; wait so that end cannot settle a Hyakki turn.
     const clearRevert = Effect.fnUntraced(function* (sessionId: string) {
       const settled = yield* Deferred.make<void>();
       clearing.set(sessionId, settled);
@@ -4302,7 +4302,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     // Failed/interrupted rollbacks must clear staged reverts before the next prompt commits them.
-    // Leave files to T3 checkpoints; history-only rewinds must preserve them.
+    // Leave files to Hyakki checkpoints; history-only rewinds must preserve them.
     const rollBackTo = Effect.fnUntraced(function* (
       sessionId: string,
       boundary: SessionMessage.ID,
@@ -4414,7 +4414,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const promptFiles = Effect.fnUntraced(function* (attachments: ReadonlyArray<ChatAttachment>) {
       const files: Array<{ uri: string; name: string }> = [];
-      // An external server may not share T3's attachment directory.
+      // An external server may not share Hyakki's attachment directory.
       if (connection.external) return files;
       for (const attachment of attachments) {
         if (!isProviderNativeImageAttachment(attachment)) continue;
@@ -4448,7 +4448,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const mcpSession = yield* mcpSessions.read(turnInput.threadId);
       const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
       const name = yield* mcpServerNameFor(turnInput.threadId);
-      // An external server may not reach T3's MCP endpoint, as with 1.x.
+      // An external server may not reach Hyakki's MCP endpoint, as with 1.x.
       const wanted =
         mcpSession === undefined || connection.external
           ? undefined
@@ -4462,7 +4462,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* removeMcp(state.mcp);
         state.mcp = undefined;
       }
-      // Idle Location eviction drops runtime MCP servers without clearing T3's cache.
+      // Idle Location eviction drops runtime MCP servers without clearing Hyakki's cache.
       // Re-adding an unchanged config keeps its existing connection.
       let mcpAvailable = false;
       if (wanted !== undefined) {
@@ -4482,7 +4482,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             Effect.timeout(INVENTORY_TIMEOUT),
             Effect.as(true),
             Effect.catchCause((cause) =>
-              Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
+              Effect.logWarning("Could not add Hyakki's MCP server to OpenCode.", cause).pipe(
                 Effect.as(false),
               ),
             ),

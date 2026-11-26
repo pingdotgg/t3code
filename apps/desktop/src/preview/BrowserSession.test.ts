@@ -553,7 +553,7 @@ describe("BrowserSession", () => {
       getMediaAccessStatus.mockReset();
       getMediaAccessStatus.mockReturnValue("not-determined");
 
-      // A device macOS has not decided yet: ask the OS, which adds T3 Code to Privacy & Security.
+      // A device macOS has not decided yet: ask the OS, which adds Hyakki to Privacy & Security.
       assert.isTrue(yield* requestMedia("https://first.test/", ["video"]));
       assert.deepStrictEqual(askForMediaAccess.mock.calls, [["camera"]]);
       assert.strictEqual(showMessageBox.mock.calls.length, 1);
@@ -583,7 +583,7 @@ describe("BrowserSession", () => {
       // Only the microphone is blocked, so the message does not send the user looking for Camera.
       assert.strictEqual(
         showMessageBox.mock.calls[2]?.[0].message,
-        "macOS blocked T3 Code from using your microphone",
+        "macOS blocked Hyakki from using your microphone",
       );
       assert.isFalse(yield* requestMedia("https://second.test/", ["video", "audio"]));
       assert.strictEqual(showMessageBox.mock.calls.length, 3);
@@ -627,7 +627,7 @@ describe("BrowserSession", () => {
       assert.strictEqual(askForMediaAccess.mock.calls.length, 0);
       assert.strictEqual(
         yield* Deferred.await(recoveryShown),
-        "macOS blocked T3 Code from using your camera and microphone",
+        "macOS blocked Hyakki from using your camera and microphone",
       );
     }).pipe(Effect.provide(layerDarwin)),
   );

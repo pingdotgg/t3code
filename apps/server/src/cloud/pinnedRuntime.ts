@@ -733,7 +733,7 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
             Effect.map(windowsShimTarget),
             Effect.orElseSucceed(() => undefined),
           )
-        : // Fully resolved, through chained links and a symlinked T3 home alike.
+        : // Fully resolved, through chained links and a symlinked Hyakki home alike.
           yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined));
     if (resolved === undefined) continue;
     const scriptTarget =
@@ -769,7 +769,7 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
 
 /**
  * Resolved executables rather than command lines: a server started through the `t3` symlink
- * shows up as `t3 serve`, possibly from another T3 home that runs this home's runtimes. Windows
+ * shows up as `t3 serve`, possibly from another Hyakki home that runs this home's runtimes. Windows
  * has no symlink launcher, and its `t3.cmd` shim runs the absolute path, so command lines do there.
  */
 const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")(function* () {
@@ -894,7 +894,7 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
     ...(yield* shellLauncherTargets(input.baseDir)),
     ...input.references,
   ].map(foldCase);
-  // Process executables are resolved, so they name the real path of a symlinked T3 home.
+  // Process executables are resolved, so they name the real path of a symlinked Hyakki home.
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));

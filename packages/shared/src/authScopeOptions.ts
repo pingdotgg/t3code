@@ -104,13 +104,13 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
   {
     scope: AuthRelayWriteScope,
     title: msg("Manage relay"),
-    description: msg("Update relay preferences or unlink T3 Connect."),
+    description: msg("Update relay preferences or unlink Hyakki Connect."),
   },
   {
     scope: AuthRelayConfigureScope,
     title: msg("Configure relay (admin)"),
     description: msg(
-      "Set up or replace T3 Connect, including its trusted pairing credential issuer.",
+      "Set up or replace Hyakki Connect, including its trusted pairing credential issuer.",
     ),
   },
 ];

@@ -107,11 +107,11 @@ afterEach(async () => {
 });
 
 it("selects the native adapter without needing a portal or GNOME extension", async () => {
-  expect(await getLinuxCaptureSupport("com.t3tools.T3Code")).toEqual({
+  expect(await getLinuxCaptureSupport("dev.ryoku.Hyakki")).toEqual({
     linuxBackend: "niri",
     linuxFeedbackAvailable: false,
   });
-  const snapshot = await captureLinuxWindow("com.t3tools.T3Code");
+  const snapshot = await captureLinuxWindow("dev.ryoku.Hyakki");
   expect(snapshot?.png).toEqual(png);
   expect(snapshot?.window).toMatchObject({
     processId: 123,
@@ -127,36 +127,36 @@ it("selects the native adapter without needing a portal or GNOME extension", asy
   expect(await NodeFSP.stat(NodePath.dirname(capturePath!)).catch(() => undefined)).toBeUndefined();
 });
 
-it("does not activate T3 until requested, then matches PID and title", async () => {
+it("does not activate Hyakki until requested, then matches PID and title", async () => {
   const snapshot = await captureNiriWindow(socketPath);
   expect(calls.some((call) => typeof call !== "string" && call.Action.FocusWindow)).toBe(false);
   windows = [
-    { ...window, id: 1, pid: 999, title: "T3 Code" },
-    { ...window, id: 2, pid: process.pid, title: "Other T3" },
-    { ...window, id: 3, pid: process.pid, title: "T3 Code" },
+    { ...window, id: 1, pid: 999, title: "Hyakki" },
+    { ...window, id: 2, pid: process.pid, title: "Other Hyakki" },
+    { ...window, id: 3, pid: process.pid, title: "Hyakki" },
   ];
-  await snapshot.feedback!.activate("T3 Code");
+  await snapshot.feedback!.activate("Hyakki");
   expect(calls).toContainEqual({ Action: { FocusWindow: { id: 3 } } });
 });
 
-it("waits for the restored T3 window to map instead of polling", async () => {
+it("waits for the restored Hyakki window to map instead of polling", async () => {
   const snapshot = await captureNiriWindow(socketPath);
   const original = handler;
   handler = async (request, socket) => {
     await original(request, socket);
     if (request === "EventStream")
       send(socket, {
-        WindowOpenedOrChanged: { window: { ...window, id: 4, pid: process.pid, title: "T3 Code" } },
+        WindowOpenedOrChanged: { window: { ...window, id: 4, pid: process.pid, title: "Hyakki" } },
       });
   };
-  await snapshot.feedback!.activate("T3 Code");
+  await snapshot.feedback!.activate("Hyakki");
   expect(calls).toContainEqual({ Action: { FocusWindow: { id: 4 } } });
 });
 
 it("rejects ambiguous activation targets", async () => {
   const snapshot = await captureNiriWindow(socketPath);
-  windows = [1, 2].map((id) => ({ ...window, id, pid: process.pid, title: "T3 Code" }));
-  await expect(snapshot.feedback!.activate("T3 Code")).rejects.toThrow("More than one");
+  windows = [1, 2].map((id) => ({ ...window, id, pid: process.pid, title: "Hyakki" }));
+  await expect(snapshot.feedback!.activate("Hyakki")).rejects.toThrow("More than one");
 });
 
 it("cancels pending activation when capture feedback is closed", async () => {
@@ -167,7 +167,7 @@ it("cancels pending activation when capture feedback is closed", async () => {
     await original(request, socket);
     if (request === "EventStream") started.resolve();
   };
-  const activation = expect(snapshot.feedback!.activate("T3 Code")).rejects.toThrow("cancelled");
+  const activation = expect(snapshot.feedback!.activate("Hyakki")).rejects.toThrow("cancelled");
   await started.promise;
   snapshot.feedback!.close();
   await activation;
@@ -195,7 +195,7 @@ it("rejects compositor errors and cleans up its temporary image", async () => {
       send(socket, { Err: "window disappeared" });
     } else await original(request, socket);
   };
-  await expect(captureLinuxWindow("com.t3tools.T3Code")).rejects.toThrow("window disappeared");
+  await expect(captureLinuxWindow("dev.ryoku.Hyakki")).rejects.toThrow("window disappeared");
   expect(await NodeFSP.stat(NodePath.dirname(capturePath!)).catch(() => undefined)).toBeUndefined();
 });
 

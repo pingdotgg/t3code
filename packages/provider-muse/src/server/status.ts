@@ -53,7 +53,7 @@ export const makePendingMuseProvider = Effect.fn("makePendingMuseProvider")(func
       auth: { status: "unknown" },
       message: settings.enabled
         ? "Checking Muse Code CLI availability..."
-        : "Muse Code is disabled in T3 Code settings.",
+        : "Muse Code is disabled in Hyakki settings.",
     },
   });
 });
@@ -103,8 +103,8 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       status: "error",
       auth: { status: "unknown" },
       message: missing
-        ? "Muse Code CLI (`muse`) was not found. Install Muse Code and run `muse login` on this T3 server host."
-        : "Failed to execute Muse Code CLI. Check its binary path on this T3 server host.",
+        ? "Muse Code CLI (`muse`) was not found. Install Muse Code and run `muse login` on this Hyakki server host."
+        : "Failed to execute Muse Code CLI. Check its binary path on this Hyakki server host.",
     });
   }
   if (Option.isNone(versionResult.success)) {
@@ -124,10 +124,10 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       version,
       status: "error",
       auth: { status: "unknown" },
-      // T3 runs Muse with MUSE_NO_AUTO_UPDATE=1, so a launcher whose runtime was never fetched
+      // Hyakki runs Muse with MUSE_NO_AUTO_UPDATE=1, so a launcher whose runtime was never fetched
       // (common after a mise upgrade) refuses to install it; a manual run completes setup.
       message: versionOutput.stderr.includes("installed binary is missing")
-        ? "Muse Code has not finished installing. Run `muse --version` on this T3 server host, then refresh its status."
+        ? "Muse Code has not finished installing. Run `muse --version` on this Hyakki server host, then refresh its status."
         : "Muse Code CLI is installed but failed to run.",
     });
   }
@@ -145,7 +145,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
       status: "error",
       auth: { status: "unknown" },
       message:
-        "Muse Code SDK could not read the model catalog. Check your Muse installation and run `muse login` on this T3 server host.",
+        "Muse Code SDK could not read the model catalog. Check your Muse installation and run `muse login` on this Hyakki server host.",
     });
   }
   const models = catalog.success.value;
@@ -160,7 +160,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
         : {
             status: "warning",
             message:
-              "Muse Code returned no models. Run `muse login` on this T3 server host and refresh its status.",
+              "Muse Code returned no models. Run `muse login` on this Hyakki server host and refresh its status.",
           }),
     },
     models,

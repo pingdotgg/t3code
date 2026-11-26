@@ -600,7 +600,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
           Effect.map((opened) => {
             if (opened === undefined) return undefined;
             const lease: WorkspaceStoreLease = {
-              // T3 persists its own event log and does not tail SDK run events.
+              // Hyakki persists its own event log and does not tail SDK run events.
               store: Object.assign(opened, { persistRunEvents: false }),
               users: 1,
             };

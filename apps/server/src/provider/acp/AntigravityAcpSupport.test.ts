@@ -135,7 +135,7 @@ describe("Antigravity Auto", () => {
   );
 
   it.each(["auto", "auto-accept-edits"] as const)(
-    "runs only server-qualified T3 MCP calls unasked in %s",
+    "runs only server-qualified Hyakki MCP calls unasked in %s",
     (runtimeMode) => {
       const policy = { runtimeMode, cwd: "/workspace" };
       const request = (

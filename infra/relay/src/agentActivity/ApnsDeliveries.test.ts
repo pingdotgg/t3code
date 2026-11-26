@@ -38,7 +38,7 @@ const config = RelayConfiguration.RelayConfiguration.of({
     teamId: "team-id",
     keyId: "key-id",
     privateKey: Redacted.make("not-a-private-key"),
-    bundleId: "com.t3tools.t3code.dev",
+    bundleId: "dev.ryoku.hyakki.dev",
   },
   apnsDeliveryJobSigningSecret: Redacted.make("job-signing-secret"),
   clerkSecretKey: Redacted.make("clerk-secret"),
@@ -77,7 +77,7 @@ const state: RelayAgentActivityState = {
 };
 
 const aggregate: RelayAgentActivityAggregateState = {
-  title: "T3 Code",
+  title: "Hyakki",
   subtitle: "Agent work in progress",
   activeCount: 1,
   updatedAt: state.updatedAt,
@@ -1377,7 +1377,7 @@ describe("signed APNs registration metadata", () => {
       token: "unchanged-token",
       ...(changed === "legacy"
         ? {}
-        : { bundleId: "com.t3tools.t3code.dev", apsEnvironment: "sandbox" as const }),
+        : { bundleId: "dev.ryoku.hyakki.dev", apsEnvironment: "sandbox" as const }),
       aggregate: kind === "live_activity_update" ? aggregate : null,
       ...(kind === "push_notification"
         ? {
@@ -1407,7 +1407,7 @@ describe("signed APNs registration metadata", () => {
         `${changed === "environment" ? "https://api.push.apple.com" : "https://api.sandbox.push.apple.com"}/3/device/unchanged-token`,
       );
       expect(requests[0]?.headers["apns-topic"]).toBe(
-        `${changed === "bundle" ? "com.t3tools.t3code.preview" : "com.t3tools.t3code.dev"}${kind === "live_activity_update" ? ".push-type.liveactivity" : ""}`,
+        `${changed === "bundle" ? "dev.ryoku.hyakki.preview" : "dev.ryoku.hyakki.dev"}${kind === "live_activity_update" ? ".push-type.liveactivity" : ""}`,
       );
     }).pipe(
       Effect.provide(
@@ -1419,8 +1419,7 @@ describe("signed APNs registration metadata", () => {
               ...target,
               push_token: "unchanged-token",
               activity_push_token: "unchanged-token",
-              bundle_id:
-                changed === "bundle" ? "com.t3tools.t3code.preview" : "com.t3tools.t3code.dev",
+              bundle_id: changed === "bundle" ? "dev.ryoku.hyakki.preview" : "dev.ryoku.hyakki.dev",
               aps_environment: changed === "environment" ? "production" : "sandbox",
             },
           ],

@@ -46,7 +46,7 @@ CREATE TABLE "relay_environment_credentials" (
 CREATE TABLE "relay_environment_links" (
 	"user_id" varchar(191),
 	"environment_id" varchar(191),
-	"environment_label" text DEFAULT 'T3 Environment' NOT NULL,
+	"environment_label" text DEFAULT 'Hyakki Environment' NOT NULL,
 	"environment_public_key" text NOT NULL,
 	"endpoint_http_base_url" text NOT NULL,
 	"endpoint_ws_base_url" text NOT NULL,

@@ -176,7 +176,7 @@ const exporter = (name: string): Config.Config<Setting<Exporter>> =>
         ? { value }
         : {
             value,
-            warning: `${name} names ${ignored.join(", ")}, which T3 Code does not export to, so ${ignored.length === 1 ? "it was" : "they were"} ignored`,
+            warning: `${name} names ${ignored.join(", ")}, which Hyakki does not export to, so ${ignored.length === 1 ? "it was" : "they were"} ignored`,
           };
     }),
   );
@@ -343,7 +343,7 @@ export const isCiEnvironment = (env: Readonly<Record<string, string | undefined>
   });
 
 /** The cross-tool `DO_NOT_TRACK=1` convention turns off product analytics and relay tracing. */
-export const isDoNotTrackSet = (env: Readonly<Record<string, string | undefined>>) =>
+const isDoNotTrackSet = (env: Readonly<Record<string, string | undefined>>) =>
   T3CODE_TRUE.includes(env.DO_NOT_TRACK?.trim().toLowerCase() ?? "");
 
 export const isRelayTracingEnabled = (env: Readonly<Record<string, string | undefined>>) =>

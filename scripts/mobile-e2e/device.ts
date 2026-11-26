@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 import type { Snapshot } from "./checks.ts";
 import type { Pose } from "./poses.ts";
 
-export const BUNDLE_ID = "com.t3tools.t3code.dev";
+export const BUNDLE_ID = "dev.ryoku.hyakki.dev";
 
 export interface RunResult {
   readonly code: number;

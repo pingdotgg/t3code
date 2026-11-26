@@ -50,7 +50,6 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { forkParked, forkParkedFiber } from "./serverActivation.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
-import { getServerOwners } from "./telemetry/Identify.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { headlessServeOutput, resolveLocalOrigin } from "./startupAccess.ts";
@@ -175,7 +174,6 @@ const recordStartupHeartbeat = Effect.gen(function* () {
     threadCount,
     projectCount,
   });
-  yield* analytics.recordOwners(yield* getServerOwners, "server");
 });
 
 const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({
@@ -356,7 +354,7 @@ const resolveStartupBrowserTarget = Effect.gen(function* () {
 
 /** Prints the one-time admin pairing URL to stdout only; logger records reach trace files and collectors. */
 export const announceStartupPairingUrl = (pairingUrl: string) =>
-  Effect.logInfo("Authentication required. Open T3 Code using the pairing URL.").pipe(
+  Effect.logInfo("Authentication required. Open Hyakki using the pairing URL.").pipe(
     Effect.andThen(Console.log(`  pairingUrl: ${pairingUrl}`)),
   );
 

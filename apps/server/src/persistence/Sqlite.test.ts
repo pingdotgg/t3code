@@ -214,7 +214,7 @@ const latestRecordedMigrationId = Effect.gen(function* () {
 const layerT3Home = ServerConfig.layerTest(process.cwd(), { prefix: "t3-sqlite-cli-" });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("layerCliConfig", (it) => {
-  it.effect("does not migrate a T3 home a running server owns", () =>
+  it.effect("does not migrate a Hyakki home a running server owns", () =>
     Effect.gen(function* () {
       const recorded = Math.max(...migrationManifest.map(([id]) => id)) - 1;
       yield* migrateTo(recorded);
@@ -233,7 +233,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("layerCliConfig",
     }).pipe(Effect.scoped, Effect.provide(layerT3Home)),
   );
 
-  it.effect("opens a current T3 home while a running server owns it", () =>
+  it.effect("opens a current Hyakki home while a running server owns it", () =>
     Effect.gen(function* () {
       yield* migrateTo();
       yield* ownT3Home();

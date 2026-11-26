@@ -26,7 +26,7 @@ Attach up to **100 files** per message:
 Files upload to the environment's machine as soon as you attach them, and all uploads must finish before sending. Provider and model limits still apply.
 
 - **Web and desktop**: Drag, paste, or pick files. Reloading before an upload finishes requires re-attaching.
-- **Mobile**: Pick files, share into T3 Code via the system share sheet, or drag images in Android split screen.
+- **Mobile**: Pick files, share into Hyakki via the system share sheet, or drag images in Android split screen.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
@@ -56,11 +56,11 @@ Slash commands (such as `/compact` or `/context`) wait for the current turn to f
 
 ## Queue messages offline on mobile
 
-Mobile keeps local copies of draft attachments so you can preview them and queue messages offline. Uploads resume on reconnect, and drafts/queued messages survive app restarts and T3 Connect sign-out (restored when signing back into the same account).
+Mobile keeps local copies of draft attachments so you can preview them and queue messages offline. Uploads resume on reconnect, and drafts/queued messages survive app restarts and Hyakki Connect sign-out (restored when signing back into the same account).
 
 ## Custom models and defaults
 
-- **Remembered defaults**: T3 Code remembers your last provider, model, and options for new threads. A project's configured model overrides this. Leaving reasoning level or service tier unset uses the provider's default.
+- **Remembered defaults**: Hyakki remembers your last provider, model, and options for new threads. A project's configured model overrides this. Leaving reasoning level or service tier unset uses the provider's default.
 - **Custom models**: Add unlisted models in **Settings → Providers → Models** (web and desktop; not supported for Antigravity, which uses its account catalog).
 - **Rename a built-in model across all clients**: Add an entry in the server's `userdata/settings.json`:
 
@@ -129,7 +129,7 @@ If you stop the agent or the server restarts, queued messages pause in order. Cl
 Type `/` for commands or `$` for skills from the selected environment and provider.
 
 - Skills also appear in the `/` menu unless you disable **Settings → Chat → Show skills in slash menu** (under Advanced).
-- Provider commands must start the message; T3 Code commands (like `/model`) and `$` skills work on any line.
+- Provider commands must start the message; Hyakki commands (like `/model`) and `$` skills work on any line.
 - `/compact` reduces context usage when supported by the provider.
 - `/clear` starts a fresh provider session in the same thread (earlier messages and diffs stay visible above a **New session** divider).
 - After adding or changing skills, plugins, or MCP servers, run **Restart agent session** from the command palette so your next message picks up the new config.
@@ -172,4 +172,4 @@ Following an agent's file link to a file outside the workspace opens it read-onl
 
 ## HTML and PDF files in the file viewer
 
-On web and desktop, HTML and PDF files open rendered (HTML previews are sandboxed from your T3 Code session; line-specific HTML links open source view). On mobile, PDFs open in the native iOS viewer or an installed Android viewer.
+On web and desktop, HTML and PDF files open rendered (HTML previews are sandboxed from your Hyakki session; line-specific HTML links open source view). On mobile, PDFs open in the native iOS viewer or an installed Android viewer.

@@ -33,7 +33,7 @@ export const RelayObservability = Effect.gen(function* () {
   const traces = yield* Axiom.Dataset("RelayTracesDataset", {
     name: relayResourceNameForStage("t3-code-relay-traces", stage),
     kind: "otel:traces:v1",
-    description: "T3 Code relay Worker HTTP request spans.",
+    description: "Hyakki relay Worker HTTP request spans.",
     retentionDays: 30,
     useRetentionPeriod: true,
   });
@@ -48,7 +48,7 @@ export const RelayObservability = Effect.gen(function* () {
 
   const mobileIngestToken = yield* Axiom.ApiToken("RelayMobileAxiomIngestToken", {
     name: relayResourceNameForStage("t3-code-mobile-otel-ingest", stage),
-    description: "Owned by Alchemy. Scoped OTLP ingest token for T3 Code mobile spans.",
+    description: "Owned by Alchemy. Scoped OTLP ingest token for Hyakki mobile spans.",
     datasetCapabilities: Output.map(traces.name, (dataset) => ({
       [dataset]: { ingest: ["create" as const] },
     })),
@@ -66,14 +66,14 @@ export const RelayObservability = Effect.gen(function* () {
   const mobileLogs = yield* Axiom.Dataset("MobileLogsDataset", {
     name: relayResourceNameForStage("t3-code-mobile-logs", stage),
     kind: "otel:logs:v1",
-    description: "T3 Code mobile app errors, crashes, and log events from expo-observe.",
+    description: "Hyakki mobile app errors, crashes, and log events from expo-observe.",
     retentionDays: 30,
     useRetentionPeriod: true,
   });
   const mobileMetrics = yield* Axiom.Dataset("MobileMetricsDataset", {
     name: relayResourceNameForStage("t3-code-mobile-metrics", stage),
     kind: "otel:metrics:v1",
-    description: "T3 Code mobile app startup and update metrics from expo-observe.",
+    description: "Hyakki mobile app startup and update metrics from expo-observe.",
     retentionDays: 30,
     useRetentionPeriod: true,
   });

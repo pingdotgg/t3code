@@ -135,7 +135,7 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   screenshot: () => Effect.succeed({ device, png }),
   close: () => Effect.void,
   testHost: () => Effect.die("not used"),
-  // As for an Expo device, agent-device knows the device by a different id than T3.
+  // As for an Expo device, agent-device knows the device by a different id than Hyakki.
   agentTarget: () =>
     Effect.succeed({
       agentDeviceId: "SIM-UDID",
@@ -190,7 +190,7 @@ it.effect("registers the device tools and returns the screenshot as image conten
       expect(openedContent.quickStart).toContain(
         `${openedContent.agentDevice.command} snapshot -i`,
       );
-      // The launcher selects the device by agent-device's id for it, not T3's.
+      // The launcher selects the device by agent-device's id for it, not Hyakki's.
       expect(openedContent.agentDevice.command).toBe(
         "/state/device/targets/thread-device/--platform_ios_--udid_SIM-UDID_--config_/host.json_--session_thread-device/agent-device",
       );

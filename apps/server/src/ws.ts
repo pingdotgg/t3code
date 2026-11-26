@@ -879,7 +879,7 @@ function readClientAnalyticsProps(request: HttpServerRequest.HttpServerRequest) 
 }
 
 /**
- * Owners a connecting client reports: its hashed T3 Connect account and its
+ * Owners a connecting client reports: its hashed Hyakki Connect account and its
  * hashed device id. Only hashes are accepted, so a raw id never reaches analytics.
  */
 function readClientOwners(
@@ -1756,7 +1756,8 @@ export const layerWsRpc = (
             if (importedThread !== null) {
               return yield* new AcpRegistryOperationError({
                 reason: "session_delete_failed",
-                message: "Delete the imported T3 thread before deleting its native ACP session.",
+                message:
+                  "Delete the imported Hyakki thread before deleting its native ACP session.",
               });
             }
             yield* manager.deleteSession({

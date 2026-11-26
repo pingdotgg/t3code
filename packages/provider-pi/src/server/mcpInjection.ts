@@ -112,7 +112,7 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution 
     if (reserved !== undefined) {
       return {
         ok: false,
-        message: `Pi launch argument '${reserved}' is controlled by T3 Code and cannot be overridden.`,
+        message: `Pi launch argument '${reserved}' is controlled by Hyakki and cannot be overridden.`,
       };
     }
     if (arg === "--") {
@@ -146,7 +146,7 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution 
       continue;
     }
     if (arg.startsWith("-")) {
-      return { ok: false, message: `Pi launch argument '${arg}' is not supported by T3 Code.` };
+      return { ok: false, message: `Pi launch argument '${arg}' is not supported by Hyakki.` };
     }
     return {
       ok: false,
@@ -253,7 +253,7 @@ export function buildPiRpcLaunch(input: {
   readonly extensionPath: string | undefined;
   readonly sessionPath?: string | undefined;
   readonly ephemeral?: boolean;
-  // T3 stops these processes as soon as they answer. They run --offline because Pi's startup
+  // Hyakki stops these processes as soon as they answer. They run --offline because Pi's startup
   // catalog refresh renews expired OAuth tokens, and a stop mid-request loses the rotated one.
   readonly shortLived?: boolean;
   readonly disableExtensions?: boolean;
@@ -293,7 +293,7 @@ export function buildPiRpcLaunch(input: {
     args.push("--extension", input.extensionPath);
   }
   const environment = { ...input.environment };
-  // MCP credentials belong to this T3 session; discard inherited server/parent credentials.
+  // MCP credentials belong to this Hyakki session; discard inherited server/parent credentials.
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];

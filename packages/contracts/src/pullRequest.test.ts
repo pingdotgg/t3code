@@ -50,10 +50,10 @@ const LIST_RESULT: PullRequestListResult = {
       host: "github.com",
       projectId: "project-1" as PullRequestListResult["entries"][number]["projectId"],
       projectTitle: "t3code",
-      repository: "pingdotgg/t3code",
+      repository: "Ryoku-dev/hyakki",
       number: 1,
       title: "Add a pull requests page",
-      url: "https://github.com/pingdotgg/t3code/pull/1",
+      url: "https://github.com/Ryoku-dev/hyakki/pull/1",
       author: { login: "octocat", name: null, avatarUrl: null },
       headBranch: "feat/page",
       baseBranch: "main",
@@ -70,7 +70,7 @@ const LIST_RESULT: PullRequestListResult = {
   ],
   errors: [],
   truncated: false,
-  nextCursors: { "github.com pingdotgg/t3code": "2026-07-02T00:00:00Z|1|1" },
+  nextCursors: { "github.com Ryoku-dev/hyakki": "2026-07-02T00:00:00Z|1|1" },
 };
 
 describe("PullRequestListResult", () => {
@@ -164,7 +164,7 @@ describe("resolvePullRequestAuthorFilter", () => {
 
 describe("PullRequestOperationError", () => {
   // Cloudflare swaps an origin 502 for its own body without CORS headers, so a
-  // client behind a T3 Connect tunnel sees a transport error instead of this error.
+  // client behind a Hyakki Connect tunnel sees a transport error instead of this error.
   it.effect("answers with a status a Cloudflare tunnel passes through", () =>
     Effect.gen(function* () {
       const error = new PullRequestOperationError({

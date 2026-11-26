@@ -94,7 +94,7 @@ const t3ChatLayer = (plan: RelayT3ChatPlan | "lookup-fails", lookups?: Array<str
               cause: new Error("down"),
             }),
           )
-        : Effect.succeed({ email: "theo@example.com", plan });
+        : Effect.succeed({ email: "tara@example.com", plan });
     },
   });
 

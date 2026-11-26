@@ -3700,7 +3700,7 @@ it.effect("keeps a running root command open when a write fails under a live pro
 
 it.effect.each([
   { ended: true },
-  // T3 ending the stream proves no dead runtime; Stop settles the work it releases.
+  // Hyakki ending the stream proves no dead runtime; Stop settles the work it releases.
   { ended: false, raisedByT3: true },
   // A Stop that already settled the subagent keeps its result.
   { ended: false, stopped: true },

@@ -932,7 +932,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
     assert.equal(systemPrompt.preset, "claude_code");
     assert.include(systemPrompt.append ?? "", "Use `delegate_task`");
     assert.include(systemPrompt.append ?? "", "call `t3_background_wait`");
-    assert.notInclude(systemPrompt.append ?? "", "## T3 Code devices");
+    assert.notInclude(systemPrompt.append ?? "", "## Hyakki devices");
     const logged = ClaudeAdapterV2.loggedClaudeQueryOptions(options);
     assert.equal(logged.hasMcpServers, true);
     assert.notInclude(JSON.stringify(logged), "secret-claude-token");
@@ -952,7 +952,7 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
   });
 });
 
-describe("ClaudeAdapterV2 T3 tool instructions", () => {
+describe("ClaudeAdapterV2 Hyakki tool instructions", () => {
   const options = (input: {
     readonly mcp: boolean;
     readonly deviceToolsAvailable: boolean;
@@ -982,12 +982,12 @@ describe("ClaudeAdapterV2 T3 tool instructions", () => {
     assert.include(text, "Use `delegate_task`");
   });
 
-  it("leaves the device block out without device access or without T3 tools", () => {
-    assert.notInclude(append({ mcp: true, deviceToolsAvailable: false }), "## T3 Code devices");
-    assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## T3 Code devices");
+  it("leaves the device block out without device access or without Hyakki tools", () => {
+    assert.notInclude(append({ mcp: true, deviceToolsAvailable: false }), "## Hyakki devices");
+    assert.notInclude(append({ mcp: false, deviceToolsAvailable: true }), "## Hyakki devices");
   });
 
-  it("gives the agent feedback line only to a session with T3 tools", () => {
+  it("gives the agent feedback line only to a session with Hyakki tools", () => {
     const feedback = (mcp: boolean, agentFeedback: "off" | "auto") =>
       append({ mcp, deviceToolsAvailable: false, agentFeedback }).includes("t3_feedback");
     assert.include(
@@ -1029,7 +1029,7 @@ describe("ClaudeAdapterV2 T3 tool instructions", () => {
     ]);
     assert.deepEqual(await subagentContext({ mcp: true, deviceToolsAvailable: false }), []);
     assert.deepEqual(await subagentContext({ mcp: false, deviceToolsAvailable: true }), []);
-    // A custom subagent can lack T3 tools even when this session has them.
+    // A custom subagent can lack Hyakki tools even when this session has them.
     assert.notInclude(
       JSON.stringify(
         await subagentContext({
@@ -1610,7 +1610,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     ),
   );
 
-  it.effect("sends append launch arguments to Claude after the T3 instructions", () =>
+  it.effect("sends append launch arguments to Claude after the Hyakki instructions", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-cwd-" });
@@ -1641,11 +1641,11 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     ),
   );
 
-  // regression: #15073 the SDK replaced the --settings launch argument with T3's settings
+  // regression: #15073 the SDK replaced the --settings launch argument with Hyakki's settings
   it.effect.each([
     `--settings '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false}'`,
     "--settings user-settings.json",
-  ])("merges %s beneath T3's settings", (launchArgs) =>
+  ])("merges %s beneath Hyakki's settings", (launchArgs) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-settings-" });
@@ -3408,7 +3408,7 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
           ...ClaudeAdapterV2.makeClaudeQueryOptions({
             modelSelection: CLAUDE_TEST_MODEL_SELECTION,
             nativeThreadId: "native-thread-claude-mcp-channel",
-            title: "Existing T3 title",
+            title: "Existing Hyakki title",
             resume: false,
             cwd: null,
             environment: { PATH: "/usr/bin" },
@@ -3465,7 +3465,7 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
       });
       assert.deepInclude(
         cli.controlRequests.find((request) => Reflect.get(request, "subtype") === "initialize"),
-        { title: "Existing T3 title" },
+        { title: "Existing Hyakki title" },
       );
       const spawned = JSON.stringify(cli.spawns);
       assert.notInclude(spawned, "--title");
@@ -3640,7 +3640,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
     }),
   );
 
-  it.effect("resumes an imported native session on its first T3 turn", () =>
+  it.effect("resumes an imported native session on its first Hyakki turn", () =>
     Effect.gen(function* () {
       const openedQueries = yield* openTurnWithOrdinal(1, false, "imported-native-session");
       assert.equal(openedQueries.length, 1);
@@ -7326,7 +7326,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         server: "probe.server",
       });
       assert.deepInclude(tool, { name: "show_weather", inputSchema: { type: "object" } });
-      // T3 skips the app-call confirmation only for `readOnlyHint` tools.
+      // Hyakki skips the app-call confirmation only for `readOnlyHint` tools.
       assert.deepInclude(appOnlyTool, {
         annotations: { readOnlyHint: true, destructiveHint: false },
       });
@@ -7465,7 +7465,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readOnly: false,
     },
     {
-      case: "a deny rule for this tool on a server alias T3 can't list",
+      case: "a deny rule for this tool on a server alias Hyakki can't list",
       rules: [{ behavior: "deny", rule: "mcp__probe_alias__refresh_weather" }],
       called: false,
       readOnly: false,
@@ -8522,7 +8522,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
-    it.effect("shows what T3 Code's own tool asks without naming a server", () =>
+    it.effect("shows what Hyakki's own tool asks without naming a server", () =>
       Effect.gen(function* () {
         const { harness, elicit, awaitCard } = yield* startElicitationTurn();
         const sessions = yield* McpProviderSessions.McpProviderSessions;
@@ -8547,13 +8547,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepInclude(cards().at(-1), { prompt: message, pushHooks });
         assert.notProperty(cards().at(-1), "appName");
 
-        // Asked by a server T3 Code did not register: its name is shown, as for any server.
-        yield* elicit({ ...own, serverName: "deploys", displayName: "T3 Code" });
+        // Asked by a server Hyakki did not register: its name is shown, as for any server.
+        yield* elicit({ ...own, serverName: "deploys", displayName: "Hyakki" });
         yield* awaitCard(2);
-        assert.deepInclude(cards().at(-1), { prompt: message, appName: "T3 Code" });
+        assert.deepInclude(cards().at(-1), { prompt: message, appName: "Hyakki" });
         assert.notProperty(cards().at(-1), "pushHooks");
 
-        // Under T3 Code's name, but nothing T3 Code asked this thread.
+        // Under Hyakki's name, but nothing Hyakki asked this thread.
         yield* elicit({ ...own, message: "Push tools?" });
         yield* awaitCard(3);
         assert.deepInclude(cards().at(-1), { prompt: "Push tools?", appName: "t3-code" });
@@ -8561,7 +8561,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
     );
 
-    it.effect("asks the person every time T3 Code's own tool asks", () =>
+    it.effect("asks the person every time Hyakki's own tool asks", () =>
       Effect.gen(function* () {
         const { harness, elicit, awaitCard } = yield* startElicitationTurn();
         const sessions = yield* McpProviderSessions.McpProviderSessions;
@@ -8605,7 +8605,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           decision: "acceptForSession",
         });
         assert.deepEqual(yield* Fiber.join(first), { action: "accept", content: {} });
-        // What the person answered in the app stays with the request T3 Code made.
+        // What the person answered in the app stays with the request Hyakki made.
         assert.deepInclude(yield* sessions.takeApprovalRequest(harness.threadId, firstAsked), {
           approved: true,
         });
@@ -12089,7 +12089,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  describe("warm process after the session changed outside T3", () => {
+  describe("warm process after the session changed outside Hyakki", () => {
     const firstReply = "00000000-0000-4000-8000-000000000c01";
     const secondReply = "00000000-0000-4000-8000-000000000c02";
     const terminalPrompt = "00000000-0000-4000-8000-000000000c03";
@@ -12111,7 +12111,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       entry("user", terminalPrompt, secondReply, "Typed in the terminal") +
       entry("assistant", terminalReply, terminalPrompt, [{ type: "text", text: "Answered." }]);
 
-    // Streams one T3 turn of two reply blocks, writes the transcript, then starts the next turn.
+    // Streams one Hyakki turn of two reply blocks, writes the transcript, then starts the next turn.
     const nextTurnAfter = Effect.fnUntraced(function* (input: {
       readonly transcript: ((promptUuid: string) => string) | null;
       readonly backgroundShell?: boolean;
@@ -12209,11 +12209,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
     it.effect.each([
       {
-        name: "the session transcript gained messages outside T3",
+        name: "the session transcript gained messages outside Hyakki",
         transcript: (promptUuid: string) => t3Turn(promptUuid) + terminalExchange,
       },
       {
-        // The terminal's rows alone are longer than the tail T3 reads first.
+        // The terminal's rows alone are longer than the tail Hyakki reads first.
         name: "a long terminal exchange followed its last message",
         transcript: (promptUuid: string) =>
           t3Turn(promptUuid) +
@@ -12239,7 +12239,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           entry("assistant", firstReply, promptUuid, [{ type: "text", text: "Working." }]),
       },
       {
-        name: "only bookkeeping follows T3's reply",
+        name: "only bookkeeping follows Hyakki's reply",
         transcript: (promptUuid: string) =>
           t3Turn(promptUuid) +
           line({
@@ -12281,7 +12281,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         wakeFiresDuringRead: true,
       },
       {
-        // Longer than the tail T3 reads, and the process's own messages are not written yet.
+        // Longer than the tail Hyakki reads, and the process's own messages are not written yet.
         name: "a long transcript's tail holds none of its messages",
         transcript: () =>
           entry("user", "old-1", null, "x".repeat(1_200_000)) +
@@ -17835,7 +17835,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   // regression: #17531 a mod that holds a tool behind a focused pane must fail the turn, not hang it
   it.effect.each([
-    { case: "fails a turn whose mod requests focus for a pane T3 cannot show", focus: true },
+    { case: "fails a turn whose mod requests focus for a pane Hyakki cannot show", focus: true },
     { case: "keeps a turn running beside a passive mod pane", focus: false },
   ] as const)("$case", ({ focus }) =>
     Effect.gen(function* () {
@@ -19148,7 +19148,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.lengthOf(harness.continuationRequests, 1);
 
-        // An empty session-task lifecycle result arriving before T3 opens the
+        // An empty session-task lifecycle result arriving before Hyakki opens the
         // wake run must not replace the root's terminal usage-limit result.
         yield* harness.offerAndWait(wakeTurnInit);
         yield* harness.offerAndWait(
@@ -27107,7 +27107,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
     );
 
-    it.effect("ends a goal check without re-prompting while T3 work will wake the thread", () =>
+    it.effect("ends a goal check without re-prompting while Hyakki work will wake the thread", () =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;

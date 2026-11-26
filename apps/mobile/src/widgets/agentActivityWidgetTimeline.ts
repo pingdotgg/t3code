@@ -73,12 +73,12 @@ export function agentActivityWidgetTimeline(
   if (source.kind !== "snapshot" || !source.aggregate) {
     const props: AgentActivityProps = {
       text: agentActivityText(0, resolve),
-      title: "T3 Code",
+      title: "Hyakki",
       subtitle:
         source.kind === "signed-out"
-          ? resolve(msg("Sign in to {product} to see agents", { product: "T3 Connect" }))
+          ? resolve(msg("Sign in to {product} to see agents", { product: "Hyakki Connect" }))
           : source.kind === "unavailable"
-            ? resolve(msg("Couldn't reach {product}", { product: "T3 Connect" }))
+            ? resolve(msg("Couldn't reach {product}", { product: "Hyakki Connect" }))
             : source.kind === "loading"
               ? resolve(msg("Loading agents…"))
               : resolve(msg("No active agents")),

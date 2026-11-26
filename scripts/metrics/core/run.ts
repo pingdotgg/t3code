@@ -107,7 +107,7 @@ export const machineLoad = Effect.gen(function* () {
 const COMPETING = /^(node|node-MainThread|t3|claude|codex|vite|pnpm)/;
 
 /**
- * CPU seconds of every node, T3, claude or codex process outside this script's own tree, keyed by
+ * CPU seconds of every node, Hyakki, claude or codex process outside this script's own tree, keyed by
  * pid and start time so a reused pid is a new process. Linux only; elsewhere none, and the run
  * records only the load average.
  */
@@ -165,7 +165,7 @@ const load1 = Effect.gen(function* () {
 
 /**
  * Starts watching the machine for one run; the returned effect reads what competed with it: the
- * highest 1-minute load seen and the cores other T3, node and agent processes kept busy.
+ * highest 1-minute load seen and the cores other Hyakki, node and agent processes kept busy.
  */
 export const watchMachine = Effect.gen(function* () {
   const startedAt = yield* nowMs;

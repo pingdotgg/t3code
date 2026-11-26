@@ -42,7 +42,7 @@ describe("importPastedComposerText", () => {
     expect(imported.map((fragment) => fragment.records)).toEqual([target.fragment!.records]);
   });
 
-  it("makes a chip of a v2 link pasted without T3's clipboard format", () => {
+  it("makes a chip of a v2 link pasted without Hyakki's clipboard format", () => {
     const text = importPastedComposerText(
       clipboard({ "text/plain": "[Login](t3-thread://v2/env-1/thread-1)" }),
       importAll([]),
@@ -51,7 +51,7 @@ describe("importPastedComposerText", () => {
   });
 
   it("keeps the link when the composer cannot take the thread", () => {
-    const pasted = "https://app.t3.codes/threads/env-1/thread-1";
+    const pasted = "https://hyakki.ryoku.dev/threads/env-1/thread-1";
     expect(importPastedComposerText(clipboard({ "text/plain": pasted }), () => new Map())).toBe(
       pasted,
     );

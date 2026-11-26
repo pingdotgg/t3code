@@ -154,7 +154,7 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   );
   if (!pointsBack || !(yield* samePath(path.dirname(adminDir), path.join(commonDir, "worktrees"))))
     return yield* notAWorktree;
-  // Git counts the file's existence as a lock. T3 passes at most one
+  // Git counts the file's existence as a lock. Hyakki passes at most one
   // `--force`, which never removes a locked worktree. Anything but a
   // confirmed absence refuses.
   const lockFile = path.join(adminDir, "locked");

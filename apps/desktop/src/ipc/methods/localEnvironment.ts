@@ -31,7 +31,7 @@ export const setLocalEnvironmentEnabled = makeIpcMethod({
   }),
 });
 
-// A background service sharing this app's T3 home records its environment ID in the same state dir.
+// A background service sharing this app's Hyakki home records its environment ID in the same state dir.
 export const getHostEnvironmentId = makeIpcMethod({
   channel: IpcChannels.GET_HOST_ENVIRONMENT_ID_CHANNEL,
   payload: Schema.Void,

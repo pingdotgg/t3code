@@ -1,12 +1,12 @@
 # Codex
 
-Use your ChatGPT plan or an existing Codex CLI login to run Codex in T3 Code.
+Use your ChatGPT plan or an existing Codex CLI login to run Codex in Hyakki.
 
 ## Connect with ChatGPT
 
-Connect during onboarding or in **Settings → Providers** (select your target environment first for remote machines). T3 Code manages the Codex runtime and signs you in via OpenAI.
+Connect during onboarding or in **Settings → Providers** (select your target environment first for remote machines). Hyakki manages the Codex runtime and signs you in via OpenAI.
 
-- Manage shared usage and credits through **Manage usage** in T3 Code.
+- Manage shared usage and credits through **Manage usage** in Hyakki.
 - **Remote sign-in**: If sign-in doesn't return automatically, paste the full `localhost` redirect URL into the sign-in panel.
 - **Speed options**: Fast and Ultrafast speeds are not available through ChatGPT sharing—[use an existing Codex login](#use-an-existing-codex-login) instead.
 - Disconnecting stops running threads while preserving history.
@@ -49,4 +49,4 @@ To switch accounts mid-thread, pick another compatible Codex instance sharing th
 
 ## OpenAI Chrome extension
 
-Using your signed-in Chrome profile via [OpenAI's Chrome extension](https://learn.chatgpt.com/docs/chrome-extension) requires a browser connection for the Codex thread. For remote environments, forward the remote page's port or use a reachable URL—T3 Code's built-in preview browser uses its own separate session.
+Using your signed-in Chrome profile via [OpenAI's Chrome extension](https://learn.chatgpt.com/docs/chrome-extension) requires a browser connection for the Codex thread. For remote environments, forward the remote page's port or use a reachable URL—Hyakki's built-in preview browser uses its own separate session.

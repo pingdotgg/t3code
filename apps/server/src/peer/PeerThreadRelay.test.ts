@@ -195,9 +195,9 @@ it.effect("serves a thread only to a link's own session", () =>
       // An outside agent's session reads through `/mcp`, never here.
       expect(yield* statusOf({ authorization: `Bearer ${agent.token}` })).toBe(403);
       // A browser page never holds a link's token, so no page's request is served.
-      expect(yield* statusOf({ authorization: linkBearer, origin: "https://app.t3.codes" })).toBe(
-        403,
-      );
+      expect(
+        yield* statusOf({ authorization: linkBearer, origin: "https://hyakki.ryoku.dev" }),
+      ).toBe(403);
       yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: false });
       expect(yield* statusOf({ authorization: linkBearer })).toBe(403);
     }),

@@ -32,7 +32,7 @@ export class ManagedPolicyRefusedError extends Schema.TaggedError<ManagedPolicyR
   "ManagedPolicyRefusedError",
   {
     organization: Schema.String,
-    /** What the policy does not allow, for example "T3 Connect". */
+    /** What the policy does not allow, for example "Hyakki Connect". */
     action: Schema.String,
     /** What that means for this request, for example "so the server cannot listen on 0.0.0.0". */
     detail: Schema.optionalKey(Schema.String),
@@ -72,7 +72,7 @@ export function allowsAuthPolicy(policy: PolicyDocument, authPolicy: ServerAuthP
 export const allowsRemoteClients = (policy: PolicyDocument) =>
   allowsAuthPolicy(policy, "remote-reachable");
 
-/** T3 Connect is a way for remote clients in, so a policy without `remote` turns it off too. */
+/** Hyakki Connect is a way for remote clients in, so a policy without `remote` turns it off too. */
 export const allowsConnect = (policy: PolicyDocument) =>
   policy.document?.limits?.connect !== false && allowsRemoteClients(policy);
 
@@ -83,7 +83,7 @@ const refuse = (policy: PolicyDocument, action: string, detail?: string) =>
     ...(detail === undefined ? {} : { detail }),
   });
 
-export const refuseConnect = (policy: PolicyDocument) => refuse(policy, "T3 Connect");
+export const refuseConnect = (policy: PolicyDocument) => refuse(policy, "Hyakki Connect");
 
 // Node throws ENOTDIR, outside the spawner's error mapping, when PATH ends in a file.
 const isMissingCli = (cause: unknown) =>

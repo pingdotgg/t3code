@@ -10,7 +10,7 @@ import { T3_HOME } from "../e2e.config.ts";
 import { makeState, runPromise, test, WEB } from "./t3.ts";
 
 // An OpenCode 1.19.5 server with background subagents on (OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS,
-// which T3 never sets). Frames follow v1.19.5 source: tool/task.ts injects a finished background
+// which Hyakki never sets). Frames follow v1.19.5 source: tool/task.ts injects a finished background
 // task's result as a synthetic prompt on the parent session; session/prompt.ts saves it, then
 // reports busy; session/status.ts reports idle, then session.idle.
 const ROOT = "ses_scenario_root";

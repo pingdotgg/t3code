@@ -742,7 +742,7 @@ describe("deriveProviderSubagentStatus", () => {
     nodes: [root],
   });
 
-  it("leaves T3 delegated tasks and ordinary threads alone", () => {
+  it("leaves Hyakki delegated tasks and ordinary threads alone", () => {
     expect(deriveProviderSubagentStatus(child("mcp"))).toBeNull();
     expect(deriveProviderSubagentStatus({ ...v2Projection, nodes: [root] })).toBeNull();
   });

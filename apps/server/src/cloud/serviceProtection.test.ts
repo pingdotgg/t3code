@@ -29,18 +29,18 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("renderPrivileg
       const plan = (uid: number, remoteAccessUnits: ReadonlyArray<string>) =>
         ServiceProtection.protectionPlan({
           uid,
-          userUnitDir: "/home/theo/.config/systemd/user",
+          userUnitDir: "/home/tara/.config/systemd/user",
           remoteAccessUnits,
           systemUnitDir,
         });
-      const theo = plan(1000, ["tailscaled.service", "ssh.service"]);
-      expect(theo.system.find((dropIn) => dropIn.unit === "user@1000.service")?.contents).toBe(
+      const tara = plan(1000, ["tailscaled.service", "ssh.service"]);
+      expect(tara.system.find((dropIn) => dropIn.unit === "user@1000.service")?.contents).toBe(
         "[Service]\nMemoryLow=2G\nOOMScoreAdjust=-900\n",
       );
-      expect(theo.managerDefaults.path).toBe(
-        "/home/theo/.config/systemd/user.conf.d/90-t3code-protect.conf",
+      expect(tara.managerDefaults.path).toBe(
+        "/home/tara/.config/systemd/user.conf.d/90-t3code-protect.conf",
       );
-      expect(theo.oomUnits).toEqual(["user@1000.service", "tailscaled.service", "ssh.service"]);
+      expect(tara.oomUnits).toEqual(["user@1000.service", "tailscaled.service", "ssh.service"]);
 
       const unrelated = NodePath.join(systemUnitDir, "ssh.service.d", "50-admin.conf");
       NodeFS.mkdirSync(NodePath.dirname(unrelated), { recursive: true });
@@ -81,9 +81,9 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("renderPrivileg
       const exists = (unit: string) =>
         NodeFS.existsSync(NodePath.join(systemUnitDir, `${unit}.d`, "90-t3code-protect.conf"));
 
-      runScript(theo, "apply");
+      runScript(tara, "apply");
       runScript(plan(1001, []), "apply");
-      for (const { path, contents } of theo.system) {
+      for (const { path, contents } of tara.system) {
         expect(NodeFS.readFileSync(path, "utf8")).toBe(contents);
       }
       expect(NodeFS.readFileSync(`/proc/${target.pid}/oom_score_adj`, "utf8").trim()).toBe("900");
@@ -249,7 +249,7 @@ it.effect("counts memory.min as protection and names the first cgroup that grant
   write(5, "memory.low", "1610612736");
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const read = ServiceProtection.readProtection("/home/theo/.config/systemd/user").pipe(
+    const read = ServiceProtection.readProtection("/home/tara/.config/systemd/user").pipe(
       Effect.provideService(FileSystem.FileSystem, {
         ...fs,
         readFileString: (path, encoding) =>
@@ -277,7 +277,7 @@ it.effect(
     NodeFS.writeFileSync(NodePath.join(root, "cgroup.controllers"), "cpuset cpu io pids\n");
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const state = yield* ServiceProtection.readProtection("/home/theo/.config/systemd/user").pipe(
+      const state = yield* ServiceProtection.readProtection("/home/tara/.config/systemd/user").pipe(
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
           readFileString: (path, encoding) =>

@@ -459,7 +459,7 @@ export interface AcpAdapterV2Flavor {
   >;
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**
-   * Runs before attachment paths, T3 instructions and native slash-command detection,
+   * Runs before attachment paths, Hyakki instructions and native slash-command detection,
    * so a rewrite can turn the user's text into a native command.
    */
   readonly rewriteUserText?: (
@@ -473,7 +473,7 @@ export interface AcpAdapterV2Flavor {
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
   >["_meta"];
   readonly mcpOverHttp?: boolean;
-  /** The agent has no tool search of its own, so T3 lists optional tools on demand. */
+  /** The agent has no tool search of its own, so Hyakki lists optional tools on demand. */
   readonly deferMcpTools?: boolean;
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
@@ -580,7 +580,7 @@ export interface AcpAdapterV2Flavor {
         ) => EffectAcpSchema.RequestPermissionResponse | undefined;
       }
     | undefined;
-  /** Grok Auto asks only about classifier refusals; T3 policy must not auto-approve them. */
+  /** Grok Auto asks only about classifier refusals; Hyakki policy must not auto-approve them. */
   readonly permissionDisposition?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
     request: EffectAcpSchema.RequestPermissionRequest,
@@ -588,7 +588,7 @@ export interface AcpAdapterV2Flavor {
   readonly approvalOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => ReadonlyArray<ProviderApprovalOption>;
-  /** Options T3 may answer with; the rest (e.g. Devin's bypass-permissions plan exit) are never sent. */
+  /** Options Hyakki may answer with; the rest (e.g. Devin's bypass-permissions plan exit) are never sent. */
   readonly answerablePermissionOptions?: (
     request: EffectAcpSchema.RequestPermissionRequest,
   ) => ReadonlyArray<EffectAcpSchema.PermissionOption>;
@@ -768,7 +768,7 @@ export interface AcpAdapterV2Flavor {
    */
   readonly supportsImagePrompts?: boolean;
   /**
-   * True when this session's native system prompt carries T3's PR-linking instructions, so
+   * True when this session's native system prompt carries Hyakki's PR-linking instructions, so
    * turns omit them. Must use the same negotiated check that sent them on session setup.
    */
   readonly sessionCarriesPullRequestLinking?: (
@@ -1156,7 +1156,7 @@ function acpMcpContext(
     authorization: session.authorizationHeader,
     processEnvironment: {
       // The thread id every process the agent starts inherits, so a tool run
-      // from its shell can find its T3 thread. Claude and Codex sessions set
+      // from its shell can find its Hyakki thread. Claude and Codex sessions set
       // the same variable (PortScanner.AGENT_THREAD_ENV; a string literal here
       // because this package cannot reach apps/server).
       T3CODE_THREAD_ID: session.threadId,
@@ -1745,7 +1745,7 @@ interface ActiveAcpTurn {
   contextUsage: ThreadTokenUsageSnapshot | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
-  /** Confirmed T3 MCP tool outputs keyed by `${toolCallId}\0${tool}\0${inputHash}`. */
+  /** Confirmed Hyakki MCP tool outputs keyed by `${toolCallId}\0${tool}\0${inputHash}`. */
   readonly claimedToolResults: Map<string, unknown>;
   /** `${toolCallId}\0${tool}\0${inputHash}` keys that already drained a recorded MCP result. */
   readonly drainedToolResultKeys: Set<string>;
@@ -2456,7 +2456,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
         // ACP may patch a completed compaction again; each compaction id marks its session once.
         const completedCompactionIds = yield* Ref.make(new Set<string>());
-        // The next prompt in a compacted session resends T3's instructions and runtime notes.
+        // The next prompt in a compacted session resends Hyakki's instructions and runtime notes.
         // Only root sessions get prompts, so a marker on a child session is never read.
         const markSessionCompacted = Effect.fn("AcpAdapterV2.markSessionCompacted")(function* (
           sessionId: string,
@@ -5000,7 +5000,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               resolvedT3Tool !== null &&
               (status === "failed" || (status === "completed" && isError))
             ) {
-              // A failed call may have completed on T3's MCP server before the provider lost its result.
+              // A failed call may have completed on Hyakki's MCP server before the provider lost its result.
               if (isHtmlRender) {
                 if (previous?.status !== "failed" && previous?.status !== "completed") {
                   yield* mcpSessions.takeHtmlRender(
@@ -6960,7 +6960,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const waiting = turnAttached;
           turnAttached = yield* Deferred.make<boolean>();
           yield* Deferred.succeed(waiting, false);
-          // session/cancel does not end the agent's MCP calls; T3 runs them, so it stops them.
+          // session/cancel does not end the agent's MCP calls; Hyakki runs them, so it stops them.
           if (options.stopMcpCalls && runtimeMcpBridge !== undefined) {
             yield* runtimeMcpBridge.stopCalls;
           }
@@ -7459,8 +7459,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               Effect.fail(
                 EffectAcpErrors.AcpRequestError.internalError(
                   disposition === "ask"
-                    ? `The active T3 runtime policy requires approval for ${operation}. Request permission with session/request_permission before retrying.`
-                    : `The active T3 runtime policy does not allow ${operation}.`,
+                    ? `The active Hyakki runtime policy requires approval for ${operation}. Request permission with session/request_permission before retrying.`
+                    : `The active Hyakki runtime policy does not allow ${operation}.`,
                 ),
               ),
             ),
@@ -9257,7 +9257,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 recorded?.failure ??
                   makeProviderFailure({
                     class: "provider_error",
-                    message: `${flavor.runtimeHarness ?? driver} sent nothing for ${minutes} ${minutes === 1 ? "minute" : "minutes"}, so T3 Code stopped the turn and restarted the agent. Send a message to continue.`,
+                    message: `${flavor.runtimeHarness ?? driver} sent nothing for ${minutes} ${minutes === 1 ? "minute" : "minutes"}, so Hyakki stopped the turn and restarted the agent. Send a message to continue.`,
                   }),
                 recorded === undefined
                   ? undefined
@@ -9477,7 +9477,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* resetPublishedCatalogKey;
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
-          // A failed prompt may have been dropped, so the fresh runtime sends T3's notes again.
+          // A failed prompt may have been dropped, so the fresh runtime sends Hyakki's notes again.
           yield* Ref.set(promptInstructionStates, new Map());
           yield* Ref.set(promptRuntimeInstructions, new Map());
           yield* Ref.set(deliveredAppContext, new Map());

@@ -12,7 +12,7 @@ import {
 } from "../shared.ts";
 import { kiroFailedAfterCancel } from "../kiro_subagent_interrupt/output.ts";
 
-/** Tool call ids Kiro reported `in_progress` before T3's `session/cancel`. */
+/** Tool call ids Kiro reported `in_progress` before Hyakki's `session/cancel`. */
 function kiroRunningBeforeCancel(transcript: ProviderReplayTranscript): Set<string> {
   const cancelIndex = transcript.entries.findIndex(
     (entry) => entry.type === "expect_outbound" && entry.label === "notification:session/cancel",
@@ -28,7 +28,7 @@ function kiroRunningBeforeCancel(transcript: ProviderReplayTranscript): Set<stri
   );
 }
 
-/** Stop reaches Kiro while its command runs; Kiro fails it and T3 shows it interrupted. */
+/** Stop reaches Kiro while its command runs; Kiro fails it and Hyakki shows it interrupted. */
 export function assertTurnInterruptMidToolKiroOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

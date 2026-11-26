@@ -489,7 +489,7 @@ export function AddEnvironmentDialog({
       type: "success",
       title: gt("Route added"),
       description: gt(
-        "{environment} falls back to T3 Connect when its other routes are unreachable.",
+        "{environment} falls back to Hyakki Connect when its other routes are unreachable.",
         { environment: routeTarget.label },
       ),
     });
@@ -499,7 +499,7 @@ export function AddEnvironmentDialog({
       {relayRouteOffer !== null ? (
         <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
           <p className="text-xs text-muted-foreground">
-            <T>This machine is on your T3 Connect account. Use it as a fallback route.</T>
+            <T>This machine is on your Hyakki Connect account. Use it as a fallback route.</T>
           </p>
           <Button
             size="xs"
@@ -507,7 +507,7 @@ export function AddEnvironmentDialog({
             disabled={isAddingSavedBackend}
             onClick={() => void addRelayRoute()}
           >
-            <T>Add T3 Connect</T>
+            <T>Add Hyakki Connect</T>
           </Button>
         </div>
       ) : null}

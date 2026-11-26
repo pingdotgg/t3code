@@ -319,7 +319,7 @@ export function useComposerMenuItems({
           skill.description ??
           (skill.scope ? gt("{scope} skill", { scope: skill.scope }) : ""),
       }));
-      // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
+      // Hyakki's `/clear` replaces the provider's, which would clear a session Hyakki still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) =>
           (item.command.name !== "compact" || compactSlashCommandAvailable) &&

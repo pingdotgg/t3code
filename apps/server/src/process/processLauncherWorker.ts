@@ -52,7 +52,7 @@ const stopReading = (socket: NodeNet.Socket) =>
 export function runProcessLauncher(): void {
   const channel = process.send?.bind(process);
   if (!channel) {
-    process.stderr.write("The process launcher is started by the T3 server.\n");
+    process.stderr.write("The process launcher is started by the Hyakki server.\n");
     process.exitCode = 1;
     return;
   }

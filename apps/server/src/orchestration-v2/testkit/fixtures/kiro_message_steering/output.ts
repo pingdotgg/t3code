@@ -38,7 +38,7 @@ export function assertKiroMessageSteeringOutput(
   ]);
   assertUserMessageInputIntents(projection, ["turn_start", "steer"]);
   assertAssistantTextIncludes(projection, "steering fixture observed");
-  // Kiro's model appends a `[STEERING steer-…]` note for Kiro's own UI; T3 drops it.
+  // Kiro's model appends a `[STEERING steer-…]` note for Kiro's own UI; Hyakki drops it.
   assert.notInclude(
     projection.turnItems
       .map((item) => (item.type === "assistant_message" ? item.text : ""))

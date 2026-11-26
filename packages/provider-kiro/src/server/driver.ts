@@ -34,7 +34,7 @@ import {
 const DRIVER_KIND = ProviderDriverKind.make("kiro");
 const decodeKiroSettings = Schema.decodeSync(KiroSettings);
 // Kiro updates itself in the background (`kiro-cli update` reports only), so
-// T3 offers no one-click update.
+// Hyakki offers no one-click update.
 const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,
   packageName: null,

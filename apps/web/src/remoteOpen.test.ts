@@ -80,9 +80,9 @@ describe("resolveRemoteOpenState", () => {
     ).toEqual({ mode: "local-exec" });
   });
 
-  it("keeps exec behavior for the environment that owns the desktop's T3 home", () => {
+  it("keeps exec behavior for the environment that owns the desktop's Hyakki home", () => {
     // With Local environment off, a background service on this machine can own the
-    // desktop's home and still be reached through T3 Connect.
+    // desktop's home and still be reached through Hyakki Connect.
     expect(
       resolveRemoteOpenState({
         target: new RelayConnectionTarget({ environmentId, label: "sol" }),
@@ -276,8 +276,8 @@ describe("remoteFallbackEditors", () => {
 describe("buildRemoteOpenUrl", () => {
   it("roots Windows paths", () => {
     expect(
-      buildRemoteOpenUrl({ editor: "vscode", host: "sol", absolutePath: "C:\\Users\\theo" }),
-    ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/theo?windowId=_blank");
+      buildRemoteOpenUrl({ editor: "vscode", host: "sol", absolutePath: "C:\\Users\\tara" }),
+    ).toBe("vscode://vscode-remote/ssh-remote+sol/C%3A/Users/tara?windowId=_blank");
   });
 
   it("keeps a plus in the SSH username through Remote-SSH's authority parsing", () => {
@@ -316,8 +316,8 @@ describe("buildRemoteOpenUrl", () => {
 
   it("drops the Windows drive letter for Zed", () => {
     expect(
-      buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "C:\\Users\\theo" }),
-    ).toBe("zed://ssh/sol/Users/theo");
+      buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "C:\\Users\\tara" }),
+    ).toBe("zed://ssh/sol/Users/tara");
     expect(buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "/C:/project" })).toBe(
       "zed://ssh/sol/C%3A/project",
     );

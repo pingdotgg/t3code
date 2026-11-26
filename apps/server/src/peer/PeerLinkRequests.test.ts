@@ -988,10 +988,10 @@ it.live("an agent below full access may not ask, and no card is shown", () =>
 it.live("work another environment's link started may not ask, and no card is shown", () =>
   withBoth((a, b) =>
     Effect.gen(function* () {
-      yield* seedThread(a, "full-access", { sessionId: "session:desk", label: "T3 Code · Desk" });
+      yield* seedThread(a, "full-access", { sessionId: "session:desk", label: "Hyakki · Desk" });
       const refused = yield* a.call({ url: b.url });
       expect(errorOf(refused)).toMatchObject({ code: "capability_denied" });
-      expect(errorOf(refused).message).toContain("T3 Code · Desk");
+      expect(errorOf(refused).message).toContain("Hyakki · Desk");
       expect(yield* cardOf(a)).toBeUndefined();
     }),
   ),

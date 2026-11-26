@@ -75,7 +75,7 @@ export function assertToolCallReadOnlyOnRequestGrokOutput(
     };
     return frame.method === "session/request_permission" ? [frame.params?.toolCall?.kind] : [];
   });
-  assert.deepEqual(permissionKinds, ["edit"], "Grok must ask T3 before its own write");
+  assert.deepEqual(permissionKinds, ["edit"], "Grok must ask Hyakki before its own write");
 
   const approval = projectionFor(result, transcript.scenario).turnItems.find(
     (item) => item.type === "approval_request",
@@ -99,7 +99,7 @@ function writtenContent(item: OrchestrationV2TurnItem): string | undefined {
 
 // Kiro gates the write with its own prompt and, Supervised under the explicit
 // approval policy, then asks the user to review the turn's changes. Its
-// prompts carry the tool call id but no kind, and only the choices T3 can
+// prompts carry the tool call id but no kind, and only the choices Hyakki can
 // honour (no session-wide "always") reach the card.
 export function assertToolCallReadOnlyOnRequestKiroOutput(
   result: OrchestratorV2ScenarioResult,

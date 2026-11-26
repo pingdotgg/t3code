@@ -279,7 +279,7 @@ describe("web cloud link environment client", () => {
       expect(error).toMatchObject({
         _tag: "CloudEnvironmentLinkError",
         message:
-          "Disconnected locally, but T3 Connect did not confirm it removed this environment: Relay encountered an internal error (upstream_unavailable).",
+          "Disconnected locally, but Hyakki Connect did not confirm it removed this environment: Relay encountered an internal error (upstream_unavailable).",
         traceId: "trace-unlink",
       });
     }),

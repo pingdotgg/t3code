@@ -71,7 +71,7 @@ export type EasDeviceHostConfig = typeof EasDeviceHostConfig.Type;
 
 /**
  * Alpha: devices leased from a Simlock gateway (https://incubator.callstack.com/simlock).
- * T3 never installs Simlock; the gateway and its workers are the user's own.
+ * Hyakki never installs Simlock; the gateway and its workers are the user's own.
  */
 export const SimlockDeviceHostConfig = Schema.Struct({
   kind: Schema.Literal("simlock"),
@@ -602,7 +602,7 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       settings_failed: "Could not read or save device settings.",
       hub_rejected: "The device hub could not complete the request.",
       package_manager_missing:
-        "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
+        "Device support needs npm, which is not on the Hyakki server's PATH. Install npm (it comes with Node.js from nodejs.org), restart Hyakki, then retry.",
     }[this.reason];
     return `Device ${this.operation} failed: ${explanation}`;
   }

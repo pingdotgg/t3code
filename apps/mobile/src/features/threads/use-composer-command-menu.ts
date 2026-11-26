@@ -112,7 +112,7 @@ export function buildComposerSlashCommandItems(
     readonly hasThread: boolean;
     readonly hasCompactableConversation?: boolean;
     readonly offersUsageLimits?: boolean;
-    /** T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live. */
+    /** Hyakki's `/clear` replaces the provider's, which would clear a session Hyakki still treats as live. */
     readonly offersFreshSession?: boolean;
     readonly offersSideChat?: boolean;
     readonly selectedProviderStatus: Pick<ServerProvider, "driver" | "slashCommands"> | null;
@@ -132,7 +132,7 @@ export function buildComposerSlashCommandItems(
       ]
     : [];
 
-  // Providers expand commands only at the start of a message. T3 commands
+  // Providers expand commands only at the start of a message. Hyakki commands
   // change local state and do not have this restriction, except `/clear`.
   if (!input.atMessageStart) return items;
   if (input.offersSideChat) {

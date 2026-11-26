@@ -10,7 +10,7 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-/** fx 0.0.15 fails a sub-agent that Stop cut off; T3 shows it, and its child thread, as interrupted. */
+/** fx 0.0.15 fails a sub-agent that Stop cut off; Hyakki shows it, and its child thread, as interrupted. */
 export function assertFxSubagentStopOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,

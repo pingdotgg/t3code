@@ -87,7 +87,7 @@ export function turnedOnInstance(instance: ProviderInstanceConfig): ProviderInst
   };
 }
 
-/** A CLI the server knows is too old or otherwise broken for T3 Code; Settings updates it. */
+/** A CLI the server knows is too old or otherwise broken for Hyakki; Settings updates it. */
 export function isBrokenVersion(provider: ServerProvider) {
   return provider.installed && provider.compatibilityAdvisory?.status === "broken";
 }
@@ -138,13 +138,13 @@ export function codexNeedsSetup(
 }
 
 /**
- * The phone joins by signing in to T3 Connect, which shares the primary computer. Another
- * computer, a build without T3 Connect, or a policy that turns it off gets no Phone section.
+ * The phone joins by signing in to Hyakki Connect, which shares the primary computer. Another
+ * computer, a build without Hyakki Connect, or a policy that turns it off gets no Phone section.
  */
 export function welcomeOffersPhone(input: {
   readonly isPrimary: boolean;
   readonly cloud: boolean;
-  // Relay read and write access, which sharing this computer through T3 Connect needs.
+  // Relay read and write access, which sharing this computer through Hyakki Connect needs.
   readonly canShare: boolean;
   readonly policy: ManagedPolicySummary | undefined;
 }) {

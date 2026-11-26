@@ -619,7 +619,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       shared: true,
     });
     const spawnCommand = yield* resolveCommand(launch.command, launch.args, input.environment);
-    // A server T3 starts always has a password; without a configured one it is generated and
+    // A server Hyakki starts always has a password; without a configured one it is generated and
     // kept in memory.
     const serverPassword =
       resolveOpenCodeServerPassword({

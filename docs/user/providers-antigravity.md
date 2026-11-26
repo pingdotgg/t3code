@@ -1,16 +1,16 @@
 # Antigravity
 
-T3 Code runs Google's official Antigravity ACP agent on your selected environment, with a T3-managed CLI installation and sign-in separate from your terminal or IDE.
+Hyakki runs Google's official Antigravity ACP agent on your selected environment, with a Hyakki-managed CLI installation and sign-in separate from your terminal or IDE.
 
 ## Set up Antigravity
 
 1. Open **Settings → Providers** (web or desktop), choose your environment, and enable **Antigravity**.
 2. Install the managed runtime (requires 1.25+ GiB free disk space; supports macOS Apple Silicon/Intel, Linux x64/ARM64 glibc/musl, and Windows x64/ARM64).
-3. Click **Sign in** and complete browser sign-in. Wait for T3 Code to confirm access and load models. (Once installed, you can also sign in from mobile.)
+3. Click **Sign in** and complete browser sign-in. Wait for Hyakki to confirm access and load models. (Once installed, you can also sign in from mobile.)
 
-- **Remote sign-in**: Paste the temporary code (or full URL) from Google's completion page into T3 Code's code field.
+- **Remote sign-in**: Paste the temporary code (or full URL) from Google's completion page into Hyakki's code field.
 - **Manual binary**: Install [Antigravity CLI](https://antigravity.google/docs/getting-started) and set **Binary path** to `agy`. Leave blank to use the managed runtime (or `PATH`).
-- **Updates**: Click **Update Antigravity** in provider settings. T3 Code requires Antigravity **1.5+** (1.5.12+ recommended); running threads finish on their original runtime.
+- **Updates**: Click **Update Antigravity** in provider settings. Hyakki requires Antigravity **1.5+** (1.5.12+ recommended); running threads finish on their original runtime.
 
 ### Sign-in methods
 

@@ -31,7 +31,7 @@ describe("prefersHttpMcpTransport", () => {
     expect(prefersHttpMcpTransport(local("/usr/local/bin/cmdc"))).toBe(true);
   });
 
-  it("keeps the stdio bridge for a batch shim T3 refuses to launch", () => {
+  it("keeps the stdio bridge for a batch shim Hyakki refuses to launch", () => {
     expect(prefersHttpMcpTransport(local("C:\\tools\\cmdc.cmd", ["acp"]))).toBe(false);
   });
 

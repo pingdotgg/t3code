@@ -16,7 +16,7 @@ static const SecretSchema chromium_schema = {
 
 int main(int argc, char **argv) {
     if (argc != 2 || argv[1][0] == '\0') return 64;
-    g_set_application_name("T3 Code");
+    g_set_application_name("Hyakki");
 
     GHashTable *attributes = secret_attributes_build(&chromium_schema, "application", argv[1], NULL);
     GError *error = NULL;
