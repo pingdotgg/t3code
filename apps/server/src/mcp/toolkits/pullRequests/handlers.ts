@@ -889,57 +889,61 @@ const make = Effect.gen(function* () {
     ),
     watch_pull_request: writesThread((input) => setWatching(input, true)),
     unwatch_pull_request: writesThread((input) => setWatching(input, false)),
-    write_pull_request_guides: McpToolAccess.writesWithCapability((input) =>
-      Effect.gen(function* () {
-        const located = yield* locateAll(input.pullRequests);
-        const guides = yield* Effect.forEach(
-          located,
-          (entry) =>
-            Effect.gen(function* () {
-              if (entry.target === null) {
-                return {
-                  host: entry.input.host ?? "",
-                  repository: entry.input.repository ?? "",
-                  number: entry.input.number ?? 0,
-                  url: entry.input.url ?? "",
-                  outcome: "failed" as const,
-                  detail: entry.failure,
+    write_pull_request_guides: McpToolAccess.writesWithCapability(
+      (input) =>
+        Effect.gen(function* () {
+          const located = yield* locateAll(input.pullRequests);
+          const guides = yield* Effect.forEach(
+            located,
+            (entry) =>
+              Effect.gen(function* () {
+                if (entry.target === null) {
+                  return {
+                    host: entry.input.host ?? "",
+                    repository: entry.input.repository ?? "",
+                    number: entry.input.number ?? 0,
+                    url: entry.input.url ?? "",
+                    outcome: "failed" as const,
+                    detail: entry.failure,
+                  };
+                }
+                const identity = {
+                  host: entry.target.host,
+                  repository: entry.target.repository,
+                  number: entry.target.number,
+                  url: entry.target.url,
                 };
-              }
-              const identity = {
-                host: entry.target.host,
-                repository: entry.target.repository,
-                number: entry.target.number,
-                url: entry.target.url,
-              };
-              if (entry.project === undefined) {
-                return {
-                  ...identity,
-                  outcome: "failed" as const,
-                  detail: new PullRequestProjectNotFoundError({
-                    repository: entry.target.repository,
-                  }).message,
-                };
-              }
-              return yield* reviewGuides.generate(guideReference(entry.project, entry.target)).pipe(
-                Effect.map((result) => ({
-                  ...identity,
-                  outcome: result.started ? ("started" as const) : ("running" as const),
-                  detail: null,
-                })),
-                Effect.catch((error) =>
-                  Effect.succeed({
+                if (entry.project === undefined) {
+                  return {
                     ...identity,
                     outcome: "failed" as const,
-                    detail: guideFailureDetail(error),
-                  }),
-                ),
-              );
-            }),
-          { concurrency: 4 },
-        );
-        return { guides };
-      }),
+                    detail: new PullRequestProjectNotFoundError({
+                      repository: entry.target.repository,
+                    }).message,
+                  };
+                }
+                return yield* reviewGuides
+                  .generate(guideReference(entry.project, entry.target))
+                  .pipe(
+                    Effect.map((result) => ({
+                      ...identity,
+                      outcome: result.started ? ("started" as const) : ("running" as const),
+                      detail: null,
+                    })),
+                    Effect.catch((error) =>
+                      Effect.succeed({
+                        ...identity,
+                        outcome: "failed" as const,
+                        detail: guideFailureDetail(error),
+                      }),
+                    ),
+                  );
+              }),
+            { concurrency: 4 },
+          );
+          return { guides };
+        }),
+      { broadestAccess: "generate pull request review guides" },
     ),
     read_pull_request_guide: McpToolAccess.reads((input) =>
       Effect.gen(function* () {
@@ -1050,40 +1054,42 @@ const make = Effect.gen(function* () {
         };
       }),
     ),
-    pull_request_create: McpToolAccess.writesWithCapability((input) =>
-      Effect.gen(function* () {
-        const thread = yield* requireThread(PullRequestForgeError, undefined);
-        const project = yield* projectOf(thread, PullRequestForgeError);
-        if (project === undefined) {
-          return yield* new PullRequestProjectNotFoundError({ repository: "" });
-        }
-        const created = yield* git
-          .createPullRequest({
-            cwd: thread.worktreePath ?? project.workspaceRoot,
-            projectId: project.id,
-            title: input.title,
-            body: input.body,
-            baseBranch: input.base,
-            draft: input.draft,
-            private: input.private,
-          })
-          .pipe(Effect.mapError(forgeFailure));
-        if (created.url === undefined) {
-          return yield* new PullRequestForgeError({
-            detail:
-              "The host accepted the PR but does not list it yet. Find it with pull_request_list.",
-          });
-        }
-        const target = yield* resolveTarget({ url: created.url }, project);
-        yield* linkToThread(thread, target);
-        return {
-          ...identityOf(target),
-          created: created.status === "created",
-          ...(thread.lineage.relationshipToParent === "subagent"
-            ? { next: CHILD_PULL_REQUEST_REPORT_NEXT }
-            : {}),
-        };
-      }),
+    pull_request_create: McpToolAccess.writesWithCapability(
+      (input) =>
+        Effect.gen(function* () {
+          const thread = yield* requireThread(PullRequestForgeError, undefined);
+          const project = yield* projectOf(thread, PullRequestForgeError);
+          if (project === undefined) {
+            return yield* new PullRequestProjectNotFoundError({ repository: "" });
+          }
+          const created = yield* git
+            .createPullRequest({
+              cwd: thread.worktreePath ?? project.workspaceRoot,
+              projectId: project.id,
+              title: input.title,
+              body: input.body,
+              baseBranch: input.base,
+              draft: input.draft,
+              private: input.private,
+            })
+            .pipe(Effect.mapError(forgeFailure));
+          if (created.url === undefined) {
+            return yield* new PullRequestForgeError({
+              detail:
+                "The host accepted the PR but does not list it yet. Find it with pull_request_list.",
+            });
+          }
+          const target = yield* resolveTarget({ url: created.url }, project);
+          yield* linkToThread(thread, target);
+          return {
+            ...identityOf(target),
+            created: created.status === "created",
+            ...(thread.lineage.relationshipToParent === "subagent"
+              ? { next: CHILD_PULL_REQUEST_REPORT_NEXT }
+              : {}),
+          };
+        }),
+      { broadestAccess: "push branches and create pull requests" },
     ),
     pull_request_update: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
@@ -1211,24 +1217,26 @@ const make = Effect.gen(function* () {
         return identityOf(target);
       }),
     ),
-    pull_request_merge: McpToolAccess.writesWithCapability((input) =>
-      Effect.gen(function* () {
-        const { target, ref } = yield* locate(input);
-        const stack = input.stack === true ? yield* stackMergeScope(ref, input) : {};
-        yield* pullRequests
-          .runAction({
-            ...ref,
-            action: input.auto === true ? "enable-auto-merge" : "merge",
-            expectedHeadSha: input.expectedHeadSha,
-            ...(input.method === undefined ? {} : { mergeMethod: input.method }),
-            ...stack,
-          })
-          .pipe(Effect.mapError(forgeFailure));
-        const after = yield* pullRequests
-          .summary({ ...ref, allowStale: false })
-          .pipe(Effect.mapError(forgeFailure));
-        return { ...identityOf(target), state: after.state };
-      }),
+    pull_request_merge: McpToolAccess.writesWithCapability(
+      (input) =>
+        Effect.gen(function* () {
+          const { target, ref } = yield* locate(input);
+          const stack = input.stack === true ? yield* stackMergeScope(ref, input) : {};
+          yield* pullRequests
+            .runAction({
+              ...ref,
+              action: input.auto === true ? "enable-auto-merge" : "merge",
+              expectedHeadSha: input.expectedHeadSha,
+              ...(input.method === undefined ? {} : { mergeMethod: input.method }),
+              ...stack,
+            })
+            .pipe(Effect.mapError(forgeFailure));
+          const after = yield* pullRequests
+            .summary({ ...ref, allowStale: false })
+            .pipe(Effect.mapError(forgeFailure));
+          return { ...identityOf(target), state: after.state };
+        }),
+      { broadestAccess: "merge pull requests" },
     ),
     ci_logs: McpToolAccess.reads((input) =>
       Effect.gen(function* () {

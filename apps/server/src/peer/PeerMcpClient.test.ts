@@ -19,7 +19,14 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import {
+  HttpClient,
+  HttpClientResponse,
+  HttpRouter,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
@@ -446,4 +453,74 @@ it.effect("bounds the session handshake, not a tool call that waits longer", () 
     yield* Deferred.succeed(answer, undefined);
     expect(yield* Fiber.join(waiting)).toEqual({ modes: "approval-required/plan" });
   }),
+);
+
+it.effect("fails instead of following HTTP redirects from a peer on /mcp", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const received = yield* Ref.make<ReadonlyArray<string>>([]);
+      const elsewhere = yield* Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
+        Effect.flatMap((server) =>
+          Effect.gen(function* () {
+            yield* HttpServer.serve(
+              Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+                Ref.update(received, (seen) => [...seen, `${request.method} ${request.url}`]).pipe(
+                  Effect.as(HttpServerResponse.empty({ status: 200 })),
+                ),
+              ),
+            ).pipe(Layer.build);
+            const address = (yield* HttpServer.HttpServer).address;
+            if (address._tag === "UnixPathAddress") {
+              return yield* Effect.die("expected a TCP address");
+            }
+            return `http://127.0.0.1:${address.port}`;
+          }).pipe(Effect.provideContext(server)),
+        ),
+      );
+      const redirectMcp = HttpRouter.middleware(
+        (httpEffect) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (request.url.startsWith("/mcp")) {
+              return HttpServerResponse.empty({
+                status: 307,
+                headers: { location: `${elsewhere}${request.url}` },
+              });
+            }
+            return yield* httpEffect;
+          }),
+        { global: true },
+      );
+      const handlers = McpToolAccess.toLayer(toolkit, {
+        probe: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
+        hold: McpToolAccess.reads(() => Effect.succeed({ modes: "" })),
+        refuse: McpToolAccess.reads(() => Effect.fail(refusal)),
+      });
+      const box = descriptorOf("environment-box", "Box");
+      const b = yield* servePeer(
+        box,
+        McpHttpServer.toolkitRegistration(toolkit, handlers),
+        redirectMcp,
+      );
+      const context = yield* Layer.build(
+        layerLinkingEnvironment(descriptorOf("environment-a", "A")),
+      );
+      const links = Context.get(context, PeerLinks.PeerLinks);
+      const client = Context.get(context, PeerMcpClient.PeerMcpClient);
+      yield* linkTo(links, b);
+
+      const failed = yield* client
+        .call({
+          environmentId: box.environmentId,
+          tool: "probe",
+          arguments: {},
+          limits: { runtimeMode: "full-access", interactionMode: "default" },
+          success: Result,
+        })
+        .pipe(Effect.flip);
+      expect(failed.code).toBe("orchestration_error");
+      expect(failed.message).toContain("HTTP 307");
+      expect(yield* Ref.get(received)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

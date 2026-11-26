@@ -1,4 +1,8 @@
-import { EnvironmentId, OrchestratorMcpFailure } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ManagedPolicySummary,
+  OrchestratorMcpFailure,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -8,6 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as WorkflowAgentLinks from "./WorkflowAgentLinks.ts";
 
 const isFailure = Schema.is(OrchestratorMcpFailure);
@@ -20,10 +25,14 @@ interface Call {
 }
 
 /** The other environment, played by the test: each tool answers from a list, in order. */
-const peer = (answers: Record<string, ReadonlyArray<unknown>>, enabled = true) => {
+const peer = (
+  answers: Record<string, ReadonlyArray<unknown>>,
+  enabled = true,
+  managedPolicy?: ManagedPolicySummary,
+) => {
   const calls: Array<Call> = [];
   const left = new Map(Object.entries(answers).map(([tool, list]) => [tool, [...list]]));
-  const layer = Layer.merge(
+  const layer = Layer.mergeAll(
     Layer.succeed(
       PeerMcpClient.PeerMcpClient,
       PeerMcpClient.PeerMcpClient.of({
@@ -41,6 +50,7 @@ const peer = (answers: Record<string, ReadonlyArray<unknown>>, enabled = true) =
       }),
     ),
     Layer.mock(PeerLinks.PeerLinks)({ enabled: Effect.succeed(enabled) }),
+    ServerSettings.layerTest({}, managedPolicy),
   );
   return { calls, layer };
 };
@@ -317,5 +327,34 @@ it.effect("a thread that stays quiet gives the turn back without a result", () =
       there.layer,
     ).pipe(Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))));
     assert.deepStrictEqual(result, { ending: "completed", detail: "", reply: "" });
+  }),
+);
+
+it.effect("carries the local managedPolicy maxRuntimeMode ceiling to remote peer calls", () =>
+  Effect.gen(function* () {
+    for (const maxRuntimeMode of ["auto", "approval-required"] as const) {
+      const there = peer(
+        {
+          t3_project_list: [
+            { projects: [{ id: "p-app", workspaceRoot: "/work/app" }], nextCursor: null },
+          ],
+          t3_thread_launch: [{ threadId: "thread-1", runId: "turn-1" }],
+        },
+        true,
+        {
+          organization: "Greendale Community College",
+          lockedSettings: [],
+          limits: { maxRuntimeMode },
+        },
+      );
+      yield* Effect.provide(
+        Effect.flatMap(WorkflowAgentLinks.make, (links) =>
+          links.start(input, "env-b", "workflow:k", EnvironmentId.make("env-a")),
+        ),
+        there.layer,
+      );
+      assert.isAbove(there.calls.length, 0);
+      assert.isTrue(there.calls.every((call) => call.runtimeMode === maxRuntimeMode));
+    }
   }),
 );

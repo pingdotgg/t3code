@@ -12,20 +12,19 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import { eventStreamResponse } from "../eventStreamResponse.ts";
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { subscribeOrchestrationV2Thread } from "../ws.ts";
 
-/** How soon an open stream ends after its link is revoked here or the beta is turned off. */
-const ACCESS_RECHECK_INTERVAL = Duration.seconds(30);
 const NO_STORE = { "cache-control": "no-store" };
 
 // The owner's thread types hold DateTime values; the JSON codec writes them as strings.
@@ -46,14 +45,14 @@ const admitLink = Effect.gen(function* () {
   const request = yield* HttpServerRequest.HttpServerRequest;
   if (request.headers.origin !== undefined) return refusal(403, "origin_not_allowed");
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
+  const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
   const settings = yield* ServerSettings.ServerSettingsService;
   const linksEnabled = settings.getSettings.pipe(
     Effect.map((current) => current.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
-  // Verifying renews the link's session, as each `/mcp` call does.
-  const verify = auth.authenticateMcpClient(request).pipe(Effect.option);
-  const client = yield* verify;
+  // Verifying renews the link's session once at admission, as each `/mcp` call does.
+  const client = yield* auth.authenticateMcpClient(request).pipe(Effect.option);
   if (client._tag === "None") return refusal(401, "unauthorized");
   if (!client.value.peerLink) return refusal(403, "not_a_link_session");
   if (!(yield* linksEnabled)) return refusal(403, "linked_environments_off");
@@ -66,17 +65,37 @@ const admitLink = Effect.gen(function* () {
   if (shell.value === null || shell.value.deletedAt !== null) {
     return refusal(404, "thread_not_found");
   }
+  const { sessionId, linkExpiresAt } = client.value;
+  const sessionInvalidated = Option.isSome(sessions)
+    ? sessions.value.awaitInvalidation(sessionId).pipe(Effect.ignore)
+    : Effect.never;
+  const linksDisabled = Effect.scoped(
+    Effect.gen(function* () {
+      const changes = yield* settings.subscribeChanges;
+      if (!(yield* linksEnabled)) return;
+      const disabled = yield* changes.pipe(
+        Stream.filter((current) => !current.linkedEnvironmentsEnabled),
+        Stream.runHead,
+      );
+      if (Option.isNone(disabled)) return yield* Effect.never;
+    }),
+  );
+  // Expiry ends an idle stream without calling authenticateMcpClient, which would renew its TTL.
+  const sessionExpired =
+    linkExpiresAt === undefined
+      ? Effect.never
+      : DateTime.now.pipe(
+          Effect.flatMap((now) => {
+            const remaining = linkExpiresAt.epochMilliseconds - now.epochMilliseconds;
+            return remaining <= 0 ? Effect.void : Effect.sleep(Duration.millis(remaining));
+          }),
+        );
   return {
     threadId: shell.value.id,
     params,
-    linkExpiresAt: client.value.linkExpiresAt,
-    /** Completes once the link's session or the beta no longer admits it. */
-    revoked: Effect.all([verify, linksEnabled]).pipe(
-      Effect.repeat({
-        schedule: Schedule.spaced(ACCESS_RECHECK_INTERVAL),
-        until: ([current, enabled]) => current._tag === "None" || !enabled,
-      }),
-    ),
+    linkExpiresAt,
+    /** Completes once the link's session is revoked/expired or the beta is turned off. */
+    revoked: Effect.raceAll([sessionInvalidated, linksDisabled, sessionExpired]),
   };
 });
 

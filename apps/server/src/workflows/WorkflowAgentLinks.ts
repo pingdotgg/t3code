@@ -22,6 +22,7 @@ import type * as Schema from "effect/Schema";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import {
   type AgentResult,
   type AgentTurn,
@@ -30,10 +31,6 @@ import {
   WorkflowAgentError,
   type WorkflowAgents,
 } from "./WorkflowAgents.ts";
-
-// A run acts for whoever owns this environment, not for an agent with modes of its own, so the
-// only ceiling on what it starts there is the access the link was paired with.
-const LIMITS = { runtimeMode: "full-access", interactionMode: "default" } as const;
 
 // T3 Connect's edge drops a request that is idle for about 100 s, so a wait goes out in pieces.
 const WAIT_PIECE = Duration.seconds(50);
@@ -53,6 +50,13 @@ type Service = WorkflowAgents["Service"];
 export const make = Effect.gen(function* () {
   const peers = yield* PeerMcpClient.PeerMcpClient;
   const links = yield* PeerLinks.PeerLinks;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  // A run acts for this environment's owner, so it carries this machine's runtime-mode ceiling
+  // (narrowed further by the link's own access on the peer).
+  const limits = {
+    runtimeMode: settings.managedPolicy?.limits?.maxRuntimeMode ?? "full-access",
+    interactionMode: "default",
+  } as const;
 
   const call = <S extends Schema.Decoder<unknown>>(
     environment: string,
@@ -65,7 +69,7 @@ export const make = Effect.gen(function* () {
         environmentId: environment as EnvironmentId,
         tool,
         arguments: args,
-        limits: LIMITS,
+        limits,
         success,
       })
       .pipe(

@@ -36,6 +36,7 @@ import {
   assertFullAccess,
   assertLiveCaller,
   assertTargetWithinLimits,
+  assertUnsupervisedAccess,
   type Caller,
   loadCaller,
   readCaller,
@@ -209,16 +210,36 @@ export const writesOwnerWork = <P, A, E, R>(
   );
 };
 
-/** Requires handler capability checks, not thread control; linked work is refused the same way. */
-export const writesWithCapability = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
-  declare(
+/** Requires handler capability checks and unsupervised/default mode; linked work is refused the same way. */
+export const writesWithCapability = <P, A, E, R>(
+  handle: (params: P) => Effect.Effect<A, E, R>,
+  options?: {
+    /** Also requires the broadest runtime mode allowed here, respecting managed policy ceilings. */
+    readonly broadestAccess?: string;
+  },
+) => {
+  const check = writingCaller.pipe(
+    Effect.tap((caller) => assertUnsupervisedAccess(caller, options?.broadestAccess)),
+    Effect.tap((caller) =>
+      options?.broadestAccess === undefined
+        ? Effect.void
+        : assertBroadestAccess(caller, options.broadestAccess),
+    ),
+  );
+  return declare(
     (params: P) =>
-      writingCaller.pipe(
-        Effect.tap((caller) => assertNotLinked(caller, "start work here that is not its link's")),
+      check.pipe(
+        Effect.tap((caller) =>
+          assertNotLinked(
+            caller,
+            options?.broadestAccess ?? "start work here that is not its link's",
+          ),
+        ),
         Effect.flatMap(() => handle(params)),
       ),
-    () => writingCaller,
+    () => check,
   );
+};
 
 export const writesThreads = <P, A, E, R>(
   threads: (params: P) => ReadonlyArray<ThreadId | undefined>,

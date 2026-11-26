@@ -14,6 +14,7 @@ import {
   type PullRequestDetail,
   type PullRequestRef,
   type PullRequestReviewGuideResult,
+  type RuntimeMode,
   type ThreadPullRequestLink,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -29,6 +30,7 @@ import type { Tool } from "effect/ai";
 
 import * as GitManager from "../../../git/GitManager.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import {
   type PullRequestTestThread,
   v2PullRequestThread,
@@ -51,6 +53,7 @@ const testCrypto = SecureRandom.make((size) => new Uint8Array(size).fill(7));
 
 const invocation = (
   capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
+  runtimeModeCeiling?: RuntimeMode,
 ): McpInvocationContext.McpInvocationScope => ({
   environmentId: EnvironmentId.make("environment-1"),
   requestNamespace: "provider-session-1",
@@ -62,6 +65,7 @@ const invocation = (
   client: undefined,
   capabilities: new Set(capabilities),
   issuedAt: 1,
+  ...(runtimeModeCeiling === undefined ? {} : { runtimeModeCeiling }),
 });
 
 function makeProject(
@@ -155,6 +159,7 @@ interface HarnessOptions {
   >;
   readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
   readonly git?: Partial<GitManager.GitManager["Service"]>;
+  readonly runtimeModeCeiling?: RuntimeMode;
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -213,7 +218,17 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     }),
     Layer.mock(GitManager.GitManager)(options.git ?? {}),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
-    McpToolAccessTestkit.liveThreadsLayer,
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      getThreadShell: (id) =>
+        Effect.succeed(
+          id === thread?.id
+            ? McpToolAccessTestkit.liveThreadShell(id, {
+                runtimeMode: thread.runtimeMode,
+                interactionMode: thread.interactionMode,
+              })
+            : McpToolAccessTestkit.liveThreadShell(id),
+        ),
+    }),
   );
   const toolkit = yield* PullRequestsToolkit.pipe(
     Effect.provide(
@@ -233,7 +248,10 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       Effect.map(
         (chunk) => chunk.at(-1)!.result as Tool.Success<(typeof PullRequestsToolkit.tools)[Name]>,
       ),
-      Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
+      Effect.provideService(
+        McpInvocationContext.McpInvocationContext,
+        invocation(capabilities, options.runtimeModeCeiling),
+      ),
       Effect.provide(layerDependencies),
     );
   return { commands, guideRequests, call };
@@ -1472,5 +1490,102 @@ describe("source control tools", () => {
         .pipe(Effect.flip);
       expect(unknown.message).toContain("No reviewer named nobody");
     }),
+  );
+
+  it.effect.each([
+    { runtimeMode: "full-access", interactionMode: "plan" },
+    { runtimeMode: "approval-required", interactionMode: "default" },
+    { runtimeMode: "auto-accept-edits", interactionMode: "default" },
+  ] as const)("refuses forge and guide writes for $runtimeMode/$interactionMode callers", (modes) =>
+    Effect.gen(function* () {
+      const mutations: Array<string> = [];
+      const harness = yield* makeHarness({
+        thread: { ...branchThread, ...modes },
+        git: {
+          createPullRequest: () =>
+            Effect.sync(() => void mutations.push("create")).pipe(Effect.as({} as never)),
+        },
+        pullRequests: {
+          update: () => Effect.sync(() => void mutations.push("update")),
+          comment: () => Effect.sync(() => void mutations.push("comment")),
+          submitReview: () => Effect.sync(() => void mutations.push("review")),
+          runAction: () => Effect.sync(() => void mutations.push("merge")),
+          rerunChecks: () => Effect.sync(() => void mutations.push("rerun")).pipe(Effect.as([])),
+        },
+      });
+      const denied = { _tag: "OrchestratorMcpFailure", code: "capability_denied" };
+      expect(
+        yield* harness
+          .call("write_pull_request_guides", {
+            pullRequests: [{ repository: "t3tools/t3code", number: 42 }],
+          })
+          .pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(
+        yield* harness
+          .call("pull_request_create", { title: "Title", body: "Body" })
+          .pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(
+        yield* harness.call("pull_request_merge", { expectedHeadSha: "abc123" }).pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(
+        yield* harness.call("pull_request_update", { title: "Title" }).pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(
+        yield* harness.call("pull_request_respond", { body: "Hi" }).pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(
+        yield* harness
+          .call("pull_request_review", { verdict: "comment", body: "Hi" })
+          .pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(yield* harness.call("ci_rerun", {}).pipe(Effect.flip)).toMatchObject(denied);
+      expect(yield* Ref.get(harness.guideRequests)).toEqual([]);
+      expect(mutations).toEqual([]);
+    }),
+  );
+
+  it.effect(
+    "requires broadest access for guide generation, PR creation, and merge while allowing auto for other forge writes",
+    () =>
+      Effect.gen(function* () {
+        const updated: Array<string> = [];
+        const harness = yield* makeHarness({
+          thread: { ...branchThread, runtimeMode: "auto", interactionMode: "default" },
+          pullRequests: {
+            update: (input) => Effect.sync(() => void updated.push(input.title ?? "")),
+          },
+        });
+        const denied = { _tag: "OrchestratorMcpFailure", code: "capability_denied" };
+        expect(
+          yield* harness
+            .call("write_pull_request_guides", {
+              pullRequests: [{ repository: "t3tools/t3code", number: 42 }],
+            })
+            .pipe(Effect.flip),
+        ).toMatchObject(denied);
+        expect(
+          yield* harness
+            .call("pull_request_create", { title: "Title", body: "Body" })
+            .pipe(Effect.flip),
+        ).toMatchObject(denied);
+        expect(
+          yield* harness
+            .call("pull_request_merge", { expectedHeadSha: "abc123" })
+            .pipe(Effect.flip),
+        ).toMatchObject(denied);
+        yield* harness.call("pull_request_update", { title: "Allowed in auto" });
+        expect(updated).toEqual(["Allowed in auto"]);
+
+        const atCeiling = yield* makeHarness({
+          thread: { ...branchThread, runtimeMode: "auto", interactionMode: "default" },
+          runtimeModeCeiling: "auto",
+        });
+        const guideResult = yield* atCeiling.call("write_pull_request_guides", {
+          pullRequests: [{ repository: "t3tools/t3code", number: 42 }],
+        });
+        expect(guideResult.guides.map((guide) => guide.outcome)).toEqual(["started"]);
+      }),
   );
 });

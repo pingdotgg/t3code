@@ -24,7 +24,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { HttpRouter, HttpServerResponse } from "effect/http";
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -325,6 +325,62 @@ it.effect("gives up on an answer whose body never arrives", () =>
       expect(yield* Queue.take(a.answered)).toBe(403);
       yield* TestClock.adjust(Duration.seconds(10));
       expect(yield* Fiber.join(page)).toMatchObject({ reason: "rejected", label: "Box" });
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("fails instead of following HTTP redirects from a peer thread endpoint", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const received = yield* Ref.make<ReadonlyArray<string>>([]);
+      const elsewhere = yield* Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
+        Effect.flatMap((server) =>
+          Effect.gen(function* () {
+            yield* HttpServer.serve(
+              Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+                Ref.update(received, (seen) => [...seen, `${request.method} ${request.url}`]).pipe(
+                  Effect.as(HttpServerResponse.empty({ status: 200 })),
+                ),
+              ),
+            ).pipe(Layer.build);
+            const address = (yield* HttpServer.HttpServer).address;
+            if (address._tag === "UnixPathAddress") {
+              return yield* Effect.die("expected a TCP address");
+            }
+            return `http://127.0.0.1:${address.port}`;
+          }).pipe(Effect.provideContext(server)),
+        ),
+      );
+      const redirect = Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
+        HttpServerResponse.empty({
+          status: 307,
+          headers: { location: `${elsewhere}${request.url}` },
+        }),
+      );
+      const b = yield* servePeer(
+        box,
+        Layer.empty,
+        Layer.mergeAll(
+          HttpRouter.add("GET", PEER_LINK_THREAD_STREAM_ROUTE, redirect),
+          HttpRouter.add("GET", PEER_LINK_THREAD_HISTORY_ROUTE, redirect),
+          HttpRouter.add("GET", PEER_LINK_THREAD_ITEM_ROUTE, redirect),
+        ),
+      );
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b);
+
+      expect(yield* a.relay.subscribe(input).pipe(Stream.runHead, Effect.flip)).toMatchObject({
+        reason: "unreachable",
+        label: "Box",
+      });
+      expect(
+        yield* a.relay.historyPage({ ...input, cursor: "cursor-1" }).pipe(Effect.flip),
+      ).toMatchObject({ reason: "unreachable", label: "Box" });
+      expect(yield* a.relay.item({ ...input, itemId: boxItem }).pipe(Effect.flip)).toMatchObject({
+        reason: "unreachable",
+        label: "Box",
+      });
+      expect(yield* Ref.get(received)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

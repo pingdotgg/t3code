@@ -22,6 +22,10 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServer from "effect/http/HttpServer";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as TestClock from "effect/testing/TestClock";
 import { Toolkit } from "effect/ai";
 
@@ -295,6 +299,60 @@ it.effect("a linked environment from before client pairing is never asked", () =
         urls: [b.url],
       });
       expect(yield* Ref.get(b.bearers)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("fails instead of following HTTP redirects when requesting a client pairing", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const received = yield* Ref.make<ReadonlyArray<string>>([]);
+      const elsewhere = yield* Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
+        Effect.flatMap((server) =>
+          Effect.gen(function* () {
+            yield* HttpServer.serve(
+              Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+                Ref.update(received, (seen) => [...seen, `${request.method} ${request.url}`]).pipe(
+                  Effect.as(HttpServerResponse.empty({ status: 200 })),
+                ),
+              ),
+            ).pipe(Layer.build);
+            const address = (yield* HttpServer.HttpServer).address;
+            if (address._tag === "UnixPathAddress") {
+              return yield* Effect.die("expected a TCP address");
+            }
+            return `http://127.0.0.1:${address.port}`;
+          }).pipe(Effect.provideContext(server)),
+        ),
+      );
+      const redirectPairing = HttpRouter.middleware(
+        (httpEffect) =>
+          Effect.gen(function* () {
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            if (request.url.startsWith("/api/peer-link/client-pairing")) {
+              return HttpServerResponse.empty({
+                status: 307,
+                headers: { location: `${elsewhere}${request.url}` },
+              });
+            }
+            return yield* httpEffect;
+          }),
+        { global: true },
+      );
+      const b = yield* servePeer(
+        box,
+        McpHttpServer.toolkitRegistration(NoTools, McpToolAccess.toLayer(NoTools, {})),
+        redirectPairing,
+      );
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "full-access");
+      const phone = yield* a.client(AuthStandardClientScopes);
+
+      expect(yield* a.pairing.request({ environmentId: box.environmentId }, phone)).toMatchObject({
+        type: "unsupported",
+        environmentId: box.environmentId,
+      });
+      expect(yield* Ref.get(received)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

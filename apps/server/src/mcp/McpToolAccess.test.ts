@@ -26,7 +26,10 @@ import * as McpToolAccess from "./McpToolAccess.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
 
 const supervisedThreadId = ThreadId.make("thread:supervised");
+const autoAcceptThreadId = ThreadId.make("thread:auto-accept-edits");
+const autoThreadId = ThreadId.make("thread:auto");
 const planThreadId = ThreadId.make("thread:plan");
+const fullAccessPlanThreadId = ThreadId.make("thread:full-access-plan");
 const fullAccessThreadId = ThreadId.make("thread:full-access");
 const endedThreadId = ThreadId.make("thread:ended");
 const backgroundThreadId = ThreadId.make("thread:background");
@@ -43,9 +46,18 @@ const backgroundShell = (threadId: ThreadId, providerInstanceId: ProviderInstanc
 
 const shells = new Map([
   [supervisedThreadId, liveThreadShell(supervisedThreadId, { runtimeMode: "approval-required" })],
+  [autoAcceptThreadId, liveThreadShell(autoAcceptThreadId, { runtimeMode: "auto-accept-edits" })],
+  [autoThreadId, liveThreadShell(autoThreadId, { runtimeMode: "auto" })],
   [
     planThreadId,
     liveThreadShell(planThreadId, { runtimeMode: "approval-required", interactionMode: "plan" }),
+  ],
+  [
+    fullAccessPlanThreadId,
+    liveThreadShell(fullAccessPlanThreadId, {
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+    }),
   ],
   [fullAccessThreadId, liveThreadShell(fullAccessThreadId)],
   [endedThreadId, liveThreadShell(endedThreadId, { activeRunId: null })],
@@ -125,6 +137,7 @@ const ProbeToolkit = Toolkit.make(
   ),
   Tool.make("writes", probe),
   Tool.make("writes_with_capability", probe),
+  Tool.make("writes_with_capability_broadest", probe),
   Tool.make("writes_threads", {
     ...probe,
     parameters: Schema.Struct({ threadId: Schema.optional(ThreadId) }),
@@ -146,6 +159,9 @@ const probeHandlers: McpToolAccess.Handlers<typeof ProbeToolkit.tools> = {
   acts_as_caller: McpToolAccess.actsAsCaller(() => ran),
   writes: McpToolAccess.writes(() => ran),
   writes_with_capability: McpToolAccess.writesWithCapability(() => ran),
+  writes_with_capability_broadest: McpToolAccess.writesWithCapability(() => ran, {
+    broadestAccess: "run broad capability work",
+  }),
   writes_threads: McpToolAccess.writesThreads(
     (input) => [input.threadId],
     () => ran,
@@ -193,6 +209,7 @@ export const refusedAtCompileTime = () => {
       acts_as_caller: unchecked,
       writes: unchecked,
       writes_with_capability: unchecked,
+      writes_with_capability_broadest: unchecked,
       writes_threads: unchecked,
       starts_threads: unchecked,
       writes_environment: unchecked,
@@ -229,7 +246,10 @@ const call = (
   );
 
 const supervised = threadCaller(supervisedThreadId);
+const autoAccept = threadCaller(autoAcceptThreadId);
+const auto = threadCaller(autoThreadId);
 const plan = threadCaller(planThreadId);
+const fullAccessPlan = threadCaller(fullAccessPlanThreadId);
 const fullAccess = threadCaller(fullAccessThreadId);
 const ended = threadCaller(endedThreadId);
 const background = threadCaller(backgroundThreadId);
@@ -241,6 +261,8 @@ const mismatchedProvider = {
   thread: { ...background.thread!, providerInstanceId: ProviderInstanceId.make("claude") },
 };
 const supervisedClient = clientCaller("approval-required");
+const autoAcceptClient = clientCaller("auto-accept-edits");
+const autoClient = clientCaller("auto");
 const fullAccessClient = clientCaller("full-access");
 const readOnlyClient = clientCaller("read-only");
 const linkedClient: McpInvocationContext.McpInvocationScope = {
@@ -259,6 +281,14 @@ const atCeilingClient: McpInvocationContext.McpInvocationScope = {
   client: {
     ...fullAccessClient.client!,
     narrowedTo: { runtimeMode: "auto", interactionMode: "default" },
+  },
+};
+const atSupervisedCeilingClient: McpInvocationContext.McpInvocationScope = {
+  ...fullAccessClient,
+  runtimeModeCeiling: "approval-required",
+  client: {
+    ...fullAccessClient.client!,
+    narrowedTo: { runtimeMode: "approval-required", interactionMode: "default" },
   },
 };
 const previewOnly = { ...fullAccess, capabilities: new Set(["preview"] as const) };
@@ -291,12 +321,29 @@ it.effect.each([
   ["writes_environment", previewOnly, {}, "capability_denied"],
 
   ["writes_with_capability", previewOnly, {}, "ran"],
+  ["writes_with_capability", auto, {}, "ran"],
+  ["writes_with_capability", autoClient, {}, "ran"],
+  ["writes_with_capability", supervised, {}, "capability_denied"],
+  ["writes_with_capability", supervisedClient, {}, "capability_denied"],
+  ["writes_with_capability", autoAccept, {}, "capability_denied"],
+  ["writes_with_capability", autoAcceptClient, {}, "capability_denied"],
+  ["writes_with_capability", plan, {}, "capability_denied"],
+  ["writes_with_capability", fullAccessPlan, {}, "capability_denied"],
   ["writes_with_capability", readOnlyClient, {}, "capability_denied"],
   ["writes_with_capability", ended, {}, "parent_not_active"],
   ["writes", linkedClient, {}, "capability_denied"],
   ["writes_with_capability", linkedClient, {}, "capability_denied"],
   ["writes", fullAccessLinkedClient, {}, "ran"],
   ["writes_with_capability", fullAccessLinkedClient, {}, "ran"],
+  ["writes_with_capability_broadest", fullAccess, {}, "ran"],
+  ["writes_with_capability_broadest", auto, {}, "capability_denied"],
+  ["writes_with_capability_broadest", autoAccept, {}, "capability_denied"],
+  ["writes_with_capability_broadest", supervised, {}, "capability_denied"],
+  ["writes_with_capability_broadest", fullAccessPlan, {}, "capability_denied"],
+  ["writes_with_capability_broadest", fullAccessClient, {}, "ran"],
+  ["writes_with_capability_broadest", autoClient, {}, "capability_denied"],
+  ["writes_with_capability_broadest", atCeilingClient, {}, "ran"],
+  ["writes_with_capability_broadest", atSupervisedCeilingClient, {}, "capability_denied"],
 
   ["writes_threads", supervised, {}, "ran"],
   ["writes_threads", supervised, { threadId: planThreadId }, "ran"],
@@ -447,6 +494,15 @@ it.effect.each([
   ["writes", ended, { environmentId: box }, "parent_not_active"],
   ["writes", supervised, { environmentId: box }, "writes in environment-box"],
   ["writes_with_capability", readOnlyClient, { environmentId: box }, "capability_denied"],
+  ["writes_with_capability", supervised, { environmentId: box }, "capability_denied"],
+  ["writes_with_capability", autoAccept, { environmentId: box }, "capability_denied"],
+  ["writes_with_capability", plan, { environmentId: box }, "capability_denied"],
+  [
+    "writes_with_capability",
+    auto,
+    { environmentId: box },
+    "writes_with_capability in environment-box",
+  ],
   [
     "starts_threads",
     plan,

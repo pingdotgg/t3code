@@ -121,7 +121,7 @@ const fromStatus = (status: number, code: string | undefined, label: string) => 
 
 const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
-  const httpClient = yield* HttpClient.HttpClient;
+  const httpClient = PeerLinks.noRedirectPeerHttpClient(yield* HttpClient.HttpClient);
 
   /**
    * Asks the linked environment for `route` of the thread. The response stays open until the

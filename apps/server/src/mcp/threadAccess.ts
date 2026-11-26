@@ -221,6 +221,20 @@ export const assertFullAccess = (context: Caller, message: string) =>
     ? Effect.void
     : Effect.fail(new OrchestratorMcpFailure({ code: "capability_denied", message }));
 
+export const assertUnsupervisedAccess = (context: Caller, what?: string) =>
+  (context.limits.runtimeMode === "auto" || context.limits.runtimeMode === "full-access") &&
+  context.limits.interactionMode === "default"
+    ? Effect.void
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message:
+            what === undefined
+              ? `Only a caller with auto/default or full-access/default access can perform this action. This caller is limited to ${context.limits.runtimeMode}/${context.limits.interactionMode}.`
+              : `Only a caller with auto/default or full-access/default access can ${what}. This caller is limited to ${context.limits.runtimeMode}/${context.limits.interactionMode}.`,
+        }),
+      );
+
 /**
  * For work whose definition picks its own modes: the caller must hold the broadest modes a
  * thread may run in here, full access or an administrator's ceiling below it.

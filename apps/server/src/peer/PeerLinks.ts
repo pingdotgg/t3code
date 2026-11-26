@@ -238,6 +238,15 @@ export const LoopbackHost = Context.Reference<(host: string) => boolean>(
   { defaultValue: () => isLocalLoopbackHost },
 );
 
+/**
+ * Disables automatic redirect following on peer requests: only the verified peer origin may
+ * receive a pairing code or link token, and a peer's 3xx must never pivot to another host.
+ */
+export const noRedirectPeerHttpClient = (httpClient: HttpClient.HttpClient) =>
+  HttpClient.transform(httpClient, (response) =>
+    Effect.provideService(response, FetchHttpClient.RequestInit, { redirect: "manual" }),
+  );
+
 /** Whether a peer holds a linked agent to its limits and keeps its work within its link. */
 const linkLimitsHold = (peer: { readonly capabilities: ExecutionEnvironmentCapabilities }) =>
   peer.capabilities.mcpModeLimitHeader === true && peer.capabilities.linkFence === true;
@@ -262,11 +271,7 @@ const make = Effect.gen(function* () {
     Effect.orDie,
   );
 
-  // Only the origin `peerOrigin` checked may receive a pairing code or token:
-  // a redirect could forward them anywhere, including plain http.
-  const peerHttpClient = HttpClient.transform(httpClient, (response) =>
-    Effect.provideService(response, FetchHttpClient.RequestInit, { redirect: "manual" }),
-  );
+  const peerHttpClient = noRedirectPeerHttpClient(httpClient);
 
   const clientFor = (origin: string) =>
     HttpApiClient.make(PeerHttpApi, { baseUrl: origin }).pipe(

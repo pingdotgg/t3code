@@ -159,7 +159,7 @@ export const layerIssuer = Layer.effect(PeerClientPairingIssuer, makeIssuer);
 const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
-  const httpClient = yield* HttpClient.HttpClient;
+  const httpClient = PeerLinks.noRedirectPeerHttpClient(yield* HttpClient.HttpClient);
 
   /** What this environment's Connections calls the client that asked. */
   const clientLabelOf = (sessionId: AuthSessionId) =>

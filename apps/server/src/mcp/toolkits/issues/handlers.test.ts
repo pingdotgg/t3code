@@ -3,6 +3,8 @@ import {
   IssueTrackerKind,
   ProjectId,
   ProviderInstanceId,
+  type ProviderInteractionMode,
+  type RuntimeMode,
   ThreadId,
   type IssueDetail,
   type OrchestrationProjectShell,
@@ -24,6 +26,7 @@ import type { Tool } from "effect/ai";
 import * as IssueService from "../../../issue/IssueService.ts";
 import * as IssueTrackerRegistry from "../../../issue/IssueTrackerRegistry.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import { v2PullRequestThread } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as IssueTrackerBindings from "../../../persistence/IssueTrackerBindings.ts";
@@ -148,6 +151,10 @@ const projectLayer = Layer.mock(ProjectService.ProjectService)({
 const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
   issues: ReadonlyArray<ThreadIssueLink> = [],
   issueLayer?: Layer.Layer<IssueService.IssueService>,
+  callerModes?: {
+    readonly runtimeMode?: RuntimeMode;
+    readonly interactionMode?: ProviderInteractionMode;
+  },
 ) {
   const links = yield* Ref.make<ReadonlyArray<ThreadIssueService.LinkThreadIssueInput>>([]);
   const layerDependencies = Layer.mergeAll(
@@ -183,7 +190,12 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
         ),
       unlink: () => Effect.succeed({ wasLinked: true }),
     }),
-    McpToolAccessTestkit.liveThreadsLayer,
+    callerModes === undefined
+      ? McpToolAccessTestkit.liveThreadsLayer
+      : Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (threadId) =>
+            Effect.succeed(McpToolAccessTestkit.liveThreadShell(threadId, callerModes)),
+        }),
   );
   const toolkit = yield* IssuesToolkit.pipe(
     Effect.provide(
@@ -440,6 +452,72 @@ describe("issue toolkit handlers", () => {
       expect(result.issues).toMatchObject([{ key: "7", title: "Seven", displayKey: "#7" }]);
       const unlinked = yield* harness.call("unlink_issue", { url: detail.url });
       expect(unlinked.wasLinked).toBe(true);
+    }),
+  );
+
+  it.effect.each([
+    { runtimeMode: "full-access", interactionMode: "plan" },
+    { runtimeMode: "approval-required", interactionMode: "default" },
+    { runtimeMode: "auto-accept-edits", interactionMode: "default" },
+  ] as const)("refuses issue writes for $runtimeMode/$interactionMode callers", (modes) =>
+    Effect.gen(function* () {
+      const writes: Array<string> = [];
+      const mockIssues = Layer.mock(IssueService.IssueService)({
+        projectScope: (projectId) =>
+          Effect.succeed({
+            projectId,
+            tracker: GITHUB,
+            host: "github.com",
+            scope: "t3tools/t3code",
+          }),
+        create: () =>
+          Effect.sync(() => void writes.push("create")).pipe(
+            Effect.as({ key: "8", url: detail.url, displayKey: "#8" }),
+          ),
+        comment: () => Effect.sync(() => void writes.push("comment")),
+        setState: () => Effect.sync(() => void writes.push("setState")),
+      });
+      const harness = yield* makeHarness([], mockIssues, modes);
+      const denied = { _tag: "OrchestratorMcpFailure", code: "capability_denied" };
+      expect(
+        yield* harness.call("create_issue", { title: "New issue" }).pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(
+        yield* harness.call("comment_on_issue", { key: "7", body: "Hello" }).pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(
+        yield* harness.call("set_issue_state", { key: "7", state: "closed" }).pipe(Effect.flip),
+      ).toMatchObject(denied);
+      expect(writes).toEqual([]);
+    }),
+  );
+
+  it.effect("allows issue writes for auto/default callers", () =>
+    Effect.gen(function* () {
+      const writes: Array<string> = [];
+      const mockIssues = Layer.mock(IssueService.IssueService)({
+        projectScope: (projectId) =>
+          Effect.succeed({
+            projectId,
+            tracker: GITHUB,
+            host: "github.com",
+            scope: "t3tools/t3code",
+          }),
+        create: () =>
+          Effect.sync(() => void writes.push("create")).pipe(
+            Effect.as({ key: "8", url: detail.url, displayKey: "#8" }),
+          ),
+        comment: () => Effect.sync(() => void writes.push("comment")),
+        setState: () => Effect.sync(() => void writes.push("setState")),
+      });
+      const harness = yield* makeHarness([], mockIssues, {
+        runtimeMode: "auto",
+        interactionMode: "default",
+      });
+      yield* harness.call("create_issue", { title: "New issue" });
+      yield* harness.call("comment_on_issue", { key: "7", body: "Hello" });
+      yield* harness.call("set_issue_state", { key: "7", state: "closed" });
+      expect(writes).toEqual(["create", "comment", "setState"]);
     }),
   );
 });
