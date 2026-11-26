@@ -758,6 +758,27 @@ describe("question answer paths", () => {
             "Contact the duty editor.\nHarbor Office\nPier 7\nInclude your reference.",
           ],
         },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Deposit: $100<div>Balance: $500</div></div><div>Purchased in June<section>Delivered in July</section></div><div>Keep <div></div>walking</div><div>Order <span>number</span> 42</div><div>Account<div><div></div>Balance: $200</div></div><div>Name<div>\nValue</div></div><div>Board<div><hr/></div>now</div><div>Rule<div><hr/>\nSigned</div></div><div>Note<div>  <em>indented</em></div></div></body></html>',
+          },
+          expected: [
+            "Deposit: $100\nBalance: $500\n",
+            "Purchased in June\nDelivered in July\n",
+            "Keep \nwalking\n",
+            "Order number 42",
+            "Account\nBalance: $200\n",
+            "Name\nValue",
+            "Board\nnow",
+            "Rule\nSigned",
+            "Note\n  indented",
+          ],
+        },
         // A prefixed span attribute is foreign markup, not an XHTML span.
         {
           ext: "epub",
