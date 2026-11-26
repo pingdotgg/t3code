@@ -790,7 +790,8 @@ describe("WebRTC device streams", () => {
   });
 
   it("falls back to MJPEG once when an iOS WebRTC attempt shows no video", async () => {
-    const { client, events, peers, image } = setup("ios");
+    const stream = { transport: "http" };
+    const { client, events, peers, image } = setup("ios", stream);
     const imageReady = () => {
       image.naturalWidth = 400;
       image.naturalHeight = 800;
@@ -814,10 +815,26 @@ describe("WebRTC device streams", () => {
     expect(events.onStatus).not.toHaveBeenCalledWith("error", expect.anything());
 
     // A refused MJPEG image switches to WebRTC, which then fails instead of bouncing back.
+    stream.transport = "webrtc";
     image.dispatchEvent(new Event("error"));
     await vi.advanceTimersByTimeAsync(15_000);
     expect(peers).toHaveLength(attempts + 1);
     expect(events.onMjpegFallback).toHaveBeenCalledOnce();
+    expect(events.onStatus).toHaveBeenLastCalledWith("error", expect.any(String));
+    client.stop();
+  });
+
+  it("keeps an iOS host that reports WebRTC on WebRTC for the full first-frame window", async () => {
+    const { client, events, peers } = setup("ios");
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    peers[0]!.connectionState = "failed";
+    peers[0]!.onconnectionstatechange?.();
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(peers.length).toBeGreaterThan(1);
+    expect(events.onStatus).not.toHaveBeenCalledWith("error", expect.anything());
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(events.onMjpegFallback).not.toHaveBeenCalled();
     expect(events.onStatus).toHaveBeenLastCalledWith("error", expect.any(String));
     client.stop();
   });
@@ -850,7 +867,7 @@ describe("WebRTC device streams", () => {
   });
 
   it("shows the WebRTC canvas again when a restart follows an MJPEG fallback", async () => {
-    const { client, events, peers, videos, present } = setup("ios");
+    const { client, events, peers, videos, present } = setup("ios", { transport: "http" });
     client.start();
     await vi.advanceTimersByTimeAsync(0);
     peers[0]!.connectionState = "failed";
@@ -871,7 +888,9 @@ describe("WebRTC device streams", () => {
   });
 
   it("restarts the iOS WebRTC feed when Duo panels are cleared without WebCodecs", async () => {
-    const { client, fetch, sockets, peers, videos, present } = setup("ios");
+    const { client, events, fetch, sockets, peers, videos, present } = setup("ios", {
+      transport: "http",
+    });
     client.start();
     await vi.advanceTimersByTimeAsync(0);
     // A screen config (tag 0x82) with a hinge lets the viewer enter Duo.
@@ -909,6 +928,15 @@ describe("WebRTC device streams", () => {
     client.setDuoPanels(panels);
     await vi.advanceTimersByTimeAsync(0);
     expect(offers()).toBe(before + 1);
+
+    // Panels installed again before the restarted feed's first frame keep Duo on screen.
+    client.setDuoPanels(null);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(offers()).toBe(before + 2);
+    client.setDuoPanels(panels);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(events.onMjpegFallback).not.toHaveBeenCalled();
+    expect(events.onStatus).not.toHaveBeenCalledWith("error", expect.anything());
     client.stop();
   });
 });

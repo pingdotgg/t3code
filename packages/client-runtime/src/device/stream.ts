@@ -1113,7 +1113,8 @@ export function createDeviceStreamClient(
     // ICE servers.
     const settings = (await probeStreamSettings()) ?? {};
     if (stopped || generation !== session || videoGeneration !== feedGeneration) return;
-    mjpegIfWebRtcStalls = true;
+    // A host that reports "webrtc" refuses MJPEG, so only the others get the fallback.
+    mjpegIfWebRtcStalls = settings.transport !== "webrtc";
     // The probe used part of the first-frame window; the WebRTC attempt gets its own.
     clearFrameTimer();
     connecting();
@@ -1462,6 +1463,10 @@ export function createDeviceStreamClient(
       controller?.abort();
       controller = null;
       closePeer();
+      if (mjpegIfWebRtcStalls) {
+        mjpegIfWebRtcStalls = false;
+        clearFrameTimer();
+      }
       closeDecoder();
       const retry = retryTimers.get("video");
       if (retry) clearTimeout(retry);
