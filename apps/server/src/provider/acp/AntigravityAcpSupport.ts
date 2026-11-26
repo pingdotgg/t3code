@@ -58,7 +58,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
 }
 
 function parseAntigravityVersion(version: string | null | undefined) {
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
+  const match = /^(?:v|agy_acp_server_)?(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? "");
   return match === null ? undefined : [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
