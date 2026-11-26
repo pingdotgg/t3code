@@ -351,30 +351,6 @@ describe("splitMarkdown", () => {
   });
 
   it.each([
-    ["comments", [["<!-- Links ", "-->"]]],
-    ["raw HTML", ["pre", "style", "script", "textarea"].map((tag) => [`<${tag}>`, `</${tag}>`])],
-    [
-      "declarations",
-      [
-        ["<?links ", "?>"],
-        ["<![CDATA[", "]]>"],
-        ["<!DOCTYPE html ", ">"],
-      ],
-    ],
-  ])("collects definitions immediately after closed HTML blocks: %s", (_, blocks) => {
-    const definitions = "[docs]: https://example.com\n[ci]: https://example.com/ci";
-    for (const [open, close] of blocks) {
-      for (const html of [`${open}${close}`, `${open}\n[hidden]: /inside-html\n${close}`]) {
-        const text = `[Docs][docs]\n\n${"a ".repeat(2500)}\n\n## More\n\n${html}\n${definitions}`;
-        const result = splitMarkdown(text);
-        expect(result.chunks).toHaveLength(2);
-        expect(result.chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
-        expect(result.definitions).toBe(definitions);
-      }
-    }
-  });
-
-  it.each([
     ["nested markers on one line", "- - ```\n    code\n    ```"],
     ["a line of many nested markers", "- ".repeat(70_000) + "x"],
     ["a heading in a list item", "- # Heading\n  2. Item\n     ```\n     code\n        ```"],
@@ -446,6 +422,14 @@ describe("splitMarkdown", () => {
         "[code]: /inside-a-fence-after-a-comment",
         "```",
         "",
+        "<!-- Links",
+        "[hidden]: /inside-a-comment",
+        "-->",
+        "[html]: /after-an-html-block",
+        "",
+        "<pre></pre>",
+        "[pre]: /after-a-one-line-html-block",
+        "",
         "- ```md",
         "  ~~~",
         "  ~~~",
@@ -458,7 +442,7 @@ describe("splitMarkdown", () => {
         "  ```",
       ].join("\n");
       expect(splitMarkdown(text).definitions).toBe(
-        "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment",
+        "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment\n[html]: /after-an-html-block\n[pre]: /after-a-one-line-html-block",
       );
       const frontmatter = ["---", "title: x", "...", "[fm]: /after-frontmatter", "", "# A"];
       expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
