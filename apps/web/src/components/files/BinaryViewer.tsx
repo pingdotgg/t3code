@@ -21,6 +21,7 @@ import {
   FileSurfaceNotice,
 } from "./fileSurfaceChrome";
 import {
+  formatArchiveModifiedDate,
   SQLITE_PAGE_SIZE,
   type BinaryWorkerRequest,
   type BinaryWorkerResult,
@@ -376,7 +377,7 @@ export default function BinaryViewer(props: {
                       {formatAttachmentSize(item.size, messages)}
                     </td>
                     <td className="w-28 border-b border-border/60 px-3 py-2 text-right whitespace-nowrap text-muted-foreground">
-                      {item.modified ? new Date(item.modified).toLocaleDateString() : "-"}
+                      {formatArchiveModifiedDate(item.modified)}
                     </td>
                   </tr>
                 ))}

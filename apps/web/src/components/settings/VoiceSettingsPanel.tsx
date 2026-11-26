@@ -226,7 +226,6 @@ function ModelCard(props: ModelCardProps) {
   const locale = useLocale();
   const { model } = props;
   const downloading = model.state === "downloading" || model.state === "verifying";
-  const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   const percent = speechModelDownloadPercent(model.downloaded ?? 0, model.size);
   return (
     <div className="@container/model px-3 py-3">
@@ -323,7 +322,7 @@ function ModelCard(props: ModelCardProps) {
               >
                 <div
                   className="h-full bg-primary transition-[width] duration-200"
-                  style={{ width: `${progress}%` }}
+                  style={{ width: `${percent}%` }}
                 />
               </div>
               <p className="mt-1 text-2xs text-muted-foreground">
