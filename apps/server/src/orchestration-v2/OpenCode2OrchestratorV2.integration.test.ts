@@ -553,6 +553,7 @@ describe("OpenCode 2 through the orchestrator", () => {
       const original = result.projections.get(source.threadId);
       assert.isDefined(original);
       const [first, failed, last] = original.runs;
+      assert.isDefined(first);
       assert.deepEqual(
         [first?.status, failed?.status, last?.status],
         ["completed", "failed", "completed"],
@@ -564,7 +565,7 @@ describe("OpenCode 2 through the orchestrator", () => {
             ? [item.runId]
             : [],
         ),
-        [first?.id, first?.id],
+        [first.id, first.id],
       );
       assert.deepEqual(
         original.visibleTurnItems.flatMap(({ item }) =>

@@ -265,7 +265,7 @@ interface ActiveTurn {
   readonly models: Set<string>;
   lastStep: Tokens | undefined;
   before: string | null | undefined;
-  command: { readonly before: string | null; prompt: string | undefined } | undefined;
+  commandBefore: string | null | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
   todoPlanId: PlanId | undefined;
@@ -1758,7 +1758,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       models: new Set(),
       lastStep: undefined,
       before: undefined,
-      command: undefined,
+      commandBefore: undefined,
       compaction: undefined,
       compactions: 0,
       todoPlanId: undefined,
@@ -3616,9 +3616,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           event.type === "session.inbox.delivered" &&
           turn !== undefined &&
           state.subagent === undefined &&
-          (isOwnPrompt(event.data.inboxID) ||
-            external !== undefined ||
-            turn.command?.prompt === event.data.inboxID)
+          (isOwnPrompt(event.data.inboxID) || external !== undefined)
         ) {
           state.providerThread = {
             ...state.providerThread,
@@ -3646,18 +3644,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (event.type === "session.inbox.enqueued" && event.data.item.type === "user") {
         const text = event.data.item.payload.text;
         const turn = state.active;
-        const command = turn?.command;
         if (state.subagent !== undefined) {
           if (turn === undefined) state.subagent.prompt ??= text;
         } else if (!isOwnPrompt(event.data.inboxID)) {
-          if (
-            !held &&
-            command !== undefined &&
-            (command.prompt === undefined || command.prompt === event.data.inboxID)
-          ) {
-            command.prompt = event.data.inboxID;
-            return;
-          }
           state.externalPrompts.set(event.data.inboxID, {
             text,
             leads: turn === undefined && !held && state.reports.size === 0,
@@ -3713,8 +3702,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const turn = state.active;
       if (turn === undefined) return undefined;
       const promptId = promptOf(turn.providerTurn);
-      const { command } = turn;
-      const before = command === undefined ? turn.before : command.before;
+      const { commandBefore } = turn;
+      const before = commandBefore === undefined ? turn.before : commandBefore;
       if (promptId === undefined && before === undefined) return undefined;
       const start = before !== undefined ? before : promptId;
       const read = yield* OpenCode2Client.paginate(
@@ -3733,23 +3722,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const found = start === null || read.at(-1)?.id === start;
           if (!found) return undefined;
           const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
-          if (command !== undefined) {
-            const prompt = recent.findLast(
-              (message) =>
-                message.type === "user" &&
-                (command.prompt === undefined
-                  ? !isOwnPrompt(message.id)
-                  : message.id === command.prompt),
-            );
+          if (commandBefore !== undefined) {
+            const prompt = recent.find((message) => message.type === "user");
             if (prompt !== undefined) {
-              command.prompt = prompt.id;
-              const head = state.providerThread.nativeConversationHeadRef?.nativeId;
-              if (!recent.some((message) => message.id === head)) {
-                state.providerThread = {
-                  ...state.providerThread,
-                  nativeConversationHeadRef: ref(prompt.id, "weak"),
-                };
-              }
+              state.providerThread = {
+                ...state.providerThread,
+                nativeConversationHeadRef: ref(prompt.id, "weak"),
+              };
             }
           }
           for (const message of recent) {
@@ -3778,7 +3757,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             turn.retry = undefined;
           }
           for (const message of recent.toReversed()) {
-            if (message.type !== "assistant" || state.active !== turn) continue;
+            if (state.active !== turn) break;
+            if (
+              message.type === "user" &&
+              commandBefore !== undefined &&
+              !isOwnPrompt(message.id)
+            ) {
+              state.externalPrompts.delete(message.id);
+              yield* emitExternalPrompt(state, turn, message.id, message.text);
+            }
+            if (message.type !== "assistant") continue;
             const ordinals = { text: 0, reasoning: 0 };
             for (const [index, part] of message.content.entries()) {
               if (part.type === "text" || part.type === "reasoning") {
@@ -4851,11 +4839,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           Effect.orElseSucceed(() => []),
         );
         if (commands.some((entry) => entry.name === command.name)) {
-          // session.command neither accepts nor returns our ID; record the preceding history boundary.
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           const before = newest.data[0]?.id ?? null;
           if (!sending()) return;
-          turn.command = { before, prompt: undefined };
+          turn.commandBefore = before;
           if (goalCommand?.type === "pause" || goalCommand?.type === "clear") {
             // OpenCode rejects pausing or clearing a missing goal; Codex treats that as a no-op.
             yield* client.session.command({ sessionID, ...command }).pipe(
