@@ -124,7 +124,7 @@ const decodeInspected = Schema.decodeUnknownOption(Inspected);
 
 const scriptRanges: readonly (readonly [FallbackScript, RegExp])[] = [
   ["hebrew", /[\u0590-\u05FF\uFB1D-\uFB4F]/u],
-  ["arabic", /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/u],
+  ["arabic", /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFC]/u],
   ["cjk-jp", /[\u3040-\u30FF\u31F0-\u31FF\uFF66-\uFF9F]/u],
   ["cjk-kr", /[\u1100-\u11FF\u3130-\u318F\uAC00-\uD7AF]/u],
 ];

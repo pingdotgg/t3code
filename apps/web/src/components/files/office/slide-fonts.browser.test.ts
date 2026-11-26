@@ -65,3 +65,15 @@ it("lays slide text out with heavy stand-ins and script fallbacks, and draws tex
   expect(thai?.text).toBe("ภาษาไทย");
   expect(thai?.glyphs).toEqual([]);
 });
+
+it("asks for the Arabic fallback for an Arabic ligature, but not for a zero-width no-break space", async () => {
+  await initWasm();
+  const scripts = async (text: string) => {
+    const bytes = await deck([{ text, family: "Arial" }]);
+
+    return deckText(bytes, openPresentation(bytes).snapshot()).scripts;
+  };
+
+  expect(await scripts("Quarterly\uFEFF report")).toEqual([]);
+  expect(await scripts("Quarterly \uFEFC report")).toEqual(["arabic"]);
+});
