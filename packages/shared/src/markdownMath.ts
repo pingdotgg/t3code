@@ -26,6 +26,7 @@ export function markdownMathRanges(source: string, tree?: Root) {
     inTable: boolean;
   }> = [];
   if (!mayContainMath(source)) return ranges;
+  const sourceOffset = source.startsWith("\uFEFF") ? 1 : 0;
   const visit = (node: Root | Root["children"][number], inTable = false) => {
     const table = inTable || node.type === "tableCell";
     if (
@@ -33,9 +34,11 @@ export function markdownMathRanges(source: string, tree?: Root) {
       node.type === "inlineMath" ||
       (node.type === "code" && node.lang === "math")
     ) {
-      const start = node.position?.start.offset;
-      const end = node.position?.end.offset;
-      if (start === undefined || end === undefined) return;
+      const parserStart = node.position?.start.offset;
+      const parserEnd = node.position?.end.offset;
+      if (parserStart === undefined || parserEnd === undefined) return;
+      const start = parserStart + sourceOffset;
+      const end = parserEnd + sourceOffset;
       const authored = source.slice(start, end);
       if (node.type === "code") {
         const open = /^[ \t]*(`{3,}|~{3,})/.exec(authored)?.[1];

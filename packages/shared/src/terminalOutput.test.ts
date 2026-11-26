@@ -4,6 +4,7 @@ import {
   appendTerminalOutput,
   EMPTY_TERMINAL_OUTPUT,
   normalizeTerminalOutput,
+  TERMINAL_OUTPUT_TAIL_CHARS,
   TERMINAL_PALETTES,
   terminalOutputPlainText,
   terminalOutputResumeText,
@@ -72,6 +73,18 @@ describe("appendTerminalOutput", () => {
       terminalOutputSpans(feed(["\u001b[38:2::12:", "34:56mR"]).text, TERMINAL_PALETTES.dark),
     ).toEqual([{ text: "R", style: { color: "rgb(12,34,56)" } }]);
   });
+
+  it.each(["\u001b[3", "\u001b]0;title"])(
+    "keeps output after CAN or SUB cancels %j, wherever the chunk splits",
+    (sequence) => {
+      for (const cancel of ["\u0018", "\u001a"]) {
+        const input = `before${sequence}${cancel}Ready`;
+        for (let cut = 0; cut <= input.length; cut += 1) {
+          expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("beforeReady");
+        }
+      }
+    },
+  );
 
   it("keeps a bounded tail that starts on a fresh line", () => {
     const lines = Array.from({ length: 2_000 }, (_, index) => `line ${index}`).join("\n");
@@ -309,6 +322,23 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
       120,
     );
     expect(viewer.text).toBe(appendTerminalOutput(source, " edited", 120).text);
+  });
+
+  it("keeps scrollback when a redraw after a cleared screen moves above the live window", () => {
+    const history = "Build started\n";
+    const source = feed([history + "working\n".repeat(63), "\u001b[2J", "Progress: 10%"]);
+    const redraw = "\u001b[1A\r\u001b[2KProgress: 20%";
+    expect(feed([terminalOutputResumeText(source), redraw]).text).toBe(history + "Progress: 20%");
+  });
+
+  it("recovers scrollback hidden by a full output tail once a redraw shortens it", () => {
+    const history = "Build started\n";
+    const progress = "x".repeat(TERMINAL_OUTPUT_TAIL_CHARS);
+    const source = feed([history + "working\n".repeat(63) + "\u001b[2J" + progress]);
+    const viewer = feed([terminalOutputResumeText(source)]);
+    expect(viewer.text).toBe(progress);
+    const redraw = "\r\u001b[2KProgress: done";
+    expect(appendTerminalOutput(viewer, redraw).text).toBe(history + "Progress: done");
   });
 });
 
