@@ -149,7 +149,12 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         } as unknown as DesktopAppSettings.DesktopAppSettings["Service"]),
         Effect.provideService(DesktopLifecycle.DesktopLifecycle, {
           register: Effect.void,
-          relaunch: () => stub.record("relaunch"),
+          relaunch: () =>
+            Ref.get(localEnvironmentEnabled).pipe(
+              Effect.flatMap((enabled) =>
+                stub.record(enabled ? "relaunch" : "relaunch with Local environment off"),
+              ),
+            ),
         }),
         Effect.provideService(DesktopClerk.DesktopClerk, {
           configure: Effect.void,
@@ -444,7 +449,7 @@ it.effect(
       yield* (yield* DesktopShutdown.DesktopShutdown).request;
       yield* Fiber.join(app);
 
-      assert.include(events, "relaunch");
+      assert.include(events, "relaunch with Local environment off");
       assert.notInclude(events, "backend");
       assert.notInclude(events, "window", "the relaunching run opened a client window");
       assert.isFalse(
