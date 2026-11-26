@@ -199,6 +199,21 @@ describe("indentCodeBlock", () => {
     expect(indentCodeBlock(editor.state, "out", (tr) => editor.view.dispatch(tr))).toBe(true);
     expect(textOf(editor)).toBe("one\ntwo");
   });
+
+  it.each([
+    ["  a\n  b", 2, 5, "out", "a\nb", 0, 2],
+    ["  a\n  b", 5, 2, "out", "a\nb", 2, 0],
+    ["one\ntwo", 7, 0, "in", "  one\n  two", 11, 2],
+  ] as const)(
+    "maps selection endpoints when shifting %j from %i to %i %s",
+    (code, anchor, head, direction, expected, nextAnchor, nextHead) => {
+      const editor = codeEditor(code, { from: anchor, to: head });
+      indentCodeBlock(editor.state, direction, (tr) => editor.view.dispatch(tr));
+      expect(textOf(editor)).toBe(expected);
+      expect(editor.state.selection.anchor - 1).toBe(nextAnchor);
+      expect(editor.state.selection.head - 1).toBe(nextHead);
+    },
+  );
 });
 
 describe("selections across two identical fences", () => {
