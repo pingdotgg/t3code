@@ -756,6 +756,9 @@ describe("workflowOneLine", () => {
     expect(workflowOneLine("Matches **/*.test.ts files.")).toBe("Matches **/*.test.ts files.");
     expect(workflowOneLine("Compare a*.ts with b*.ts now.")).toBe("Compare a*.ts with b*.ts now.");
     expect(workflowOneLine("Fixed foo*bar* now.")).toBe("Fixed foobar now.");
+    expect(workflowOneLine("Edit src/*/test/*.ts now.")).toBe("Edit src/*/test/*.ts now.");
+    expect(workflowOneLine("***important*** now.")).toBe("important now.");
+    expect(workflowOneLine("(*aside*) now.")).toBe("(aside) now.");
   });
 
   it("keeps underscores inside identifiers, paths and code", () => {
