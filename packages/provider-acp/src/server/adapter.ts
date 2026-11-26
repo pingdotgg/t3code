@@ -116,7 +116,11 @@ import {
   makeAcpClientPolicyGrants,
   unknownRecord,
 } from "./clientPolicy.ts";
-import { parseElicitationForm } from "./elicitationForm.ts";
+import {
+  parseElicitationForm,
+  withOptionalChoices,
+  type ElicitationQuestionForm,
+} from "./elicitationForm.ts";
 import {
   makeAcpClientTerminals,
   resolveEmbeddedTerminalContent,
@@ -502,14 +506,13 @@ export interface AcpAdapterV2Flavor {
     readonly url: string;
     readonly message: string;
   }) => Effect.Effect<boolean>;
-  readonly extractElicitationForm?: (request: EffectAcpSchema.CreateElicitationRequest) =>
-    | {
-        readonly questions: ReadonlyArray<OrchestrationV2UserInputQuestion>;
-        readonly respond: (
-          answers: ProviderUserInputAnswers,
-        ) => EffectAcpSchema.CreateElicitationResponse;
-      }
-    | undefined;
+  /**
+   * The adapter applies the schema's `required` list to the returned form, so `respond` gets no
+   * entry for a single choice the user skipped and leaves that field out of its content.
+   */
+  readonly extractElicitationForm?: (
+    request: EffectAcpSchema.CreateElicitationRequest,
+  ) => ElicitationQuestionForm | undefined;
   readonly withRuntimeStartup?: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
   readonly makeRuntime: (
     input: AcpAdapterV2RuntimeInput,
@@ -7907,21 +7910,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       allowOther: unknownRecord(params._meta)?.["cognition.ai/allowOther"] === true,
                     })
                   : undefined;
-              const form =
-                nativeForm ??
-                (parsedForm === undefined
-                  ? undefined
-                  : {
-                      questions: parsedForm.questions,
-                      respond: (
-                        answers: ProviderUserInputAnswers,
-                      ): EffectAcpSchema.CreateElicitationResponse => {
-                        const content = parsedForm.content(answers);
-                        return content === undefined
-                          ? { action: "cancel" }
-                          : { action: "accept", content };
-                      },
-                    });
+              const form: ElicitationQuestionForm | undefined =
+                nativeForm !== undefined
+                  ? withOptionalChoices(nativeForm, params.requestedSchema)
+                  : parsedForm === undefined
+                    ? undefined
+                    : {
+                        questions: parsedForm.questions,
+                        respond: (answers) => {
+                          const content = parsedForm.content(answers);
+                          return content === undefined
+                            ? { action: "cancel" }
+                            : { action: "accept", content };
+                        },
+                      };
               if (form === undefined) return { action: "decline" } as const;
               const elicitationScopeId =
                 "sessionId" in params ? params.sessionId : `request:${params.requestId}`;
