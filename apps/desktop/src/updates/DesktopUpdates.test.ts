@@ -1390,6 +1390,21 @@ describe("describeUpdateErrorCause", () => {
     cyclic.cause = cyclic;
     assert.include(DesktopUpdates.describeUpdateErrorCause(cyclic), "[truncated cause]");
     assert.isAtMost(DesktopUpdates.describeUpdateErrorCause(cyclic).length, 1024);
+
+    const describeCause = (outer: string, inner: string) =>
+      DesktopUpdates.describeUpdateErrorCause(
+        Object.assign(new Error(outer), { cause: new Error(inner) }),
+      );
+    const a = (count: number) => "a".repeat(count);
+    const b = (count: number) => "b".repeat(count);
+
+    assert.equal(describeCause(`${a(511)}🚀 tail`, "b"), `Error: ${a(511)}; caused by Error: b`);
+    assert.equal(describeCause(`${a(510)}🚀 tail`, "b"), `Error: ${a(510)}🚀; caused by Error: b`);
+
+    // The nested message starts 538 code units into the summary.
+    const prefix = `Error: ${a(512)}; caused by Error: `;
+    assert.equal(describeCause(a(512), `${b(485)}🚀 tail`), `${prefix}${b(485)}`);
+    assert.equal(describeCause(a(512), `${b(484)}🚀 tail`), `${prefix}${b(484)}🚀`);
   });
 
   it("does not serialize arbitrary payloads or let unreadable errors break logging", () => {
