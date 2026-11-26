@@ -2354,3 +2354,92 @@ it.effect.each([
       }).pipe(Effect.provide(layerLive));
     }),
 );
+
+it.effect(
+  "a child the user resumes after the parent's Stop wakes the parent when it finishes",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const parentThreadId = ThreadId.make("thread:stop-resume-parent");
+      yield* createWatchingThread(parentThreadId, 3);
+      yield* send(parentThreadId, "first", "start_immediately");
+      const childThreadId = yield* delegate(parentThreadId, "resumed child task");
+      const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+      const stopCommandId = CommandId.make("stop-resume-parent");
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: stopCommandId,
+        threadId: parentThreadId,
+        runId: parentRun.id,
+        holdQueue: true,
+      });
+      yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
+      yield* orchestrator.recoverDelegatedTasks;
+      const interrupted = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+      assert.equal(interrupted.status, "interrupted");
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]?.status,
+        "interrupted",
+      );
+
+      // The user presses Resume on the stopped child.
+      const resumeMessageId = MessageId.make("message:stop-resume-child:resume");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("resume:stop-resume-child"),
+        threadId: childThreadId,
+        messageId: resumeMessageId,
+        text: "",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        manualContinuationOfRunId: interrupted.id,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const resumed = (yield* orchestrator.getThreadProjection(childThreadId)).runs.find(
+        (run) => run.userMessageId === resumeMessageId,
+      )!;
+      assert.isDefined(resumed.delegatedTaskId);
+
+      const now = yield* DateTime.now;
+      yield* projections.apply({
+        id: EventId.make("event:stop-resume-child:answer"),
+        type: "message.updated",
+        threadId: childThreadId,
+        runId: resumed.id,
+        occurredAt: now,
+        payload: {
+          id: MessageId.make("message:stop-resume-child:answer"),
+          threadId: childThreadId,
+          runId: resumed.id,
+          nodeId: null,
+          role: "assistant",
+          text: "CHILD_DONE",
+          attachments: [],
+          streaming: false,
+          createdBy: "agent",
+          creationSource: "server",
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make("event:stop-resume-child:completed"),
+        type: "run.updated",
+        threadId: childThreadId,
+        runId: resumed.id,
+        occurredAt: now,
+        payload: { ...resumed, status: "completed", startedAt: now, completedAt: now },
+      });
+      yield* orchestrator.recoverDelegatedTasks;
+
+      const followup = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+        (task) => task.id === resumed.delegatedTaskId,
+      );
+      assert.equal(followup?.status, "completed");
+      // The resume came after the Stop, so its result is owed to the parent like any follow-up's.
+      assert.notEqual(followup?.completionDelivery?.state, "disposed");
+    }).pipe(Effect.provide(layerTest)),
+);
