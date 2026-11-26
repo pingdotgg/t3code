@@ -42,7 +42,7 @@ export function markdownMathRanges(source: string, tree?: Root) {
       const authored = source.slice(start, end);
       if (node.type === "code") {
         const open = /^[ \t]*(`{3,}|~{3,})/.exec(authored)?.[1];
-        const close = /\n[ \t>]*(`{3,}|~{3,})[ \t\r]*$/.exec(authored)?.[1];
+        const close = /(?:\r\n|\r|\n)[ \t>]*(`{3,}|~{3,})[ \t\r]*$/.exec(authored)?.[1];
         if (!open || !close || open[0] !== close[0] || close.length < open.length) return;
       }
       const display = node.type !== "inlineMath" || /^(?:\$\$|\\\[)/.test(authored);
