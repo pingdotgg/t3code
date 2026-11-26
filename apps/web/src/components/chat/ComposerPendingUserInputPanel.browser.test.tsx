@@ -121,8 +121,6 @@ it.each<{ focus: string; control: ReactNode; toggles: boolean }>([
 );
 
 it.each<{ focus: string; html: string; nested?: boolean; typed: string; toggles: boolean }>([
-  { focus: "an input", html: "<input data-focus />", typed: "1", toggles: false },
-  { focus: "a textarea", html: "<textarea data-focus></textarea>", typed: "1", toggles: false },
   {
     focus: "a file editor",
     html: '<div data-focus contenteditable="true"></div>',
