@@ -321,6 +321,8 @@ function escapeLength(input: string, index: number): number {
   if (next === "[") {
     for (let cursor = index + 2; cursor < input.length; cursor += 1) {
       const code = input.charCodeAt(cursor);
+      // Like xterm.js, a new ESC cancels an unfinished CSI so the next sequence parses intact.
+      if (code === 0x1b) return cursor - index;
       if (code >= 0x40 && code <= 0x7e) return cursor - index + 1;
     }
     return -1;
