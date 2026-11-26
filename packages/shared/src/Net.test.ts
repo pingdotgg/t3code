@@ -45,9 +45,31 @@ const openServer = (host?: string): Effect.Effect<NodeNet.Server, NetService.Net
     return closeServer(server);
   });
 
-const ownIpv4 = Object.values(NodeOS.networkInterfaces())
-  .flatMap((entries) => entries ?? [])
-  .find((entry) => entry.family === "IPv4" && !entry.internal)?.address;
+// A tunnel can own an address the machine cannot dial itself, so only a self-reachable one counts.
+const reachesOwnListener = (address: string) =>
+  new Promise<boolean>((resolve) => {
+    const server = NodeNet.createServer();
+    server.once("error", () => resolve(false));
+    server.listen(0, address, () => {
+      const socket = NodeNet.createConnection({ host: address, port: getPort(server) });
+      const settle = (reached: boolean) => {
+        socket.destroy();
+        server.close(() => resolve(reached));
+      };
+      socket.setTimeout(250);
+      socket.once("connect", () => settle(true));
+      socket.once("error", () => settle(false));
+      socket.once("timeout", () => settle(false));
+    });
+  });
+
+let ownIpv4: string | undefined;
+for (const entry of Object.values(NodeOS.networkInterfaces()).flatMap((entries) => entries ?? [])) {
+  if (entry.family === "IPv4" && !entry.internal && (await reachesOwnListener(entry.address))) {
+    ownIpv4 = entry.address;
+    break;
+  }
+}
 
 it.layer(NetService.layer)("NetService", (it) => {
   describe("Net helpers", () => {
