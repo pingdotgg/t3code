@@ -195,7 +195,16 @@ export function upsertProviderWorkspaceSnapshot(
   };
 }
 
-const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean => {
+const claudeGatewayEndpoint = (provider: ServerProvider): string | undefined =>
+  provider.driver === ProviderDriverKind.make("claudeAgent") &&
+  provider.auth.type === "customEndpoint"
+    ? provider.auth.endpoint
+    : undefined;
+
+const shouldRetainMissingProviderModels = (
+  provider: ServerProvider,
+  previousProvider: ServerProvider | undefined,
+): boolean => {
   if (provider.driver === ProviderDriverKind.make("pi")) {
     // Pi auth becomes known only after inventory discovery: empty means unauthenticated; failed/interactive discovery preserves unknown auth and cached models.
     return !(
@@ -223,8 +232,12 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   if (provider.driver === ProviderDriverKind.make("claudeAgent")) {
     // Claude Code keeps one gateway model cache per Claude home, for one base URL at a time, so a
     // ready probe can omit this instance's gateway models after another instance or a terminal
-    // `claude` on a different gateway rewrote that cache.
-    return true;
+    // `claude` on a different gateway rewrote that cache. A ready probe from the instance's own
+    // unchanged gateway is authoritative, so slugs the gateway stopped listing drop out.
+    const endpoint = claudeGatewayEndpoint(provider);
+    const sameGateway =
+      endpoint !== undefined && claudeGatewayEndpoint(previousProvider ?? provider) === endpoint;
+    return !(sameGateway && provider.installed && provider.status === "ready");
   }
 
   const isAntigravity = provider.driver === ProviderDriverKind.make("antigravity");
@@ -255,16 +268,20 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   return isPendingAntigravityAuthentication || isPendingInitialProbe || isIncompleteInstalledProbe;
 };
 
-const shouldRetainMissingOpenCodeMetadata = (provider: ServerProvider): boolean =>
+const shouldRetainMissingOpenCodeMetadata = (
+  provider: ServerProvider,
+  previousProvider: ServerProvider | undefined,
+): boolean =>
   provider.driver === ProviderDriverKind.make("opencode") &&
-  shouldRetainMissingProviderModels(provider);
+  shouldRetainMissingProviderModels(provider, previousProvider);
 
 const mergeProviderModels = (
+  previousProvider: ServerProvider | undefined,
   provider: ServerProvider,
   previousModels: ReadonlyArray<ServerProvider["models"][number]>,
   nextModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
-  const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
+  const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider, previousProvider);
   const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
   const unavailableSubProviders = new Set(
     provider.subProviders?.flatMap((subProvider) =>
@@ -348,7 +365,12 @@ export const mergeProviderSnapshot = (
   }
   const savedAccount = carrySavedAntigravityAccount(previousProvider, nextProvider);
   const { message: _uncheckedMessage, ...nextWithoutMessage } = nextProvider;
-  const models = mergeProviderModels(nextProvider, previousProvider.models, nextProvider.models);
+  const models = mergeProviderModels(
+    previousProvider,
+    nextProvider,
+    previousProvider.models,
+    nextProvider.models,
+  );
   // Folder catalogs were compared with the old machine catalog, so every folder rescans.
   const previousWorkspaceSnapshots = Equal.equals(models, previousProvider.models)
     ? previousProvider.workspaceSnapshots
@@ -387,7 +409,7 @@ export const mergeProviderSnapshot = (
     previousProvider.workspaceRescannedAt !== undefined
       ? { workspaceRescannedAt: previousProvider.workspaceRescannedAt }
       : {}),
-    ...(shouldRetainMissingOpenCodeMetadata(nextProvider)
+    ...(shouldRetainMissingOpenCodeMetadata(nextProvider, previousProvider)
       ? {
           slashCommands:
             nextProvider.slashCommands.length === 0

@@ -1543,6 +1543,183 @@ it.layer(
       },
     );
 
+    it("drops claudeAgent models a ready probe from the same gateway stopped listing", () => {
+      const gatewayAuth = {
+        status: "authenticated",
+        type: "customEndpoint",
+        endpoint: "https://gateway.example.com",
+      } as const;
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: gatewayAuth,
+        checkedAt: "2026-11-26T00:00:00.000Z",
+        version: "2.1.332",
+        models: [
+          {
+            slug: "anthropic/claude-sonnet-4.5",
+            name: "Sonnet 4.5",
+            isCustom: false,
+            capabilities: null,
+          },
+          { slug: "openai/gpt-5", name: "GPT-5", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const merge = ProviderRegistry.mergeProviderSnapshot;
+
+      const sameGateway = {
+        ...previousProvider,
+        checkedAt: "2026-11-26T00:01:00.000Z",
+        models: [previousProvider.models[0]],
+      } satisfies ServerProvider;
+      assert.deepStrictEqual(
+        merge(previousProvider, sameGateway).models.map((model) => model.slug),
+        ["anthropic/claude-sonnet-4.5"],
+      );
+
+      const otherGateway = {
+        ...sameGateway,
+        auth: { ...gatewayAuth, endpoint: "https://other-gateway.example.com" },
+      } satisfies ServerProvider;
+      assert.deepStrictEqual(
+        merge(previousProvider, otherGateway).models.map((model) => model.slug),
+        ["anthropic/claude-sonnet-4.5", "openai/gpt-5"],
+      );
+
+      assert.deepStrictEqual(
+        merge(previousProvider, { ...sameGateway, status: "warning" }).models.map(
+          (model) => model.slug,
+        ),
+        ["anthropic/claude-sonnet-4.5", "openai/gpt-5"],
+      );
+
+      const noEndpoint = { ...previousProvider, auth: { status: "authenticated" } } as const;
+      assert.deepStrictEqual(
+        merge(noEndpoint, { ...sameGateway, auth: { status: "authenticated" } }).models.map(
+          (model) => model.slug,
+        ),
+        ["anthropic/claude-sonnet-4.5", "openai/gpt-5"],
+      );
+    });
+
+    it.effect("persists claudeAgent gateway removals so they survive a restart", () =>
+      Effect.gen(function* () {
+        const gatewayAuth = {
+          status: "authenticated",
+          type: "customEndpoint",
+          endpoint: "https://gateway.example.com",
+        } as const;
+        const cacheDir = yield* ServerConfig.ServerConfig.pipe(
+          Effect.map((config) => config.providerStatusCacheDir),
+        );
+        const cachedProvider = {
+          instanceId: ProviderInstanceId.make("claudeAgent-gateway"),
+          driver: ProviderDriverKind.make("claudeAgent"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: gatewayAuth,
+          checkedAt: "2026-11-26T00:00:00.000Z",
+          version: "2.1.332",
+          models: [
+            {
+              slug: "anthropic/claude-sonnet-4.5",
+              name: "Sonnet 4.5",
+              isCustom: false,
+              capabilities: null,
+            },
+            { slug: "openai/gpt-5", name: "GPT-5", isCustom: false, capabilities: null },
+          ],
+          slashCommands: [],
+          skills: [],
+        } satisfies ServerProvider;
+        const refreshedProvider = {
+          ...cachedProvider,
+          checkedAt: "2026-11-26T00:01:00.000Z",
+          models: [cachedProvider.models[0]],
+        } satisfies ServerProvider;
+        const filePath = yield* resolveProviderStatusCachePath({
+          cacheDir,
+          instanceId: cachedProvider.instanceId,
+        });
+        yield* writeProviderStatusCache({ filePath, provider: cachedProvider });
+        const nextProvider = yield* Ref.make<ServerProvider>(refreshedProvider);
+        const currentProvider = yield* Ref.make<ServerProvider>(cachedProvider);
+        const instance = {
+          instanceId: cachedProvider.instanceId,
+          driverKind: cachedProvider.driver,
+          continuationIdentity: {
+            driverKind: cachedProvider.driver,
+            continuationKey: "claudeAgent:instance:claudeAgent-gateway",
+          },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: cachedProvider.driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Ref.get(currentProvider),
+            refresh: Ref.get(nextProvider).pipe(
+              Effect.tap((provider) => Ref.set(currentProvider, provider)),
+            ),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        } satisfies ProviderInstance;
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (id) => Effect.succeed(id === instance.instanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+
+        // A restart hydrates the cache written by the previous run before the probe merges.
+        for (const _restarted of [false, true]) {
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const afterRefresh = yield* registry.refreshInstance(instance.instanceId);
+            assert.deepStrictEqual(
+              afterRefresh[0]?.models.map((model) => model.slug),
+              ["anthropic/claude-sonnet-4.5"],
+            );
+            assert.deepStrictEqual(
+              (yield* readProviderStatusCache(filePath))?.models.map((model) => model.slug),
+              ["anthropic/claude-sonnet-4.5"],
+            );
+          }).pipe(
+            Effect.provide(
+              ProviderRegistry.layer.pipe(
+                Layer.provide(layerInstanceRegistry),
+                Layer.provide(layerUnusedMutator),
+              ),
+            ),
+            Effect.scoped,
+          );
+        }
+      }).pipe(
+        Effect.provide(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-claude-gateway-model-cache-",
+          }).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+        ),
+      ),
+    );
+
     it("retains stale OpenCode models when a refresh fails or lists none", () => {
       const previousProvider = {
         instanceId: ProviderInstanceId.make("opencode"),
