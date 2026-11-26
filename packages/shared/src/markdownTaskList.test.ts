@@ -1,7 +1,39 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { markdownTaskMarkerOffset } from "./markdownTaskList.ts";
-import { setMarkdownTaskChecked } from "./markdownTaskEdits.ts";
+import { setMarkdownTaskChecked, taskListMarkerOffset } from "./markdownTaskEdits.ts";
+
+describe("taskListMarkerOffset", () => {
+  it("finds markers on the first line or an indented continuation line", () => {
+    const nextLine = "-\n  [ ] Task";
+    expect(taskListMarkerOffset(nextLine, 0)).toBe(4);
+    expect(setMarkdownTaskChecked(nextLine, 4, true)).toBe("-\n  [x] Task");
+
+    const quoted = "> -\n>   [ ] Task";
+    expect(taskListMarkerOffset(quoted, 2)).toBe(8);
+    expect(setMarkdownTaskChecked(quoted, 8, true)).toBe("> -\n>   [x] Task");
+
+    expect(taskListMarkerOffset("-\r\n  [ ] Task", 0)).toBe(5);
+    expect(taskListMarkerOffset("1.\n   [ ] Task", 0)).toBe(6);
+    expect(taskListMarkerOffset("> > -\n> >   [ ] Task", 4)).toBe(12);
+    expect(taskListMarkerOffset(">-\n>   [ ] Task", 1)).toBe(7);
+    expect(taskListMarkerOffset("-\n\t[ ] Task", 0)).toBe(3);
+    expect(taskListMarkerOffset("- parent\n\n  -\n    [ ] Child", 12)).toBe(18);
+  });
+
+  it("ignores markers that do not begin the item's continuation line", () => {
+    expect(taskListMarkerOffset("-\n\n  [ ] Task", 0)).toBeNull();
+    expect(taskListMarkerOffset("- First\n  [ ] Second", 0)).toBeNull();
+    expect(taskListMarkerOffset("-\n[ ] Task", 0)).toBeNull();
+    expect(taskListMarkerOffset("-\n [ ] Task", 0)).toBeNull();
+    expect(taskListMarkerOffset("-\n      [ ] Task", 0)).toBeNull();
+    expect(taskListMarkerOffset("-\n  > [ ] Quoted", 0)).toBeNull();
+    expect(taskListMarkerOffset("> -\n  [ ] Task", 2)).toBeNull();
+    expect(taskListMarkerOffset("> -\n>  [ ] Task", 2)).toBeNull();
+    expect(taskListMarkerOffset("> -\n> >   [ ] Deeper", 2)).toBeNull();
+    expect(taskListMarkerOffset("-\n- [ ] Next", 0)).toBeNull();
+  });
+});
 
 describe("setMarkdownTaskChecked", () => {
   const markdown = "- [ ] First\n- [x] Second\n";
@@ -42,6 +74,8 @@ describe("markdownTaskMarkerOffset", () => {
     for (const text of ["Wrapped", "Wrapped onto two lines"]) {
       expect(markdownTaskMarkerOffset(markdown, 0, text, true)).toBe(markdown.lastIndexOf("[ ]"));
     }
+    expect(markdownTaskMarkerOffset("-\n  [ ] Task", 0, "Task", true)).toBe(4);
+    expect(markdownTaskMarkerOffset("> -\n>   [ ] Task", 0, "Task", true)).toBe(8);
   });
 
   it("tells identical labels apart by count within one list and by state", () => {
