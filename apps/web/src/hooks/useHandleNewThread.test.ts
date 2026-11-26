@@ -6,6 +6,9 @@ const testState = vi.hoisted(() => {
   let completeProjectFileRead: (value: ProjectFile) => void = () => undefined;
   let projectFileRead = Promise.resolve<ProjectFile>(null);
   let draftSession = {
+    environmentId: "environment-ssh",
+    projectId: "project-remote",
+    workspaceUsesDefaults: true as true | undefined,
     envMode: "local",
     worktreePath: null,
     branch: null as string | null,
@@ -100,6 +103,9 @@ const testState = vi.hoisted(() => {
       storedDraft = nextStoredDraft;
       openDraftRoute = null;
       draftSession = {
+        environmentId: "environment-ssh",
+        projectId: "project-remote",
+        workspaceUsesDefaults: true,
         envMode: "local",
         worktreePath: null,
         branch: null,
@@ -306,6 +312,7 @@ describe.each([
     expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(opened?.draftId, {
       envMode: "worktree",
       startFromOrigin: false,
+      workspaceUsesDefaults: true,
     });
   });
 
@@ -326,6 +333,7 @@ describe.each([
     expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(opened?.draftId, {
       envMode: "worktree",
       startFromOrigin: false,
+      workspaceUsesDefaults: true,
     });
   });
 

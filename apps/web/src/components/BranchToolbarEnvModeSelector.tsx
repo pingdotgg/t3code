@@ -160,7 +160,14 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           <SelectGroupLabel>
             <T>Workspace</T>
           </SelectGroupLabel>
-          <SelectItem value="local">
+          <SelectItem
+            value="local"
+            onClick={() => {
+              if (effectiveEnvMode === "local" && activeWorktreePath === null) {
+                onEnvModeChange("local");
+              }
+            }}
+          >
             <span className="inline-flex items-center gap-1.5">
               {activeWorktreePath ? (
                 <FolderGitIcon className="size-3" />
@@ -170,7 +177,14 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               {resolveCurrentWorkspaceLabel(activeWorktreePath, m)}
             </span>
           </SelectItem>
-          <SelectItem value="worktree">
+          <SelectItem
+            value="worktree"
+            onClick={() => {
+              if (effectiveEnvMode === "worktree" && activeWorktreePath === null) {
+                onEnvModeChange("worktree");
+              }
+            }}
+          >
             <span className="inline-flex items-center gap-1.5">
               <FolderGit2Icon className="size-3" />
               {resolveEnvModeLabel("worktree", m)}

@@ -870,6 +870,28 @@ describe("composerDraftStore project draft thread mapping", () => {
     resetComposerDraftStore();
   });
 
+  it("restores inherited workspace defaults until the user chooses the workspace", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      envMode: "local",
+      workspaceUsesDefaults: true,
+    });
+    store.setProjectDraftThreadId(otherProjectRef, otherDraftId, { envMode: "local" });
+    const restore = () =>
+      useComposerDraftStore.persist.getOptions().merge!(
+        JSON.parse(
+          JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+        ),
+        useComposerDraftStore.getInitialState(),
+      ).draftThreadsByThreadKey;
+
+    expect(restore()[draftId]?.workspaceUsesDefaults).toBe(true);
+    expect(restore()[otherDraftId]?.workspaceUsesDefaults).toBeUndefined();
+
+    store.setDraftThreadContext(draftId, { envMode: "local" });
+    expect(restore()[draftId]?.workspaceUsesDefaults).toBeUndefined();
+  });
+
   it("clears composer data for one environment without touching another", () => {
     const store = useComposerDraftStore.getState();
     const localThreadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);

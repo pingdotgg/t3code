@@ -34,6 +34,9 @@ a connected one if any is connected.
 
 When you change a new thread's project, T3 Code stays in the current environment
 if that project exists there. Otherwise it selects an environment that has it.
+On web and desktop, when you move an unsent draft to another connected machine
+using **Run on**, an inherited workspace uses that machine's project defaults.
+A workspace mode you set yourself stays selected.
 
 ### Start without a project
 

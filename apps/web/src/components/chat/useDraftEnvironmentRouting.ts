@@ -1,6 +1,7 @@
 import { msg, useGT } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
+import { resolveDraftWorkspaceDefaults } from "../../hooks/useHandleNewThread";
 import { useLoadBalancedEnvironment } from "../../hooks/useLoadBalancedEnvironment";
 import { useLogicalProjectEnvironments } from "../../hooks/useLogicalProjectEnvironments";
 import { useScratchProject } from "../../hooks/useScratchProject";
@@ -35,7 +36,7 @@ import { currentClientMetadata } from "../../connection/platform";
 import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import type { DraftSessionState } from "../../composerDraftStore";
+import type { DraftSessionState, DraftThreadEnvMode } from "../../composerDraftStore";
 import { loadBalancingSendWarning } from "./composerSend.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
@@ -311,7 +312,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     environmentChangeRef.current = request;
     setBusyEnvironmentChange(null);
     // `triagePrompt` is the prompt the target machine prepared for a triage draft.
-    const retarget = (project: (typeof allProjects)[number], triagePrompt?: string) => {
+    const retarget = (
+      project: (typeof allProjects)[number],
+      triagePrompt?: string,
+      workspace?: { envMode: DraftThreadEnvMode; startFromOrigin: boolean },
+    ) => {
       const currentDraft = getDraftSession(draftId);
       if (
         environmentChangeRef.current !== request ||
@@ -343,6 +348,9 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
           projectRef,
           environmentSelection: "manual",
           loadBalancedEnvironmentId: null,
+          ...(workspace && currentDraft.workspaceUsesDefaults
+            ? { ...workspace, workspaceUsesDefaults: true }
+            : {}),
         });
       }
       seedDraftModelSelection(draftId, projectRef);
@@ -358,7 +366,34 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     // The playbook and context files exist only on the machine that prepared them.
     const followsTriage = isTriagePrompt(getComposerDraft(draftId)?.prompt ?? "");
     if (target.projectId !== null && !(knownProject && followsTriage)) {
-      if (knownProject) retarget(knownProject);
+      const environment = environmentById.get(target.environmentId);
+      const config = environment?.serverConfig;
+      if (
+        knownProject &&
+        !activeProjectIsScratch &&
+        originalDraft.workspaceUsesDefaults &&
+        target.environmentId !== originalDraft.environmentId &&
+        environment?.connection.phase === "connected" &&
+        config
+      ) {
+        const projectRef = scopeProjectRef(target.environmentId, knownProject.id);
+        const defaults = resolveDraftWorkspaceDefaults(
+          projectRef,
+          knownProject,
+          config.settings,
+          config.newProjectsRoot,
+        );
+        if (defaults.pending) {
+          setBusyEnvironmentChange(request);
+          void defaults.pending
+            .then((workspace) => retarget(knownProject, undefined, workspace))
+            .finally(finish);
+          return;
+        }
+        retarget(knownProject, undefined, defaults.workspace);
+      } else if (knownProject) {
+        retarget(knownProject);
+      }
       finish();
       return;
     }

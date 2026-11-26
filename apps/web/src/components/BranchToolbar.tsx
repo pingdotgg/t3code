@@ -447,6 +447,11 @@ const RunContextSelector = memo(function RunContextSelector({
               <MenuRadioItem
                 disabled={envModeLocked || forceNewWorktree}
                 value="local"
+                onClick={() => {
+                  if (effectiveEnvMode === "local" && activeWorktreePath === null) {
+                    onEnvModeChange("local");
+                  }
+                }}
                 closeOnClick
               >
                 <span className="flex min-w-0 items-center gap-1.5">
@@ -458,7 +463,16 @@ const RunContextSelector = memo(function RunContextSelector({
                   <MiddleTruncate value={resolveCurrentWorkspaceLabel(activeWorktreePath, m)} />
                 </span>
               </MenuRadioItem>
-              <MenuRadioItem disabled={envModeLocked} value="worktree" closeOnClick>
+              <MenuRadioItem
+                disabled={envModeLocked}
+                value="worktree"
+                onClick={() => {
+                  if (effectiveEnvMode === "worktree" && activeWorktreePath === null) {
+                    onEnvModeChange("worktree");
+                  }
+                }}
+                closeOnClick
+              >
                 <span className="flex min-w-0 items-center gap-1.5">
                   <FolderGit2Icon className="size-3" />
                   <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree", m)}</span>

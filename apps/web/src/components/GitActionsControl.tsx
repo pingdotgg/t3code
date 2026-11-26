@@ -2109,6 +2109,7 @@ export default function ThreadGitActionsControl({
     setDraftThreadContext(draftId ?? activeThreadRef, {
       branch,
       worktreePath: activeDraftThread.worktreePath,
+      workspaceUsesDefaults: !manualSelection && activeDraftThread.workspaceUsesDefaults === true,
       environmentSelection: manualSelection
         ? "manual"
         : (activeDraftThread.environmentSelection ??

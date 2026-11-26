@@ -251,6 +251,7 @@ export function BranchToolbarBranchSelector({
       worktreePath,
       envMode: nextDraftEnvMode,
       environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
+      ...(automatic ? { workspaceUsesDefaults: draftThread?.workspaceUsesDefaults ?? false } : {}),
       projectRef: scopeProjectRef(environmentId, activeProject.id),
     });
     return true;

@@ -6,6 +6,7 @@ import {
 import {
   DEFAULT_SERVER_SETTINGS,
   type ScopedProjectRef,
+  type ServerSettings,
   type T3ProjectFile,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -76,6 +77,8 @@ export function readLastUsedProjectKey(): string | null {
 // workspace default unless the user has already chosen a workspace.
 interface ProvisionalWorkspace {
   readonly envMode: DraftThreadEnvMode;
+  readonly projectRef: ScopedProjectRef;
+  readonly workspaceUsesDefaults: boolean;
   // A reused draft keeps an earlier "manual" marker; only a switch to manual after opening is a choice.
   readonly openedManual: boolean;
 }
@@ -92,6 +95,9 @@ function keepsProvisionalWorkspace(
   return (
     draft !== null &&
     draft.promotedTo == null &&
+    draft.environmentId === provisional.projectRef.environmentId &&
+    draft.projectId === provisional.projectRef.projectId &&
+    (!provisional.workspaceUsesDefaults || draft.workspaceUsesDefaults === true) &&
     draft.envMode === provisional.envMode &&
     draft.worktreePath === null &&
     (provisional.openedManual || draft.environmentSelection !== "manual")
@@ -105,11 +111,69 @@ export function readPendingWorkspaceDefault(draftId: DraftId): Promise<void> | n
   return keepsProvisionalWorkspace(draft, pending) ? pending.settled : null;
 }
 
+export function resolveDraftWorkspaceDefaults(
+  projectRef: ScopedProjectRef,
+  project: EnvironmentProject | undefined,
+  targetServerSettings: ServerSettings,
+  newProjectsRoot: string | undefined,
+) {
+  const projectSettings = resolveProjectSettings(
+    targetServerSettings,
+    project?.id ?? null,
+    project,
+  );
+  const envModeFor = (projectFile: T3ProjectFile | null): DraftThreadEnvMode =>
+    resolveNewThreadEnvMode({
+      projectSettings: resolveProjectSettings(
+        targetServerSettings,
+        project?.id ?? null,
+        project,
+        projectFile,
+      ),
+      workspaceRoot: project?.workspaceRoot ?? null,
+      newProjectsRoot,
+      projectHasThreads:
+        readThreadShells().some(
+          (thread) =>
+            thread.environmentId === projectRef.environmentId &&
+            thread.projectId === projectRef.projectId,
+        ) ||
+        readUnloadedThreadCount(
+          [{ environmentId: projectRef.environmentId, id: projectRef.projectId }],
+          [],
+        ) > 0,
+    });
+  const workspaceFor = (projectFile: T3ProjectFile | null) => {
+    const envMode = envModeFor(projectFile);
+    return {
+      envMode,
+      startFromOrigin: resolveNewDraftStartFromOrigin({
+        envMode,
+        newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
+      }),
+    };
+  };
+  const consultProjectFile =
+    project !== undefined &&
+    projectSettings.settings.defaultThreadEnvMode === null &&
+    appAtomRegistry
+      .get(environmentSummaries.connectedEnvironmentIdsAtom)
+      .includes(project.environmentId);
+  if (!consultProjectFile) return { workspace: workspaceFor(null), pending: null };
+  const projectFileRead = readT3ProjectFile(project.environmentId, project.workspaceRoot);
+  const cachedProjectFile = peekT3ProjectFile(project.environmentId, project.workspaceRoot);
+  return {
+    workspace: workspaceFor(cachedProjectFile ?? null),
+    pending: cachedProjectFile === undefined ? projectFileRead.then(workspaceFor) : null,
+  };
+}
+
 interface NewThreadWorkspaceOptions {
   branch?: string | null;
   worktreePath?: string | null;
   envMode?: DraftThreadEnvMode;
   startFromOrigin?: boolean;
+  workspaceUsesDefaults?: boolean;
 }
 
 function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undefined) {
@@ -234,65 +298,44 @@ export function createNewThreadHandler(router: AnyRouter) {
           currentRouteTarget?.kind === "draft" ? currentRouteTarget.draftId : null,
         destinationDraftId,
       });
-    const envModeFor = (projectFile: T3ProjectFile | null): DraftThreadEnvMode =>
-      resolveNewThreadEnvMode({
-        projectSettings: resolveProjectSettings(
-          targetServerSettings,
-          project?.id ?? null,
-          project,
-          projectFile,
-        ),
-        workspaceRoot: project?.workspaceRoot ?? null,
-        newProjectsRoot: environmentServerConfigs.get(projectRef.environmentId)?.newProjectsRoot,
-        projectHasThreads:
-          readThreadShells().some(
-            (thread) =>
-              thread.environmentId === projectRef.environmentId &&
-              thread.projectId === projectRef.projectId,
-          ) ||
-          readUnloadedThreadCount(
-            [{ environmentId: projectRef.environmentId, id: projectRef.projectId }],
-            [],
-          ) > 0,
-      });
     const startFromOriginFor = (envMode: DraftThreadEnvMode) =>
       resolveNewDraftStartFromOrigin({
         envMode,
         newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
       });
-    // The draft opens without waiting on t3.json: a cold read takes seconds on a loaded host.
-    // Its workspace default lands afterwards unless the user picked a workspace or sent first.
+    // A cold t3.json read can finish after the composer opens.
     const resolveDefaultEnvMode = () => {
-      // Environment queries wait for a connection, so an offline machine's file is never read.
-      const consultProjectFile =
-        project !== undefined &&
-        projectSettings.settings.defaultThreadEnvMode === null &&
-        appAtomRegistry
-          .get(environmentSummaries.connectedEnvironmentIdsAtom)
-          .includes(project.environmentId);
-      if (!consultProjectFile) return { envMode: envModeFor(null), applyProjectFile: () => {} };
-      const projectFileRead = readT3ProjectFile(project.environmentId, project.workspaceRoot);
-      const cachedProjectFile = peekT3ProjectFile(project.environmentId, project.workspaceRoot);
-      if (cachedProjectFile !== undefined) {
-        return { envMode: envModeFor(cachedProjectFile), applyProjectFile: () => {} };
-      }
-      const envMode = envModeFor(null);
+      const { workspace, pending } = resolveDraftWorkspaceDefaults(
+        projectRef,
+        project,
+        targetServerSettings,
+        environmentServerConfigs.get(projectRef.environmentId)?.newProjectsRoot,
+      );
+      const { envMode } = workspace;
+      if (pending === null) return { envMode, applyProjectFile: () => {} };
       const applyProjectFile = (draftId: DraftId) => {
         const provisional: ProvisionalWorkspace = {
           envMode,
+          projectRef,
+          workspaceUsesDefaults: getDraftSession(draftId)?.workspaceUsesDefaults === true,
           openedManual: getDraftSession(draftId)?.environmentSelection === "manual",
         };
-        const settled = projectFileRead
-          .then((projectFile) => {
-            const fileEnvMode = envModeFor(projectFile);
+        const settled = pending
+          .then((resolved) => {
             const draft = getDraftSession(draftId);
-            if (fileEnvMode === envMode || !keepsProvisionalWorkspace(draft, provisional)) return;
+            if (
+              pendingWorkspaceDefaults.get(draftId)?.settled !== settled ||
+              resolved.envMode === envMode ||
+              !keepsProvisionalWorkspace(draft, provisional)
+            )
+              return;
             // Commit before a waiting send re-reads the composer's workspace.
             flushSync(() =>
               setDraftThreadContext(draftId, {
-                envMode: fileEnvMode,
-                ...(draft.startFromOrigin === startFromOriginFor(envMode)
-                  ? { startFromOrigin: startFromOriginFor(fileEnvMode) }
+                envMode: resolved.envMode,
+                workspaceUsesDefaults: provisional.workspaceUsesDefaults,
+                ...(draft.startFromOrigin === workspace.startFromOrigin
+                  ? { startFromOrigin: resolved.startFromOrigin }
                   : {}),
               }),
             );
@@ -313,6 +356,8 @@ export function createNewThreadHandler(router: AnyRouter) {
     const hasWorktreePathOption = options?.worktreePath !== undefined;
     const hasEnvModeOption = options?.envMode !== undefined;
     const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+    const hasExplicitWorkspaceOption =
+      hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasStartFromOriginOption;
     const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
     const storedDraftThreadRef = storedDraftThread
       ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
@@ -342,8 +387,6 @@ export function createNewThreadHandler(router: AnyRouter) {
         const isDraftAlreadyOpen =
           currentRouteTarget?.kind === "draft" &&
           currentRouteTarget.draftId === emptyStoredDraftThread.draftId;
-        const hasExplicitWorkspaceOption =
-          hasBranchOption || hasWorktreePathOption || hasEnvModeOption || hasStartFromOriginOption;
         let workspaceContext: NewThreadWorkspaceOptions | null = null;
         let applyProjectFile: ((draftId: DraftId) => void) | null = null;
         if (hasExplicitWorkspaceOption) {
@@ -356,6 +399,7 @@ export function createNewThreadHandler(router: AnyRouter) {
             worktreePath: null,
             envMode: defaultEnvMode.envMode,
             startFromOrigin: startFromOriginFor(defaultEnvMode.envMode),
+            workspaceUsesDefaults: emptyStoredDraftThread.workspaceUsesDefaults ?? false,
           };
         }
         if (workspaceContext) {
@@ -454,6 +498,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         worktreePath: options?.worktreePath ?? null,
         envMode: initialEnvMode,
         startFromOrigin: options?.startFromOrigin ?? startFromOriginFor(initialEnvMode),
+        workspaceUsesDefaults: !hasExplicitWorkspaceOption,
         runtimeMode: defaultRuntimeMode,
         ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
       });

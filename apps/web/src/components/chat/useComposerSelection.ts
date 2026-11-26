@@ -251,10 +251,15 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, {
         envMode: mode,
-        startFromOrigin: resolveNewDraftStartFromOrigin({
-          envMode: mode,
-          newWorktreesStartFromOrigin: activeProjectSettings.settings.newWorktreesStartFromOrigin,
-        }),
+        ...(draftThread?.envMode === mode && !draftThread.worktreePath
+          ? {}
+          : {
+              startFromOrigin: resolveNewDraftStartFromOrigin({
+                envMode: mode,
+                newWorktreesStartFromOrigin:
+                  activeProjectSettings.settings.newWorktreesStartFromOrigin,
+              }),
+            }),
         ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
       });
     }
