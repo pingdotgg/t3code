@@ -181,8 +181,9 @@ describe("observability", () => {
         );
       }
       assert.deepEqual(names, ["sample", "slow", "failed", "logged", "other"]);
-      assert.isTrue(
-        delegates.length === 6 && delegates.every((span) => span.status._tag === "Ended"),
+      assert.deepEqual(
+        delegates.map((span) => span.status._tag),
+        Array(6).fill("Ended"),
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
