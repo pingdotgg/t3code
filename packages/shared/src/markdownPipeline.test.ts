@@ -5,12 +5,6 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import type { Link, Root, RootContent } from "mdast";
-import type { Root as HastRoot } from "hast";
-import {
-  rehypeNormalizeLocalFileLinks,
-  rehypePreserveImageSourceMeta,
-  sanitizeChatHast,
-} from "./markdownHast.ts";
 import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
@@ -555,48 +549,35 @@ it("keeps mixed-case local editor file links by lowercasing the scheme before sa
   ]);
 });
 
-it("preserves HTTP(S) targets regardless of scheme casing without allowing other schemes", () => {
-  for (const scheme of ["https", "HTTPS", "hTtPs", "http", "HTTP", "javascript", "JAVASCRIPT"]) {
-    const url = `${scheme}://Example.com/A%2Fb.png?Key=Value#Part`;
-    const expected = /^https?$/i.test(scheme)
-      ? url.replace(scheme, scheme.toLowerCase())
-      : undefined;
-    const tree: HastRoot = {
-      type: "root",
-      children: [
-        { type: "element", tagName: "a", properties: { href: url }, children: [] },
-        {
-          type: "element",
-          tagName: "picture",
-          properties: {},
-          children: [
-            {
-              type: "element",
-              tagName: "source",
-              properties: { media: "(prefers-color-scheme: dark)", srcSet: url },
-              children: [],
-            },
-            {
-              type: "element",
-              tagName: "img",
-              properties: { src: url, dataLightSrc: url },
-              children: [],
-            },
-          ],
-        },
-      ],
-    };
-    rehypePreserveImageSourceMeta()(tree);
-    rehypeNormalizeLocalFileLinks()(tree);
-    const sanitized = sanitizeChatHast(tree);
-    const anchor = sanitized.children[0];
-    const picture = sanitized.children[1];
-    const image = picture?.type === "element" ? picture.children[0] : undefined;
-    expect(anchor?.type === "element" ? anchor.properties.href : null, scheme).toBe(expected);
-    expect(image?.type === "element" ? image.properties.src : null, scheme).toBe(expected);
-    expect(image?.type === "element" ? image.properties.dataDarkSrc : null, scheme).toBe(expected);
-    expect(image?.type === "element" ? image.properties.dataLightSrc : null, scheme).toBe(expected);
-  }
+it("keeps uppercase HTTP(S) link and image URLs by lowercasing the scheme before sanitizing", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { tagName?: string; properties?: object; children?: Node[] };
+  const elements = (node: Node): Node[] => [
+    ...(node.tagName === "a" || node.tagName === "img" ? [node] : []),
+    ...(node.children ?? []).flatMap(elements),
+  ];
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "[upper](HTTPS://Example.com/A?Key=Value#Part) [mixed](hTtP://Example.com/B) [js](JAVASCRIPT:alert(1))",
+        "",
+        "![shot](HTTPS://Example.com/Shot.png)",
+        "",
+        '<picture><source media="(prefers-color-scheme: dark)" srcset="HTTPS://Example.com/Dark.png"><img src="HTTP://Example.com/Light.png"></picture>',
+      ].join("\n"),
+    ),
+  ) as Node;
+  expect(elements(tree).map((node) => node.properties)).toEqual([
+    { href: "https://Example.com/A?Key=Value#Part" },
+    { href: "http://Example.com/B" },
+    {},
+    { src: "https://Example.com/Shot.png", alt: "shot", dataStandalone: true },
+    { src: "http://Example.com/Light.png", dataDarkSrc: "https://Example.com/Dark.png" },
+  ]);
 });
 
 it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {
