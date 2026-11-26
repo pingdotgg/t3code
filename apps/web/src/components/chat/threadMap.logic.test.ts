@@ -412,6 +412,32 @@ describe("deriveThreadMap", () => {
     });
   });
 
+  it("never takes a notification from inside a turn for the prompt that opened it", () => {
+    const notice = (id: string, runId: string): OrchestrationV2TurnItem => ({
+      ...itemBase(id, runId),
+      type: "notification",
+      source: { kind: "delegated_task", taskIds: [] },
+      outcome: "completed",
+      summary: `${id} summary`,
+    });
+    const [afterWork, retained] = deriveThreadMap(
+      projection({
+        runs: [run("after-work", 1), run("retained", 2)],
+        // Both windows start inside the turn, after its prompt.
+        items: [
+          tool("after-work-tool", "after-work"),
+          notice("after-work-notice", "after-work"),
+          notice("retained-notice", "retained"),
+        ],
+        // The latest turn's prompt is kept even when its row is not.
+        messages: [message("retained-prompt", "retained", { text: "Ship it" })],
+      }),
+    );
+
+    expect(afterWork).toMatchObject({ rowId: null, prompt: "", moreToolCalls: true });
+    expect(retained).toMatchObject({ rowId: null, prompt: "Ship it", moreToolCalls: true });
+  });
+
   it("counts a turn's changed files across its repositories, only from captured changes", () => {
     const checkpoint = (
       id: string,
@@ -453,13 +479,14 @@ describe("deriveThreadMap", () => {
   });
 
   it("summarizes what a turn did and picks its update and answer", () => {
-    const [phased, unphased, live, partial] = deriveThreadMap(
+    const [phased, unphased, live, partial, failed] = deriveThreadMap(
       projection({
         runs: [
           run("phased", 1),
           run("unphased", 2),
           run("live", 3, { status: "running", completedAt: null }),
           run("partial", 4),
+          run("failed", 5, { status: "failed" }),
         ],
         items: [
           prompt("phased", "One"),
@@ -485,6 +512,10 @@ describe("deriveThreadMap", () => {
           reply("live-alert", "live", "final_answer", "async"),
           // The window starts inside this turn: its prompt and earlier work are not loaded.
           tool("partial-tool", "partial"),
+          // It failed before its answer, so its commentary is only an update.
+          prompt("failed", "Five"),
+          reply("failed-note", "failed", "commentary"),
+          reply("failed-later-note", "failed", "commentary"),
         ],
         checkpoints: [
           {
@@ -526,7 +557,8 @@ describe("deriveThreadMap", () => {
       answerItemId: null,
       durationMs: null,
     });
-    expect(partial).toMatchObject({ toolCalls: 1, moreToolCalls: true });
+    expect(partial).toMatchObject({ toolCalls: 1, moreToolCalls: true, rowId: null });
+    expect(failed).toMatchObject({ updateItemId: "failed-note", answerItemId: null });
   });
 });
 

@@ -96,6 +96,9 @@ const EDGE_CLASS: Record<"spine" | "input" | "output" | "return", string> = {
   return: "text-info",
 };
 
+const sameView = (left: FleetViewTransform, right: FleetViewTransform) =>
+  left.scale === right.scale && left.x === right.x && left.y === right.y;
+
 const rectStyle = (rect: FleetRect): CSSProperties => ({
   left: rect.x,
   top: rect.y,
@@ -253,17 +256,14 @@ function ThreadMapCanvas({
       eased,
     );
   };
-  // Eases back to the opening view, which then follows new turns again.
   // The opening view can show only the newest turns of a long map; Fit shows all of it.
   const fitted = size === null ? null : fitFleetLayout(layout, size);
-  const isFitted =
-    view !== null &&
-    fitted !== null &&
-    view.scale === fitted.scale &&
-    view.x === fitted.x &&
-    view.y === fitted.y;
+  const isFitted = view !== null && fitted !== null && sameView(view, fitted);
   const fit = () => {
-    if (fitted !== null && !isFitted) setView(fitted, true);
+    if (fitted === null || initial === null || isFitted) return;
+    // When the opening view is the whole map, return to it so new turns stay in view.
+    if (sameView(initial, fitted)) setManual({ view: null, glide: true });
+    else setView(fitted, true);
   };
   const onWheel = useEffectEvent((event: WheelEvent) => {
     if (view === null) return;
@@ -931,10 +931,15 @@ function TurnDetails({
     rememberTimelinePosition(
       key,
       {
-        rowId: turn.rowId,
-        offsetWithinRow: -16,
-        // Where the timeline was, should the turn's row be folded away.
-        scrollOffset: remembered?.scrollOffset ?? 0,
+        ...(turn.rowId === null
+          ? // Only the oldest loaded turn can open before the window, so it starts at the top.
+            { rowId: "", offsetWithinRow: 0, scrollOffset: 0 }
+          : {
+              rowId: turn.rowId,
+              offsetWithinRow: -16,
+              // Where the timeline was, should the turn's row be folded away.
+              scrollOffset: remembered?.scrollOffset ?? 0,
+            }),
         atEnd: false,
         ...(remembered?.disclosures === undefined ? {} : { disclosures: remembered.disclosures }),
       },

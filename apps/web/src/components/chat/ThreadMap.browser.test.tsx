@@ -26,7 +26,7 @@ import { render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { useThreadMapViewStore } from "../../threadMapViewStore";
 import ThreadMap from "./ThreadMap";
-import { readTimelinePosition } from "./timelineScrollAnchoring";
+import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
 const threadRef = scopeThreadRef(EnvironmentId.make("environment"), ThreadId.make("thread-test"));
 const at = (second: number) => DateTime.makeUnsafe(Date.UTC(2026, 0, 1, 0, 0, second));
@@ -188,5 +188,38 @@ it("fits the whole map when the opening view shows only the newest turns", async
   expect(inCanvas()).toBe(false);
   await fitButton.click();
   await expect.element(fitButton).toBeDisabled();
-  await expect.poll(inCanvas).toBe(true);
+  await vi.waitFor(() => expect(inCanvas()).toBe(true));
+});
+
+it("opens a turn that starts before the loaded history at the top of the conversation", async () => {
+  setup();
+  const projection = fixture();
+  // The window starts inside turn 1: its prompt row is not loaded.
+  const visibleTurnItems = projection.visibleTurnItems.filter(
+    (entry) => entry.item.id !== "prompt-1-item",
+  );
+  // The reader had scrolled down the conversation before opening the map.
+  rememberTimelinePosition(
+    scopedThreadKey(threadRef),
+    { rowId: "answer-1", offsetWithinRow: 0, scrollOffset: 900, atEnd: false },
+    false,
+  );
+  await using screen = await render(
+    <div className="flex h-[640px] w-[960px] flex-col">
+      <ThreadMap
+        threadRef={threadRef}
+        projection={{ ...projection, visibleTurnItems }}
+        bottomInset={0}
+      />
+    </div>,
+  );
+  const details = screen.getByRole("group", { name: "Details" });
+
+  await screen.getByRole("button", { name: /^Turn 1,/ }).click();
+  await details.getByRole("button", { name: "Show in conversation" }).click();
+
+  expect(readTimelinePosition(scopedThreadKey(threadRef))).toMatchObject({
+    scrollOffset: 0,
+    atEnd: false,
+  });
 });

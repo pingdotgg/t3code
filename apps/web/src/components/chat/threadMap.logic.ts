@@ -66,8 +66,11 @@ export interface ThreadMapTurn {
   readonly number: number;
   readonly status: OrchestrationV2RunStatus;
   readonly queued: boolean;
-  /** The conversation row the turn opens at: its prompt, or the notification that woke it. */
-  readonly rowId: string;
+  /**
+   * The conversation row the turn opens at: its prompt, or the notification that woke it.
+   * Null when that row is older than the loaded window.
+   */
+  readonly rowId: string | null;
   readonly prompt: string;
   readonly sender: ThreadMapSender | null;
   /** The first commentary message, read live through its turn item. */
@@ -246,10 +249,17 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
     const openingItem = userItemByMessageId.get(run.userMessageId);
     const openingMessage = messageById.get(run.userMessageId);
     const opening = openingItem ?? openingMessage;
-    // A wake's message becomes a notification row, which has no message ID. A provider
-    // handoff can come before it, so it need not be the turn's first item.
+    // A wake's message becomes a notification row, which has no message ID. Only a provider
+    // handoff comes before it; a notification after other work arrived mid-turn.
+    const firstOwnItem = items.find((item) => item.type !== "handoff");
     const openingNotification =
-      openingItem === undefined ? items.find((item) => item.type === "notification") : undefined;
+      openingItem === undefined &&
+      firstOwnItem?.type === "notification" &&
+      (openingMessage === undefined ||
+        openingMessage.notification !== undefined ||
+        openingMessage.delegatedCompletion !== undefined)
+        ? firstOwnItem
+        : undefined;
     const prompt =
       openingNotification?.summary ??
       (opening === undefined
@@ -286,7 +296,8 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
         firstAssistant ??= item.id;
         if (item.phase === "commentary") firstCommentary ??= item.id;
         // An async alert is sent apart from the answer, even when marked as one.
-        if (item.delivery !== "async") {
+        // Commentary is never the answer, even in a turn that ended before giving one.
+        if (item.delivery !== "async" && item.phase !== "commentary") {
           lastAssistant = item.id;
           if (item.phase === "final_answer") finalAnswer = item.id;
         }
@@ -308,7 +319,8 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
       number: run.ordinal,
       status: run.status,
       queued,
-      rowId: openingNotification?.id ?? run.userMessageId,
+      rowId:
+        openingItem !== undefined || queued ? run.userMessageId : (openingNotification?.id ?? null),
       prompt,
       sender,
       updateItemId,
