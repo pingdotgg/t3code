@@ -312,7 +312,14 @@ export function windowsEnvironmentValueCommand(name: string): string {
       ") | Where-Object { $_ }) -join ';'"
     );
   }
-  return `$value = [Environment]::GetEnvironmentVariable('${name}')`;
+  // A variable saved after this process started is only in the User or Machine registry scope.
+  return (
+    "$value = @(" +
+    `[Environment]::GetEnvironmentVariable('${name}','Process'),` +
+    `[Environment]::GetEnvironmentVariable('${name}','User'),` +
+    `[Environment]::GetEnvironmentVariable('${name}','Machine')` +
+    ") | Where-Object { $_ } | Select-Object -First 1"
+  );
 }
 
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {

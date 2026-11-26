@@ -12,23 +12,6 @@
   Metro bundles the pnpm copy—run `vp i` after editing a local module's TypeScript or changes will
   not appear on device.
 
-## Measuring renders
-
-[`render-counter.ts`](../../apps/mobile/src/features/development/render-counter.ts) loads only when
-`__DEV__` and `EXPO_PUBLIC_T3_RENDER_COUNTER=1` (stripped from release builds).
-[`measure-renders.mts`](../../apps/mobile/scripts/measure-renders.mts) drives measurements through
-Metro's Hermes inspector proxy (works on iOS and Android without `simctl` or `adb`). Pass the LAN
-URL Metro advertises as `--metro`:
-
-```bash
-EXPO_PUBLIC_T3_RENDER_COUNTER=1 vp run dev:client   # in apps/mobile, then pair the app
-node apps/server/src/bin.ts auth session issue --base-dir <base-dir> --token-only
-node apps/mobile/scripts/measure-renders.mts --server <server-origin> --token <token> \
-  --metro http://<metro-lan-host>:8081 --project-root <scratch-dir>
-```
-
-Compare before and after on the same base and device using the median of three runs.
-
 ## React Compiler
 
 Expo enables the compiler through `experiments.reactCompiler` in `app.config.ts` (not

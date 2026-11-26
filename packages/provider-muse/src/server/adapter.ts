@@ -437,6 +437,22 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           providerSession: session,
         });
       });
+      const reportStartupPhase = Effect.fn("MuseAdapterV2.reportStartupPhase")(function* (
+        phase: string | undefined,
+      ) {
+        if (session.startupPhase === phase) return;
+        const { startupPhase: _reported, ...current } = session;
+        session = {
+          ...current,
+          ...(phase === undefined ? {} : { startupPhase: phase }),
+          updatedAt: yield* DateTime.now,
+        };
+        yield* emit({
+          type: "provider_session.updated",
+          driver: MUSE_PROVIDER,
+          providerSession: session,
+        });
+      });
       const updateThread = Effect.fnUntraced(function* (
         patch: Partial<OrchestrationV2ProviderThread>,
       ) {
@@ -1952,6 +1968,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             : undefined;
           const startModel = yield* resolveModel(args.modelSelection);
           const permissionProfile = musePermissionProfile(args.runtimePolicy.runtimeMode);
+          if (requestedId) yield* reportStartupPhase("resume");
           const result = yield* request(
             requestedId ? "session/resume" : "session/start",
             requestedId
@@ -1973,6 +1990,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               return Effect.fail(error);
             }),
             Effect.flatMap((value) => decode(MuseSessionResult, value)),
+            Effect.ensuring(Effect.suspend(() => reportStartupPhase(undefined))),
           );
           if (result.session.sessionId !== nativeSessionId)
             return yield* protocolError("Muse returned a different session identity");
