@@ -111,6 +111,7 @@ interface TranscriptSource {
   readonly volumeId: string;
   readonly physicalSourceId?: string;
   readonly fileName?: string;
+  readonly excludeTopLevelDir?: (name: string) => boolean;
 }
 
 const RatesCacheFile = Schema.Struct({
@@ -213,9 +214,19 @@ export const make = Effect.gen(function* () {
     coveredSince.set(coverageKey(source), windowStartMs);
     cacheDirty = true;
   };
-  const isWithinDirectory = (filePath: string, dir: string) => {
-    const relative = path.relative(dir, filePath);
-    return relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
+  const isWithinDirectory = (
+    folder: string,
+    dir: string,
+    excludeTopLevelDir?: (name: string) => boolean,
+  ) => {
+    const relative = path.relative(dir, folder);
+    if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+      return false;
+    }
+    if (excludeTopLevelDir === undefined || relative.length === 0) return true;
+    const sepIndex = relative.indexOf(path.sep);
+    const topLevel = sepIndex === -1 ? relative : relative.slice(0, sepIndex);
+    return !excludeTopLevelDir(topLevel);
   };
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
@@ -404,7 +415,12 @@ export const make = Effect.gen(function* () {
         yield* usageInstances(driver, settings),
         (instance) => reader.directories(instance, { awaitRefresh }),
       );
-      for (const { dir: directory, fileName, refreshing } of directories.flat()) {
+      for (const {
+        dir: directory,
+        fileName,
+        excludeTopLevelDir,
+        refreshing,
+      } of directories.flat()) {
         if (refreshing) {
           const key = `${provider}\0${directory}`;
           if (seen.has(key)) continue;
@@ -426,7 +442,7 @@ export const make = Effect.gen(function* () {
               entry.mtimeMs >= retentionCutoffMs &&
               (entry.records.length + entry.tailRecords.length > 0 ||
                 entry.malformedRecords.length > 0) &&
-              isWithinDirectory(filePath, dir),
+              isWithinDirectory(path.dirname(filePath), dir, excludeTopLevelDir),
           );
         const volumeId =
           previous?.dir === dir && (hasRetainedHistory || !currentVolumeId)
@@ -447,6 +463,7 @@ export const make = Effect.gen(function* () {
           volumeId,
           ...(sourceId === undefined ? {} : { physicalSourceId: sourceId }),
           ...(fileName === undefined ? {} : { fileName }),
+          ...(excludeTopLevelDir === undefined ? {} : { excludeTopLevelDir }),
         });
       }
     }
@@ -686,6 +703,7 @@ export const make = Effect.gen(function* () {
     readonly dir: string;
     readonly volumeId: string;
     readonly physicalSourceId?: string;
+    readonly excludeTopLevelDir?: (name: string) => boolean;
     readonly hostId?: string;
     readonly status?: UsageSource["status"];
     readonly message?: string;
@@ -706,12 +724,14 @@ export const make = Effect.gen(function* () {
     windowStartMs: number,
     fromMemory: boolean,
   ) {
-    const { provider, format, dir, volumeId, physicalSourceId, fileName } = source;
+    const { provider, format, dir, volumeId, physicalSourceId, fileName, excludeTopLevelDir } =
+      source;
     const identity = {
       provider,
       dir,
       volumeId,
       ...(physicalSourceId === undefined ? {} : { physicalSourceId }),
+      ...(excludeTopLevelDir === undefined ? {} : { excludeTopLevelDir }),
     };
     const exists = yield* fileSystem
       .exists(dir)
@@ -722,8 +742,15 @@ export const make = Effect.gen(function* () {
     }
     // scanSummary aggregates the saved files, as it does for a deleted directory.
     if (fromMemory) return { ...identity, files: [] } satisfies ScannedDir;
+    const listOptions =
+      fileName === undefined && excludeTopLevelDir === undefined
+        ? undefined
+        : {
+            ...(fileName === undefined ? {} : { fileName }),
+            ...(excludeTopLevelDir === undefined ? {} : { excludeTopLevelDir }),
+          };
     const { files, walked, failedPaths } = yield* Effect.promise(() =>
-      listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
+      listTranscriptFiles(dir, windowStartMs, listOptions),
     );
     const read = yield* Effect.forEach(
       files,
@@ -929,22 +956,22 @@ export const make = Effect.gen(function* () {
     // Deleted transcripts' saved usage still aggregates and deduplicates normally.
     const retainedSinceMs = Math.max(windowStartMs, retentionCutoffMs);
     // Saved paths are files below a scanned root, so their folder decides; folders repeat thousands of times.
-    const withinDir = (dir: string) => {
+    const withinDir = (dir: string, excludeTopLevelDir?: (name: string) => boolean) => {
       const foldersWithin = new Map<string, boolean>();
       return (filePath: string) => {
         const folder = path.dirname(filePath);
         let within = foldersWithin.get(folder);
         if (within === undefined) {
-          within = isWithinDirectory(folder, dir);
+          within = isWithinDirectory(folder, dir, excludeTopLevelDir);
           foldersWithin.set(folder, within);
         }
         return within;
       };
     };
-    const filesByDir = scannedDirs.map(({ provider, dir, files }) => {
+    const filesByDir = scannedDirs.map(({ provider, dir, files, excludeTopLevelDir }) => {
       const retainedFiles = [...(files ?? [])];
       const livePaths = new Set(retainedFiles.map((file) => file.path));
-      const isRetained = withinDir(dir);
+      const isRetained = withinDir(dir, excludeTopLevelDir);
       for (const [filePath, entry] of fileCache) {
         if (
           entry.provider !== provider ||
@@ -975,9 +1002,9 @@ export const make = Effect.gen(function* () {
     });
     // Usage two transcripts share counts in the first one, so saved files take the order an exact
     // scan reads them in: walked files in walk order, then the directory's deleted files.
-    for (const { provider, dir, walked } of fromMemory ? [] : scannedDirs) {
+    for (const { provider, dir, walked, excludeTopLevelDir } of fromMemory ? [] : scannedDirs) {
       if (walked === undefined) continue;
-      const within = withinDir(dir);
+      const within = withinDir(dir, excludeTopLevelDir);
       const saved = [...fileCache.keys()];
       const members = new Set(
         saved.filter(

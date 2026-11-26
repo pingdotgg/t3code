@@ -129,6 +129,7 @@ export type ProviderUsageReader<Config, R> =
         ReadonlyArray<{
           readonly dir: string;
           readonly fileName?: string;
+          readonly excludeTopLevelDir?: (name: string) => boolean;
           readonly refreshing?: true;
         }>,
         never,
