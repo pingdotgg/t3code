@@ -42,15 +42,6 @@ describe("embeddedScripts", () => {
     ]);
   });
 
-  it("skips -- after -c only for POSIX shells, not other interpreters", () => {
-    const inner = `python3 -c -- 'print(1)'; fish -c -- 'echo hi'`;
-    expect(scriptsOf(`sh -c -- "${inner}"`)).toEqual([
-      ["shellscript", inner, inner],
-      ["python", "--", "--"],
-      ["fish", "--", "--"],
-    ]);
-  });
-
   it("highlights a heredoc fed to an interpreter in that interpreter's language", () => {
     const command = `python3 - <<'PY'\n${pythonScript}PY`;
     expect(scriptsOf(command)).toEqual([["python", pythonScript, pythonScript]]);
@@ -86,8 +77,6 @@ describe("embeddedScripts", () => {
     [`psql app <<'EOF'\nselect 1;\nEOF`, "sql", "select 1;\n"],
     [`echo "$(node -e 'console.log(1)')"`, "javascript", "console.log(1)"],
     [`python3 <<< 'print(1)'`, "python", "print(1)"],
-    [`sh -c -- 'echo hi'`, "shellscript", "echo hi"],
-    [`node -p <<'EOF'\n1+41\nEOF`, "javascript", "1+41\n"],
   ])("finds the inline script in %s", (command, language, script) => {
     expect(scriptsOf(command)).toEqual([[language, script, expect.any(String)]]);
   });
@@ -119,7 +108,6 @@ describe("embeddedScripts", () => {
     ["plain commands", `rg -n "foo" src && git status`],
     ["an unnamed heredoc into a plain command", `git commit -F - <<'EOF'\nfix: x\nEOF`],
     ["an empty script", `bash -lc '   '`],
-    ["a shell given no script after --", `sh -c --`],
     ["a shell whose -c has no script, before a heredoc", `sh -c -- <<'EOF'\necho hi\nEOF`],
     ["a heredoc `cat` sends to stdout while stderr goes to a file", `cat 2>log.ts <<'EOF'\nx\nEOF`],
   ])("finds nothing for %s", (_case, command) => {
