@@ -82,6 +82,8 @@ const UNDRAWN_NAMES: Readonly<Record<string, string>> = {
   "\u001B": "\\e",
 };
 const PICTOGRAPH = /^\p{Extended_Pictographic}$/u;
+// The pictographic range also holds code points reserved for emoji that do not exist yet.
+const EMOJI = /^\p{Emoji}$/u;
 const SKIN_TONE_BASE = /^\p{Emoji_Modifier_Base}$/u;
 const JOINER = 0x200d;
 const TEXT_SELECTOR = 0xfe0e;
@@ -90,8 +92,11 @@ const KEYCAP = 0x20e3;
 
 const isSkinTone = (codePoint: number) => codePoint >= 0x1f3fb && codePoint <= 0x1f3ff;
 // An emoji that is not a skin tone, which only colours the emoji before it.
-const isPicture = (codePoint: number) =>
-  codePoint >= 0 && !isSkinTone(codePoint) && PICTOGRAPH.test(String.fromCodePoint(codePoint));
+const isPicture = (codePoint: number) => {
+  if (codePoint < 0 || isSkinTone(codePoint)) return false;
+  const character = String.fromCodePoint(codePoint);
+  return PICTOGRAPH.test(character) && EMOJI.test(character);
+};
 // A digit, # or *.
 const isKeycapBase = (codePoint: number) =>
   (codePoint >= 0x30 && codePoint <= 0x39) || codePoint === 0x23 || codePoint === 0x2a;

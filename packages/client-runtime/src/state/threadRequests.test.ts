@@ -759,6 +759,10 @@ it("leaves a joiner or a presentation selector alone only inside an emoji", () =
   expect(named("a\u{1F3FD}‍\u{1F4BB} \u{1F469}‍\u{1F3FD} \u{1F44B}\u{1F3FD}️")).toBe(
     "a\u{1F3FD}<U+200D>\u{1F4BB} \u{1F469}<U+200D>\u{1F3FD} \u{1F44B}\u{1F3FD}<U+FE0F>",
   );
+  // A code point reserved for an emoji that does not exist yet is not an emoji.
+  expect(named("\u{1FC00}\uFE0F \u{1FC00}\u200D\u{1F4BB} \u{1F469}\u200D\u{1FC00}")).toBe(
+    "\u{1FC00}<U+FE0F> \u{1FC00}<U+200D>\u{1F4BB} \u{1F469}<U+200D>\u{1FC00}",
+  );
   // Tag characters are named, in a flag as well.
   expect(named("\u{1F3F4}\u{E0067}\u{E0062}\u{E007F}")).toBe("\u{1F3F4}<U+E0067U+E0062U+E007F>");
 });
