@@ -382,10 +382,21 @@ describe("wordsHast", () => {
 
   it("reads a directive's label as written", () => {
     expect(
-      codexDirectiveSources(':codex-followup[pick {a} or [b]]{prompt="go"}').map(
-        (directive) => directive.label,
-      ),
-    ).toEqual(["pick {a} or [b]"]);
+      codexDirectiveSources(
+        ':codex-followup[pick {a} or [b]]{prompt="go"} :codex-followup{prompt="Look at [foo]"} :codex-followup[<!-- x -->]{prompt="go"}',
+      ).map((directive) => directive.label),
+    ).toEqual(["pick {a} or [b]", "", ""]);
+  });
+
+  it("keeps unlabeled follow-up directives literal when copying", () => {
+    const unlabeled = 'Before :codex-followup{prompt="Look at [foo]"} after';
+    expect(wordsHtml(unlabeled)).toBe(
+      '<p dir="ltr">Before :codex-followup{prompt="Look at [foo]"} after</p>',
+    );
+    expect(renderCodexDirectivesForCopy(unlabeled)).toBe(unlabeled);
+    expect(renderCodexDirectivesForCopy('Before :codex-followup[Ask]{prompt="go"} after')).toBe(
+      "Before Ask after",
+    );
   });
 
   it.each([

@@ -1216,7 +1216,9 @@ export function codexDirectiveSources(markdown: string): CodexDirectiveSource[] 
           attributes: directiveAttributes(child),
           start: start.offset!,
           end: end.offset!,
-          label: directiveLabel(markdown.slice(start.offset, end.offset)),
+          label: textOf(child).trim()
+            ? directiveLabel(markdown.slice(start.offset, end.offset))
+            : "",
           inLink,
         });
       }
