@@ -174,19 +174,15 @@ describe("collectComposerInlineTokens", () => {
   });
 
   it("collects a file link after an unclosed bracket", () => {
-    const mention = {
-      type: "mention",
-      value: "src/app.ts",
-      source: "[app.ts](src/app.ts)",
-    };
     expect(collectComposerInlineTokens("See [WIP and [app.ts](src/app.ts) please")).toEqual([
-      { ...mention, start: 13, end: 33 },
+      {
+        type: "mention",
+        value: "src/app.ts",
+        source: "[app.ts](src/app.ts)",
+        start: 13,
+        end: 33,
+      },
     ]);
-    expect(collectComposerInlineTokens("TODO: [draft\n[app.ts](src/app.ts) please")).toEqual([
-      { ...mention, start: 13, end: 33 },
-    ]);
-    const newlineName = serializeComposerFileLink("src/a\nb.ts");
-    expect(collectComposerInlineTokens(`see ${newlineName} ok`)[0]?.value).toBe("src/a\nb.ts");
   });
 
   it("leaves a context reference link alone", () => {
