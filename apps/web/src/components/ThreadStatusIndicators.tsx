@@ -18,7 +18,7 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { msg, T, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { TerminalIcon } from "lucide-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -490,6 +490,7 @@ function PullRequestBadge({
         <ThreadPullRequestsMiniList
           pullRequests={pullRequests}
           onOpenPullRequest={onOpenPullRequest}
+          onShowAll={onOpenList}
         />
       ) : number !== undefined && url !== undefined ? (
         <ul className="flex flex-col gap-1">
@@ -540,12 +541,53 @@ export function ThreadLinkBadge({
   );
 }
 
+// Hover previews stay short: rendering hundreds of rows froze the page and
+// filled the screen. The full list lives in the Linked items tab.
+export const LINKED_ITEMS_PREVIEW_LIMIT = 8;
+
+export function LinkedItemsOverflow({
+  hidden,
+  onShowAll,
+}: {
+  hidden: number;
+  onShowAll?: (() => void) | undefined;
+}) {
+  if (hidden <= 0) return null;
+  if (!onShowAll) {
+    return (
+      <div className="px-1 pt-1 text-muted-foreground">
+        <T>
+          +<Var>{hidden}</Var> more
+        </T>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="mt-1 flex w-full cursor-pointer items-center rounded-sm px-1 py-1 text-left text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onShowAll();
+      }}
+    >
+      <T>
+        +<Var>{hidden}</Var> more in Linked items
+      </T>
+    </button>
+  );
+}
+
 export function ThreadPullRequestsMiniList({
   pullRequests,
   onOpenPullRequest,
+  onShowAll,
 }: {
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
+  onShowAll?: (() => void) | undefined;
 }) {
   const lines = pipe(
     visibleThreadPullRequests(pullRequests),
@@ -554,37 +596,43 @@ export function ThreadPullRequestsMiniList({
   );
   if (lines.length === 0) return null;
   return (
-    <ul className="flex flex-col gap-1">
-      {lines.map((line) => {
-        const snapshot = line.link.snapshot;
-        const presentation =
-          snapshot === null
-            ? null
-            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
-        return (
-          <ThreadPullRequestMiniListItem
-            key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
-            number={line.link.number}
-            url={line.link.url}
-            title={snapshot?.title ?? line.link.repository}
-            presentation={presentation}
-            depth={line.depth}
-            onOpenPullRequest={onOpenPullRequest}
-          >
-            {line.stack ? (
-              <span className="ml-auto shrink-0 pl-1 text-3xs">
-                {line.stack.kind === "native" ? (
-                  <T context="a native stack of pull requests">stack</T>
-                ) : (
-                  <T context="a chain of pull requests based on each other">chain</T>
-                )}{" "}
-                · {line.stack.size}
-              </span>
-            ) : null}
-          </ThreadPullRequestMiniListItem>
-        );
-      })}
-    </ul>
+    <>
+      <ul className="flex flex-col gap-1">
+        {lines.slice(0, LINKED_ITEMS_PREVIEW_LIMIT).map((line) => {
+          const snapshot = line.link.snapshot;
+          const presentation =
+            snapshot === null
+              ? null
+              : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
+          return (
+            <ThreadPullRequestMiniListItem
+              key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
+              number={line.link.number}
+              url={line.link.url}
+              title={snapshot?.title ?? line.link.repository}
+              presentation={presentation}
+              depth={line.depth}
+              onOpenPullRequest={onOpenPullRequest}
+            >
+              {line.stack ? (
+                <span className="ml-auto shrink-0 pl-1 text-3xs">
+                  {line.stack.kind === "native" ? (
+                    <T context="a native stack of pull requests">stack</T>
+                  ) : (
+                    <T context="a chain of pull requests based on each other">chain</T>
+                  )}{" "}
+                  · {line.stack.size}
+                </span>
+              ) : null}
+            </ThreadPullRequestMiniListItem>
+          );
+        })}
+      </ul>
+      <LinkedItemsOverflow
+        hidden={lines.length - LINKED_ITEMS_PREVIEW_LIMIT}
+        onShowAll={onShowAll}
+      />
+    </>
   );
 }
 
