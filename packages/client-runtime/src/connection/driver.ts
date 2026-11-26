@@ -1,6 +1,7 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
@@ -29,8 +30,12 @@ import {
   usableRoutes,
 } from "./routes.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import { refreshCookieSession } from "../authorization/remote.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+
+// The server moves the session out at most daily; this keeps an open tab's cookie in step with it.
+const COOKIE_SESSION_REFRESH_INTERVAL = Duration.hours(12);
 
 export type ConnectionDriverProgress =
   | {
@@ -264,6 +269,21 @@ export const make = Effect.gen(function* () {
               ),
               Effect.forkScoped,
             );
+        }
+        // A browser's cookie session renews only over HTTP, and a long-lived tab may make none.
+        if (
+          prepared.httpAuthorization === null &&
+          prepared.target._tag === "PrimaryConnectionTarget"
+        ) {
+          yield* Effect.sleep(COOKIE_SESSION_REFRESH_INTERVAL).pipe(
+            Effect.andThen(refreshCookieSession(prepared.httpBaseUrl)),
+            Effect.catch((error) =>
+              Effect.logWarning("Could not refresh the browser session.", { error }),
+            ),
+            Effect.forever,
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.forkScoped,
+          );
         }
         return { prepared, session } satisfies RouteConnection;
       }),

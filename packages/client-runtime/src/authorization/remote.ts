@@ -190,6 +190,18 @@ export const fetchRemoteSessionState = Effect.fn(
   );
 });
 
+/** Reads the session a browser's own cookie carries, which also renews it and its cookie. */
+export const refreshCookieSession = Effect.fn("clientRuntime.authorization.refreshCookieSession")(
+  function* (httpBaseUrl: string) {
+    const client = yield* makeEnvironmentHttpApiGroupClient(httpBaseUrl, "auth");
+    return yield* executeEnvironmentHttpRequest(
+      environmentEndpointUrl(httpBaseUrl, "/api/auth/session"),
+      DEFAULT_REMOTE_REQUEST_TIMEOUT_MS,
+      client.session({ headers: {} }),
+    );
+  },
+);
+
 const webSocketTicketPath = (use: AuthWebSocketTicketUse | undefined) =>
   use === undefined ? "/api/auth/websocket-ticket" : `/api/auth/websocket-ticket/${use}`;
 

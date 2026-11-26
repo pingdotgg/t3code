@@ -882,9 +882,9 @@ const make = Effect.gen(function* () {
           expirationClaim: claims.exp,
         });
       }
-      // A peer link's session renews while it is used and its token is never
-      // reissued, so the session row holds its deadline, not the token.
-      const rowHoldsDeadline = claims.plk === 1;
+      // Peer link and browser cookie sessions renew while they are used and their token is
+      // never reissued, so the session row holds their deadline, not the token.
+      const rowHoldsDeadline = claims.plk === 1 || claims.method === "browser-session-cookie";
       if (!rowHoldsDeadline && claims.exp <= observedAt.epochMilliseconds) {
         return yield* new SessionTokenExpiredError({
           sessionId: claims.sid,

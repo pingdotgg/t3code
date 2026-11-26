@@ -166,6 +166,20 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           expect(restrictedCookies).toHaveLength(1);
           expect(restrictedCookies[0]).toMatch(/^t3_session_/);
           expect(restrictedCookies[0]).not.toContain("t3_dev_session_");
+
+          const restrictedCookie = restrictedCookies[0] ?? "";
+          const sessionResponse = await environmentA.handler(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: { cookie: restrictedCookie.split(";", 1)[0] ?? "" },
+            }),
+            requestContext,
+          );
+          const session = (await sessionResponse.json()) as { expiresAt: string };
+          const [refreshedCookie] = sessionResponse.headers.getSetCookie();
+          expect(refreshedCookie?.split(";", 1)[0]).toBe(restrictedCookie.split(";", 1)[0]);
+          expect(refreshedCookie).toContain(
+            `Expires=${DateTime.toDate(DateTime.makeUnsafe(session.expiresAt)).toUTCString()}`,
+          );
         }),
       ([environmentA, environmentB]) =>
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),

@@ -1003,6 +1003,37 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       ),
     );
 
+    it.effect("keeps a paired browser signed in while it is used", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const pairing = yield* serverAuth.issuePairingCredential();
+        const exchanged = yield* serverAuth.createBrowserSession(
+          pairing.credential,
+          requestMetadata,
+        );
+        const sessionId = (yield* serverAuth.listSessions()).find(
+          (session) => session.method === "browser-session-cookie",
+        )?.sessionId;
+        expect(sessionId).toBeDefined();
+
+        yield* TestClock.adjust("20 days");
+        const state = yield* serverAuth.getSessionState(
+          makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
+        );
+        expect(state.authenticated).toBe(true);
+
+        // Day 40: used 20 days ago, so the documented 30 days of disuse have not passed.
+        yield* TestClock.adjust("20 days");
+        const listed = (yield* serverAuth.listSessions()).map((session) => session.sessionId);
+        expect(listed).toContain(sessionId);
+        const later = yield* serverAuth.getSessionState(
+          makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
+        );
+        expect(later.authenticated).toBe(true);
+      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+    );
+
     it.effect("accepts cookie sessions on HTTP requests only from the app's own origins", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
