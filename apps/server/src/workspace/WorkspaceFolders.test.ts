@@ -263,55 +263,75 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const tmp = yield* makeTempDir;
-        const home = path.join(tmp, "home");
-        const other = path.join(tmp, "other");
-        const blocked = path.join(home, "Desktop");
+        const root = (name: string) => path.join(tmp, name);
+        const probe = path.join(tmp, "probe");
+        yield* fileSystem.writeFileString(probe, "free");
         for (const folder of ["home/api/.git", "home/Desktop/notes/.git", "other/web/.git"]) {
           yield* fileSystem.makeDirectory(path.join(tmp, folder), { recursive: true });
         }
-        const gate = path.join(tmp, "gate");
-        NodeChildProcess.execFileSync("mkfifo", [gate]);
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            try {
-              NodeFS.closeSync(
-                NodeFS.openSync(gate, NodeFS.constants.O_WRONLY | NodeFS.constants.O_NONBLOCK),
-              );
-            } catch {
-              // ENXIO: no reader is waiting.
-            }
-          }),
-        );
-        const listing = yield* Deferred.make<void>();
+        const listings = new Map<string, { gate: string; started: Deferred.Deferred<void> }>();
+        for (const name of ["home", "work", "spare", "extra"]) {
+          const gate = path.join(tmp, `${name}.gate`);
+          yield* fileSystem.makeDirectory(path.join(root(name), "Desktop"), { recursive: true });
+          NodeChildProcess.execFileSync("mkfifo", [gate]);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              try {
+                NodeFS.closeSync(
+                  NodeFS.openSync(gate, NodeFS.constants.O_WRONLY | NodeFS.constants.O_NONBLOCK),
+                );
+              } catch {
+                // ENXIO: no reader is waiting.
+              }
+            }),
+          );
+          listings.set(path.join(root(name), "Desktop"), {
+            gate,
+            started: yield* Deferred.make<void>(),
+          });
+        }
         const hanging = FileSystem.FileSystem.of({
           ...fileSystem,
-          readDirectory: (target, options) =>
-            target === blocked
-              ? Deferred.succeed(listing, undefined).pipe(
-                  Effect.andThen(fileSystem.readFileString(gate)),
+          readDirectory: (target, options) => {
+            const listing = listings.get(target);
+            return listing === undefined
+              ? fileSystem.readDirectory(target, options)
+              : Deferred.succeed(listing.started, undefined).pipe(
+                  Effect.andThen(fileSystem.readFileString(listing.gate)),
                   Effect.as([]),
-                )
-              : fileSystem.readDirectory(target, options),
+                );
+          },
         });
         const discover = (workspaceRoot: string) =>
           WorkspaceFolders.discoverFolders(workspaceRoot).pipe(
             Effect.map((folders) => folders.map((folder) => folder.path)),
             Effect.provideService(FileSystem.FileSystem, hanging),
           );
+        const discoverPastDeadline = Effect.fnUntraced(function* (name: string) {
+          const scan = yield* Effect.forkChild(discover(root(name)));
+          yield* Deferred.await(listings.get(path.join(root(name), "Desktop"))!.started);
+          yield* TestClock.adjust("2 seconds");
+          return yield* Fiber.join(scan);
+        });
 
+        const home = root("home");
         const found = [path.join(home, "Desktop", "notes"), path.join(home, "api")];
         assert.deepEqual(
           (yield* WorkspaceFolders.discoverFolders(home)).map((folder) => folder.path),
           found,
         );
-        const first = yield* Effect.forkChild(discover(home));
-        yield* Deferred.await(listing);
-        yield* TestClock.adjust("2 seconds");
         // The stuck root keeps what it last found, so its repositories do not drop out meanwhile.
-        assert.deepEqual(yield* Fiber.join(first), found);
+        assert.deepEqual(yield* discoverPastDeadline("home"), found);
         // Each pass would otherwise pin another thread, and four leave the server unanswered.
         for (let pass = 0; pass < 4; pass++) assert.deepEqual(yield* discover(home), found);
-        assert.deepEqual(yield* discover(other), [path.join(other, "web")]);
+        assert.deepEqual(yield* discover(root("other")), [path.join(root("other"), "web")]);
+        // Two stuck listings are the most there can be, however many projects hold one. Other
+        // roots then list nothing either, and keep what they found.
+        assert.deepEqual(yield* discoverPastDeadline("work"), []);
+        assert.deepEqual(yield* discover(root("spare")), []);
+        assert.deepEqual(yield* discover(root("extra")), []);
+        assert.deepEqual(yield* discover(root("other")), [path.join(root("other"), "web")]);
+        assert.equal(yield* fileSystem.readFileString(probe), "free");
       }),
   );
 

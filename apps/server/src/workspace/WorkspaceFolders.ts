@@ -116,10 +116,15 @@ export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
   });
 
 // A listing behind a macOS privacy prompt or a hung mount can pin one of libuv's 4 shared threads
-// for good. So a root lists one folder at a time, holding its slot until `open()` returns, and a
-// root whose read passes the deadline lists nothing more until it does. The deadline starts with
-// the read, so queueing behind a slow but working one never counts.
+// for good. So listings run one at a time per root and two overall, holding their slots until
+// `open()` returns; a root whose read passes the deadline, or every root once both have, lists
+// nothing more until it returns. The deadline starts with the read, so queueing never counts.
 const LISTING_DEADLINE = "2 seconds";
+const MAX_LISTINGS = 2;
+const listingSlots = Semaphore.makeUnsafe(MAX_LISTINGS);
+let overdueListings = 0;
+/** Completes when every slot holds an overdue read; replaced once one returns. */
+let saturated = Deferred.makeUnsafe<void>();
 const rootListings = new Map<
   string,
   {
@@ -139,22 +144,29 @@ const listFolder = Effect.fnUntraced(function* (root: string, folder: string) {
     overdue: false,
     stuck: Deferred.makeUnsafe<void>(),
   };
-  if (entry.overdue) return yield* new Cause.TimeoutError(`A listing in ${root} is overdue.`);
+  if (entry.overdue || overdueListings >= MAX_LISTINGS) {
+    return yield* new Cause.TimeoutError(`Listings for ${root} are overdue.`);
+  }
   rootListings.set(root, entry);
   entry.users += 1;
   const stuck = entry.stuck;
+  const full = saturated;
   const read = Effect.gen(function* () {
     const reading = yield* Effect.forkChild(fileSystem.readDirectory(folder));
     const early = yield* Fiber.await(reading).pipe(Effect.timeoutOption(LISTING_DEADLINE));
     if (Option.isSome(early)) return yield* early.value;
     entry.overdue = true;
     Deferred.doneUnsafe(entry.stuck, Effect.void);
+    overdueListings += 1;
+    if (overdueListings === MAX_LISTINGS) Deferred.doneUnsafe(saturated, Effect.void);
     const late = yield* Fiber.await(reading);
+    if (overdueListings === MAX_LISTINGS) saturated = Deferred.makeUnsafe();
+    overdueListings -= 1;
     entry.overdue = false;
     entry.stuck = Deferred.makeUnsafe();
     return yield* late;
   }).pipe(Effect.uninterruptible);
-  const listing = yield* entry.slot.withPermit(read).pipe(
+  const listing = yield* entry.slot.withPermit(listingSlots.withPermit(read)).pipe(
     Effect.ensuring(
       Effect.sync(() => {
         entry.users -= 1;
@@ -165,15 +177,17 @@ const listFolder = Effect.fnUntraced(function* (root: string, folder: string) {
   );
   const names = yield* Effect.raceFirst(
     Effect.asSome(Fiber.join(listing)),
-    Effect.as(Deferred.await(stuck), Option.none()),
+    Effect.as(Effect.raceFirst(Deferred.await(stuck), Deferred.await(full)), Option.none()),
   ).pipe(Effect.ensuring(Effect.sync(() => listing.interruptUnsafe())));
   if (Option.isSome(names)) return names.value;
   return yield* new Cause.TimeoutError(`Listing ${folder} took too long.`);
 });
 
 // A stuck listing may never return (a privacy prompt nobody can see on a service host), so while a
-// root is overdue its last discovery stands in rather than dropping its repositories everywhere.
+// root lists nothing, its last discovery stands in rather than dropping its repositories everywhere.
 const lastDiscovered = new Map<string, ReadonlyArray<ProjectTrackedFolder>>();
+const listingsRefused = (root: string) =>
+  rootListings.get(root)?.overdue === true || overdueListings >= MAX_LISTINGS;
 
 // Built once per operation: the probes share the caller's file system and path services.
 const folderProbes = Effect.gen(function* () {
@@ -359,7 +373,7 @@ export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* 
     ignored.some((entry) => folderPath === entry || isWithinRoot(path, folderPath, entry));
   // A scan that met a stuck listing missed what lies behind it.
   const previous = () =>
-    rootListings.get(root)?.overdue === true
+    listingsRefused(root)
       ? lastDiscovered.get(root)?.filter((folder) => !isIgnored(folder.path))
       : undefined;
   // Uncapped: the folders outside the project are dropped below, and must not use up the room.
