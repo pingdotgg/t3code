@@ -54,7 +54,7 @@
   "929a11e234f6e5d9": "Installez les outils en ligne de commande Azure ({cli}), puis activez la prise en charge d’Azure DevOps avec {command}.",
   "ad599e9de33538dd": "Ajoutez un jeton Bitbucket dans Paramètres → Gestion de versions et tickets.",
   "d810ecd91e8cf9d0": "Installez la CLI Origin avec {install}, puis exécutez {login}.",
-  "eb0f60ef4f92ab7d": "Installez {fj} 0.6 ou version ultérieure depuis {fjUrl} et exécutez {fjLogin}, ou installez {tea} 0.16 ou version ultérieure depuis {teaUrl} et exécutez {teaLogin} pour chaque serveur Forgejo ou Gitea.",
+  "1a04c8d36a7b29d3": "Installez {fj} 0.6 ou version ultérieure depuis {fjUrl} et exécutez {fjLogin}, ou installez {gt} 2.0 ou version ultérieure depuis {gtUrl} et exécutez {gtLogin} pour chaque serveur Forgejo ou Gitea.",
   "d026a85e2e50e675": "Installez la CLI GitCafe avec {install}, puis exécutez {login}, enregistrez un jeton dans Paramètres ou définissez {variable} sur le serveur.",
   "22d3c0c48a34b5b3": "Installez la CLI TanStack Source avec {install}, puis exécutez {login}, enregistrez un jeton dans Paramètres ou définissez {variable} sur le serveur.",
   "756c80ad262ef315": "En attente dans le fil d'origine",
@@ -5398,7 +5398,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} arrêt} other {{count} arrêts}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} arrêt} other {{count} arrêts}}",
   "9830004326e7d8c0": "{count, plural, one {sur {count} fichier} other {sur {count} fichiers}}",
   "e6035bad35419efa": "Options du guide",
   "4d7635a2bf1f5816": "Réécrire le guide",

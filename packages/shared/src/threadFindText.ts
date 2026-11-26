@@ -191,7 +191,7 @@ function markdownThreadFindText(
         }
         value = rendered + value.slice(cursor);
       }
-      text += inPre ? value : value.replace(/\r?\n/g, " ");
+      text += inPre ? value : value.replace(/\r\n|\r|\n/g, " ");
     }
     const renderSkills =
       node.tagName === "code" || node.tagName === "a"

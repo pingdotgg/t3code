@@ -15,13 +15,30 @@ it("takes the plan title from headings outside code", () => {
 });
 
 it("skips empty plan headings without reading into the next line", () => {
-  const markdown = "#   \r\n###\t\r\n## Real Title\r\n\r\n## Summary\r\n\r\nBody text";
-  expect(proposedPlanTitle(markdown)).toBe("Real Title");
-  expect(stripDisplayedPlanMarkdown(markdown)).toBe("Body text");
+  for (const [heading, title] of [
+    ["#   \r\n###\t\r\n## ###\r\n## Real Title", "Real Title"],
+    ["## # #", "#"],
+    ["## ###\t###", "###"],
+  ]) {
+    const markdown = `${heading}\r\n\r\n## Summary\r\n\r\nBody text`;
+    expect(proposedPlanTitle(markdown)).toBe(title);
+    expect(stripDisplayedPlanMarkdown(markdown)).toBe("Body text");
+  }
 });
 
 it("strips the displayed plan title and summary after leading blank lines", () => {
   const markdown = "\r\n# My Plan\r\n\r\n## Summary\r\n\r\nBody text";
   expect(proposedPlanTitle(markdown)).toBe("My Plan");
   expect(stripDisplayedPlanMarkdown(markdown)).toBe("Body text");
+});
+
+it("reads the plan title past a leading byte-order mark", () => {
+  for (const markdown of [
+    "\uFEFF# Rollout\n\nDeploy",
+    "\uFEFF   # Rollout\r\n\r\n## Summary\r\n\r\nDeploy",
+  ]) {
+    expect(proposedPlanTitle(markdown)).toBe("Rollout");
+    expect(stripDisplayedPlanMarkdown(markdown)).toBe("Deploy");
+  }
+  expect(proposedPlanTitle("\uFEFF    # Indented code")).toBeNull();
 });
