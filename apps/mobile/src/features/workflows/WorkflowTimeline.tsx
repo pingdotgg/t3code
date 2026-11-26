@@ -232,12 +232,12 @@ function Rail(props: { readonly first: boolean; readonly last: boolean }) {
   );
 }
 
-/** Where a fork leaves the rail under its mark, and where it rejoins below its last step. */
 // The branch curves are drawn left to right, so RTL flips them onto the mirrored rail.
 function useBranchMirror() {
   return useInterfaceDirection() === "rtl" ? { transform: [{ scaleX: -1 }] } : null;
 }
 
+/** Where a fork leaves the rail under its mark, and where it rejoins below its last step. */
 function BranchOut(props: { readonly palette: Palette }) {
   const mirror = useBranchMirror();
   return (

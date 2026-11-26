@@ -6,6 +6,7 @@ import { Platform, View } from "react-native";
 
 import { AppText as Text } from "./ui/AppText";
 import { T3Wordmark } from "./T3Wordmark";
+import { useInterfaceDirection } from "../i18n/direction";
 import { IPAD_HOME_TITLE_OFFSET } from "../lib/layoutMetrics";
 import { resolveMobileStageLabel } from "../lib/mobileBranding";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
@@ -27,6 +28,7 @@ export function CompactBrandTitle(
   } = {},
 ) {
   const gt = useGT();
+  const isRtl = useInterfaceDirection() === "rtl";
   const stageLabel = resolveMobileStageLabel(Constants.expoConfig?.extra?.appVariant);
   const titleOffset = brandTitleOffset();
   const { scale } = useAndroidControlSizing();
@@ -47,7 +49,11 @@ export function CompactBrandTitle(
       role="heading"
       className="flex-row items-center gap-1.5"
       style={[
-        { direction: "ltr", marginLeft: titleOffset },
+        {
+          direction: "ltr",
+          marginLeft: isRtl ? 0 : titleOffset,
+          marginRight: isRtl ? titleOffset : 0,
+        },
         Platform.OS === "android" && { gap: 5.25 * scale },
         props.fit && { flexShrink: 0 },
       ]}

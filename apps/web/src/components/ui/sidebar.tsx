@@ -257,8 +257,6 @@ function SidebarProvider({
               "calc(var(--workspace-controls-start) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))",
             "--workspace-header-controls-end": "calc(var(--workspace-controls-left) + 5.25rem)",
             "--workspace-panel-controls-end": "calc(var(--workspace-controls-left) + 6.25rem)",
-            "--workspace-page-header-end":
-              "max(var(--workspace-gutter-start), var(--workspace-controls-left))",
             ...style,
           } as React.CSSProperties
         }

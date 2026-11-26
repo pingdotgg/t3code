@@ -203,7 +203,7 @@ export function ThreadReadLabel({
   );
 }
 
-const PATH_TOKEN_PATTERN = /(^|[\s־([{'"`])((?:~\/|\.{1,2}\/|\/|[A-Za-z]:\\)[^\s"'`<>()[\]{}]+)/g;
+const PATH_TOKEN_PATTERN = /(^|[\s־\-([{'"`])((?:~\/|\.{1,2}\/|\/|[A-Za-z]:\\)[^\s"'`<>()[\]{}]+)/g;
 
 function renderWorkEntryLabel(text: string) {
   const matches = [...text.matchAll(PATH_TOKEN_PATTERN)];

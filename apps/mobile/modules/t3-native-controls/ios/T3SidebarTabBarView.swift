@@ -140,8 +140,12 @@ final class T3SidebarTabBarView: ExpoView, UITabBarDelegate {
 
   private func updateLayoutDirection() {
     let direction: UISemanticContentAttribute = rightToLeft ? .forceRightToLeft : .forceLeftToRight
+    let layout: UITraitEnvironmentLayoutDirection = rightToLeft ? .rightToLeft : .leftToRight
     semanticContentAttribute = direction
     tabBar.semanticContentAttribute = direction
+    if #available(iOS 17.0, *), tabBar.traitCollection.layoutDirection != layout {
+      tabBar.traitOverrides.layoutDirection = layout
+    }
     setNeedsLayout()
     updateTabBarLayout()
   }

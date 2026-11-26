@@ -396,7 +396,7 @@ function WorkspaceColumns(
       }}
     >
       <Split.Column>
-        <Stack.Host direction={direction}>
+        <Stack.Host>
           <ColumnScreen
             descriptor={primary}
             primary
@@ -411,7 +411,7 @@ function WorkspaceColumns(
         </Stack.Host>
       </Split.Column>
       <Split.Column>
-        <Stack.Host direction={direction}>
+        <Stack.Host>
           <Stack.Screen
             screenKey="workspace-empty"
             activityMode={layout.usesSplitView && !activeDetailKey ? "attached" : "detached"}

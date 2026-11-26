@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { ExpandedImageDialog } from "./ExpandedImageDialog";
 
 const PIXEL =
@@ -287,4 +287,40 @@ describe("ExpandedImageDialog", () => {
       }
     },
   );
+
+  it("preserves cursor-anchored zoom inside an RTL ancestor", async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1600;
+    canvas.height = 1200;
+    await using screen = await render(
+      <div dir="rtl">
+        <ExpandedImageDialog
+          preview={{ images: [{ src: canvas.toDataURL(), name: "rtl-large.png" }], index: 0 }}
+          onClose={() => {}}
+        />
+      </div>,
+      { router: false },
+    );
+    const viewportLocator = screen.getByRole("region", { name: "rtl-large.png, zoomable image" });
+    const viewport = viewportLocator.element() as HTMLElement;
+    const image = screen.getByRole("img", { name: "rtl-large.png" }).element() as HTMLElement;
+    await vi.waitFor(() => expect(image.style.width).not.toBe(""));
+    expect(viewport.getAttribute("dir")).toBe("ltr");
+
+    const bounds = viewport.getBoundingClientRect();
+    const clickX = bounds.left + bounds.width * 0.4;
+    const clickY = bounds.top + bounds.height * 0.5;
+    const imageBefore = image.getBoundingClientRect();
+    const expectedFractionX = (clickX - imageBefore.left) / imageBefore.width;
+
+    await act(() => {
+      viewport.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, clientX: clickX, clientY: clickY }),
+      );
+    });
+    const imageAfter = image.getBoundingClientRect();
+    const actualFractionX = (clickX - imageAfter.left) / imageAfter.width;
+    expect(imageAfter.width).toBeGreaterThan(imageBefore.width);
+    expect(actualFractionX).toBeCloseTo(expectedFractionX, 2);
+  });
 });
