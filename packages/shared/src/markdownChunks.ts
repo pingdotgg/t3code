@@ -146,6 +146,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let first = true;
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
+  let ambiguousHtml = false;
   let afterBlankLine = false;
   let afterDefinition = false;
   let afterHeading = false;
@@ -182,6 +183,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     } else {
       if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
       const cutPoint =
+        !ambiguousHtml &&
         chars >= targetChars &&
         ((line.startsWith("#") && ATX_HEADING.test(line)) ||
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
@@ -222,14 +224,17 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
             }
           }
         }
-        if (index >= parsedThrough || htmlStarts?.has(index)) closes = closesAtBlankLine;
+        if (index === flowStart || htmlStarts?.has(index)) closes = closesAtBlankLine;
+        else if (index >= parsedThrough) ambiguousHtml = true;
       }
       // Two or more spaces may put a fence in a list item, which this does not track.
       openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       const definition: boolean =
-        (first || afterBlankLine || afterDefinition || afterHeading) && isLinkDefinition(line);
+        !ambiguousHtml &&
+        (first || afterBlankLine || afterDefinition || afterHeading) &&
+        isLinkDefinition(line);
       afterDefinition = definition;
       if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
         definitions.push(line.trim());
@@ -250,7 +255,10 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       openWrappers = 0;
     }
     afterBlankLine = BLANK_LINE.test(line);
-    if (afterBlankLine) resetFlow(index + 1);
+    if (afterBlankLine) {
+      ambiguousHtml = false;
+      resetFlow(index + 1);
+    }
     afterHeading =
       closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
