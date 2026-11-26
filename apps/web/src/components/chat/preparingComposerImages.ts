@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { create } from "zustand";
 
 import {
+  composerDraftHasUserContent,
   composerTargetKey,
   type ComposerThreadTarget,
   useComposerDraftStore,
@@ -157,6 +158,35 @@ export function joinPreparedImagesToDraft<T>(insert: () => T): T {
   } finally {
     preparedImagesJoiningDraft = false;
   }
+}
+
+/** Watches for edits while a send waits, including new images that have yet to enter the draft. */
+export function watchComposerSendEdits(draftTarget: ComposerThreadTarget): () => boolean {
+  const targetKey = composerTargetKey(draftTarget);
+  const submittedImages = new Set(getPreparingComposerImages(targetKey));
+  const cancelGeneration = cancelGenerations.get(targetKey);
+  let draft = useComposerDraftStore.getState().getComposerDraft(draftTarget);
+  let changed = false;
+  const stopWatchingDraft = useComposerDraftStore.subscribe((state) => {
+    const next = state.getComposerDraft(draftTarget);
+    if (!preparedImagesJoiningDraft) {
+      changed ||=
+        draft && next
+          ? composerDraftContentChanged(draft, next)
+          : composerDraftHasUserContent(draft ?? next);
+    }
+    draft = next;
+  });
+  const stopWatchingImages = usePreparingComposerImageStore.subscribe(() => {
+    if (getPreparingComposerImages(targetKey).some((image) => !submittedImages.has(image))) {
+      changed = true;
+    }
+  });
+  return () => {
+    stopWatchingDraft();
+    stopWatchingImages();
+    return changed || cancelGenerations.get(targetKey) !== cancelGeneration;
+  };
 }
 
 /**

@@ -119,7 +119,11 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { countPreparingComposerImages, holdComposerSend } from "./preparingComposerImages";
+import {
+  countPreparingComposerImages,
+  holdComposerSend,
+  watchComposerSendEdits,
+} from "./preparingComposerImages";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
@@ -1786,17 +1790,31 @@ export function useComposerSend(input: ComposerSendInput) {
   };
 
   const onSendLatest = useStableCallback(onSend);
+  const waitBeforeSend = async <T>(pending: Promise<T>) => {
+    const finishWatching = watchComposerSendEdits(composerDraftTarget);
+    let edited = false;
+    sendInFlightRef.current = true;
+    const result = await pending.finally(() => {
+      edited = finishWatching();
+      sendInFlightRef.current = false;
+    });
+    const sameRoute = currentRouteThreadKeyRef.current === routeThreadKey;
+    if (edited && sameRoute && activeThread) {
+      setThreadError(
+        activeThread.id,
+        m(msg("Draft changed while preparing this message. Review it and send again.")),
+      );
+    }
+    return { result, edited, sameRoute };
+  };
   const sendWithEnvironmentRefresh = async (...args: Parameters<typeof onSend>) => {
     const refresh =
       args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
         ? null
         : refreshBeforeSend();
     if (refresh === null) return onSend(...args);
-    sendInFlightRef.current = true;
-    const ready = await refresh.finally(() => {
-      sendInFlightRef.current = false;
-    });
-    if (ready) return onSendLatest(...args);
+    const { result: ready, edited } = await waitBeforeSend(refresh);
+    if (ready && !edited) return onSendLatest(...args);
   };
   const sendWithEnvironmentRefreshLatest = useStableCallback(sendWithEnvironmentRefresh);
   const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
@@ -1804,18 +1822,8 @@ export function useComposerSend(input: ComposerSendInput) {
     const workspaceDefault =
       draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
     if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
-    const submittedDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-    sendInFlightRef.current = true;
-    await workspaceDefault.finally(() => {
-      sendInFlightRef.current = false;
-    });
-    // Workspace defaults update the draft session. A composer edit invalidates the send.
-    if (
-      currentRouteThreadKeyRef.current !== routeThreadKey ||
-      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) !== submittedDraft
-    ) {
-      return;
-    }
+    const { edited, sameRoute } = await waitBeforeSend(workspaceDefault);
+    if (edited || !sameRoute) return;
     return sendWithEnvironmentRefreshLatest(...args);
   };
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
