@@ -55,8 +55,14 @@ export function ChunkedMarkdown(props: {
     props.relativePath,
   ]);
   const saved = savedPositions.get(positionKey);
-  // A streaming file may not have reached the saved piece yet; opening at the top beats its end.
-  const restore = saved && saved.index < items.length ? saved : undefined;
+  // The list applies its initial index once, so wait for the saved chunk to stream in.
+  const awaitingSaved = props.loading && saved !== undefined && saved.index >= items.length;
+  const spinner = (
+    <div className="flex justify-center py-4">
+      <Spinner size="md" tone="muted" />
+    </div>
+  );
+  if (awaitingSaved) return spinner;
   return (
     <div
       // Clicking the text focuses the preview, so Select All stays inside it.
@@ -74,7 +80,12 @@ export function ChunkedMarkdown(props: {
       <LegendList<ChunkItem>
         ref={listRef}
         data={items}
-        {...(restore && { initialScrollIndex: restore })}
+        {...(saved && {
+          initialScrollIndex: {
+            index: Math.min(saved.index, Math.max(items.length - 1, 0)),
+            viewOffset: saved.viewOffset,
+          },
+        })}
         onScroll={() => {
           const list = listRef.current?.getState();
           if (!list) return;
@@ -94,13 +105,7 @@ export function ChunkedMarkdown(props: {
         recycleItems={false}
         className="h-full scrollbar-gutter-both"
         contentContainerClassName="py-5"
-        ListFooterComponent={
-          props.loading ? (
-            <div className="flex justify-center py-4">
-              <Spinner size="md" tone="muted" />
-            </div>
-          ) : null
-        }
+        ListFooterComponent={props.loading ? spinner : null}
         renderItem={({ item }) => (
           <div className="pb-5">
             {item.chunk.text.length > LARGE_MARKDOWN_CHUNK_MAX_CHARS ? (
