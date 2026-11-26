@@ -85,7 +85,7 @@ import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, useProjects, waitForProject } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { managedTelemetryOffMessage, useManagedPolicy } from "../../state/managedPolicy";
+import { useManagedPolicy } from "../../state/managedPolicy";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
@@ -335,7 +335,7 @@ export function WelcomePage({
                 </Button>
               </div>
             </div>
-            <TelemetryNotice environmentId={environmentId} />
+            <TelemetryNotice />
           </div>
         </div>
       </div>
@@ -343,41 +343,21 @@ export function WelcomePage({
   );
 }
 
-function TelemetryNotice({ environmentId }: { readonly environmentId: EnvironmentId }) {
-  const messages = useMessages();
-  const telemetryOff = managedTelemetryOffMessage(useManagedPolicy(environmentId), messages);
+function TelemetryNotice() {
   return (
     <p className="mt-auto pt-12 text-2xs leading-relaxed text-muted-foreground/70">
-      {telemetryOff === undefined ? (
-        <T>
-          Hyakki collects anonymous usage data to improve the app. To opt out, see the{" "}
-          <a
-            className="underline decoration-current/40 underline-offset-2 hover:text-muted-foreground"
-            href={PRIVACY_POLICY_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            privacy policy
-          </a>
-          .
-        </T>
-      ) : (
-        <>
-          {telemetryOff}{" "}
-          <T>
-            See the{" "}
-            <a
-              className="underline decoration-current/40 underline-offset-2 hover:text-muted-foreground"
-              href={PRIVACY_POLICY_URL}
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              privacy policy
-            </a>
-            .
-          </T>
-        </>
-      )}
+      <T>
+        Hyakki collects no usage data. See the{" "}
+        <a
+          className="underline decoration-current/40 underline-offset-2 hover:text-muted-foreground"
+          href={PRIVACY_POLICY_URL}
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          privacy policy
+        </a>
+        .
+      </T>
     </p>
   );
 }

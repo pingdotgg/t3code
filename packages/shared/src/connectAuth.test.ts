@@ -9,14 +9,14 @@ import {
 describe("connectAuth", () => {
   it("round-trips state, challenge, and loopback port through the authorize URL fragment", () => {
     const url = buildConnectAuthorizeRequestUrl({
-      hostedAppUrl: "https://app.t3.codes",
+      hostedAppUrl: "https://hyakki.ryoku.dev",
       state: "q7mK9xV2pL4nR8sT6wYzAQ",
       challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
       loopbackPort: 34338,
     });
     const parsed = new URL(url);
 
-    expect(parsed.origin).toBe("https://app.t3.codes");
+    expect(parsed.origin).toBe("https://hyakki.ryoku.dev");
     expect(parsed.pathname).toBe("/connect");
     expect(parsed.search).toBe("");
     expect(readConnectAuthorizeRequest(parsed)).toEqual({
@@ -28,22 +28,26 @@ describe("connectAuth", () => {
   });
 
   it("rejects authorize requests missing state, challenge, or port", () => {
-    expect(readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect"))).toBeNull();
+    expect(readConnectAuthorizeRequest(new URL("https://hyakki.ryoku.dev/connect"))).toBeNull();
     expect(
-      readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect#state=abc&port=34338")),
+      readConnectAuthorizeRequest(new URL("https://hyakki.ryoku.dev/connect#state=abc&port=34338")),
     ).toBeNull();
     expect(
-      readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect#challenge=abc&port=34338")),
+      readConnectAuthorizeRequest(
+        new URL("https://hyakki.ryoku.dev/connect#challenge=abc&port=34338"),
+      ),
     ).toBeNull();
     expect(
-      readConnectAuthorizeRequest(new URL("https://app.t3.codes/connect#state=abc&challenge=abc")),
+      readConnectAuthorizeRequest(
+        new URL("https://hyakki.ryoku.dev/connect#state=abc&challenge=abc"),
+      ),
     ).toBeNull();
   });
 
   it("rejects authorize requests whose loopback port is corrupted", () => {
     for (const port of ["", "abc", "-1", "0", "65536", "34338x", "34 38"]) {
       const url = new URL(
-        `https://app.t3.codes/connect#state=state-1&challenge=challenge-1&port=${encodeURIComponent(port)}`,
+        `https://hyakki.ryoku.dev/connect#state=state-1&challenge=challenge-1&port=${encodeURIComponent(port)}`,
       );
       expect(readConnectAuthorizeRequest(url), port).toBeNull();
     }

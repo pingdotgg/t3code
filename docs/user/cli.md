@@ -2,7 +2,7 @@
 
 The `t3` command runs and manages Hyakki servers, background services, remote access, threads, workflows, and diagnostics. Run `t3 --help` or `t3 <command> --help` for full flags.
 
-See [Install Hyakki](./install.md#command-line) for installation (`curl -fsSL https://t3.codes/install.sh | sh`, `irm https://t3.codes/install.ps1 | iex`, or `npx t3@latest`).
+See [Install Hyakki](./install.md#command-line) for installation (`curl -fsSL https://raw.githubusercontent.com/neur0map/hyakki/main/scripts/install.sh | sh`, `irm https://raw.githubusercontent.com/neur0map/hyakki/main/scripts/install.ps1 | iex`, or `npx t3@latest`).
 
 ## Running and connecting
 

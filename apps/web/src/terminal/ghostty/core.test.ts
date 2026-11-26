@@ -378,7 +378,7 @@ describe("GhosttyTerminalCore snapshots", () => {
       "\u0301界🙂",
       "\x1b[0",
       "m\r\n",
-      "\x1b]8;;https://t3.codes\x1b",
+      "\x1b]8;;https://github.com/neur0map/hyakki\x1b",
       "\\link",
       "\x1b]8;;\x1b",
       "\\\x1b[?1049h",

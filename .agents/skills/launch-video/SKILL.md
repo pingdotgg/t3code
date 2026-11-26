@@ -183,7 +183,7 @@ seeks every animation (in the story and inside each beat) to each frame's time.
 - **Pacing**: `Kit.timeline([[realSeconds, animFrom, animTo], ...])` maps video time to
   animation time; `animFrom == animTo` holds a frame. It also sets the video length.
 - **Outro** `.outro`: logo, a two-line headline, "Available now in **Hyakki** `<version>`",
-  `t3.codes`. Change the headline and version, keep the rest. Hold it about 3 s.
+  `hyakki.ryoku.dev`. Change the headline and version, keep the rest. Hold it about 3 s.
 
 Two animations on one property of one element fight (the later one wins for its whole
 fill). Give an element one animation per property, as `Kit.beats` does for visibility.

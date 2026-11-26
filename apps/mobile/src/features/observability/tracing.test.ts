@@ -7,7 +7,6 @@ import { vi } from "vite-plus/test";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 
-import { setConnectionTracesEnabled } from "./diagnosticsSetting";
 import * as Tracing from "./tracing";
 
 vi.mock("expo-constants", () => ({
@@ -32,8 +31,7 @@ const layerTracingTo = (fetchFn: typeof fetch) =>
     },
   ).pipe(Layer.provide(layerRemoteHttpClient(fetchFn)));
 
-it.effect.each([false, true])("gates relay sends and preserves typed failures (%s)", (enabled) => {
-  setConnectionTracesEnabled(enabled);
+it.effect("sends no traces and preserves typed failures", () => {
   const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
   const layerTracing = layerTracingTo(fetchFn);
   const failure = { durationNanos: 1n };
@@ -57,11 +55,7 @@ it.effect.each([false, true])("gates relay sends and preserves typed failures (%
     Effect.scoped,
     Effect.andThen(
       Effect.sync(() => {
-        expect(fetchFn).toHaveBeenCalledTimes(Number(enabled));
-        if (!enabled) return;
-        expect(new TextDecoder().decode(fetchFn.mock.calls[0]?.[1]?.body as Uint8Array)).toContain(
-          "mobile.test.failed-span",
-        );
+        expect(fetchFn).not.toHaveBeenCalled();
       }),
     ),
   );

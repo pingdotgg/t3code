@@ -1,49 +1,28 @@
-# Product analytics
+# 08 · No product analytics
 
-The server owns analytics delivery, opt-out, and identity for every connected client. Clients never
-load an analytics browser SDK, and visiting hosted web without an authenticated connection does not
-count as product use.
+Hyakki sends nothing to its makers. There is no analytics backend, no crash reporting and no relay
+tracing, and none should be added. What users see and rely on is [PRIVACY.md](../../PRIVACY.md).
 
-## Identity
+## What stays, and why
 
-- **`distinct_id` is the install id.** Both are the hash of a random id persisted in the state
-  directory. Events carry it under both names because older builds derived `distinct_id` from the
-  Codex or Claude sign-in files, so the ingest side counts installs by `installId`.
-- **Identity never comes from a provider.** Do not read a provider's sign-in files or derive an id
-  or owner from a user's OpenAI, Claude, or other provider account, even hashed: users did not sign
-  in to those to be identified by Hyakki.
-- **Resolve owners at query time.** `install.owner_observed` links installs to owners (Connect
-  account, client device). Two Connect accounts are never merged as one person.
-- **Hash everywhere with [one helper](../../packages/shared/src/telemetryId.ts).** Clients and
-  servers hash with the same SHA-256 helper so IDs correlate; the server accepts only hashes from
-  clients.
+- `apps/server/src/telemetry/AnalyticsService.ts` keeps the service shape upstream code calls, but
+  `record` always answers `false` and nothing is queued or sent. Keeping the shape lets fixes from
+  upstream T3 Code apply without rewriting every caller.
+- `packages/shared/src/relayTracing.ts` `layer` always provides no relay tracer, whatever it is
+  configured with, so no client exports relay spans.
+- The mobile app compiles `expo-observe` in, so `apps/mobile/src/features/observability/observe.ts`
+  turns dispatching off on every start, and the Observe endpoint is a name that never resolves.
+- Agent feedback (`apps/server/src/feedback`) stores reports locally only. A report is marked
+  unsent because the analytics service refuses it.
 
-## Attribution boundaries
+## What is not telemetry
 
-- Client dimensions (`surface`, etc.) belong to the event's WebSocket connection, never a
-  server-global "current client". Keep client and server dimensions separate, and leave missing
-  client metadata unknown rather than backfilling from server properties.
-- Active-use reports count `client.turn.requested` (deduplicated by command ID), not connections
-  (Hyakki Connect sessions renew hourly).
+- OTLP export to an endpoint the user configures (Settings › Maintenance › Diagnostics, or the
+  `T3CODE_OTLP_*` / `OTEL_EXPORTER_OTLP_*` variables). It goes only where the user points it.
+- Desktop host state (power, idle, lock) passed from the desktop shell to its own local backend.
+- The coding agents Hyakki starts. They talk to their own providers under their own terms.
 
-## Collection boundary and delivery
+## Upstream fixes
 
-- Payloads stay strictly to product metadata, closed contract enums, and normalized measurements:
-  never attach prompts, file paths, credentials, raw provider payloads, device names, conversation
-  IDs, or user-named provider instance IDs. Models in the bundled manifest or a vendor's own
-  model list report their catalog slug, with aliases and routed IDs mapped to it. Any other model
-  ID can name a user, a deployment, or a local file, so it reports only `custom:<driver>`.
-- The sole exception is opt-in `agent.feedback`, which
-  [`FeedbackService`](../../apps/server/src/feedback/FeedbackService.ts) scrubs of paths, private
-  values, and secret-shaped strings, and only attaches bounded conversation traces when the user
-  explicitly previews and sends them. Each report is sent under its own id without `installId` or
-  host properties, in a request of its own, so it links to no install or other report; reports sent
-  without a preview carry only their categories.
-- Delivery ([`AnalyticsService.ts`](../../apps/server/src/telemetry/AnalyticsService.ts)) attaches a
-  UUID per event, backs off on failure, and drops batches after bounded retries so a stuck batch
-  cannot loop forever.
-- Dev-runner servers and servers on CI runners disable telemetry (and relay tracing) by default so
-  they do not inflate install counts. CI detection is `isCiEnvironment` in
-  [`otelEnvironment.ts`](../../packages/shared/src/otelEnvironment.ts). An explicit
-  `T3CODE_TELEMETRY_ENABLED=true` overrides both defaults; a managed policy that denies telemetry
-  overrides everything.
+When a cherry-picked upstream fix touches analytics, relay tracing or Observe, keep the no-op
+behaviour above: take the fix, drop any new event, exporter or endpoint.

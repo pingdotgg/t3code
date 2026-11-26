@@ -818,12 +818,12 @@ it.effect(
 
       const onTunnel = yield* handoff("box.example.ts.net");
       const hosted = new URL(onTunnel.location);
-      expect(`${hosted.origin}${hosted.pathname}`).toBe("https://app.t3.codes/approve-agent");
+      expect(`${hosted.origin}${hosted.pathname}`).toBe("https://hyakki.ryoku.dev/approve-agent");
       expect(hosted.searchParams.get("environment")).toEqual(expect.any(String));
       hosted.searchParams.delete("environment");
       expect(hosted.searchParams.toString()).toBe(onTunnel.query);
 
-      const elsewhere = yield* handoff("other.t3coderelay.com");
+      const elsewhere = yield* handoff("other.relay.hyakki.ryoku.dev");
       expect(elsewhere.location).toBe(`/connect-agent?${elsewhere.query}`);
       const peerLink = yield* handoff("box.example.ts.net", true);
       expect(peerLink.location).toBe(`/connect-agent?${peerLink.query}`);

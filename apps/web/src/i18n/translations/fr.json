@@ -3163,7 +3163,6 @@
   "c646366e142ba05f": "L’état WSL de l’app desktop n’est pas disponible.",
   "228dcd284ea651b3": "Échec du chargement de l’état WSL.",
   "b08d105dd2553f8d": "Le projet n’est pas apparu dans l’app desktop.",
-  "7a4b3f3b83e121d7": "{organization} a désactivé les données d’utilisation anonymes.",
   "d85822b18e9475df": "Géré par {organization}.",
   "a6dd531d58080010": "Connectez-vous à ce serveur pour vérifier les versions.",
   "314cdccee9c14774": "Ce serveur ne prend pas en charge les recherches dans le registre. Mettez-le à jour avant de changer de canal.",
@@ -6306,18 +6305,8 @@
   ],
   "216ab7514aea1d61": "Commencer sans agent",
   "501ce2d99da8bfd1": "Configurez un agent pour commencer.",
-  "5439a25822bbfb88": [
-    "Hyakki collecte des données d’utilisation anonymes pour améliorer l’app. Pour vous désinscrire, consultez la",
-    " ",
-    {
-      "t": "a",
-      "i": 1,
-      "c": "politique de confidentialité"
-    },
-    "."
-  ],
-  "b33f35083757b42c": [
-    "Consultez la",
+  "2c6f3bdca8c0b2c7": [
+    "Hyakki ne collecte aucune donnée d’utilisation. Consultez la",
     " ",
     {
       "t": "a",
@@ -10362,8 +10351,7 @@
   "c424bee294b9f778": "Cet environnement est géré par {organization}. Certains paramètres et fonctionnalités suivent sa politique.",
   "82d9538af590f58c": "Voyez vos agents, importez des projets et configurez votre téléphone.",
   "6a48fd0a37e725a1": "Mentions légales",
-  "c5a987f6e461f34e": "Comment nous traitons vos données, y compris les données d’utilisation anonymes collectées par Hyakki.",
-  "e741b1ab9396053a": "Comment nous traitons vos données. {telemetryOff}",
+  "4d3bccb4c440176c": "Comment nous traitons vos données. Hyakki ne collecte aucune donnée d’utilisation.",
   "5293b8c9636f071c": "Mentions relatives aux dépendances, ressources et outils facultatifs utilisés par Hyakki.",
   "e39a57514be028e9": "Consulter",
   "7c0512387c3a42ea": "Stable",

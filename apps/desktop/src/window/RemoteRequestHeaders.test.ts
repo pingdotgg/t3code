@@ -8,14 +8,14 @@ import {
 const packagedPolicy: MainWindowRequestHeaderPolicy = {
   desktopOrigin: "t3code://app",
   mainWebContentsId: 42,
-  clerkFrontendApiHostname: "clerk.t3.codes",
+  clerkFrontendApiHostname: "clerk.hyakki.ryoku.dev",
   isDevelopment: false,
 };
 
 const devPolicy: MainWindowRequestHeaderPolicy = {
   desktopOrigin: "t3code-dev://app",
   mainWebContentsId: 42,
-  clerkFrontendApiHostname: "clerk.t3.codes",
+  clerkFrontendApiHostname: "clerk.hyakki.ryoku.dev",
   devServerOrigin: "http://devbox.internal:5733",
   isDevelopment: true,
 };
@@ -66,7 +66,10 @@ describe("RemoteRequestHeaders", () => {
   });
 
   it("preserves headers for Clerk frontend API requests", () => {
-    for (const url of ["https://clerk.t3.codes/v1/client", "https://CLERK.T3.CODES./v1/client"]) {
+    for (const url of [
+      "https://clerk.hyakki.ryoku.dev/v1/client",
+      "https://CLERK.HYAKKI.RYOKU.DEV./v1/client",
+    ]) {
       const headers = stripDesktopOriginHeaders(packagedPolicy, {
         url,
         webContentsId: 42,

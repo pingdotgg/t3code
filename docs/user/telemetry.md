@@ -1,31 +1,18 @@
-# Product usage data and diagnostics
+# Usage data and diagnostics
 
-Hyakki sends lightweight product usage events and relay connection traces to keep the app reliable and fast. Prompts, responses, file contents, and credentials are never included (unless you explicitly approve an [agent feedback](#agent-feedback) card with conversation text attached).
+Hyakki collects no usage data. There are no product analytics, no crash reports and no relay
+traces, and nothing about you, your machine or your projects is sent to the people who make it.
+See the [privacy notice](../../PRIVACY.md).
 
-## Product usage events
-
-The server sends usage events to `ingest.t3.codes` under a hashed random install ID (plus a hashed Hyakki Connect account ID when signed in, and random client device IDs). Events contain provider, catalog model name (non-catalog models report as custom), reasoning effort, permission mode, turn/request outcome, duration, release channel, and token counts.
-
-## Disable telemetry
-
-- **Server / CLI**: Set `T3CODE_TELEMETRY_ENABLED=false` or `DO_NOT_TRACK=1` before starting (`DO_NOT_TRACK=1` takes precedence). CI environments (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `JENKINS_URL`) disable telemetry by default unless `T3CODE_TELEMETRY_ENABLED=true`.
-- **Desktop app**: Export `T3CODE_TELEMETRY_ENABLED=false` or `DO_NOT_TRACK=1` in your shell profile (macOS/Linux) or user environment variables (Windows) and restart.
-- **Managed policy**: Administrators can set `"telemetry": false` in [managed policy](./managed-policy.md#other-capabilities) for servers and desktop apps.
-- **Mobile app**: Toggle **Send crash reports** and **Send connection traces** separately in **Settings → About Hyakki → Diagnostics**.
-
-## Relay connection diagnostics
-
-Hyakki Connect sends connection timings, request paths, environment/thread IDs, and error types (no addresses, logs, or stack frames) to Axiom. Disabled by the server telemetry opt-outs above or by `T3CODE_OTEL_SDK_DISABLED` / `OTEL_SDK_DISABLED`.
+The coding agents you run are separate programs with their own providers and terms. Hyakki
+starts them; it does not control or answer for what they send.
 
 ## Agent feedback
 
-Optional tool for agents to report Hyakki bugs or missing capabilities. Configure in **Settings → Labs → Agent feedback**:
-
-- **Off** (default): Feedback tools and `t3 feedback` are disabled.
-- **When I ask**: Agents submit a report only when you ask, shown as an interactive approval card before anything leaves your machine.
-- **Automatic**: Also sends minimal automated reports (problem kind + tool/command name only—no text or conversation) when an agent hits a Hyakki tool failure; enables `t3 feedback` CLI reporting (up to 10/hour).
-
-Approval cards show exact payloads (expected/actual/workaround, turn outline with no text, and optional **Include the conversation** up to 16 KB). File paths, usernames, hostnames, git remotes, and secret-like strings are scrubbed before saving, and reports use one-off random IDs. Inspect local reports with `t3 feedback list [--json]`.
+**Settings → Labs → Agent feedback** lets an agent write down a Hyakki bug or missing capability
+it ran into. Reports stay on your machine: inspect them with `t3 feedback list [--json]`. File
+paths, usernames, hostnames, git remotes and secret-like strings are scrubbed before a report is
+saved.
 
 ## Agent activity for mobile notifications
 

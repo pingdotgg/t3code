@@ -3163,7 +3163,6 @@
   "c646366e142ba05f": "Desktop WSL state is unavailable.",
   "228dcd284ea651b3": "Failed to load WSL state.",
   "b08d105dd2553f8d": "The project did not appear in the desktop app.",
-  "7a4b3f3b83e121d7": "{organization} turned off anonymous usage data.",
   "d85822b18e9475df": "Managed by {organization}.",
   "a6dd531d58080010": "Connect to this server to check releases.",
   "314cdccee9c14774": "This server does not support registry lookups. Update it before switching tracks.",
@@ -6307,18 +6306,8 @@
   ],
   "216ab7514aea1d61": "Start without an agent",
   "501ce2d99da8bfd1": "Set up one agent to start.",
-  "5439a25822bbfb88": [
-    "Hyakki collects anonymous usage data to improve the app. To opt out, see the",
-    " ",
-    {
-      "t": "a",
-      "i": 1,
-      "c": "privacy policy"
-    },
-    "."
-  ],
-  "b33f35083757b42c": [
-    "See the",
+  "2c6f3bdca8c0b2c7": [
+    "Hyakki collects no usage data. See the",
     " ",
     {
       "t": "a",
@@ -10372,8 +10361,7 @@
   "c424bee294b9f778": "This environment is managed by {organization}. Some settings and features follow its policy.",
   "82d9538af590f58c": "See your agents, import projects, and set up your phone.",
   "6a48fd0a37e725a1": "Legal",
-  "c5a987f6e461f34e": "How we handle your data, including the anonymous usage data Hyakki collects.",
-  "e741b1ab9396053a": "How we handle your data. {telemetryOff}",
+  "4d3bccb4c440176c": "How we handle your data. Hyakki collects no usage data.",
   "5293b8c9636f071c": "Notices for dependencies, assets, and optional tools used by Hyakki.",
   "e39a57514be028e9": "Review",
   "7c0512387c3a42ea": "Stable",

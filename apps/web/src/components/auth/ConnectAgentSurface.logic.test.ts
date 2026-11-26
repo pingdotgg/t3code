@@ -20,7 +20,7 @@ it("checks a typed code even in a signed-in browser, and approves without one at
   const signedOut = {
     clientName: "Poke",
     redirectHost: "poke.com",
-    environmentHost: "prod-a1.t3coderelay.com",
+    environmentHost: "prod-a1.relay.hyakki.ryoku.dev",
   };
   const details = { ...signedOut, csrfToken: "csrf", oneClickAccess: AuthMcpClientAccess.literals };
   const access = resolveMcpAccess(null, undefined, false);

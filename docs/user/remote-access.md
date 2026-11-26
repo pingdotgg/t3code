@@ -1,6 +1,6 @@
 # Remote access
 
-Drive Hyakki from your phone, browser (`app.t3.codes`), or another desktop app while your agents run on a host computer or server. The host must stay awake and running while you work.
+Drive Hyakki from your phone, browser (`hyakki.ryoku.dev`), or another desktop app while your agents run on a host computer or server. The host must stay awake and running while you work.
 
 ## Hyakki Connect (recommended)
 
@@ -22,7 +22,7 @@ Free Hyakki Connect accounts can link up to **3 host machines** (phones and brow
 
 - **Desktop host**: Enable **Settings → Sharing & access → Network access** (restarts desktop) and create a one-time pairing link.
 - **CLI host**: Run `t3 up --lan` (background service) or `t3 serve --lan` (foreground), then run `t3 pair` to generate a QR code / pairing URL (`t3code://pair` opens directly in the desktop app).
-- **Hosted web app (`app.t3.codes`)**: Requires an HTTPS endpoint (Hyakki Connect or Tailscale HTTPS). For plain HTTP on a LAN, open the direct pairing URL in a local browser or pair from the desktop/mobile app. For custom CAs on Android, install the CA certificate in Android security settings.
+- **Hosted web app (`hyakki.ryoku.dev`)**: Requires an HTTPS endpoint (Hyakki Connect or Tailscale HTTPS). For plain HTTP on a LAN, open the direct pairing URL in a local browser or pair from the desktop/mobile app. For custom CAs on Android, install the CA certificate in Android security settings.
 - **Session lifetime**: Paired devices stay signed in while active; sessions unused for 30 days must re-pair.
 
 ### Reach one machine several ways

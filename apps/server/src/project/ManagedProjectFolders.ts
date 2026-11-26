@@ -199,7 +199,7 @@ function namedProjectReadme(name: string): string {
     "",
     `# ${name}`,
     "",
-    "Created in [Hyakki](https://t3.codes).",
+    "Created in [Hyakki](https://github.com/neur0map/hyakki).",
     "",
   ].join("\n");
 }

@@ -62,7 +62,7 @@ const prepareBenchProject = (forge: FakeGitHub) =>
   Effect.fn("mobileMetrics.prepareProject")(function* (workspace: string) {
     const fs = yield* FileSystem.FileSystem;
     const git = (args: ReadonlyArray<string>) => run("git", args, { cwd: workspace });
-    const author = ["-c", "user.email=bench@t3.codes", "-c", "user.name=bench"];
+    const author = ["-c", "user.email=bench@hyakki.ryoku.dev", "-c", "user.name=bench"];
     yield* git(["branch", "-M", "main"]);
     yield* fs.makeDirectory(NodePath.join(workspace, "src"), { recursive: true });
     for (let index = 0; index < DIFF_FILES; index++)

@@ -1,14 +1,11 @@
 import * as Cause from "effect/Cause";
-import * as ConfigProvider from "effect/ConfigProvider";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Tracer from "effect/Tracer";
-import { HttpClient, HttpClientResponse } from "effect/http";
-import { OtlpSerialization, OtlpTracer } from "effect/observability";
+import { HttpClient } from "effect/http";
 
 export interface RelayClientTracingConfig {
   readonly tracesUrl: string;
@@ -139,72 +136,11 @@ export function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
   });
 }
 
-/** A batch queued before an opt-out is dropped when its turn to be sent comes. */
-const layerSendWhile = (isEnabled: () => boolean) =>
-  Layer.effect(
-    HttpClient.HttpClient,
-    Effect.map(
-      HttpClient.HttpClient,
-      HttpClient.transform((send, request) =>
-        isEnabled()
-          ? send
-          : Effect.succeed(
-              HttpClientResponse.fromWeb(request, new Response(null, { status: 202 })),
-            ),
-      ),
-    ),
-  );
-
-/** Spans started while `isEnabled` says no stay local instead of being exported. */
-function gatedTracer(delegate: Tracer.Tracer, isEnabled: () => boolean): Tracer.Tracer {
-  return Tracer.make({
-    span: (options) => (isEnabled() ? delegate.span(options) : Tracer.nativeTracer.span(options)),
-    ...(delegate.context ? { context: delegate.context } : {}),
-  });
-}
-
+/** Hyakki sends no relay traces: every client gets no relay tracer, whatever it was configured with. */
 export function layer(
-  config: RelayClientTracingConfig | null,
-  resource: RelayClientTracingResource,
-  options?: { readonly isEnabled?: () => boolean },
+  _config: RelayClientTracingConfig | null,
+  _resource: RelayClientTracingResource,
+  _options?: { readonly isEnabled?: () => boolean },
 ): Layer.Layer<never, never, HttpClient.HttpClient> {
-  if (config === null) {
-    return Layer.succeed(RelayClientTracer, Option.none());
-  }
-
-  const layerTracer = OtlpTracer.layer({
-    url: config.tracesUrl,
-    headers: {
-      Authorization: `Bearer ${config.tracesToken}`,
-      "X-Axiom-Dataset": config.tracesDataset,
-    },
-    resource: {
-      serviceName: resource.serviceName,
-      serviceVersion: resource.serviceVersion,
-      attributes: {
-        "service.namespace": "t3code",
-        "service.instance.id": resource.serviceInstanceId,
-        "service.runtime": resource.runtime,
-        "t3code.component": resource.component ?? "relay-client",
-        "t3code.client.surface": resource.client,
-        ...resource.attributes,
-      },
-    },
-  }).pipe(
-    Layer.provide(OtlpSerialization.layerJson),
-    // An operator's OTEL_RESOURCE_ATTRIBUTES describe their machines for their own receiver.
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({}))),
-    options?.isEnabled ? Layer.provide(layerSendWhile(options.isEnabled)) : identity,
-  );
-
-  return Layer.effect(
-    RelayClientTracer,
-    Tracer.Tracer.pipe(
-      Effect.map(nonInterferingTracer),
-      Effect.map((tracer) =>
-        options?.isEnabled ? gatedTracer(tracer, options.isEnabled) : tracer,
-      ),
-      Effect.asSome,
-    ),
-  ).pipe(Layer.provide(layerTracer));
+  return Layer.succeed(RelayClientTracer, Option.none());
 }

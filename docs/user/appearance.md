@@ -45,7 +45,7 @@ An agent running on the same machine as the server in **Full access** mode can r
 
 ## Environment themes
 
-Environment themes come from the server serving your web app or the desktop app's local environment (or local [background service](./background-service.md) when the built-in local environment is off). Hosted `app.t3.codes` and remote connections do not apply them.
+Environment themes come from the server serving your web app or the desktop app's local environment (or local [background service](./background-service.md) when the built-in local environment is off). Hosted `hyakki.ryoku.dev` and remote connections do not apply them.
 
 Select a published theme in **Settings → Appearance** to track server updates, or **Duplicate** it for an independent editable copy.
 

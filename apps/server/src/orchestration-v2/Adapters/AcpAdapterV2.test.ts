@@ -5395,7 +5395,10 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(webItem("grok-web-search", "completed"), {
         title: "Web search: t3 code",
         patterns: ["t3 code"],
-        results: [{ url: "https://t3.codes" }, { url: "https://github.com/neur0map/hyakki" }],
+        results: [
+          { url: "https://hyakki.ryoku.dev" },
+          { url: "https://github.com/neur0map/hyakki" },
+        ],
       });
       assert.deepEqual(webItem("antigravity-web-search", "completed"), {
         title: "Web search: top story on Hacker News today",
@@ -5417,7 +5420,7 @@ describe("AcpAdapterV2", () => {
         results: [{ url: "https://example.com/streamed_(detail)" }],
       });
       assert.deepEqual(webItem("grok-web-fetch", "completed")?.results, [
-        { url: "https://t3.codes", snippet: "Hyakki page" },
+        { url: "https://hyakki.ryoku.dev", snippet: "Hyakki page" },
       ]);
       const completedCompaction = items.find(
         (item) =>

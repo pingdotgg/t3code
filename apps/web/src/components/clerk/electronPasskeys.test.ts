@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 const publicKeyOptions = {
   allowCredentials: [],
   challenge: new Uint8Array([1]),
-  rpId: "clerk.t3.codes",
+  rpId: "clerk.hyakki.ryoku.dev",
   timeout: 60_000,
   userVerification: "preferred" as const,
 };

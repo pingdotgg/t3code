@@ -787,7 +787,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     // Loose refs on purpose: the soak writes them as files, which a reftable store would ignore.
     ["-c", "init.defaultRefFormat=files", "init", "-q", "-b", "main"],
     ["add", "."],
-    ["-c", "user.email=bench@t3.codes", "-c", "user.name=bench", "commit", "-qm", "init"],
+    ["-c", "user.email=bench@hyakki.ryoku.dev", "-c", "user.name=bench", "commit", "-qm", "init"],
   ]) {
     yield* run("git", args, { cwd: project });
   }

@@ -4,7 +4,7 @@ Welcome to Hyakki. This guide explains how Hyakki works, what you need before st
 
 ## How Hyakki works
 
-Hyakki is an open-source control plane for coding agents. It gives the coding agents already installed on your computer (or server) one fast, unified interface across **desktop**, **web** (`app.t3.codes` or local), and **mobile** (iOS and Android).
+Hyakki is an open-source control plane for coding agents. It gives the coding agents already installed on your computer (or server) one fast, unified interface across **desktop**, **web** (`hyakki.ryoku.dev` or local), and **mobile** (iOS and Android).
 
 ### Core concepts
 
@@ -18,7 +18,7 @@ Hyakki is an open-source control plane for coding agents. It gives the coding ag
 
 - **Bring your own subscription or API keys**: Hyakki is free and does not resell tokens. You need at least **one installed, authenticated provider** on the host machine before starting a thread (Codex via ChatGPT and Google Antigravity can install and sign in directly from Hyakki).
 - **Code stays on your machine**: Your code and prompts go directly from your host machine to your chosen provider—never through Hyakki servers.
-- **Your host must stay awake**: Your phone and `app.t3.codes` are remote controls. If the host machine sleeps or shuts down, agents pause until it wakes. Use the [background service](./background-service.md) for always-on hosts.
+- **Your host must stay awake**: Your phone and `hyakki.ryoku.dev` are remote controls. If the host machine sleeps or shuts down, agents pause until it wakes. Use the [background service](./background-service.md) for always-on hosts.
 - **Git is optional but unlocks the best features**: Branching, isolated worktrees, turn diffs, and one-click PRs require a Git repository (and a signed-in host CLI or token for PRs/issues).
 - **No local-model focus**: Hyakki is designed for frontier coding agents (though OpenAI-compatible local endpoints like Ollama can be used for lightweight [text generation](./text-generation.md) like thread titles).
 - **Device vs. server settings**: Appearance, keybinding preferences, and saved PR views live per device; provider configs, thread rules, worktree cleanup, and scheduled tasks live on each server environment (with per-project overrides).
@@ -108,7 +108,7 @@ Hyakki is an open-source control plane for coding agents. It gives the coding ag
 - [Usage and limits](./usage.md) — Token/cost tracking, custom model pricing, pooled subscription quotas, CLIProxyAPI hubs, and HTTP quota sources.
 - [Maintenance, power, and diagnostics](./diagnostics.md) — Background activity profiles, keep awake, Diagnostics UI, and `t3 trace`.
 - [CLI reference (`t3`)](./cli.md) — Complete overview of `t3` subcommands.
-- [Product usage data and diagnostics](./telemetry.md) — Telemetry opt-outs, agent feedback, mobile diagnostics, and OTLP export.
+- [Usage data and diagnostics](./telemetry.md) — No usage data, local agent feedback, and OTLP export to your own receiver.
 - [Triage an issue](./triage.md) — Letting an agent investigate a Hyakki bug and draft an issue.
 - [Managed policy](./managed-policy.md) — Machine-wide enterprise configuration via JSON, macOS profiles, and Windows GPO/registry.
 - [Open source licenses](./open-source-licenses.md) — Viewing third-party license notices in the app.

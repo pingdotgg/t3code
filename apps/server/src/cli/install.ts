@@ -54,8 +54,8 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const windows = platform === "win32";
   if (Option.isNone(runtime)) {
     const script = windows
-      ? "irm https://t3.codes/install.ps1 | iex"
-      : "curl -fsSL https://t3.codes/install.sh | sh";
+      ? "irm https://raw.githubusercontent.com/neur0map/hyakki/main/scripts/install.ps1 | iex"
+      : "curl -fsSL https://raw.githubusercontent.com/neur0map/hyakki/main/scripts/install.sh | sh";
     return yield* new CliInstallError({
       reason: `Only the standalone t3 can install itself. Use \`${script}\`, or Settings in the desktop app.`,
     });

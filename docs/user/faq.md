@@ -35,7 +35,7 @@ Since v0.1.7, Claude in Hyakki drains your 5-hour limit at the same rate as Clau
 
 ## How do I use Hyakki remotely?
 
-Your agents run wherever the Hyakki server runs (desktop, server, or VPS). Run `t3 up` on that machine and connect via Hyakki Connect, LAN, Tailscale, or [app.t3.codes](https://app.t3.codes). See [Remote access](./remote-access.md).
+Your agents run wherever the Hyakki server runs (desktop, server, or VPS). Run `t3 up` on that machine and connect via Hyakki Connect, LAN, Tailscale, or [hyakki.ryoku.dev](https://hyakki.ryoku.dev). See [Remote access](./remote-access.md).
 
 ## How do I use Hyakki on my phone?
 
@@ -65,7 +65,7 @@ No. Hyakki focuses on frontier coding agents.
 
 No. Code and prompts go directly from your machine to your chosen provider. With Hyakki Connect, traffic travels over a Cloudflare tunnel (`cloudflared` on your machine); Hyakki's relay coordinates the link without proxying your HTTP/WebSocket sessions.
 
-Hyakki sends basic product usage events (provider, model, token totals—no prompts or file contents). Disable with `T3CODE_TELEMETRY_ENABLED=false` or `DO_NOT_TRACK=1`. See [Product usage data](./telemetry.md).
+Hyakki also collects no usage data. See [Usage data](./telemetry.md).
 
 ## Worktrees are eating my disk. How do I clean them up?
 

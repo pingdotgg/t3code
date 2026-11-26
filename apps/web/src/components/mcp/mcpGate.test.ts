@@ -17,12 +17,12 @@ const tunnel: EnvironmentCloudLinkStateResult = {
   relayIssuer: "https://relay.example.test",
   managedTunnelActive: true,
   publishAgentActivity: true,
-  tunnelHostname: "prod-a1.t3coderelay.com",
+  tunnelHostname: "prod-a1.relay.hyakki.ryoku.dev",
 };
 
 const savedTunnel = {
-  httpBaseUrl: "https://prod-b2.t3coderelay.com",
-  wsBaseUrl: "wss://prod-b2.t3coderelay.com",
+  httpBaseUrl: "https://prod-b2.relay.hyakki.ryoku.dev",
+  wsBaseUrl: "wss://prod-b2.relay.hyakki.ryoku.dev",
   providerKind: "cloudflare_tunnel",
 } as const;
 
@@ -48,12 +48,12 @@ describe("resolveMcpGate", () => {
   it("opens on a fresh reachable check, at the tunnel's MCP URL", () => {
     expect(resolveMcpGate(open)).toEqual({
       kind: "open",
-      mcpUrl: "https://prod-a1.t3coderelay.com/mcp",
+      mcpUrl: "https://prod-a1.relay.hyakki.ryoku.dev/mcp",
     });
     // A saved machine's address comes from Hyakki Connect, not from what it reports itself.
     expect(resolveMcpGate(saved)).toEqual({
       kind: "open",
-      mcpUrl: "https://prod-b2.t3coderelay.com/mcp",
+      mcpUrl: "https://prod-b2.relay.hyakki.ryoku.dev/mcp",
     });
     // A disconnected saved machine follows Hyakki Connect's list. Offline or an unreadable list keeps
     // a retry; only a list showing nothing wrong asks to reconnect.

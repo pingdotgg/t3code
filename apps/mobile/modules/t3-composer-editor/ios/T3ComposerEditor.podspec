@@ -4,7 +4,7 @@ Pod::Spec.new do |s|
   s.summary        = 'Native attributed composer editor for Hyakki mobile.'
   s.description    = 'UIKit-backed rich text composer with atomic skill and file tokens.'
   s.author         = 'T3 Tools'
-  s.homepage       = 'https://t3tools.com'
+  s.homepage       = 'https://github.com/neur0map/hyakki'
   s.platforms      = {
     :ios => '16.4',
   }

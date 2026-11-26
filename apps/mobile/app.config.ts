@@ -19,11 +19,9 @@ const runtimeVersionPolicy =
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
-// Compiled into the native project. Without a relay, Observe's native side could dispatch to
-// Expo's own ingest before observe.ts turns it off; `.invalid` never resolves (RFC 6761).
-const observeEndpointUrl = repoEnv.T3CODE_RELAY_URL?.trim()
-  ? new URL("/v1/mobile/observe", repoEnv.T3CODE_RELAY_URL.trim()).toString()
-  : "https://observe.invalid";
+// Hyakki sends no telemetry. Observe's native side is compiled in, so point it at a name that
+// never resolves (RFC 6761) rather than at Expo's ingest or a relay.
+const observeEndpointUrl = "https://observe.invalid";
 
 const fromRepoRoot = (relativePath: string) => `../../${relativePath}`;
 const androidAdaptiveForeground = "./assets/android-icon-foreground.png";
@@ -83,7 +81,7 @@ const VARIANT_CONFIG = {
     scheme: "t3code-dev",
     iosBundleIdentifier: "dev.ryoku.hyakki.dev",
     androidPackage: "dev.ryoku.hyakki.dev",
-    relyingParty: "clerk.t3.codes",
+    relyingParty: "clerk.hyakki.ryoku.dev",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
@@ -91,7 +89,7 @@ const VARIANT_CONFIG = {
     scheme: "t3code-preview",
     iosBundleIdentifier: "dev.ryoku.hyakki.preview",
     androidPackage: "dev.ryoku.hyakki.preview",
-    relyingParty: "clerk.t3.codes",
+    relyingParty: "clerk.hyakki.ryoku.dev",
     assets: PREVIEW_ASSETS,
   },
   production: {
@@ -99,7 +97,7 @@ const VARIANT_CONFIG = {
     scheme: "t3code",
     iosBundleIdentifier: "dev.ryoku.hyakki",
     androidPackage: "dev.ryoku.hyakki",
-    relyingParty: "clerk.t3.codes",
+    relyingParty: "clerk.hyakki.ryoku.dev",
     assets: RELEASE_ASSETS,
   },
 } as const;
@@ -118,8 +116,8 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
-// Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
-const HOSTED_APP_HOST = "app.t3.codes";
+// Copied thread links open the app. hyakki.ryoku.dev/.well-known lists every variant's identifiers.
+const HOSTED_APP_HOST = "hyakki.ryoku.dev";
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -487,9 +485,9 @@ const config: ExpoConfig = {
     EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_ANDROID_CLIENT_ID,
     EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME: repoEnv.EXPO_PUBLIC_CLERK_GOOGLE_IOS_URL_SCHEME,
     observability: {
-      tracesUrl: repoEnv.EXPO_PUBLIC_OTLP_TRACES_URL ?? "https://api.axiom.co/v1/traces",
-      tracesDataset: repoEnv.EXPO_PUBLIC_OTLP_TRACES_DATASET ?? null,
-      tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
+      tracesUrl: null,
+      tracesDataset: null,
+      tracesToken: null,
     },
     eas: {
       projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { MCP_APPS, mcpHandoffAction } from "./mcpApps";
 
-const MCP_URL = "https://prod-a1.t3coderelay.com/mcp?x=1&y=two words";
+const MCP_URL = "https://prod-a1.relay.hyakki.ryoku.dev/mcp?x=1&y=two words";
 
 describe("MCP app links", () => {
   it("fill in Hyakki and the encoded URL", () => {

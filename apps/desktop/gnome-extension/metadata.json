@@ -1,5 +1,5 @@
 {
-  "uuid": "snap-shot@t3.codes",
+  "uuid": "snap-shot@hyakki.ryoku.dev",
   "name": "Hyakki SnapShots",
   "description": "Allows Hyakki to capture the focused window, identify it for optional accessibility text, and animate it into Hyakki. Disable this extension to revoke access.",
   "shell-version": ["45", "46", "47", "48", "49", "50", "51"],
