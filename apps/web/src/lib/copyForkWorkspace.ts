@@ -1,7 +1,16 @@
+import { msg } from "gt-react";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { previewEnvironment } from "../state/preview";
+import { m } from "../i18n/messages";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import type { OpenPreviewMutation } from "../browser/openFileInPreview";
-import { readThreadPreviewState, setActivePreviewTab } from "../previewStateStore";
+import {
+  readThreadPreviewState,
+  reconcilePreviewServerSessions,
+  setActivePreviewTab,
+} from "../previewStateStore";
 import { type RightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { openPreviewSession } from "../components/preview/openPreviewSession";
@@ -28,7 +37,28 @@ export async function copyForkWorkspace<E>(
     }));
   if (!sourcePanel) return;
 
-  const previews = readThreadPreviewState(source);
+  let previews = readThreadPreviewState(source);
+  while (
+    !previews.listLoaded &&
+    sourcePanel.surfaces.some(
+      (surface) =>
+        surface.kind === "preview" &&
+        surface.resourceId !== null &&
+        !previews.sessions[surface.resourceId],
+    )
+  ) {
+    const query = previewEnvironment.list({
+      environmentId: source.environmentId,
+      input: { threadId: source.threadId },
+    });
+    const result = await executeAtomQuery(appAtomRegistry, query, {
+      refresh: true,
+      reportFailure: false,
+    });
+    if (result._tag === "Failure") break;
+    reconcilePreviewServerSessions(source, result.value);
+    previews = readThreadPreviewState(source);
+  }
   const surfaces: RightPanelSurface[] = [];
   let activeSurfaceId: string | null = null;
   let failed = false;
@@ -77,5 +107,5 @@ export async function copyForkWorkspace<E>(
     },
   }));
   if (failed)
-    throw new Error("The new thread was created, but a browser tab could not be restored.");
+    throw new Error(m(msg("The new thread was created, but a browser tab could not be restored.")));
 }

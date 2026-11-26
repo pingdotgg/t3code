@@ -37,6 +37,8 @@ import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelSt
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import stylesheet from "~/index.css?inline";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
+import { copyForkWorkspace } from "~/lib/copyForkWorkspace";
+import { AsyncResult } from "effect/reactivity";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
 import { reconcilePreviewServerSessions } from "~/previewStateStore";
@@ -1018,6 +1020,48 @@ it("a subagent tab shows its read-only bar under no header of its own", async ()
   await expect
     .element(screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true }))
     .toBeVisible();
+});
+
+it("waits for saved browser tabs to load when forking before preview hydration", async () => {
+  using _environment = installFakeEnvironment([]);
+  const source = scopeThreadRef(ENVIRONMENT_ID, ThreadId.make("hydrating-source"));
+  const target = scopeThreadRef(ENVIRONMENT_ID, ThreadId.make("fork-target"));
+  const pending = Promise.withResolvers<void>();
+  const requested = Promise.withResolvers<void>();
+  const snapshot: PreviewSessionSnapshot = {
+    threadId: source.threadId,
+    tabId: "saved-tab",
+    navStatus: { _tag: "Success", title: "Guide", url: "https://example.com/guide" },
+    canGoBack: false,
+    canGoForward: false,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  };
+  using _list = answerRpc(WS_METHODS.previewList, () =>
+    Effect.promise(async () => {
+      requested.resolve();
+      await pending.promise;
+      return { sessions: [snapshot], revision: 1, serverEpoch: "test" };
+    }),
+  );
+  const panels = useRightPanelStore.getState();
+  panels.openBrowser(source, snapshot.tabId);
+  panels.openFile(source, "README.md");
+  const open = vi.fn(async () =>
+    AsyncResult.success({ ...snapshot, threadId: target.threadId, tabId: "new-tab" }),
+  );
+  const copy = copyForkWorkspace(source, target, open);
+  await requested.promise;
+  expect(open).not.toHaveBeenCalled();
+  pending.resolve();
+  await copy;
+  expect(open).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({
+        threadId: target.threadId,
+        url: "https://example.com/guide",
+      }),
+    }),
+  );
 });
 
 it("forks the visible workspace with fresh browser tabs in the original order", async () => {
