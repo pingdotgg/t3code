@@ -1804,11 +1804,14 @@ export function useComposerSend(input: ComposerSendInput) {
     args[0]?.preventDefault();
     const workspaceDefault =
       draftId && !sendInFlightRef.current ? waitForPendingWorkspaceDefault(draftId) : null;
-    if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
+    if (workspaceDefault === null || !draftId) return sendWithEnvironmentRefresh(...args);
+    const composerAtSend = useComposerDraftStore.getState().getComposerDraft(draftId);
     sendInFlightRef.current = true;
     await workspaceDefault.finally(() => {
       sendInFlightRef.current = false;
     });
+    // An edit during the wait keeps the composer instead of sending content the user never sent.
+    if (useComposerDraftStore.getState().getComposerDraft(draftId) !== composerAtSend) return;
     return sendWithEnvironmentRefreshLatest(...args);
   };
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
