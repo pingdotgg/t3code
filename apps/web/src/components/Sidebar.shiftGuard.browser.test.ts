@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
-import { fakeTimers, render } from "../../test/render";
+import { render } from "../../test/render";
 import { createSidebarShiftGuard } from "./Sidebar.shiftGuard";
 
 function mountList(container: HTMLElement, names: readonly string[]) {
@@ -31,6 +31,17 @@ function mountList(container: HTMLElement, names: readonly string[]) {
   };
 }
 
+// Fake timers would not do: the browser runner advances them with real time while a userEvent
+// command runs, so a slow click could outlast the guard's window before its press lands.
+function manualClock() {
+  let now = 0;
+  const spy = vi.spyOn(performance, "now").mockImplementation(() => now);
+  return {
+    advance: (ms: number) => void (now += ms),
+    [Symbol.dispose]: () => spy.mockRestore(),
+  };
+}
+
 // userEvent cannot hold the mouse, so `act` runs inside the real press, after the guard saw it.
 function duringPress(act: () => void) {
   const listener = () => act();
@@ -44,14 +55,14 @@ describe("sidebar shift guard", () => {
   it("drops a press on a row that slid up on its own, then accepts it after the delay", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, ["A", "B", "C"]);
-    using _clock = fakeTimers();
+    using clock = manualClock();
 
     list.remove("A");
     list.guard.update();
     await userEvent.click(list.button("B"));
     expect(list.pressed).toEqual([]);
 
-    vi.advanceTimersByTime(500);
+    clock.advance(500);
     await userEvent.click(list.button("B"));
     expect(list.pressed).toEqual(["B"]);
   });
@@ -59,7 +70,7 @@ describe("sidebar shift guard", () => {
   it("keeps rows that did not move, or barely moved, clickable", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, ["A", "B", "C"]);
-    using _clock = fakeTimers();
+    using _clock = manualClock();
 
     list.remove("C");
     list.button("A").closest("ul")!.style.paddingTop = "2px";
@@ -72,7 +83,7 @@ describe("sidebar shift guard", () => {
   it("keeps rows clickable when an empty list first fills", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, []);
-    using _clock = fakeTimers();
+    using _clock = manualClock();
 
     list.add("A");
     list.add("B");
@@ -84,7 +95,7 @@ describe("sidebar shift guard", () => {
   it("lets the user act on the row their own press moved", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, ["A", "B", "C"]);
-    using _clock = fakeTimers();
+    using _clock = manualClock();
     list.button("A").addEventListener("click", () => {
       list.remove("A");
       list.guard.update();
@@ -98,7 +109,7 @@ describe("sidebar shift guard", () => {
   it("clears an earlier mark when the user's own input moves the row again", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, ["A", "B", "C", "D"]);
-    using _clock = fakeTimers();
+    using _clock = manualClock();
 
     list.remove("A");
     list.guard.update();
@@ -114,7 +125,7 @@ describe("sidebar shift guard", () => {
     const field = document.createElement("input");
     screen.container.append(field);
     using list = mountList(screen.container, ["A", "B", "C"]);
-    using _clock = fakeTimers();
+    using _clock = manualClock();
 
     field.focus();
     await userEvent.keyboard("x");
@@ -127,7 +138,7 @@ describe("sidebar shift guard", () => {
   it("keeps a held press dropped until its release, whatever happens before", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, ["A", "B", "C"]);
-    using _clock = fakeTimers();
+    using clock = manualClock();
 
     list.remove("A");
     list.guard.update();
@@ -136,7 +147,7 @@ describe("sidebar shift guard", () => {
       const other = { bubbles: true, pointerId: 9 };
       screen.container.dispatchEvent(new PointerEvent("pointerdown", other));
       screen.container.dispatchEvent(new PointerEvent("pointerup", other));
-      vi.advanceTimersByTime(1_000);
+      clock.advance(1_000);
     });
     await userEvent.click(list.button("B"));
     expect(list.pressed).toEqual([]);
@@ -145,7 +156,7 @@ describe("sidebar shift guard", () => {
   it("lets keyboard activation through while a dropped press is held", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, ["A", "B", "C"]);
-    using _clock = fakeTimers();
+    using _clock = manualClock();
 
     list.remove("A");
     list.guard.update();
@@ -166,14 +177,14 @@ describe("sidebar shift guard", () => {
   it("ends a dropped press the browser cancels", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, ["A", "B", "C"]);
-    using _clock = fakeTimers();
+    using clock = manualClock();
 
     list.remove("A");
     list.guard.update();
     const touch = { bubbles: true, pointerId: 9, pointerType: "touch" };
     list.button("B").dispatchEvent(new PointerEvent("pointerdown", touch));
     list.button("B").dispatchEvent(new PointerEvent("pointercancel", touch));
-    vi.advanceTimersByTime(500);
+    clock.advance(500);
     await userEvent.click(list.button("B"));
     expect(list.pressed).toEqual(["B"]);
   });

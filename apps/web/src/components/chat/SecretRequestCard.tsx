@@ -37,6 +37,7 @@ import {
   ShieldCheckIcon,
 } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
@@ -316,10 +317,22 @@ function SecretRequestField(props: {
   const { input } = props;
   const gt = useGT();
   const [revealed, setRevealed] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const masked = input.secret && !revealed;
+  const toggleRevealed = () => {
+    const field = inputRef.current;
+    const start = field?.selectionStart ?? null;
+    const end = field?.selectionEnd ?? null;
+    flushSync(() => setRevealed((current) => !current));
+    // After a click changes a focused input's type, Chromium moves the caret to the
+    // start unless the new type is laid out before the selection is restored.
+    field?.getBoundingClientRect();
+    field?.setSelectionRange(start, end);
+  };
   const control = (
     <InputGroup>
       <InputGroupInput
+        ref={inputRef}
         id={props.id}
         // A CSS-masked text field still exposes its value to screen readers.
         type={masked ? "password" : "text"}
@@ -348,7 +361,7 @@ function SecretRequestField(props: {
             disabled={props.disabled}
             // Keep focus, and the caret, in the input.
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => setRevealed((current) => !current)}
+            onClick={toggleRevealed}
           >
             {revealed ? <EyeOffIcon aria-hidden /> : <EyeIcon aria-hidden />}
           </Button>

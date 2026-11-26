@@ -249,7 +249,7 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   const segments: PullRequestBodySegment[] = [];
   const markdown: string[] = [];
   let markdownStart = 0;
-  let openFence: string | null = null;
+  let openFence: { readonly marker: string; readonly flushLeft: boolean } | null = null;
 
   // Blank lines around a run are dropped, but never leading spaces: four of them open an
   // indented code block, so trimming a run would silently turn code into prose.
@@ -285,14 +285,16 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
       const fence = fenceMatch[1]!;
       // A fence closes only on the same marker, at least as long as the one that opened it,
       // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
-      // info string opening a nested fence, not a close.
+      // info string opening a nested fence, not a close. Under a fence opened at the margin, an
+      // indented-code line is content too: a tab-indented ``` there is part of the example.
       const closes =
         openFence !== null &&
-        fence[0] === openFence[0] &&
-        fence.length >= openFence.length &&
-        fenceMatch[2]!.trim().length === 0;
+        fence[0] === openFence.marker[0] &&
+        fence.length >= openFence.marker.length &&
+        fenceMatch[2]!.trim().length === 0 &&
+        !(openFence.flushLeft && INDENTED_CODE_PATTERN.test(line));
       if (openFence === null) {
-        openFence = fence;
+        openFence = { marker: fence, flushLeft: line.startsWith(fence) };
       } else if (closes) {
         openFence = null;
       }
