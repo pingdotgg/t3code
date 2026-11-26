@@ -8998,6 +8998,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               itemIdentityVersion = 2;
               yield* Ref.set(runtimeRestartRequired, false);
               prepareClaimableTerminalEnvironment(yield* readMcpContext(input.threadId));
+              // The failed load may have replayed part of the old session's history.
+              yield* Ref.set(snapshot, emptySnapshotState());
               return yield* startAcpRuntime(input.threadId);
             });
         yield* Ref.set(activeSessionId, started.sessionId);
@@ -11342,7 +11344,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }).pipe(Effect.tapError(() => restorePrevious));
                   if (activated !== undefined) {
                     const nextSelection = threadInput.modelSelection ?? input.modelSelection;
-                    const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
+                    const nextRuntimePolicy = threadInput.runtimePolicy ?? latestRuntimePolicy;
                     yield* configureSession(activated, nextSelection, nextRuntimePolicy);
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
@@ -11942,6 +11944,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     snapshotLoadedForSessionId !== sessionId
                   ) {
                     yield* Ref.set(snapshot, emptySnapshotState());
+                    snapshotLoadedForSessionId = null;
                     const mcpContext = yield* readMcpContext(
                       snapshotInput.providerThread.appThreadId,
                     );
