@@ -151,8 +151,10 @@ function ApprovalTextParts(props: { readonly parts: ReadonlyArray<ApprovalTextPa
     <Text className="font-sans text-sm leading-normal text-foreground-secondary">
       {props.parts.map((part, index) =>
         part.named ? (
+          // Tinted only: a second font inside wrapped lines makes Android lay the text out shorter
+          // than it draws, which cuts off its last lines.
           // oxlint-disable-next-line react/no-array-index-key -- parts never reorder and two may read alike
-          <Text key={index} className="font-mono text-sm text-warning-foreground">
+          <Text key={index} className="text-warning-foreground">
             {part.text}
           </Text>
         ) : (
