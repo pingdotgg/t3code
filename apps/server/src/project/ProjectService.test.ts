@@ -11,6 +11,7 @@ import {
   ProjectId,
   type ProjectTrackedFolder,
   ProviderInstanceId,
+  type ManagedPolicyDocument,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
@@ -40,7 +41,9 @@ import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -205,6 +208,7 @@ it.effect("resolves only the requested active project page in creation order", (
 
 const layerProjectServiceDependencies = Layer.mergeAll(
   RuntimeLayer.layerEventSink,
+  RuntimeLayer.layerCommandReceiptStoreProvided,
   ProjectStore.layer,
   ProjectionStore.layer,
   IdAllocator.layer,
@@ -1232,4 +1236,163 @@ it.effect("rejects an update that waited on the lock while its project was delet
       "Update race",
     );
   }).pipe(Effect.provide(layerProjectServiceDependencies)),
+);
+
+const layerProjectServiceUnderPolicy = (
+  policy: ManagedPolicyDocument | undefined,
+  options: {
+    readonly workspacePaths?: Layer.Layer<WorkspacePaths.WorkspacePaths>;
+    // A base directory and database kept across layers stand for a server restart.
+    readonly baseDir?: string;
+  } = {},
+) =>
+  RuntimeLayer.layerProjectService.pipe(
+    Layer.provideMerge(ProjectEnrichmentService.layer),
+    Layer.provideMerge(options.workspacePaths ?? layerWorkspacePaths),
+    Layer.provideMerge(layerMetadata),
+    Layer.provideMerge(
+      ServerSettings.layer.pipe(
+        Layer.provide(ServerSecretStore.layer),
+        Layer.provide(ManagedPolicy.layerTest(policy)),
+      ),
+    ),
+    Layer.provideMerge(
+      options.baseDir === undefined ? SqlitePersistence.layerMemory : SqlitePersistence.layerConfig,
+    ),
+    Layer.provideMerge(
+      options.baseDir === undefined
+        ? ServerConfig.layerTest(process.cwd(), { prefix: "project-service-policy-" })
+        : ServerConfig.layerTest(process.cwd(), options.baseDir),
+    ),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.provideMerge(layerEnrichmentCompletions),
+  );
+
+const lockedModelPolicy: ManagedPolicyDocument = {
+  schemaVersion: 1,
+  organization: "Example Corp",
+  settings: {
+    defaultModelSelection: { value: { instanceId: "codex", model: "gpt-managed" }, locked: true },
+    defaultProjectScripts: { value: [], locked: true },
+  },
+};
+
+it.effect("a project update a policy refuses changes nothing and says why", () =>
+  Effect.gen(function* () {
+    const service = yield* ProjectService.ProjectService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const projectId = ProjectId.make("project:policy-refused");
+    yield* settings.start;
+    yield* service.create({
+      commandId: CommandId.make("command:policy-refused:create"),
+      projectId,
+      title: "Before",
+      workspaceRoot: "/work/policy-refused",
+    });
+    const refused = yield* Effect.flip(
+      service.update({
+        commandId: CommandId.make("command:policy-refused:update"),
+        projectId,
+        title: "After",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model: "claude-sonnet-5-5",
+        },
+      }),
+    );
+    assert.strictEqual(Option.getOrThrow(yield* service.getById(projectId)).title, "Before");
+    assert.isUndefined((yield* settings.getSettings).projectSettingsOverrides[projectId]);
+    // The check reads the settings already loaded, so a refusal saves nothing either.
+    const config = yield* ServerConfig.ServerConfig;
+    assert.isFalse(yield* (yield* FileSystem.FileSystem).exists(config.settingsPath));
+    assert.strictEqual(refused._tag, "ProjectInvalidError");
+    assert.include(refused.message, "defaultModelSelection is managed by Example Corp");
+
+    // Changes that leave Settings alone still go through.
+    yield* service.update({
+      commandId: CommandId.make("command:policy-refused:rename"),
+      projectId,
+      title: "After",
+    });
+    assert.strictEqual(Option.getOrThrow(yield* service.getById(projectId)).title, "After");
+  }).pipe(Effect.provide(layerProjectServiceUnderPolicy(lockedModelPolicy))),
+);
+
+it.effect("a project create whose actions a policy refuses creates nothing", () => {
+  const preparedRoots: Array<string> = [];
+  return Effect.gen(function* () {
+    const service = yield* ProjectService.ProjectService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const projectId = ProjectId.make("project:policy-create");
+    yield* settings.start;
+    const refused = yield* Effect.flip(
+      service.create({
+        commandId: CommandId.make("command:policy-create:create"),
+        projectId,
+        title: "Refused",
+        workspaceRoot: "/work/policy-create",
+        createWorkspaceRootIfMissing: true,
+        scripts: [
+          { id: "test", name: "Test", command: "true", icon: "test", runOnWorktreeCreate: false },
+        ],
+      }),
+    );
+    assert.isTrue(Option.isNone(yield* service.getById(projectId)));
+    // Refused before the folder is prepared, which can create it.
+    assert.deepEqual(preparedRoots, []);
+    assert.strictEqual(refused._tag, "ProjectInvalidError");
+  }).pipe(
+    Effect.provide(
+      layerProjectServiceUnderPolicy(lockedModelPolicy, {
+        workspacePaths: Layer.succeed(WorkspacePaths.WorkspacePaths, {
+          normalizeWorkspaceRoot: (workspaceRoot) =>
+            Effect.sync(() => {
+              preparedRoots.push(workspaceRoot);
+              return workspaceRoot;
+            }),
+          resolveRelativePathWithinRoot: ({ workspaceRoot, relativePath }) =>
+            Effect.succeed({ absolutePath: `${workspaceRoot}/${relativePath}`, relativePath }),
+        }),
+      }),
+    ),
+  );
+});
+
+it.effect("a project update accepted before a policy lock still replays after it", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "project-service-replay-" });
+    const projectId = ProjectId.make("project:policy-replay");
+    const accepted = {
+      commandId: CommandId.make("command:policy-replay:update"),
+      projectId,
+      title: "After",
+      defaultModelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-5-5",
+      },
+    };
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      yield* (yield* ServerSettings.ServerSettingsService).start;
+      yield* service.create({
+        commandId: CommandId.make("command:policy-replay:create"),
+        projectId,
+        title: "Before",
+        workspaceRoot: "/work/policy-replay",
+      });
+      yield* service.update(accepted);
+    }).pipe(Effect.provide(layerProjectServiceUnderPolicy(undefined, { baseDir })));
+
+    // After a restart under the policy, the retry returns its first outcome; a new command is refused.
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      yield* (yield* ServerSettings.ServerSettingsService).start;
+      assert.strictEqual((yield* service.update(accepted)).title, "After");
+      const refused = yield* Effect.flip(
+        service.update({ ...accepted, commandId: CommandId.make("command:policy-replay:new") }),
+      );
+      assert.strictEqual(refused._tag, "ProjectInvalidError");
+    }).pipe(Effect.provide(layerProjectServiceUnderPolicy(lockedModelPolicy, { baseDir })));
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

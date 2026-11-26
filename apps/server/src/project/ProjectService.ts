@@ -9,6 +9,7 @@ import {
   type ProjectUpdatePayload,
   type ProjectSnapshot,
   type ThreadId,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
@@ -29,6 +30,7 @@ import { withCommandMetrics } from "../observability/Metrics.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
   decodeProjectCommandRejection,
@@ -202,6 +204,7 @@ export const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
@@ -539,39 +542,40 @@ export const make = Effect.gen(function* () {
   });
 
   // Once project settings are folded, project defaults resolve from Settings only, where the app's editor saves them.
-  const saveProjectSettings = (
-    projectId: ProjectId,
-    input: Pick<
-      ProjectUpdateInput,
-      "scripts" | "defaultModelSelection" | "defaultThreadEnvMode" | "autoPull"
-    >,
-  ) =>
-    input.scripts === undefined &&
-    input.defaultModelSelection === undefined &&
-    input.defaultThreadEnvMode === undefined &&
-    input.autoPull === undefined
-      ? Effect.void
-      : serverSettings.getSettings.pipe(
-          // A patch replaces the project's whole entry, so its other overrides are carried over.
-          Effect.flatMap(({ projectSettingsOverrides }) => {
-            const entry = {
-              ...projectSettingsOverrides[projectId],
-              ...(input.scripts === undefined ? {} : { defaultProjectScripts: input.scripts }),
-              ...(input.defaultModelSelection == null
-                ? {}
-                : { defaultModelSelection: input.defaultModelSelection }),
-              ...(input.defaultThreadEnvMode == null
-                ? {}
-                : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
-              ...(input.autoPull === undefined ? {} : { defaultAutoPull: input.autoPull }),
-            };
-            // A cleared project default inherits the machine's setting again.
-            if (input.defaultModelSelection === null) delete entry.defaultModelSelection;
-            if (input.defaultThreadEnvMode === null) delete entry.defaultThreadEnvMode;
-            return serverSettings.updateSettings({
-              projectSettingsOverrides: { [projectId]: entry },
-            });
-          }),
+  type ProjectSettingsInput = Pick<
+    ProjectUpdateInput,
+    "scripts" | "defaultModelSelection" | "defaultThreadEnvMode" | "autoPull"
+  >;
+  const hasProjectSettings = (input: ProjectSettingsInput) =>
+    input.scripts !== undefined ||
+    input.defaultModelSelection !== undefined ||
+    input.defaultThreadEnvMode !== undefined ||
+    input.autoPull !== undefined;
+  const projectSettingsPatch = (projectId: ProjectId, input: ProjectSettingsInput) =>
+    serverSettings.getSettings.pipe(
+      // A patch replaces the project's whole entry, so its other overrides are carried over.
+      Effect.map(({ projectSettingsOverrides }): ServerSettingsPatch => {
+        const entry = {
+          ...projectSettingsOverrides[projectId],
+          ...(input.scripts === undefined ? {} : { defaultProjectScripts: input.scripts }),
+          ...(input.defaultModelSelection == null
+            ? {}
+            : { defaultModelSelection: input.defaultModelSelection }),
+          ...(input.defaultThreadEnvMode == null
+            ? {}
+            : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+          ...(input.autoPull === undefined ? {} : { defaultAutoPull: input.autoPull }),
+        };
+        // A cleared project default inherits the machine's setting again.
+        if (input.defaultModelSelection === null) delete entry.defaultModelSelection;
+        if (input.defaultThreadEnvMode === null) delete entry.defaultThreadEnvMode;
+        return { projectSettingsOverrides: { [projectId]: entry } };
+      }),
+    );
+  const saveProjectSettings = (projectId: ProjectId, input: ProjectSettingsInput) =>
+    hasProjectSettings(input)
+      ? projectSettingsPatch(projectId, input).pipe(
+          Effect.flatMap(serverSettings.updateSettings),
           Effect.asVoid,
           Effect.mapError(
             (cause) =>
@@ -581,10 +585,42 @@ export const make = Effect.gen(function* () {
                 cause,
               }),
           ),
-        );
+        )
+      : Effect.void;
+  // Settings are written only once the row commits, so a policy that would refuse them refuses the
+  // whole update first; otherwise the row would change and the agent would see only a failure.
+  const refuseProjectSettings = (projectId: ProjectId, input: ProjectSettingsInput) =>
+    projectSettingsPatch(projectId, input).pipe(
+      Effect.flatMap(serverSettings.checkSettingsUpdate),
+      Effect.mapError((cause) =>
+        cause.operation === "write-managed-setting" || cause.operation === "use-disallowed-provider"
+          ? new ProjectInvalidError({ projectId, detail: cause.message })
+          : new ProjectOperationError({
+              operation: "dispatch-project-command",
+              projectId,
+              cause,
+            }),
+      ),
+    );
+  // A replay returns its first receipt and writes nothing, so a policy deployed since can't refuse it.
+  const checkProjectSettings = (
+    commandId: CommandId,
+    projectId: ProjectId,
+    input: ProjectSettingsInput,
+  ) =>
+    hasProjectSettings(input)
+      ? receipts.getProjectByCommandId(commandId).pipe(
+          Effect.map(Option.isSome),
+          Effect.orElseSucceed(() => false),
+          Effect.flatMap((replay) =>
+            replay ? Effect.void : refuseProjectSettings(projectId, input),
+          ),
+        )
+      : Effect.void;
 
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
+      yield* checkProjectSettings(input.commandId, input.projectId, { scripts: input.scripts });
       yield* rejectWslSharePath(input.projectId, input.workspaceRoot);
       const workspaceRoot = yield* normalizeWorkspaceRoot({
         projectId: input.projectId,
@@ -621,6 +657,7 @@ export const make = Effect.gen(function* () {
       if (Option.isNone(existing)) {
         return yield* new ProjectNotFoundError({ projectId: input.projectId });
       }
+      yield* checkProjectSettings(input.commandId, input.projectId, input);
       const previousRoot = existing.value.workspaceRoot;
       if (input.workspaceRoot !== undefined && input.workspaceRoot !== previousRoot) {
         yield* rejectWslSharePath(input.projectId, input.workspaceRoot);

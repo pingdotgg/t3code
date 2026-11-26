@@ -2804,6 +2804,42 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
       ),
     );
 
+    it.effect("checks a write against the policy as updateSettings would, without writing", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const projectId = ProjectId.make("project-check");
+        const lockedAway = {
+          projectSettingsOverrides: {
+            [projectId]: {
+              textGenerationModelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "gpt-other",
+              },
+            },
+          },
+        };
+
+        const refused = yield* service.checkSettingsUpdate(lockedAway).pipe(Effect.flip);
+        assert.equal(refused.operation, "write-managed-setting");
+        assert.equal(refused.managedSetting, "textGenerationModelSelection.model");
+        yield* service.checkSettingsUpdate({ defaultAutoPull: true });
+        assert.isFalse((yield* service.getSettings).defaultAutoPull);
+        assert.isFalse(yield* fs.exists(config.settingsPath));
+      }).pipe(
+        Effect.provide(
+          layerServerSettings({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            settings: {
+              "textGenerationModelSelection.model": { value: "gpt-locked", locked: true },
+            },
+          }),
+        ),
+      ),
+    );
+
     it.effect(
       "compares a project's partial override with a locked entry by the keys it holds",
       () =>
