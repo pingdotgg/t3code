@@ -77,6 +77,9 @@ describe("splitMarkdown", () => {
 
     const htmlBlock = ["<div>", "x".repeat(4100), "\u00a0", "# literal", "</div>"].join("\n");
     expect(splitLargeMarkdown(htmlBlock)).toHaveLength(1);
+
+    const listFence = "- ~~~md\n\u00a0\n\n  [real]: /right\n\n[real]";
+    expect(splitMarkdown(listFence, 1).definitions).toBe("[real]: /right");
   });
 
   it("still closes fences and recognizes blank lines with ASCII spaces, tabs, and CRLF", () => {
@@ -119,7 +122,7 @@ describe("splitMarkdown", () => {
       "<h1>x</h1>",
     );
 
-    const mixed = `---\rtitle: cr\r---\r\r[ref]: /cr-link\r\r\`\`\`md\r# inside fence\r\`\`\`\r\r<details>\r\r${"x".repeat(32 * 1024)}\r\r</details>\r\r# After [ref]\r\n\r\n- [ ] task`;
+    const mixed = `---\rtitle: cr\r---\r\r[ref]: /cr-link\r\r- \`\`\`md\r\r  [fake]: /wrong\r  \`\`\`\r\r\`\`\`md\r# inside fence\r\`\`\`\r\r<details>\r\r${"x".repeat(32 * 1024)}\r\r</details>\r\r# After [ref]\r\n\r\n- [ ] task`;
     const mixedResult = splitMarkdown(mixed);
     expect(mixedResult.definitions).toBe("[ref]: /cr-link");
     expect(mixedResult.chunks.map((chunk) => chunk.text.split(/\r\n?|\n/)[0])).toEqual([
@@ -348,6 +351,52 @@ describe("splitMarkdown", () => {
     const definition = "[ref]: /target";
     const text = beforeFence + "  ```sh\n  example\n  ```\n" + definitionIndent + definition;
     expect(splitMarkdown(text).definitions).toBe(definition);
+  });
+
+  it("keeps list sample definitions literal and retains outside definitions", () => {
+    for (const listFence of [
+      "- ```md\n\n  [fake]: /wrong\n  ```",
+      "-\t```md\n\n    [fake]: /wrong\n    ```",
+      "* ````md\n  ```\n\n  [fake]: /wrong\n  ````",
+      "2. ~~~md\n\n   [fake]: /wrong\n   ~~~",
+      "1. First\n2. ```md\n\n   [fake]: /wrong\n   ```",
+      "1.\tFirst\n2. ~~~md\n\n   [fake]: /wrong\n   ~~~",
+      "1. First\n\n   continuation\n2. ~~~md\n\n   [fake]: /wrong\n   ~~~",
+      "1. First\n   - nested\n\n   outer continuation\n2. ~~~md\n\n   [fake]: /wrong\n   ~~~",
+      "1. First\nlazy continuation\n2. ```md\n\n   [fake]: /wrong\n   ```",
+      "1. --\nlazy continuation\n2. ~~~md\n\n   [fake]: /wrong\n   ~~~",
+      "+\n2. ~~~md\n\n   [fake]: /wrong\n   ~~~",
+      "1. First\n2.\n3. ~~~md\n\n   [fake]: /wrong\n   ~~~",
+      "- ```md\n\tcode\n\n  [fake]: /wrong\n  ```",
+    ]) {
+      expect(splitMarkdown(`${listFence}\n\n[fake]`).definitions).toBe("");
+    }
+    // "2." cannot interrupt a paragraph, and a less-indented line ends the list item's fence.
+    expect(splitMarkdown("Text\n2. ```md\n\n   [real]: /right\n\n[real]").definitions).toBe(
+      "[real]: /right",
+    );
+    expect(splitMarkdown("- item\n  2. ~~~md\n[fake]: /wrong\n\n[fake]").definitions).toBe("");
+    for (const text of [
+      "- item\n<pre></pre>\nparagraph\n2. ~~~md\n\n   [real]: /right\n\n[real]",
+      "- item\n<!-- comment -->\nparagraph\n2. ~~~md\n\n   [real]: /right\n\n[real]",
+      "- item\n> quote\nparagraph\n2. ~~~md\n\n   [real]: /right\n\n[real]",
+      "1. First\n\nparagraph\n2. ~~~md\n\n   [real]: /right\n\n[real]",
+      "1. First\n   --\nparagraph\n2. ~~~md\n\n   [real]: /right\n\n[real]",
+      "paragraph\n+\n2. ~~~md\n\n   [real]: /right\n\n[real]",
+      "1. ```md\n   x\n   ```\nparagraph\n2. ~~~md\n\n   [real]: /right\n\n[real]",
+      "123. ~~~\n\t\tcode\n     ~~~\n[real]: /right\n\n[real]",
+      "1.\t```md\n\t```\n[real]: /right\n\n[real]",
+    ]) {
+      const result = splitMarkdown(text, 1);
+      expect(result.definitions).toBe("[real]: /right");
+      expect(result.chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
+    }
+    expect(splitMarkdown("- ```md\n\n  [fake]: /wrong\n[real]: /right").definitions).toBe(
+      "[real]: /right",
+    );
+    const multilineAfterListFence =
+      "- ```md\n\n  [fake]:\n    /wrong\n  ```\n[real]:\n  /right\n\n[fake] [real]";
+    expect(splitMarkdown(multilineAfterListFence, 1).definitions).toBe("[real]:\n  /right");
   });
 
   it.each([
