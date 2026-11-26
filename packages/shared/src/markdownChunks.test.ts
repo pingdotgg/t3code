@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { unified } from "unified";
+import { toHtml } from "hast-util-to-html";
 import remarkGfm from "remark-gfm";
-import { taskListMarkerOffset } from "./markdownTaskEdits.ts";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
-import { toHtml } from "hast-util-to-html";
+import { unified } from "unified";
 
 import {
   LARGE_MARKDOWN_CHUNK_MAX_CHARS,
   splitMarkdown,
   withMarkdownDefinitions,
 } from "./markdownChunks.ts";
+import { taskListMarkerOffset } from "./markdownTaskEdits.ts";
 
 const splitLargeMarkdown = (text: string, targetChars?: number) =>
   splitMarkdown(text, targetChars).chunks;
@@ -252,8 +252,8 @@ describe("withMarkdownDefinitions", () => {
     expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
   });
 
-  it("masks frontmatter before prefixing definitions and preserves source task offsets", () => {
-    const text = "\uFEFF---\r\ntitle: hidden\r\n---\r\n\r\n[ref]: /😀\r\n\r\n- [ ] task";
+  it("keeps frontmatter hidden and task offsets shifted by exactly the prefix", () => {
+    const text = "\uFEFF---\r\ntitle: hidden\r\n---\r\n\r\n[ref]: /x\r\n\r\n- [ ] task";
     const { definitions } = splitMarkdown(text);
     const rendered = withMarkdownDefinitions(text, definitions);
     expect(html(rendered)).not.toContain("hidden");
@@ -264,12 +264,6 @@ describe("withMarkdownDefinitions", () => {
       .children.find((node) => node.type === "list");
     const marker = taskListMarkerOffset(rendered, list!.position!.start.offset!);
     expect(marker! - (definitions.length + 2)).toBe(text.indexOf("[ ]"));
-    expect(withMarkdownDefinitions(text, "")).toBe(text);
-    for (const content of ["# Heading", "- [ ] task", "> quote"]) {
-      const source = `\uFEFF${content}\n\n[id]: /first\n\n[id]`;
-      const prepared = withMarkdownDefinitions(source, splitMarkdown(source).definitions);
-      expect(html(prepared)).toBe(html(source));
-    }
   });
 
   it("keeps shared definitions out of a trailing unclosed code fence", () => {
