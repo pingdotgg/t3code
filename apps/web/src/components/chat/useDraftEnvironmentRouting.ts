@@ -25,6 +25,7 @@ import {
 import { isTriagePrompt, replaceTriagePlaybookLink } from "@t3tools/shared/triagePrompt";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { shallow } from "zustand/shallow";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -165,6 +166,14 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     needsLoadBalancing ? loadBalancingCandidates : [],
     loadBalancingSettings.loadBalancingWeights,
   );
+  const mountedRoutingScope = useRef<object | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates send preparation when the draft or project scope closes
+  useLayoutEffect(() => {
+    mountedRoutingScope.current = { draftId, activeProjectKey };
+    return () => {
+      mountedRoutingScope.current = null;
+    };
+  }, [draftId, activeProjectKey]);
   const readRouting = useStableCallback(() => ({ input, loadBalancingCandidates }));
   const readWorktreeBase = async (projectRef: ScopedProjectRef, branch: string | null) => {
     const cwd = readProject(projectRef)?.workspaceRoot;
@@ -175,7 +184,10 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       let cursor: number | undefined;
       do {
         const matching = await readRefs(
-          { environmentId, input: { cwd, query: branch.slice(0, 256), cursor } },
+          {
+            environmentId,
+            input: { cwd, query: branch.slice(0, 256), cursor, includeMatchingRemoteRefs: true },
+          },
           call,
         );
         if (matching._tag !== "Success") break;
@@ -196,11 +208,18 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     )
       return null;
     const originalDraft = getDraftSession(draftId);
-    if (!originalDraft) return null;
+    const scope = mountedRoutingScope.current;
+    if (!originalDraft || !scope) return null;
     const composerDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
-    const readCurrentRouting = () => {
+    const readCurrentRouting = (equivalentBase: string | null = null) => {
       const current = readRouting();
-      return current.input.draftId === draftId &&
+      const latestDraft = getDraftSession(draftId);
+      const draftMatches =
+        latestDraft === originalDraft ||
+        (equivalentBase !== null &&
+          shallow(latestDraft, { ...originalDraft, branch: equivalentBase }));
+      return mountedRoutingScope.current === scope &&
+        current.input.draftId === draftId &&
         current.input.automaticEnvironment &&
         !current.input.composerHasAttachments &&
         current.input.activeProjectKey === activeProjectKey &&
@@ -209,7 +228,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         current.input.loadBalancingSettings.loadBalancingWeights ===
           loadBalancingSettings.loadBalancingWeights &&
         current.loadBalancingCandidates.join("\n") === loadBalancingCandidates.join("\n") &&
-        getDraftSession(draftId) === originalDraft &&
+        draftMatches &&
         useComposerDraftStore.getState().getComposerDraft(draftId) === composerDraft
         ? current
         : null;
@@ -235,13 +254,18 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       const moved = changesProject(originalDraft, projectRef);
       const defaults = moved ? resolveRetargetedDraftWorkspace(originalDraft, projectRef) : null;
       const workspace = defaults?.load ? await defaults.load() : defaults?.workspace;
+      if (mountedRoutingScope.current !== scope) return false;
       const isWorktree = (workspace?.envMode ?? originalDraft.envMode) === "worktree";
       const branch =
         isWorktree && (moved || originalDraft.branch === null)
           ? await readWorktreeBase(projectRef, originalDraft.branch)
-          : originalDraft.branch;
+          : moved
+            ? null
+            : originalDraft.branch;
+      // The picker can seed the same default while the destination refs load.
+      const equivalentBase = !moved && originalDraft.branch === null ? branch : null;
       if (
-        !readCurrentRouting()?.input.logicalProjectEnvironments.some(
+        !readCurrentRouting(equivalentBase)?.input.logicalProjectEnvironments.some(
           (candidate) =>
             candidate.environmentId === environmentId && candidate.projectId === target.projectId,
         )

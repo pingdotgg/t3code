@@ -30,6 +30,8 @@ import { draftFanoutSelectionsAtom } from "./chatViewSend";
 const resources = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
   refs: [] as VcsRef[],
+  refsEnvironment: "machine-b",
+  beforeRefs: vi.fn<() => Promise<void>>(),
   readProjectFile: vi.fn<() => Promise<T3ProjectFile | null>>(),
   pickedEnvironmentId: null as EnvironmentId | null,
   refreshSelection: vi.fn<(ids: readonly EnvironmentId[]) => Promise<EnvironmentId | null>>(),
@@ -71,10 +73,21 @@ vi.mock(import("../../state/vcs"), async (original) => {
             input: VcsListRefsInput;
           },
         ) =>
-          Effect.sync(() => {
+          Effect.promise(async () => {
+            await resources.beforeRefs();
             const refs =
-              environmentId === "machine-b"
-                ? resources.refs.filter((ref) => !input.query || ref.name.includes(input.query))
+              environmentId === resources.refsEnvironment
+                ? resources.refs.filter((ref) => {
+                    if (
+                      !input.includeMatchingRemoteRefs &&
+                      ref.isRemote &&
+                      resources.refs.some(
+                        (local) => !local.isRemote && ref.name === `origin/${local.name}`,
+                      )
+                    )
+                      return false;
+                    return !input.query || ref.name.includes(input.query);
+                  })
                 : [];
             return {
               refs,
@@ -111,6 +124,8 @@ function setup() {
   resources.refreshSelection.mockReset();
   resources.readProjectFile.mockReset().mockResolvedValue(null);
   resources.refs = [];
+  resources.refsEnvironment = "machine-b";
+  resources.beforeRefs.mockReset().mockResolvedValue(undefined);
   resources.projects = [];
   resources.pickedEnvironmentId = null;
   const a = EnvironmentId.make("machine-a");
@@ -382,6 +397,7 @@ it.each([
   { branch: null, expected: "remote-base" },
   { branch: "source-only", expected: "remote-base" },
   { branch: "shared", expected: "shared" },
+  { branch: "origin/release", expected: "origin/release" },
 ])("sends on a usable destination worktree base from $branch", async ({ branch, expected }) => {
   const { a, b, draftId, input, store } = fanoutSetup();
   store.setDraftThreadContext(draftId, {
@@ -393,6 +409,14 @@ it.each([
   resources.refs = [
     { name: "remote-base", current: true, isDefault: true, worktreePath: null },
     { name: "shared", current: false, isDefault: false, worktreePath: null },
+    { name: "release", current: false, isDefault: false, worktreePath: null },
+    {
+      name: "origin/release",
+      isRemote: true,
+      current: false,
+      isDefault: false,
+      worktreePath: null,
+    },
   ];
   const file = Promise.withResolvers<T3ProjectFile>();
   resources.readProjectFile.mockReturnValue(file.promise);
@@ -413,6 +437,90 @@ it.each([
     environmentId: b,
     envMode: "worktree",
     branch: expected,
+  });
+});
+
+it.each([
+  { branch: "main", selection: "auto", ready: true },
+  { branch: "feature", selection: "manual", ready: false },
+] as const)(
+  "handles a $selection branch update while preparing Send",
+  async ({ branch, selection, ready }) => {
+    const { a, draftId, input, store } = fanoutSetup();
+    store.setDraftThreadContext(draftId, {
+      branch: null,
+      envMode: "worktree",
+      environmentSelection: "auto",
+      loadBalancedEnvironmentId: a,
+    });
+    resources.refreshSelection.mockResolvedValue(a);
+    resources.refsEnvironment = a;
+    resources.refs = [{ name: "main", current: true, isDefault: true, worktreePath: null }];
+    const refsReady = Promise.withResolvers<void>();
+    resources.beforeRefs.mockReturnValue(refsReady.promise);
+    const onPrepared = vi.fn();
+    await using screen = await render(
+      <Harness
+        input={{ ...input, draftThread: store.getDraftSession(draftId) }}
+        onPrepared={onPrepared}
+      />,
+    );
+    await screen.getByRole("button", { name: "Send" }).click();
+    await vi.waitFor(() => expect(resources.beforeRefs).toHaveBeenCalled());
+    await act(async () => {
+      store.setDraftThreadContext(draftId, { branch, environmentSelection: selection });
+      refsReady.resolve();
+    });
+    await vi.waitFor(() => expect(onPrepared).toHaveBeenCalledWith(ready));
+    expect(store.getDraftSession(draftId)?.branch).toBe(branch);
+  },
+);
+
+it("abandons Send when the draft closes during the destination workspace read", async () => {
+  const { a, draftId, input, store } = fanoutSetup();
+  store.setDraftThreadContext(draftId, {
+    environmentSelection: "auto",
+    loadBalancedEnvironmentId: a,
+  });
+  const file = Promise.withResolvers<T3ProjectFile>();
+  resources.readProjectFile.mockReturnValue(file.promise);
+  const onPrepared = vi.fn();
+  await using screen = await render(
+    <Harness
+      input={{ ...input, draftThread: store.getDraftSession(draftId) }}
+      onPrepared={onPrepared}
+    />,
+  );
+  await screen.getByRole("button", { name: "Send" }).click();
+  await vi.waitFor(() => expect(resources.readProjectFile).toHaveBeenCalled());
+  await screen.rerender(<p>Another thread</p>);
+  await act(async () => file.resolve({ defaultThreadEnvMode: "local" }));
+  await vi.waitFor(() => expect(onPrepared).toHaveBeenCalledWith(false));
+  expect(store.getDraftSession(draftId)?.environmentId).toBe(a);
+});
+
+it("drops the source branch when Send moves to a current checkout", async () => {
+  const { a, b, draftId, input, store } = fanoutSetup();
+  store.setDraftThreadContext(draftId, {
+    envMode: "worktree",
+    branch: "source-only",
+    environmentSelection: "auto",
+    loadBalancedEnvironmentId: a,
+  });
+  resources.readProjectFile.mockResolvedValue({ defaultThreadEnvMode: "local" });
+  const onPrepared = vi.fn();
+  await using screen = await render(
+    <Harness
+      input={{ ...input, draftThread: store.getDraftSession(draftId) }}
+      onPrepared={onPrepared}
+    />,
+  );
+  await screen.getByRole("button", { name: "Send" }).click();
+  await vi.waitFor(() => expect(onPrepared).toHaveBeenCalledWith(true));
+  expect(store.getDraftSession(draftId)).toMatchObject({
+    environmentId: b,
+    envMode: "local",
+    branch: null,
   });
 });
 
