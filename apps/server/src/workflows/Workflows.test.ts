@@ -2277,6 +2277,38 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a daily time an older server kept under the id as written still starts its run", () =>
+  Effect.gen(function* () {
+    const { boot, database } = yield* harness();
+    const standup = workflow(
+      "standup",
+      { version: 1, payload: Tick, triggers: [daily("9:00")] },
+      () => Effect.void,
+    );
+    yield* Effect.provide(
+      Effect.flatMap(
+        SqlClient.SqlClient,
+        (sql) =>
+          sql`INSERT INTO workflow_triggers (trigger_id, next_at) VALUES ('standup/daily:9:00:all', '1970-01-01T09:00:00.000Z')`,
+      ),
+      database,
+    );
+    yield* TestClock.adjust("545 minutes");
+    const runs = yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        yield* workflows.sweep;
+        return yield* workflows.list();
+      }),
+      [standup],
+    );
+    assert.deepStrictEqual(
+      runs.map((run) => run.workflow),
+      ["standup"],
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("an issue opened after the workflow loaded starts one run, which can comment on it", () =>
   Effect.gen(function* () {
     const starts: Array<string> = [];

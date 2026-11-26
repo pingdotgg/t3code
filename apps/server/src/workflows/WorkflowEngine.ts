@@ -365,6 +365,16 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const latestDefinitions = [...new Set(registered.map(([definition]) => definition.name))].map(
     (name) => latest(name)![0],
   );
+  for (const definition of latestDefinitions) {
+    for (const trigger of definition.triggers) {
+      if (trigger.kind !== "schedule" || trigger.formerId === undefined) continue;
+      const id = `${definition.name}/${trigger.id}`;
+      const former = yield* store.triggerNext(`${definition.name}/${trigger.formerId}`);
+      if (former !== undefined && (yield* store.triggerNext(id)) === undefined) {
+        yield* store.triggerSet(id, former);
+      }
+    }
+  }
   // A schedule taken out and put back is new again: its first run is one interval away.
   yield* store.triggersKeep(
     latestDefinitions.flatMap((definition) =>

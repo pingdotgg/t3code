@@ -24,6 +24,8 @@ export interface ScheduleTrigger {
   readonly kind: "schedule";
   /** Stable across restarts: where this trigger's next time is kept. */
   readonly id: string;
+  /** Where an older server kept this trigger's next time, carried over so an upgrade misses no run. */
+  readonly formerId?: string;
   readonly schedule:
     | { readonly type: "interval"; readonly everyMs: number }
     | {
@@ -85,9 +87,12 @@ export const daily = (
   }
   // Equivalent spellings share one id: the schedule reads no days or all seven as every day.
   const at = `${String(time.hour).padStart(2, "0")}:${String(time.minute).padStart(2, "0")}`;
+  const id = `daily:${at}:${days.length === 0 || days.length === 7 ? "all" : days.join(",")}`;
+  const formerId = `daily:${timeOfDay}:${weekdays?.toSorted().join(",") ?? "all"}`;
   return {
     kind: "schedule",
-    id: `daily:${at}:${days.length === 0 || days.length === 7 ? "all" : days.join(",")}`,
+    id,
+    ...(formerId === id ? {} : { formerId }),
     schedule: { type: "fixed_time", timeOfDay, ...(weekdays === undefined ? {} : { weekdays }) },
   };
 };
