@@ -72,15 +72,16 @@ jobs:
           GH_TOKEN: ${{ secrets.UPSTREAM_FIXES_TOKEN || github.token }}
         run: |
           git push --force origin "$BRANCH"
+          # A fork's gh defaults to the parent repository; name ours explicitly.
           title="Upstream fixes ($(date -u +%Y-%m-%d))"
-          if pr=$(gh pr view "$BRANCH" --json number --jq .number 2>/dev/null) && [ -n "$pr" ]; then
-            gh pr edit "$pr" --title "$title" --body-file "$RUNNER_TEMP/summary.md"
+          if pr=$(gh pr view "$BRANCH" --repo "$GITHUB_REPOSITORY" --json number --jq .number 2>/dev/null) && [ -n "$pr" ]; then
+            gh pr edit "$pr" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/summary.md"
           else
-            gh pr create --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/summary.md"
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/summary.md"
           fi
 
       - name: Run CI on the branch
         if: steps.pick.outputs.changed == 'true' && env.HAS_TOKEN != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run ci.yml --ref "$BRANCH"
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
