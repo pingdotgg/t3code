@@ -26,6 +26,29 @@ const API_ERROR =
   /Error (\d{3}), Message: ((?:(?!, Status: |Error \d{3}, Message: ).)+), Status: ([A-Z_]+|\d{3}[^,\n]*)/s;
 // Antigravity 1.5 with a Google account writes "STATUS (code NNN): message".
 const STATUS_ERROR = /(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): (\P{Cc}+)/u;
+// Newer Antigravity builds attach the HTTP JSON body (pretty-printed or compact) to the error step.
+const ERROR_JSON_START = /\{\s*"error"\s*:/g;
+const decodeVerificationError = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      error: Schema.Struct({
+        code: Schema.Literal(403),
+        status: Schema.Literal("PERMISSION_DENIED"),
+        details: Schema.Array(Schema.Unknown),
+      }),
+    }),
+  ),
+);
+const decodeVerificationErrorInfo = Schema.decodeUnknownOption(
+  Schema.Struct({
+    "@type": Schema.Literal("type.googleapis.com/google.rpc.ErrorInfo"),
+    domain: Schema.Literal("cloudcode-pa.googleapis.com"),
+    reason: Schema.Literal("VALIDATION_REQUIRED"),
+    metadata: Schema.optionalKey(
+      Schema.NullOr(Schema.Struct({ validation_url: Schema.optionalKey(Schema.Unknown) })),
+    ),
+  }),
+);
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 // Claude rejects a saved thinking block without a valid signature. It sits in the native
 // history, so every later prompt to that session fails the same way.
@@ -35,6 +58,8 @@ const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
 const RETRY_DELAY = /\bretryDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
+// Antigravity 1.5 may state the reset only in the message: "... Resets in 4m42s.".
+const RESETS_IN = /\bResets in ((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?!\w|\.\d)/;
 const GO_DURATION_PART = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|h|m|s)/g;
 const GO_DURATION_UNIT_MS: Record<string, number> = {
   ns: 1e-6,
@@ -113,7 +138,8 @@ function resetAtFrom(text: string, now: DateTime.Utc | undefined): string | unde
   // makeProviderFailure drops a timestamp that does not parse, so fall back to the delay.
   const timestamp = RESET_TIMESTAMP.exec(text)?.[1];
   if (timestamp !== undefined && Option.isSome(DateTime.make(timestamp))) return timestamp;
-  const delay = RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1];
+  const delay =
+    RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1] ?? RESETS_IN.exec(text)?.[1];
   if (delay === undefined || now === undefined) return undefined;
   let delayMs = 0;
   for (const [, amount, unit] of delay.matchAll(GO_DURATION_PART)) {
@@ -126,6 +152,48 @@ function resetAtFrom(text: string, now: DateTime.Utc | undefined): string | unde
 function statusError(text: string) {
   const match = STATUS_ERROR.exec(text);
   return match === null ? null : ([match[0], match[2], match[3], match[1]] as const);
+}
+
+function balancedJsonObject(text: string, start: number): string | undefined {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return undefined;
+}
+
+function verificationErrorInfo(text: string) {
+  for (const match of text.matchAll(ERROR_JSON_START)) {
+    const json = balancedJsonObject(text, match.index);
+    if (json === undefined) continue;
+    const response = Option.getOrUndefined(decodeVerificationError(json));
+    if (response === undefined) continue;
+    for (const detail of response.error.details) {
+      const info = Option.getOrUndefined(decodeVerificationErrorInfo(detail));
+      if (info !== undefined) return info;
+    }
+  }
+  return undefined;
 }
 
 function turnFailure(
@@ -171,6 +239,18 @@ function turnFailure(
       }),
       threadDisposition: "broken",
     };
+  }
+  const verification = verificationErrorInfo(text);
+  if (verification !== undefined) {
+    return reusable(
+      makeProviderFailure({
+        class: "permission_error",
+        message: "Verify your Google account, then retry this turn.",
+        code: "VALIDATION_REQUIRED",
+        retryable: false,
+        verificationUrl: verification.metadata?.validation_url,
+      }),
+    );
   }
   if (apiError === null) {
     return reusable(
