@@ -104,6 +104,7 @@ import { beginLayoutContentDrag, beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
+import { followLayoutCompanions } from "./openRules";
 import {
   scrollLeftByWheel,
   scrollTabStripFromRow,
@@ -1617,7 +1618,7 @@ function LayoutPaneTabButton({
 }) {
   const label = useLayoutTabLabel(tab);
   const focusTab = () => {
-    useLayoutStore.getState().focusTab(tab.id);
+    followLayoutCompanions(() => useLayoutStore.getState().focusTab(tab.id));
     // Choosing a side chat's tab puts the keyboard in its message box.
     const { content } = tab;
     if (content.kind === "surface" && content.surfaceId.startsWith("thread:")) {

@@ -3,11 +3,7 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import {
-  closeThreadSurface,
-  hideThreadSurfaceTabs,
-  hideThreadSurfaces,
-} from "../components/ThreadSurfaceTab";
+import { closeThreadSurface, hideThreadSurfaces } from "../components/ThreadSurfaceTab";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell } from "../state/entities";
@@ -255,9 +251,6 @@ export function openPullRequestWorkspace(threadRef: ScopedThreadRef, number: num
   useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
 }
 
-/** Threads whose surfaces an open hid, by thread key: they show again when an open brings it back. */
-const companionsHiddenByOpen = new Map<string, { panel: boolean; terminal: boolean }>();
-
 function chatThreadRef(target: ThreadRouteTarget): ScopedThreadRef | null {
   if (target.kind === "server") return target.threadRef;
   const draft = useComposerDraftStore.getState().getDraftSession(target.draftId);
@@ -265,10 +258,9 @@ function chatThreadRef(target: ThreadRouteTarget): ScopedThreadRef | null {
 }
 
 /**
- * Run an open (a sidebar click, a route) so a thread's terminal and side panes follow its chat:
- * a chat it swaps off a pane hides them, shells and browsers still running, unless the open only
- * focused another tab of that pane as a tab click would, and a chat it brings back shows the ones
- * an earlier open hid.
+ * Run a chat switch (sidebar click, tab click, ctrl+Tab, route) so a thread's terminal and side
+ * panes follow its chat: a chat swapped off a pane hides its companions in that workspace while
+ * keeping shells and browsers running, and a chat returning restores the ones previously hidden.
  */
 export function followLayoutCompanions(open: () => void): void {
   const before = useLayoutStore.getState().layout;
@@ -278,31 +270,45 @@ export function followLayoutCompanions(open: () => void): void {
     const from = chatThreadRef(swap.from);
     const to = chatThreadRef(swap.to);
     if (from && to && scopedThreadKey(from) === scopedThreadKey(to)) continue;
-    if (from && !swap.focusOnly) hideCompanionsOf(from);
+    if (from) hideCompanionsOf(from, before.focusedWorkspaceId);
     if (to) showCompanionsOf(to);
   }
 }
 
-function hideCompanionsOf(threadRef: ScopedThreadRef) {
-  const panel = selectThreadRightPanelState(
-    useRightPanelStore.getState().byThreadKey,
-    threadRef,
-  ).isOpen;
-  const terminal = selectThreadTerminalUiState(
-    useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-    threadRef,
-  ).terminalOpen;
+function hideCompanionsOf(threadRef: ScopedThreadRef, workspaceId: string) {
+  const layout = useLayoutStore.getState().layout;
+  const tabs = findLayoutSurfaceTabs(layout, threadRef);
+  const panelTabs = tabs.filter(
+    (location) =>
+      location.tab.content.kind === "surface" &&
+      location.tab.content.surfaceId !== THREAD_TERMINAL_SURFACE_ID,
+  );
+  const terminalTab = tabs.find(
+    (location) =>
+      location.tab.content.kind === "surface" &&
+      location.tab.content.surfaceId === THREAD_TERMINAL_SURFACE_ID,
+  );
+  const panel =
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).isOpen &&
+    panelTabs.length > 0 &&
+    panelTabs.every((location) => location.workspace.id === workspaceId);
+  const terminal =
+    selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      threadRef,
+    ).terminalOpen && terminalTab?.workspace.id === workspaceId;
   if (!panel && !terminal) return;
-  companionsHiddenByOpen.set(scopedThreadKey(threadRef), { panel, terminal });
-  hideThreadSurfaceTabs(threadRef);
+  useLayoutStore.getState().setHiddenCompanions(scopedThreadKey(threadRef), { panel, terminal });
+  if (panel) useRightPanelStore.getState().close(threadRef);
+  if (terminal) useTerminalUiStateStore.getState().setTerminalOpen(threadRef, false);
 }
 
 function showCompanionsOf(threadRef: ScopedThreadRef) {
   const key = scopedThreadKey(threadRef);
-  const hidden = companionsHiddenByOpen.get(key);
-  if (!hidden) return;
-  companionsHiddenByOpen.delete(key);
   const store = useLayoutStore.getState();
+  const hidden = store.hiddenCompanionsByThreadKey[key];
+  if (!hidden) return;
+  store.setHiddenCompanions(key, null);
   const chat = findThreadChat(store.layout, threadRef);
   const focused = selectFocusedTab(store.layout);
   if (!chat) return;

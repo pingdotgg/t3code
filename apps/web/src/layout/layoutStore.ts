@@ -262,7 +262,15 @@ export interface LayoutNewTabTicket {
   readonly request: LayoutNewTabRequest;
 }
 
-type LayoutPersistedState = Pick<LayoutStoreState, "layout" | "companionShares">;
+export interface HiddenLayoutCompanions {
+  readonly panel: boolean;
+  readonly terminal: boolean;
+}
+
+type LayoutPersistedState = Pick<
+  LayoutStoreState,
+  "layout" | "companionShares" | "hiddenCompanionsByThreadKey"
+>;
 
 interface LayoutStoreState {
   layout: LayoutState;
@@ -284,6 +292,9 @@ interface LayoutStoreState {
   companionShares: Partial<Record<LayoutCompanionKind, number>>;
   /** Drop the remembered sizes, so surfaces open as Settings says again. */
   forgetCompanionShares: () => void;
+  /** Threads whose companion splits hid on a chat switch, restored when that chat returns. */
+  hiddenCompanionsByThreadKey: Readonly<Record<string, HiddenLayoutCompanions>>;
+  setHiddenCompanions: (threadKey: string, hidden: HiddenLayoutCompanions | null) => void;
   /** Put new tabs somewhere as a group (see `placeLayoutTabs`). */
   placeTabs: (
     tabs: readonly LayoutTab[],
@@ -515,6 +526,25 @@ export const useLayoutStore = create<LayoutStoreState>()(
           set((state) =>
             Object.keys(state.companionShares).length === 0 ? state : { companionShares: {} },
           ),
+        hiddenCompanionsByThreadKey: {},
+        setHiddenCompanions: (threadKey, hidden) =>
+          set((state) => {
+            const current = state.hiddenCompanionsByThreadKey[threadKey];
+            if (hidden === null) {
+              if (current === undefined) return state;
+              const { [threadKey]: _removed, ...rest } = state.hiddenCompanionsByThreadKey;
+              return { hiddenCompanionsByThreadKey: rest };
+            }
+            if (current?.panel === hidden.panel && current.terminal === hidden.terminal) {
+              return state;
+            }
+            return {
+              hiddenCompanionsByThreadKey: {
+                ...state.hiddenCompanionsByThreadKey,
+                [threadKey]: hidden,
+              },
+            };
+          }),
         placeTabs: (tabs, placement, options) =>
           apply((layout) => placeLayoutTabs(layout, tabs, placement, options)),
         requestNewTab: (request) => {
@@ -583,6 +613,7 @@ export const useLayoutStore = create<LayoutStoreState>()(
       partialize: (state) => ({
         layout: state.layout,
         companionShares: state.companionShares,
+        hiddenCompanionsByThreadKey: state.hiddenCompanionsByThreadKey,
       }),
       // The layout decodes itself, whatever version saved it.
       migrate: (persisted, version) => {
@@ -602,6 +633,11 @@ export const useLayoutStore = create<LayoutStoreState>()(
               ? persisted.companionShares
               : null,
           ),
+          hiddenCompanionsByThreadKey: decodeHiddenCompanions(
+            persisted && typeof persisted === "object" && "hiddenCompanionsByThreadKey" in persisted
+              ? persisted.hiddenCompanionsByThreadKey
+              : null,
+          ),
           layout: savedBeforeGhostTabs ? ghostLoneLayoutChats(layout) : layout,
         };
       },
@@ -617,6 +653,18 @@ function decodeCompanionShares(value: unknown): Partial<Record<LayoutCompanionKi
     if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) shares[key] = raw;
   }
   return shares;
+}
+
+function decodeHiddenCompanions(value: unknown): Readonly<Record<string, HiddenLayoutCompanions>> {
+  if (!value || typeof value !== "object") return {};
+  const result: Record<string, HiddenLayoutCompanions> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (!entry || typeof entry !== "object") continue;
+    const panel = "panel" in entry && entry.panel === true;
+    const terminal = "terminal" in entry && entry.terminal === true;
+    if (panel || terminal) result[key] = { panel, terminal };
+  }
+  return result;
 }
 
 /**

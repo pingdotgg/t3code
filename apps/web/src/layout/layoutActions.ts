@@ -2,7 +2,7 @@
  * Layout actions shared by the keyboard, the tab menu and the notch buttons.
  */
 import { closeThreadSurface } from "../components/ThreadSurfaceTab";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useClosedViewStore, WORKFLOWS_PAGE_REF } from "../closedViewStore";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { getLayoutBehavior } from "./layoutBehavior";
@@ -20,6 +20,7 @@ import { readThreadLineage } from "../state/entities";
 import { ISSUES_PANEL_REF, PULL_REQUESTS_PANEL_REF } from "../rightPanelStore";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { useLayoutStore } from "./layoutStore";
+import { followLayoutCompanions } from "./openRules";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import { threadlessSurfacesRef } from "../threadlessSurfaces";
@@ -40,6 +41,7 @@ export function closeLayoutThread(threadRef: ScopedThreadRef): void {
     return ref?.environmentId === threadRef.environmentId && ref.threadId === threadRef.threadId;
   };
   const store = useLayoutStore.getState();
+  store.setHiddenCompanions(scopedThreadKey(threadRef), null);
   store.closeTabsWhere((tab) =>
     tab.content.kind === "chat"
       ? matches(tab.content.target)
@@ -273,5 +275,5 @@ export function openLayoutBeside(kind: LayoutBesideKind): void {
 
 /** ctrl+Tab / ctrl+shift+Tab: the focused pane's tabs, surfaces included. */
 export function focusAdjacentLayoutTab(delta: 1 | -1): void {
-  useLayoutStore.getState().focusAdjacentTab(delta);
+  followLayoutCompanions(() => useLayoutStore.getState().focusAdjacentTab(delta));
 }

@@ -14,6 +14,7 @@ import {
   useRightPanelStore,
 } from "../rightPanelStore";
 import { useLayoutBehaviorStore } from "./layoutBehavior";
+import { focusAdjacentLayoutTab } from "./layoutActions";
 import {
   commitLayoutDrop,
   isLayoutDropUseful,
@@ -38,6 +39,7 @@ import {
 } from "./layoutStore";
 import { LayoutSurfaceHost, selectSurfaceMounts } from "./SurfaceHost";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
+import { useTerminalUiStateStore } from "../terminalUiStateStore";
 
 const TOUR_KEY = "t3code:layout-tour:v1";
 
@@ -919,4 +921,58 @@ it("opening a second file in a reused surface pane does not loop through rightPa
   } finally {
     unsub();
   }
+});
+
+it("hides a thread's companion splits when switching tabs in the same pane and restores them on return", async () => {
+  using fixture = setupPullRequestDrop();
+  const { chatPaneId } = fixture;
+  const terminalBefore = useTerminalUiStateStore.getState().terminalUiStateByThreadKey;
+  using _restoreTerminals = {
+    [Symbol.dispose]: () =>
+      useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: terminalBefore }),
+  };
+  useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: {} });
+  useLayoutStore.getState().openKeptTab({
+    kind: "chat",
+    target: { kind: "server", threadRef: pullRequestThreadRef },
+  });
+  const threadATab = findLayoutChatForThread(useLayoutStore.getState().layout, threadRef)!;
+  const threadBTab = findLayoutChatForThread(
+    useLayoutStore.getState().layout,
+    pullRequestThreadRef,
+  )!;
+  useLayoutStore.getState().focusTab(threadATab.tab.id);
+  await using _screen = await render(<SurfaceSync />);
+
+  await act(() => {
+    requestLayoutSurfacePlacement(threadRef, { kind: "split", paneId: chatPaneId, side: "right" });
+    useRightPanelStore.getState().open(threadRef, "diff");
+    requestLayoutSurfacePlacement(threadRef, { kind: "split", paneId: chatPaneId, side: "down" });
+    useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
+    useLayoutStore.getState().focusTab(threadATab.tab.id);
+  });
+  expect(findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef)).toHaveLength(2);
+
+  await act(() => {
+    focusAdjacentLayoutTab(1);
+  });
+  expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(threadBTab.tab.id);
+  expect(findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef)).toHaveLength(0);
+  expect(useLayoutStore.getState().hiddenCompanionsByThreadKey[scopedThreadKey(threadRef)]).toEqual(
+    { panel: true, terminal: true },
+  );
+  expect(
+    useRightPanelStore
+      .getState()
+      .byThreadKey[scopedThreadKey(threadRef)]?.surfaces.map((s) => s.id),
+  ).toEqual(["diff"]);
+
+  await act(() => {
+    focusAdjacentLayoutTab(-1);
+  });
+  expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(threadATab.tab.id);
+  expect(findLayoutSurfaceTabs(useLayoutStore.getState().layout, threadRef)).toHaveLength(2);
+  expect(
+    useLayoutStore.getState().hiddenCompanionsByThreadKey[scopedThreadKey(threadRef)],
+  ).toBeUndefined();
 });
