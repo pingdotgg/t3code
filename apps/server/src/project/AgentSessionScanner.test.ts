@@ -1158,7 +1158,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           { path: plain, git: null, threadCount: 1 },
           {
             path: repo,
-            git: { remoteKey: "github.com/Ryoku-dev/hyakki", repository: "Ryoku-dev/hyakki" },
+            git: { remoteKey: "github.com/ryoku-dev/hyakki", repository: "Ryoku-dev/hyakki" },
             threadCount: 2,
           },
         ]);
@@ -1219,7 +1219,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
 
           const input = { claudeHomePath, codexHomePath, configBaseDir };
           const result = yield* runScan(input);
-          const git = { remoteKey: "github.com/Ryoku-dev/hyakki", repository: "Ryoku-dev/hyakki" };
+          const git = { remoteKey: "github.com/ryoku-dev/hyakki", repository: "Ryoku-dev/hyakki" };
           expect(
             result.candidates.map((candidate) => ({ path: candidate.path, git: candidate.git })),
           ).toEqual([
