@@ -12,6 +12,18 @@ describe("restoring pasted Markdown links", () => {
       expected: "Guide: [Guide](https://example.com/start), [Guide](https://example.com/end).",
     },
     {
+      case: "line breaks within a link",
+      plain: "First\nSecond",
+      html: '<a href="https://example.com/">First<br>Second</a>',
+      expected: "[First](https://example.com/)\n[Second](https://example.com/)",
+    },
+    {
+      case: "a backslash immediately before a link",
+      plain: "\\Guide",
+      html: '\\<a href="https://example.com/">Guide</a>',
+      expected: "\\\\[Guide](https://example.com/)",
+    },
+    {
       case: "nested labels, punctuation and native clipboard line breaks",
       plain: "First line\n\nRead [the guide] & notes",
       html: '<p>First line</p><p>Read <a href="https://example.com/guide(part)?a=1&amp;b=2"><strong>[the guide]</strong></a> &amp; notes</p>',

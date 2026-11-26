@@ -31,7 +31,7 @@ export function readPastedComposerClipboard(
   plainTextOnly = false,
 ) {
   const plain = readPastedPlainText(clipboardData);
-  if (plainTextOnly || !plain) return { text: plain, context: null, hasCopiedContext: false };
+  if (plainTextOnly || !plain) return { text: plain, context: null };
   const html = clipboardData.getData("text/html");
   const text = restorePastedMarkdownLinks(plain, html);
   const copied =
@@ -41,7 +41,7 @@ export function readPastedComposerClipboard(
   const source =
     copied?.source ??
     (threads.records[0] ? { environmentId: threads.records[0].environmentId } : null);
-  if (source === null) return { text, context: null, hasCopiedContext: false };
+  if (source === null) return { text, context: null };
   const pastedIds = new Set<string>(
     collectComposerContextReferences(threads.text).map((occurrence) => occurrence.contextId),
   );
@@ -62,11 +62,7 @@ export function readPastedComposerClipboard(
     source,
     records: [...records.values()].filter((record) => pastedIds.has(record.contextId)),
   };
-  return {
-    text,
-    context,
-    hasCopiedContext: copied?.records.some((record) => pastedIds.has(record.contextId)) ?? false,
-  };
+  return { text, context };
 }
 
 export type PastedComposerClipboard = ReturnType<typeof readPastedComposerClipboard>;

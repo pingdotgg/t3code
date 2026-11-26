@@ -161,7 +161,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
-  readPasteAtEnd: (clipboardData: DataTransfer, plainTextOnly: boolean) => PastedComposerClipboard;
+  pasteAtCodeBlockEnd: (clipboardData: DataTransfer) => boolean;
   readSelectionRange: () => { start: number; end: number };
   captureAttachmentInsertion: () => ComposerAttachmentInsertion | undefined;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
@@ -1167,16 +1167,6 @@ function ComposerPromptEditorTiptapInner(
   };
 
   const capturedPastes = useRef(new WeakMap<ClipboardEvent, PastedComposerClipboard>());
-  const onClipboardPasteCapture = (event: React.ClipboardEvent<HTMLElement>) => {
-    onPaste(event, (plainTextOnly) => {
-      const paste = readPastedComposerClipboard(
-        event.clipboardData,
-        plainTextOnly || literalText || (editor !== null && isInCodeBlock(editor.view)),
-      );
-      capturedPastes.current.set(event.nativeEvent, paste);
-      return paste;
-    });
-  };
 
   /** `newLineAt` inserts on a fresh line created at that block boundary, in the same undo step. */
   const insertClipboardText = (
@@ -1642,6 +1632,18 @@ function ComposerPromptEditorTiptapInner(
     [],
   );
 
+  const onClipboardPasteCapture = (event: React.ClipboardEvent<HTMLElement>) => {
+    onPaste(event, (plainTextOnly) => {
+      const paste = readPastedComposerClipboard(
+        event.clipboardData,
+        plainTextOnly || literalText || (editor !== null && isInCodeBlock(editor.view)),
+      );
+      capturedPastes.current.set(event.nativeEvent, paste);
+      return paste;
+    });
+  };
+  const onClipboardPasteCaptureStable = useStableCallback(onClipboardPasteCapture);
+
   const resumeEditingFocusRef = useRef(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- preserves native selection focus across temporarily making the editor read-only for dictation
   useEffect(() => {
@@ -1904,14 +1906,22 @@ function ComposerPromptEditorTiptapInner(
               ),
         );
       },
-      readPasteAtEnd: (clipboardData, plainTextOnly) =>
-        readPastedComposerClipboard(
-          clipboardData,
-          plainTextOnly ||
-            literalText ||
-            (editor !== null &&
-              Selection.atEnd(editor.state.doc).$from.parent.type.spec.code === true),
-        ),
+      pasteAtCodeBlockEnd: (clipboardData) => {
+        if (!editor) return false;
+        const { view } = editor;
+        const end = Selection.atEnd(view.state.doc);
+        if (!end.$from.parent.type.spec.code) return false;
+        const text = readPastedPlainText(clipboardData);
+        if (!text) return false;
+        view.focus();
+        view.dispatch(
+          markAsClipboardEdit(
+            view.state.tr.setSelection(end).insertText(text),
+            "paste",
+          ).scrollIntoView(),
+        );
+        return true;
+      },
       readSelectionRange: () => {
         readSnapshot();
         return selectionRangeRef.current;
@@ -2054,7 +2064,7 @@ function ComposerPromptEditorTiptapInner(
               }}
               onKeyUp={(event) => onPageScrollKeyUp?.(event.key)}
               onBlur={onPageScrollRelease}
-              onPasteCapture={onClipboardPasteCapture}
+              onPasteCapture={onClipboardPasteCaptureStable}
               onCopyCapture={(event) => handleCopyCut(event, false)}
               onCutCapture={(event) => handleCopyCut(event, true)}
             />

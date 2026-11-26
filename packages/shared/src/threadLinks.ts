@@ -11,8 +11,8 @@ const HOSTED_PREFIX = `${DEFAULT_HOSTED_APP_URL}/threads/`;
 const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
 const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
-// A label stops at any bracket, so a run of unclosed brackets is scanned once, not once per bracket.
-const LABEL = String.raw`[^[\]\n]*`;
+// Unescaped brackets end a label, so consecutive unclosed brackets cannot restart a long scan.
+const LABEL = String.raw`(?:\\[^\r\n]|[^\\[\]\r\n])*`;
 // Earlier alternatives claim text so later ones cannot match inside it: an escaped character opens
 // nothing, code is literal, and a link to anywhere else keeps a thread URL in its label or href.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(

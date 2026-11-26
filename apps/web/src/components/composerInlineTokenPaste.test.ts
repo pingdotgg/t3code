@@ -47,6 +47,10 @@ describe("importPastedComposerText", () => {
       importAll([]),
     );
     expect(text).toBe(chip("Login"));
+    const withBrackets = clipboard({
+      "text/plain": String.raw`[Fix \[login\]](https://app.t3.codes/threads/env-1/thread-1)`,
+    });
+    expect(importPastedComposerText(withBrackets, importAll([]))).toBe(chip("Fix login"));
   });
 
   it("keeps the link when the composer cannot take the thread", () => {

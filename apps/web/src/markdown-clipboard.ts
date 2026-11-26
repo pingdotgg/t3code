@@ -306,10 +306,13 @@ export function restorePastedMarkdownLinks(plain: string, html: string): string 
     if (href === undefined || start === undefined) continue;
     const label = plain.slice(start, end);
     if (label === href) continue;
-    const prefix = plain.slice(resultEnd, start).replace(/(?<!\\)((?:\\\\)*)!$/, "$1\\!");
+    const prefix = plain.slice(resultEnd, start).replace(/(?<!\\)((?:\\\\)*)([!\\])$/, "$1\\$2");
+    const destination = href.replaceAll("&", "&amp;");
     parts.push(
       prefix,
-      markdownAnchor(escapeProse(label.replace(/\n/g, " ")), href.replaceAll("&", "&amp;"), false),
+      label.replace(/\S(?:[^\n]*\S)?/g, (line) =>
+        markdownAnchor(escapeProse(line), destination, false),
+      ),
     );
     resultEnd = end;
   }

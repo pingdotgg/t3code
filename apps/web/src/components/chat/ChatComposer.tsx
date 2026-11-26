@@ -2833,6 +2833,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       )
     : bannerItems;
 
+  const canInsertComposerText =
+    !activePendingIsResponding &&
+    (pendingUserInputs.length === 0 || Boolean(activePendingProgress?.activeQuestion)) &&
+    !projectSelectionRequired &&
+    !speechInput.freezesEditor;
+
   const insertComposerText = (
     text: string,
     position: "cursor" | "end",
@@ -2844,10 +2850,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ): boolean => {
     if (
       text.length === 0 ||
-      activePendingIsResponding ||
-      (pendingUserInputs.length > 0 && !activePendingProgress?.activeQuestion) ||
-      projectSelectionRequired ||
-      speechInput.freezesEditor ||
+      !canInsertComposerText ||
       (options?.citationCommentAnchor && !composerEditorRef.current)
     ) {
       return false;
@@ -3032,15 +3035,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
     const paste = readClipboard(bypassAutoAttachment);
     const pastedContext = Boolean(paste.context?.records.length);
-    const canAttachFiles = !paste.hasCopiedContext && activeThreadId !== null && files.length > 0;
+    const canAttachFiles = !pastedContext && activeThreadId !== null && files.length > 0;
     const htmlImageContent =
       canAttachFiles && plainText.length > 0
         ? clipboardHtmlImageContent(event.clipboardData.getData("text/html"))
         : "none";
     if (
       folders.length > 0 ||
-      (!pastedContext &&
-        canAttachFiles &&
+      (canAttachFiles &&
         shouldHandleComposerAttachmentPaste({
           files,
           plainText,
@@ -3057,6 +3059,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
 
+    if (pastedContext) return;
     const imagesBesideText = imagesToAttachBesidePastedText({
       files,
       plainText,
@@ -3064,7 +3067,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       htmlHasImageAndText: htmlImageContent === "image-and-text",
     });
     if (imagesBesideText.length > 0) void addComposerAttachments(imagesBesideText);
-    if (pastedContext) return;
     if (!foldPastedText(paste.text, bypassAutoAttachment)) {
       return;
     }
@@ -3332,15 +3334,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         pendingDraftWork.has(attachmentTargetKey),
       insertTextAtEnd: insertComposerTextAtEndStable,
       pasteTextAtEnd: (clipboardData, options) => {
-        if (speechInput.freezesEditor) return false;
+        if (!canInsertComposerText) return false;
         const shortcutArmed = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
         const bypassAutoAttachment = options.bypassAutoAttachment || shortcutArmed;
-        const paste =
-          composerEditorRef.current?.readPasteAtEnd(clipboardData, bypassAutoAttachment) ??
-          readPastedComposerClipboard(
-            clipboardData,
-            bypassAutoAttachment || isLiteralPendingAnswer,
-          );
+        if (composerEditorRef.current?.pasteAtCodeBlockEnd(clipboardData)) return true;
+        const paste = readPastedComposerClipboard(
+          clipboardData,
+          bypassAutoAttachment || isLiteralPendingAnswer,
+        );
         if (paste.context?.records.length) {
           return insertComposerTextAtEndStable(paste.text, { clipboardPaste: paste });
         }
@@ -3550,6 +3551,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThread,
       addComposerAttachments,
       addComposerFoldersStable,
+      canInsertComposerText,
       foldPastedText,
       composerDraftTarget,
       composerModelOptions,
