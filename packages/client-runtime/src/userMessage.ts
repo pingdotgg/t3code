@@ -94,6 +94,13 @@ export function resolveUserMessagePresentation(
       guestName: guest.name,
     };
   }
+  if (message.scheduledTaskId !== undefined) {
+    return {
+      text: message.text,
+      attribution: "automation",
+      scheduledTaskId: message.scheduledTaskId,
+    };
+  }
   // The agent reads T3 Code's English resume prompt; people see it in their language.
   if (
     message.createdBy === "agent" &&
@@ -104,13 +111,6 @@ export function resolveUserMessagePresentation(
       text: resolve(USAGE_LIMIT_RESUME_LABEL),
       attribution: "t3code",
       scheduledTaskId: undefined,
-    };
-  }
-  if (message.scheduledTaskId !== undefined) {
-    return {
-      text: message.text,
-      attribution: "automation",
-      scheduledTaskId: message.scheduledTaskId,
     };
   }
   const legacyPrefix = LEGACY_AUTOMATION_PREFIX.exec(message.text);

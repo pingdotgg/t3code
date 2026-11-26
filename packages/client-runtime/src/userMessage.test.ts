@@ -241,6 +241,16 @@ describe("resolveUserMessagePresentation", () => {
         ).text,
       ).toBe(USAGE_LIMIT_RESUME_TEXT);
     }
+    expect(
+      resolveUserMessagePresentation(
+        { ...resume, scheduledTaskId: ScheduledTaskId.make("task:resume") },
+        german,
+      ),
+    ).toEqual({
+      text: USAGE_LIMIT_RESUME_TEXT,
+      attribution: "automation",
+      scheduledTaskId: "task:resume",
+    });
   });
 
   it("attributes older server-sent restart continuations to T3 Code, not another agent", () => {
