@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPublicFaviconHost } from "./hostClassification.ts";
+import {
+  isLocalLoopbackHost,
+  isPrivateNetworkHost,
+  isPublicFaviconHost,
+  isWildcardHost,
+  listensOnLoopback,
+} from "./hostClassification.ts";
 
 describe("isPublicFaviconHost", () => {
   it("treats public hosts as public", () => {
@@ -108,5 +114,25 @@ describe("isPublicFaviconHost", () => {
   it("rejects malformed IPv4 text as a public host", () => {
     expect(isPublicFaviconHost("10.0.0.999")).toBe(true);
     expect(isPublicFaviconHost("10.0.0")).toBe(true);
+  });
+});
+
+describe("IPv6 bind host spellings", () => {
+  it("classifies every spelling of the IPv6 wildcard address", () => {
+    for (const host of ["::", "[::]", "::0", "[::0]", "0:0:0:0:0:0:0:0"]) {
+      expect({ host, wildcard: isWildcardHost(host) }).toEqual({ host, wildcard: true });
+      expect({ host, loopback: listensOnLoopback(host) }).toEqual({ host, loopback: true });
+      expect({ host, private: isPrivateNetworkHost(host) }).toEqual({ host, private: true });
+    }
+    expect(isWildcardHost("::1")).toBe(false);
+  });
+
+  it("classifies every spelling of the IPv6 loopback address", () => {
+    for (const host of ["::1", "[::1]", "0:0:0:0:0:0:0:1", "::0:1"]) {
+      expect({ host, loopback: isLocalLoopbackHost(host) }).toEqual({ host, loopback: true });
+      expect({ host, private: isPrivateNetworkHost(host) }).toEqual({ host, private: true });
+    }
+    expect(isLocalLoopbackHost("::2")).toBe(false);
+    expect(isLocalLoopbackHost("1::1")).toBe(false);
   });
 });

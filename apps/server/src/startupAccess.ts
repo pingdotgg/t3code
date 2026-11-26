@@ -140,7 +140,7 @@ const isIpv6Family = (family: string | number): boolean => family === "IPv6" || 
 // A startup URL names the address the server bound; `localhost` can resolve to the other
 // address family, where this server is not listening.
 const loopbackAddressFor = (host: string | undefined): string =>
-  host !== undefined && normalizeHost(host) === "::" ? "::1" : "127.0.0.1";
+  host?.includes(":") && isWildcardHost(host) ? "::1" : "127.0.0.1";
 
 /** The origin a browser on this machine uses to reach a server bound to `host`. */
 export const resolveLocalOrigin = (host: string | undefined, port: number): string =>
