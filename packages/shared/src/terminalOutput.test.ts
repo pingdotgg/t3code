@@ -239,6 +239,18 @@ describe("appendTerminalOutput under adversarial output", () => {
     }
   });
 
+  it("consumes an escape followed by an emoji whole, however it is split", () => {
+    for (const [input, expected] of [
+      ["a\u001b😀b", "ab"],
+      ["a\u001b\ud83dX", "aX"],
+    ] as const) {
+      expect(normalizeTerminalOutput(input).text).toBe(expected);
+      for (let cut = 1; cut < input.length; cut += 1) {
+        expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe(expected);
+      }
+    }
+  });
+
   it("gives the same result however the output is split into chunks", () => {
     const input =
       "abcdef\rX\u001b[31mred\u001b[0m\nnext line\r\u001b[2Kdone\n" +
