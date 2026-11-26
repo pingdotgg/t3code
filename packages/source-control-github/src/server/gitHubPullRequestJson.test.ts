@@ -1821,6 +1821,7 @@ describe("decodePullRequestFilesJson", () => {
     );
 
     expect(result.truncated).toBe(true);
+    expect(result.omittedFileStats).toEqual([{ path: "example.ts", additions: 0, deletions: 0 }]);
   });
 });
 
