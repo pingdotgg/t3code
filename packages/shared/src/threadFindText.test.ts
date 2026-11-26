@@ -264,3 +264,8 @@ it("indexes image destinations rendered as file chips", () => {
     ),
   ).toEqual(["notes.ts · L42–64 "]);
 });
+
+it("projects carriage-return soft line breaks to a space outside code blocks", () => {
+  expect(assistantSegments("First\rsecond")).toEqual(["First second"]);
+  expect(assistantSegments("```text\nFirst\rsecond\n```")).toEqual(["First\rsecond\n"]);
+});

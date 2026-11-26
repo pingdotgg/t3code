@@ -5383,7 +5383,7 @@
     " ",
     "시작됨"
   ],
-  "ffd7529d1f50e0a6": "{count, plural, other {중지 {count}회}}",
+  "e093a6c02ff2c19f": "{count, plural, other {총 {count}단계}}",
   "9830004326e7d8c0": "{count, plural, other {파일 {count}개에 걸쳐}}",
   "e6035bad35419efa": "가이드 옵션",
   "4d7635a2bf1f5816": "가이드 다시 작성",
