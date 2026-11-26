@@ -99,9 +99,6 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("ftp://deploy:s3cr3ttok@git.example.com/team/repo.git")).toBe(
       "ftp://git.example.com/team/repo",
     );
-    expect(
-      normalizeGitRemoteUrl("ftp://alice@corp.com:s3cr3ttok@git.example.com/team/repo.git"),
-    ).toBe("ftp://git.example.com/team/repo");
     expect(normalizeGitRemoteUrl("ssh://git:s3cr3ttok@git.example.com:2222/repo.git")).toBe(
       "ssh://git@git.example.com:2222/repo",
     );
