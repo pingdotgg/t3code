@@ -244,5 +244,20 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       label: "environment-data:workspace:add-task-folder-repository",
       tag: WS_METHODS.workspaceAddTaskFolderRepository,
     }),
+    /** A project's `worktreeLayout` commands as its `t3.json` holds them now, and whether each is approved. */
+    layoutCommands: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:layout-commands",
+      tag: WS_METHODS.workspaceLayoutCommands,
+      staleTimeMs: 0,
+    }),
+    /** The same read as a one-off, for a check made as a worktree thread is about to start. */
+    readLayoutCommands: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:workspace:read-layout-commands",
+      tag: WS_METHODS.workspaceLayoutCommands,
+    }),
+    approveLayoutCommands: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:workspace:approve-layout-commands",
+      tag: WS_METHODS.workspaceApproveLayoutCommands,
+    }),
   };
 }

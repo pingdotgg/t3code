@@ -11,20 +11,22 @@ const BASELINE_INSET = 2;
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 
 // Older servers offer Ultracode as a level. It changes the workflow, so it keeps its name.
-// Max is named too, so the full scale stops short of it. Default leaves the level to the agent.
-const NAMED_LEVELS = new Set(["ultracode", "max", "default"]);
+// Max and Ultra sit above the bar scale. Default leaves the level to the agent.
+const NAMED_LEVELS = new Set(["ultracode", "max", "default", "ultra"]);
 const OFF_LEVELS = new Set(["off", "none"]);
 // More bars than this no longer fit the glyph's height in whole pixels.
 const MAX_BARS = 7;
 
 /**
  * Maps a reasoning select to bars: one per ordinary level, filled up to the current one, with an
- * off level as none filled. Max, Default, prompt-injected and workflow levels are named instead.
+ * off level as none filled. Max, Default, Ultra, prompt-injected and workflow levels keep their names.
  */
 export function resolveEffortGlyph(descriptor: SelectDescriptor, current: string | null) {
   const special = new Set([...(descriptor.promptInjectedValues ?? []), ...NAMED_LEVELS]);
-  const levels = descriptor.options.filter((option) => !special.has(option.id));
-  if (levels.length < 2 || levels.length > MAX_BARS || current === null) return null;
+  const listed = descriptor.options.filter((option) => !special.has(option.id));
+  if (listed.length < 2 || listed.length > MAX_BARS || current === null) return null;
+  // ACP agents may list levels high to low; an off level last marks that order.
+  const levels = OFF_LEVELS.has(listed.at(-1)!.id) ? listed.toReversed() : listed;
   const startsAtOff = OFF_LEVELS.has(levels[0]!.id);
   const count = startsAtOff ? levels.length - 1 : levels.length;
   if (special.has(current)) {

@@ -140,10 +140,38 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("does not close a fence opened at the margin on a tab-indented marker", () => {
+    const code = "```\n\t```\nhttps://example.com/sample.mp4\n```";
+    expect(split(`${code}\n\nhttps://example.com/demo.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: code, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+    ]);
+    const listCode = "- List\n\n\t```md\n  https://example.com/sample.mp4\n\t```";
+    expect(split(`${listCode}\n\nhttps://example.com/demo.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: listCode, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+    ]);
+  });
+
   it("keeps a video tag that shares its line with prose as markdown", () => {
     const body = 'Before <video src="https://example.com/a.mp4"></video> after';
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+    const captioned = '<video src="https://example.com/a.mp4"></video> Before the fix\n\nIt opens.';
+    expect(split(`${captioned}\n\n<video src="https://example.com/b.mp4"></video>`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: captioned, sourceOffset: 0 },
+      { id: "attachment:1", kind: "attachment", url: "https://example.com/b.mp4", media: "video" },
     ]);
   });
 
@@ -185,6 +213,16 @@ describe("pull request body segmentation", () => {
     const body = ['<video src="https://example.com/a.mp4">', "still prose", "more prose"].join(
       "\n",
     );
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
+  it.each([
+    ["a whitespace run inside a line", `a${" ".repeat(1_000_000)}b`],
+    ["a run of unclosed video tags", `${"<video ".repeat(150_000)}</video>`],
+    ["a run of backticks before a line separator", `${"`".repeat(100_000)}\u2028x`],
+  ])("splits %s in one pass", (_case, body) => {
     expect(split(body)).toEqual([
       { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
     ]);
@@ -260,6 +298,18 @@ describe("reference links around lifted media", () => {
     ).toEqual([["the docs", "https://example.com/first"]]);
   });
 
+  it("renders the body whole when its definitions would be repeated past the budget", () => {
+    const definitions = Array.from(
+      { length: 400 },
+      (_, index) => `[d${index}]: https://example.com/${"x".repeat(60)}${index}`,
+    ).join("\n");
+    const uses = Array.from({ length: 1200 }, () => `[use][d1]\n${recording}`).join("\n");
+    const body = `\n${definitions}\n\n${uses}\n`;
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body.trim(), sourceOffset: 1 },
+    ]);
+  });
+
   it("leaves a definition shown in code as code", () => {
     expect(
       referenceLinks(
@@ -275,6 +325,20 @@ describe("reference links around lifted media", () => {
     const marker = segment.text.indexOf("[ ]");
     expect(body.slice(segment.sourceOffset + marker)).toBe("[ ] Read [the docs][guide]");
   });
+
+  it.each([
+    ["\uFEFF", "", 0],
+    ["intro\n\n\uFEFF", "intro\n\n\uFEFF", 0],
+    [`${recording}\n\n\uFEFF`, "\uFEFF", 1],
+  ])("preserves BOM meaning and task offsets after prefix %j", (prefix, kept, pick) => {
+    const definition = "[guide]: https://example.com/docs";
+    const task = "- [ ] Read [guide]";
+    const body = `${prefix}${task}\n\n${recording}\n\n${definition}`;
+    const segment = splitPullRequestBody(body, () => [definition])[pick]!;
+    if (segment.kind !== "markdown") throw new Error("expected prose");
+    expect(segment.text).toBe(`${definition}\n\n${kept}${task}`);
+    expect(segment.sourceOffset + segment.text.indexOf("[ ]")).toBe(body.indexOf("[ ]"));
+  });
 });
 
 describe("media on custom hosts", () => {
@@ -284,6 +348,15 @@ describe("media on custom hosts", () => {
     ["<https://drop.example.com/shot.webp>", "image"],
   ])("recognizes %s without a request", (body, media) => {
     expect(split(body)).toEqual([expect.objectContaining({ kind: "attachment", media })]);
+  });
+
+  it.each([
+    "[Open report](https://example.com/report?file=demo.mp4)",
+    "https://example.com/report#demo.png",
+  ])("keeps %s a link when only its query or fragment names media", (body) => {
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
   });
 
   it("keeps inline links and media examples in code as prose", () => {
