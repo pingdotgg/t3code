@@ -193,6 +193,7 @@ it("refreshes a stored automatic choice before sending an unsent draft", async (
   store.setDraftThreadContext(draftId, {
     branch: "main",
     envMode: "worktree",
+    workspaceExplicit: true,
     environmentSelection: "auto",
   });
   await using screen = await render(

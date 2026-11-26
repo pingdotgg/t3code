@@ -76,6 +76,7 @@ export function readLastUsedProjectKey(): string | null {
 // workspace default unless the user has already chosen a workspace.
 interface ProvisionalWorkspace {
   readonly envMode: DraftThreadEnvMode;
+  readonly projectRef: ScopedProjectRef;
   // A reused draft keeps an earlier "manual" marker; only a switch to manual after opening is a choice.
   readonly openedManual: boolean;
 }
@@ -92,6 +93,8 @@ function keepsProvisionalWorkspace(
   return (
     draft !== null &&
     draft.promotedTo == null &&
+    draft.environmentId === provisional.projectRef.environmentId &&
+    draft.projectId === provisional.projectRef.projectId &&
     draft.envMode === provisional.envMode &&
     draft.worktreePath === null &&
     (provisional.openedManual || draft.environmentSelection !== "manual")
@@ -284,6 +287,7 @@ export function createNewThreadHandler(router: AnyRouter) {
       const applyProjectFile = (draftId: DraftId) => {
         const provisional: ProvisionalWorkspace = {
           envMode,
+          projectRef,
           openedManual: getDraftSession(draftId)?.environmentSelection === "manual",
         };
         const settled = projectFileRead

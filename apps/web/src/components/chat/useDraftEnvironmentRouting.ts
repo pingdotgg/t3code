@@ -10,6 +10,7 @@ import {
   type ProviderDriverKind,
   ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
+  type ScopedProjectRef,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 import {
@@ -75,6 +76,17 @@ function carryFanoutSelections(
     selectionsOn(environmentId),
     appAtomRegistry.get(selectionsOn(draft.environmentId)),
   );
+}
+
+function automaticDraftContext(draft: DraftSessionState, projectRef: ScopedProjectRef) {
+  const projectChanged =
+    draft.environmentId !== projectRef.environmentId || draft.projectId !== projectRef.projectId;
+  return {
+    projectRef,
+    environmentSelection: "auto" as const,
+    loadBalancedEnvironmentId: projectRef.environmentId,
+    ...(projectChanged ? retargetDraftWorkspace(draft, projectRef) : {}),
+  };
 }
 
 /**
@@ -162,6 +174,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     )
       return null;
     const originalDraft = getDraftSession(draftId);
+    if (!originalDraft) return null;
     const composerDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
     return loadBalancing.refreshSelection(loadBalancingCandidates).then((environmentId) => {
       const current = readRouting();
@@ -194,14 +207,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         return false;
       }
       const projectRef = scopeProjectRef(target.environmentId, target.projectId);
-      if (originalDraft) carryFanoutSelections(originalDraft, target.environmentId);
+      carryFanoutSelections(originalDraft, target.environmentId);
       // The send must read the target project's composer and provider context after retargeting.
       flushSync(() =>
         setDraftThreadContext(draftId, {
-          projectRef,
-          environmentSelection: "auto",
-          loadBalancedEnvironmentId: target.environmentId,
-          branch: originalDraft?.branch ?? null,
+          ...automaticDraftContext(originalDraft, projectRef),
+          branch: originalDraft.branch,
         }),
       );
       return true;
@@ -215,12 +226,12 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     );
     if (!target?.projectId) return;
     const draft = getDraftSession(draftId);
-    if (draft) carryFanoutSelections(draft, target.environmentId);
-    setDraftThreadContext(draftId, {
-      projectRef: scopeProjectRef(target.environmentId, target.projectId),
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: target.environmentId,
-    });
+    if (!draft) return;
+    carryFanoutSelections(draft, target.environmentId);
+    setDraftThreadContext(
+      draftId,
+      automaticDraftContext(draft, scopeProjectRef(target.environmentId, target.projectId)),
+    );
   }, [
     needsLoadBalancing,
     loadBalancing.pending,
