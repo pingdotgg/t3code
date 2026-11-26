@@ -413,31 +413,47 @@ describe("preview guest input", () => {
   });
 
   describe("keys for a cross-site frame holding an unfocused guest's focus", () => {
-    // The page's focus is in a cross-site frame, whose focus may be in another cross-site frame.
+    const field = { tagName: "INPUT" };
+    // Cross-site documents are unreadable from their parent; each runs in its own session.
+    const crossSiteFrame = (frameId: string) => ({
+      tagName: "IFRAME",
+      contentDocument: null,
+      frameId,
+    });
+    const sameSiteFrame = (activeElement: object) => ({
+      tagName: "IFRAME",
+      contentDocument: { activeElement },
+      frameId: "SAME",
+    });
+
+    /** Runs each evaluated expression against the focus in that session's document. */
     const makeFocusedFrameGuest = ({
-      nested = false,
+      focus = { page: crossSiteFrame("CROSS"), "session-cross": field },
       frameSessions = new Map([
         ["CROSS", "session-cross"],
         ["NESTED", "session-nested"],
       ]),
     }: {
-      readonly nested?: boolean;
+      readonly focus?: Readonly<Record<string, object>>;
       readonly frameSessions?: ReadonlyMap<string, string>;
     } = {}) => {
-      const owners: Record<string, string | undefined> = {
-        page: "CROSS",
-        "session-cross": nested ? "NESTED" : undefined,
-      };
+      const handles = new Map<string, { readonly frameId?: string }>();
       const input: Array<{ method: string; sessionId: string | undefined; params: unknown }> = [];
       const sendCommand = vi.fn(
         async (method: string, params: Record<string, unknown>, sessionId?: string) => {
-          const expression = typeof params["expression"] === "string" ? params["expression"] : "";
-          if (expression.endsWith("!== null")) return { result: { value: false } };
           if (method === "Runtime.evaluate") {
-            const owner = owners[sessionId ?? "page"];
-            return { result: owner === undefined ? { subtype: "null" } : { objectId: owner } };
+            const document = { activeElement: focus[sessionId ?? "page"] ?? null };
+            const context = NodeVM.createContext({ document });
+            const value = NodeVM.runInContext(String(params["expression"]), context);
+            if (params["returnByValue"] === true) return { result: { value } };
+            if (value === null) return { result: { type: "object", subtype: "null", value } };
+            const objectId = `handle-${handles.size}`;
+            handles.set(objectId, value);
+            return { result: { type: "object", objectId } };
           }
-          if (method === "DOM.describeNode") return { node: { frameId: params["objectId"] } };
+          if (method === "DOM.describeNode") {
+            return { node: { frameId: handles.get(String(params["objectId"]))?.frameId } };
+          }
           if (method.startsWith("Input.")) input.push({ method, sessionId, params });
           return {};
         },
@@ -476,9 +492,23 @@ describe("preview guest input", () => {
     });
 
     it("follows focus into a cross-site frame inside another", async () => {
-      const guest = makeFocusedFrameGuest({ nested: true });
+      const guest = makeFocusedFrameGuest({
+        focus: {
+          page: crossSiteFrame("CROSS"),
+          "session-cross": crossSiteFrame("NESTED"),
+          "session-nested": field,
+        },
+      });
       await guest.send("Input.insertText", { text: "x" });
       expect(guest.input.map(({ sessionId }) => sessionId)).toEqual(["session-nested"]);
+    });
+
+    it("looks past same-site frames for the cross-site one", async () => {
+      const guest = makeFocusedFrameGuest({
+        focus: { page: sameSiteFrame(crossSiteFrame("CROSS")), "session-cross": field },
+      });
+      await guest.send("Input.insertText", { text: "x" });
+      expect(guest.input.map(({ sessionId }) => sessionId)).toEqual(["session-cross"]);
     });
 
     it("keeps editing commands and drops clipboard ones", async () => {
