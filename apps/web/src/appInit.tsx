@@ -13,6 +13,7 @@ import { applyAppearanceFontVariables, TYPOGRAPHY_ADVANCED_STORAGE_KEY } from ".
 import { startElectronBrowserHost } from "./browser/ElectronBrowserHost";
 import { startBrowserProfileReporting } from "./browser/BrowserProfileReporter";
 import { startPreviewTitleRecording } from "./browserHistoryStore";
+import { setServerRelayTelemetry } from "./cloud/publicConfig";
 import { retainThreadOverlaysForThread } from "./components/chat/threadOverlayRetention";
 import { resolveWindowTitleThreadStatus } from "./components/Sidebar.logic";
 import { startBackgroundThreadAnnouncements } from "./components/BackgroundThreadAnnouncer";
@@ -56,7 +57,7 @@ import { startProviderAuthDelivery } from "./providerAuthDelivery";
 import { getRouter, type AppRouter } from "./router";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 import { environmentProjects } from "./state/projects";
-import { primaryServerConfigAtom } from "./state/server";
+import { primaryRelayTracingAllowedAtom, primaryServerConfigAtom } from "./state/server";
 import { environmentShell } from "./state/shell";
 import { installChatRouteCommands } from "./shortcuts/chatRouteCommands";
 import { startWorkspaceFocus } from "./lib/workspaceFocus";
@@ -277,6 +278,9 @@ export function startAppServices(): AppRouter {
   startI18n();
   startDocumentTitle(router);
   startHostEnvironmentLookup();
+  appAtomRegistry.subscribe(primaryRelayTracingAllowedAtom, setServerRelayTelemetry, {
+    immediate: true,
+  });
   startEnvironmentThemeRepaint();
   startThemeBackground();
   startBrowserChromeThemeSync(router);

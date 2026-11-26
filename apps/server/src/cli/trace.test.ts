@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 
 import { formatTraceSummary, makeTraceSpanSummary } from "./trace.ts";
 
@@ -32,21 +33,28 @@ function browserSpan(
 }
 
 it("drops spans that ended before the window and counts unreadable lines", () => {
-  const summarizer = makeTraceSpanSummary(MINUTE_MS);
+  const nowMs = Date.UTC(2026, 10, 24);
+  const cutoff = BigInt(nowMs) * 1_000_000n - 1n;
+  const summarizer = makeTraceSpanSummary({ nowMs, duration: Duration.nanos(1n) });
   [
     span("old", 1, 0),
+    JSON.stringify({
+      name: "just-before",
+      durationMs: 1,
+      endTimeUnixNano: String(cutoff - 1n),
+    }),
     "",
     "{not json",
     JSON.stringify({ name: "no-duration" }),
     JSON.stringify({ name: "far-future", durationMs: 1, endTimeUnixNano: "9".repeat(22) }),
-    span("recent", 4, 5 * MINUTE_MS),
+    JSON.stringify({ name: "at-cutoff", durationMs: 4, endTimeUnixNano: String(cutoff) }),
   ].forEach(summarizer.addLine);
   const summary = summarizer.finish();
 
   assert.strictEqual(summary.skippedLineCount, 3);
   assert.deepStrictEqual(
     summary.spans.map((entry) => [entry.name, entry.count, entry.perMinute]),
-    [["recent", 1, undefined]],
+    [["at-cutoff", 1, undefined]],
   );
 });
 
@@ -74,7 +82,10 @@ it("prints durations that round up to a second in seconds", () => {
 });
 
 it("keeps sub-millisecond windows and rates without rounding printed dates", () => {
-  const summarizer = makeTraceSpanSummary(1_795_478_399_998.25);
+  const summarizer = makeTraceSpanSummary({
+    nowMs: 1_795_478_400_000,
+    duration: Duration.millis(1.75),
+  });
   ["1795478399998000000", "1795478399998999950", "1795478399999999999"]
     .map((endTimeUnixNano) => JSON.stringify({ name: "rpc", durationMs: 1, endTimeUnixNano }))
     .forEach(summarizer.addLine);
@@ -87,8 +98,8 @@ it("keeps sub-millisecond windows and rates without rounding printed dates", () 
   assert.include(formatted, "from 2026-11-23T23:59:59.998Z to 2026-11-23T23:59:59.999Z");
 });
 
-it("prints end times in other numeric spellings as before", () => {
-  const summarizer = makeTraceSpanSummary();
+it("includes an end time in scientific notation at the window boundary", () => {
+  const summarizer = makeTraceSpanSummary({ nowMs: 1_795_478_400_001, duration: Duration.zero });
   summarizer.addLine(
     JSON.stringify({ name: "rpc", durationMs: 1, endTimeUnixNano: "1795478400001e6" }),
   );
@@ -127,5 +138,28 @@ it("formats large summaries without overflowing the call stack", () => {
   assert.strictEqual(
     lines.at(-1),
     "long-span-name      1   1.0  1ms  1ms  1ms            0       0",
+  );
+});
+
+it("uses singular nouns only for counts of one", () => {
+  const summarize = (lines: ReadonlyArray<string>) => {
+    const summarizer = makeTraceSpanSummary();
+    lines.forEach(summarizer.addLine);
+    return formatTraceSummary(summarizer.finish(), 0).split("\n");
+  };
+  const one = summarize([span("a", 1, MINUTE_MS), "{not json"]);
+  const two = summarize([span("a", 1, MINUTE_MS), span("b", 1, MINUTE_MS), "x", "y"]);
+
+  assert.deepStrictEqual(
+    [one[0]?.split(" ended")[0], one[1], one.at(-1)],
+    ["1 span", "Skipped 1 line that is not a span.", "1 more span name. Use --limit to show more."],
+  );
+  assert.deepStrictEqual(
+    [two[0]?.split(" ended")[0], two[1], two.at(-1)],
+    [
+      "2 spans",
+      "Skipped 2 lines that are not spans.",
+      "2 more span names. Use --limit to show more.",
+    ],
   );
 });

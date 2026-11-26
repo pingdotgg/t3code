@@ -111,7 +111,11 @@ function parseSkillFrontmatter(contents: string, fileName: string) {
   if (end === -1) return undefined;
   try {
     const frontmatter = decodeSkillFrontmatter(
-      parseYamlDocument(contents.slice(start + 3, end).trim()) ?? {},
+      // Antigravity reads plain scalar names and descriptions as text.
+      parseYamlDocument(contents.slice(start + 3, end).trim(), {
+        schema: "failsafe",
+        customTags: ["null"],
+      }) ?? {},
     );
     const name = frontmatter.name || fileName.slice(0, -3);
     const description = frontmatter.description?.trim();
@@ -306,7 +310,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 
     const sortedEntries = entries.toSorted();
     const skillFileName = sortedEntries.find((entry) => entry.toLowerCase() === "skill.md");
-    if (skillFileName !== undefined && (mode !== "agent-root" || skillFileName.endsWith(".md"))) {
+    // agy treats the automatic .agent(s)/skills roots as collections.
+    if (skillFileName !== undefined && mode !== "agent-root") {
       if (matchesSkillFilter(path.basename(directory), filter)) {
         yield* addSkillFile(path.join(directory, skillFileName), scope, pluginName);
       }

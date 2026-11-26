@@ -48,6 +48,14 @@ describe("device tool helpers", () => {
       const ambiguous = yield* Effect.flip(resolveHostId(hosts, "mac mini"));
       expect(ambiguous.reason).toContain("Mac mini (mini-1), Mac mini (mini-2)");
       expect(ambiguous.reason).not.toContain("oliverMac");
+
+      const labelPrefix = "a".repeat(63);
+      const selectorPrefix = "b".repeat(127);
+      const emojiHost = { ...hosts[2]!, label: `${labelPrefix}😀` };
+      const unknownEmoji = yield* Effect.flip(resolveHostId([emojiHost], `${selectorPrefix}😀`));
+      expect(unknownEmoji.reason.isWellFormed()).toBe(true);
+      expect(unknownEmoji.reason).toContain(`No device host ${selectorPrefix}.`);
+      expect(unknownEmoji.reason).toContain(`${labelPrefix} (mini-1)`);
     }),
   );
 
