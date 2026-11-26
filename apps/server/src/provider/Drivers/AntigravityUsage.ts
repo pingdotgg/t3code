@@ -15,7 +15,11 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import { resolveAntigravityInstanceDirectories } from "../antigravityAuthSupport.ts";
-import { makeAntigravityUsageCache, readAntigravityUsage } from "./antigravityUsageReader.ts";
+import {
+  antigravityRateModel,
+  makeAntigravityUsageCache,
+  readAntigravityUsage,
+} from "./antigravityUsageReader.ts";
 
 export class AntigravityUsage extends Context.Service<
   AntigravityUsage,
@@ -64,7 +68,7 @@ const make = Effect.gen(function* () {
   }) {
     const roots: Array<string> = [];
     for (const instance of instances) roots.push(...(yield* dataRoots(instance.environment)));
-    for (const { instanceId } of instances.filter((instance) => instance.configured)) {
+    for (const { instanceId } of instances) {
       const directories = yield* resolveAntigravityInstanceDirectories(
         host.paths.stateDir,
         instanceId,
@@ -123,6 +127,7 @@ export const layer = Layer.effect(AntigravityUsage, make);
 export const antigravityUsageReader: ProviderUsageReader<AntigravitySettings, AntigravityUsage> = {
   kind: "scan",
   provider: "antigravity",
+  rateModel: antigravityRateModel,
   scan: ({ instances, windowStartMs }) =>
     AntigravityUsage.pipe(Effect.flatMap((usage) => usage.scan({ instances, windowStartMs }))),
 };

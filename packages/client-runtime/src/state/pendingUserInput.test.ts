@@ -83,6 +83,18 @@ describe("resolvePendingUserInputAnswer", () => {
     ).toBe("Node.js");
   });
 
+  it("lets an optional text question stay blank", () => {
+    const textQuestion = { id: "notes", options: [] };
+    expect(resolvePendingUserInputAnswer({ ...textQuestion, required: false }, undefined)).toBe("");
+    expect(
+      resolvePendingUserInputAnswer({ ...textQuestion, required: false }, { customAnswer: " " }),
+    ).toBe("");
+    expect(resolvePendingUserInputAnswer(textQuestion, { customAnswer: " " })).toBeNull();
+    expect(
+      resolvePendingUserInputAnswer({ ...textQuestion, required: true }, { customAnswer: "" }),
+    ).toBeNull();
+  });
+
   it("accepts ready attachment-only answers while preserving selected options", () => {
     expect(resolvePendingUserInputAnswer(singleSelectQuestion, { attachmentCount: 1 })).toBe("");
     expect(
@@ -176,6 +188,40 @@ describe("buildPendingUserInputAnswers", () => {
       scope: "Orchestration-first",
       compat: "Keep the current envelope for one release window",
     });
+  });
+
+  it("answers a multi-select question with no options checked as an empty list", () => {
+    const extrasQuestion = {
+      id: "extras",
+      header: "Extras",
+      question: "Which extras do you want?",
+      options: [{ label: "Lint" }, { label: "Tests" }, { label: "CI" }],
+      multiSelect: true,
+    } as const;
+    const uncheckedAgain = togglePendingUserInputOptionSelection(
+      extrasQuestion,
+      togglePendingUserInputOptionSelection(extrasQuestion, undefined, "Lint"),
+      "Lint",
+    );
+    const scope = { selectedOptionValues: ["Node.js"] };
+
+    expect(buildPendingUserInputAnswers([singleSelectQuestion, extrasQuestion], { scope })).toEqual(
+      { scope: "Node.js", extras: [] },
+    );
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, extrasQuestion], {
+        scope,
+        extras: uncheckedAgain,
+      }),
+    ).toEqual({ scope: "Node.js", extras: [] });
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, extrasQuestion], { extras: {} }),
+    ).toBeNull();
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, { ...extrasQuestion, required: true }], {
+        scope,
+      }),
+    ).toBeNull();
   });
 });
 

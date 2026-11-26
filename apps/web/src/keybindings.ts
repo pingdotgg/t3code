@@ -17,13 +17,24 @@ import {
   resolveEventKeys,
   type ShortcutEventLike as SharedShortcutEventLike,
   type ShortcutModifierStateLike,
+  type ShortcutKeyboardLayoutMap,
+  shortcutKeyFromEvent as sharedShortcutKeyFromEvent,
 } from "@t3tools/shared/keybindings";
 import { isElectron } from "./env";
 import { isEditableFocused } from "./lib/editableFocus";
 import { projectScriptIdFromCommand } from "./projectScripts";
+import { getKeyboardLayoutMap } from "./keyboardLayout";
 
 export type { ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
-export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
+export function shortcutKeyFromEvent(
+  event: Pick<ShortcutEventLike, "key" | "code" | "shiftKey" | "altKey">,
+  platform: string,
+) {
+  return sharedShortcutKeyFromEvent(
+    event,
+    isMacPlatform(platform) && event.altKey ? getKeyboardLayoutMap() : undefined,
+  );
+}
 
 export interface ShortcutEventLike extends SharedShortcutEventLike {
   target?: EventTarget | null;
@@ -42,6 +53,7 @@ export interface ShortcutMatchContext {
 
 interface ShortcutMatchOptions {
   platform?: string;
+  keyboardLayoutMap?: ShortcutKeyboardLayoutMap;
   context?: Partial<ShortcutMatchContext>;
 }
 
@@ -67,6 +79,7 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     isWeb: !isElectron,
     isDesktop: isElectron,
     editableFocus: false,
+    isMac: isMacPlatform(resolvePlatform(options)),
     ...options?.context,
   };
 }
@@ -110,7 +123,10 @@ export function shortcutConflictKey(
   ].join("|");
 }
 
-function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMatchContext) {
+export function shortcutForContext(
+  binding: ResolvedKeybindingRule,
+  context: Partial<ShortcutMatchContext>,
+) {
   const shortcut = binding.shortcut;
   // Resolve persisted Mod+Enter against send preference without rewriting saved shortcuts.
   if (
@@ -191,7 +207,15 @@ export function resolveShortcutCommand(
     const binding = keybindings[index];
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
-    if (!matchesKeybindingShortcut(event, shortcutForContext(binding, context), platform)) continue;
+    if (
+      !matchesKeybindingShortcut(
+        event,
+        shortcutForContext(binding, context),
+        platform,
+        options?.keyboardLayoutMap ?? getKeyboardLayoutMap(),
+      )
+    )
+      continue;
     return binding.command;
   }
   return null;
@@ -222,6 +246,8 @@ export function formatShortcutKeyLabel(key: string): string {
   if (key === "arrowdown") return "Down";
   if (key === "arrowleft") return "Left";
   if (key === "arrowright") return "Right";
+  if (key === "pageup") return "PageUp";
+  if (key === "pagedown") return "PageDown";
   return key.slice(0, 1).toUpperCase() + key.slice(1);
 }
 
@@ -281,12 +307,24 @@ export function threadTraversalDirectionFromCommand(
   return null;
 }
 
+export function isThreadNavigationShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const command = resolveShortcutCommand(event, keybindings, options);
+  return (
+    threadTraversalDirectionFromCommand(command) !== null ||
+    threadJumpIndexFromCommand(command ?? "") !== null
+  );
+}
+
 export function shouldShowThreadJumpHintsForModifiers(
   modifiers: ShortcutModifierStateLike,
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
-  // Ghostty can write keys to the shell before window shortcuts run, regardless of the when clause.
+  // Holding a modifier is routine in a shell (Ctrl+C, Ctrl+R), so don't flash hints over it.
   if (resolveContext(options).terminalFocus) {
     return false;
   }
@@ -349,6 +387,15 @@ export function isTerminalNewShortcut(
   return matchesCommandShortcut(event, keybindings, "terminal.new", options);
 }
 
+export function isTerminalCycleShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const command = resolveShortcutCommand(event, keybindings, options);
+  return command === "terminal.previous" || command === "terminal.next";
+}
+
 export function isTerminalCloseShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
@@ -363,6 +410,16 @@ export function isDiffToggleShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
+}
+
+export function isSidebarToggleShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  // A focused terminal owns Ctrl chords, such as tmux's Ctrl+B prefix; Cmd never reaches it.
+  if (event.ctrlKey && options?.context?.terminalFocus) return false;
+  return matchesCommandShortcut(event, keybindings, "sidebar.toggle", options);
 }
 
 export function isOpenFavoriteEditorShortcut(

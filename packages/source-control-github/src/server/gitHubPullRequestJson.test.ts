@@ -359,10 +359,18 @@ describe("pull request detail decoding", () => {
           checkSuite: { workflowRun: null },
           ...fields,
         };
-  const inWorkflow = ({ workflowName, ...fields }: Record<string, unknown>) =>
+  const inWorkflow = ({
+    workflowName,
+    workflowId = `W_kwDORLtfbc4${String(workflowName)}`,
+    event = "pull_request",
+    runNumber = 95380,
+    ...fields
+  }: Record<string, unknown>) =>
     check({
       ...fields,
-      checkSuite: { workflowRun: { workflow: { name: workflowName } } },
+      checkSuite: {
+        workflowRun: { event, runNumber, workflow: { id: workflowId, name: workflowName } },
+      },
     });
 
   const coreJson = (
@@ -393,6 +401,8 @@ describe("pull request detail decoding", () => {
             createdAt: "2026-07-01T00:00:00Z",
             updatedAt: "2026-07-05T00:00:00Z",
             mergedAt: null,
+            mergeCommit: null,
+            mergedBy: null,
             closedAt: null,
             headRefName: "feat/detail",
             baseRefName: "main",
@@ -551,12 +561,48 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
+  it("reads a merged pull request's merge commit and who merged it", () => {
+    expect(
+      detailOf([], {
+        state: "MERGED",
+        mergedAt: "2026-07-05T00:00:00Z",
+        mergeCommit: { oid: "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9" },
+        mergedBy: {
+          __typename: "User",
+          login: "octocat",
+          avatarUrl: "https://avatars.githubusercontent.com/u/1",
+          name: "Octo Cat",
+        },
+      }),
+    ).toMatchObject({
+      state: "merged",
+      mergeCommitSha: "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9",
+      mergedBy: { login: "octocat", name: "Octo Cat" },
+    });
+  });
+
   it("reads an auto-merge request and strategy, and its null as off", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
       autoMergeMethod: "squash",
     });
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
+  });
+
+  it("reads the newest merge queue removal, and none where the queue was not asked about", () => {
+    const removal = {
+      __typename: "RemovedFromMergeQueueEvent",
+      id: "RMQE_1",
+      createdAt: "2026-07-05T00:00:00Z",
+      reason: "Required status checks failed",
+    };
+    expect(detailOf([], { mergeQueueRemovals: { nodes: [removal] } }).mergeQueueRemoval).toEqual({
+      id: "RMQE_1",
+      removedAt: "2026-07-05T00:00:00Z",
+      reason: "Required status checks failed",
+    });
+    expect(detailOf([], { mergeQueueRemovals: { nodes: [] } }).mergeQueueRemoval).toBeUndefined();
+    expect(detailOf([]).mergeQueueRemoval).toBeUndefined();
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {
@@ -616,6 +662,139 @@ describe("pull request detail decoding", () => {
       expect(checksOf(rollup)).toEqual([[["check", "pending"]], "pending"]);
     }
   });
+
+  it("drops a cancelled check whose workflow run was superseded by a newer run on the head", () => {
+    const superseded = {
+      workflowName: "CI",
+      workflowId: "W_kwDORLtfbc4N00ni",
+      runNumber: 95379,
+      status: "COMPLETED",
+      startedAt: "2026-10-30T10:00:00Z",
+      completedAt: "2026-10-30T10:00:05Z",
+    };
+    const replacement = {
+      workflowName: "CI",
+      workflowId: "W_kwDORLtfbc4N00ni",
+      runNumber: 95380,
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      startedAt: "2026-10-30T10:00:10Z",
+      completedAt: "2026-10-30T10:05:00Z",
+    };
+    const rollup = [
+      inWorkflow({ ...superseded, name: "check", conclusion: "CANCELLED" }),
+      inWorkflow({
+        ...superseded,
+        name: "web browser tests (runner ${{ matrix.slice }} of 6)",
+        conclusion: "CANCELLED",
+      }),
+      inWorkflow({ ...replacement, name: "check" }),
+      inWorkflow({ ...replacement, name: "web browser tests (runner 1 of 6)" }),
+      inWorkflow({ ...replacement, name: "web browser tests (runner 2 of 6)" }),
+    ];
+    const detail = detailOf(rollup);
+
+    expect([detail.checks.map((check) => [check.name, check.status]), detail.checksState]).toEqual([
+      [
+        ["check", "success"],
+        ["web browser tests (runner 1 of 6)", "success"],
+        ["web browser tests (runner 2 of 6)", "success"],
+      ],
+      "passing",
+    ]);
+  });
+
+  it("keeps a cancelled check when the newer run is another workflow with the same name", () => {
+    const detail = detailOf([
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        workflowId: "W_kwDORLtfbc4N00ni",
+        runNumber: 95379,
+        conclusion: "CANCELLED",
+      }),
+      inWorkflow({
+        name: "lint",
+        workflowName: "CI",
+        workflowId: "W_kwDORLtfbc4ToKTh",
+        runNumber: 95380,
+        conclusion: "SUCCESS",
+      }),
+    ]);
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toContainEqual([
+      "test",
+      "cancelled",
+    ]);
+    expect(detail.checksState).toBe("failing");
+  });
+
+  it("drops a required cancelled check once a newer run reports it, whenever it finished", () => {
+    const detail = detailOf([
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        runNumber: 41,
+        conclusion: "CANCELLED",
+        isRequired: true,
+        startedAt: "2026-10-30T10:00:00Z",
+        completedAt: "2026-10-30T10:09:00Z",
+      }),
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        runNumber: 42,
+        conclusion: "SUCCESS",
+        isRequired: true,
+        startedAt: "2026-10-30T10:01:00Z",
+        completedAt: "2026-10-30T10:05:00Z",
+      }),
+    ]);
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toEqual([["test", "success"]]);
+    expect(detail.checksState).toBe("passing");
+  });
+
+  it.each([
+    ["a push", "push", "push", "CANCELLED", false, "cancelled"],
+    ["another event", "pull_request", "pull_request_target", "CANCELLED", false, "cancelled"],
+    ["a pull request run", "pull_request", "pull_request", "FAILURE", false, "failure"],
+    [
+      "a pull request run, if required",
+      "pull_request",
+      "pull_request",
+      "CANCELLED",
+      true,
+      "cancelled",
+    ],
+  ])(
+    "keeps an older run's check when the newer run is %s",
+    (_label, olderEvent, newerEvent, conclusion, isRequired, status) => {
+      const detail = detailOf([
+        inWorkflow({
+          name: "test (packages/shared)",
+          workflowName: "CI",
+          event: olderEvent,
+          runNumber: 41,
+          conclusion,
+          isRequired,
+        }),
+        inWorkflow({
+          name: "test (apps/server)",
+          workflowName: "CI",
+          event: newerEvent,
+          runNumber: 42,
+          conclusion: "SUCCESS",
+        }),
+      ]);
+
+      expect(detail.checks.map((check) => [check.name, check.status])).toContainEqual([
+        "test (packages/shared)",
+        status,
+      ]);
+      expect(detail.checksState).toBe("failing");
+    },
+  );
 
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
     const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
@@ -1465,6 +1644,7 @@ describe("review submission payload", () => {
     const payload = buildReviewSubmission({
       verdict: "request-changes",
       body: "Two things.",
+      expectedHeadSha: "0a1b2c3d4e5f",
       comments: [
         {
           path: "src/a.ts",
@@ -1479,6 +1659,7 @@ describe("review submission payload", () => {
       ],
     });
     expect(payload).toEqual({
+      commit_id: "0a1b2c3d4e5f",
       event: "REQUEST_CHANGES",
       body: "Two things.",
       comments: [
@@ -1753,12 +1934,14 @@ describe("pull request lookups", () => {
 });
 
 describe("pull request watch fingerprints", () => {
-  it("moves status with checks and remarks with comments, each without the other", () => {
+  it("moves status with checks and queue removals, and remarks with comments, not across", () => {
     const pullRequest = (input: {
       readonly running: number;
       readonly failed: number;
       readonly commentEditedAt: string | null;
       readonly reviews: number;
+      readonly removals: number;
+      readonly timelineItems: number;
     }) => ({
       state: "OPEN",
       mergeable: "MERGEABLE",
@@ -1766,6 +1949,7 @@ describe("pull request watch fingerprints", () => {
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
       reviewThreads: { totalCount: 0 },
+      mergeQueueRemovals: { totalCount: input.timelineItems, filteredCount: input.removals },
       commits: {
         nodes: [
           {
@@ -1787,7 +1971,14 @@ describe("pull request watch fingerprints", () => {
     });
     const fingerprint = (input: Parameters<typeof pullRequest>[0]) =>
       toPullRequestWatchFingerprint(decodeWatched(pullRequest(input)));
-    const base = { running: 2, failed: 0, commentEditedAt: null, reviews: 1 };
+    const base = {
+      running: 2,
+      failed: 0,
+      commentEditedAt: null,
+      reviews: 1,
+      removals: 0,
+      timelineItems: 3,
+    };
     const before = fingerprint(base);
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
@@ -1798,5 +1989,12 @@ describe("pull request watch fingerprints", () => {
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
+    // Queued and dropped between two passes leaves the head and its checks as they were.
+    const dropped = fingerprint({ ...base, removals: 1, timelineItems: 5 });
+    expect(dropped.status).not.toBe(before.status);
+    expect(dropped.remarks).toBe(before.remarks);
+    // GitHub's totalCount counts every timeline item, whatever itemTypes asks for.
+    const queued = fingerprint({ ...base, timelineItems: 4 });
+    expect(queued.status).toBe(before.status);
   });
 });

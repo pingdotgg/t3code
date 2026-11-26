@@ -105,7 +105,7 @@
   note: "Retained with the same OR semantics, short-circuiting, and false result for an empty collection."
 "effect/Predicate#struct":
   replacement: "Predicate.Struct"
-  note: "Capitalized constructor name; field checks and refinement-aware typing are retained."
+  note: "Capitalized constructor name; field checks and refinement-aware typing are retained. V4 also checks own enumerable symbol fields."
 "effect/Predicate#tuple":
   replacement: "Predicate.Tuple([p1, p2, ...])"
   note: "Capitalized constructor now takes one predicate array instead of rest arguments and checks missing positions as undefined."

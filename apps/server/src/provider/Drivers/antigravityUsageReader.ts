@@ -126,21 +126,41 @@ const MODEL_IDS: Record<number, string> = {
   1417: "gemini-4-argon",
   1418: "gemini-4-argon",
   1419: "gemini-4-argon",
+  1427: "gemini-4-carbon",
+  1437: "gemini-4-carbon",
+  1525: "gemini-4-hydrogen",
+  1526: "gemini-4-hydrogen",
+  1527: "gemini-4-hydrogen",
+  1532: "gemini-4-neon",
+  1533: "gemini-4-neon",
+  1537: "gemini-pro-orchestrator-neon",
+  1667: "gemini-pro-orchestrator",
+  1669: "gemini-4-hydrogen-orchestrator",
 };
 
 // Effort and routing variants share the base model's price.
-function withRateModel(record: UsageRecord): UsageRecord {
-  const base = record.model.replace(
-    /-(?:extra-low|low|medium|high|tiered|control|thinking|agent)$/,
+export const antigravityRateModel = (model: string) => {
+  const base = model.replace(
+    /-(?:extra-low|low|medium|high|tiered|control|thinking|agent|orchestrator|trial|n|r)$/,
     "",
   );
-  const rateModel = /^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/.test(record.model)
+  return /^gemini-3-flash-(?:agent(?:-[ab])?|[ab])$/.test(model)
     ? "gemini-3.5-flash"
-    : record.model === "gemini-3.7-flash-safety-le"
+    : model === "gemini-3.7-flash-safety-le"
       ? "gemini-3.7-flash"
-      : base === "gemini-3-flash"
-        ? "gemini-3-flash-preview"
-        : base;
+      : model === "gemini-pro-orchestrator-neon"
+        ? "gemini-4-neon"
+        : model === "gemini-pro-orchestrator-g1-pro"
+          ? "gemini-4-argon"
+          : model === "gemini-pro-orchestrator"
+            ? "gemini-4-carbon"
+            : base === "gemini-3-flash"
+              ? "gemini-3-flash-preview"
+              : base;
+};
+
+function withRateModel(record: UsageRecord): UsageRecord {
+  const rateModel = antigravityRateModel(record.model);
   return rateModel === record.model ? record : { ...record, rateModel };
 }
 
@@ -169,7 +189,14 @@ function isConcreteModel(model: string): boolean {
 
 function rememberModel(models: Map<number, string | null>, id: number, model: string | null) {
   const previous = models.get(id);
-  models.set(id, previous === undefined || previous === model ? model : null);
+  if (previous === undefined) models.set(id, model);
+  else if (
+    previous !== model &&
+    (previous === null ||
+      model === null ||
+      antigravityRateModel(previous) !== antigravityRateModel(model))
+  )
+    models.set(id, null);
 }
 
 interface Metadata {
@@ -252,9 +279,8 @@ const readDatabase = Effect.fn("readDatabase")(function* (
         "SELECT name FROM sqlite_master WHERE type = 'table'",
       )).map((row) => row.name),
     );
-    if (!tables.has("gen_metadata") && !tables.has("steps")) {
-      return yield* new AntigravityDatabaseDecodeError({ path });
-    }
+    // Not a conversation store, e.g. agy's conversation_summaries.db index.
+    if (!tables.has("gen_metadata") && !tables.has("steps")) return null;
     // Seek by rowid regardless of indexes; idx normally aliases rowid, but sort for layouts where it does not.
     const readMetadata = Effect.fnUntraced(function* (
       query: string,
@@ -420,7 +446,7 @@ export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* 
   const files: Array<{ root: string; path: string; records: UsageRecord[] }> = [];
   const errors: string[] = [];
   const models = new Map<number, string | null>();
-  const pending: Array<{ data: CachedDatabase["data"]; fileIndex: number }> = [];
+  const pending: Array<{ data: NonNullable<CachedDatabase["data"]>; fileIndex: number }> = [];
   const identities = new Map<string, number>();
   const groups: Array<
     UsageCandidate & { parent: number; size: number; owner: number; fileIndex: number }

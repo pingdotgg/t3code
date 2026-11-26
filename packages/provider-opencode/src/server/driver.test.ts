@@ -148,10 +148,14 @@ const makeOpenCode2ProjectInstance = (
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
-          new Response(JSON.stringify({ location: { directory }, data }), {
-            status: unavailable ? 503 : 200,
-            headers: { "content-type": "application/json" },
-          }),
+          // An external server without a requested location answers for its own default.
+          new Response(
+            JSON.stringify({ location: { directory: directory ?? "/srv/remote" }, data }),
+            {
+              status: unavailable ? 503 : 200,
+              headers: { "content-type": "application/json" },
+            },
+          ),
         ),
       );
     });
@@ -175,6 +179,105 @@ const makeOpenCode2ProjectInstance = (
         return yield* Fiber.join(read);
       });
   });
+
+// A managed OpenCode 2 whose config can change while no server runs. Each start gets its own
+// port, and stopping a server ends its event streams.
+const makeIdlingOpenCode2Instance = Effect.gen(function* () {
+  const subscribed = yield* Deferred.make<void>();
+  const catalogs = { machine: [openCode2Model("opencode", "big-pickle", "Big Pickle")] };
+  const servers: Array<{
+    running: boolean;
+    readonly streams: Set<ReadableStreamDefaultController>;
+  }> = [];
+  const http = HttpClient.make((request) => {
+    const url = new URL(request.url);
+    const json = (body: unknown, status = 200) =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body, { status })));
+    const server = servers[Number(url.port) - 4096];
+    if (!server?.running) return json({ _tag: "InternalServerError", message: "stopped" }, 503);
+    switch (url.pathname) {
+      case "/api/info":
+        return json(JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body));
+      case "/api/event":
+        return Deferred.succeed(subscribed, undefined).pipe(
+          Effect.as(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(new ReadableStream({ start: (stream) => server.streams.add(stream) }), {
+                headers: { "content-type": "text/event-stream" },
+              }),
+            ),
+          ),
+        );
+      case "/api/model":
+      case "/api/provider":
+        return json({
+          location: { directory: "/work" },
+          data: url.pathname === "/api/provider" ? [] : catalogs.machine,
+        });
+      default:
+        return json({ _tag: "NotFoundError", message: "not found" }, 404);
+    }
+  });
+  const runtime = {
+    ...openCode2Runtime,
+    startOpenCodeServerProcess: ({
+      verify,
+    }: Parameters<OpenCodeRuntime.OpenCodeRuntime["Service"]["startOpenCodeServerProcess"]>[0]) =>
+      Effect.gen(function* () {
+        const server = { running: true, streams: new Set<ReadableStreamDefaultController>() };
+        const url = `http://127.0.0.1:${4096 + servers.length}`;
+        servers.push(server);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            server.running = false;
+            for (const stream of server.streams) {
+              try {
+                stream.close();
+              } catch {}
+            }
+          }),
+        );
+        const version = verify ? yield* verify(url) : "2.0.18";
+        return {
+          url,
+          version,
+          isRunning: Effect.sync(() => server.running),
+          exitCode: Effect.never,
+        };
+      }),
+  };
+  const instance = yield* create({}, http).pipe(
+    Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+  );
+  const ready = yield* instance.snapshot.streamChanges.pipe(
+    Stream.filter((snapshot) => snapshot.status === "ready"),
+    Stream.take(1),
+    Stream.runCollect,
+    Effect.forkChild,
+  );
+  // The catalog's settle delay starts only after its first HTTP read; the first event
+  // subscription is a request that follows that read.
+  yield* Deferred.await(subscribed);
+  yield* TestClock.adjust("5 seconds");
+  yield* Fiber.join(ready);
+  return {
+    instance,
+    catalogs,
+    servers,
+    // Text generation borrows a server without reading the catalog. The fake has no session
+    // API, so the generation fails once it has borrowed the server.
+    borrowWithoutCatalogRead: instance.textGeneration
+      .generateThreadTitle({
+        cwd: "/work",
+        message: "Rename the thread",
+        modelSelection: { instanceId: instance.instanceId, model: "opencode/big-pickle" },
+      })
+      .pipe(Effect.ignore, Effect.andThen(TestClock.adjust("5 seconds"))),
+    // The managed server stops 30 seconds after its last borrower.
+    idleOut: TestClock.adjust("31 seconds"),
+  };
+});
 
 it.live("discovers models through a home-relative OpenCode wrapper", () =>
   Effect.gen(function* () {
@@ -279,7 +382,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         }),
       );
       assert.deepStrictEqual(serverStarts, ["start"]);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each(["2.1.2", null])(
@@ -312,7 +415,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         assert.strictEqual(maintenance.packageName, "@opencode/cli");
         assert.isNotEmpty(probeOffline);
         assert.isTrue(probeOffline.every((offline) => offline === "1"));
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect("skips the installed CLI probe when a localhost provider is disabled", () =>
@@ -333,7 +436,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       const snapshot = yield* instance.snapshot.refresh;
       assert.isFalse(snapshot.enabled);
       assert.deepStrictEqual(probed, []);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("opens a session through OpenCode 2 that a lazy mise shim installs on first use", () =>
@@ -356,7 +459,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       assert.deepStrictEqual(serverStarts, ["start"], "the OpenCode 2 adapter starts its server");
       const capabilities = yield* instance.orchestrationAdapter.getCapabilities();
       assert.isTrue(capabilities.sessions.supportsRuntimeModeSwitchInSession);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("does not scan a workspace through a 1.x server it could not probe offline", () =>
@@ -368,7 +471,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
 
       yield* Effect.flip(instance.snapshotForCwd!(process.cwd()));
       assert.deepStrictEqual(serverStarts, []);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect.each([
@@ -404,7 +507,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         capabilities.turns.supportsNativeGoals === true,
         version.endsWith("2.2.5") || version.endsWith("2.2.6"),
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("uses the connected OpenCode version for goal support after an upgrade", () =>
@@ -479,7 +582,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       assert.isTrue(
         (yield* instance.orchestrationAdapter.getCapabilities()).turns.supportsNativeGoals,
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("answers capability reads without waiting on an unreachable server", () =>
@@ -535,6 +638,73 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           "plum",
         );
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("caches a cold OpenCode 2 directory's skills only after its scan ends", () =>
+    Effect.gen(function* () {
+      // OpenCode 2.2.7: touching a location lists it as loaded with built-in commands and skills
+      // at once, while provider.list waits for the scan that adds the project's skills.
+      const scanEnded = yield* Deferred.make<void>();
+      const builtinSkills = JSON.stringify({
+        location: { directory: "/work" },
+        data: (
+          JSON.parse(OPENCODE_2_WORKSPACE_RESPONSES["/api/skill"].body).data as Array<{
+            id: string;
+          }>
+        ).filter((skill) => skill.id !== "plum"),
+      });
+      const http = HttpClient.make((request) => {
+        const path = new URL(request.url).pathname;
+        const json = (body: string) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(JSON.parse(body))));
+        const afterScan = (body: string) =>
+          Deferred.await(scanEnded).pipe(Effect.andThen(json(body)));
+        switch (path) {
+          case "/api/info":
+            return json(
+              JSON.stringify({
+                ...JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body),
+                version: "2.2.7",
+              }),
+            );
+          case "/api/event":
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(new ReadableStream(), {
+                  headers: { "content-type": "text/event-stream" },
+                }),
+              ),
+            );
+          case "/api/debug/location":
+            return json('[{"directory":"/work"}]');
+          case "/api/provider":
+          case "/api/model":
+            return afterScan('{"location":{"directory":"/work"},"data":[]}');
+          case "/api/command":
+            return json(OPENCODE_2_WORKSPACE_RESPONSES["/api/command"].body);
+          case "/api/skill":
+            return Deferred.isDone(scanEnded).pipe(
+              Effect.flatMap((done) =>
+                json(done ? OPENCODE_2_WORKSPACE_RESPONSES["/api/skill"].body : builtinSkills),
+              ),
+            );
+          default:
+            return Effect.die(`Unexpected request: ${path}`);
+        }
+      });
+      const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, http);
+
+      const snapshot = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.succeed(scanEnded, undefined);
+      yield* TestClock.adjust("30 seconds");
+      const { skills } = yield* Fiber.join(snapshot);
+      assert.include(
+        skills.map((skill) => skill.name),
+        "plum",
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect.each(["probe", "error", "empty"] as const)(
@@ -669,6 +839,97 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("lists models from an external server that lacks the host's directory", () =>
+    Effect.gen(function* () {
+      const replay = replayOpenCodeServer(OPENCODE_2_RESPONSES, "secret");
+      const catalog = (directory: string | undefined) => ({
+        location: { directory: directory ?? "/srv/remote" },
+        data: [
+          {
+            id: "big-pickle",
+            modelID: "big-pickle",
+            providerID: "opencode",
+            name: "Big Pickle",
+            package: "@opencode/ai/providers/openai-compatible",
+            settings: {},
+            compatibility: {},
+            capabilities: { tools: true, input: ["text"], output: ["text"] },
+            variants: [],
+            time: { released: 1789516800000 },
+            cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+            status: "active",
+            enabled: true,
+            limit: { context: 1000000, output: 65536 },
+          },
+        ],
+      });
+      // Like a real remote OpenCode 2 server: a directory it does not have is a 404.
+      const server = HttpClient.make((request) => {
+        const url = new URL(request.url);
+        if (url.pathname !== "/api/model" && url.pathname !== "/api/provider") {
+          return replay.execute(request);
+        }
+        const directory = Option.getOrUndefined(
+          UrlParams.getFirst(request.urlParams, "location[directory]"),
+        );
+        const known = directory === undefined || directory === "/srv/remote";
+        const body = known
+          ? url.pathname === "/api/model"
+            ? catalog(directory)
+            : {
+                location: { directory: directory ?? "/srv/remote" },
+                data: [
+                  {
+                    id: "opencode",
+                    integrationID: "opencode",
+                    name: "OpenCode Zen",
+                    activation: "enabled",
+                    package: "@opencode/ai/providers/openai-compatible",
+                    settings: {},
+                  },
+                ],
+              }
+          : {
+              _tag: "LocationNotFoundError",
+              message: `Location not found: ${directory}`,
+            };
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              status: known ? 200 : 404,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      });
+      const instance = yield* create(
+        { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+        server,
+      );
+      const settled = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter(
+          (snapshot) =>
+            snapshot.installed && (snapshot.status === "ready" || snapshot.status === "error"),
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+      const [snapshot] = Array.from(yield* Fiber.join(settled));
+      assert.deepStrictEqual(
+        { status: snapshot?.status, message: snapshot?.message },
+        { status: "ready", message: "OpenCode 2.0.18 lists 1 model." },
+      );
+      assert.deepStrictEqual(
+        snapshot?.models.map((model) => [model.slug, model.subProvider]),
+        [["opencode/big-pickle", "OpenCode Zen"]],
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("lists a project's own opencode.jsonc models in that project's snapshot", () =>
     Effect.gen(function* () {
       const snapshotFor = yield* makeOpenCode2ProjectInstance("listed");
@@ -686,6 +947,35 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       );
       assert.strictEqual(otherSnapshot.workspaceModels, undefined);
       assert.strictEqual(otherSnapshot.workspaceModelsPending, undefined);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("lists models added to OpenCode's config while its managed server was stopped", () =>
+    Effect.gen(function* () {
+      const { instance, catalogs, servers, borrowWithoutCatalogRead, idleOut } =
+        yield* makeIdlingOpenCode2Instance;
+      assert.deepStrictEqual(
+        (yield* instance.snapshot.getSnapshot).models.map((model) => model.slug),
+        ["opencode/big-pickle"],
+      );
+
+      yield* idleOut;
+      assert.isFalse(servers[0]?.running);
+      catalogs.machine = [...catalogs.machine, openCode2Model("uni", "medium-gpt", "Medium GPT")];
+      const relisted = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models.length > 1),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* borrowWithoutCatalogRead;
+      assert.strictEqual(servers.length, 2, "the borrow starts a fresh server");
+
+      const [snapshot] = Array.from(yield* Fiber.join(relisted));
+      assert.deepStrictEqual(snapshot?.models.map((model) => model.slug).toSorted(), [
+        "opencode/big-pickle",
+        "uni/medium-gpt",
+      ]);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
@@ -737,6 +1027,81 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect.each([
+    { status: 200, data: null, reason: "unsupported" },
+    { status: 404, data: null, reason: "unsupported" },
+    { status: 503, data: null, reason: "probeFailed" },
+    {
+      status: 200,
+      data: {
+        workspace: {
+          id: "remote-workspace",
+          name: "Remote workspace",
+          usageURL: "https://opencode.ai/console/remote-workspace",
+        },
+        budgets: [
+          {
+            id: "all",
+            limit: 20,
+            spent: 15,
+            scope: "combined",
+            per: "set",
+            coverage: "all",
+            models: [],
+            shared: true,
+            resetsAt: 1793491200000,
+          },
+        ],
+      },
+      reason: undefined,
+    },
+  ])(
+    "reads external workspace usage without local credentials, HTTP $status, $reason",
+    (scenario) =>
+      Effect.gen(function* () {
+        const requested: string[] = [];
+        const replay = replayOpenCodeServer(OPENCODE_2_RESPONSES, "secret", requested);
+        const server = HttpClient.make((request) => {
+          assert.notInclude(request.url, "opencode.ai/zen");
+          if (request.url.endsWith("/api/experimental/usage/limits")) {
+            assert.strictEqual(request.headers.authorization, "Basic b3BlbmNvZGU6c2VjcmV0");
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  {
+                    location: { directory: "/work" },
+                    data: scenario.data,
+                  },
+                  { status: scenario.status },
+                ),
+              ),
+            );
+          }
+          return replay.execute(request);
+        });
+        const instance = yield* create(
+          { serverUrl: "https://remote.example", serverPassword: "secret" },
+          server,
+        );
+        const [snapshot] = Array.from(
+          yield* instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.usageLimits !== undefined),
+            Stream.take(1),
+            Stream.runCollect,
+          ),
+        );
+        assert.strictEqual(snapshot?.usageLimits?.unavailable?.reason, scenario.reason);
+        if (scenario.reason === undefined) {
+          assert.strictEqual(snapshot?.usageLimits?.windows[0]?.usedPercent, 75);
+          assert.strictEqual(snapshot?.usageLimits?.externalUsage?.label, "Remote workspace");
+          assert.deepStrictEqual(snapshot?.usageLimits?.windows[0]?.providerIds, []);
+        } else {
+          assert.deepStrictEqual(snapshot?.usageLimits?.windows, []);
+        }
+      }),
+  );
+
   it.effect.each(
     [
       { name: "recovers" },
@@ -776,6 +1141,10 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           );
         }
         const path = new URL(request.url).pathname;
+        if (path === "/api/experimental/usage/limits")
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })),
+          );
         if (path === "/api/model") modelReads += 1;
         const body =
           path === "/api/info"
@@ -905,6 +1274,85 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       assert.strictEqual(usageReads, expectedReads);
       assert.strictEqual(modelReads, catalogReads);
       assert.strictEqual(serverStarts, starts);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("reads Go usage from a stored key when the local server has no Console workspace", () =>
+    Effect.gen(function* () {
+      let goUsageReads = 0;
+      const usageStarted = yield* Deferred.make<void>();
+      const server = HttpClient.make((request) => {
+        if (request.url === "https://opencode.ai/zen/go/v1/usage") {
+          goUsageReads += 1;
+          assert.strictEqual(request.headers.authorization, "Bearer test-go-key");
+          const window = { percent: 10, resetsAt: "2026-11-01T00:00:00.000Z" };
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ usage: { rolling: window, weekly: window, monthly: window } }),
+            ),
+          );
+        }
+        const path = new URL(request.url).pathname;
+        if (path === "/api/experimental/usage/limits") {
+          const response = HttpClientResponse.fromWeb(
+            request,
+            Response.json({ location: { directory: "/work" }, data: null }),
+          );
+          return Deferred.succeed(usageStarted, undefined).pipe(Effect.as(response));
+        }
+        const body =
+          path === "/api/info"
+            ? JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body)
+            : { location: { directory: "/work" }, data: [] };
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+      });
+      const runtime = {
+        ...openCode2Runtime,
+        startOpenCodeServerProcess: ({
+          verify,
+        }: Parameters<
+          OpenCodeRuntime.OpenCodeRuntime["Service"]["startOpenCodeServerProcess"]
+        >[0]) =>
+          Effect.gen(function* () {
+            const url = "http://127.0.0.1:4096";
+            const version = verify ? yield* verify(url) : "2.0.18";
+            return { url, version, isRunning: Effect.succeed(true), exitCode: Effect.never };
+          }),
+      };
+      const instance = yield* OpenCodeDriver.create({
+        instanceId: ProviderInstanceId.make("opencode-go-key-only"),
+        displayName: undefined,
+        environment: [
+          {
+            name: "OPENCODE_AUTH_CONTENT",
+            sensitive: true,
+            value: JSON.stringify({ "opencode-go": { type: "api", key: "test-go-key" } }),
+          },
+          { name: "OPENCODE_API_KEY", sensitive: true, value: "" },
+        ],
+        enabled: true,
+        config: OpenCodeDriver.defaultConfig(),
+      }).pipe(
+        Effect.provide(TestProviderHost.layer()),
+        Effect.provideService(HttpClient.HttpClient, server),
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+      );
+      const initial = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((entry) => entry.usageLimits !== undefined),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(usageStarted);
+      yield* TestClock.adjust("5 seconds");
+      const [snapshot] = Array.from(yield* Fiber.join(initial));
+      assert.strictEqual(snapshot?.usageLimits?.unavailable, undefined);
+      assert.deepStrictEqual(
+        snapshot?.usageLimits?.windows.map((window) => window.kind),
+        ["session", "weekly", "monthly"],
+      );
+      assert.strictEqual(goUsageReads, 1);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 });
@@ -1081,7 +1529,7 @@ it.layer(Layer.mergeAll(layer, Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, op
         assert.deepStrictEqual(slugsOf(unreadable), ["opencode/big-pickle"]);
         assert.strictEqual(unreadable.workspaceModels, undefined);
         assert.strictEqual(unreadable.workspaceModelsPending, true);
-      }).pipe(Effect.scoped),
+      }),
     );
   },
 );
@@ -1116,7 +1564,7 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
         const v2 = yield* instance.snapshot.resolveMaintenance({ fresh: true });
         assert.strictEqual(v2.packageName, "@opencode/cli");
         assert.isNull(v2.update);
-      }).pipe(Effect.scoped),
+      }),
   );
 
   it.effect(
@@ -1151,6 +1599,6 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
           "after upgrading to 2.x, the next session must not open through the 1.x adapter",
         );
         assert.include(serverStarts, "start", "the OpenCode 2 adapter starts its server");
-      }).pipe(Effect.scoped),
+      }),
   );
 });

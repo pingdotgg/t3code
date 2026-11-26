@@ -34,7 +34,7 @@ Send `/compact` to compact a thread yourself.
 Leave **Server URL** empty to let T3 Code start OpenCode locally. A password in
 provider settings applies to both that server and T3 Code's connection. With no
 password setting, the local server uses `OPENCODE_SERVER_PASSWORD` from its
-environment.
+environment, and with neither T3 Code generates a password for it.
 
 To use an existing OpenCode server, set **Server URL** and its password in provider
 settings. T3 Code uses only that configured password for an external server; it
@@ -55,7 +55,9 @@ reached through `localhost`. That server can still report the previous version
 until you restart it. For a loopback URL, T3 Code shows that restart requirement
 instead of treating the CLI update as a failure.
 
-After a lost connection, send another prompt to reconnect to the same OpenCode
+T3 Code waits for a local server it started to recover after a lost connection.
+You can stop the turn while it reconnects. If the server exits or an external
+connection cannot be restored, send another prompt to resume the same OpenCode
 session.
 
 ## Approvals

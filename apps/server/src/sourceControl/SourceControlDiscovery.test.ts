@@ -104,6 +104,8 @@ const defaultDiscoveries = [
   }),
 ];
 
+const onPath = (command: string) => `/usr/local/bin/${command}`;
+
 const layerDiscovery = (
   runProcess = run,
   discoveries: ReadonlyArray<SourceControlProviderDiscoverySpec> = defaultDiscoveries,
@@ -172,10 +174,13 @@ it.effect("reports every hosting integration in registry order with its sign-in"
         ["jj", "available"],
       ],
     );
-  }).pipe(Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery())))),
+  }).pipe(
+    Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery()))),
+    Effect.provideService(SpawnExecutableResolution, onPath),
+  ),
 );
 
-it.effect("explains a hosting CLI whose version probe failed instead of advising an install", () =>
+it.effect("explains a CLI whose version probe failed instead of advising an install", () =>
   Effect.gen(function* () {
     const discovery = yield* SourceControlDiscovery.SourceControlDiscovery;
     const result = yield* discovery.discover;
@@ -195,15 +200,24 @@ it.effect("explains a hosting CLI whose version probe failed instead of advising
     assert.strictEqual(authDetail("broken"), item("broken").installHint);
 
     assert.strictEqual(item("absent").installHint, "Install absent.");
+
+    const git = result.versionControlSystems.find((entry) => entry.kind === "git");
+    assert.isDefined(git);
+    assert.notInclude(git.installHint, "Install Git from");
+    assert.include(git.installHint, "`git --version` exited with status 1");
   }).pipe(
+    Effect.provideService(SpawnExecutableResolution, onPath),
     Effect.provide(
       SourceControlDiscovery.layer.pipe(
         Layer.provide(
-          layerDiscovery(run, [
-            cliDiscovery("slow", "slow-cli"),
-            cliDiscovery("broken", "broken-cli"),
-            cliDiscovery("absent", "absent-cli"),
-          ]),
+          layerDiscovery(
+            (input) => run(input.command === "git" ? { ...input, command: "broken-cli" } : input),
+            [
+              cliDiscovery("slow", "slow-cli"),
+              cliDiscovery("broken", "broken-cli"),
+              cliDiscovery("absent", "absent-cli"),
+            ],
+          ),
         ),
       ),
     ),
@@ -242,7 +256,7 @@ it.effect.each(["darwin", "linux"] as const)(
       }
     }).pipe(
       Effect.provide(SourceControlDiscovery.layer.pipe(Layer.provide(layerDiscovery(runProcess)))),
-      Effect.provideService(SpawnExecutableResolution, (command) => `/usr/local/bin/${command}`),
+      Effect.provideService(SpawnExecutableResolution, onPath),
       Effect.provideService(HostProcess.Platform, platform),
       Effect.provideService(HostProcess.Architecture, "arm64"),
     );

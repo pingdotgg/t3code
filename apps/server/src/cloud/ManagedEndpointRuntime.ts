@@ -28,6 +28,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as RelayClientLedger from "./RelayClientLedger.ts";
 
 export type CloudManagedEndpointRuntimeStatus =
   | {
@@ -59,6 +60,8 @@ export interface ConnectorFacts {
   readonly readyConnections: number | null;
   /** The public tunnel hostname from the remote config cloudflared receives once it connects. */
   readonly hostname: string | null;
+  /** The local origin that remote config routes the public hostname to. */
+  readonly origin: string | null;
   readonly protocol: string | null;
 }
 
@@ -114,6 +117,8 @@ const CONNECTOR_READINESS_INTERVAL = Duration.seconds(30);
 const CONNECTOR_READINESS_REQUEST_TIMEOUT = Duration.seconds(5);
 const CONNECTOR_NOT_READY_CHECKS_BEFORE_RESTART = 6;
 const CONNECTOR_NOT_READY_CHECKS_MAX = 60;
+// cloudflared stuck on a dead HTTP/2 socket can ignore SIGTERM for minutes.
+const RELAY_CLIENT_FORCE_KILL_AFTER = Duration.seconds(5);
 const RELAY_CLIENT_METRICS_LINE = /\bStarting metrics server on (127\.0\.0\.1:\d+)\/metrics\b/u;
 const RELAY_CLIENT_PROTOCOL = /\bprotocol=(\w+)/u;
 // cloudflared's metrics server: `/ready` answers 200 or 503 with this body, and
@@ -122,7 +127,14 @@ const ConnectorReadyBody = Schema.Struct({ readyConnections: Schema.Number });
 const ConnectorConfigBody = Schema.Struct({
   config: Schema.Struct({
     ingress: Schema.optional(
-      Schema.NullOr(Schema.Array(Schema.Struct({ hostname: Schema.optional(Schema.String) }))),
+      Schema.NullOr(
+        Schema.Array(
+          Schema.Struct({
+            hostname: Schema.optional(Schema.String),
+            service: Schema.optional(Schema.String),
+          }),
+        ),
+      ),
     ),
   }),
 });
@@ -157,6 +169,14 @@ export function classifyRelayClientOutput(
 ): "connected" | "unregistered" | "warning" | "debug" {
   if (/\bRegistered tunnel connection\b/iu.test(line)) {
     return "connected";
+  }
+  // cloudflared logs a browser closing its request mid-stream as ERR; the tunnel itself is fine.
+  if (
+    /\bERR\s+(?:Request failed\s+)?error="Incoming request ended abruptly: context canceled"(?:\s|$)/u.test(
+      line,
+    )
+  ) {
+    return "debug";
   }
   // cloudflared uses zerolog FTL/PNC for fatal/panic; classify them above debug too.
   if (/\b(?:ERR|WRN|FTL|PNC)\b/u.test(line)) {
@@ -210,6 +230,7 @@ const stopConnector = (connector: ActiveConnector | null) =>
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
+  const relayClientLedger = yield* RelayClientLedger.RelayClientLedger;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   // Without T3 Connect no connector ever runs, whoever asks for one.
@@ -567,7 +588,9 @@ export const make = Effect.gen(function* () {
         tunnelId: connector.config.tunnelId,
         tunnelName: connector.config.tunnelName,
       });
-      yield* connector.child.kill().pipe(Effect.ignore);
+      yield* connector.child
+        .kill({ forceKillAfter: RELAY_CLIENT_FORCE_KILL_AFTER })
+        .pipe(Effect.ignore);
     }
   });
 
@@ -755,6 +778,12 @@ export const make = Effect.gen(function* () {
 
     const http2 = yield* Ref.get(http2Ref);
     const connectorScope = yield* Scope.make("sequential");
+    // Added before the spawn so it runs after the spawner's finalizer has stopped the client.
+    let forgetRelayClient: Effect.Effect<void> = Effect.void;
+    yield* Scope.addFinalizer(
+      connectorScope,
+      Effect.suspend(() => forgetRelayClient),
+    );
     const child = yield* spawner
       .spawn(
         ChildProcess.make(
@@ -773,6 +802,7 @@ export const make = Effect.gen(function* () {
           ],
           {
             detached: false,
+            forceKillAfter: RELAY_CLIENT_FORCE_KILL_AFTER,
             env: {
               ...env,
               TUNNEL_TOKEN: config.connectorToken,
@@ -819,22 +849,28 @@ export const make = Effect.gen(function* () {
     }
 
     if (!("status" in child)) {
-      const connector = {
-        child,
-        executable,
-        scope: connectorScope,
-        configKey: nextConfigKey,
-        config,
-        startedAtMillis: yield* Clock.currentTimeMillis,
-        registered: yield* Deferred.make<void>(),
-        metricsAddress: yield* Deferred.make<string>(),
-        protocol: yield* Ref.make<string | null>(null),
-      } satisfies ActiveConnector;
-      yield* Ref.set(activeRef, connector);
-      yield* Effect.forkIn(observeConnectorOutput(connector), connectorScope);
-      yield* Effect.forkIn(superviseConnector(connector), connectorScope);
-      yield* Effect.forkIn(watchConnectorRegistration(connector), connectorScope);
-      yield* Effect.forkIn(watchConnectorReadiness(connector), connectorScope);
+      // An interrupt before activeRef owns a supervised connector would leave its client open or unwatched.
+      yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          forgetRelayClient = yield* relayClientLedger.track(Number(child.pid));
+          const connector = {
+            child,
+            executable,
+            scope: connectorScope,
+            configKey: nextConfigKey,
+            config,
+            startedAtMillis: yield* Clock.currentTimeMillis,
+            registered: yield* Deferred.make<void>(),
+            metricsAddress: yield* Deferred.make<string>(),
+            protocol: yield* Ref.make<string | null>(null),
+          } satisfies ActiveConnector;
+          yield* Ref.set(activeRef, connector);
+          yield* Effect.forkIn(restore(observeConnectorOutput(connector)), connectorScope);
+          yield* Effect.forkIn(restore(superviseConnector(connector)), connectorScope);
+          yield* Effect.forkIn(restore(watchConnectorRegistration(connector)), connectorScope);
+          yield* Effect.forkIn(restore(watchConnectorReadiness(connector)), connectorScope);
+        }),
+      );
       return {
         status: "running",
         providerKind: "cloudflare_tunnel",
@@ -886,7 +922,7 @@ export const make = Effect.gen(function* () {
       { pid, tunnelId: active.config.tunnelId, tunnelName: active.config.tunnelName },
     );
     // The supervisor starts the replacement with its usual crash-loop backoff.
-    return yield* active.child.kill().pipe(
+    return yield* active.child.kill({ forceKillAfter: RELAY_CLIENT_FORCE_KILL_AFTER }).pipe(
       Effect.as(true),
       Effect.orElseSucceed(() => false),
     );
@@ -910,7 +946,13 @@ export const make = Effect.gen(function* () {
     const pid = Number(active.child.pid);
     const protocol = yield* Ref.get(active.protocol);
     if (!(yield* Deferred.isDone(active.metricsAddress))) {
-      return { pid, readyConnections: null, hostname: null, protocol } satisfies ConnectorFacts;
+      return {
+        pid,
+        readyConnections: null,
+        hostname: null,
+        origin: null,
+        protocol,
+      } satisfies ConnectorFacts;
     }
     const metricsUrl = `http://${yield* Deferred.await(active.metricsAddress)}`;
     const [ready, config] = yield* Effect.all(
@@ -920,10 +962,12 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
+    const hostnameRule = config?.config.ingress?.find((rule) => rule.hostname);
     return {
       pid,
       readyConnections: ready?.readyConnections ?? null,
-      hostname: config?.config.ingress?.find((rule) => rule.hostname)?.hostname ?? null,
+      hostname: hostnameRule?.hostname ?? null,
+      origin: hostnameRule?.service ?? null,
       protocol,
     } satisfies ConnectorFacts;
   });

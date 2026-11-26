@@ -3,12 +3,13 @@ import {
   type ProviderApprovalOption,
   type RuntimeRequestId,
 } from "@t3tools/contracts";
+import { msg, useGT, useMessages } from "gt-react";
 import { memo } from "react";
 import { EllipsisIcon, TriangleAlertIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 interface ComposerPendingApprovalActionsProps {
   presentation?: "composer" | "inline";
@@ -24,10 +25,19 @@ interface ComposerPendingApprovalActionsProps {
 }
 
 const DEFAULT_APPROVAL_OPTIONS = [
-  { decision: "cancel", label: "Cancel" },
-  { decision: "decline", label: "Decline" },
-  { decision: "acceptForSession", label: "Always allow this session" },
-  { decision: "accept", label: "Approve" },
+  {
+    decision: "cancel",
+    label: msg("Cancel", { $context: "verb, response to an approval request" }),
+  },
+  {
+    decision: "decline",
+    label: msg("Decline", { $context: "verb, response to an approval request" }),
+  },
+  { decision: "acceptForSession", label: msg("Always allow this session") },
+  {
+    decision: "accept",
+    label: msg("Approve", { $context: "verb, response to an approval request" }),
+  },
 ] satisfies ReadonlyArray<ProviderApprovalOption>;
 
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
@@ -39,6 +49,10 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
   options = DEFAULT_APPROVAL_OPTIONS,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
+  const gt = useGT();
+  const m = useMessages();
+  // Provider options carry server-authored labels; only the built-in defaults are translated.
+  const optionLabel = (label: string) => (options === DEFAULT_APPROVAL_OPTIONS ? m(label) : label);
   const primaryOptions = options.filter(
     (option) => option.decision === "decline" || option.decision === "accept",
   );
@@ -62,7 +76,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
           <>
             {option.warning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
             <span className={presentation === "inline" ? "whitespace-normal" : "max-w-40 truncate"}>
-              {option.label}
+              {optionLabel(option.label)}
             </span>
           </>
         );
@@ -86,10 +100,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             </Button>
           );
         return option.warning ? (
-          <Tooltip key={option.decision}>
-            <TooltipTrigger render={button} />
-            <TooltipPopup side="top">{option.warning}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger key={option.decision} render={button} label={option.warning} />
         ) : (
           button
         );
@@ -100,13 +111,17 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             disabled={disabled || isResponding || !canRespond}
             render={
               presentation === "inline" ? (
-                <InlineButton tone="muted" aria-label="More approval options" />
+                <InlineButton tone="muted" aria-label={gt("More approval options")} />
               ) : (
-                <Button size="icon-xs" variant="outline" aria-label="More approval options" />
+                <Button size="icon-xs" variant="outline" aria-label={gt("More approval options")} />
               )
             }
           >
-            {presentation === "inline" ? "More" : <EllipsisIcon />}
+            {presentation === "inline" ? (
+              gt("More", { $context: "button that opens more approval options" })
+            ) : (
+              <EllipsisIcon />
+            )}
           </MenuTrigger>
           <MenuPopup {...composerFloatingLayerProps} side="top" align="end" width="content">
             {moreOptions.map((option) => {
@@ -121,14 +136,13 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
                   }}
                 >
                   {option.warning ? <TriangleAlertIcon className="size-3 text-warning" /> : null}
-                  <span className="min-w-0 whitespace-normal wrap-break-word">{option.label}</span>
+                  <span className="min-w-0 whitespace-normal wrap-break-word">
+                    {optionLabel(option.label)}
+                  </span>
                 </MenuItem>
               );
               return option.warning ? (
-                <Tooltip key={option.decision}>
-                  <TooltipTrigger render={item} />
-                  <TooltipPopup side="top">{option.warning}</TooltipPopup>
-                </Tooltip>
+                <SharedTooltipTrigger key={option.decision} render={item} label={option.warning} />
               ) : (
                 item
               );
