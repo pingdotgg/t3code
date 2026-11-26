@@ -168,19 +168,28 @@ export function officePreviewKind(file: {
   return null;
 }
 
+// GBK/GB18030 sources are not UTF-8, and the byte cap can cut their last character. A cut tail
+// decodes as U+FFFD in both decoders, so strip it before deciding that GB18030 is wrong.
+function decodeBoundedText(bounded: Uint8Array, truncated: boolean): string | null {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bounded, { stream: truncated });
+  } catch {
+    const gb18030 = new TextDecoder("gb18030").decode(bounded);
+    if (!gb18030.includes("�")) return gb18030;
+    const withoutCutTail = truncated ? gb18030.slice(0, -1) : gb18030;
+    return withoutCutTail.includes("�") ? null : withoutCutTail;
+  }
+}
+
 export function decodeFilePreviewText(bytes: Uint8Array, truncated = false) {
   const bounded = bytes.subarray(0, FILE_TEXT_PREVIEW_MAX_BYTES);
   if (bounded.some((byte) => byte === 0))
     throw new Error("This file contains binary data and cannot be shown as text.");
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  try {
-    return {
-      text: decoder.decode(bounded, { stream: truncated || bytes.length > bounded.length }),
-      truncated: truncated || bytes.length > bounded.length,
-    };
-  } catch {
+  const isTruncated = truncated || bytes.length > bounded.length;
+  const text = decodeBoundedText(bounded, isTruncated);
+  if (text === null)
     throw new Error("This file is not UTF-8 text. Open it in another app to view its contents.");
-  }
+  return { text, truncated: isTruncated };
 }
 
 export const WORKSPACE_BROWSER_PREVIEW_EXTENSIONS = [".htm", ".html", ".pdf"] as const;

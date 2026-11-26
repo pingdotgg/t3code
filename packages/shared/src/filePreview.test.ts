@@ -195,6 +195,30 @@ describe("attachment preview classification", () => {
     expect(() => decodeFilePreviewText(new Uint8Array([65, 0, 66]))).toThrow("binary");
     expect(() => decodeFilePreviewText(new Uint8Array([255]))).toThrow("UTF-8");
   });
+  it("decodes a GBK source file instead of rejecting it", () => {
+    const gbk = new Uint8Array([
+      0x2f, 0x2f, 0x20, 0xd6, 0xd0, 0xce, 0xc4, 0xd7, 0xa2, 0xca, 0xcd, 0x0a, 0x69, 0x6e, 0x74,
+      0x20, 0x61, 0x20, 0x3d, 0x20, 0x31, 0x3b, 0x0a,
+    ]);
+    expect(decodeFilePreviewText(gbk)).toEqual({
+      text: "// 中文注释\nint a = 1;\n",
+      truncated: false,
+    });
+  });
+  it("still prefers UTF-8 when the bytes are valid UTF-8", () => {
+    expect(decodeFilePreviewText(new TextEncoder().encode("// 中文注释\n")).text).toBe(
+      "// 中文注释\n",
+    );
+  });
+  it("does not corrupt a GBK character cut by the preview boundary", () => {
+    const bytes = new Uint8Array(FILE_TEXT_PREVIEW_MAX_BYTES + 1).fill(0x61);
+    bytes[FILE_TEXT_PREVIEW_MAX_BYTES - 2] = 0xd6;
+    bytes[FILE_TEXT_PREVIEW_MAX_BYTES - 1] = 0xd0;
+    bytes[FILE_TEXT_PREVIEW_MAX_BYTES] = 0xce;
+    const preview = decodeFilePreviewText(bytes);
+    expect(preview.truncated).toBe(true);
+    expect(preview.text.endsWith("�")).toBe(false);
+  });
   it.each(["doc", "xls", "ppt", "7z", "rar"])(
     "retains the binary fallback for %s, which opencode does not render",
     (extension) => {
