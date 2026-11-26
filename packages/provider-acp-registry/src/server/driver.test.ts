@@ -1039,6 +1039,43 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
+// Advertises `global` plus one command per file in `<session cwd>/.agent/commands`.
+const workspaceCommandsAgentSource = `
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
+const projectCommands = (cwd) => {
+  try {
+    return readdirSync(join(cwd, ".agent", "commands")).map((file) => file.replace(/\\.md$/, ""));
+  } catch {
+    return [];
+  }
+};
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method, params } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") {
+    send({ id, result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] } });
+  } else if (method === "session/new") {
+    send({ id, result: { sessionId: "probe-session" } });
+    const names = ["global", ...projectCommands(params.cwd)];
+    send({
+      method: "session/update",
+      params: {
+        sessionId: "probe-session",
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: names.map((name) => ({ name, description: name })),
+        },
+      },
+    });
+  } else {
+    send({ id, result: {} });
+  }
+});
+`;
+
 const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(AcpRegistryRuntimeCoordinator.layer),
   Layer.provideMerge(IdAllocator.layer),
@@ -1138,6 +1175,65 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* instance.invalidateCaches ?? Effect.void;
       yield* instance.snapshot.refresh;
       expect(Option.isSome(yield* Fiber.join(refreshed))).toBe(true);
+    }),
+  );
+
+  const createWorkspaceCommandsInstance = Effect.fn(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+    const agentPath = path.join(directory, "agent.mjs");
+    yield* fileSystem.writeFileString(agentPath, workspaceCommandsAgentSource);
+    const project = path.join(directory, "project");
+    yield* fileSystem.makeDirectory(path.join(project, ".agent", "commands"), { recursive: true });
+    yield* fileSystem.writeFileString(path.join(project, ".agent", "commands", "demo.md"), "demo");
+    const otherProject = path.join(directory, "other-project");
+    yield* fileSystem.makeDirectory(otherProject, { recursive: true });
+    const instance = yield* AcpRegistryDriver.create({
+      instanceId: identity.instanceId,
+      displayName: identity.displayName,
+      enabled: true,
+      environment: [],
+      config: decodeSettings({ source: "local", commandPath: "agent" }),
+    }).pipe(
+      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+        ...catalogWithInspection({
+          status: "ready",
+          agentId: "agent",
+          version: null,
+          distribution: "local",
+        }),
+        resolve: () =>
+          Effect.succeed({
+            distribution: "local" as const,
+            spawn: { command: process.execPath, args: [agentPath] },
+          }),
+      }),
+    );
+    return { instance, project, otherProject };
+  });
+
+  it.effect("lists the commands an agent advertises for the project's own directory", () =>
+    Effect.gen(function* () {
+      const { instance, project } = yield* createWorkspaceCommandsInstance();
+      expect(instance.snapshotForCwd).toBeDefined();
+      const snapshot = yield* instance.snapshotForCwd!(project);
+      expect(snapshot.slashCommands.map((command) => command.name)).toContain("demo");
+    }),
+  );
+
+  it.effect("keeps a live session's project commands out of other projects", () =>
+    Effect.gen(function* () {
+      const { instance, otherProject } = yield* createWorkspaceCommandsInstance();
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+      // What a thread running in `project` publishes when the agent advertises its commands.
+      yield* coordinator.publishAvailableCommands(identity.instanceId, {
+        slashCommands: [{ name: "global" }, { name: "demo" }],
+        skills: [],
+      });
+      expect(instance.snapshotForCwd).toBeDefined();
+      const snapshot = yield* instance.snapshotForCwd!(otherProject);
+      expect(snapshot.slashCommands.map((command) => command.name)).not.toContain("demo");
     }),
   );
 
