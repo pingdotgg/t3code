@@ -73,6 +73,18 @@ describe("appendTerminalOutput", () => {
     ).toEqual([{ text: "R", style: { color: "rgb(12,34,56)" } }]);
   });
 
+  it.each(["\u001b[3", "\u001b]0;title"])(
+    "keeps output after CAN or SUB cancels %j, wherever the chunk splits",
+    (sequence) => {
+      for (const cancel of ["\u0018", "\u001a"]) {
+        const input = `before${sequence}${cancel}Ready`;
+        for (let cut = 0; cut <= input.length; cut += 1) {
+          expect(feed([input.slice(0, cut), input.slice(cut)]).text).toBe("beforeReady");
+        }
+      }
+    },
+  );
+
   it("keeps a bounded tail that starts on a fresh line", () => {
     const lines = Array.from({ length: 2_000 }, (_, index) => `line ${index}`).join("\n");
     const state = feed([lines], 1_000);
@@ -334,8 +346,4 @@ describe("terminalOutputSpans", () => {
     const spans = terminalOutputSpans(text, TERMINAL_PALETTES.dark);
     expect(spans.map((span) => span.style?.color)).toEqual(["#1f2328", "#1f2328"]);
   });
-});
-
-it.each(["\u0018", "\u001a"])("keeps command output after a cancelled CSI (%j)", (cancel) => {
-  expect(normalizeTerminalOutput(`\u001b[3${cancel}Ready\n`).text).toBe("Ready\n");
 });
