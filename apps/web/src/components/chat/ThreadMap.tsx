@@ -402,31 +402,46 @@ function ThreadMapCanvas({
       {/* Below the canvas, not over it: nothing on the map can end up under the controls. */}
       <div className="flex items-center justify-end gap-3 border-t border-border/60 px-3 py-1">
         <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/60 bg-popover/90 p-0.5 shadow-xs/5">
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={gt("Zoom out")}
-            onClick={() => zoom(0.8)}
+          <SharedTooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label={gt("Zoom out")}
+                onClick={() => zoom(0.8)}
+              />
+            }
+            label={gt("Zoom out")}
           >
             <MinusIcon />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={gt("Zoom in")}
-            onClick={() => zoom(1.25)}
+          </SharedTooltipTrigger>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label={gt("Zoom in")}
+                onClick={() => zoom(1.25)}
+              />
+            }
+            label={gt("Zoom in")}
           >
             <PlusIcon />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={gt("Fit the map to view")}
-            disabled={manual === null || manual.view === null}
-            onClick={fit}
+          </SharedTooltipTrigger>
+          <SharedTooltipTrigger
+            render={
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label={gt("Fit the map to view")}
+                disabled={manual === null || manual.view === null}
+                onClick={fit}
+              />
+            }
+            label={gt("Fit the map to view")}
           >
             <MaximizeIcon />
-          </Button>
+          </SharedTooltipTrigger>
         </div>
       </div>
     </>
@@ -489,6 +504,7 @@ function ThreadMapScene({
     },
   });
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
     const step =
       event.key === "ArrowDown" || event.key === "ArrowRight"
         ? 1
@@ -905,7 +921,7 @@ function TurnDetails({
     rememberTimelinePosition(
       key,
       {
-        rowId: turn.userMessageId,
+        rowId: turn.rowId,
         offsetWithinRow: -16,
         // Where the timeline was, should the turn's row be folded away.
         scrollOffset: remembered?.scrollOffset ?? 0,

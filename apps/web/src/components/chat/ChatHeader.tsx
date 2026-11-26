@@ -426,12 +426,18 @@ export const ChatHeader = memo(function ChatHeader({
             if (next === "conversation" || next === "map") onThreadViewChange(next);
           }}
         >
-          <Toggle aria-label={gt("Conversation")} value="conversation">
+          <SharedTooltipTrigger
+            render={<Toggle aria-label={gt("Conversation")} value="conversation" />}
+            label={gt("Conversation")}
+          >
             <MessageSquareTextIcon className="size-3.5" />
-          </Toggle>
-          <Toggle aria-label={gt("Thread map")} value="map">
+          </SharedTooltipTrigger>
+          <SharedTooltipTrigger
+            render={<Toggle aria-label={gt("Thread map")} value="map" />}
+            label={gt("Thread map")}
+          >
             <WorkflowIcon className="size-3.5" />
-          </Toggle>
+          </SharedTooltipTrigger>
         </ToggleGroup>
       )}
     </div>

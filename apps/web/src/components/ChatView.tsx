@@ -175,6 +175,7 @@ import {
   deriveCanInterruptRunningThread,
   findRevertCheckpoint,
   isLatestRunSettled,
+  type TimelineEntry,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import { useWorkspaceRevision } from "../hooks/useWorkspaceRevision";
@@ -320,6 +321,7 @@ import {
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { useCitedHistory } from "./chat/citationProcedure";
 import type { MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
+import { ThreadActivityAnnouncer } from "./chat/ThreadActivityAnnouncer";
 import { ThreadTimeline } from "./chat/ThreadTimeline";
 import { useThreadMapChosen, useThreadMapViewStore } from "../threadMapViewStore";
 import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
@@ -444,6 +446,7 @@ const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_TURN_ITEMS: ThreadStructure["turnItems"] = [];
 const EMPTY_RUNS: ThreadStructure["runs"] = [];
+const NO_TIMELINE_ENTRIES: ReadonlyArray<TimelineEntry> = [];
 const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
 const EMPTY_COMPOSER_BANNER_ITEMS: ReadonlyArray<ComposerBannerStackItem> = [];
 
@@ -2941,7 +2944,8 @@ export default function ChatView(props: ChatViewProps) {
   const threadMapShown = threadMapChosen && threadMapRef !== null;
   const citedKey = citationRequest?.key ?? null;
   const showCitedConversation = useStableCallback(() => {
-    if (citedKey !== null && activeThreadRef !== null) setThreadMapShown(activeThreadRef, false);
+    // The route names the cited thread even before the thread itself has loaded.
+    if (citedKey !== null) setThreadMapShown(routeThreadRef, false);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a citation arrives by navigation, and only the conversation can show the cited message
   useEffect(showCitedConversation, [citedKey, showCitedConversation]);
@@ -3376,6 +3380,21 @@ export default function ChatView(props: ChatViewProps) {
     ]
       .filter((part) => part !== null)
       .join(" · ") || null;
+  const awaitingUser =
+    activePendingApproval !== null
+      ? "approval"
+      : activePendingUserInput !== null ||
+          // A secret request has no runtime request; the shell carries it.
+          activeThreadShell?.hasPendingUserInput === true
+        ? "input"
+        : null;
+  const awaitingRequestId =
+    activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null;
+  const announcedActivityRun = announcedRun(activeActivityRun, serverProjection?.runs ?? []);
+  const detailBehindShell = isDetailBehindShell(
+    activeLatestRun,
+    activeThreadShell?.latestRun ?? null,
+  );
   // The end of the timeline holds the thread's present and next turns: what it is doing now,
   // its lifecycle status, guest messages awaiting you, then your queued messages.
   const timelineFooter =
@@ -3682,14 +3701,28 @@ export default function ChatView(props: ChatViewProps) {
               className="relative flex min-h-0 flex-1 flex-col bg-background"
             >
               {threadMapShown ? (
-                <Suspense fallback={null}>
-                  <ThreadMap
-                    key={activeThreadKey}
-                    threadRef={threadMapRef}
-                    projection={serverProjection}
-                    bottomInset={composerTimelineInset}
+                <>
+                  <Suspense fallback={null}>
+                    <ThreadMap
+                      key={activeThreadKey}
+                      threadRef={threadMapRef}
+                      projection={serverProjection}
+                      bottomInset={composerTimelineInset}
+                    />
+                  </Suspense>
+                  {/* The timeline announces turns; the map shows no messages, so only their status. */}
+                  <ThreadActivityAnnouncer
+                    threadKey={isProviderSubagent ? null : displayedTimelineKey}
+                    status={awaitingUser ?? (isWorking ? "working" : "idle")}
+                    requestId={awaitingRequestId}
+                    runId={announcedActivityRun?.runId ?? null}
+                    runStatus={announcedActivityRun?.status ?? null}
+                    detailBehind={detailBehindShell}
+                    level="status"
+                    entries={NO_TIMELINE_ENTRIES}
+                    workspaceRoot={activeWorkspaceRoot}
                   />
-                </Suspense>
+                </>
               ) : (
                 <WorkspaceMutationIdContext value={workspaceMutationId}>
                   <ThreadTimeline
@@ -3714,18 +3747,8 @@ export default function ChatView(props: ChatViewProps) {
                     isWorking={isWorking}
                     runlessWorkActive={runlessWorkStartedAt !== null}
                     isCompacting={isCompacting}
-                    awaitingUser={
-                      activePendingApproval !== null
-                        ? "approval"
-                        : activePendingUserInput !== null ||
-                            // A secret request has no runtime request; the shell carries it.
-                            activeThreadShell?.hasPendingUserInput === true
-                          ? "input"
-                          : null
-                    }
-                    awaitingRequestId={
-                      activePendingApproval?.requestId ?? activePendingUserInput?.requestId ?? null
-                    }
+                    awaitingUser={awaitingUser}
+                    awaitingRequestId={awaitingRequestId}
                     activeTurnStartedAt={activeWorkStartedAt}
                     providerStartingLabel={
                       providerStartingRun?.providerStartingLabelMsg
@@ -3751,11 +3774,8 @@ export default function ChatView(props: ChatViewProps) {
                     runs={serverProjection?.runs ?? []}
                     latestRun={activeActivityRun}
                     usageLimitRunId={usageLimitRunId}
-                    announcedRun={announcedRun(activeActivityRun, serverProjection?.runs ?? [])}
-                    detailBehindShell={isDetailBehindShell(
-                      activeLatestRun,
-                      activeThreadShell?.latestRun ?? null,
-                    )}
+                    announcedRun={announcedActivityRun}
+                    detailBehindShell={detailBehindShell}
                     runningRunId={activeRunningTurnId}
                     turnDiffSummaries={turnDiffSummaries}
                     activeThreadEnvironmentId={

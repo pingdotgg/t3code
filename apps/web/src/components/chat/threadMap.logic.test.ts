@@ -352,6 +352,11 @@ describe("deriveThreadMap", () => {
           }),
           tool("unresolved", "a", { toolName: "t3_thread_send", input: { message: "hi" } }),
           tool("failed", "a", { toolName: "t3_thread_send", status: "failed" }),
+          tool("in-flight", "a", {
+            toolName: "t3_thread_send",
+            status: "running",
+            input: { threadId: "target-d" },
+          }),
           tool("errored", "a", {
             toolName: "t3_thread_send",
             output: { isError: true, content: [{ type: "text", text: "No such thread" }] },
@@ -367,6 +372,71 @@ describe("deriveThreadMap", () => {
       { kind: "send", id: "send:from-envelope", threadId: "target-c" },
       { kind: "send", id: "send:unresolved", threadId: null },
     ]);
+  });
+
+  it("opens a turn a notification started at the notification's row", () => {
+    const [turn] = deriveThreadMap(
+      projection({
+        runs: [run("woken", 1)],
+        items: [
+          {
+            ...itemBase("woken-notification", "woken"),
+            type: "notification",
+            source: { kind: "delegated_task", taskIds: [] },
+            outcome: "completed",
+            summary: "1 delegated task finished",
+          },
+          tool("woken-tool", "woken"),
+        ],
+      }),
+    );
+
+    expect(turn).toMatchObject({
+      rowId: "woken-notification",
+      prompt: "1 delegated task finished",
+      toolCalls: 1,
+      moreToolCalls: false,
+    });
+  });
+
+  it("counts a turn's changed files across its repositories, only from captured changes", () => {
+    const checkpoint = (
+      id: string,
+      runId: string,
+      overrides: Partial<OrchestrationV2ThreadProjection["checkpoints"][number]>,
+    ): OrchestrationV2ThreadProjection["checkpoints"][number] => ({
+      id: CheckpointId.make(id),
+      threadId,
+      scopeId: CheckpointScopeId.make(`${id}-scope`),
+      runId: RunId.make(runId),
+      nodeId: NodeId.make("node"),
+      parentCheckpointId: null,
+      ordinalWithinScope: 1,
+      appRunOrdinal: 1,
+      ref: CheckpointRef.make(id),
+      status: "ready",
+      files: [{ path: "a.ts", kind: "modified", additions: 1, deletions: 0 }],
+      capturedAt: at(15),
+      ...overrides,
+    });
+    const [repos, missing] = deriveThreadMap(
+      projection({
+        runs: [run("repos", 1), run("missing", 2)],
+        items: [prompt("repos", "One"), prompt("missing", "Two")],
+        checkpoints: [
+          checkpoint("root", "repos", {}),
+          // A tracked repository's checkpoint carries no app ordinal.
+          checkpoint("tracked", "repos", {
+            appRunOrdinal: null,
+            filesTotal: { count: 3, additions: 3, deletions: 0 },
+          }),
+          checkpoint("not-captured", "missing", { status: "missing", files: [] }),
+        ],
+      }),
+    );
+
+    expect(repos?.filesChanged).toBe(4);
+    expect(missing?.filesChanged).toBeNull();
   });
 
   it("summarizes what a turn did and picks its update and answer", () => {
@@ -395,8 +465,11 @@ describe("deriveThreadMap", () => {
           reply("unphased-last", "unphased"),
           // Sent mid-turn apart from the answer, so it never becomes the answer.
           reply("unphased-async", "unphased", undefined, "async"),
+          // Codex marks an async alert as a final answer too.
+          reply("unphased-alert", "unphased", "final_answer", "async"),
           prompt("live", "Three"),
           reply("live-first", "live"),
+          reply("live-alert", "live", "final_answer", "async"),
           // The window starts inside this turn: its prompt and earlier work are not loaded.
           tool("partial-tool", "partial"),
         ],

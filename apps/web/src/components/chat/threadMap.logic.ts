@@ -66,7 +66,8 @@ export interface ThreadMapTurn {
   readonly number: number;
   readonly status: OrchestrationV2RunStatus;
   readonly queued: boolean;
-  readonly userMessageId: MessageId;
+  /** The conversation row the turn opens at: its prompt, or the notification that woke it. */
+  readonly rowId: string;
   readonly prompt: string;
   readonly sender: ThreadMapSender | null;
   /** The first commentary message, read live through its turn item. */
@@ -140,12 +141,8 @@ function sendTarget(item: Extract<Item, { readonly type: "dynamic_tool" }>): Thr
   return isThreadId(threadId) ? threadId : null;
 }
 
-function isFailedSend(item: Extract<Item, { readonly type: "dynamic_tool" }>): boolean {
-  return (
-    item.status === "failed" ||
-    item.status === "cancelled" ||
-    compactDynamicToolOutput(item.output)?.isError === true
-  );
+function isDeliveredSend(item: Extract<Item, { readonly type: "dynamic_tool" }>): boolean {
+  return item.status === "completed" && compactDynamicToolOutput(item.output)?.isError !== true;
 }
 
 function durationOf(run: Run): number | null {
@@ -233,12 +230,14 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
     else outputs.push(output);
   }
 
+  // One checkpoint per repository; a capture that is missing or failed says nothing about files.
   const filesChangedByRun = new Map<RunId, number>();
   for (const checkpoint of projection.checkpoints) {
-    if (checkpoint.runId === null || checkpoint.appRunOrdinal === null) continue;
+    if (checkpoint.runId === null || checkpoint.status !== "ready") continue;
     filesChangedByRun.set(
       checkpoint.runId,
-      checkpoint.filesTotal?.count ?? checkpoint.files.length,
+      (filesChangedByRun.get(checkpoint.runId) ?? 0) +
+        (checkpoint.filesTotal?.count ?? checkpoint.files.length),
     );
   }
 
@@ -247,11 +246,14 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
     const openingItem = userItemByMessageId.get(run.userMessageId);
     const openingMessage = messageById.get(run.userMessageId);
     const opening = openingItem ?? openingMessage;
+    // A wake's message becomes a notification row, which has no message ID.
+    const openingNotification = items[0]?.type === "notification" ? items[0] : undefined;
     const prompt =
-      opening === undefined
+      openingNotification?.summary ??
+      (opening === undefined
         ? ""
         : (openingMessage?.notification?.summary ??
-          presentedText({ ...opening, id: run.userMessageId, role: "user" }));
+          presentedText({ ...opening, id: run.userMessageId, role: "user" })));
     const sender = opening === undefined ? null : senderOf(opening);
 
     const inputs: ThreadMapInput[] =
@@ -259,7 +261,7 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
     const outputs: ThreadMapOutput[] = [...(agentsByRun.get(run.id) ?? [])];
     let toolCalls = 0;
     // Without its opening message, the turn's start is older than the loaded window.
-    let moreToolCalls = !queued && openingItem === undefined;
+    let moreToolCalls = !queued && openingItem === undefined && openingNotification === undefined;
     let firstCommentary: TurnItemId | null = null;
     let firstAssistant: TurnItemId | null = null;
     let lastAssistant: TurnItemId | null = null;
@@ -280,13 +282,16 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
         });
       } else if (item.type === "assistant_message") {
         firstAssistant ??= item.id;
-        if (item.delivery !== "async") lastAssistant = item.id;
         if (item.phase === "commentary") firstCommentary ??= item.id;
-        if (item.phase === "final_answer") finalAnswer = item.id;
+        // An async alert is sent apart from the answer, even when marked as one.
+        if (item.delivery !== "async") {
+          lastAssistant = item.id;
+          if (item.phase === "final_answer") finalAnswer = item.id;
+        }
       } else if (
         item.type === "dynamic_tool" &&
         THREAD_SEND_TOOLS.has(resolveT3McpToolId(item.toolName) ?? "") &&
-        !isFailedSend(item)
+        isDeliveredSend(item)
       ) {
         outputs.push({ kind: "send", id: `send:${item.id}`, threadId: sendTarget(item) });
       }
@@ -301,7 +306,7 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
       number: run.ordinal,
       status: run.status,
       queued,
-      userMessageId: run.userMessageId,
+      rowId: openingNotification?.id ?? run.userMessageId,
       prompt,
       sender,
       updateItemId,
