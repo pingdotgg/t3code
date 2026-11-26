@@ -198,6 +198,13 @@ describe("thread links", () => {
       ["> Use `example", `> ${hidden} end\``, `> ${after}`],
       ["> > Use `example", `> > ${hidden} end\``, `> > ${after}`],
       ["> Use `example", `${hidden} end\``, after],
+      ["Use `example", `    > ${hidden} end\``, after],
+      ["> Use `example", `>     > ${hidden} end\``, `> ${after}`],
+      ["> Intro", "Use `example", `> ${hidden} end\``, `> ${after}`],
+      ["> > Intro", "> Use `example", `> > ${hidden} end\``, `> > ${after}`],
+      ["1. Stray ` tick", `    > ${after} and \`code\``],
+      ["1. Intro", "", "    Stray ` tick", `    > ${after} and \`code\``],
+      ["- Intro", "", "Use `example", `    > ${hidden} end\``, after],
       ["Use `example", "```" + hidden + "`", after],
       ["\\\\``" + after + "`"],
     ]) {

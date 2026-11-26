@@ -28,7 +28,7 @@ const fencedCode = (char: "`" | "~", name: string) => {
 // A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, or deeper blockquote.
 const SPAN_BREAK_LINE =
   /[ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|(?:[-*+]|\d{1,9}[.)])[ \t]|`{3,}[^`\r\n]*\r?$|~{3,})/my;
-const LINE_PREFIX = /[ \t]*(?:>[ \t]*|(?:[-*+]|\d{1,9}[.)])[ \t]+)*/y;
+const LINE_PREFIX = /([ \t]*)(>|(?:[-*+]|\d{1,9}[.)])[ \t]+)?/y;
 // Earlier alternatives claim text so later ones cannot match inside it: an escaped character opens
 // nothing, code is literal, and a link to anywhere else keeps a thread URL in its label or href.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
@@ -47,14 +47,62 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
   "gm",
 );
 
-function quoteDepthAt(markdown: string, lineStart: number): number {
-  LINE_PREFIX.lastIndex = lineStart;
-  return LINE_PREFIX.exec(markdown)?.[0].replace(/[^>]/g, "").length ?? 0;
+function codeSpanLines(markdown: string) {
+  const lines: Array<{ start: number; depth: number }> = [];
+  const listIndents: number[] = [];
+  let paragraphDepth: number | undefined;
+  let start = 0;
+  for (const line of markdown.split("\n")) {
+    let offset = 0;
+    let depth = 0;
+    let hasList = false;
+    let listOffset = 0;
+    while (offset < line.length) {
+      LINE_PREFIX.lastIndex = offset;
+      const prefix = LINE_PREFIX.exec(line);
+      if (prefix === null) break;
+      const indent = prefix[1]!.replace(/\t/g, "    ").length;
+      if (
+        listOffset === 0 &&
+        paragraphDepth === undefined &&
+        indent < (listIndents[depth] ?? 0) &&
+        line.trim()
+      ) {
+        listIndents.length = depth;
+      }
+      const containerIndent = listIndents[depth] ?? 0;
+      const continuedIndent = indent >= containerIndent ? containerIndent : 0;
+      if (prefix[2] === undefined || indent - continuedIndent > 3) break;
+      offset = LINE_PREFIX.lastIndex;
+      if (prefix[2] === ">") {
+        depth++;
+        listOffset = 0;
+        if (line[offset] === " " || line[offset] === "\t") offset++;
+      } else {
+        listOffset += indent + prefix[2]!.replace(/\t/g, "    ").length;
+        listIndents[depth] = listOffset;
+        hasList = true;
+      }
+    }
+    const content = line.slice(offset);
+    const endsParagraph =
+      /^(?:[ \t\r]*$|[ \t]*#{1,6}(?:[ \t]|$)|[ \t]*`{3,}[^`]*$|[ \t]*~{3,})/.test(content);
+    const effectiveDepth = endsParagraph || hasList ? depth : Math.max(depth, paragraphDepth ?? 0);
+    lines.push({ start, depth: effectiveDepth });
+    paragraphDepth = endsParagraph ? undefined : effectiveDepth;
+    start += line.length + 1;
+  }
+  return lines;
 }
 
-function findCodeSpanEnd(markdown: string, openIndex: number, tickCount: number): number {
-  // Found only once the span wraps: looking back for the line start per backtick is quadratic on a long line.
-  let openDepth: number | undefined;
+function findCodeSpanEnd(
+  markdown: string,
+  openIndex: number,
+  tickCount: number,
+  lines: ReturnType<typeof codeSpanLines>,
+  lineIndex: number,
+): number {
+  const openDepth = lines[lineIndex]!.depth;
   for (let i = openIndex + tickCount; i < markdown.length; i++) {
     if (markdown[i] === "`") {
       let runEnd = i + 1;
@@ -62,9 +110,9 @@ function findCodeSpanEnd(markdown: string, openIndex: number, tickCount: number)
       if (runEnd - i === tickCount) return runEnd;
       i = runEnd - 1;
     } else if (markdown[i] === "\n") {
-      openDepth ??= quoteDepthAt(markdown, markdown.lastIndexOf("\n", openIndex) + 1);
+      lineIndex++;
       SPAN_BREAK_LINE.lastIndex = i + 1;
-      if (SPAN_BREAK_LINE.test(markdown) || quoteDepthAt(markdown, i + 1) > openDepth) return -1;
+      if (SPAN_BREAK_LINE.test(markdown) || lines[lineIndex]!.depth > openDepth) return -1;
     }
   }
   return -1;
@@ -224,10 +272,15 @@ export function replaceThreadLinks(
   const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
   let result = "";
   let cursor = 0;
+  let lines: ReturnType<typeof codeSpanLines> | undefined;
+  let lineIndex = 0;
   for (let match = pattern.exec(markdown); match !== null; match = pattern.exec(markdown)) {
     const spanTicks = match.groups?.spanTicks;
     if (spanTicks !== undefined) {
-      const spanEnd = findCodeSpanEnd(markdown, match.index, spanTicks.length);
+      lines ??= codeSpanLines(markdown);
+      while (lineIndex + 1 < lines.length && lines[lineIndex + 1]!.start <= match.index)
+        lineIndex++;
+      const spanEnd = findCodeSpanEnd(markdown, match.index, spanTicks.length, lines, lineIndex);
       if (spanEnd !== -1) pattern.lastIndex = spanEnd;
       continue;
     }
