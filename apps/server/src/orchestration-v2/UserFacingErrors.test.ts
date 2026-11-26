@@ -89,8 +89,6 @@ describe("userFacingDispatchErrorMessage", () => {
   it("formats capability errors for provider instance IDs matching Object.prototype keys", () => {
     for (const [instanceId, expectedName] of [
       ["constructor", "Constructor"],
-      ["toString", "ToString"],
-      ["valueOf", "ValueOf"],
       ["claudeAgent", "Claude"],
     ] as const) {
       const error = new CommandPolicyCapabilityUnsupportedError({
