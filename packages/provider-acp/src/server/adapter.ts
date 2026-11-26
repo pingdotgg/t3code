@@ -7698,9 +7698,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
-                  const context = followsAgentWorkState
-                    ? yield* Ref.get(activeTurn)
-                    : yield* activeContext;
+                  const context = yield* Ref.get(activeTurn);
+                  // An ask that raced session/cancel lands after the turn settled; ACP expects `cancelled`.
+                  if (context === null && !followsAgentWorkState) {
+                    return {
+                      _tag: "Immediate" as const,
+                      response: { outcome: { outcome: "cancelled" } } as const,
+                    };
+                  }
                   const disposition = dispositionFor(
                     context?.input.runtimePolicy ?? latestRuntimePolicy,
                     policyRequest(
@@ -7729,10 +7734,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           : ({ outcome: { outcome: "selected", optionId } } as const),
                     };
                   }
+                  if (context === null) {
+                    return {
+                      _tag: "Immediate" as const,
+                      response: { outcome: { outcome: "cancelled" } } as const,
+                    };
+                  }
                   return {
                     _tag: "Pending" as const,
                     pending: yield* beginApprovalRequest(
-                      yield* activeContext,
+                      context,
                       params,
                       handlerGeneration,
                       transportRequestId,
