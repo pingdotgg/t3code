@@ -1804,10 +1804,18 @@ export function useComposerSend(input: ComposerSendInput) {
     const workspaceDefault =
       draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
     if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
+    const submittedDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
     sendInFlightRef.current = true;
     await workspaceDefault.finally(() => {
       sendInFlightRef.current = false;
     });
+    // Workspace defaults update the draft session. A composer edit invalidates the send.
+    if (
+      currentRouteThreadKeyRef.current !== routeThreadKey ||
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) !== submittedDraft
+    ) {
+      return;
+    }
     return sendWithEnvironmentRefreshLatest(...args);
   };
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
