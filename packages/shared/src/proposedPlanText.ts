@@ -25,20 +25,21 @@ export function proposedPlanTitle(planMarkdown: string): string | null {
 }
 
 export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
-  const lines = planMarkdown.trimEnd().split(/\r?\n/);
-  const lineAt = (index: number) =>
-    index === 0 ? lines[index]?.replace(/^\uFEFF/, "") : lines[index];
+  const lines = planMarkdown
+    .replace(/^\uFEFF/, "")
+    .trimEnd()
+    .split(/\r?\n/);
   let start = 0;
-  while (lineAt(start)?.trim().length === 0 || headingText(lineAt(start) ?? "") === "") {
+  while (lines[start]?.trim().length === 0 || headingText(lines[start] ?? "") === "") {
     start += 1;
   }
-  if (headingText(lineAt(start) ?? "")) start += 1;
-  while (lineAt(start)?.trim().length === 0) {
+  if (headingText(lines[start] ?? "")) start += 1;
+  while (lines[start]?.trim().length === 0) {
     start += 1;
   }
-  if (headingText(lineAt(start) ?? "")?.toLowerCase() === "summary") {
+  if (headingText(lines[start] ?? "")?.toLowerCase() === "summary") {
     start += 1;
-    while (lineAt(start)?.trim().length === 0) {
+    while (lines[start]?.trim().length === 0) {
       start += 1;
     }
   }

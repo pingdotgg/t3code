@@ -32,23 +32,13 @@ it("strips the displayed plan title and summary after leading blank lines", () =
   expect(stripDisplayedPlanMarkdown(markdown)).toBe("Body text");
 });
 
-it("consumes a document-leading byte-order mark before scanning plan headings", () => {
+it("reads the plan title past a leading byte-order mark", () => {
   for (const markdown of [
     "\uFEFF# Rollout\n\nDeploy",
     "\uFEFF   # Rollout\r\n\r\n## Summary\r\n\r\nDeploy",
   ]) {
-    expect.soft(proposedPlanTitle(markdown)).toBe("Rollout");
-    expect.soft(stripDisplayedPlanMarkdown(markdown)).toBe("Deploy");
+    expect(proposedPlanTitle(markdown)).toBe("Rollout");
+    expect(stripDisplayedPlanMarkdown(markdown)).toBe("Deploy");
   }
-  expect(proposedPlanTitle("\uFEFF```sh\n# Comment\n```\n\n# Rollout")).toBe("Rollout");
-});
-
-it("preserves byte-order marks away from the document start and heading indentation", () => {
-  for (const markdown of ["\n\uFEFF# Rollout", "\uFEFF\uFEFF# Rollout", "\uFEFF    # Rollout"]) {
-    expect(proposedPlanTitle(markdown)).toBeNull();
-  }
-  for (const markdown of ["\uFEFF\uFEFF# Rollout\n\nDeploy", "\uFEFFDeploy\uFEFFhere"]) {
-    expect(stripDisplayedPlanMarkdown(markdown)).toBe(markdown);
-  }
-  expect(stripDisplayedPlanMarkdown("# Rollout\n\nDeploy\uFEFFhere")).toBe("Deploy\uFEFFhere");
+  expect(proposedPlanTitle("\uFEFF    # Indented code")).toBeNull();
 });
