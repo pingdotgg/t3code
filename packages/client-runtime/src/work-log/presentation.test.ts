@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { compactT3McpToolOutput } from "@t3tools/shared/toolOutput";
 
 import {
   resolveViewedImageAsset,
@@ -10,6 +11,9 @@ import {
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
+  workEntriesViewedImagePaths,
+  workEntriesViewedImages,
+  workEntryViewedImagePath,
 } from "./presentation.js";
 
 function commandItem(
@@ -157,6 +161,28 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toEqual({ displayName: "Taking a snapshot of the preview page", icon: "browser" });
   });
 
+  it("names the reported outcome when it contradicts the row's verb", () => {
+    const row = (tool: string, output: unknown) =>
+      resolveWorkEntryToolPresentation({
+        label: `T3-code.${tool}`,
+        toolLifecycleStatus: "completed",
+        toolData: { output: compactT3McpToolOutput(`t3-code.${tool}`, output) },
+      })?.displayName;
+    expect(row("pull_request_create", { number: 470, created: false })).toBe(
+      "Found 1 open pull request",
+    );
+    expect(row("pull_request_create", { number: 470, created: true })).toBe(
+      "Opened a pull request",
+    );
+    expect(row("ci_rerun", { number: 883, checks: [] })).toBe("Found no failed checks to re-run");
+    expect(row("ci_rerun", { number: 883, checks: [{ name: "ci", rerun: true }] })).toBe(
+      "Re-ran CI",
+    );
+    expect(row("pull_request_merge", { number: 1, state: "open" })).toBe(
+      "Queued 1 pull request to merge",
+    );
+  });
+
   it("uses the summary's state only when the provider omitted a lifecycle status", () => {
     const entry = { label: "T3-code.preview_click" };
     expect(resolveWorkEntryToolPresentation(entry, "inProgress")?.displayName).toBe(
@@ -223,5 +249,69 @@ describe("resolveViewedImageAsset", () => {
       resolveViewedImageAsset("file:///repo/my%20shot.png", { threadId: ThreadId.make("thread") })
         ?.resource.path,
     ).toBe("/repo/my shot.png");
+  });
+});
+
+describe("workEntryViewedImagePath", () => {
+  it("withholds a Read's image preview until the Read has finished", () => {
+    const read: WorkLogPresentationEntry = {
+      id: "read",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      label: "Read",
+      tone: "tool",
+      itemType: "dynamic_tool",
+      viewedImagePath: "/repo/out/later3.png",
+    };
+
+    expect(workEntryViewedImagePath({ ...read, toolLifecycleStatus: "inProgress" })).toBeNull();
+    expect(workEntryViewedImagePath({ ...read, toolLifecycleStatus: "completed" })).toBe(
+      "/repo/out/later3.png",
+    );
+  });
+});
+
+describe("workEntriesViewedImages", () => {
+  const read = (
+    id: string,
+    path: string,
+    toolLifecycleStatus: NonNullable<WorkLogPresentationEntry["toolLifecycleStatus"]>,
+  ): WorkLogPresentationEntry => ({
+    id,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: "Read",
+    tone: "tool",
+    itemType: "dynamic_tool",
+    viewedImagePath: path,
+    toolLifecycleStatus,
+  });
+
+  it("marks an image pending until a Read of it finishes", () => {
+    expect(
+      workEntriesViewedImages([
+        read("done", "/repo/a.png", "completed"),
+        read("running", "/repo/b.png", "inProgress"),
+        read("missing", "/repo/c.png", "failed"),
+        read("again", "/repo/a.png", "inProgress"),
+      ]),
+    ).toEqual([
+      { path: "/repo/a.png", pending: false },
+      { path: "/repo/b.png", pending: true },
+    ]);
+    expect(
+      workEntriesViewedImages([
+        read("running", "/repo/b.png", "inProgress"),
+        read("done", "/repo/b.png", "completed"),
+      ]),
+    ).toEqual([{ path: "/repo/b.png", pending: false }]);
+  });
+
+  it("orders the finished images like the strip shows them", () => {
+    expect(
+      workEntriesViewedImagePaths([
+        read("first", "/repo/a.png", "inProgress"),
+        read("other", "/repo/b.png", "completed"),
+        read("again", "/repo/a.png", "completed"),
+      ]),
+    ).toEqual(["/repo/a.png", "/repo/b.png"]);
   });
 });

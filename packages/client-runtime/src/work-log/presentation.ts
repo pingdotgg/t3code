@@ -26,6 +26,7 @@ import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
 
 import {
   summarizeT3ToolCalls,
+  t3ToolOutcomeLabel,
   t3ToolResultIndicatesFailure,
   type T3ToolSummaryCall,
 } from "@t3tools/client-runtime/t3ToolSummary";
@@ -304,13 +305,24 @@ export function resolveWorkEntryToolPresentation(
     workEntryToolName(entry),
     workEntryToolInput(entry),
   );
+  const output = workEntryToolOutput(entry);
+  const failed = definition !== null && t3ToolResultIndicatesFailure(output);
   const status = entry.toolLifecycleStatus ?? fallbackStatus;
-  return resolveT3McpToolPresentation(
+  const presentation = resolveT3McpToolPresentation(
     definition,
-    definition && t3ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
+    failed ? "failed" : status,
     entry.toolData,
     resolve,
   );
+  if (definition === null || presentation === null || failed || status !== "completed") {
+    return presentation;
+  }
+  const outcomeLabel = t3ToolOutcomeLabel(
+    definition.summaryAction,
+    { input: workEntryToolInput(entry), output, outcome: "completed" },
+    resolve,
+  );
+  return outcomeLabel === undefined ? presentation : { ...presentation, displayName: outcomeLabel };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -467,9 +479,13 @@ function computeToolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
 }
 
 export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): string | null {
-  if (entry.toolLifecycleStatus === "failed") {
-    return null;
-  }
+  // The file may not exist until the call runs, and an open row never retries a failed asset URL.
+  return entry.toolLifecycleStatus === "failed" || entry.toolLifecycleStatus === "inProgress"
+    ? null
+    : viewedImagePathOf(entry);
+}
+
+function viewedImagePathOf(entry: WorkLogPresentationEntry): string | null {
   const viewedImagePath = entry.viewedImagePath?.trim();
   if (
     viewedImagePath !== undefined &&
@@ -491,7 +507,28 @@ export function workEntryViewedImagePath(entry: WorkLogPresentationEntry): strin
 export function workEntriesViewedImagePaths(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): string[] {
-  return [...new Set(entries.flatMap((entry) => workEntryViewedImagePath(entry) ?? []))];
+  return workEntriesViewedImages(entries).flatMap(({ path, pending }) => (pending ? [] : path));
+}
+
+export interface ViewedImage {
+  readonly path: string;
+  /** Only running Reads opened it, so its file may not exist yet; show a placeholder, not a request. */
+  readonly pending: boolean;
+}
+
+/** {@link workEntriesViewedImagePaths}, plus the images a running Read is opening. */
+export function workEntriesViewedImages(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): ViewedImage[] {
+  const pendingByPath = new Map<string, boolean>();
+  for (const entry of entries) {
+    if (entry.toolLifecycleStatus === "failed") continue;
+    const path = viewedImagePathOf(entry);
+    if (path === null) continue;
+    const pending = entry.toolLifecycleStatus === "inProgress";
+    pendingByPath.set(path, (pendingByPath.get(path) ?? true) && pending);
+  }
+  return [...pendingByPath].map(([path, pending]) => ({ path, pending }));
 }
 
 export interface ViewedImageAsset {

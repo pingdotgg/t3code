@@ -32,6 +32,22 @@ import type {
 } from "./gitHubPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
 
+/**
+ * `review-requested:<viewer>` search rows include the viewer's team requests, which name no login,
+ * so record the viewer as requested. Search rows only: the listing fallback cannot tell whether the
+ * viewer belongs to a requested team.
+ */
+function withViewerRequested<T extends { readonly reviewRequestLogins: ReadonlyArray<string> }>(
+  item: T,
+  input: { readonly involvement: string; readonly viewer: string },
+): T {
+  const viewer = input.viewer.toLowerCase();
+  return input.involvement === "reviewing" &&
+    !item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer)
+    ? { ...item, reviewRequestLogins: [...item.reviewRequestLogins, input.viewer] }
+    : item;
+}
+
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
   comment: true,
@@ -434,7 +450,7 @@ export const make = Effect.gen(function* () {
           Effect.map((page) => ({
             ...page,
             items: page.items.map((item) => ({
-              ...item,
+              ...(page.continues ? withViewerRequested(item, input) : item),
               author: withAvatar(item.author, new Map<string, string>(), input.host),
             })),
           })),
@@ -460,7 +476,7 @@ export const make = Effect.gen(function* () {
             Effect.map(unresolvedBySearch(input, batch), (unresolved) => ({
               truncated: batch.truncated,
               items: batch.items.map((item) => ({
-                ...item,
+                ...withViewerRequested(item, input),
                 author: withAvatar(item.author, new Map<string, string>(), input.host),
               })),
               unresolved,
@@ -503,7 +519,11 @@ export const make = Effect.gen(function* () {
 
     getChangeRequestChecks: (input) =>
       cli.revalidateChecks(input, readChecks(input)).pipe(
-        Effect.map(({ state, checks }) => ({ state, checks })),
+        Effect.map(({ state, checks, workflowApprovalsRequired }) => ({
+          state,
+          checks,
+          ...(workflowApprovalsRequired === undefined ? {} : { workflowApprovalsRequired }),
+        })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
 

@@ -1776,14 +1776,18 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
               commands: (yield* thread.takeGitCommands).map(gitSubcommand),
             };
           });
+        // Turn 1 kept the scope's index, so no read-tree or ls-files rebuilds it. diff-tree
+        // lists where it differs from HEAD, cat-file checks its blobs survived gc, and the
+        // second diff-tree checks no .gitattributes changed under it.
         const snapshot = [
           "rev-parse",
           "log",
           "config",
-          "read-tree",
-          "ls-files",
+          "diff-tree",
+          "cat-file",
           "add",
           "write-tree",
+          "diff-tree",
           "log",
           "commit-tree",
           "update-ref",

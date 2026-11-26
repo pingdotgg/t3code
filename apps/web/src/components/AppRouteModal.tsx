@@ -2,7 +2,14 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { T, useGT } from "gt-react";
 import { XIcon } from "lucide-react";
 import { useRouter } from "@tanstack/react-router";
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
 import { getCommandPaletteOpener } from "../commandPaletteStore";
 import { useNativeTitlebarHeight } from "../lib/windowControlsOverlay";
@@ -11,14 +18,22 @@ import { useCloseAppModal } from "./sidebar/mainAppLocation";
 import { GlobalVoiceInputIndicator } from "./chat/GlobalVoiceInputIndicator";
 import { Button } from "./ui/button";
 import { DialogBackdrop } from "./ui/dialog";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 /**
  * Large modal for the Settings and Usage routes. Esc, the close button, or a press on the
  * backdrop returns to the page that opened it. Keyboard guards that skip dialogs exempt
  * `[data-app-modal]`, because these pages own their shortcuts.
  */
-export function AppRouteModal({ label, children }: { label: string; children: ReactNode }) {
+export function AppRouteModal({
+  label,
+  actionsRef,
+  children,
+}: {
+  label: string;
+  actionsRef?: RefObject<DialogPrimitive.Root.Actions | null>;
+  children: ReactNode;
+}) {
   const closeAppModal = useCloseAppModal();
   const [open, setOpen] = useState(true);
   // Text selection that ends on the backdrop is not a dismissal.
@@ -56,6 +71,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   return (
     <DialogPrimitive.Root
       open={open}
+      actionsRef={actionsRef}
       // Portaled layers outside this tree (toasts, Clerk, confirm dialogs) are not backdrop presses.
       disablePointerDismissal
       onOpenChange={(nextOpen, eventDetails) => {
@@ -144,20 +160,21 @@ function blurFocusedWithin(container: HTMLElement | null) {
 export function AppRouteModalClose() {
   const gt = useGT();
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <DialogPrimitive.Close
-            aria-label={gt("Close")}
-            render={<Button size="icon-sm" variant="ghost" />}
-          />
-        }
-      >
-        <XIcon />
-      </TooltipTrigger>
-      <TooltipPopup side="bottom">
-        <T>Close (Esc)</T>
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <DialogPrimitive.Close
+          aria-label={gt("Close")}
+          render={<Button size="icon-sm" variant="ghost" />}
+        />
+      }
+      label={
+        <>
+          <T>Close (Esc)</T>
+        </>
+      }
+      side="bottom"
+    >
+      <XIcon />
+    </SharedTooltipTrigger>
   );
 }
