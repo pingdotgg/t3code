@@ -516,7 +516,7 @@ it.each([
   },
 );
 
-it("recovers from a failed download progress poll without notifying, but reports a failed initial load", async () => {
+it("caps progress while downloading, recovers from a failed poll, and reports a failed initial load", async () => {
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-progress"),
     label: "Test environment",
@@ -538,6 +538,7 @@ it("recovers from a failed download progress poll without notifying, but reports
     supportsLanguageDetection: false,
     active: false,
     state: "downloading",
+    downloaded: 100,
   };
   const status = {
     supported: true,
@@ -553,11 +554,12 @@ it("recovers from a failed download progress poll without notifying, but reports
     gpuDevices: [],
   };
   const unavailable = () => new Response(null, { status: 503 });
+  const installed = deferred<Response>();
   const readModels = vi
     .fn((_withBenchmarks: boolean) => unavailable())
     .mockImplementationOnce(() => Response.json({ models: [model] }))
     .mockImplementationOnce(unavailable)
-    .mockImplementationOnce(() => Response.json({ models: [{ ...model, state: "installed" }] }));
+    .mockImplementationOnce(() => installed.promise);
   const fetch = globalThis.fetch;
   using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.href);
@@ -576,6 +578,10 @@ it("recovers from a failed download progress poll without notifying, but reports
         </SettingsScopeProvider>
       );
       await using screen = await render(panel("first"));
+      const progress = screen.getByRole("progressbar", { name: "Tiny download progress" });
+      await expect.element(progress).toHaveAttribute("aria-valuenow", "99");
+      await expect.element(progress.locator("div")).toHaveStyle({ width: "99%" });
+      installed.resolve(Response.json({ models: [{ ...model, state: "installed" }] }));
       await expect.element(screen.getByRole("button", { name: "Use model" })).toBeVisible();
       expect(readModels.mock.calls.map(([withBenchmarks]) => withBenchmarks)).toEqual([
         true,
