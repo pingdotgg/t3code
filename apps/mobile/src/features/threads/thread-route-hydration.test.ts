@@ -113,11 +113,17 @@ describe("threadRouteOpensDraft", () => {
     expect(threadRouteOpensDraft(failedDetail)).toBe(false);
   });
 
+  it("keeps the route of an uncached thread while its environment is unreachable", () => {
+    expect(threadRouteOpensDraft({ connectionState: "offline", detailStatus: "empty" })).toBe(
+      false,
+    );
+    expect(threadRouteOpensDraft({ connectionState: "error", detailStatus: "empty" })).toBe(false);
+  });
+
   it("opens a draft once the thread can't arrive", () => {
     expect(
       threadRouteOpensDraft({ connectionState: "reconnecting", detailStatus: "deleted" }),
     ).toBe(true);
-    expect(threadRouteOpensDraft({ connectionState: "offline", detailStatus: "empty" })).toBe(true);
   });
 });
 
