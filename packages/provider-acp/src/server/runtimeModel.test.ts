@@ -1678,6 +1678,50 @@ describe("extractMcpToolCallIdentity", () => {
     ).toEqual({ server: "t3-code", tool: "delegate_task", input: { task: "x" } });
   });
 
+  it("recovers T3 identity from multi-line acp-mcp-call fallback commands", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "exec-multiline",
+      kind: "execute",
+      title: "Ran command",
+      status: "in_progress",
+    });
+    const heredoc = [
+      `ELECTRON_RUN_AS_NODE=1 "$T3_ACP_MCP_NODE" \${T3_ACP_MCP_ENTRYPOINT:+"$T3_ACP_MCP_ENTRYPOINT"} acp-mcp-call html_render - <<'EOF'`,
+      '{"path":"/abs/page.html","title":"Report","height":420}',
+      "EOF",
+    ].join("\n");
+    const multiLineJson =
+      '"$T3_ACP_MCP_NODE" acp-mcp-call html_render \'{\n  "path": "/abs/page.html",\n  "title": "Report"\n}\'';
+
+    expect(
+      extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: [heredoc] }),
+    ).toMatchObject({ server: "t3-code", tool: "html_render" });
+    expect(
+      extractMcpToolCallIdentity(toolCall, { embeddedTerminalCommands: [multiLineJson] }),
+    ).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+      input: { path: "/abs/page.html", title: "Report" },
+    });
+  });
+
+  it("does not treat a command that only mentions acp-mcp-call as a T3 tool call", () => {
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "exec-mention",
+      kind: "execute",
+      title: "Ran command",
+      status: "in_progress",
+    });
+
+    expect(
+      extractMcpToolCallIdentity(toolCall, {
+        embeddedTerminalCommands: ['rg "acp-mcp-call" --hidden'],
+      }),
+    ).toBeUndefined();
+  });
+
   it("recovers T3 identity from pi-acp title-only fallback execs", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
