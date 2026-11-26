@@ -4417,11 +4417,10 @@ describe("UsageService", () => {
       const localProjectDir = NodePath.join(projectsDir, "C--Users-dev-app");
       const nestedSshDir = NodePath.join(localProjectDir, "ssh-nested");
       const mirrorDir = NodePath.join(projectsDir, `ssh-${sessionId}`);
-      const mirrorSubagentDir = NodePath.join(mirrorDir, sessionId, "subagents");
       yield* Effect.promise(() =>
         Promise.all([
           NodeFSP.mkdir(nestedSshDir, { recursive: true }),
-          NodeFSP.mkdir(mirrorSubagentDir, { recursive: true }),
+          NodeFSP.mkdir(mirrorDir, { recursive: true }),
         ]),
       );
 
@@ -4438,10 +4437,6 @@ describe("UsageService", () => {
           NodeFSP.writeFile(
             NodePath.join(mirrorDir, `${sessionId}.jsonl`),
             claudeLine(3, 100, "claude-fable-5", sessionId),
-          ),
-          NodeFSP.writeFile(
-            NodePath.join(mirrorSubagentDir, "agent-1.jsonl"),
-            claudeLine(4, 50, "claude-fable-5", sessionId),
           ),
         ]),
       );
