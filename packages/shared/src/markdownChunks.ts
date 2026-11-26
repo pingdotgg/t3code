@@ -142,8 +142,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
-      // An indented fence may sit in a list item, which this does not track.
-      openedFence = /^[`~]/.test(line) && FENCE_OPEN.test(line);
+      // Two or more spaces may put a fence in a list item, which this does not track.
+      openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       const definition: boolean =
