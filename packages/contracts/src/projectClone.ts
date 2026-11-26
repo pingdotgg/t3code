@@ -63,6 +63,8 @@ export const ProjectCloneStartResult = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   remoteUrl: TrimmedNonEmptyString,
   repository: Schema.NullOr(SourceControlRepositoryInfo),
+  /** The destination already held a checkout of this repository, so nothing was cloned. */
+  existingCheckout: Schema.optionalKey(Schema.Boolean),
 });
 export type ProjectCloneStartResult = typeof ProjectCloneStartResult.Type;
 

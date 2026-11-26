@@ -12986,5 +12986,6 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "92e129bf413a1220": "retirada",
-  "800966eb58181745": "Verificando quais idiomas o modelo suporta…"
+  "800966eb58181745": "Verificando quais idiomas o modelo suporta…",
+  "546bb8e7c137c91d": "O checkout que já estava em {target} foi usado, então {count, plural, one {{count} arquivo não foi copiado} other {{count} arquivos não foram copiados}}"
 }

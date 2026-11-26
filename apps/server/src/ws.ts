@@ -205,6 +205,7 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as ManagedProviders from "./policy/managedProviders.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import { invalidateSettingsSecrets } from "./sourceControl/sourceControlHostSecrets.ts";
+import { sourceControlDefinitions } from "./sourceControl/sourceControlDefinitions.ts";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -3062,6 +3063,16 @@ export const layerWsRpc = (
                 Effect.andThen(projectEnrichment.invalidate([project.workspaceRoot])),
                 Effect.andThen(projectEnrichment.request(project.workspaceRoot)),
                 Effect.ignoreCause({ log: true }),
+              ),
+            isCheckoutOf: ({ workspaceRoot, remoteUrl }) =>
+              repositoryIdentityResolver.resolve(workspaceRoot, { refresh: true }).pipe(
+                Effect.map((identity) => {
+                  if (identity === null) return false;
+                  const wanted = sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl);
+                  return (
+                    identity.canonicalKey === wanted || identity.origin?.canonicalKey === wanted
+                  );
+                }),
               ),
           }),
         [WS_METHODS.projectsEnsureScratch]: () =>
