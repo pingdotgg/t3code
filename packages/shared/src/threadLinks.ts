@@ -1,6 +1,9 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type { Nodes } from "mdast";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 
@@ -15,16 +18,28 @@ const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
 const LABEL = String.raw`[^[\]\n]*`;
 const LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*`;
 const QUOTE_PREFIX = new RegExp(String.raw`^([ \t]*${LIST_MARKERS})(>(?:[ \t]*>)+)`, "gm");
+const markdownParser = unified().use(remarkParse);
+
+function startsWithBomPrefixedFence(markdown: string): boolean {
+  if (!markdown.startsWith("\uFEFF")) return false;
+  const [firstLine = ""] = markdown.split(/\r\n?|\n/, 1);
+  let node: Nodes | undefined = markdownParser.parse(firstLine).children[0];
+  while (node && "children" in node) node = node.children[0];
+  // A fence parsed from its opening line has no body. Indented code contains the marker.
+  return node?.type === "code" && node.value === "";
+}
+
 // Mask a leading BOM and move inter-marker spacing before the quote so fences match and offsets
 // stay intact. A label may span \r or U+2028, which multiline `^` follows, so labels and output
 // are read from the original.
 const threadLinkSource = (markdown: string) =>
-  markdown
-    .replace(/^\uFEFF/, " ")
-    .replace(QUOTE_PREFIX, (_source, indent: string, quote: string) => {
+  (startsWithBomPrefixedFence(markdown) ? ` ${markdown.slice(1)}` : markdown).replace(
+    QUOTE_PREFIX,
+    (_source, indent: string, quote: string) => {
       const markers = quote.replace(/[ \t]/g, "");
       return indent + " ".repeat(quote.length - markers.length) + markers;
-    });
+    },
+  );
 // CommonMark fences start on their own line (optional blockquotes, indentation, or list markers)
 // and close on a line with at least as many of the same marker; backtick info strings hold no `.
 // Quote markers are compared from the first `>`, so lines may indent them differently.
