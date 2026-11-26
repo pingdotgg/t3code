@@ -9753,6 +9753,7 @@
   "543ef9fcaf8aa96f": "Выключено",
   "5173c50b0a60847c": "Доступно обновление: {serverVersion} → {clientVersion}",
   "987c5623ba70f390": "Маршруты",
+  "36d52134b8b8d455": "{count, plural, one {{count} маршрут} few {{count} маршрута} many {{count} маршрутов} other {{count} маршрута}}",
   "80a2ef2c87f7f180": "сервер {label}",
   "08f54865b364957d": "Обновить",
   "b426469630d60955": "Выключить {label}",

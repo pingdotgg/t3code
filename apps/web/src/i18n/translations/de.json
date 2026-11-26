@@ -9752,6 +9752,7 @@
   "543ef9fcaf8aa96f": "Ausgeschaltet",
   "5173c50b0a60847c": "Update verfügbar: {serverVersion} → {clientVersion}",
   "987c5623ba70f390": "Routen",
+  "36d52134b8b8d455": "{count, plural, one {{count} Route} other {{count} Routen}}",
   "80a2ef2c87f7f180": "Server {label}",
   "08f54865b364957d": "Aktualisieren",
   "b426469630d60955": "{label} ausschalten",

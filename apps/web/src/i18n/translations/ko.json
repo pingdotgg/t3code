@@ -9707,6 +9707,7 @@
   "543ef9fcaf8aa96f": "꺼짐",
   "5173c50b0a60847c": "업데이트 가능: {serverVersion} → {clientVersion}",
   "987c5623ba70f390": "경로",
+  "36d52134b8b8d455": "{count, plural, other {경로 {count}개}}",
   "80a2ef2c87f7f180": "{label} 서버",
   "08f54865b364957d": "업데이트",
   "b426469630d60955": "{label} 끄기",

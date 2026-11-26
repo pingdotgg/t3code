@@ -9766,6 +9766,7 @@
   "543ef9fcaf8aa96f": "已停用",
   "5173c50b0a60847c": "有可用更新：{serverVersion} → {clientVersion}",
   "987c5623ba70f390": "线路",
+  "36d52134b8b8d455": "{count, plural, other {{count} 条线路}}",
   "80a2ef2c87f7f180": "{label} 服务器",
   "08f54865b364957d": "更新",
   "b426469630d60955": "关闭 {label}",
