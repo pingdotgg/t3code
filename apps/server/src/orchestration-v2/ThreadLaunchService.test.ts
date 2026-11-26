@@ -3558,6 +3558,86 @@ it.live("launches into a task folder and leaves nothing behind when its setup is
   }).pipe(Effect.provide(layerGit), Effect.scoped);
 });
 
+it.live("cancelling setup keeps a worktree that a side chat of the thread already uses", () => {
+  const state: TaskFoldersTestState = { workspaceRoot: "/unset", trackedFolders: [], thread: null };
+  const layerGit = GitVcsDriver.layer.pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-launch-side-chat-" })),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+  const layerTaskFolders = layerTaskFoldersWithGit(state).pipe(
+    Layer.provide(layerGit),
+    Layer.orDie,
+  );
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const run = (cwd: string, ...args: ReadonlyArray<string>) =>
+      git
+        .execute({ operation: "launch-test", cwd, args })
+        .pipe(Effect.map((result) => result.stdout.trim()));
+    const shop = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-side-chat-" }),
+    );
+    const repository = path.join(shop, "api");
+    yield* fileSystem.makeDirectory(repository);
+    yield* run(repository, "init", "-b", "main");
+    yield* run(repository, "config", "user.email", "launch@example.test");
+    yield* run(repository, "config", "user.name", "Launch");
+    yield* fileSystem.writeFileString(path.join(repository, "README.md"), "start\n");
+    yield* run(repository, "add", ".");
+    yield* run(repository, "commit", "-m", "initial");
+    state.workspaceRoot = shop;
+    state.trackedFolders = [{ path: repository, name: "api" }];
+    const entered = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      taskFolders: layerTaskFolders,
+      runSetup: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "launch:side-chat-parent",
+          thread: "thread:side-chat-parent",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main", branch: "feature/side-chat" },
+        }),
+      );
+      yield* Deferred.await(entered);
+      const parent = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(parent.runs[0]?.status, "preparing");
+      const worktreePath = parent.thread.worktreePath!;
+
+      // The side chat is either refused until setup ends, or keeps its checkout.
+      const sideChatId = ThreadId.make("thread:side-chat-child");
+      const opened = yield* threads
+        .dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("fork:side-chat-child"),
+          sourceThreadId: launched.threadId,
+          targetThreadId: sideChatId,
+          sourcePoint: { type: "latest_stable" },
+          sideChat: true,
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.exit);
+      if (opened._tag === "Failure") return;
+      const sideChat = yield* threads.getThreadProjection(sideChatId);
+      assert.equal(sideChat.thread.worktreePath, worktreePath);
+      const sentinel = path.join(worktreePath, "sentinel.txt");
+      yield* fileSystem.writeFileString(sentinel, "side chat work\n");
+
+      assert.isTrue(yield* tracker.cancel(launched.threadId));
+
+      assert.isTrue(yield* fileSystem.exists(sentinel), "the side chat's checkout was removed");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(layerGit), Effect.scoped);
+});
+
 it.effect(
   "deletes a claimed worktree's branch when setup is cancelled before checkout returns",
   () =>
