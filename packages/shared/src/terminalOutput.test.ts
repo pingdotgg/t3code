@@ -335,3 +335,7 @@ describe("terminalOutputSpans", () => {
     expect(spans.map((span) => span.style?.color)).toEqual(["#1f2328", "#1f2328"]);
   });
 });
+
+it.each(["\u0018", "\u001a"])("keeps command output after a cancelled CSI (%j)", (cancel) => {
+  expect(normalizeTerminalOutput(`\u001b[3${cancel}Ready\n`).text).toBe("Ready\n");
+});
