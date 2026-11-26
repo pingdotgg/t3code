@@ -49,6 +49,7 @@ const shellQuote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
 
 const makeHarness = Effect.fn("AntigravityRuntimeHealthTest.makeHarness")(function* (
   source: "path" | "override",
+  symlink: boolean,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -72,13 +73,18 @@ const makeHarness = Effect.fn("AntigravityRuntimeHealthTest.makeHarness")(functi
         ].join("\n"),
       )
       .pipe(Effect.andThen(fs.chmod(file, 0o755)));
+  const initialTarget = symlink ? path.join(root, "original-runtime") : executable;
+  yield* writeRuntime(initialTarget, "variable");
+  yield* fs.writeFileString(versionFile, "1.5.12");
+  if (symlink) yield* fs.symlink(initialTarget, executable);
+
   const installation = yield* AntigravityInstallation.makeAntigravityInstallation({
     baseDir: root,
     releaseAsset: null,
     updateChecksEnabled: Effect.succeed(false),
   });
   const instance = yield* AntigravityDriver.create({
-    instanceId: ProviderInstanceId.make("runtime-health"),
+    instanceId: ProviderInstanceId.make(path.basename(root)),
     displayName: "Antigravity",
     enabled: true,
     config: {
@@ -111,14 +117,7 @@ it.layer(layerTest)("external Antigravity runtime health", (it) => {
   ] as const) {
     it.effect.skipIf(windowsHost)(`clears a ${source} refusal after ${upgrade}`, () =>
       Effect.gen(function* () {
-        const h = yield* makeHarness(source);
-        if (upgrade === "symlink retarget") {
-          yield* h.writeRuntime(h.target + "-old", "variable");
-          yield* h.fs.symlink(h.target + "-old", h.executable);
-        } else {
-          yield* h.writeRuntime(h.executable, "variable");
-        }
-        yield* h.fs.writeFileString(h.versionFile, "1.5.12");
+        const h = yield* makeHarness(source, upgrade === "symlink retarget");
         yield* h.refresh();
         yield* h.fs.writeFileString(h.versionFile, "1.5.0");
         const refused = yield* h.refresh().pipe(Effect.flip);

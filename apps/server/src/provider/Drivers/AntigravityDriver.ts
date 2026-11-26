@@ -17,6 +17,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
@@ -344,21 +345,24 @@ export const AntigravityDriver: ProviderDriver<
       function* (executablePath: string) {
         const target = yield* fileSystem.realPath(executablePath);
         const info = yield* fileSystem.stat(target);
-        return JSON.stringify([
+        return {
           executablePath,
           target,
-          String(info.dev),
-          info.ino.valueOrUndefined?.toString(),
-          String(info.size),
-          info.mtime.valueOrUndefined?.getTime(),
-        ]);
+          device: info.dev,
+          inode: info.ino.valueOrUndefined,
+          size: info.size,
+          modifiedAt: info.mtime.valueOrUndefined?.getTime(),
+        };
       },
       Effect.orElseSucceed(() => undefined),
     );
     let nextExternalAttempt = 0;
     let completedExternalAttempt = 0;
+    type ExternalExecutableIdentity = NonNullable<
+      Effect.Success<ReturnType<typeof externalExecutableIdentity>>
+    >;
     let rejectedExternalRuntime:
-      | { readonly identity: string; readonly version: string }
+      | { readonly identity: ExternalExecutableIdentity; readonly version: string }
       | undefined;
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
@@ -609,8 +613,8 @@ export const AntigravityDriver: ProviderDriver<
           ? yield* externalExecutableIdentity(executable.executablePath)
           : undefined;
       const rememberedVersion =
-        rejectedExternalRuntime?.identity === identity
-          ? rejectedExternalRuntime?.version
+        rejectedExternalRuntime && Equal.equals(rejectedExternalRuntime.identity, identity)
+          ? rejectedExternalRuntime.version
           : undefined;
       if (previousRejection === rejectedExternalRuntime && rememberedVersion === undefined) {
         rejectedExternalRuntime = undefined;
