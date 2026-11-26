@@ -2,6 +2,7 @@ import { useGT } from "gt-react-native";
 import {
   WorkspaceColumnsRendererContext,
   WorkspacePresentationHostContext,
+  WorkspaceVisibleRouteContext,
 } from "./workspace-presentation-context";
 import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -145,6 +146,7 @@ export function Inspector(props: {
   const { registerWorkspaceInspector } = useAdaptiveWorkspaceLayout();
   const navigation = use(NavigationContext);
   const route = use(NavigationRouteContext);
+  const visibleWorkspaceRoute = use(WorkspaceVisibleRouteContext);
   const content: InspectorContent = {
     ...props.content,
     resetKeys: [route?.key, ...(props.content.resetKeys ?? [])],
@@ -169,6 +171,13 @@ export function Inspector(props: {
     }
     deactivateRef.current = registerWorkspaceInspector(content, route?.key, props.revealKey);
   });
+  // An overlay (a maximized thread, a sheet) blurs the route but leaves it the visible workspace
+  // page, so the column stays registered and the sidebar doesn't shift behind the overlay.
+  const handleBlur = useEffectEvent(() => {
+    if (route !== undefined && visibleWorkspaceRoute === route.key) return;
+    focusedRef.current = false;
+    syncRegistration();
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Navigation focus events own the inspector registration lifetime.
   useEffect(() => {
@@ -178,13 +187,9 @@ export function Inspector(props: {
       focusedRef.current = true;
       syncRegistration();
     };
-    const blur = () => {
-      focusedRef.current = false;
-      syncRegistration();
-    };
     if (navigation.isFocused()) focus();
     const unsubscribeFocus = navigation.addListener("focus", focus);
-    const unsubscribeBlur = navigation.addListener("blur", blur);
+    const unsubscribeBlur = navigation.addListener("blur", handleBlur);
     return () => {
       unsubscribeFocus();
       unsubscribeBlur();
