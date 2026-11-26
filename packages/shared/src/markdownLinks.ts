@@ -455,7 +455,9 @@ function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
     if (start >= runStart && start <= runEnd) return runEnd;
     delimiter.lastIndex = start;
     runStart = start;
-    runEnd = delimiter.exec(markdown)?.index ?? markdown.length;
+    let match = delimiter.exec(markdown);
+    while (match?.[0].length === 2 && match[0][0] === "\\") match = delimiter.exec(markdown);
+    runEnd = match?.index ?? markdown.length;
     return runEnd;
   };
 }
@@ -463,8 +465,9 @@ function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
 function markdownLinkTailScanner(markdown: string) {
   // A blank line ends the paragraph, so no part of a link's tail runs past one.
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
-  const doubleQuoteEnd = markdownRunEndFinder(markdown, /"|\n[ \t\r]*\n/g);
-  const singleQuoteEnd = markdownRunEndFinder(markdown, /'|\n[ \t\r]*\n/g);
+  // Escape pairs (`\"`, `\\`) match so the finder can skip them.
+  const doubleQuoteEnd = markdownRunEndFinder(markdown, /\\[\\"]|"|\n[ \t\r]*\n/g);
+  const singleQuoteEnd = markdownRunEndFinder(markdown, /\\[\\']|'|\n[ \t\r]*\n/g);
   const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
   return (start: number) => {
     const end = whitespaceEnd(start);
