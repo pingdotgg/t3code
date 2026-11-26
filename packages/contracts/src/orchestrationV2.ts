@@ -1998,6 +1998,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     exitCode: Schema.optional(Schema.Int),
     /** Set when the command is a monitor, so background work lists it as a monitor. */
     monitor: Schema.optional(Schema.Boolean),
+    awaitingCompletion: Schema.optional(Schema.Literal(true)),
     /** The provider wakes the agent when this command finishes after its turn. */
     completionWake: Schema.optional(Schema.Literal("always")),
   }),
@@ -2900,6 +2901,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     exitCode: Schema.optional(Schema.Int),
     /** Set when the command is a monitor, so background work lists it as a monitor. */
     monitor: Schema.optional(Schema.Boolean),
+    awaitingCompletion: Schema.optional(Schema.Literal(true)),
     /** The provider wakes the agent when this command finishes after its turn. */
     completionWake: Schema.optional(Schema.Literal("always")),
   }),

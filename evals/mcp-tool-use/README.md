@@ -32,6 +32,37 @@ Cases are JSON lines in `cases/`, one file per area. The case schema in `run.ts`
 
 Check that the case builds with `--dry-run --case <id>`. Then run it on the text before your fix, where it must fail, and on the text after, where it must pass.
 
+## Antigravity background work (live)
+
+The replay runner does not run Antigravity. To reproduce the reported premature handoff during
+device capture, use the same Antigravity runtime and model on both revisions. Use a fresh
+disposable project and a fresh thread on an isolated T3 server for each sample (or stop the
+previous server and remove `ready.txt`, `screenshot.txt`, and `published.txt` before reusing a
+project). Put this executable `fixture` in the project:
+
+```sh
+#!/bin/sh
+set -eu
+case "$1" in
+  serve) sleep 18; printf 'ready\n' > ready.txt; exec sleep 90 ;;
+  capture)
+    if ! test -f ready.txt; then echo 'Server is not ready'; exit 73; fi
+    sleep 14; printf 'proof captured\n' > screenshot.txt; echo CAPTURE_OK
+    ;;
+  publish) cp screenshot.txt published.txt; echo PUBLISH_OK ;;
+esac
+```
+
+Prompt: “Please start the fixture dev server in the background with `./fixture serve`. I need you
+to capture the result with `./fixture capture` and then publish it with `./fixture publish`.
+Leave the dev server running until the work is complete. Go ahead and do those steps.”
+
+Pass when the agent creates `published.txt` and reports the result without another user message or
+waiting for the server to exit. If the first capture fails because the server is not ready, a
+finite readiness check is valid; leaving only the daemon running and promising to continue is not.
+For the control case, omit `sleep 18` and verify the agent still completes the finite capture and
+publish steps.
+
 ## Device manager cases
 
 `cases/device-manager.ndjson` ports nine mechanisms from the [device-routing investigation described in #25661](https://github.com/pingdotgg/t3code/pull/25661) and adds seven cases from t3dotgg’s 2026-10-26 fleet device investigation. All prompts, files, hosts and prior turns are authored Acme data; the fleet cases cite finding ids without carrying source transcripts or identifiers.

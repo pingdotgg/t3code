@@ -466,6 +466,37 @@ describe("orchestration V2 contracts", () => {
     expect(runtimeThread.contextUsage).toBeNull();
     expect(runtimeThread.nativeMetadata).toBeNull();
   });
+
+  it("preserves awaitingCompletion on command_execution items across JSON round-trip", () => {
+    const encoded = encodeOrchestrationV2TurnItemJson({
+      id: "item-cmd-1" as OrchestrationV2TurnItem["id"],
+      threadId: ThreadId.make("thread-1"),
+      runId: RunId.make("run-1"),
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "running",
+      title: "Run capture",
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "command_execution",
+      input: "./fixture capture",
+      awaitingCompletion: true,
+    });
+    expect(encoded).toMatchObject({
+      type: "command_execution",
+      status: "running",
+      awaitingCompletion: true,
+    });
+    const decoded = decodeOrchestrationV2TurnItemJson(encoded);
+    expect(decoded.type === "command_execution" ? decoded.awaitingCompletion : undefined).toBe(
+      true,
+    );
+  });
 });
 
 describe("thread open stats", () => {
