@@ -106,9 +106,10 @@ function refreshFailureDetail(cause: unknown) {
     : REFRESH_FAILED;
 }
 
-// Go's url.Error shape: the token request got no HTTP response, so the cause is the route to Google.
-const TOKEN_EXCHANGE_UNREACHABLE =
-  'token exchange failed: Post "https://oauth2.googleapis.com/token":';
+// Go's url.Error shape (`Post "<url>": <cause>`): the token request got no HTTP response.
+const isTokenExchangeUnreachable = (line: string) =>
+  line.includes("token exchange failed") &&
+  line.includes('Post "https://oauth2.googleapis.com/token":');
 const TOKEN_EXCHANGE_UNREACHABLE_MESSAGE =
   "Antigravity could not exchange the sign-in code with Google: the T3 server could not reach oauth2.googleapis.com. Give the T3 server process a working route to it (for example a proxy in its environment), then start sign-in again.";
 
@@ -462,30 +463,22 @@ export const AntigravityDriver: ProviderDriver<
         Effect.ignore,
         Effect.forkScoped,
       );
+      let tokenExchangeError: string | undefined;
       const output = yield* child.stdout.pipe(
         Stream.decodeText(),
         Stream.splitLines,
         Stream.map((line) => line.trim()),
-        Stream.runForEach((line) =>
-          line.startsWith("https://accounts.google.com/")
+        Stream.runForEach((line) => {
+          if (tokenExchangeError === undefined && isTokenExchangeUnreachable(line)) {
+            tokenExchangeError = line;
+          }
+          return line.startsWith("https://accounts.google.com/")
             ? input.onAuthorizationUrl(line)
-            : Effect.void,
-        ),
+            : Effect.void;
+        }),
         Effect.forkScoped,
       );
-      const tokenExchangeError = yield* child.stderr.pipe(
-        Stream.decodeText(),
-        Stream.splitLines,
-        Stream.runFold(
-          () => Option.none<string>(),
-          (found, line) =>
-            Option.isNone(found) && line.includes(TOKEN_EXCHANGE_UNREACHABLE)
-              ? Option.some(line)
-              : found,
-        ),
-        Effect.orElseSucceed(() => Option.none<string>()),
-        Effect.forkScoped,
-      );
+      yield* Stream.runDrain(child.stderr).pipe(Effect.ignore, Effect.forkScoped);
       return {
         submit: (response: string) => Deferred.succeed(code, response).pipe(Effect.asVoid),
         completed: Effect.gen(function* () {
@@ -499,9 +492,8 @@ export const AntigravityDriver: ProviderDriver<
             Effect.mapError((cause) => failed("Antigravity sign-in stopped unexpectedly.", cause)),
           );
           if (Number(exitCode) !== 0) {
-            const unreachable = yield* Fiber.join(tokenExchangeError);
-            if (Option.isSome(unreachable)) {
-              return yield* failed(TOKEN_EXCHANGE_UNREACHABLE_MESSAGE, unreachable.value);
+            if (tokenExchangeError !== undefined) {
+              return yield* failed(TOKEN_EXCHANGE_UNREACHABLE_MESSAGE, tokenExchangeError);
             }
             return yield* failed(
               "Antigravity could not finish Google sign-in. Start sign-in again.",

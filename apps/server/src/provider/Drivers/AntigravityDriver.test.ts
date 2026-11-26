@@ -862,54 +862,58 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       }),
   );
 
-  it.effect.skipIf(windowsHost)(
-    "says why Google sign-in failed when the CLI's code login cannot exchange the code",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* makeHarness();
-        const directory = h.path.join(h.profileDirectory, "..", "token-exchange-timeout");
-        const executablePath = h.path.join(directory, "agy");
-        yield* h.fs.makeDirectory(directory, { recursive: true });
-        const loginUrl =
-          "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=fixture-state";
-        // agy 1.5.17's output when oauth2.googleapis.com is unreachable from this process.
-        yield* h.fs.writeFileString(
-          executablePath,
-          [
-            "#!/bin/sh",
-            `printf '%s\\n' ${shellQuote(loginUrl)}`,
-            "read -r _code",
-            `printf '%s\\n' ${shellQuote('Error: couldn\'t log in: token exchange failed: Post "https://oauth2.googleapis.com/token": dial tcp 192.0.2.1:443: i/o timeout')} >&2`,
-            "exit 1",
-            "",
-          ].join("\n"),
-        );
-        yield* h.fs.chmod(executablePath, 0o755);
-        h.controls.selected = {
-          executablePath,
-          source: "managed",
-          version: "token-exchange-timeout",
-          managedVersionDirectory: directory,
-        };
-        const auth = h.instance.auth;
-        if (!auth?.respond) return yield* Effect.die("Antigravity has no code sign-in.");
-        const owner = "owner-session";
-        const phase = (wanted: string) =>
-          auth.subscribe(owner).pipe(
-            Stream.filter((state) => state.phase === wanted),
-            Stream.runHead,
-            Effect.flatMap(Effect.fromOption),
+  // agy 1.5.17 prints its login failure on stdout: the CLI's own line, and the login log's wording.
+  for (const diagnostic of [
+    'couldn\'t log in: token exchange failed: Post "https://oauth2.googleapis.com/token": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused',
+    'consumerOAuth: token exchange failed due to network error (check firewall/network restrictions): Post "https://oauth2.googleapis.com/token": dial tcp 192.0.2.1:443: i/o timeout',
+  ])
+    it.effect.skipIf(windowsHost)(
+      `says why Google sign-in failed when the CLI's code login cannot exchange the code: ${diagnostic}`,
+      () =>
+        Effect.gen(function* () {
+          const h = yield* makeHarness();
+          const directory = h.path.join(h.profileDirectory, "..", "token-exchange-timeout");
+          const executablePath = h.path.join(directory, "agy");
+          yield* h.fs.makeDirectory(directory, { recursive: true });
+          const loginUrl =
+            "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&state=fixture-state";
+          yield* h.fs.writeFileString(
+            executablePath,
+            [
+              "#!/bin/sh",
+              `printf '%s\\n' ${shellQuote(loginUrl)}`,
+              "read -r _code",
+              `printf '%s\\n' ${shellQuote(diagnostic)}`,
+              "exit 1",
+              "",
+            ].join("\n"),
           );
-        const started = yield* auth.start(owner);
-        yield* phase("waiting");
-        yield* auth.respond(owner, {
-          instanceId: h.instance.instanceId,
-          flowId: started.flowId!,
-          interactionId: started.flowId!,
-          response: { type: "credentials", values: { code: "4/0Ab-code" } },
-        });
-        const failed = yield* phase("failed");
-        expect(failed.message).toMatch(/token exchange|oauth2\.googleapis\.com|network|proxy/i);
-      }),
-  );
+          yield* h.fs.chmod(executablePath, 0o755);
+          h.controls.selected = {
+            executablePath,
+            source: "managed",
+            version: "token-exchange-timeout",
+            managedVersionDirectory: directory,
+          };
+          const auth = h.instance.auth;
+          if (!auth?.respond) return yield* Effect.die("Antigravity has no code sign-in.");
+          const owner = "owner-session";
+          const phase = (wanted: string) =>
+            auth.subscribe(owner).pipe(
+              Stream.filter((state) => state.phase === wanted),
+              Stream.runHead,
+              Effect.flatMap(Effect.fromOption),
+            );
+          const started = yield* auth.start(owner);
+          yield* phase("waiting");
+          yield* auth.respond(owner, {
+            instanceId: h.instance.instanceId,
+            flowId: started.flowId!,
+            interactionId: started.flowId!,
+            response: { type: "credentials", values: { code: "4/0Ab-code" } },
+          });
+          const failed = yield* phase("failed");
+          expect(failed.message).toMatch(/token exchange|oauth2\.googleapis\.com|network|proxy/i);
+        }),
+    );
 });
