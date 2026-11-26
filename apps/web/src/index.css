@@ -2318,6 +2318,20 @@ code {
   }
 }
 
+/* Markdown fences hold sentences, not code: each line takes the direction of its
+   own words. Coding-font ligatures assume left-to-right and would overprint RTL letters.
+   Text and unlabeled fences stay LTR: they often hold trees and tables, whose lines must align. */
+.chat-markdown
+  .chat-markdown-codeblock:is(
+    [data-language="md" i],
+    [data-language="markdown" i],
+    [data-language="mdx" i]
+  )
+  pre {
+  unicode-bidi: plaintext;
+  font-variant-ligatures: none;
+}
+
 /* Sent messages color prose with the message foreground, which is not chosen
    for the code surface, so their plain-text fences keep the global foreground. */
 .chat-markdown.user-message-markdown
