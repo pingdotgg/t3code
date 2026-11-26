@@ -12,9 +12,16 @@ import { useGT, useMessages } from "gt-react-native";
 import { type ComponentProps, type ReactNode, useId, useState } from "react";
 import { Platform, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectReadFileError,
+  type ProjectReadFileResult,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
+  filePreviewKind,
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
   mediaMimeTypeFromExtension,
@@ -75,6 +82,7 @@ import {
 } from "./filePath";
 import { useWorkspaceFileAssetUrlState } from "./workspaceFileAssetUrl";
 import { MOBILE_FULL_FILE_MAX_BYTES, useFullFileText } from "./useFullFileText";
+import { useBinaryFilePreviewText } from "./useBinaryFilePreviewText";
 
 function FilesBrowserHeader(props: {
   readonly projectName: string;
@@ -237,6 +245,8 @@ function FileSourceSurface(props: ComponentProps<typeof SourceFileSurface>) {
     />
   );
 }
+
+const isProjectReadFileError = Schema.is(ProjectReadFileError);
 
 function FileContent(props: {
   readonly activeMode: FileViewMode;
@@ -734,9 +744,26 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         : null,
     revision: `${fileData?.byteLength ?? 0}:${fileRefreshCount}`,
   });
+  const binaryFallbackPath =
+    isProjectReadFileError(fileQuery.failure) &&
+    fileQuery.failure.failure === "binary_file" &&
+    relativePath !== null &&
+    ["text", "markdown"].includes(filePreviewKind({ name: relativePath }))
+      ? relativePath
+      : null;
+  const binaryFallback = useBinaryFilePreviewText({
+    environmentId,
+    threadId,
+    cwd,
+    relativePath: binaryFallbackPath,
+    revision: String(fileRefreshCount),
+  });
   // Until the full text arrives, the 1 MB preview shows with its partial-file notice.
-  const fileContents = fullText ?? fileData?.contents ?? null;
-  const fileTruncated = fileData?.truncated === true && fullText === null;
+  const fileContents = fullText ?? fileData?.contents ?? binaryFallback.content?.text ?? null;
+  const fileTruncated =
+    (fileData?.truncated === true && fullText === null) ||
+    binaryFallback.content?.truncated === true;
+  const fileError = binaryFallbackPath === null ? fileQuery.error : binaryFallback.error;
   const assetPreviewPath =
     !metadataPending &&
     directoryPath === null &&
@@ -1103,7 +1130,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           mediaSource={mediaSource}
           resolveVideoUri={assetPreview.refresh}
           fileContents={fileContents}
-          fileError={fileQuery.error}
+          fileError={fileError}
           initialLine={targetLine}
           relativePath={relativePath}
           threadId={threadId}
