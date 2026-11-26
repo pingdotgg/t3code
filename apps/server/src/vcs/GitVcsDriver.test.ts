@@ -874,6 +874,17 @@ const makeNestedRepository = ({ git }: CaptureIndexChange) =>
     ),
   );
 
+// git worktree add needs an empty folder.
+const makeLinkedWorktree = ({ git, fs, path, cwd }: CaptureIndexChange) =>
+  fs
+    .remove(path.join(cwd, "nested"), { recursive: true })
+    .pipe(Effect.andThen(git(["worktree", "add", "--detach", "nested"])));
+
+const nestedGitlink = ({ git }: CaptureIndexChange) =>
+  git(["-C", "nested", "rev-parse", "HEAD"]).pipe(
+    Effect.map(({ stdout }) => `160000 commit ${stdout.trim()}\tnested\n`),
+  );
+
 it.effect.each([
   { name: "nothing changed", reuses: true, change: () => Effect.void },
   {
@@ -969,6 +980,53 @@ it.effect.each([
     setup: makeNestedRepository,
     change: ({ fs, path, cwd }: CaptureIndexChange) =>
       fs.remove(path.join(cwd, "nested/.git"), { recursive: true }),
+  },
+  {
+    name: "an untracked repository switched to an unborn branch",
+    reuses: false,
+    setup: makeNestedRepository,
+    change: ({ git }: CaptureIndexChange) =>
+      git(["-C", "nested", "symbolic-ref", "HEAD", "refs/heads/unborn"]),
+    nestedTree: () => Effect.succeed(""),
+  },
+  {
+    name: "an untracked folder became a linked worktree",
+    reuses: true,
+    change: makeLinkedWorktree,
+    nestedTree: nestedGitlink,
+  },
+  {
+    name: "a linked worktree moved its HEAD",
+    reuses: true,
+    setup: makeLinkedWorktree,
+    change: ({ git }: CaptureIndexChange) =>
+      git(["-C", "nested", "commit", "--quiet", "--allow-empty", "-m", "moved"]),
+    nestedTree: nestedGitlink,
+  },
+  {
+    name: "a still-registered linked worktree lost its .git file but kept its files",
+    reuses: true,
+    setup: makeLinkedWorktree,
+    change: ({ fs, path, cwd }: CaptureIndexChange) => fs.remove(path.join(cwd, "nested/.git")),
+    nestedTree: ({ git }: CaptureIndexChange) =>
+      git(["rev-parse", "HEAD:file.txt"]).pipe(
+        Effect.map(({ stdout }) => `100644 blob ${stdout.trim()}\tnested/file.txt\n`),
+      ),
+  },
+  {
+    name: "a linked worktree was removed",
+    reuses: true,
+    setup: makeLinkedWorktree,
+    change: ({ git }: CaptureIndexChange) => git(["worktree", "remove", "nested"]),
+    nestedTree: () => Effect.succeed(""),
+  },
+  {
+    name: "a still-registered linked worktree's folder was deleted",
+    reuses: true,
+    setup: makeLinkedWorktree,
+    change: ({ fs, path, cwd }: CaptureIndexChange) =>
+      fs.remove(path.join(cwd, "nested"), { recursive: true }),
+    nestedTree: () => Effect.succeed(""),
   },
   {
     name: "an untracked file was edited under core.ignorestat",
@@ -1133,7 +1191,7 @@ it.effect.each([
       ]),
 ])(
   "checkpoint capture through a kept index stages what a rebuilt index would: $name",
-  ({ file = "nested/large.txt", workspace = "", reuses, setup, change, during }) =>
+  ({ file = "nested/large.txt", workspace = "", reuses, setup, change, during, nestedTree }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1198,6 +1256,12 @@ it.effect.each([
         (yield* git(["rev-parse", `${checkpointRef}^{tree}`])).stdout,
         (yield* git(["rev-parse", `${freshRef}^{tree}`])).stdout,
       );
+      if (nestedTree !== undefined) {
+        assert.strictEqual(
+          (yield* git(["ls-tree", "-r", checkpointRef, "--", "nested"])).stdout,
+          yield* nestedTree(context),
+        );
+      }
       assert.strictEqual(rebuilt === 0, reuses);
       yield* git(["fsck", "--connectivity-only"]);
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
@@ -1297,6 +1361,76 @@ it.effect("a capture through a kept index skips the index rebuild and its scan",
       ...end,
     ]);
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each([
+  { name: "a linked worktree", args: ["worktree", "add", "--detach"] },
+  { name: "a clone", args: ["clone", "."] },
+])(
+  "a capture through a kept index runs no git status inside $name and sees racy edits",
+  ({ args }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-capture-index-nested-" });
+      const data = path.join(cwd, "data.txt");
+      // 2000-01-01, in seconds.
+      const past = 946_684_800;
+      let trace: string | undefined;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: (input) => {
+            if (trace === undefined) return liveProcess.run(input);
+            const traced = { ...input, env: { ...input.env, GIT_TRACE2_EVENT: trace } };
+            if (!input.args.includes("add")) return liveProcess.run(traced);
+            // Same size and mtime, after the claim: only Git's racy check can see this edit.
+            return fs
+              .writeFileString(data, "after!\n")
+              .pipe(
+                Effect.andThen(fs.utimes(data, past, past)),
+                Effect.orDie,
+                Effect.andThen(liveProcess.run(traced)),
+              );
+          },
+        }),
+      );
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* git(["config", "core.trustctime", "false"]);
+      yield* fs.writeFileString(data, "before\n");
+      yield* fs.utimes(data, past, past);
+      yield* git([...args, "worktrees/nested"]);
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      // In the file's second, the kept index leaves the file's entry racy.
+      const keptIndexes = path.join(cwd, ".git", "t3-checkpoint-indexes");
+      const keptIndex = yield* fs.glob("*/index.*", { root: keptIndexes });
+      assert.strictEqual(keptIndex.length, 1);
+      yield* fs.utimes(path.join(keptIndexes, keptIndex[0]!), past, past);
+      trace = path.join(cwd, ".git", "trace2.json");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+      const events = (yield* fs.readFileString(trace)).split("\n");
+      const starts = events.filter((line) => line.includes('"event":"start"'));
+      assert.isTrue(starts.some((line) => line.includes('"add"')));
+      assert.isFalse(starts.some((line) => line.includes('"read-tree"')));
+      assert.deepEqual(
+        events.filter(
+          (line) => line.includes('"event":"child_start"') && line.includes('"status"'),
+        ),
+        [],
+      );
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:data.txt`])).stdout, "after!\n");
+      const nestedHead = (yield* git([
+        "-C",
+        "worktrees/nested",
+        "rev-parse",
+        "HEAD",
+      ])).stdout.trim();
+      assert.strictEqual(
+        (yield* git(["ls-tree", "-r", checkpointRef, "--", "worktrees"])).stdout,
+        `160000 commit ${nestedHead}\tworktrees/nested\n`,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.each(["sha1", "sha256"] as const)(
