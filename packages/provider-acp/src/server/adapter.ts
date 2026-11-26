@@ -637,6 +637,12 @@ export interface AcpAdapterV2Flavor {
   readonly extractSubagentSessionEvent?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => AcpSubagentSessionEvent | undefined;
+  /** Extracts measured context usage from a settled `session/prompt` response. */
+  readonly extractPromptContextUsage?: (input: {
+    readonly result: EffectAcpSchema.PromptResponse;
+    readonly modelSelection: ModelSelection;
+    readonly session: AcpSessionRuntime.AcpSessionRuntimeStartResult;
+  }) => ThreadTokenUsageSnapshot | undefined;
   readonly extractSubagentUpdate?: (
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
@@ -9440,6 +9446,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       updated.set(context.nativeThreadId, promptParts.runtimeInstructions);
                       return updated;
                     });
+                    if (flavor.extractPromptContextUsage !== undefined && !context.finalized) {
+                      const setup = yield* Ref.get(activeSessionSetup);
+                      const extracted =
+                        setup === null
+                          ? undefined
+                          : flavor.extractPromptContextUsage({
+                              result,
+                              modelSelection: context.input.modelSelection,
+                              session: setup,
+                            });
+                      if (extracted !== undefined) {
+                        yield* Ref.update(contextUsageBySessionId, (current) =>
+                          new Map(current).set(context.nativeThreadId, extracted),
+                        );
+                        context.contextUsage = extracted;
+                      }
+                    }
                     if (
                       !context.interrupted &&
                       !(context.finalized && context.finalizedStatus !== "completed")
