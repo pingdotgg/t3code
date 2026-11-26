@@ -1929,6 +1929,35 @@ describe("external usage settings", () => {
     expect(collectLimitNotices(presentations)).toEqual(["Host · codex: Could not read limits."]);
   });
 
+  it("names the providers a hub lists when it has no account T3 Code reads", () => {
+    const hub = (unreadProviders?: readonly string[]) =>
+      new Map([
+        [
+          EnvironmentId.make("a"),
+          {
+            entry: { target: { label: "Desktop" } },
+            serverConfig: {
+              providers: [],
+              usageLimitSources: [
+                {
+                  id: UsageLimitSourceId.make("hub"),
+                  kind: "cliproxy" as const,
+                  label: "Kimi hub",
+                  checkedAt: "2026-09-03T11:00:00.000Z",
+                  accounts: [],
+                  ...(unreadProviders ? { unreadProviders } : {}),
+                },
+              ],
+            },
+          },
+        ],
+      ]);
+    expect(collectLimitNotices(hub(["antigravity", "kimi-ai"]))).toEqual([
+      "Kimi hub: No Codex, Claude, or Grok accounts. Skipped antigravity, kimi-ai.",
+    ]);
+    expect(collectLimitNotices(hub())).toEqual(["Kimi hub: No accounts reported."]);
+  });
+
   it("shows the reason an account's limits are unsupported, but not a bare unsupported", () => {
     const unsupported = (message?: string) =>
       provider({
