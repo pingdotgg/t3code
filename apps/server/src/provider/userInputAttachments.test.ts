@@ -551,6 +551,28 @@ describe("question answer paths", () => {
                 metadata: {},
               },
               {
+                output_type: "display_data",
+                data: { "text/markdown": ["| Region | Tonnes |\n", "| North | 120 |"] },
+                metadata: {},
+              },
+              {
+                output_type: "execute_result",
+                execution_count: 1,
+                data: { "text/markdown": "**Total:** 301" },
+                metadata: {},
+              },
+              {
+                output_type: "execute_result",
+                execution_count: 2,
+                data: { "text/markdown": "*Markdown summary*", "text/plain": "Plain summary" },
+                metadata: {},
+              },
+              {
+                output_type: "display_data",
+                data: { "image/png": "iVBORw0KGgo=", "text/html": "<script>chart()</script>" },
+                metadata: {},
+              },
+              {
                 output_type: "error",
                 ename: "ZeroDivisionError",
                 evalue: "division by zero",
@@ -579,6 +601,12 @@ describe("question answer paths", () => {
       expect(extracted).not.toContain("10%|#");
       expect(extracted).toContain("42\nNext line");
       expect(extracted).toContain("raw\rvalue");
+      expect(extracted).toContain("| Region | Tonnes |\n| North | 120 |\n");
+      expect(extracted).toContain("**Total:** 301\n");
+      expect(extracted).toContain("Plain summary\n");
+      expect(extracted).not.toContain("*Markdown summary*");
+      expect(extracted).not.toContain("iVBORw0KGgo");
+      expect(extracted).not.toContain("<script>");
       expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
