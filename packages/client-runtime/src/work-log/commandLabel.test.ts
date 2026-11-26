@@ -5,6 +5,9 @@ import { commandDisplayText, commandProgramName } from "./commandLabel.ts";
 describe("commandProgramName", () => {
   it.each([
     ["/bin/bash --rcfile /tmp/config -c 'git status'", "git"],
+    ['bash -c -- "printf ok"', "printf"],
+    ['sh -c -- "printf ok"', "printf"],
+    ['bash -lc -- "printf ok"', "printf"],
     ["zsh -lc 'CI=1 env -u DEBUG sudo -u root vp test run'", "vp"],
     ['"C:\\Program Files\\Git\\bin\\bash.exe" -lc "git status"', "git"],
     // regression: #9371 a multiline script whose later line re-quotes must still label its first program
@@ -22,7 +25,7 @@ describe("commandProgramName", () => {
     expect(commandProgramName(command)).toBe(program);
   });
 
-  it.each(["zsh -lc", "zsh -lc 'git status", "zsh -lc 'env'"])(
+  it.each(["zsh -lc", "bash -c --", "zsh -lc 'git status", "zsh -lc 'env'"])(
     "falls back for missing or malformed scripts: %s",
     (command) => {
       expect(commandProgramName(command)).toBeNull();
@@ -146,6 +149,18 @@ describe("commandProgramName", () => {
     ].join(";");
 
     expect(commandProgramName(command)).toBeNull();
+  });
+});
+
+describe("commandDisplayText with shell option terminators", () => {
+  it.each([
+    ['bash -c -- "printf ok"', "printf ok"],
+    ['sh -c -- "printf ok"', "printf ok"],
+    ['bash -lc -- "printf ok"', "printf ok"],
+    ["bash -c --", "bash -c --"],
+    ['bash -c -- "printf ok" arg0', 'bash -c -- "printf ok" arg0'],
+  ])("shows %j as %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
   });
 });
 
