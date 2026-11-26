@@ -1,6 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeUtil from "node:util";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { readToolOutputImage } from "@t3tools/shared/toolOutput";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
@@ -469,6 +469,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const agentScope = yield* AgentScope;
+  const processSandbox = yield* ProcessSandbox;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -555,9 +556,30 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             sessionPath,
             runtimeMode: input.runtimePolicy.runtimeMode,
           });
+          const sandboxedLaunch = processSandbox.enabled
+            ? yield* processSandbox
+                .wrap({
+                  command: options.settings.binaryPath || "pi",
+                  args: launch.args,
+                  cwd,
+                  env: launch.env,
+                  name: "pi",
+                  threadId: input.threadId,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterOpenSessionError({
+                        driver: PI_PROVIDER,
+                        providerSessionId: input.providerSessionId,
+                        cause,
+                      }),
+                  ),
+                )
+            : { command: options.settings.binaryPath || "pi", args: launch.args };
           const scopedLaunch = yield* agentScope.wrap({
-            command: options.settings.binaryPath || "pi",
-            args: launch.args,
+            command: sandboxedLaunch.command,
+            args: sandboxedLaunch.args,
             name: "pi",
             threadId: input.threadId,
             env: launch.env,

@@ -55,6 +55,7 @@ const minimalDesktopFlags = (baseDir: string) => ({
   tailscaleServePort: Option.none<number>(),
   lan: Option.none<boolean>(),
   teamHubOnly: Option.none<boolean>(),
+  teamBwrapSandbox: Option.none<boolean>(),
 });
 
 const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
@@ -348,6 +349,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
         teamHubOnly: Option.none<boolean>(),
+        teamBwrapSandbox: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -394,6 +396,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         tailscaleServePort: Option.none<number>(),
         lan: Option.none<boolean>(),
         teamHubOnly: Option.none<boolean>(),
+        teamBwrapSandbox: Option.none<boolean>(),
       };
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromEnv({ env: { T3CODE_DEV_AUTH_TOKEN: secret } }),
@@ -451,6 +454,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           teamHubOnly: Option.none(),
+          teamBwrapSandbox: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -529,6 +533,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           teamHubOnly: Option.none(),
+          teamBwrapSandbox: Option.none(),
         },
         Option.some("Debug"),
       ).pipe(
@@ -678,6 +683,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           teamHubOnly: Option.none(),
+          teamBwrapSandbox: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -728,6 +734,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           teamHubOnly: Option.none(),
+          teamBwrapSandbox: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -770,6 +777,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           teamHubOnly: Option.none(),
+          teamBwrapSandbox: Option.none(),
         },
         Option.none(),
         {
@@ -834,6 +842,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
           tailscaleServePort: Option.none(),
           lan: Option.none(),
           teamHubOnly: Option.none(),
+          teamBwrapSandbox: Option.none(),
         },
         Option.none(),
       ).pipe(
@@ -875,6 +884,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     tailscaleServePort: Option.none<number>(),
     lan: Option.none<boolean>(),
     teamHubOnly: Option.none<boolean>(),
+    teamBwrapSandbox: Option.none<boolean>(),
   });
 
   it.effect("uses the automatic port selector only when no port is configured", () =>
@@ -1125,6 +1135,41 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       ).toBe(true);
       expect(
         yield* resolveHubOnly({ flag: Option.some(false), env: { T3CODE_TEAM_HUB_ONLY: "true" } }),
+      ).toBeUndefined();
+    }),
+  );
+
+  it.effect("resolves --team-bwrap-sandbox from CLI flag and T3CODE_TEAM_BWRAP_SANDBOX env", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-team-bwrap-sandbox");
+      const resolveBwrap = (input: {
+        readonly flag: Option.Option<boolean>;
+        readonly env?: Record<string, string>;
+      }) =>
+        resolveServerConfig(
+          { ...minimalWebFlags(baseDir), teamBwrapSandbox: input.flag },
+          Option.none(),
+        ).pipe(
+          Effect.map((config) => config.teamBwrapSandbox),
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(ConfigProvider.fromEnv({ env: input.env ?? {} })),
+              NetService.layer,
+            ),
+          ),
+        );
+
+      expect(yield* resolveBwrap({ flag: Option.none() })).toBeUndefined();
+      expect(yield* resolveBwrap({ flag: Option.some(true) })).toBe(true);
+      expect(
+        yield* resolveBwrap({ flag: Option.none(), env: { T3CODE_TEAM_BWRAP_SANDBOX: "1" } }),
+      ).toBe(true);
+      expect(
+        yield* resolveBwrap({
+          flag: Option.some(false),
+          env: { T3CODE_TEAM_BWRAP_SANDBOX: "1" },
+        }),
       ).toBeUndefined();
     }),
   );

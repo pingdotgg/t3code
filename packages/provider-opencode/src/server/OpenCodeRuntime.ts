@@ -37,7 +37,7 @@ import { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshot
 import * as OpenCodeServerLedger from "./OpenCodeServerLedger.ts";
 import { collectStreamAsString } from "@t3tools/provider-core/server/snapshotProbe";
 import * as NetService from "@t3tools/shared/Net";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   DEFAULT_VARIANT_CHOICE_ID,
@@ -514,6 +514,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const hostPlatform = yield* HostProcess.Platform;
   const serverLedger = yield* OpenCodeServerLedger.OpenCodeServerLedger;
   const agentScope = yield* AgentScope;
+  const processSandbox = yield* ProcessSandbox;
   const random = yield* SecureRandom.SecureRandom;
   // npm's Windows shim lets the child escape libuv kill-on-close; run its executable directly.
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
@@ -610,6 +611,13 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         DEFAULT_OPENCODE_SERVER_TIMEOUT_MS,
         input.environment,
       );
+    if (processSandbox.enabled) {
+      return yield* new OpenCodeRuntimeError({
+        operation: "startOpenCodeServerProcess",
+        detail:
+          "Shared OpenCode server daemon does not support per-worktree --team-bwrap-sandbox isolation.",
+      });
+    }
     const args = ["serve", `--hostname=${hostname}`, `--port=${port}`];
     const launch = yield* agentScope.wrap({
       command: input.binaryPath,

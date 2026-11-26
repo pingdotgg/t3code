@@ -58,6 +58,39 @@ export const AgentScopeThreadId = Context.Reference<string | undefined>(
   { defaultValue: () => undefined },
 );
 
+export interface ProcessSandboxWrapInput {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd?: string | undefined;
+  /** Optional working directory inside `cwd` (must stay within `cwd`). */
+  readonly chdir?: string | undefined;
+  readonly env?: NodeJS.ProcessEnv | undefined;
+  readonly name: string;
+  readonly threadId?: string | undefined;
+  readonly extraSocketPaths?: ReadonlyArray<string> | undefined;
+  readonly extraHelperPaths?: ReadonlyArray<string> | undefined;
+}
+
+export interface ProcessSandboxCommand {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
+export interface ProcessSandboxShape {
+  readonly enabled: boolean;
+  readonly wrap: (input: ProcessSandboxWrapInput) => Effect.Effect<ProcessSandboxCommand, Error>;
+}
+
+export const ProcessSandbox = Context.Reference<ProcessSandboxShape>(
+  "@t3tools/shared/ProcessSandbox",
+  {
+    defaultValue: () => ({
+      enabled: false,
+      wrap: ({ command, args }) => Effect.succeed({ command, args }),
+    }),
+  },
+);
+
 export const AGENT_OOM_SCORE_ADJ = 800;
 
 export const RAISE_OOM_SCORE_LINE = `{ echo ${AGENT_OOM_SCORE_ADJ} >/proc/self/oom_score_adj; } 2>/dev/null`;

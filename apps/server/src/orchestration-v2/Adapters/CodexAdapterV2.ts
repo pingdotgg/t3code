@@ -49,7 +49,7 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   COMPUTER_USE_TOOL_SOURCE,
@@ -1800,13 +1800,24 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   readonly extendEnv?: boolean | undefined;
   readonly threadId?: string | undefined;
 }) {
+  const processSandbox = yield* ProcessSandbox;
+  const sandboxed = processSandbox.enabled
+    ? yield* processSandbox.wrap({
+        command: input.command,
+        args: input.args,
+        cwd: input.cwd,
+        env: input.env,
+        name: "codex",
+        threadId: input.threadId,
+      })
+    : { command: input.command, args: input.args };
   const launch = yield* (yield* AgentScope).wrap({
-    command: input.command,
-    args: input.args,
+    command: sandboxed.command,
+    args: sandboxed.args,
     name: "codex",
     threadId: input.threadId,
     env: input.env,
-    shared: true,
+    shared: !processSandbox.enabled,
   });
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, {
     ...(input.env === undefined ? {} : { env: input.env }),
@@ -1982,6 +1993,7 @@ export const layerAppServerClientFactory: Layer.Layer<
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
+    const processSandbox = yield* ProcessSandbox;
     const portDiscovery = yield* PortScanner.PortDiscovery;
 
     return CodexAppServerClientFactory.of({
@@ -1996,9 +2008,21 @@ export const layerAppServerClientFactory: Layer.Layer<
           args: codexAppServerArgs(
             resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
           ),
+          ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
           env: environment,
           threadId: input.threadId,
-        }).pipe(Effect.provideService(AgentScope, agentScope));
+        }).pipe(
+          Effect.provideService(AgentScope, agentScope),
+          Effect.provideService(ProcessSandbox, processSandbox),
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapter.ProviderAdapterOpenSessionError({
+                driver: CODEX_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+          ),
+        );
         const handle = yield* spawner.spawn(command).pipe(
           Effect.provideService(Scope.Scope, scope),
           Effect.mapError(

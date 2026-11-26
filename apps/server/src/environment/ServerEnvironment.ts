@@ -309,6 +309,7 @@ export const make = Effect.gen(function* () {
       shellOlderSettled: true,
       agentFeedback: true,
       ...(serverConfig.teamHubOnly === true ? { teamHubOnly: true } : {}),
+      teamBwrapSandbox: serverConfig.teamBwrapSandbox === true,
     },
   };
 

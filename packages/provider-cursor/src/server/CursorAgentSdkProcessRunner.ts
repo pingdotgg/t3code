@@ -1,6 +1,6 @@
 import type { AgentMessage, InteractionUpdate, RunResult, SteerAckOutcome } from "@cursor/sdk";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -132,6 +132,7 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
   }) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const agentScope = yield* AgentScope;
+    const processSandbox = yield* ProcessSandbox;
     const hostEnvironment = yield* HostProcess.Environment;
     const runnerContext = yield* Effect.context<never>();
     const activeCleanups = new Set<Effect.Effect<void>>();
@@ -164,6 +165,15 @@ export const makeCursorAgentSdkProcessRunner = Effect.fn("makeCursorAgentSdkProc
             ),
           );
 
+        if (processSandbox.enabled) {
+          yield* teardownScope();
+          return yield* toRunnerError(
+            "worker.launch",
+            new Error(
+              "Cursor shared worker does not support per-worktree --team-bwrap-sandbox isolation.",
+            ),
+          );
+        }
         const launch = yield* options.resolveLaunch.pipe(
           Effect.onError(() => teardownScope()),
           Effect.mapError((cause) => toRunnerError("worker.launch", cause)),

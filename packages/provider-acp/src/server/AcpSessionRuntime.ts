@@ -29,7 +29,12 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpProtocol from "effect-acp/protocol";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/shared/AgentScope";
+import {
+  AgentScope,
+  AgentScopeThreadId,
+  ProcessSandbox,
+  RAISE_OOM_SCORE_LINE,
+} from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { windowsSystem32Path } from "@t3tools/shared/windowsSystem";
 
@@ -1493,12 +1498,36 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ),
     );
   }
+  const processSandbox = yield* ProcessSandbox;
+  const effectiveSpawnCommand = processSandbox.enabled
+    ? {
+        ...(yield* processSandbox
+          .wrap({
+            command: spawnCommand.command,
+            args: spawnCommand.args,
+            cwd: options.spawn.cwd ?? options.cwd,
+            env: commandLookupEnv,
+            name: "acp",
+            threadId: yield* AgentScopeThreadId,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new EffectAcpErrors.AcpSpawnError({
+                  command: options.spawn.command,
+                  cause,
+                }),
+            ),
+          )),
+        shell: false,
+      }
+    : spawnCommand;
   const containedTargetCommand =
-    linuxCgroupLease === undefined || NodePath.isAbsolute(spawnCommand.command)
-      ? spawnCommand.command
+    linuxCgroupLease === undefined || NodePath.isAbsolute(effectiveSpawnCommand.command)
+      ? effectiveSpawnCommand.command
       : yield* Effect.gen(function* () {
           const resolved = resolveLinuxCgroupTargetCommand(
-            spawnCommand.command,
+            effectiveSpawnCommand.command,
             options.spawn.cwd ?? options.cwd,
             commandLookupEnv,
           );
@@ -1510,17 +1539,17 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         });
   const agentScope = yield* AgentScope;
   const scopedLaunch =
-    linuxCgroupLease !== undefined || spawnCommand.shell
+    linuxCgroupLease !== undefined || effectiveSpawnCommand.shell
       ? undefined
       : yield* agentScope.wrap({
-          command: spawnCommand.command,
-          args: spawnCommand.args,
+          command: effectiveSpawnCommand.command,
+          args: effectiveSpawnCommand.args,
           name: "acp",
           threadId: yield* AgentScopeThreadId,
           env: commandLookupEnv,
         });
   const scopedSpawnCommand =
-    scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
+    scopedLaunch === undefined ? effectiveSpawnCommand : { ...scopedLaunch, shell: false };
   // Finalizers run in reverse order: reap detached work after terminating the agent.
   const scopeUnit = scopedLaunch?.unit;
   const stopScope =
@@ -1530,7 +1559,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     linuxCgroupLease === undefined
       ? scopedSpawnCommand
       : {
-          ...wrapCommandForLinuxCgroup(linuxCgroupLease, containedTargetCommand, spawnCommand.args),
+          ...wrapCommandForLinuxCgroup(
+            linuxCgroupLease,
+            containedTargetCommand,
+            effectiveSpawnCommand.args,
+          ),
           shell: false,
         };
   const spawnEnvironment =

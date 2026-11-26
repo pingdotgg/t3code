@@ -116,11 +116,172 @@ sudo systemctl enable --now t3hub t3runner
   ```
 
 - **No upward privilege from runner to hub:** `t3runner` holds no `t3hub` session token and cannot mint sessions or read RBAC/invite tables on `t3hub`.
-- **Cross-environment forwarding scope:** In Milestone 4, cross-environment MCP forwarding from `t3hub` to linked runners is restricted to `owner` and `admin` callers; per-environment `team_environments` ACLs and hub-signed member execution handoffs (`actingMemberId` propagation from `t3hub` to `t3runner`) arrive in Milestone 5.
+- **Cross-environment forwarding & ACLs:** `t3hub` enforces per-environment `team_environments` ACLs (roles and member whitelists) before forwarding or issuing short-lived subject-scoped client pairings for linked runners, propagating `actingMemberId` from `t3hub` to `t3runner` on every turn and revoking member sessions across linked peers on role/status changes.
 
 ## 5. Optional Layer 2 Hardening (Concurrent Teammates)
 
-To further isolate concurrent agent turns running under `t3runner`:
+The `t3hub` / `t3runner` OS-user split (Plane 2) completely protects the Team Control Plane (`statev2.sqlite`, `ServerSecretStore`, RBAC, invites, and admin-only View transcripts). To also isolate **concurrent teammate turns** running under the same `t3runner` OS user—preventing one agent or shell terminal from reading sibling worktrees, inspecting sibling processes, or touching `t3runner`'s own `userdata`—enable both Linux **`bwrap` (bubblewrap) worktree sandboxing** and **`/proc` `hidepid=2`**.
 
-- Mount `/proc` with `hidepid=2` so sibling processes cannot inspect each other's `/proc/<pid>` entries.
-- Wrap agent commands in Linux `bwrap` (bubblewrap) mounting only the thread's worktree, `/tmp`, and its turn-scoped socket, or run separate runner users per trust tier (for example `t3runner-default` and `t3runner-admin`).
+> **Fail-closed guarantee:** `--team-bwrap-sandbox` (`T3CODE_TEAM_BWRAP_SANDBOX=1`) is **off by default** and has zero effect on personal installs, macOS, Windows, or standard runners. When explicitly enabled, `t3runner` runs a preflight probe at startup verifying Linux, the `bwrap` binary, and unprivileged user-namespace support—and **refuses to start** rather than falling back to unsandboxed execution if any check fails.
+
+### 5.1 Install `bubblewrap` and Configure Ubuntu 24.04 AppArmor (if applicable)
+
+Install `bubblewrap` on Debian / Ubuntu hosts:
+
+```bash
+sudo apt-get update && sudo apt-get install -y bubblewrap
+```
+
+Verify unprivileged user namespaces are enabled in the kernel:
+
+```bash
+sysctl kernel.unprivileged_userns_clone 2>/dev/null || true
+# Expected on Debian/Ubuntu (if present): kernel.unprivileged_userns_clone = 1
+```
+
+If `kernel.unprivileged_userns_clone` is `0`, enable it persistently:
+
+```bash
+echo 'kernel.unprivileged_userns_clone=1' | sudo tee /etc/sysctl.d/99-t3runner-userns.conf
+sudo sysctl --system
+```
+
+#### Ubuntu 24.04+ AppArmor unprivileged userns restriction
+
+Ubuntu 24.04 sets `kernel.apparmor_restrict_unprivileged_userns=1` by default, which causes `bwrap` to fail with `bwrap: setting up uid map: Permission denied` unless `bwrap` has an AppArmor profile granting `userns`. Check whether it is active and ensure `/etc/apparmor.d/bwrap` exists:
+
+```bash
+sysctl kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
+```
+
+If `kernel.apparmor_restrict_unprivileged_userns = 1` and `/etc/apparmor.d/bwrap` is absent, install the minimal `bwrap` AppArmor profile:
+
+```bash
+sudo tee /etc/apparmor.d/bwrap <<'EOF'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides.
+  include if exists <local/bwrap>
+}
+EOF
+sudo apparmor_parser -r /etc/apparmor.d/bwrap
+```
+
+Confirm `t3runner` can run `bwrap` with PID/IPC/UTS/mount namespaces:
+
+```bash
+sudo -u t3runner bwrap \
+  --unshare-pid --unshare-ipc --unshare-uts --die-with-parent --new-session \
+  --ro-bind /usr /usr --ro-bind-try /bin /bin --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 \
+  --dev /dev --proc /proc --tmpfs /tmp \
+  -- true && echo "bwrap preflight OK"
+```
+
+### 5.2 Enable `/proc` `hidepid=2` (Host-Wide + systemd Unit)
+
+Mounting `/proc` with `hidepid=2` prevents unprivileged users from viewing `/proc/<pid>` entries belonging to other OS users (such as `t3hub` or root services). Combine host-wide `/etc/fstab` hardening with systemd's per-unit `ProtectProc=invisible` + `ProcSubset=pid` on `t3runner.service`:
+
+#### Option A — Host-wide `/etc/fstab` `hidepid=2`
+
+Create a dedicated group for monitoring daemons that legitimately need full `/proc` visibility (never add `t3runner` to this group), then remount `/proc`:
+
+```bash
+sudo groupadd --system proc 2>/dev/null || true
+# Optional: add monitoring agents (e.g. node_exporter) to the `proc` group, NEVER `t3runner`.
+# sudo usermod -aG proc node_exporter
+
+# Add (or update) the /proc entry in /etc/fstab:
+echo 'proc /proc proc defaults,nosuid,nodev,noexec,hidepid=2,gid=proc 0 0' | sudo tee -a /etc/fstab
+
+# Apply immediately without rebooting:
+sudo mount -o remount,hidepid=2,gid=proc /proc
+```
+
+#### Option B — systemd per-unit `/proc` isolation + `--team-bwrap-sandbox`
+
+Update `/etc/systemd/system/t3runner.service` to enable `--team-bwrap-sandbox` (or `T3CODE_TEAM_BWRAP_SANDBOX=1`), `ProtectProc=invisible`, and `ProcSubset=pid`:
+
+```ini
+[Unit]
+Description=T3 Code Default Team Runner (t3runner)
+After=network-online.target t3hub.service
+
+[Service]
+Type=simple
+User=t3runner
+Group=t3runner
+Environment=T3CODE_HOME=/var/lib/t3runner
+Environment=T3CODE_TEAM_BWRAP_SANDBOX=1
+ExecStart=/usr/local/bin/t3 serve --team-bwrap-sandbox --host 127.0.0.1 --port 3774 --base-dir /var/lib/t3runner
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectProc=invisible
+ProcSubset=pid
+InaccessiblePaths=/var/lib/t3hub
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Reload and restart `t3runner`:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart t3runner
+sudo systemctl status t3runner --no-pager
+```
+
+> **Note on shared-daemon providers:** Providers that run a single shared background server across workspaces (`cursor`, `opencode`) fail closed when `--team-bwrap-sandbox` is enabled. Per-worktree providers (`claudeAgent`, `codex`, `antigravity`/ACP, `pi`, `muse`) and runner shell terminals all run inside per-thread `bwrap` sandboxes. For trust-tier isolation across different team roles, you can also run separate runner OS users (for example `t3runner-default` and `t3runner-admin`) gated by `team_environments` ACLs.
+
+### 5.3 Verify Layer 2 Hardening
+
+1. **Verify runner advertises `capabilities.teamBwrapSandbox === true`:**
+
+   ```bash
+   curl -s http://127.0.0.1:3774/.well-known/t3/environment \
+     | jq '{environmentId, teamHubOnly: .capabilities.teamHubOnly, teamBwrapSandbox: .capabilities.teamBwrapSandbox}'
+   # Expected: { ..., "teamBwrapSandbox": true }
+   ```
+
+2. **Verify `/proc` `hidepid=2` hides `t3hub` and other users' processes from `t3runner`:**
+
+   ```bash
+   sudo -u t3runner sh -c 'ps -eo user,pid,comm | grep -E "t3hub|sshd|root"' || echo "Foreign processes hidden (OK)"
+   ```
+
+3. **Verify sibling worktrees, sibling processes, `/var/lib/t3hub`, and `/var/lib/t3runner/userdata` are inaccessible from inside a sandboxed turn:**
+
+   Run the following checks inside a sandboxed runner terminal or agent turn in worktree `wt-alice` (while another worktree `wt-bob` exists in `/srv/t3-workspaces/wt-bob` or `/var/lib/t3runner/worktrees/...`):
+
+   ```bash
+   # 1. Sibling worktree is invisible (No such file or directory):
+   ls -la /srv/t3-workspaces/wt-bob
+   # Expected: ls: cannot access '/srv/t3-workspaces/wt-bob': No such file or directory
+
+   # 2. PID namespace isolation (only this sandbox's own processes appear, starting at PID 1/2):
+   ps -ef
+   # Expected: only the sandboxed shell/agent and `ps`, no sibling turns or host daemons
+
+   # 3. Control plane (/var/lib/t3hub) is inaccessible:
+   ls -la /var/lib/t3hub
+   # Expected: No such file or directory (or Permission denied)
+
+   # 4. Runner userdata (statev2.sqlite, ServerSecretStore) is inaccessible:
+   ls -la /var/lib/t3runner/userdata/statev2.sqlite /var/lib/t3runner/userdata/secrets
+   # Expected: No such file or directory
+   ```
+
+4. **Verify fail-closed startup when `bwrap` is unavailable:**
+
+   ```bash
+   sudo -u t3runner env PATH=/nonexistent T3CODE_TEAM_BWRAP_SANDBOX=1 \
+     /usr/local/bin/t3 serve --host 127.0.0.1 --port 0 --base-dir /tmp/t3-bwrap-check
+   # Expected: exits non-zero with "Linux bwrap sandbox unavailable [binary_not_found]"
+   ```

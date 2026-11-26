@@ -99,6 +99,12 @@ const teamHubOnlyFlag = Flag.Boolean("team-hub-only").pipe(
   ),
   Flag.optional,
 );
+const teamBwrapSandboxFlag = Flag.Boolean("team-bwrap-sandbox").pipe(
+  Flag.withDescription(
+    "Isolate spawned coding agents and shell terminals inside Linux bubblewrap (bwrap) scoped to each thread's worktree; fails closed if unavailable (equivalent to T3CODE_TEAM_BWRAP_SANDBOX).",
+  ),
+  Flag.optional,
+);
 
 export const traceFileConfig = Config.String("T3CODE_TRACE_FILE").pipe(
   Config.option,
@@ -184,6 +190,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  teamBwrapSandbox: Config.Boolean("T3CODE_TEAM_BWRAP_SANDBOX").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -221,6 +231,7 @@ export interface CliServerFlags {
   readonly tailscaleServePort: Option.Option<number>;
   readonly lan: Option.Option<boolean>;
   readonly teamHubOnly: Option.Option<boolean>;
+  readonly teamBwrapSandbox: Option.Option<boolean>;
 }
 
 export interface CliAuthLocationFlags {
@@ -257,6 +268,7 @@ export const sharedServerCommandFlags = {
   tailscaleServePort: tailscaleServePortFlag,
   lan: lanFlag,
   teamHubOnly: teamHubOnlyFlag,
+  teamBwrapSandbox: teamBwrapSandboxFlag,
 } as const;
 
 const resolveOptionPrecedence = <Value>(
@@ -307,6 +319,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
     lan: flags.lan ?? Option.none(),
     teamHubOnly: flags.teamHubOnly ?? Option.none(),
+    teamBwrapSandbox: flags.teamBwrapSandbox ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
   const bootstrapEnvelope =
@@ -557,6 +570,15 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     )
       ? { teamHubOnly: true }
       : {}),
+    ...(Option.getOrElse(
+      resolveOptionPrecedence(
+        normalizedFlags.teamBwrapSandbox,
+        Option.fromUndefinedOr(env.teamBwrapSandbox),
+      ),
+      () => false,
+    )
+      ? { teamBwrapSandbox: true }
+      : {}),
   };
 
   return config;
@@ -583,6 +605,7 @@ export const resolveCliAuthConfig = (
       tailscaleServePort: Option.none(),
       lan: Option.none(),
       teamHubOnly: Option.none(),
+      teamBwrapSandbox: Option.none(),
     },
     cliLogLevel,
   );

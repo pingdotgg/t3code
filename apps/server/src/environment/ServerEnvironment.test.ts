@@ -365,4 +365,38 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerEnvironmen
       }).pipe(Effect.provide(layerTest));
     }),
   );
+
+  it.effect.each([
+    { teamBwrapSandbox: undefined, advertised: false },
+    { teamBwrapSandbox: false, advertised: false },
+    { teamBwrapSandbox: true, advertised: true },
+  ])(
+    "advertises capabilities.teamBwrapSandbox=$advertised when teamBwrapSandbox=$teamBwrapSandbox",
+    ({ teamBwrapSandbox, advertised }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-server-environment-bwrap-test-",
+        });
+        const config = yield* makeServerConfig(baseDir);
+        yield* fileSystem.makeDirectory(config.stateDir, { recursive: true });
+        const descriptor = yield* Effect.gen(function* () {
+          const environment = yield* ServerEnvironment.ServerEnvironment;
+          return yield* environment.getDescriptor;
+        }).pipe(
+          Effect.provide(
+            ServerEnvironment.layer.pipe(
+              Layer.provide(layerEmptySecretStore),
+              Layer.provide(
+                ServerConfig.layer({
+                  ...config,
+                  ...(teamBwrapSandbox === undefined ? {} : { teamBwrapSandbox }),
+                }),
+              ),
+            ),
+          ),
+        );
+        expect(descriptor.capabilities.teamBwrapSandbox).toBe(advertised);
+      }),
+  );
 });

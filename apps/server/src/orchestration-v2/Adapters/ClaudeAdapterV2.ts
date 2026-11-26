@@ -82,7 +82,7 @@ import {
   MCP_APP_OUTPUT_KEY,
   mcpAppToolResourceUri,
 } from "@t3tools/shared/mcpApp";
-import { AgentScope } from "@t3tools/shared/AgentScope";
+import { AgentScope, ProcessSandbox } from "@t3tools/shared/AgentScope";
 import * as ProviderProcesses from "../../process/providerProcesses.ts";
 import * as SpawnWorker from "../../process/SpawnWorker.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -1633,6 +1633,7 @@ export const layerQueryRunner: Layer.Layer<
     const path = yield* Path.Path;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
+    const processSandbox = yield* ProcessSandbox;
     const providerProcesses = yield* ProviderProcesses.ProviderProcesses;
     const platform = yield* HostProcess.Platform;
     const runFork = Effect.runForkWith(yield* Effect.context<never>());
@@ -1740,16 +1741,51 @@ export const layerQueryRunner: Layer.Layer<
       };
       // The SDK can prepend a scope wrapper to native binaries; script entries run through node.
       const binaryPath = queryOptions.pathToClaudeCodeExecutable;
-      const launch =
-        binaryPath === undefined || CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext))
-          ? undefined
-          : yield* agentScope.wrap({
-              command: binaryPath,
-              args: [],
-              name: "claude",
-              threadId: input.threadId,
-              env: queryOptions.env,
-            });
+      const isNativeBinary =
+        binaryPath !== undefined &&
+        !CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext));
+      const nativeSandboxLaunch =
+        isNativeBinary && processSandbox.enabled
+          ? yield* processSandbox
+              .wrap({
+                command: binaryPath,
+                args: [],
+                cwd: queryOptions.cwd,
+                env: queryOptions.env,
+                name: "claude",
+                threadId: input.threadId,
+              })
+              .pipe(Effect.mapError((cause) => queryRunnerError(cause, "query")))
+          : undefined;
+      const scriptSandboxPrefix =
+        !isNativeBinary && processSandbox.enabled
+          ? yield* processSandbox
+              .wrap({
+                command: process.execPath,
+                args: ["__t3_claude_sandbox_target__"],
+                cwd: queryOptions.cwd,
+                env: queryOptions.env,
+                name: "claude",
+                threadId: input.threadId,
+                ...(binaryPath !== undefined ? { extraHelperPaths: [binaryPath] } : {}),
+              })
+              .pipe(
+                Effect.map((wrapped) => ({
+                  command: wrapped.command,
+                  args: wrapped.args.slice(0, Math.max(0, wrapped.args.length - 2)),
+                })),
+                Effect.mapError((cause) => queryRunnerError(cause, "query")),
+              )
+          : undefined;
+      const launch = !isNativeBinary
+        ? undefined
+        : yield* agentScope.wrap({
+            command: nativeSandboxLaunch?.command ?? binaryPath,
+            args: nativeSandboxLaunch?.args ?? [],
+            name: "claude",
+            threadId: input.threadId,
+            env: queryOptions.env,
+          });
       const options =
         launch === undefined || launch.args.length === 0
           ? queryOptions
@@ -1774,7 +1810,19 @@ export const layerQueryRunner: Layer.Layer<
       let descendants: ReturnType<typeof trackDescendants> | undefined;
       const spawnProcess =
         options.spawnClaudeCodeProcess ??
-        ((spawnOptions: ClaudeSpawnOptions) => {
+        ((rawSpawnOptions: ClaudeSpawnOptions) => {
+          const spawnOptions =
+            scriptSandboxPrefix === undefined
+              ? rawSpawnOptions
+              : {
+                  ...rawSpawnOptions,
+                  command: scriptSandboxPrefix.command,
+                  args: [
+                    ...scriptSandboxPrefix.args,
+                    rawSpawnOptions.command,
+                    ...rawSpawnOptions.args,
+                  ],
+                };
           if (platform !== "win32") {
             // Node can report "exit" before it has read the stderr the CLI wrote.
             let stderrDone = () => {};
