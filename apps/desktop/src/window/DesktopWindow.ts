@@ -101,6 +101,14 @@ const RENDERER_RECOVERY_RELOAD_DELAY_MS = 500;
 const RENDERER_RECOVERY_MAX_ATTEMPTS = 3;
 const RENDERER_RECOVERY_WINDOW_MS = 60_000;
 const DEVELOPMENT_RETRYABLE_LOAD_ERROR_CODES = new Set([-2, -7, -9, -102, -105, -106, -118]);
+const ALLOWED_MAIN_WINDOW_PERMISSIONS: ReadonlySet<string> = new Set([
+  "media",
+  "display-capture",
+  "clipboard-read",
+  "clipboard-sanitized-write",
+  "notifications",
+  "fullscreen",
+]);
 
 type WindowTitleBarOptions = Pick<
   Electron.BrowserWindowConstructorOptions,
@@ -792,10 +800,43 @@ export const make = Effect.gen(function* () {
       }
       return { action: "deny" };
     });
-    // Chromium asks this before handing a navigation to an OS protocol handler, and grants it
-    // when nothing answers. External links are opened through ElectronShell only.
-    window.webContents.session.setPermissionRequestHandler((_contents, permission, callback) =>
-      callback(permission !== "openExternal"),
+    const isAllowedMainWindowPermission = (
+      permission: string,
+      originUrl: string | undefined,
+      isMainFrame: boolean,
+    ): boolean =>
+      isMainFrame &&
+      ALLOWED_MAIN_WINDOW_PERMISSIONS.has(permission) &&
+      originUrl !== undefined &&
+      isSameOriginRendererNavigation({
+        applicationUrl,
+        navigationUrl: originUrl,
+      });
+    // Restrict default-session permissions to the app's own main frame so embedded asset
+    // subframes cannot inherit camera, clipboard, or external-protocol access.
+    window.webContents.session.setPermissionRequestHandler(
+      (_contents, permission, callback, details) => {
+        const originUrl =
+          "securityOrigin" in details &&
+          typeof details.securityOrigin === "string" &&
+          details.securityOrigin.length > 0
+            ? details.securityOrigin
+            : details.requestingUrl;
+        callback(
+          isAllowedMainWindowPermission(permission, originUrl, details.isMainFrame === true),
+        );
+      },
+    );
+    window.webContents.session.setPermissionCheckHandler(
+      (_contents, permission, requestingOrigin, details) => {
+        const originUrl =
+          (details?.securityOrigin && details.securityOrigin.length > 0
+            ? details.securityOrigin
+            : undefined) ||
+          requestingOrigin ||
+          details?.requestingUrl;
+        return isAllowedMainWindowPermission(permission, originUrl, details?.isMainFrame === true);
+      },
     );
     window.webContents.on("will-navigate", (event, url) => {
       if (

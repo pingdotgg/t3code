@@ -22,6 +22,7 @@ vi.mock("electron", async (importOriginal) => ({
     fromPartition: vi.fn(() => ({
       getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/1.2.3"),
       setPermissionRequestHandler: vi.fn(),
+      setPermissionCheckHandler: vi.fn(),
       setUserAgent: vi.fn(),
     })),
   },
@@ -77,6 +78,7 @@ function makeFakeBrowserWindow() {
     id: 1,
     session: {
       setPermissionRequestHandler: vi.fn(),
+      setPermissionCheckHandler: vi.fn(),
       webRequest: {
         onBeforeSendHeaders: vi.fn(),
       },
@@ -1662,15 +1664,108 @@ describe("DesktopWindow", () => {
         if (!answerPermission) {
           return yield* Effect.die("permission request handler was not registered");
         }
-        const answers = (["openExternal", "media"] as const).map((permission) => {
+        const checkPermission = vi.mocked(
+          fakeWindow.window.webContents.session.setPermissionCheckHandler,
+        ).mock.lastCall?.[0];
+        if (!checkPermission) {
+          return yield* Effect.die("permission check handler was not registered");
+        }
+
+        const requestPermission = (
+          permission: Parameters<typeof answerPermission>[1],
+          details: Parameters<typeof answerPermission>[3],
+        ) => {
           const callback = vi.fn();
-          answerPermission(fakeWindow.window.webContents, permission, callback, {
-            isMainFrame: false,
-            requestingUrl: "http://127.0.0.1:3773/api/assets/token/page.html",
-          });
+          answerPermission(fakeWindow.window.webContents, permission, callback, details);
           return callback.mock.lastCall?.[0];
-        });
-        assert.deepEqual(answers, [false, true]);
+        };
+
+        for (const permission of [
+          "openExternal",
+          "media",
+          "clipboard-read",
+          "geolocation",
+        ] as const) {
+          assert.isFalse(
+            requestPermission(permission, {
+              isMainFrame: false,
+              requestingUrl: "http://127.0.0.1:3773/api/assets/token/page.html",
+            }),
+            `subframe request should deny ${permission}`,
+          );
+          assert.isFalse(
+            requestPermission(permission, {
+              isMainFrame: false,
+              requestingUrl: "t3code-dev://app/subframe",
+            }),
+            `same-origin subframe request should deny ${permission}`,
+          );
+          assert.isFalse(
+            checkPermission(fakeWindow.window.webContents, permission, "http://127.0.0.1:3773", {
+              isMainFrame: false,
+              requestingUrl: "http://127.0.0.1:3773/api/assets/token/page.html",
+            }),
+            `subframe check should deny ${permission}`,
+          );
+        }
+
+        for (const permission of ["media", "clipboard-read"] as const) {
+          assert.isFalse(
+            requestPermission(permission, {
+              isMainFrame: true,
+              requestingUrl: "http://127.0.0.1:3773/api/assets/token/page.html",
+            }),
+            `non-app origin request should deny ${permission}`,
+          );
+          assert.isFalse(
+            checkPermission(fakeWindow.window.webContents, permission, "http://127.0.0.1:3773", {
+              isMainFrame: true,
+              requestingUrl: "http://127.0.0.1:3773/api/assets/token/page.html",
+            }),
+            `non-app origin check should deny ${permission}`,
+          );
+        }
+
+        for (const permission of [
+          "media",
+          "display-capture",
+          "clipboard-read",
+          "clipboard-sanitized-write",
+          "notifications",
+          "fullscreen",
+        ] as const) {
+          assert.isTrue(
+            requestPermission(permission, {
+              isMainFrame: true,
+              requestingUrl: "t3code-dev://app/",
+            }),
+            `app main frame request should allow ${permission}`,
+          );
+          assert.isTrue(
+            checkPermission(fakeWindow.window.webContents, permission, "t3code-dev://app", {
+              isMainFrame: true,
+              requestingUrl: "t3code-dev://app/",
+            }),
+            `app main frame check should allow ${permission}`,
+          );
+        }
+
+        for (const permission of ["openExternal", "geolocation"] as const) {
+          assert.isFalse(
+            requestPermission(permission, {
+              isMainFrame: true,
+              requestingUrl: "t3code-dev://app/",
+            }),
+            `app main frame request should deny ${permission}`,
+          );
+          assert.isFalse(
+            checkPermission(fakeWindow.window.webContents, permission, "t3code-dev://app", {
+              isMainFrame: true,
+              requestingUrl: "t3code-dev://app/",
+            }),
+            `app main frame check should deny ${permission}`,
+          );
+        }
       }).pipe(Effect.provide(layer));
     }),
   );

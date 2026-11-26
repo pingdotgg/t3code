@@ -635,3 +635,167 @@ it.effect("closes connections beyond a forward's limit without tunnelling them",
     expect(endpoint.requests.length).toBe(tunnelled);
   }),
 );
+
+it.effect(
+  "redirects unspecified and IPv4-mapped IPv6 loopback HTTP(S) requests to localhost and cancels WS(S)",
+  () =>
+    Effect.gen(function* () {
+      const tunnel = yield* makeTunnel("ws://127.0.0.1:3773/api/preview/tunnel");
+      let registeredFilter: Electron.WebRequestFilter | undefined;
+      let listener:
+        | ((
+            details: Electron.OnBeforeRequestListenerDetails,
+            callback: (response: Electron.CallbackResponse) => void,
+          ) => void)
+        | null = null;
+      const session = {
+        setProxy: async () => undefined,
+        closeAllConnections: async () => undefined,
+        webRequest: {
+          onBeforeRequest: (
+            filterOrNull: Electron.WebRequestFilter | null,
+            nextListener?: (
+              details: Electron.OnBeforeRequestListenerDetails,
+              callback: (response: Electron.CallbackResponse) => void,
+            ) => void,
+          ) => {
+            if (filterOrNull === null) {
+              registeredFilter = undefined;
+              listener = null;
+            } else {
+              registeredFilter = filterOrNull;
+              listener = nextListener ?? null;
+            }
+          },
+        },
+      };
+
+      yield* tunnel.route({
+        environmentId: "remote",
+        session: session as unknown as Electron.Session,
+        tunnelled: true,
+      });
+
+      expect(registeredFilter).toEqual({
+        urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"],
+      });
+      expect(listener).not.toBeNull();
+
+      const invoke = (url: string) => {
+        let response: Electron.CallbackResponse | undefined;
+        listener!({ url } as Electron.OnBeforeRequestListenerDetails, (next) => {
+          response = next;
+        });
+        return response;
+      };
+
+      for (const host of [
+        "[::ffff:7f00:1]",
+        "[::ffff:127.0.0.1]",
+        "[::ffff:7fff:ffff]",
+        "[::ffff:0:0]",
+        "[::ffff:0.0.0.0]",
+        "0.0.0.0",
+        "[::]",
+      ]) {
+        expect(invoke(`http://${host}:3000/app?x=1`), `http ${host}`).toEqual({
+          redirectURL: "http://localhost:3000/app?x=1",
+        });
+        expect(invoke(`https://${host}:3000/app?x=1`), `https ${host}`).toEqual({
+          redirectURL: "https://localhost:3000/app?x=1",
+        });
+        expect(invoke(`ws://${host}:3000/hmr`), `ws ${host}`).toEqual({ cancel: true });
+        expect(invoke(`wss://${host}:3000/hmr`), `wss ${host}`).toEqual({ cancel: true });
+      }
+
+      for (const allowedUrl of [
+        "http://localhost:3000/app",
+        "http://127.0.0.1:3000/app",
+        "http://[::1]:3000/app",
+        "http://[::ffff:192.168.1.10]:3000/app",
+        "https://example.com/page",
+        "wss://example.com/socket",
+      ]) {
+        expect(invoke(allowedUrl), allowedUrl).toEqual({});
+      }
+
+      yield* tunnel.route({
+        environmentId: "remote",
+        session: session as unknown as Electron.Session,
+        tunnelled: false,
+      });
+      expect(listener).toBeNull();
+    }),
+);
+
+it.effect.each(["::ffff:7f00:1", "::ffff:127.0.0.1"])(
+  "tunnels IPv4-mapped IPv6 loopback domain %s over SOCKS5 without dialling locally",
+  (host) =>
+    Effect.gen(function* () {
+      const decoy = yield* listenDecoy;
+      const endpoint = yield* listenEndpoint;
+      const proxyPort = yield* routeThroughTunnel(
+        `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel?wsTicket=t`,
+      );
+      const { reply } = yield* socksConnect(proxyPort, host, addressPort(decoy.server));
+      expect(reply[1]).toBe(0);
+      expect(endpoint.requests).toEqual([
+        `/api/preview/tunnel?wsTicket=t&port=${addressPort(decoy.server)}`,
+      ]);
+      expect(decoy.connections()).toBe(0);
+    }),
+);
+
+const socksConnectIpv6 = (proxyPort: number, ipv6Bytes: Uint8Array, port: number) =>
+  Effect.acquireRelease(
+    Effect.promise(
+      () =>
+        new Promise<{ socket: NodeNet.Socket; reply: Buffer }>((resolve, reject) => {
+          const socket = NodeNet.connect(proxyPort, "127.0.0.1", () =>
+            socket.write(Uint8Array.of(5, 1, 0)),
+          );
+          let received = Buffer.alloc(0);
+          let greeted = false;
+          const onData = (chunk: Buffer) => {
+            received = Buffer.concat([received, chunk]);
+            if (!greeted && received.length >= 2) {
+              if (received[1] !== 0) return resolve({ socket, reply: received.subarray(0, 2) });
+              greeted = true;
+              received = received.subarray(2);
+              const destination = Buffer.alloc(2);
+              destination.writeUInt16BE(port);
+              socket.write(Buffer.concat([Uint8Array.of(5, 1, 0, 4), ipv6Bytes, destination]));
+            }
+            if (greeted && received.length >= 10) {
+              socket.off("data", onData);
+              resolve({ socket, reply: received.subarray(0, 10) });
+            }
+          };
+          socket.on("data", onData);
+          socket.on("error", reject);
+        }),
+    ),
+    ({ socket }) => Effect.sync(() => socket.destroy()),
+  );
+
+it.effect("unwraps IPv4-mapped IPv6 addresses in raw SOCKS5 IPv6 CONNECT requests", () =>
+  Effect.gen(function* () {
+    const decoy = yield* listenDecoy;
+    const endpoint = yield* listenEndpoint;
+    const proxyPort = yield* routeThroughTunnel(
+      `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel?wsTicket=t`,
+    );
+
+    const mappedLoopback = Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1);
+    const allowed = yield* socksConnectIpv6(proxyPort, mappedLoopback, addressPort(decoy.server));
+    expect(allowed.reply[1]).toBe(0);
+    expect(endpoint.requests).toEqual([
+      `/api/preview/tunnel?wsTicket=t&port=${addressPort(decoy.server)}`,
+    ]);
+
+    const mappedPrivate = Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 192, 168, 1, 20);
+    const refused = yield* socksConnectIpv6(proxyPort, mappedPrivate, addressPort(decoy.server));
+    expect(refused.reply[1]).not.toBe(0);
+    expect(decoy.connections()).toBe(0);
+  }),
+);

@@ -11,9 +11,17 @@ import { LoadingStrip } from "../../components/ui/LoadingStrip";
 import { PdfPreview } from "../../components/PdfPreview";
 import { ControlPill } from "../../components/ui/ControlPill";
 import { useHardwareBack } from "../../lib/backHandler";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { isPdfPreviewUri } from "../../lib/pdfPreview";
 import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
 import { useContentTopInset } from "../../components/ui/useBarInset";
+import {
+  decideWorkspaceWebPreviewNavigation,
+  shouldStartWorkspaceWebPreviewLoad,
+  workspaceWebPreviewOriginWhitelist,
+} from "./workspaceFileWebPreviewPolicy";
+
+export { shouldStartWorkspaceWebPreviewLoad, workspaceWebPreviewOriginWhitelist };
 
 export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) {
   const gt = useGT();
@@ -63,17 +71,26 @@ function DocumentWebPreview(props: { readonly uri: string }) {
           // react-native-webview defaults to "never", which starts the page under the header.
           contentInsetAdjustmentBehavior="automatic"
           decelerationRate={webViewDecelerationRate}
-          originWhitelist={["*"]}
+          originWhitelist={workspaceWebPreviewOriginWhitelist(props.uri)}
           allowsBackForwardNavigationGestures
           allowsFullscreenVideo
           allowsInlineMediaPlayback
           setSupportMultipleWindows={false}
           onShouldStartLoadWithRequest={(request) => {
-            if (request.isTopFrame !== false && isPdfPreviewUri(request.url)) {
-              setLinkedPdf(request.url);
+            const decision = decideWorkspaceWebPreviewNavigation(request, props.uri);
+            if (decision.action === "open-pdf") {
+              setLinkedPdf(decision.url);
               return false;
             }
-            return true;
+            if (decision.action === "open-external") {
+              void tryOpenExternalUrl(decision.url, "file-preview");
+              return false;
+            }
+            return decision.action === "allow";
+          }}
+          onOpenWindow={(event) => {
+            const url = event.nativeEvent.targetUrl;
+            if (/^https?:/i.test(url)) void tryOpenExternalUrl(url, "file-preview");
           }}
           startInLoadingState
           onLoadProgress={(event) => {

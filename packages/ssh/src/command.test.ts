@@ -252,6 +252,35 @@ describe("ssh command", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
+  it.effect("redacts credentials from stderr in non-zero command failures", () => {
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        makeFailedProcess({
+          stdout: "",
+          stderr: 'error: {"credential":"stderr-secret","token":"tok-123"}\n',
+        }),
+      ),
+    );
+    const layerProcess = Layer.mergeAll(
+      NodeServices.layer,
+      NodeCrypto.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return Effect.gen(function* () {
+      const failure = yield* runSshCommand(
+        { alias: "devbox", hostname: "devbox.example.com", username: "julius", port: 2222 },
+        { remoteCommandArgs: ["sh", "-s"] },
+      ).pipe(Effect.flip);
+
+      assert.instanceOf(failure, SshCommandError);
+      assert.equal(failure.stderr, 'error: {"credential":"[redacted]","token":"[redacted]"}\n');
+      assert.equal(failure.message, 'error: {"credential":"[redacted]","token":"[redacted]"}');
+      assert.notInclude(failure.stderr, "stderr-secret");
+      assert.notInclude(failure.stderr, "tok-123");
+    }).pipe(Effect.provide(layerProcess));
+  });
+
   it.effect("keeps redacted output the command emitted before timing out", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(
@@ -262,7 +291,11 @@ describe("ssh command", () => {
             Stream.never,
           ),
           stderr: Stream.concat(
-            Stream.make(encoder.encode("REMOTE: waiting for archive extraction\n")),
+            Stream.make(
+              encoder.encode(
+                'REMOTE: waiting for archive extraction {"bearerToken":"stderr-timeout-secret"}\n',
+              ),
+            ),
             Stream.never,
           ),
           all: Stream.empty,
@@ -289,7 +322,11 @@ describe("ssh command", () => {
       assert.instanceOf(failure, SshCommandError);
       assert.equal(failure.exitCode, null);
       assert.equal(failure.stdout, 'PROGRESS: extracting\n{"credential":"[redacted]"}\n');
-      assert.equal(failure.stderr, "REMOTE: waiting for archive extraction\n");
+      assert.equal(
+        failure.stderr,
+        'REMOTE: waiting for archive extraction {"bearerToken":"[redacted]"}\n',
+      );
+      assert.notInclude(failure.stderr, "stderr-timeout-secret");
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerSpawner)));
   });
 

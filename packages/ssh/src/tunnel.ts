@@ -35,6 +35,7 @@ import {
   controlMasterArgs,
   findLiveControlPath,
   getLastNonEmptyOutputLine,
+  redactSshErrorOutput,
   remoteStateKey,
   resolveSshCommand,
   resolveSshTarget,
@@ -212,14 +213,32 @@ const decodeRemoteJsonOutput = <A, E>(
   decode(stdout).pipe(
     Effect.catch((error) =>
       Effect.gen(function* () {
-        const jsonObject = extractJsonObject(stdout);
-        if (jsonObject === stdout.trim()) {
-          return yield* Effect.fail(error);
+        const trimmed = stdout.trim();
+        const tried = new Set<string>([stdout, trimmed]);
+        const candidates: Array<string> = [];
+        const addCandidate = (candidate: string | null) => {
+          if (candidate === null || tried.has(candidate)) return;
+          tried.add(candidate);
+          candidates.push(candidate);
+        };
+
+        addCandidate(getLastNonEmptyOutputLine(stdout));
+
+        let searchFrom = trimmed.length;
+        let attempts = 0;
+        while (searchFrom > 0 && attempts < 64) {
+          const braceIndex = trimmed.lastIndexOf("{", searchFrom - 1);
+          if (braceIndex < 0) break;
+          attempts += 1;
+          addCandidate(extractJsonObject(trimmed.slice(braceIndex)));
+          searchFrom = braceIndex;
         }
-        const exit = yield* Effect.exit(decode(jsonObject));
-        if (Exit.isSuccess(exit)) {
-          return exit.value;
+
+        for (const candidate of candidates) {
+          const exit = yield* Effect.exit(decode(candidate));
+          if (Exit.isSuccess(exit)) return exit.value;
         }
+
         return yield* Effect.fail(error);
       }),
     ),
@@ -1280,7 +1299,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     if (!getLastNonEmptyOutputLine(result.stdout)) {
       return yield* new SshLaunchError({
         message: "SSH launch did not return a remote port.",
-        stdout: result.stdout,
+        stdout: redactSshErrorOutput(result.stdout),
       });
     }
     const parsed = yield* decodeRemoteLaunchOutput(result.stdout).pipe(
@@ -1288,7 +1307,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
         (cause) =>
           new SshLaunchError({
             message: "SSH launch returned unparseable output.",
-            stdout: result.stdout,
+            stdout: redactSshErrorOutput(result.stdout),
             cause,
           }),
       ),
@@ -1296,7 +1315,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     if (!Number.isInteger(parsed.remotePort)) {
       return yield* new SshLaunchError({
         message: `SSH launch returned an invalid remote port: ${String(parsed.remotePort)}.`,
-        stdout: result.stdout,
+        stdout: redactSshErrorOutput(result.stdout),
       });
     }
     yield* Effect.logInfo("ssh.remoteServer.launch.ready", {
@@ -1339,7 +1358,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   if (!getLastNonEmptyOutputLine(result.stdout)) {
     return yield* new SshPairingError({
       message: "SSH pairing did not return a credential.",
-      stdout: result.stdout,
+      stdout: redactSshErrorOutput(result.stdout),
     });
   }
   const parsed = yield* decodeRemotePairingOutput(result.stdout).pipe(
@@ -1347,7 +1366,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
       (cause) =>
         new SshPairingError({
           message: "SSH pairing returned unparseable output.",
-          stdout: result.stdout,
+          stdout: redactSshErrorOutput(result.stdout),
           cause,
         }),
     ),
@@ -1355,7 +1374,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   if (parsed.credential.trim().length === 0) {
     return yield* new SshPairingError({
       message: "SSH pairing command returned an invalid credential.",
-      stdout: result.stdout,
+      stdout: redactSshErrorOutput(result.stdout),
     });
   }
   yield* Effect.logDebug("ssh.remoteServer.pairingToken.created", {
@@ -1709,7 +1728,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
         }),
     ),
     Effect.flatMap(([, exitCode]) => {
-      const stderr = stderrTail;
+      const stderr = redactSshErrorOutput(stderrTail, true, false);
       const error = new SshCommandError({
         command: tunnelCommand,
         exitCode,

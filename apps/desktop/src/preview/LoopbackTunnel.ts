@@ -46,31 +46,116 @@ const REPLY_ADDRESS_NOT_SUPPORTED = 8;
 
 const socksReply = (code: number) => Uint8Array.of(5, code, 0, 1, 0, 0, 0, 0, 0, 0);
 
+const parseIpv4Octets = (host: string): readonly [number, number, number, number] | null => {
+  const parts = host.split(".");
+  if (parts.length !== 4 || parts.some((part) => !/^\d{1,3}$/.test(part))) return null;
+  const octets = parts.map(Number);
+  return octets.every((octet) => octet >= 0 && octet <= 255)
+    ? [octets[0]!, octets[1]!, octets[2]!, octets[3]!]
+    : null;
+};
+
+const parseIpv6Bytes = (rawHost: string): Uint8Array | null => {
+  const host = rawHost.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host.includes(":")) return null;
+  const zoneIndex = host.indexOf("%");
+  const addr = zoneIndex === -1 ? host : host.slice(0, zoneIndex);
+  let ipv4Tail: readonly [number, number, number, number] | null = null;
+  let hexPart = addr;
+  const lastColon = addr.lastIndexOf(":");
+  if (lastColon !== -1 && addr.slice(lastColon + 1).includes(".")) {
+    ipv4Tail = parseIpv4Octets(addr.slice(lastColon + 1));
+    if (ipv4Tail === null) return null;
+    hexPart = addr.slice(0, lastColon);
+    if (hexPart.endsWith(":")) hexPart += ":";
+  }
+  const halves = hexPart.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves[1] ? halves[1].split(":") : [];
+  if ([...head, ...tail].some((part) => !/^[\da-f]{1,4}$/.test(part))) return null;
+  const targetGroups = ipv4Tail === null ? 8 : 6;
+  const missing = targetGroups - head.length - tail.length;
+  if ((halves.length === 1 && missing !== 0) || (halves.length === 2 && missing < 1)) return null;
+  const groups = [
+    ...head.map((part) => Number.parseInt(part, 16)),
+    ...Array.from({ length: missing }, () => 0),
+    ...tail.map((part) => Number.parseInt(part, 16)),
+  ];
+  const bytes = new Uint8Array(16);
+  for (let index = 0; index < groups.length; index += 1) {
+    bytes[index * 2] = groups[index]! >>> 8;
+    bytes[index * 2 + 1] = groups[index]! & 0xff;
+  }
+  if (ipv4Tail !== null) {
+    bytes[12] = ipv4Tail[0];
+    bytes[13] = ipv4Tail[1];
+    bytes[14] = ipv4Tail[2];
+    bytes[15] = ipv4Tail[3];
+  }
+  return bytes;
+};
+
+const unwrapIpv4MappedIpv6 = (bytes: Uint8Array): Uint8Array | null => {
+  if (bytes.length !== 16) return null;
+  for (let index = 0; index < 10; index += 1) {
+    if (bytes[index] !== 0) return null;
+  }
+  if (bytes[10] !== 0xff || bytes[11] !== 0xff) return null;
+  return bytes.subarray(12, 16);
+};
+
+const isIpv6LoopbackBytes = (bytes: Uint8Array): boolean => {
+  const mappedIpv4 = unwrapIpv4MappedIpv6(bytes);
+  if (mappedIpv4 !== null) {
+    return NetAddress.isLoopback(NetAddress.ipv4FromBytesUnsafe(mappedIpv4));
+  }
+  return NetAddress.isLoopback(NetAddress.ipv6FromBytesUnsafe(bytes));
+};
+
+const isUnspecifiedIpv4Bytes = (bytes: Uint8Array): boolean =>
+  bytes.length === 4 && bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 0 && bytes[3] === 0;
+
+const isUnspecifiedIpv6Bytes = (bytes: Uint8Array): boolean =>
+  bytes.length === 16 && bytes.every((byte) => byte === 0);
+
 // Chromium names the host as typed, so IP literals also arrive as domain names, and a fully
 // qualified `localhost.` keeps its trailing dot.
 const isLoopbackName = (typed: string) => {
-  const name = typed.replace(/\.$/, "");
-  return (
-    name === "localhost" ||
-    name.endsWith(".localhost") ||
-    Result.match(NetAddress.ipFromString(name), {
-      onSuccess: NetAddress.isLoopback,
-      onFailure: () => false,
-    })
-  );
+  const name = typed.replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (name === "localhost" || name.endsWith(".localhost")) return true;
+  const ipv6 = parseIpv6Bytes(name);
+  if (ipv6 !== null) return isIpv6LoopbackBytes(ipv6);
+  return Result.match(NetAddress.ipFromString(name), {
+    onSuccess: NetAddress.isLoopback,
+    onFailure: () => false,
+  });
 };
 
 // `*://` matches only http and https, so WebSocket schemes are listed separately.
-const UNSPECIFIED_ADDRESS_URLS = ["http", "https", "ws", "wss"].flatMap((scheme) => [
-  `${scheme}://0.0.0.0/*`,
-  `${scheme}://[::]/*`,
-]);
+const TUNNEL_INTERCEPT_URLS = ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"];
 
-const sendUnspecifiedToLocalhost = (
+const shouldRedirectToLocalhost = (hostname: string): boolean => {
+  if (hostname === "0.0.0.0") return true;
+  const ipv6 = parseIpv6Bytes(hostname);
+  if (ipv6 === null) return false;
+  if (isUnspecifiedIpv6Bytes(ipv6)) return true;
+  const mappedIpv4 = unwrapIpv4MappedIpv6(ipv6);
+  if (mappedIpv4 === null) return false;
+  return (
+    isUnspecifiedIpv4Bytes(mappedIpv4) ||
+    NetAddress.isLoopback(NetAddress.ipv4FromBytesUnsafe(mappedIpv4))
+  );
+};
+
+const redirectBypassedLoopbackToLocalhost = (
   details: Electron.OnBeforeRequestListenerDetails,
   callback: (response: Electron.CallbackResponse) => void,
 ) => {
-  const url = new URL(details.url);
+  const url = URL.parse(details.url);
+  if (url === null || !shouldRedirectToLocalhost(url.hostname)) {
+    return callback({});
+  }
   // A WebSocket handshake can't be redirected.
   if (url.protocol === "ws:" || url.protocol === "wss:") return callback({ cancel: true });
   url.hostname = "localhost";
@@ -93,7 +178,7 @@ const parseConnect = (data: Buffer): SocksRequest | undefined => {
     addressType === 1
       ? NetAddress.isLoopback(NetAddress.ipv4FromBytesUnsafe(host))
       : addressType === 4
-        ? NetAddress.isLoopback(NetAddress.ipv6FromBytesUnsafe(host))
+        ? isIpv6LoopbackBytes(host)
         : isLoopbackName(host.subarray(1).toString("latin1").toLowerCase());
   return loopback ? { port: data.readUInt16BE(4 + hostLength) } : { refusal: REPLY_NOT_ALLOWED };
 };
@@ -653,12 +738,12 @@ const make = Effect.gen(function* () {
                 proxyBypassRules: "*,<-loopback>,169.254.0.0/16,fe80::/10",
               },
         );
-        // The bypass rules don't cover the unspecified address, so it would reach this machine.
+        // The bypass rules miss unspecified and IPv4-mapped IPv6 loopback addresses.
         if (port === null) session.webRequest.onBeforeRequest(null);
         else {
           session.webRequest.onBeforeRequest(
-            { urls: UNSPECIFIED_ADDRESS_URLS },
-            sendUnspecifiedToLocalhost,
+            { urls: TUNNEL_INTERCEPT_URLS },
+            redirectBypassedLoopbackToLocalhost,
           );
         }
         await session.closeAllConnections();

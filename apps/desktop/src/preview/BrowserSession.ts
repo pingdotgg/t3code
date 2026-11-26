@@ -230,6 +230,14 @@ interface MediaConsent {
   resets: number;
 }
 
+type OriginPermission = "clipboard-read" | "geolocation";
+
+interface OriginPermissionConsent {
+  readonly decisions: Record<OriginPermission, Map<string, boolean>>;
+  /** Bumped by each reset, so an answer to an older prompt cannot restore a decision. */
+  resets: number;
+}
+
 export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<BrowserSessionPartitionDerivationError>()(
   "BrowserSessionPartitionDerivationError",
   {
@@ -680,6 +688,16 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     consent.decisions.clear();
   };
 
+  /** Clipboard-read and geolocation answers by Session; cleared with cookies too. */
+  const originPermissionConsentBySession = new WeakMap<Session, OriginPermissionConsent>();
+  const forgetOriginPermissionDecisions = (browserSession: Session): void => {
+    const consent = originPermissionConsentBySession.get(browserSession);
+    if (consent === undefined) return;
+    consent.resets += 1;
+    consent.decisions["clipboard-read"].clear();
+    consent.decisions.geolocation.clear();
+  };
+
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
@@ -713,13 +731,18 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         try: () => {
           const browserSession = session.fromPartition(partition);
           // Location and clipboard decisions are remembered separately for each origin.
-          const permissionDecisions = {
-            "clipboard-read": new Map<string, boolean>(),
-            geolocation: new Map<string, boolean>(),
+          const originPermissionConsent: OriginPermissionConsent = {
+            decisions: {
+              "clipboard-read": new Map<string, boolean>(),
+              geolocation: new Map<string, boolean>(),
+            },
+            resets: 0,
           };
+          originPermissionConsentBySession.set(browserSession, originPermissionConsent);
+          const permissionDecisions = originPermissionConsent.decisions;
           const confirmOriginPermission = (
             requester: WebContents,
-            permission: keyof typeof permissionDecisions,
+            permission: OriginPermission,
             rawUrl: string | undefined,
             callback: (granted: boolean) => void,
           ): void => {
@@ -735,6 +758,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               callback(remembered);
               return;
             }
+            // A reset while a prompt is pending must not grant or remember.
+            const resets = originPermissionConsent.resets;
+            const isStale = () =>
+              originPermissionConsent.resets !== resets || requester?.isDestroyed() === true;
             promptPermission(
               requester,
               {
@@ -752,6 +779,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                       }),
               },
               (answer) => {
+                if (isStale()) {
+                  callback(false);
+                  return;
+                }
                 if (answer !== undefined) decisions.set(origin, answer);
                 callback(answer === true);
               },
@@ -968,7 +999,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       const selected = selectSessions(sessions, partitions);
-      for (const [, browserSession] of selected) forgetMediaDecisions(browserSession);
+      for (const [, browserSession] of selected) {
+        forgetMediaDecisions(browserSession);
+        forgetOriginPermissionDecisions(browserSession);
+      }
       yield* Effect.forEach(
         selected,
         ([partition, browserSession]) =>
@@ -1002,6 +1036,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       for (const [partition, candidate] of sessions) {
         if (candidate !== browserSession) continue;
         forgetMediaDecisions(browserSession);
+        forgetOriginPermissionDecisions(browserSession);
         yield* revokeCertificates(partition, browserSession);
       }
     }),

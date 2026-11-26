@@ -32,7 +32,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { captureLauncher, captureLauncherFor, runLauncher } from "./launcherTestHarness.ts";
 import * as SshAuth from "./auth.ts";
 import { remoteStateKey } from "./command.ts";
-import { SshCommandError, SshPasswordPromptError, SshReadinessError } from "./errors.ts";
+import {
+  SshCommandError,
+  SshPairingError,
+  SshPasswordPromptError,
+  SshReadinessError,
+} from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
 const isSshCommandError = Schema.is(SshCommandError);
@@ -658,6 +663,55 @@ describe("ssh tunnel scripts", () => {
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.effect("decodes pairing JSON even when a login shell banner prints braces", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "troy",
+      port: 2222,
+    } as const;
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeSuccessfulProcess('{banner}\n{"credential":"secret-token"}\n')),
+    );
+    const layerProcess = Layer.mergeAll(
+      NodeServices.layer,
+      NodeCrypto.layer,
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+    return Effect.gen(function* () {
+      const result = yield* SshTunnel.issueRemotePairingToken(target, undefined, ARCHIVE);
+      assert.equal(result.credential, "secret-token");
+    }).pipe(Effect.provide(layerProcess));
+  });
+
+  it.effect(
+    "redacts credentials from SshPairingError stdout when pairing output is malformed",
+    () => {
+      const target = {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "troy",
+        port: 2222,
+      } as const;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(makeSuccessfulProcess('{banner}\n{"credential":"secret-token", broken\n')),
+      );
+      const layerProcess = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      return Effect.gen(function* () {
+        const failure = yield* SshTunnel.issueRemotePairingToken(target, undefined, ARCHIVE).pipe(
+          Effect.flip,
+        );
+        assert.instanceOf(failure, SshPairingError);
+        assert.notInclude(failure.stdout, "secret-token");
+        assert.include(failure.stdout, '"credential":"[redacted]"');
+      }).pipe(Effect.provide(layerProcess));
+    },
+  );
 
   it.effect("retains a bounded diagnostic tail when the tunnel exits before readiness", () =>
     Effect.gen(function* () {

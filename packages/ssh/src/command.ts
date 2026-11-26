@@ -164,12 +164,12 @@ const collectProcessOutput = <E>(
     ),
   );
 
-function redactSshErrorOutput(output: string, keepTail = false): string {
+export function redactSshErrorOutput(output: string, keepTail = false, truncate = true): string {
   const redacted = output.replace(
-    /("(?:access_token|bearerToken|credential|pairingToken|token)"\s*:\s*")[^"]+(")/giu,
+    /("(?:access_token|bearerToken|credential|pairingToken|token)"\s*:\s*")[^"]+("|$)/giu,
     "$1[redacted]$2",
   );
-  if (redacted.length <= MAX_SSH_ERROR_OUTPUT_LENGTH) return redacted;
+  if (!truncate || redacted.length <= MAX_SSH_ERROR_OUTPUT_LENGTH) return redacted;
   return keepTail
     ? `[truncated]\n${redacted.slice(-MAX_SSH_ERROR_OUTPUT_LENGTH)}`
     : `${redacted.slice(0, MAX_SSH_ERROR_OUTPUT_LENGTH)}\n[truncated]`;
@@ -339,28 +339,29 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
   const { stdout, stderr } = output;
   if (exitCode !== 0) {
     const diagnosticStdout = redactSshErrorOutput(stdout, input.keepErrorOutputTail);
+    const diagnosticStderr = redactSshErrorOutput(stderr, false, false);
     yield* Effect.logWarning("ssh.command.failed", {
       ...sshTargetLogFields(target),
       command: ["ssh", ...args],
       exitCode,
       stdout: diagnosticStdout,
-      stderr,
+      stderr: diagnosticStderr,
     });
     return yield* new SshCommandError({
       command: ["ssh", ...args],
       exitCode,
       stdout: diagnosticStdout,
-      stderr,
+      stderr: diagnosticStderr,
       message:
         hostKeyVerificationMessage({
           target,
           hostSpec,
-          stderr,
+          stderr: diagnosticStderr,
           platform: yield* HostProcess.Platform,
         }) ??
         normalizeSshErrorMessage({
           stdout: diagnosticStdout,
-          stderr,
+          stderr: diagnosticStderr,
           fallbackMessage: `SSH command failed for ${hostSpec} (exit ${exitCode}).`,
         }),
     });
@@ -392,7 +393,7 @@ export const runSshCommand = Effect.fn("ssh/command.runSshCommand")(function* (
         // The enclosing operation owns the span for this inline handler.
         onNone: Effect.fnUntraced(function* () {
           const diagnosticStdout = redactSshErrorOutput(output.stdout, input.keepErrorOutputTail);
-          const { stderr } = output;
+          const diagnosticStderr = redactSshErrorOutput(output.stderr, false, false);
           yield* Effect.logWarning("ssh.command.timedOut", {
             ...sshTargetLogFields(target),
             timeoutMs: input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS,
@@ -400,13 +401,13 @@ export const runSshCommand = Effect.fn("ssh/command.runSshCommand")(function* (
             preHostArgs: input.preHostArgs ?? [],
             hasStdin: input.stdin !== undefined,
             stdout: diagnosticStdout,
-            stderr,
+            stderr: diagnosticStderr,
           });
           return yield* new SshCommandError({
             command: ["ssh"],
             exitCode: null,
             stdout: diagnosticStdout,
-            stderr,
+            stderr: diagnosticStderr,
             message: `SSH command timed out after ${input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS}ms.`,
           });
         }),

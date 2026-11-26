@@ -475,6 +475,136 @@ describe("BrowserSession", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect.each(["clipboard-read", "geolocation"] as const)(
+    "forgets %s answers when the profile's cookies are cleared",
+    (permission) =>
+      Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const partition = yield* browserSessions.getPartition("scope-a");
+        yield* browserSessions.getSession("scope-a");
+        const browserSession = sessions.get(partition);
+        assert.isDefined(browserSession);
+        const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+        const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+
+        const requestOriginPermission = () =>
+          Effect.callback<boolean>((resume) => {
+            requestHandler(
+              null,
+              permission,
+              (granted: boolean) => resume(Effect.succeed(granted)),
+              {
+                requestingUrl: "https://page.test/",
+                isMainFrame: true,
+              },
+            );
+          });
+        const checkOriginPermission = (): boolean =>
+          checkHandler(null, permission, "https://page.test", {}) as boolean;
+
+        showMessageBox.mockReset();
+        showMessageBox.mockReturnValueOnce(1).mockReturnValueOnce(0).mockReturnValueOnce(1);
+
+        assert.isFalse(yield* requestOriginPermission());
+        assert.isFalse(yield* requestOriginPermission());
+        assert.strictEqual(showMessageBox.mock.calls.length, 1);
+
+        yield* browserSessions.clearCookies([partition]);
+        assert.isTrue(yield* requestOriginPermission());
+        assert.isTrue(checkOriginPermission());
+        assert.strictEqual(showMessageBox.mock.calls.length, 2);
+
+        yield* browserSessions.cookiesCleared(browserSession as unknown as Electron.Session);
+        assert.isFalse(checkOriginPermission());
+        assert.isFalse(yield* requestOriginPermission());
+        assert.strictEqual(showMessageBox.mock.calls.length, 3);
+
+        yield* browserSessions.clearCookies([partition]);
+        showMessageBox.mockReturnValue(0);
+        assert.isTrue(yield* requestOriginPermission());
+        browserSession.clearStorageData.mockRejectedValueOnce(new Error("clear failed"));
+        const cleared = yield* Effect.result(browserSessions.clearCookies([partition]));
+        assert.strictEqual(cleared._tag, "Failure");
+        assert.isFalse(checkOriginPermission());
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect.each(["clipboard-read", "geolocation"] as const)(
+    "a reset or closed tab while a %s prompt is open neither grants nor remembers",
+    (permission) =>
+      Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const partition = yield* browserSessions.getPartition("scope-a");
+        yield* browserSessions.getSession("scope-a");
+        const browserSession = sessions.get(partition);
+        assert.isDefined(browserSession);
+        const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+        const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+        const guest = Object.assign(new NodeEvents.EventEmitter(), {
+          hostWebContents: null,
+          isDestroyed: vi.fn<() => boolean>(() => false),
+        });
+        const requestOriginPermission = () => {
+          const granted = Deferred.makeUnsafe<boolean>();
+          requestHandler(
+            guest,
+            permission,
+            (value: boolean) => Deferred.doneUnsafe(granted, Effect.succeed(value)),
+            { requestingUrl: "https://page.test/", isMainFrame: true },
+          );
+          return Deferred.await(granted);
+        };
+        const checkOriginPermission = (): boolean =>
+          checkHandler(null, permission, "https://page.test", {}) as boolean;
+
+        // clearCookies while the prompt is open rejects a late Allow.
+        const askedClear = yield* Deferred.make<void>();
+        const answerClear = Promise.withResolvers<number>();
+        showMessageBox.mockReset();
+        showMessageBox.mockImplementationOnce(() => {
+          Deferred.doneUnsafe(askedClear, Effect.void);
+          return answerClear.promise;
+        });
+        const pendingClear = yield* Effect.forkChild(requestOriginPermission());
+        yield* Deferred.await(askedClear);
+        yield* browserSessions.clearCookies([partition]);
+        answerClear.resolve(0);
+        assert.isFalse(yield* Fiber.join(pendingClear));
+        assert.isFalse(checkOriginPermission());
+
+        // cookiesCleared while the prompt is open also rejects a late Allow.
+        const askedExternal = yield* Deferred.make<void>();
+        const answerExternal = Promise.withResolvers<number>();
+        showMessageBox.mockImplementationOnce(() => {
+          Deferred.doneUnsafe(askedExternal, Effect.void);
+          return answerExternal.promise;
+        });
+        const pendingExternal = yield* Effect.forkChild(requestOriginPermission());
+        yield* Deferred.await(askedExternal);
+        yield* browserSessions.cookiesCleared(browserSession as unknown as Electron.Session);
+        answerExternal.resolve(0);
+        assert.isFalse(yield* Fiber.join(pendingExternal));
+        assert.isFalse(checkOriginPermission());
+
+        // Destroying the requesting tab while the prompt is open rejects and does not remember.
+        const askedTab = yield* Deferred.make<void>();
+        const answerTab = Promise.withResolvers<number>();
+        showMessageBox.mockImplementationOnce(() => {
+          Deferred.doneUnsafe(askedTab, Effect.void);
+          return answerTab.promise;
+        });
+        const pendingTab = yield* Effect.forkChild(requestOriginPermission());
+        yield* Deferred.await(askedTab);
+        const promptSignal = showMessageBox.mock.lastCall?.[0].signal;
+        guest.isDestroyed.mockReturnValue(true);
+        guest.emit("destroyed");
+        assert.isTrue(promptSignal?.aborted);
+        answerTab.resolve(0);
+        assert.isFalse(yield* Fiber.join(pendingTab));
+        assert.isFalse(checkOriginPermission());
+      }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("asks once per origin and device before a page uses the camera", () =>
     Effect.gen(function* () {
       const browserSessions = yield* BrowserSession.BrowserSession;

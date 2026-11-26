@@ -51,7 +51,7 @@ import {
 import { useUiStateStore } from "../uiStateStore";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
-import { GUEST_PAGE_PATH } from "../guestPage";
+import { GUEST_PAGE_PATH, normalizeRoutePathname } from "../guestPage";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -65,9 +65,10 @@ import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
+    const pathname = normalizeRoutePathname(location.pathname);
     // Guest links open on the owner's tunnel host in a browser with no T3 session, and must
     // not trigger pairing or an environment connection.
-    if (location.pathname === GUEST_PAGE_PATH) {
+    if (pathname === GUEST_PAGE_PATH) {
       return {
         authGateState: {
           status: "guest",
@@ -75,7 +76,7 @@ export const Route = createRootRoute({
       };
     }
 
-    if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
+    if (pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
       return {
         authGateState: {
           status: "hosted-pairing",
@@ -100,7 +101,7 @@ export const Route = createRootRoute({
       authGateState.status === "authenticated" &&
       getDesktopSnapShotBridge() &&
       shouldResumeSnapShotSetupOnStartup() &&
-      location.pathname !== "/settings/snap-shot"
+      pathname !== "/settings/snap-shot"
     ) {
       throw redirect({ to: "/settings/snap-shot", replace: true });
     }
@@ -150,7 +151,9 @@ function RootRouteView() {
 }
 
 function RootRouteBranch() {
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const pathname = useLocation({
+    select: (location) => normalizeRoutePathname(location.pathname),
+  });
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
   // A sync IPC read; the setting only changes across a relaunch.
@@ -250,7 +253,9 @@ function RootRouteErrorView({ error }: ErrorComponentProps) {
   const gt = useGT();
   const message = errorMessage(error) ?? gt("An unexpected router error occurred.");
   // Router pathname rather than window.location: desktop uses hash history, where the window path is always "/".
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const pathname = useLocation({
+    select: (location) => normalizeRoutePathname(location.pathname),
+  });
   const report = errorReport(error, pathname);
 
   return (

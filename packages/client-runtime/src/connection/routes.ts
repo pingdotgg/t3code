@@ -291,7 +291,12 @@ export function mergeLearnedRoutes(input: {
     // A loopback address names whichever device opens it, never the server.
     if (isLocalLoopbackHost(url.hostname)) continue;
     reported.set(url.origin, url);
-    if (endpoint.kind === "tailnet") tailscaleOrigins.add(url.origin);
+    if (
+      endpoint.kind === "tailnet" &&
+      (isTailnetHost(url.hostname) || isSharedAddressSpaceHost(url.hostname))
+    ) {
+      tailscaleOrigins.add(url.origin);
+    }
   }
   const normalized = (url: string) => url.replace(/\/+$/, "");
   const known = new Set(
@@ -310,7 +315,7 @@ export function mergeLearnedRoutes(input: {
       ];
     }
     if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return [];
-    if (sendsTokenInClear(saved, route, tailscaleOrigins.has(normalized(url)))) return [];
+    if (sendsTokenInClear(saved, route)) return [];
     known.add(normalized(url));
     return [withNetwork(route, tailscaleOrigins.has(normalized(url)))];
   });
@@ -320,7 +325,6 @@ export function mergeLearnedRoutes(input: {
     if (
       url.protocol === "http:" &&
       sharedCredential !== undefined &&
-      !tailscaleOrigins.has(url.origin) &&
       !tokenAllowsPlainHttp(saved, sharedCredential)
     ) {
       continue;
@@ -361,9 +365,9 @@ export function mergeLearnedRoutes(input: {
   return signature(saved) === signature(next) ? null : next;
 }
 
-// A paired token goes to a plain HTTP address outside the tailnet only when
-// it was paired that way, so a token paired over HTTPS, loopback, or the
-// tailnet keeps to the transports it was issued for.
+// A paired token goes to a plain HTTP address only when it was paired over
+// plain HTTP on a non-loopback network, so an HTTPS- or loopback-paired token
+// never downgrades to cleartext.
 function tokenAllowsPlainHttp(
   routes: ReadonlyArray<ConnectionRoute>,
   credentialId: string,
@@ -385,13 +389,12 @@ function tokenAllowsPlainHttp(
 export function sendsTokenInClear(
   routes: ReadonlyArray<ConnectionRoute>,
   route: ConnectionRoute,
-  tailscale?: boolean,
 ): boolean {
   const profile = Option.getOrNull(route.profile);
   if (profile?._tag !== "BearerConnectionProfile" || profile.authorization === "t3-connect") {
     return false;
   }
-  if ((tailscale ?? profile.network === "tailscale") || !profile.httpBaseUrl.startsWith("http:")) {
+  if (!profile.httpBaseUrl.startsWith("http:")) {
     return false;
   }
   const credentialId = credentialConnectionId(connectionRouteId(route.target));

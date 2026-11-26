@@ -288,7 +288,7 @@ describe("learned routes", () => {
     expect(credentialConnectionId(connectionRouteId(learned.target))).toBe("lan");
   });
 
-  it("keeps a token paired over HTTPS off plain HTTP addresses outside the tailnet", () => {
+  it("keeps a token paired over HTTPS off plain HTTP addresses, including tailnet IPs", () => {
     const entry = entryWithRoutes(relayOnly, [PUBLIC, RELAY]);
     const routes = mergeLearnedRoutes({
       entry,
@@ -301,11 +301,61 @@ describe("learned routes", () => {
       allowInsecure: true,
     });
     expect(ids(routes)).toEqual([
-      `learned:${ENVIRONMENT_ID}:http://100.101.102.103:3773@public`,
       `learned:${ENVIRONMENT_ID}:https://desk.tail1234.ts.net@public`,
       "public",
       "relay",
     ]);
+  });
+
+  it("refuses and drops a stale plain HTTP tailnet route borrowing an HTTPS-paired token", () => {
+    const tailnetOrigin = "http://100.101.102.103:3773";
+    const base = learned(`learned:${ENVIRONMENT_ID}:${tailnetOrigin}@public`, `${tailnetOrigin}/`);
+    const staleProfile = Option.getOrThrow(base.profile) as BearerConnectionProfile;
+    const stale: ConnectionRoute = {
+      target: base.target,
+      profile: Option.some(new BearerConnectionProfile({ ...staleProfile, network: "tailscale" })),
+    };
+    const entry = entryWithRoutes(relayOnly, [stale, PUBLIC, RELAY]);
+    expect(sendsTokenInClear([stale, PUBLIC, RELAY], stale)).toBe(true);
+    expect(ids(usableRoutes(entry))).toEqual(["public", "relay"]);
+
+    const routes = mergeLearnedRoutes({
+      entry,
+      activeRoute: PUBLIC,
+      reported: [{ kind: "tailnet", httpBaseUrl: `${tailnetOrigin}/` }],
+      allowInsecure: true,
+    });
+    expect(ids(routes)).toEqual(["public", "relay"]);
+  });
+
+  it("does not mark non-tailnet hosts as Tailscale even when reported with kind tailnet", () => {
+    const routes = mergeLearnedRoutes({
+      entry: relayOnly,
+      activeRoute: RELAY,
+      reported: [
+        { kind: "tailnet", httpBaseUrl: "http://192.168.1.10:3773/" },
+        { kind: "tailnet", httpBaseUrl: "https://desk.example.com/" },
+        { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
+      ],
+      allowInsecure: true,
+    })!;
+    const byUrl = new Map(
+      routes
+        .filter((route) => route.target._tag === "BearerConnectionTarget")
+        .map((route) => [(profileOf(route) as BearerConnectionProfile).httpBaseUrl, route]),
+    );
+    expect(connectionRouteKind(byUrl.get("http://192.168.1.10:3773/")!)).toBe("lan");
+    expect(
+      (profileOf(byUrl.get("http://192.168.1.10:3773/")!) as BearerConnectionProfile).network,
+    ).toBeUndefined();
+    expect(connectionRouteKind(byUrl.get("https://desk.example.com/")!)).toBe("public");
+    expect(
+      (profileOf(byUrl.get("https://desk.example.com/")!) as BearerConnectionProfile).network,
+    ).toBeUndefined();
+    expect(connectionRouteKind(byUrl.get("http://100.101.102.103:3773/")!)).toBe("tailnet");
+    expect(
+      (profileOf(byUrl.get("http://100.101.102.103:3773/")!) as BearerConnectionProfile).network,
+    ).toBe("tailscale");
   });
 
   it("drops a stale plain HTTP route borrowing an HTTPS-paired token while another route is active", () => {
