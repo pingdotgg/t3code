@@ -11997,10 +11997,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     (yield* Ref.get(activeSessionId)) !== sessionId ||
                     snapshotLoadedForSessionId !== sessionId;
                   if (needsSnapshotLoad) {
-                    if ((yield* Ref.get(activeTurn)) !== null) {
+                    if (
+                      (yield* Ref.get(activeTurn)) !== null ||
+                      (yield* Ref.get(runningBackgroundTaskIds)).size > 0
+                    ) {
                       return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                         driver,
-                        detail: "Cannot read ACP thread snapshot while a turn is active",
+                        detail:
+                          "Cannot read ACP thread snapshot while a turn or background work is active",
                       });
                     }
                     if (!capabilities.threads.canReadThreadSnapshot) {
