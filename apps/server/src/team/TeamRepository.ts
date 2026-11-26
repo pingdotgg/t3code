@@ -839,6 +839,10 @@ export class TeamRepository extends Context.Service<
       }>,
       TeamRepositoryError
     >;
+    readonly clearPendingRemoteRevocationUnlinkFlag: (input: {
+      readonly teamId: TeamId;
+      readonly environmentId: EnvironmentId;
+    }) => Effect.Effect<void, TeamRepositoryError>;
     readonly deletePendingRemoteRevocation: (
       id: string,
     ) => Effect.Effect<void, TeamRepositoryError>;
@@ -2967,6 +2971,19 @@ const make = Effect.gen(function* () {
         }));
       },
     ),
+
+    clearPendingRemoteRevocationUnlinkFlag: Effect.fn(
+      "TeamRepository.clearPendingRemoteRevocationUnlinkFlag",
+    )(function* (input) {
+      yield* runSql(
+        "clearPendingRemoteRevocationUnlinkFlag",
+        sql`
+          UPDATE team_pending_remote_revocations
+          SET unlink_after_revoke = 0
+          WHERE team_id = ${input.teamId} AND environment_id = ${input.environmentId}
+        `,
+      );
+    }),
 
     deletePendingRemoteRevocation: Effect.fn("TeamRepository.deletePendingRemoteRevocation")(
       function* (id) {

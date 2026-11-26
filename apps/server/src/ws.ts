@@ -2897,39 +2897,58 @@ export const layerWsRpc = (
             .search(input)
             .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
         [WS_METHODS.serverPrepareAcpRegistryAgent]: (input) =>
-          Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
             Effect.andThen(
-              Effect.suspend(() => {
-                const blocked = ManagedProviders.disallowedDriverReason(
-                  serverSettings.managedPolicy,
-                  ProviderDriverKind.make("acpRegistry"),
-                );
-                return blocked === undefined
-                  ? acpRegistryCatalog
-                      .prepare(input)
-                      .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError))
-                  : Effect.fail(
-                      new AcpRegistryOperationError({ reason: "install_failed", message: blocked }),
+              Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
+                Effect.andThen(
+                  Effect.suspend(() => {
+                    const blocked = ManagedProviders.disallowedDriverReason(
+                      serverSettings.managedPolicy,
+                      ProviderDriverKind.make("acpRegistry"),
                     );
-              }),
+                    return blocked === undefined
+                      ? acpRegistryCatalog
+                          .prepare(input)
+                          .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError))
+                      : Effect.fail(
+                          new AcpRegistryOperationError({
+                            reason: "install_failed",
+                            message: blocked,
+                          }),
+                        );
+                  }),
+                ),
+              ),
             ),
           ),
         [WS_METHODS.serverUninstallAcpRegistryManagedBinary]: (input) =>
-          Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
-            Effect.andThen(
-              acpRegistryCatalog
-                .uninstallManagedBinary(input)
-                .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                Effect.annotateCurrentSpan({ "acp_registry.agent_id": input.agentId }).pipe(
+                  Effect.andThen(
+                    acpRegistryCatalog
+                      .uninstallManagedBinary(input)
+                      .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError)),
+                  ),
+                ),
+              ),
             ),
-          ),
         [WS_METHODS.serverAcceptAcpRegistryUrlAuth]: (input) =>
-          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
-            Effect.andThen(
-              acpRegistryRuntimeCoordinator
-                .acceptUrlAuthentication(input)
-                .pipe(Effect.map((accepted) => ({ accepted }))),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+                  Effect.andThen(
+                    acpRegistryRuntimeCoordinator
+                      .acceptUrlAuthentication(input)
+                      .pipe(Effect.map((accepted) => ({ accepted }))),
+                  ),
+                ),
+              ),
             ),
-          ),
         [WS_METHODS.serverListAcpRegistrySessions]: (input) =>
           Effect.annotateCurrentSpan({
             "provider.instance_id": input.instanceId,
@@ -2959,56 +2978,68 @@ export const layerWsRpc = (
             "project.id": input.projectId,
           }).pipe(Effect.andThen(listAcpRegistryProviders(input))),
         [WS_METHODS.serverSetAcpRegistryProvider]: (input) =>
-          Effect.annotateCurrentSpan({
-            "provider.instance_id": input.instanceId,
-            "project.id": input.projectId,
-          }).pipe(Effect.andThen(setAcpRegistryProvider(input))),
-        [WS_METHODS.serverDisableAcpRegistryProvider]: (input) =>
-          Effect.annotateCurrentSpan({
-            "provider.instance_id": input.instanceId,
-            "project.id": input.projectId,
-          }).pipe(Effect.andThen(disableAcpRegistryProvider(input))),
-        [WS_METHODS.serverLogoutAcpRegistry]: (input) =>
-          Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
             Effect.andThen(
-              Effect.gen(function* () {
-                const { instance, manager } = yield* acpRegistrySessions.sessionManager(
-                  input.instanceId,
-                );
-                const snapshot = yield* instance.snapshot.getSnapshot;
-                if (snapshot.auth.canLogout !== true) {
-                  return yield* new AcpRegistryOperationError({
-                    reason: "logout_unsupported",
-                    message: "The ACP agent does not advertise logout.",
-                  });
-                }
-                if (instance.auth) {
-                  yield* providerAuth.logout(input).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new AcpRegistryOperationError({
-                          reason: "logout_failed",
-                          message: "Could not sign out of the ACP agent.",
-                          cause,
-                        }),
-                    ),
-                  );
-                } else {
-                  yield* providerSessionManager.closeInstance(input.instanceId).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new AcpRegistryOperationError({
-                          reason: "logout_failed",
-                          message: "Could not stop live sessions before ACP logout.",
-                          cause,
-                        }),
-                    ),
-                  );
-                  yield* manager.logout(config.cwd);
-                }
-                yield* providerRegistry.refreshInstance(input.instanceId);
-                return { loggedOut: true } as const;
-              }),
+              Effect.annotateCurrentSpan({
+                "provider.instance_id": input.instanceId,
+                "project.id": input.projectId,
+              }).pipe(Effect.andThen(setAcpRegistryProvider(input))),
+            ),
+          ),
+        [WS_METHODS.serverDisableAcpRegistryProvider]: (input) =>
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              Effect.annotateCurrentSpan({
+                "provider.instance_id": input.instanceId,
+                "project.id": input.projectId,
+              }).pipe(Effect.andThen(disableAcpRegistryProvider(input))),
+            ),
+          ),
+        [WS_METHODS.serverLogoutAcpRegistry]: (input) =>
+          teamService.assertCanAccessLocalEnvironment(currentSessionId).pipe(
+            Effect.andThen(
+              Effect.annotateCurrentSpan({ "provider.instance_id": input.instanceId }).pipe(
+                Effect.andThen(
+                  Effect.gen(function* () {
+                    const { instance, manager } = yield* acpRegistrySessions.sessionManager(
+                      input.instanceId,
+                    );
+                    const snapshot = yield* instance.snapshot.getSnapshot;
+                    if (snapshot.auth.canLogout !== true) {
+                      return yield* new AcpRegistryOperationError({
+                        reason: "logout_unsupported",
+                        message: "The ACP agent does not advertise logout.",
+                      });
+                    }
+                    if (instance.auth) {
+                      yield* providerAuth.logout(input).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new AcpRegistryOperationError({
+                              reason: "logout_failed",
+                              message: "Could not sign out of the ACP agent.",
+                              cause,
+                            }),
+                        ),
+                      );
+                    } else {
+                      yield* providerSessionManager.closeInstance(input.instanceId).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new AcpRegistryOperationError({
+                              reason: "logout_failed",
+                              message: "Could not stop live sessions before ACP logout.",
+                              cause,
+                            }),
+                        ),
+                      );
+                      yield* manager.logout(config.cwd);
+                    }
+                    yield* providerRegistry.refreshInstance(input.instanceId);
+                    return { loggedOut: true } as const;
+                  }),
+                ),
+              ),
             ),
           ),
         [WS_METHODS.serverRefreshProviders]:
@@ -3140,8 +3171,14 @@ export const layerWsRpc = (
           teamService
             .assertCanReadThread(currentSessionId, input.threadId)
             .pipe(Effect.andThen(mcpAppRequests.readResource(input))),
-        [WS_METHODS.providerMcpSignInStart]: (input) => mcpSignIn.start(input),
-        [WS_METHODS.providerMcpSignInComplete]: (input) => mcpSignIn.complete(input),
+        [WS_METHODS.providerMcpSignInStart]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(mcpSignIn.start(input))),
+        [WS_METHODS.providerMcpSignInComplete]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(mcpSignIn.complete(input))),
         [WS_METHODS.providerUploadFeedback]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(
@@ -3193,7 +3230,9 @@ export const layerWsRpc = (
               ),
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
-          providerMaintenanceRunner.updateProvider(input),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerMaintenanceRunner.updateProvider(input))),
         [WS_METHODS.providerConsumeResetCredit]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
@@ -3226,26 +3265,61 @@ export const layerWsRpc = (
             );
             return { outcome };
           }),
-        [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),
+        [WS_METHODS.providerAuthStart]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.start(input, currentSessionId))),
         [WS_METHODS.providerAuthRespond]: (input) =>
-          Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(
-            Effect.andThen(providerAuth.respond(input, currentSessionId)),
-          ),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(
+              Effect.andThen(
+                Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(
+                  Effect.andThen(providerAuth.respond(input, currentSessionId)),
+                ),
+              ),
+            ),
         [WS_METHODS.providerAuthComplete]: (input) =>
-          providerAuth.complete(input, currentSessionId),
-        [WS_METHODS.chatGptReconnectProfile]: (input) => providerAuth.reconnectProfile(input),
-        [WS_METHODS.chatGptImportProfile]: (input) => providerAuth.importProfile(input),
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.complete(input, currentSessionId))),
+        [WS_METHODS.chatGptReconnectProfile]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.reconnectProfile(input))),
+        [WS_METHODS.chatGptImportProfile]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.importProfile(input))),
         [WS_METHODS.chatGptHandoffSubscribe]: (input) =>
           subscribeChatGptHandoff(input, currentSessionId),
-        [WS_METHODS.providerAuthCancel]: (input) => providerAuth.cancel(input, currentSessionId),
-        [WS_METHODS.providerAuthRemoveMethod]: (input) => providerAuth.removeMethod(input),
-        [WS_METHODS.providerAuthLogout]: (input) => providerAuth.logout(input),
+        [WS_METHODS.providerAuthCancel]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.cancel(input, currentSessionId))),
+        [WS_METHODS.providerAuthRemoveMethod]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.removeMethod(input))),
+        [WS_METHODS.providerAuthLogout]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerAuth.logout(input))),
         [WS_METHODS.providerAuthSubscribe]: (input) =>
           providerAuth.subscribe(input, currentSessionId),
-        [WS_METHODS.providerInstallStart]: (input) => providerInstallation.start(input),
-        [WS_METHODS.providerInstallCancel]: (input) => providerInstallation.cancel(input),
+        [WS_METHODS.providerInstallStart]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerInstallation.start(input))),
+        [WS_METHODS.providerInstallCancel]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerInstallation.cancel(input))),
         [WS_METHODS.providerInstallSubscribe]: (input) => providerInstallation.subscribe(input),
-        [WS_METHODS.providerInstallRemove]: (input) => providerInstallation.remove(input),
+        [WS_METHODS.providerInstallRemove]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(providerInstallation.remove(input))),
         [WS_METHODS.serverUpdateServer]: (input) => serverSelfUpdate.update(input),
         [WS_METHODS.serverGetNpmRelease]: (input) => npmRelease.get(input),
         [WS_METHODS.serverUpdateServerWithProgress]: (input) =>
@@ -3255,17 +3329,25 @@ export const layerWsRpc = (
         [WS_METHODS.serverUpsertKeybinding]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (rule) {
+            yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
             return yield* keybindings.upsertKeybindingRule(rule);
           }),
         [WS_METHODS.serverRemoveKeybinding]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (rule) {
+            yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
             return yield* keybindings.removeKeybindingRule(rule);
           }),
-        [WS_METHODS.serverRunStorageCleanup]: () => storageCleanup.runNow,
+        [WS_METHODS.serverRunStorageCleanup]: () =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(storageCleanup.runNow)),
         [WS_METHODS.serverGetStorageCleanupReport]: () => storageCleanup.reports,
         [WS_METHODS.serverGetDatabaseStorage]: () => databaseStorage.status,
-        [WS_METHODS.serverReclaimDatabaseSpace]: () => databaseStorage.requestReclaim,
+        [WS_METHODS.serverReclaimDatabaseSpace]: () =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(databaseStorage.requestReclaim)),
         [WS_METHODS.peerLinksList]: (_input) =>
           peerLinks.list.pipe(
             Effect.flatMap((links) =>
@@ -3402,6 +3484,7 @@ export const layerWsRpc = (
         [WS_METHODS.serverUpdateSettings]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {
+            yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -4356,8 +4439,14 @@ export const layerWsRpc = (
             ),
         [WS_METHODS.subscribePreviewEvents]: (_input) =>
           filterPreviewEventsStreamForSession(teamService, currentSessionId, previewManager.events),
-        [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
-        [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
+        [WS_METHODS.deviceConfigure]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(deviceService.configure(input))),
+        [WS_METHODS.deviceTestHost]: (input) =>
+          teamService
+            .assertCanAccessLocalEnvironment(currentSessionId)
+            .pipe(Effect.andThen(deviceService.testHost(input))),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
         [WS_METHODS.deviceSimlockIdentity]: (input) => deviceService.simlockIdentity(input),
         [WS_METHODS.deviceList]: (input) =>

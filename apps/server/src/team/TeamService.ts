@@ -593,7 +593,6 @@ export class TeamService extends Context.Service<
     readonly updateEnvironment: (input: {
       readonly sessionId: AuthSessionId;
       readonly payload: TeamUpdateEnvironmentInput;
-      readonly peerLinks?: PeerLinks.PeerLinks["Service"];
       readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
     }) => Effect.Effect<TeamEnvironment, TeamOperationError>;
     readonly detachEnvironment: (input: {
@@ -4668,6 +4667,11 @@ const make = Effect.gen(function* () {
         TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
       }),
     );
+    // Clear any stale unlink_after_revoke flag from an earlier offline detach so background
+    // revocation drain revokes old sessions without tearing down this re-attached environment.
+    yield* repository
+      .clearPendingRemoteRevocationUnlinkFlag({ teamId: team.id, environmentId })
+      .pipe(Effect.mapError(toInternalError));
     yield* publish({ version: 1, type: "environmentUpserted", payload: environment });
     yield* publishAccessChange({ type: "environment", environmentId });
     return environment;
@@ -4676,7 +4680,6 @@ const make = Effect.gen(function* () {
   const updateEnvironment = Effect.fn("TeamService.updateEnvironment")(function* (input: {
     readonly sessionId: AuthSessionId;
     readonly payload: TeamUpdateEnvironmentInput;
-    readonly peerLinks?: PeerLinks.PeerLinks["Service"];
     readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
   }) {
     const team = yield* requireWorkspace();

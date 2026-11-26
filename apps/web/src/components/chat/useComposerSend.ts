@@ -1750,7 +1750,12 @@ export function useComposerSend(input: ComposerSendInput) {
       const shouldSetPendingLocalDraftView = Boolean(
         isLocalDraftThread &&
         teamDraftAccess?.viewId &&
-        teamNotesSendCtx?.isViewingOnLocalExecutionEnvironment,
+        readTeamThreadNotesForSend({
+          environmentId,
+          threadId: threadIdForSend,
+          project: activeProject,
+          connectedEnvironmentIds,
+        }).isViewingOnLocalExecutionEnvironment,
       );
       if (failure === null) {
         if (shouldSetPendingLocalDraftView && teamDraftAccess?.viewId) {

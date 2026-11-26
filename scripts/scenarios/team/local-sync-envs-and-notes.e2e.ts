@@ -1051,7 +1051,7 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
   const probeLogPath = NodePath.join(teamProjectDir, "mcp-probe-turns.jsonl");
   await runPromise(
     Effect.gen(function* () {
-      const client = yield* rpcClient(topology.teamServer.home, topology.teamServer.origin);
+      const client = yield* rpcClientForBearer(topology.teamServer.origin, claraBearerToken);
       yield* client["server.updateSettings"]({
         patch: {
           defaultModelSelection: { instanceId: probeInstanceId, model: "default" },

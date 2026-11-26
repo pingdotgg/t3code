@@ -131,7 +131,6 @@ export function makeTeamWsRpcHandlers(
       teamService.updateEnvironment({
         sessionId,
         payload,
-        ...(deps?.peerLinks !== undefined ? { peerLinks: deps.peerLinks } : {}),
         ...(deps?.peerClientPairing !== undefined
           ? { peerClientPairing: deps.peerClientPairing }
           : {}),

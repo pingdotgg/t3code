@@ -2640,6 +2640,38 @@ describe("TeamService", () => {
           peerLinks: mockPeerLinks,
         });
         expect(revokedCalls).toEqual([]);
+
+        // 5. Re-attaching an offline-detached environment clears unlinkAfterRevoke so drain
+        // still revokes old sessions WITHOUT unlinking the re-attached environment.
+        remoteOnline = false;
+        unlinkedEnvs.length = 0;
+        revokedCalls.length = 0;
+        yield* team.detachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: { environmentId: envB },
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(unlinkedEnvs).toEqual([]);
+
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envB,
+            name: "Remote B Reattached",
+            accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+          },
+        });
+
+        remoteOnline = true;
+        revokedCalls.length = 0;
+        yield* team.drainPendingRemoteRevocations({
+          peerClientPairing: mockPeerClientPairing,
+          peerLinks: mockPeerLinks,
+        });
+        expect(revokedCalls.length).toBe(1);
+        expect(revokedCalls[0]?.environmentId).toBe(envB);
+        expect(unlinkedEnvs).toEqual([]);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });
