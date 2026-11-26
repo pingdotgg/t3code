@@ -5981,6 +5981,22 @@ export function claudeSdkUserInputAnswers(
   );
 }
 
+// Claude Code tells the model which preview was picked with a "selected preview:" line built from these.
+// Previews belong to single-select questions, so only an answer with exactly one pick carries one.
+export function claudeSdkUserInputAnnotations(
+  questions: ReadonlyArray<OrchestrationV2UserInputQuestion>,
+  answers: ProviderUserInputAnswers,
+): NonNullable<AskUserQuestionInput["annotations"]> {
+  return Object.fromEntries(
+    questions.flatMap((question) => {
+      const answer = answers[question.id];
+      const picked = Array.isArray(answer) && answer.length === 1 ? answer[0] : answer;
+      const preview = question.options.find((option) => option.label === picked)?.preview;
+      return preview === undefined ? [] : [[question.id, { preview }]];
+    }),
+  );
+}
+
 function claudeTodoSteps(input: unknown): ReadonlyArray<OrchestrationV2PlanStep> {
   const value =
     typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
@@ -13419,6 +13435,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             );
             if (!(yield* Deferred.isDone(answers))) yield* cancelWithdrawnRequest(artifacts);
+            const annotations = claudeSdkUserInputAnnotations(questions, resolvedAnswers);
             return callbackOptions.signal.aborted
               ? ({
                   behavior: "deny",
@@ -13429,6 +13446,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   updatedInput: {
                     questions: toolInput.questions,
                     answers: claudeSdkUserInputAnswers(resolvedAnswers),
+                    ...(Object.keys(annotations).length > 0 ? { annotations } : {}),
                   },
                   toolUseID: callbackOptions.toolUseID,
                 } satisfies PermissionResult);

@@ -21,7 +21,9 @@ import Animated, {
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ControlPill } from "../../components/ui/ControlPill";
+import { resolveMarkdownFontSizes } from "../../lib/appearancePreferences";
 import { cn } from "../../lib/cn";
+import { questionPreviewMarkdown } from "../../lib/markdownDocument";
 import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
@@ -84,8 +86,10 @@ function QuestionText(props: {
   readonly workspaceRoot: string | null;
   readonly setDirection: TextDirection | undefined;
   readonly preserveSoftBreaks?: boolean;
+  readonly monospace?: boolean;
 }) {
   const styles = useMarkdownPreviewStyles();
+  const codeSizes = resolveMarkdownFontSizes(styles.nativeTextStyle.fontSize);
   const markdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
@@ -109,7 +113,17 @@ function QuestionText(props: {
   return (
     <SelectableMarkdownText
       markdown={markdown}
-      textStyle={styles.nativeTextStyle}
+      textStyle={
+        props.monospace
+          ? {
+              ...styles.nativeTextStyle,
+              // A code block's family and size: at the body size a 40-column mockup wraps on a phone.
+              fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+              fontSize: codeSizes.codeBlockFontSize,
+              lineHeight: codeSizes.codeBlockLineHeight,
+            }
+          : styles.nativeTextStyle
+      }
       writingDirection={markdownProseDirection(markdown)}
       // Android's renderer aligns relative to each paragraph's direction.
       textAlign={
@@ -348,12 +362,13 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                       {option.preview ? (
                         <View className="px-3.5">
                           <QuestionText
-                            markdown={option.preview}
+                            markdown={questionPreviewMarkdown(option.preview)}
                             environmentId={props.environmentId}
                             threadId={props.threadId}
                             workspaceRoot={props.workspaceRoot}
                             setDirection={setDirection}
                             preserveSoftBreaks
+                            monospace
                           />
                         </View>
                       ) : null}

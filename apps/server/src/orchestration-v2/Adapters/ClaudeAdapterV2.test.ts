@@ -570,23 +570,9 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
 
   it("projects AskUserQuestion input with question text as the answer key", () => {
     const preview = "\n  **Proposed change**\n\n```ts\n\tconst enabled = true;\n```\n  ";
-    assert.deepEqual(
-      ClaudeAdapterV2.claudeUserInputQuestions({
-        questions: [
-          {
-            header: "Approach",
-            question: "Which approach?",
-            options: [
-              { label: "Simple", description: "Use fewer moving parts", preview },
-              { label: "Safe", description: "Keep the current setup" },
-            ],
-            multiSelect: true,
-          },
-        ],
-      }),
-      [
+    const questions = ClaudeAdapterV2.claudeUserInputQuestions({
+      questions: [
         {
-          id: "Which approach?",
           header: "Approach",
           question: "Which approach?",
           options: [
@@ -596,7 +582,31 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
           multiSelect: true,
         },
       ],
-    );
+    });
+    assert.deepEqual(questions, [
+      {
+        id: "Which approach?",
+        header: "Approach",
+        question: "Which approach?",
+        options: [
+          { label: "Simple", description: "Use fewer moving parts", preview },
+          { label: "Safe", description: "Keep the current setup" },
+        ],
+        multiSelect: true,
+      },
+    ]);
+    for (const answer of ["Simple", ["Simple"]]) {
+      assert.deepEqual(
+        ClaudeAdapterV2.claudeSdkUserInputAnnotations(questions, { "Which approach?": answer }),
+        { "Which approach?": { preview } },
+      );
+    }
+    for (const answer of ["Safe", "Something else entirely", ["Simple", "Safe"]]) {
+      assert.deepEqual(
+        ClaudeAdapterV2.claudeSdkUserInputAnnotations(questions, { "Which approach?": answer }),
+        {},
+      );
+    }
     const sdkAnswers: NonNullable<AskUserQuestionInput["answers"]> =
       ClaudeAdapterV2.claudeSdkUserInputAnswers({
         "Which approach?": ["Simple", "Safe"],

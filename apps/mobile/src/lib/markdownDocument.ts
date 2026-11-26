@@ -289,6 +289,60 @@ export function markdownWithHtml(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+/**
+ * A question preview as Claude wrote it for a monospace box: raw HTML such as `<Nav>` stays typed
+ * text, and each paragraph line keeps its indent as no-break spaces, which Markdown does not strip.
+ */
+export function questionPreviewMarkdown(markdown: string): string {
+  const escapes: MarkdownEdit[] = [];
+  const visitHtml = (node: MarkdownNode) => {
+    if ("children" in node) return node.children.forEach(visitHtml);
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (node.type !== "html" || start === undefined || end === undefined) return;
+    // Backslashes before the "<" are doubled, so they stay text and do not undo its escape.
+    for (const match of markdown.slice(start, end).matchAll(/\\*</g)) {
+      const at = start + match.index;
+      const slashes = match[0].slice(0, -1);
+      escapes.push({ start: at, end: at + slashes.length, content: `${slashes}${slashes}\\` });
+    }
+  };
+  if (markdown.includes("<")) visitHtml(parser.parse(markdown));
+  const literal = applyMarkdownEdits(markdown, escapes);
+
+  const code: Array<{ start: number; end: number }> = [];
+  const edits: MarkdownEdit[] = [];
+  const visit = (node: MarkdownNode, top: boolean) => {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (start === undefined || end === undefined) return;
+    if (node.type === "code" || node.type === "inlineCode") code.push({ start, end });
+    if (top && node.type === "paragraph") {
+      const lineStart = literal.lastIndexOf("\n", start - 1) + 1;
+      for (const indent of literal.slice(lineStart, end).matchAll(/^[ \t]+/gm)) {
+        const offset = lineStart + indent.index;
+        const content = indent[0].replaceAll("\t", "    ").replaceAll(" ", "\u00a0");
+        edits.push({ start: offset, end: offset + indent[0].length, content });
+      }
+    }
+    if ("children" in node) for (const child of node.children) visit(child, false);
+  };
+  for (const block of parser.parse(literal).children) visit(block, true);
+  // An HTML block can hold Markdown code, which shows once its tags are text: its escapes come out.
+  let shift = 0;
+  for (const escape of escapes) {
+    const start = escape.start + shift;
+    const end = start + escape.content.length;
+    shift += escape.content.length - (escape.end - escape.start);
+    if (code.some((range) => start >= range.start && start < range.end))
+      edits.push({ start, end, content: markdown.slice(escape.start, escape.end) });
+  }
+  return applyMarkdownEdits(
+    literal,
+    edits.sort((a, b) => a.start - b.start),
+  );
+}
+
 /** Reference definitions as authored, one line each, so a Windows destination keeps its backslashes. */
 export function markdownReferenceDefinitions(markdown: string): string[] {
   if (!markdown.includes("]:")) return [];

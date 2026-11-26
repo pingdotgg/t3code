@@ -4,6 +4,7 @@ import {
   markdownForNativeRendering,
   markdownHtmlContent,
   markdownWithHtml,
+  questionPreviewMarkdown,
   markdownWithFileEmbeds,
   parseMarkdownDocument,
   type MarkdownNode,
@@ -175,6 +176,25 @@ describe("HTML in native Markdown", () => {
     expect(markdownWithHtml(rows.join("\n\n") + "\n\n" + literal)).toBe(
       expected.join("\n\n") + "\n\n" + literal,
     );
+  });
+});
+
+describe("question previews in native Markdown", () => {
+  it("keeps tags and indentation as typed, and code inside an HTML block unescaped", async () => {
+    const preview =
+      "  Name    Value\n  width   10\n| <Nav> |\n\n`<b>` <span>x</span>\n\n<div>\n`<Nav>` \\<p>\n</div>\n\n<pre>\n\n    <i>\n</pre>";
+    const native = JSON.stringify(
+      await parseMarkdown(markdownForNativeParsing(questionPreviewMarkdown(preview))),
+    );
+    expect(native).toContain("\u00a0\u00a0Name    Value");
+    expect(native).toContain("\u00a0\u00a0width   10");
+    expect(native).toContain("| <Nav> |");
+    expect(native).toContain("<span>x</span>");
+    expect(native).toContain('"content":"<b>"');
+    expect(native).toContain('"content":"<Nav>"');
+    expect(native).toContain("\\\\<p>");
+    expect(native).toContain("</div>");
+    expect(native).toContain('"content":"<i>\\n"');
   });
 });
 
