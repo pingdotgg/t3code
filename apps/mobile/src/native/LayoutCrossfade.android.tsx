@@ -16,8 +16,9 @@ interface NativeLayoutCrossfadeProps extends ViewProps {
 const NativeLayoutCrossfade = requireNativeView<NativeLayoutCrossfadeProps>("T3LayoutCrossfade");
 
 export function LayoutCrossfade({ onSnapshot, ...props }: LayoutCrossfadeProps) {
-  // The workspace columns sit on the header color; the snapshot paints it so it hides the new layout.
-  const backdrop = processColor(themeColorToNativeColor(useUniwindTheme()["--color-header"]));
+  // The snapshot covers the whole column, wider than the pane; the pane's own color keeps the area
+  // it didn't draw from showing as a different surface while the column slides.
+  const backdrop = processColor(themeColorToNativeColor(useUniwindTheme()["--color-screen"]));
   return (
     <NativeLayoutCrossfade
       {...props}

@@ -106,7 +106,7 @@ class T3LayoutCrossfadeView(
     capturing = true
     try {
       val canvas = Canvas(bitmap)
-      // The header color is slightly translucent; anything less than opaque lets the new layout through.
+      // Anything less than opaque would let the new layout show through the old one.
       canvas.drawColor(backdropColor or OPAQUE)
       draw(canvas)
     } finally {
