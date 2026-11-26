@@ -1056,6 +1056,17 @@ export function useComposerSend(input: ComposerSendInput) {
         .getState()
         .getComposerDraft(composerDraftTarget);
       sendInFlightRef.current = true;
+      // Without a settled answer the send waits a round trip for one, so it shows as sending.
+      const showsWait = knownLayoutCommands === null && isCurrentRouteThread();
+      if (showsWait) {
+        beginLocalDispatch({
+          preparingWorktree: true,
+          submissionIntent:
+            submissionIntent === "background" && !isLocalDraftThread
+              ? "foreground"
+              : submissionIntent,
+        });
+      }
       const layoutApproval = await ensureWorktreeLayoutApproved({
         environmentId,
         projectId: activeProject.id,
@@ -1063,6 +1074,7 @@ export function useComposerSend(input: ComposerSendInput) {
         known: knownLayoutCommands,
       }).finally(() => {
         sendInFlightRef.current = false;
+        if (showsWait && isCurrentRouteThread()) resetLocalDispatch();
       });
       if (layoutApproval.status === "cancelled") return;
       if (layoutApproval.status === "blocked") {
