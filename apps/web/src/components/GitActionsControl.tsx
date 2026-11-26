@@ -1936,13 +1936,16 @@ function CheckoutGitActionsControl({
                         </div>
                       </ScrollArea>
                     </div>
-                    <div dir="ltr" className="flex justify-end font-mono">
-                      <span className="text-diff-addition">
-                        +{formatDiffCount(selectedFiles.reduce((sum, f) => sum + f.insertions, 0))}
-                      </span>
-                      <span className="text-muted-foreground"> / </span>
-                      <span className="text-diff-deletion">
-                        -{formatDiffCount(selectedFiles.reduce((sum, f) => sum + f.deletions, 0))}
+                    <div className="flex justify-end font-mono">
+                      <span dir="ltr">
+                        <span className="text-diff-addition">
+                          +
+                          {formatDiffCount(selectedFiles.reduce((sum, f) => sum + f.insertions, 0))}
+                        </span>
+                        <span className="text-muted-foreground"> / </span>
+                        <span className="text-diff-deletion">
+                          -{formatDiffCount(selectedFiles.reduce((sum, f) => sum + f.deletions, 0))}
+                        </span>
                       </span>
                     </div>
                   </div>
