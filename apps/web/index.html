@@ -123,6 +123,43 @@
             },
           },
         };
+        // Fork: Kaluwa's presets (apps/web/src/kaluwa/kaluwaPalette.ts), on the local build only.
+        const IS_KALUWA_BUILD = (() => {
+          try {
+            return window.desktopBridge?.getAppBranding?.()?.stageLabel === "Local";
+          } catch {
+            return false;
+          }
+        })();
+        const KALUWA_THEME_APPEARANCES = IS_KALUWA_BUILD
+          ? { "kaluwa-ember": "dark", "kaluwa-tide": "dark", "kaluwa-noir": "dark" }
+          : {};
+        if (IS_KALUWA_BUILD) {
+          const splash = (background, foreground, accent, chrome) => ({
+            background,
+            foreground,
+            accent,
+            chrome,
+          });
+          Object.assign(BUILT_IN_THEME_PALETTES, {
+            "kaluwa-ember": {
+              dark: splash("#1d1c1b", "#f5f4f2", "#f2683a", "#1d1c1b"),
+              light: splash("#f5f4f2", "#141413", "#c8481a", "#f5f4f2"),
+            },
+            "kaluwa-tide": {
+              dark: splash("#17181c", "#eef0f6", "#5b8cff", "#0f1013"),
+              light: splash("#f6f7f9", "#14161c", "#1f55e0", "#e9ebf0"),
+            },
+            "kaluwa-noir": {
+              dark: splash("#000000", "#f1f3f7", "#5b8cff", "#000000"),
+              light: splash("#ffffff", "#101219", "#1650d8", "#ffffff"),
+            },
+            "kaluwa-paper": {
+              light: splash("#f7f6f3", "#161513", "#b8451b", "#eceae5"),
+              dark: splash("#191817", "#f5f4f2", "#ff8a5c", "#121110"),
+            },
+          });
+        }
         const BUILT_IN_THEME_MODES = Object.fromEntries(
           Object.entries(BUILT_IN_THEME_PALETTES).map(([id, palettes]) => [
             id,
@@ -219,7 +256,10 @@
         };
 
         try {
-          const storedTheme = window.localStorage.getItem("t3code:theme");
+          // Fork: Kaluwa starts on its Ember preset until a theme is chosen.
+          const storedTheme =
+            window.localStorage.getItem("t3code:theme") ??
+            (IS_KALUWA_BUILD ? "kaluwa-ember" : null);
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           const LEGACY_THEME_IDS = {
             "t3-chat-dark": "t3-chat",
@@ -248,7 +288,11 @@
             themeModes !== null;
           const theme = isKnownTheme && storedTheme ? storedTheme : "system";
           const isThemed = isKnownTheme && themeModes !== null;
-          const baseAppearance = customTheme ? customTheme.appearance : "light";
+          const baseAppearance = customTheme
+            ? customTheme.appearance
+            : Object.hasOwn(KALUWA_THEME_APPEARANCES, themeId)
+              ? KALUWA_THEME_APPEARANCES[themeId]
+              : "light";
           const systemMode = prefersDark ? "dark" : "light";
           const storedAppearanceMode = window.localStorage.getItem(
             THEME_APPEARANCE_MODE_STORAGE_KEY,

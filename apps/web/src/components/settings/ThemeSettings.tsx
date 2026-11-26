@@ -14,6 +14,7 @@ import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme"
 import { readThemeHalvesRaw } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import {
+  getBuiltInThemeDefinitions,
   getThemeDefinition,
   singleAppearanceOf,
   getThemeModes,
@@ -61,6 +62,8 @@ const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [
   OCEAN_THEME,
   EMBER_THEME,
   IRIS_THEME,
+  // Fork: Kaluwa's presets, on the local build only.
+  ...getBuiltInThemeDefinitions().filter((theme) => theme.id.startsWith("kaluwa-")),
 ];
 
 function collectionVariantLabels(themes: ReadonlyArray<ThemeDefinition>): ReadonlyArray<string> {

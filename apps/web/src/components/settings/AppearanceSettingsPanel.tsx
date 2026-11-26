@@ -38,6 +38,8 @@ import { AdvancedSettings } from "./AdvancedSettings";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 import { TypographySection } from "./TypographySettings";
 import { ThreadDetailsItemsRow } from "./ThreadDetailsItemsRow";
+import { IS_KALUWA_BUILD } from "../../kaluwa/kaluwaLook";
+import { KaluwaLookSettings } from "./KaluwaLookSettings";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: msg("Artwork"),
@@ -173,6 +175,9 @@ export function AppearanceSettingsPanel() {
           />
         </div>
       </SettingsSection>
+
+      {/* Fork: Kaluwa's look, on the local build only. */}
+      {IS_KALUWA_BUILD ? <KaluwaLookSettings /> : null}
 
       <SettingsSection id="appearance-interface" title={gt("Interface")}>
         <SettingsRow

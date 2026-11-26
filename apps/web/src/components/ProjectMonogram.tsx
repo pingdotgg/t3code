@@ -18,6 +18,8 @@ export function ProjectMonogram({
     <span
       aria-hidden="true"
       data-slot="project-monogram"
+      // Fork: lets Kaluwa paint the tile from its palette (see index.css).
+      data-project-color={color}
       className={cn("inline-flex size-4 shrink-0 items-center justify-center", className)}
     >
       <svg

@@ -35,6 +35,8 @@ import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
 import { applyThemeBackground } from "./themeBackground";
 import { applyThemeCss } from "./themeCss";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
+import { IS_KALUWA_BUILD } from "./kaluwa/kaluwaLook";
+import { buildKaluwaThemes } from "./kaluwa/kaluwaThemes";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
@@ -1226,7 +1228,18 @@ export function updateThemeColorFamily(
   }
 }
 
-const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = BUILT_IN_THEMES;
+const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = [
+  ...BUILT_IN_THEMES,
+  // Fork: Kaluwa's own presets, on the local build only.
+  ...(IS_KALUWA_BUILD
+    ? buildKaluwaThemes({ generate: createVividThemeColors, canonical: toCanonicalThemeColor })
+    : []),
+];
+
+/** Fork: the built-in themes plus Kaluwa's, for lists that show every built-in. */
+export function getBuiltInThemeDefinitions(): ReadonlyArray<ThemeDefinition> {
+  return BUILT_IN_THEME_DEFINITIONS;
+}
 
 export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | null {
   const themeId = themeIdFromPreference(theme);

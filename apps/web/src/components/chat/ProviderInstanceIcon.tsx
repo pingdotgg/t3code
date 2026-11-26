@@ -20,6 +20,7 @@ import {
 import { cn } from "~/lib/utils";
 import { providerClients } from "../settings/providerDriverMeta";
 import { ProviderPackageIcon } from "./ProviderPackageIcon";
+import { kaluwaAccentColor } from "../../kaluwa/kaluwaAccent";
 import {
   AcpRegistryAgentIcon,
   officialAcpRegistryIconUrlForAgentId,
@@ -106,7 +107,8 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   const accentColor = normalizeProviderAccentColor(props.accentColor);
   const accentStyle = accentColor
     ? ({
-        "--provider-accent": accentColor,
+        // Fork: a Kaluwa swatch follows the current palette.
+        "--provider-accent": kaluwaAccentColor(accentColor),
         "--provider-accent-foreground": providerAccentForegroundColor(accentColor),
       } as CSSProperties)
     : undefined;
@@ -129,6 +131,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       )}
       style={accentStyle}
       data-provider-accent-color={accentColor}
+      data-provider-icon=""
     >
       {isAcpRegistry ? (
         <AcpRegistryAgentIcon

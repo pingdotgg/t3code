@@ -1,4 +1,3 @@
-import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { MonitorIcon, MoonIcon, PaletteIcon, SunIcon } from "lucide-react";
 
@@ -6,7 +5,7 @@ import { m } from "../i18n/messages";
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
 import { useTheme } from "../hooks/useTheme";
-import { getThemeDefinition } from "../themePalette";
+import { getBuiltInThemeDefinitions, getThemeDefinition } from "../themePalette";
 import {
   ADDON_ICON_CLASS,
   ITEM_ICON_CLASS,
@@ -45,7 +44,8 @@ function useThemeCards() {
   const seen = new Set<string>();
   return [
     ...STANDARD_THEME_CARDS.map((card) => ({ ...card, id: null })),
-    ...[...BUILT_IN_THEMES, ...customThemes, ...environmentThemes]
+    // Fork: includes Kaluwa's built-in themes on the local build.
+    ...[...getBuiltInThemeDefinitions(), ...customThemes, ...environmentThemes]
       .filter((definition) => {
         if (seen.has(definition.id)) return false;
         seen.add(definition.id);

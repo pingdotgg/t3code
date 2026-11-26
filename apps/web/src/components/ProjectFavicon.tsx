@@ -64,7 +64,12 @@ export function ProjectFavicon(input: {
       input.className,
     );
     return (
-      <span aria-hidden="true" className={iconClassName}>
+      // Fork: data-project-color lets Kaluwa paint the icon from its palette (see index.css).
+      <span
+        aria-hidden="true"
+        className={iconClassName}
+        data-project-color={project.projectIcon.color}
+      >
         <Suspense fallback={<DynamicProjectIconFallback />}>
           <LucideProjectIcon
             name={project.projectIcon.name}

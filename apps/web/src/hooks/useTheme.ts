@@ -25,6 +25,8 @@ import {
   type ThemeHalves,
   type ThemePreferenceMode,
 } from "../themePalette";
+import { KALUWA_DEFAULT_THEME_ID } from "../kaluwa/kaluwaPalette";
+import { IS_KALUWA_BUILD } from "../kaluwa/kaluwaLook";
 
 type Theme = ThemePreference;
 type ThemeSnapshot = {
@@ -199,6 +201,8 @@ export function readThemePreference(): Theme {
   if (raw !== null && isKnownThemePreference(raw)) {
     return canonicalThemePreference(raw);
   }
+  // Fork: Kaluwa starts on its Ember preset until a theme is chosen.
+  if (raw === null && IS_KALUWA_BUILD) return KALUWA_DEFAULT_THEME_ID;
   return DEFAULT_THEME_SNAPSHOT.theme;
 }
 

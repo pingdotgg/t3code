@@ -11,9 +11,13 @@ import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
 import { whenLocaleReady } from "./i18n/runtime";
 import { chunkLoadState } from "./lib/chunkReloadGuard";
+import { startKaluwaLook } from "./kaluwa/kaluwaLook";
 
 const stopTrackingKeyboardLayout = trackKeyboardLayout();
 import.meta.hot?.dispose(stopTrackingKeyboardLayout);
+
+// Fork: Kaluwa's look (palette, status emphasis, lift), on the local build only.
+startKaluwaLook();
 
 const router = startAppServices();
 

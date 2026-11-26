@@ -8,6 +8,9 @@ import { Input } from "../ui/input";
 import { Button } from "../ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { normalizeProviderAccentColor } from "../../providerInstances";
+import { IS_KALUWA_BUILD } from "../../kaluwa/kaluwaLook";
+import { kaluwaAccentColor } from "../../kaluwa/kaluwaAccent";
+import { KaluwaSwatchPanel } from "./KaluwaSwatchPanel";
 
 const FALLBACK_ACCENT_COLOR = "#2563eb";
 
@@ -115,6 +118,14 @@ function ProviderCustomColorPicker(props: {
 }) {
   const gt = useGT();
   const normalized = normalizeProviderAccentColor(props.value);
+  const customPanel = (
+    <ProviderCustomColorPanel
+      value={normalized ?? FALLBACK_ACCENT_COLOR}
+      onPreview={props.onPreview}
+      onCommit={props.onCommit}
+      showAddButton={!normalized}
+    />
+  );
   return (
     <Popover
       onOpenChange={(open) => {
@@ -127,7 +138,7 @@ function ProviderCustomColorPicker(props: {
             type="button"
             size="icon-sm"
             variant="ghost-muted"
-            style={normalized ? { backgroundColor: normalized } : undefined}
+            style={normalized ? { backgroundColor: kaluwaAccentColor(normalized) } : undefined}
             aria-label={
               normalized
                 ? gt("Change accent color for {provider}", { provider: props.displayName })
@@ -145,12 +156,14 @@ function ProviderCustomColorPicker(props: {
         }
       />
       <PopoverPopup side="bottom" align="start" sideOffset={6} padding="none">
-        <ProviderCustomColorPanel
-          value={normalized ?? FALLBACK_ACCENT_COLOR}
-          onPreview={props.onPreview}
-          onCommit={props.onCommit}
-          showAddButton={!normalized}
-        />
+        {/* Fork: Kaluwa picks from its palette, with a custom colour under Advanced. */}
+        {IS_KALUWA_BUILD ? (
+          <KaluwaSwatchPanel value={normalized} onCommit={props.onCommit}>
+            {customPanel}
+          </KaluwaSwatchPanel>
+        ) : (
+          customPanel
+        )}
         {normalized ? (
           <div className="border-t border-border/60 p-1">
             <PopoverClose

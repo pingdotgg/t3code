@@ -2972,3 +2972,226 @@ li:has(+ .kaluwa-folder-thread) > .kaluwa-folder-head-trunk {
     2.25rem minmax(11rem, 1fr) repeat(var(--kaluwa-ext-cols, 1), minmax(5.5rem, 7rem))
     3.5rem;
 }
+
+/* Fork: Kaluwa's look. kaluwa/kaluwaLook.ts paints the swatches (--kaluwa-swatch-*), --kaluwa-lift
+   and the data-kaluwa-* choices onto <html> on the local build; values come from the theme lab
+   the owner approved. Unlayered, so they win over the utilities they restyle. */
+html[data-kaluwa-look] {
+  --kaluwa-hl: rgb(255 255 255 / calc(var(--kaluwa-lift, 0) * 90%));
+}
+html.dark[data-kaluwa-look] {
+  --kaluwa-hl: rgb(255 255 255 / calc(var(--kaluwa-lift, 0) * 8.5%));
+}
+html[data-kaluwa-font="inter"] {
+  --font-sans:
+    "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+/* Status colours point at palette swatches, so they follow the preset and mood. */
+html[data-kaluwa-status-colors="palette"] {
+  --kaluwa-st-working: var(--kaluwa-swatch-steel);
+  --kaluwa-st-waiting: var(--kaluwa-swatch-ash);
+  --kaluwa-st-approval: var(--kaluwa-swatch-ochre);
+  --kaluwa-st-input: var(--kaluwa-swatch-dusk);
+  --kaluwa-st-failed: var(--kaluwa-swatch-clay);
+  --kaluwa-st-done: var(--kaluwa-swatch-sage);
+}
+html[data-kaluwa-status-colors="palette"] .kaluwa-av-spin {
+  background: conic-gradient(from 0deg, transparent 0 25%, var(--kaluwa-swatch-accent) 100%);
+}
+html[data-kaluwa-look] [data-kaluwa-status="working"] > .kaluwa-av-ring {
+  border-color: color-mix(in srgb, var(--kaluwa-st) 34%, transparent);
+}
+html[data-kaluwa-look] [data-kaluwa-status="done"] > .kaluwa-av-ring {
+  border-color: color-mix(in srgb, var(--kaluwa-st) 62%, transparent);
+}
+html[data-kaluwa-look]
+  :is(
+    [data-kaluwa-status="approval"],
+    [data-kaluwa-status="woke"],
+    [data-kaluwa-status="input"],
+    [data-kaluwa-status="request"],
+    [data-kaluwa-status="failed"]
+  )
+  > .kaluwa-av-ring {
+  box-shadow:
+    0 0 5px color-mix(in srgb, var(--kaluwa-st) 60%, transparent),
+    inset 0 0 3px color-mix(in srgb, var(--kaluwa-st) 45%, transparent);
+}
+
+/* Status emphasis: how loud the status word is. Soft keeps attention states in full colour and
+   tints working and done; quiet colours only attention; off leaves colour to the rings. Any
+   label with data-kaluwa-status-label and data-kaluwa-status follows it too. */
+html[data-kaluwa-emphasis="soft"]
+  :is(.kaluwa-folder-status, [data-kaluwa-status-label]):is(
+    [data-kaluwa-status="working"],
+    [data-kaluwa-status="done"]
+  ) {
+  color: color-mix(in srgb, var(--kaluwa-st) 62%, var(--sidebar-muted-foreground));
+  font-weight: 500;
+}
+html[data-kaluwa-emphasis="soft"]
+  :is(.kaluwa-folder-status, [data-kaluwa-status-label])[data-kaluwa-status="waiting"],
+html[data-kaluwa-emphasis="quiet"]
+  :is(.kaluwa-folder-status, [data-kaluwa-status-label]):is(
+    [data-kaluwa-status="working"],
+    [data-kaluwa-status="waiting"],
+    [data-kaluwa-status="done"]
+  ),
+html[data-kaluwa-emphasis="off"] :is(.kaluwa-folder-status, [data-kaluwa-status-label]) {
+  color: var(--sidebar-muted-foreground);
+  font-weight: 450;
+}
+
+/* Subscription badges on provider logos. */
+html[data-kaluwa-badges="tinted"] .kaluwa-av-badge {
+  background: color-mix(
+    in srgb,
+    var(--provider-accent, var(--sidebar-muted-foreground)) 46%,
+    var(--sidebar)
+  );
+  color: color-mix(
+    in srgb,
+    var(--provider-accent, var(--sidebar-muted-foreground)) 30%,
+    var(--sidebar-foreground)
+  );
+  box-shadow:
+    inset 0 0.5px 0 rgb(255 255 255 / 16%),
+    0 0 0 1.5px var(--sidebar);
+}
+html[data-kaluwa-badges="outline"] .kaluwa-av-badge {
+  background: var(--sidebar);
+  color: color-mix(
+    in srgb,
+    var(--provider-accent, var(--sidebar-muted-foreground)) 80%,
+    var(--sidebar-foreground)
+  );
+  box-shadow:
+    inset 0 0 0 0.75px
+      color-mix(in srgb, var(--provider-accent, var(--sidebar-muted-foreground)) 75%, transparent),
+    0 0 0 1.5px var(--sidebar);
+}
+html[data-kaluwa-badges="mono"] .kaluwa-av-badge {
+  background: color-mix(in srgb, var(--sidebar-foreground) 15%, var(--sidebar));
+  color: var(--sidebar-muted-foreground);
+}
+
+/* Provider logos: softened halves saturation so brand colours sit with the palette. */
+html[data-kaluwa-logos="soft"] [data-provider-icon] :is(svg, img) {
+  filter: saturate(0.5) brightness(1.06);
+}
+html[data-kaluwa-logos="mono"] [data-provider-icon] :is(svg, img) {
+  filter: grayscale(1) brightness(1.12);
+}
+
+/* Project icon colours are a fixed enum; each paints as its nearest swatch
+   (KALUWA_PROJECT_COLOR_SWATCHES in kaluwaPalette.ts). */
+html[data-kaluwa-look] [data-project-color="gray"] {
+  --kaluwa-tile: var(--kaluwa-swatch-ash);
+}
+html[data-kaluwa-look] [data-project-color="red"] {
+  --kaluwa-tile: var(--kaluwa-swatch-clay);
+}
+html[data-kaluwa-look] [data-project-color="orange"] {
+  --kaluwa-tile: var(--kaluwa-swatch-accent);
+}
+html[data-kaluwa-look] [data-project-color="amber"] {
+  --kaluwa-tile: var(--kaluwa-swatch-ochre);
+}
+html[data-kaluwa-look] [data-project-color="yellow"] {
+  --kaluwa-tile: var(--kaluwa-swatch-sand);
+}
+html[data-kaluwa-look] :is([data-project-color="lime"], [data-project-color="green"]) {
+  --kaluwa-tile: var(--kaluwa-swatch-moss);
+}
+html[data-kaluwa-look] [data-project-color="emerald"] {
+  --kaluwa-tile: var(--kaluwa-swatch-sage);
+}
+html[data-kaluwa-look] :is([data-project-color="teal"], [data-project-color="cyan"]) {
+  --kaluwa-tile: var(--kaluwa-swatch-lagoon);
+}
+html[data-kaluwa-look] :is([data-project-color="sky"], [data-project-color="blue"]) {
+  --kaluwa-tile: var(--kaluwa-swatch-steel);
+}
+html[data-kaluwa-look] [data-project-color="indigo"] {
+  --kaluwa-tile: var(--kaluwa-swatch-slate);
+}
+html[data-kaluwa-look] :is([data-project-color="violet"], [data-project-color="purple"]) {
+  --kaluwa-tile: var(--kaluwa-swatch-dusk);
+}
+html[data-kaluwa-look] [data-project-color="fuchsia"] {
+  --kaluwa-tile: var(--kaluwa-swatch-plum);
+}
+html[data-kaluwa-look] :is([data-project-color="pink"], [data-project-color="rose"]) {
+  --kaluwa-tile: var(--kaluwa-swatch-rose);
+}
+html[data-kaluwa-tiles="mono"] [data-project-color] {
+  --kaluwa-tile: var(--sidebar-muted-foreground);
+}
+html[data-kaluwa-look] :is([data-project-color], [data-project-color] > svg) {
+  color: var(--kaluwa-tile);
+}
+html[data-kaluwa-look] .kaluwa-folder-icon[data-slot="project-monogram"] > svg {
+  color: color-mix(in srgb, var(--kaluwa-tile) 62%, var(--sidebar-foreground));
+  background-image: linear-gradient(
+    140deg,
+    color-mix(in srgb, var(--kaluwa-tile) 46%, var(--sidebar)),
+    color-mix(in srgb, var(--kaluwa-tile) 16%, var(--sidebar))
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--kaluwa-tile) 40%, transparent),
+    inset 0 1px 0 var(--kaluwa-hl);
+}
+
+/* Lift on Kaluwa's own themes: brighter text, a lighter card and an accent tint on hovered and
+   selected rows (the theme roles stay as generated; this mixes on top of them). */
+html[data-kaluwa-look][data-theme-id^="kaluwa-"]:not([data-theme-id=""]) {
+  --card: color-mix(in srgb, var(--app-theme-surface), #fff calc(var(--kaluwa-lift, 0) * 50%));
+  --foreground: color-mix(in srgb, var(--app-theme-text), #000 calc(var(--kaluwa-lift, 0) * 45%));
+  --card-foreground: var(--foreground);
+  --popover-foreground: var(--foreground);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-row-hover: color-mix(
+    in srgb,
+    var(--app-theme-message-action) calc(var(--kaluwa-lift, 0) * 6%),
+    var(--app-theme-sidebar-row-hover)
+  );
+  --sidebar-row-active: color-mix(
+    in srgb,
+    var(--app-theme-message-action) calc(var(--kaluwa-lift, 0) * 13%),
+    var(--app-theme-sidebar-row-active)
+  );
+  --sidebar-row-selected: color-mix(
+    in srgb,
+    var(--app-theme-message-action) calc(var(--kaluwa-lift, 0) * 13%),
+    var(--app-theme-sidebar-row-selected)
+  );
+  --accent: var(--sidebar-row-hover);
+}
+html.dark[data-kaluwa-look][data-theme-id^="kaluwa-"]:not([data-theme-id=""]) {
+  --background: color-mix(
+    in srgb,
+    var(--app-theme-canvas),
+    #fff calc(var(--kaluwa-lift, 0) * 1.2%)
+  );
+  --card: color-mix(in srgb, var(--app-theme-surface), #fff calc(var(--kaluwa-lift, 0) * 3.5%));
+  --foreground: color-mix(in srgb, var(--app-theme-text), #fff calc(var(--kaluwa-lift, 0) * 45%));
+  --message-surface: color-mix(
+    in srgb,
+    var(--app-theme-message-surface),
+    var(--app-theme-text) calc(var(--kaluwa-lift, 0) * 2%)
+  );
+}
+
+/* Lift's hairline top highlight on raised surfaces, in the dark, where it reads as depth. */
+html.dark[data-kaluwa-look] [data-slot="composer-shell"] {
+  --chat-composer-highlight: var(--kaluwa-hl);
+}
+html.dark[data-kaluwa-look]
+  :is(
+    [data-sidebar-row][aria-current="page"],
+    [data-kaluwa-rail] [aria-current="page"],
+    [data-user-message-bubble]
+  ):not(:focus-visible) {
+  box-shadow: inset 0 1px 0 var(--kaluwa-hl);
+}
