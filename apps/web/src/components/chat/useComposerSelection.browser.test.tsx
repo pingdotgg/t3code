@@ -294,42 +294,47 @@ it("keeps a running thread's runtime mode pick for its next message", async () =
   expect(command).not.toHaveBeenCalled();
 });
 
-it("saves a pick back to the stored mode while an earlier save is in flight", async () => {
-  const { setModelSelection: command } = setup();
-  let finishFirst = (_: AtomCommandResult<void, unknown>) => {};
-  command
-    .mockReturnValueOnce(new Promise((resolve) => (finishFirst = resolve)))
-    .mockResolvedValue(AsyncResult.success(undefined));
-  const thread = {
-    ...cursorThread("thread-mode-overlap"),
-    runtimeMode: "approval-required",
-    runtime: null,
-  } as EnvironmentThreadShell;
-  appAtomRegistry.set(shellAtom(thread.id), thread);
-  await using screen = await render(
-    <AppAtomRegistryProvider>
-      <Picker thread={thread} runtime={null} runtimeMode="approval-required" />
-    </AppAtomRegistryProvider>,
-  );
-  await page.getByRole("button", { name: "Pick auto" }).click();
-  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
-  await screen.rerender(
-    <AppAtomRegistryProvider>
-      <Picker thread={thread} runtime={null} runtimeMode="auto" />
-    </AppAtomRegistryProvider>,
-  );
-  await page.getByRole("button", { name: "Pick supervised" }).click();
+it.each([
+  { order: "first save lands first", firstToFinish: 0 },
+  { order: "second save lands first", firstToFinish: 1 },
+])(
+  "saves a pick back to the stored mode while an earlier save is in flight ($order)",
+  async ({ firstToFinish }) => {
+    const { setModelSelection: command } = setup();
+    const finish: Array<(result: AtomCommandResult<void, unknown>) => void> = [];
+    command.mockImplementation(() => new Promise((resolve) => finish.push(resolve)));
+    const thread = {
+      ...cursorThread(`thread-mode-overlap-${firstToFinish}`),
+      runtimeMode: "approval-required",
+      runtime: null,
+    } as EnvironmentThreadShell;
+    appAtomRegistry.set(shellAtom(thread.id), thread);
+    await using screen = await render(
+      <AppAtomRegistryProvider>
+        <Picker thread={thread} runtime={null} runtimeMode="approval-required" />
+      </AppAtomRegistryProvider>,
+    );
+    await page.getByRole("button", { name: "Pick auto" }).click();
+    await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
+    await screen.rerender(
+      <AppAtomRegistryProvider>
+        <Picker thread={thread} runtime={null} runtimeMode="auto" />
+      </AppAtomRegistryProvider>,
+    );
+    await page.getByRole("button", { name: "Pick supervised" }).click();
+    await vi.waitFor(() =>
+      expect(command).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({ runtimeMode: "approval-required" }),
+        }),
+      ),
+    );
 
-  await vi.waitFor(() =>
-    expect(command).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        input: expect.objectContaining({ runtimeMode: "approval-required" }),
-      }),
-    ),
-  );
-  finishFirst(AsyncResult.success(undefined));
-  const draftMode = () =>
-    useComposerDraftStore.getState().getComposerDraft(scopeThreadRef(environmentId, thread.id))
-      ?.runtimeMode ?? null;
-  await vi.waitFor(() => expect(draftMode()).toBeNull());
-});
+    const draftMode = () =>
+      useComposerDraftStore.getState().getComposerDraft(scopeThreadRef(environmentId, thread.id))
+        ?.runtimeMode ?? null;
+    finish[firstToFinish]?.(AsyncResult.success(undefined));
+    finish[1 - firstToFinish]?.(AsyncResult.success(undefined));
+    await vi.waitFor(() => expect(draftMode()).toBeNull());
+  },
+);

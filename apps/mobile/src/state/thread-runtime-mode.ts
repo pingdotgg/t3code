@@ -42,7 +42,11 @@ export function selectThreadRuntimeMode(
     return;
   }
   const settle = beginRuntimeModePickSave(threadKey, thread.runtimeMode, runtimeMode);
-  if (settle === null) return;
+  if (settle === null) {
+    // The thread already holds this mode, so the draft would only hide later changes.
+    releaseComposerDraftRuntimeMode(threadKey, runtimeMode);
+    return;
+  }
   void runAtomCommand(
     appAtomRegistry,
     threadEnvironment.setRuntimeMode,

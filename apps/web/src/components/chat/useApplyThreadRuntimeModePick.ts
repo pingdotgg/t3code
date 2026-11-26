@@ -35,7 +35,14 @@ export function useApplyThreadRuntimeModePick() {
     // next message instead.
     if (!thread || threadRuntimeIsActive(thread.runtime)) return;
     const settle = beginRuntimeModePickSave(threadKey, thread.runtimeMode, runtimeMode);
-    if (settle === null) return;
+    if (settle === null) {
+      // The thread already holds this mode, so the draft would only hide later changes.
+      const store = useComposerDraftStore.getState();
+      if (store.getComposerDraft(target)?.runtimeMode === runtimeMode) {
+        store.setRuntimeMode(target, null);
+      }
+      return;
+    }
     const result = await setRuntimeMode({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, runtimeMode, createdAt: new Date().toISOString() },

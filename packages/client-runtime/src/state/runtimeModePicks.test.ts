@@ -15,6 +15,13 @@ describe("beginRuntimeModePickSave", () => {
     expect(first?.(true)).toBe("approval-required");
   });
 
+  it("releases nothing until the last save in flight lands, in either order", () => {
+    const first = beginRuntimeModePickSave("order", "approval-required", "auto");
+    const second = beginRuntimeModePickSave("order", "approval-required", "approval-required");
+    expect(first?.(true)).toBeNull();
+    expect(second?.(true)).toBe("approval-required");
+  });
+
   it("keeps the latest pick's draft when its own save fails", () => {
     const first = beginRuntimeModePickSave("fail", "approval-required", "auto");
     const second = beginRuntimeModePickSave("fail", "approval-required", "full-access");
