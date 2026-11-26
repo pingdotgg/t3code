@@ -131,7 +131,7 @@ const scriptRanges: readonly (readonly [FallbackScript, RegExp])[] = [
 
 const hanRange = /[\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\uFF00-\uFFEF]/u;
 
-function scripts(text: string): FallbackScript[] {
+export function scripts(text: string): FallbackScript[] {
   const found = scriptRanges.flatMap((entry) => (entry[1].test(text) ? [entry[0]] : []));
 
   // The Japanese and Korean faces also draw the Chinese characters their text mixes in.
