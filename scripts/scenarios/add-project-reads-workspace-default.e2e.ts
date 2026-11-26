@@ -8,7 +8,7 @@ import { makeState, runPromise, test, WEB } from "./t3.ts";
 test(
   "Adding a project to a draft applies the workspace default from t3.json",
   WEB,
-  async ({ t3, screen, browser }) => {
+  async ({ t3, app, screen, browser }) => {
     const source = await t3.project("source", {
       "next/t3.json": JSON.stringify({ defaultThreadEnvMode: "worktree" }),
     });
@@ -41,6 +41,7 @@ test(
       await browser.keyboard.press("Enter");
 
       await projectPicker.getByText("next").waitFor();
+      await app.screenshot("workspace-after-add");
       await expect(workspace).toHaveText("New worktree");
     } finally {
       await runPromise(
