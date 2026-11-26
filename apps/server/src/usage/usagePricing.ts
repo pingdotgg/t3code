@@ -262,10 +262,8 @@ function ratesAt(
   totals: UsageTokenTotals,
   modelCalls?: number,
 ): TokenRates {
-  // Multi-call turn summaries sum prompt tokens across calls; compare per-call context.
-  const calls =
-    modelCalls !== undefined && Number.isFinite(modelCalls) && modelCalls > 1 ? modelCalls : 1;
-  const prompt = promptTokens(totals) / calls;
+  // Tiers apply per request; a multi-call turn sums its calls, so compare the average.
+  const prompt = promptTokens(totals) / Math.max(1, modelCalls ?? 1);
   const tier = rate.contextTiers.find((tier) => prompt > tier.thresholdTokens)?.rate;
   if (speed === "standard") return tier ?? rate;
   return tier?.[speed] ?? rate[speed] ?? tier ?? rate;
