@@ -839,6 +839,27 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
         .join("\n");
       for (const seek of seeks) assert.include(plan, seek);
     }
+    // Live items found by status alone: sorted by ordinal, SQLite would fetch every row of the thread.
+    const live = traceSqlStatements();
+    const liveItems = yield* store
+      .getThreadRecords(threadId, ["turnItems"], {
+        turnItemStatuses: ["pending", "running", "waiting"],
+      })
+      .pipe(Effect.withTracer(live.tracer));
+    assert.deepEqual(
+      liveItems.turnItems.map((item) => item.id),
+      ["item:idle-compaction:rolled-back"],
+    );
+    const liveQuery = live.statements.find((statement) =>
+      statement.includes("FROM orchestration_v2_projection_turn_items"),
+    );
+    assert.isDefined(liveQuery);
+    assert.include(
+      (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${liveQuery}`))
+        .map((row) => row.detail)
+        .join("\n"),
+      "USING COVERING INDEX orchestration_v2_projection_turn_items_thread_type_idx",
+    );
     assert.deepEqual(
       records.providerTurns.map((turn) => turn.id),
       ["turn:idle-newest"],

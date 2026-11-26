@@ -54,7 +54,7 @@
   "929a11e234f6e5d9": "Install the Azure command-line tools ({cli}), then enable Azure DevOps support with {command}.",
   "ad599e9de33538dd": "Add a Bitbucket token in Settings → Source control & issues.",
   "d810ecd91e8cf9d0": "Install the Origin CLI with {install}, then run {login}.",
-  "eb0f60ef4f92ab7d": "Install {fj} 0.6 or later from {fjUrl} and run {fjLogin}, or install {tea} 0.16 or later from {teaUrl} and run {teaLogin} for each Forgejo or Gitea server.",
+  "1a04c8d36a7b29d3": "Install {fj} 0.6 or later from {fjUrl} and run {fjLogin}, or install {gt} 2.0 or later from {gtUrl} and run {gtLogin} for each Forgejo or Gitea server.",
   "d026a85e2e50e675": "Install the GitCafe CLI with {install}, then run {login}, save a token in Settings, or set {variable} on the server.",
   "22d3c0c48a34b5b3": "Install the TanStack Source CLI with {install}, then run {login}, save a token in Settings, or set {variable} on the server.",
   "756c80ad262ef315": "Waiting in the original thread",
@@ -5406,7 +5406,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} stops} other {{count} stops}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} stop} other {{count} stops}}",
   "9830004326e7d8c0": "{count, plural, one {through {count} file} other {through {count} files}}",
   "e6035bad35419efa": "Guide options",
   "4d7635a2bf1f5816": "Rewrite guide",

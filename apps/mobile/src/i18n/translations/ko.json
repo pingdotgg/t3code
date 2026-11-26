@@ -54,7 +54,7 @@
   "929a11e234f6e5d9": "Azure 명령줄 도구({cli})를 설치한 후 {command}로 Azure DevOps 지원을 켜세요.",
   "ad599e9de33538dd": "설정 → 소스 제어 및 이슈에서 Bitbucket 토큰을 추가하세요.",
   "d810ecd91e8cf9d0": "{install}로 Origin CLI를 설치한 후 {login}을(를) 실행하세요.",
-  "eb0f60ef4f92ab7d": "{fjUrl}에서 {fj} 0.6 이상을 설치하고 {fjLogin}을(를) 실행하거나, {teaUrl}에서 {tea} 0.16 이상을 설치하고 Forgejo 또는 Gitea 서버마다 {teaLogin}을(를) 실행하세요.",
+  "1a04c8d36a7b29d3": "{fjUrl}에서 {fj} 0.6 이상을 설치하고 {fjLogin}을(를) 실행하거나, {gtUrl}에서 {gt} 2.0 이상을 설치하고 Forgejo 또는 Gitea 서버마다 {gtLogin}을(를) 실행하세요.",
   "d026a85e2e50e675": "{install}로 GitCafe CLI를 설치한 후 {login}을(를) 실행하거나, 설정에 토큰을 저장하거나, 서버에서 {variable}을(를) 설정하세요.",
   "22d3c0c48a34b5b3": "{install}로 TanStack Source CLI를 설치한 후 {login}을(를) 실행하거나, 설정에 토큰을 저장하거나, 서버에서 {variable}을(를) 설정하세요.",
   "756c80ad262ef315": "원래 스레드에서 대기 중",
@@ -5383,7 +5383,7 @@
     " ",
     "시작됨"
   ],
-  "ffd7529d1f50e0a6": "{count, plural, other {중지 {count}회}}",
+  "e093a6c02ff2c19f": "{count, plural, other {총 {count}단계}}",
   "9830004326e7d8c0": "{count, plural, other {파일 {count}개에 걸쳐}}",
   "e6035bad35419efa": "가이드 옵션",
   "4d7635a2bf1f5816": "가이드 다시 작성",
