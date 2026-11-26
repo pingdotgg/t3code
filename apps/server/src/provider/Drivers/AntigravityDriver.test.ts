@@ -14,6 +14,7 @@ import {
   RunId,
   ThreadId,
   type AntigravitySettings,
+  type ProviderInstallState,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -73,6 +74,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     readonly enabled?: boolean;
     /** Extra instance variables, such as ones a parent T3 turn already exported. */
     readonly environment?: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+    readonly installState?: ProviderInstallState;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -163,6 +165,13 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
+    ...(options.installState === undefined
+      ? {}
+      : {
+          state: Effect.succeed(options.installState),
+          changes: Stream.make(options.installState),
+          checkForUpdate: Effect.void,
+        }),
     compatibility: (version) =>
       Effect.succeed(
         resolveProviderCompatibility(
@@ -618,6 +627,33 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(snapshot.supportsTextGeneration).toBe(false);
         expect(h.acquisitions).toHaveLength(2);
         expect(h.releases).toEqual([h.first.version, h.signedOut.version]);
+        yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "reports an outdated managed runtime as a provider update (#43402)",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          installState: {
+            driver: ProviderDriverKind.make("antigravity"),
+            operationId: null,
+            phase: "idle",
+            downloadedBytes: 0,
+            totalBytes: null,
+            version: "1.5.18",
+            installedVersion: "1.5.17",
+            canRemove: true,
+            message: null,
+          },
+        });
+        h.controls.selected = yield* h.makeExecutable("1.5.17", { agentVersion: "1.5.17" });
+        yield* h.refresh();
+        const snapshot = yield* h.instance.snapshot.getSnapshot;
+        expect(snapshot.versionAdvisory?.status).toBe("behind_latest");
+        expect(snapshot.versionAdvisory?.latestVersion).toBe("1.5.18");
+        expect(snapshot.versionAdvisory?.canUpdate).toBe(true);
         yield* h.assertClosed;
       }),
   );
