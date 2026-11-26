@@ -5,7 +5,7 @@ import { test, WEB } from "./t3.ts";
 test(
   "A moved draft loads the workspace default of a project it has never opened",
   WEB,
-  async ({ t3, browser, screen }) => {
+  async ({ t3, app, browser, screen }) => {
     await t3.project("checkout-project", {
       "t3.json": JSON.stringify({ defaultThreadEnvMode: "local" }),
     });
@@ -21,6 +21,7 @@ test(
     await picker.tap();
     await screen.getByRole("option", "worktree-project", { exact: true }).tap();
     await picker.filter({ hasText: "worktree-project" }).waitFor();
+    await app.screenshot("workspace-after-moving-draft");
     await expect(workspace).toContainText("New worktree");
   },
 );
