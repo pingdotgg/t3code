@@ -856,6 +856,24 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("linking a machine at its numeric Tailscale address is not refused as plain http", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const a = yield* makeA(laptop);
+      const failed = yield* a.links
+        .link({
+          url: "http://100.105.1.20:3773",
+          pairingCode: "unused",
+          access: "auto",
+          expectedEnvironmentId: box.environmentId,
+          expectedLabel: "Box",
+        })
+        .pipe(Effect.flip);
+      expect(failed.message).not.toContain("plain http");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.live("linking an address with nothing listening says so, unlike one that is not T3 Code", () =>
   Effect.scoped(
     Effect.gen(function* () {
