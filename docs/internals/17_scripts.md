@@ -18,7 +18,7 @@ Repository and package scripts are written in TypeScript with Effect and `effect
   }
   ```
 
-- **References:** [`scripts/build-npm-launcher.ts`](../../scripts/build-npm-launcher.ts) and [`scripts/resolve-nightly-release.ts`](../../scripts/resolve-nightly-release.ts).
+- **References:** [`scripts/build-npm-launcher.ts`](../../scripts/build-npm-launcher.ts).
 
 ## Exceptions
 

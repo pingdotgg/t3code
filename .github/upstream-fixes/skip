@@ -1,0 +1,2 @@
+# Upstream commits the fixes workflow must never pick, one sha per line.
+# Add a commit here when it does not fit this fork; a short sha is enough.
