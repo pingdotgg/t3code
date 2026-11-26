@@ -243,6 +243,7 @@ export const AntigravityDriver: ProviderDriver<
           detail: authConfigIssue,
         });
       }
+      // Thread variables affect the child environment, while health and startup select the same provider executable.
       const executable = yield* installation.acquire(settings.binaryPath, processEnvironment).pipe(
         Effect.mapError(
           (cause) =>
@@ -339,27 +340,26 @@ export const AntigravityDriver: ProviderDriver<
       }
     });
 
-    let externalRuntime:
-      | {
-          readonly path: string;
-          nextAttempt: number;
-          reportedAttempt: number;
-          rejectedVersion: string | undefined;
-        }
+    const externalExecutableIdentity = Effect.fn("AntigravityDriver.externalExecutableIdentity")(
+      function* (executablePath: string) {
+        const target = yield* fileSystem.realPath(executablePath);
+        const info = yield* fileSystem.stat(target);
+        return JSON.stringify([
+          executablePath,
+          target,
+          String(info.dev),
+          info.ino.valueOrUndefined?.toString(),
+          String(info.size),
+          info.mtime.valueOrUndefined?.getTime(),
+        ]);
+      },
+      Effect.orElseSucceed(() => undefined),
+    );
+    let nextExternalAttempt = 0;
+    let completedExternalAttempt = 0;
+    let rejectedExternalRuntime:
+      | { readonly identity: string; readonly version: string }
       | undefined;
-    const observeExternalRuntime = (executable: AntigravityInstallation.AntigravityExecutable) => {
-      if (executable.version !== null) {
-        externalRuntime = undefined;
-      } else if (externalRuntime?.path !== executable.executablePath) {
-        externalRuntime = {
-          path: executable.executablePath,
-          nextAttempt: 0,
-          reportedAttempt: 0,
-          rejectedVersion: undefined,
-        };
-      }
-      return externalRuntime;
-    };
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
       input: AntigravityAdapterV2RuntimeInput,
@@ -384,14 +384,18 @@ export const AntigravityDriver: ProviderDriver<
         spawn,
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       const startCompatible = Effect.fn("AntigravityDriver.startCompatible")(function* () {
-        const observed = observeExternalRuntime(executable);
-        const attempt = observed ? ++observed.nextAttempt : 0;
+        const external = executable.version === null;
+        const attempt = external ? ++nextExternalAttempt : 0;
+        const identity = external
+          ? yield* externalExecutableIdentity(executable.executablePath)
+          : undefined;
         const version = (yield* runtime.initialize()).agentInfo?.version;
         const refused = yield* runtimeIncompatibility(executable, version);
-        // A late handshake must not replace a newer version report for this executable.
-        if (observed && version && attempt > observed.reportedAttempt) {
-          observed.reportedAttempt = attempt;
-          observed.rejectedVersion = refused ? version : undefined;
+        // A late handshake must not replace the result of a newer attempt.
+        if (attempt > completedExternalAttempt) {
+          completedExternalAttempt = attempt;
+          rejectedExternalRuntime =
+            refused && version && identity ? { identity, version } : undefined;
         }
         if (refused) {
           return yield* new AcpErrors.AcpTransportError({ detail: refused.detail, cause: refused });
@@ -599,8 +603,19 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
-      const observed = observeExternalRuntime(executable);
-      const version = executable.version ?? observed?.rejectedVersion;
+      const previousRejection = rejectedExternalRuntime;
+      const identity =
+        executable.version === null && previousRejection
+          ? yield* externalExecutableIdentity(executable.executablePath)
+          : undefined;
+      const rememberedVersion =
+        rejectedExternalRuntime?.identity === identity
+          ? rejectedExternalRuntime?.version
+          : undefined;
+      if (previousRejection === rejectedExternalRuntime && rememberedVersion === undefined) {
+        rejectedExternalRuntime = undefined;
+      }
+      const version = executable.version ?? rememberedVersion;
       if (version) {
         const refused = yield* runtimeIncompatibility(executable, version);
         if (refused) {
