@@ -107,22 +107,16 @@ const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
 
 function isLinkDefinition(line: string): boolean {
   const match = LINK_DEFINITION.exec(line);
-  if (!match) return false;
+  // The scanner splits on LF, so an interior CR crosses a Markdown line boundary.
+  if (!match || /\r./s.test(line)) return false;
   const [, label = "", bareDestination] = match;
-  if (!/[^ \t\r]/.test(label)) return false;
-  let column = line.indexOf("[") + 1;
-  let length = 0;
-  // Bare CR resets the tab column without consuming any of the Markdown label limit.
+  if (!/[^ \t]/.test(label)) return false;
+  const start = line.indexOf("[") + 1;
+  let column = start;
+  // The Markdown tokenizer counts tabs as spaces up to the next four-column stop.
   for (let i = 0; i < label.length; i++) {
-    const char = label[i];
-    if (char === "\r") {
-      column = 0;
-      continue;
-    }
-    const width = char === "\t" ? 4 - (column % 4) : 1;
-    column += width;
-    length += width;
-    if (length > MAX_LINK_LABEL_LENGTH) return false;
+    column += label[i] === "\t" ? 4 - (column % 4) : 1;
+    if (column - start > MAX_LINK_LABEL_LENGTH) return false;
   }
   if (bareDestination === undefined) return true;
   let depth = 0;

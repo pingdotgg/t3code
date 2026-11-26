@@ -328,14 +328,7 @@ describe("splitMarkdown", () => {
     ["nonbreaking space in a label", "[\u00a0]: /url", true],
     ["label at the length limit", "[" + "a".repeat(999) + "]: /url", true],
     ["label over the length limit", "[" + "a".repeat(1000) + "]: /url", false],
-    ["bare carriage return at the length limit", "[" + "a".repeat(998) + "\rb]: /url", true],
-    ["backslash before a bare carriage return", "[" + "a".repeat(997) + "\\\rb]: /url", true],
-    ["tab after a bare carriage return at the limit", "[" + "a".repeat(994) + "\r\tb]: /url", true],
-    [
-      "tab after a bare carriage return past the limit",
-      "[" + "a".repeat(996) + "\r\t]: /url",
-      false,
-    ],
+    ["single-line definition with a CRLF ending", "[ref]: /url\r\n", true],
     ["tab expands past the length limit", " [" + "a".repeat(998) + "\t]: /url", false],
     [
       "indentation keeps a tabbed label within the limit",
@@ -354,6 +347,21 @@ describe("withMarkdownDefinitions", () => {
     const processor = unified().use(remarkParse).use(remarkRehype);
     return toHtml(processor.runSync(processor.parse(text)));
   };
+
+  it.each([
+    ["continuation in a label", "[a\rb]: /url"],
+    ["backslash before a blank line", "[a\\\r\rb]: /url"],
+    ["blank line with spaces", "[a\r \rb]: /url"],
+    ["heading", "[a\r# b]: /url"],
+    ["blockquote", "[a\r> b]: /url"],
+    ["fence", "[a\r```]: /url"],
+    ["blank line in a title", '[a]: /url "title\r\rcontinued"'],
+  ])("leaves later chunks intact when a candidate contains a bare CR: %s", (_, candidate) => {
+    const next = "# Next";
+    const { chunks, definitions } = splitMarkdown(candidate + "\n\n" + next, 1);
+    expect(html(withMarkdownDefinitions(chunks[1]!.text, definitions))).toBe(html(next));
+    expect(definitions).toBe("");
+  });
 
   it("keeps the first document definition ahead of later chunk definitions", () => {
     const text = "[id]: /first\n\n" + "x".repeat(4100) + "\n\n# Next\n[id]: /later\n\n[id]";
