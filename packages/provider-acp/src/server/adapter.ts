@@ -2632,6 +2632,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             : flavor.extractSubagentUpdate?.(tool);
         let turnAttached = yield* Deferred.make<boolean>();
         const activeSessionId = yield* Ref.make<string | null>(null);
+        // Reported through hasPendingBackgroundWorkForThread so the run keeps ingesting their replies.
+        const trailingTranscriptDrains = new Set<ActiveAcpSubagent>();
         const unreadToolCalls = makeAcpUnreadToolCalls();
         // session/load replays history before activeSessionId names the loaded session.
         const loadingSessionId = yield* Ref.make<string | null>(null);
@@ -4473,18 +4475,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        // Starts before the terminal status is emitted, so the run never sees it without this drain pending.
         const startSubagentTrailingTranscriptDrain = Effect.fnUntraced(function* (
           subagent: ActiveAcpSubagent,
+          status: OrchestrationV2Subagent["status"],
         ) {
           if (
             flavor.readSubagentTranscript === undefined ||
             subagent.transcriptTrailingDrainStarted ||
-            (subagent.task.status !== "idle" && subagent.task.status !== "completed") ||
+            (status !== "idle" && status !== "completed") ||
             subagent.lastTranscriptEntryKind === "assistant_message"
           ) {
             return;
           }
           subagent.transcriptTrailingDrainStarted = true;
+          trailingTranscriptDrains.add(subagent);
           const stop = yield* Deferred.make<void>();
           subagent.transcriptTrailingDrainStop = stop;
           yield* Effect.gen(function* () {
@@ -4514,7 +4519,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               if (subagent.lastTranscriptEntryKind === "assistant_message") break;
             }
-          }).pipe(Effect.ignoreCause, Effect.forkIn(sessionScope));
+          }).pipe(
+            Effect.ignoreCause,
+            // Re-emitting the settled subagent makes the run re-check its pending work.
+            Effect.ensuring(
+              Effect.suspend(() => {
+                trailingTranscriptDrains.delete(subagent);
+                return emitProviderEvent({
+                  type: "subagent.updated",
+                  driver,
+                  subagent: subagent.task,
+                });
+              }).pipe(Effect.ignoreCause),
+            ),
+            Effect.forkIn(sessionScope),
+          );
         });
 
         const startSubagentTranscriptFollower = Effect.fnUntraced(function* (
@@ -4759,6 +4778,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (acpSubagentStatusIsTerminal(taskStatus)) {
             yield* stopSubagentTranscriptFollower(subagent);
             yield* drainSubagentTranscript(subagent, true);
+            yield* startSubagentTrailingTranscriptDrain(subagent, taskStatus);
           }
 
           yield* flushSubagentAssistant(subagent);
@@ -4853,7 +4873,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           if (acpSubagentStatusIsTerminal(taskStatus)) {
             subagent.terminalStatusProjected = true;
-            yield* startSubagentTrailingTranscriptDrain(subagent);
           } else {
             yield* startSubagentTranscriptFollower(subagent);
           }
@@ -7601,6 +7620,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (acpSubagentStatusIsTerminal(status)) {
             yield* stopSubagentTranscriptFollower(subagent);
             yield* drainSubagentTranscript(subagent, true);
+            yield* startSubagentTrailingTranscriptDrain(subagent, status);
           }
           yield* flushSubagentAssistant(subagent);
           yield* mutateCarryoverSubagentStatus(subagent, status, resultOverride);
@@ -7691,7 +7711,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           if (acpSubagentStatusIsTerminal(status)) {
             subagent.terminalStatusProjected = true;
-            yield* startSubagentTrailingTranscriptDrain(subagent);
           }
         });
 
@@ -11004,6 +11023,39 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const canReportBackgroundWork =
           continuationRequests !== undefined &&
           (flavor.followAgentWorkState === true || Boolean(flavor.enablePostSettleContinuation));
+        const sessionHasPendingBackgroundWork = Effect.gen(function* () {
+          if (!postSettleContinuationEnabled && !followsAgentWorkState) return false;
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          if (
+            followsAgentWorkState &&
+            rootSessionId !== null &&
+            hasWorkingDescendant(rootSessionId)
+          )
+            return true;
+          if (
+            followsAgentWorkState &&
+            (agentWork?.state === "running" ||
+              agentWork?.state === "requires_action" ||
+              agentRequests.size > 0)
+          )
+            return true;
+          if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
+          if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
+          if (yield* Ref.get(continuationRequested)) return true;
+          if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
+          const active = yield* Ref.get(activeTurn);
+          if (
+            active !== null &&
+            [...active.subagents.values()].some(acpSubagentHasPendingBackgroundWork)
+          ) {
+            return true;
+          }
+          const carryover = yield* Ref.get(carryoverSubagents);
+          if (carryover !== null && carryover.subagents.some(acpSubagentHasPendingBackgroundWork)) {
+            return true;
+          }
+          return false;
+        });
         const sessionRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver,
@@ -11024,45 +11076,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 },
               }),
           ...(canReportBackgroundWork
-            ? {
-                hasPendingBackgroundWork: Effect.gen(function* () {
-                  if (!postSettleContinuationEnabled && !followsAgentWorkState) return false;
-                  const rootSessionId = yield* Ref.get(activeSessionId);
-                  if (
-                    followsAgentWorkState &&
-                    rootSessionId !== null &&
-                    hasWorkingDescendant(rootSessionId)
-                  )
-                    return true;
-                  if (
-                    followsAgentWorkState &&
-                    (agentWork?.state === "running" ||
-                      agentWork?.state === "requires_action" ||
-                      agentRequests.size > 0)
-                  )
-                    return true;
-                  if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
-                  if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
-                  if (yield* Ref.get(continuationRequested)) return true;
-                  if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
-                  const active = yield* Ref.get(activeTurn);
-                  if (
-                    active !== null &&
-                    [...active.subagents.values()].some(acpSubagentHasPendingBackgroundWork)
-                  ) {
-                    return true;
-                  }
-                  const carryover = yield* Ref.get(carryoverSubagents);
-                  if (
-                    carryover !== null &&
-                    carryover.subagents.some(acpSubagentHasPendingBackgroundWork)
-                  ) {
-                    return true;
-                  }
-                  return false;
-                }),
-              }
+            ? { hasPendingBackgroundWork: sessionHasPendingBackgroundWork }
             : {}),
+          // Root-subscription probe: only T3's own trailing transcript reads. Replacement checks
+          // (includeSubagents) keep the session-wide answer they used before this probe existed.
+          hasPendingBackgroundWorkForThread: (providerThread, options) =>
+            options?.includeSubagents === true
+              ? canReportBackgroundWork
+                ? sessionHasPendingBackgroundWork
+                : Effect.succeed(false)
+              : Effect.sync(() =>
+                  [...trailingTranscriptDrains].some(
+                    (subagent) =>
+                      subagent.rootSessionId === providerThread.nativeThreadRef?.nativeId,
+                  ),
+                ),
           ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
               return yield* runtimeTransitionPermit.withPermit(

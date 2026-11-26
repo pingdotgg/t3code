@@ -2723,10 +2723,9 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
           sender: "child-1",
         });
 
-        const { startTurn, until, throughPromptSettled } = yield* openSessionWithRunningCommand(
-          {},
-          profile,
-        );
+        const { startTurn, until, throughPromptSettled, session, providerThread } =
+          yield* openSessionWithRunningCommand({}, profile);
+        const runKeepsIngesting = session.hasPendingBackgroundWorkForThread!(providerThread);
         yield* startTurn(1, false);
         const promptEvents = yield* throughPromptSettled;
         const childThread = promptEvents.find((event) => event.type === "app_thread.created");
@@ -2740,6 +2739,8 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
           idleSubagent?.type === "subagent.updated" ? idleSubagent.subagent.status : null,
           "idle",
         );
+        // The run reads this probe once the root ends; it must already hold the drain at Idle.
+        assert.isTrue(yield* runKeepsIngesting);
 
         // Closing reply lands in transcript.jsonl after Idle.
         yield* writeTranscript([
@@ -2771,6 +2772,13 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
             : null,
           "## Summary\n\n| Check | Status |\n| --- | --- |\n| Diff | Passed |",
         );
+        // The drain ends with a subagent event, so the run re-checks and stops ingesting.
+        let pending = true;
+        for (let attempt = 0; attempt < 2 && pending; attempt += 1) {
+          yield* until((event) => event.type === "subagent.updated");
+          pending = yield* runKeepsIngesting;
+        }
+        assert.isFalse(pending);
       }).pipe(Effect.provide(layerSession)),
   );
 
