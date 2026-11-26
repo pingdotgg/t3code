@@ -221,6 +221,22 @@ describe("wordsHast", () => {
     ).toBe(
       '<ul dir="ltr">\n<li>wide<br>\n<span data-leading-whitespace="">  </span>continued</li>\n</ul>',
     );
+    for (const [markdown, spaces, tag] of [
+      ["-     \tfoo\n          bar", "  ", "ul"],
+      ["-        foo\n      \tbar", "", "ul"],
+      ["10.   \t\tfoo\n              bar", "  ", 'ol start="10"'],
+      ["-\t  \tfoo\n          bar", "  ", "ul"],
+      ["-\t\tfoo\n      \tbar", "", "ul"],
+    ] as const) {
+      expect(
+        wordsHtml(markdown, {
+          breaks: true,
+          extensions: { userMessage: true, leadingWhitespace: true },
+        }),
+      ).toBe(
+        `<${tag} dir="ltr">\n<li>foo<br>\n${spaces ? `<span data-leading-whitespace="">${spaces}</span>` : ""}bar</li>\n</${tag.split(" ")[0]}>`,
+      );
+    }
   });
 
   it("gives elements the source positions components read", () => {
