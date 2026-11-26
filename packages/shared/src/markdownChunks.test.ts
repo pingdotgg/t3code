@@ -64,6 +64,37 @@ describe("splitMarkdown", () => {
     expect(starts(text)).toEqual(["````", "after"]);
   });
 
+  it("treats nonbreaking spaces as content rather than fence suffixes or blank lines", () => {
+    const fence = ["```md", "x".repeat(4100), "```\u00a0", "# literal", "```"].join("\n");
+    expect(splitLargeMarkdown(fence)).toHaveLength(1);
+
+    const prose = ["*" + "x".repeat(4100), "\u00a0", "more*"].join("\n");
+    expect(splitLargeMarkdown(prose)).toHaveLength(1);
+
+    const htmlBlock = ["<div>", "x".repeat(4100), "\u00a0", "# literal", "</div>"].join("\n");
+    expect(splitLargeMarkdown(htmlBlock)).toHaveLength(1);
+  });
+
+  it("still closes fences and recognizes blank lines with ASCII spaces, tabs, and CRLF", () => {
+    const fence = ["```md", "x".repeat(4100), "``` \t", "# heading"].join("\r\n");
+    expect(splitLargeMarkdown(fence).map((chunk) => chunk.text.split("\r\n")[0])).toEqual([
+      "```md",
+      "# heading",
+    ]);
+
+    const prose = ["a".repeat(4100), " \t", "next paragraph"].join("\r\n");
+    expect(splitLargeMarkdown(prose).map((chunk) => chunk.text.split("\r\n")[0])).toEqual([
+      "a".repeat(4100),
+      "next paragraph",
+    ]);
+
+    const htmlBlock = ["<div>", "x".repeat(4100), " \t", "# heading"].join("\r\n");
+    expect(splitLargeMarkdown(htmlBlock).map((chunk) => chunk.text.split("\r\n")[0])).toEqual([
+      "<div>",
+      "# heading",
+    ]);
+  });
+
   it("keeps HTML blocks and display math open across blank lines", () => {
     const text = [
       "<!--",
