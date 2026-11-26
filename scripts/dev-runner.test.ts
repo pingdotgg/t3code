@@ -873,6 +873,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
                 Effect.provideService(HostProcess.WorkingDirectory, root),
                 Effect.provideService(HostProcess.HomeDirectory, home),
                 Effect.provideService(HostProcess.Environment, {}),
+                // Each run is its own runner process, which releases the state directory lock.
+                Effect.scoped,
               );
               return spawned.filter((args) =>
                 args.some((arg) => arg.endsWith("migrate-dev-db.ts")),
