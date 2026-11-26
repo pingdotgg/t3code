@@ -89,6 +89,45 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect.each([
+  ["a trusted project on its own folder", null],
+  ["an untrusted project on the substitute folder", "/state/claude-project-config/folder-1"],
+] as const)("lists the slash commands of %s", ([, root]) =>
+  Effect.gen(function* () {
+    let options: ClaudeSdk.Options | undefined;
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation((input) => {
+      options = input.options;
+      return {
+        initializationResult: async () => ({
+          commands: [{ name: "plugin:review", description: "Review changes", argumentHint: "" }],
+          models: [],
+        }),
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped();
+    const asked: Array<unknown> = [];
+    const snapshot = yield* probeClaudeWorkspaceSnapshot(
+      yield* decodeClaudeSettings({ binaryPath: "claude" }),
+      { skills: [], slashCommands: [] } as unknown as ServerProvider,
+      cwd,
+      {
+        PATH: (yield* HostProcess.Environment).PATH,
+        CLAUDE_CONFIG_DIR: yield* fileSystem.makeTempDirectoryScoped(),
+      },
+      (input) => Effect.sync(() => (asked.push(input), root)),
+    );
+    assert.deepEqual(asked, [{ cwd }]);
+    assert.equal(options?.cwd, cwd);
+    assert.equal(options?.projectConfigRoot, root ?? undefined);
+    assert.include(
+      snapshot.slashCommands.map((command) => command.name),
+      "plugin:review",
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("keeps the probe subprocess alive while gateway model discovery can finish", () =>
   Effect.gen(function* () {
     let abortSignal: AbortSignal | undefined;

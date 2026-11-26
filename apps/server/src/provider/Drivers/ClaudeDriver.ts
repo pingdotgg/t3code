@@ -211,6 +211,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     );
     const textGeneration = yield* makeClaudeTextGeneration(
       effectiveConfig,
+      projectTrust.forFolder,
       processEnv,
       modelCatalog,
       modelRoutes.route,
@@ -462,7 +463,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               machineSnapshot,
               cwd,
               processEnv,
-              projectTrust.forListing,
+              projectTrust.forFolder,
             ),
           ),
           Effect.provideService(FileSystem.FileSystem, fileSystem),

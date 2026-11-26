@@ -164,6 +164,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -14108,7 +14109,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         turnInput.runtimePolicy.maxRuntimeMode,
                       ) === "permitted",
                   })
-                  .pipe(Effect.mapError((cause) => queryRunnerError(cause, "projectTrust")));
+                  .pipe(
+                    // The folder it names lasts as long as the session that reads it.
+                    Scope.provide(sessionScope),
+                    Effect.mapError((cause) => queryRunnerError(cause, "projectTrust")),
+                  );
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           clearedNativeSessions.delete(nativeThreadId);
           if (existing !== null) {

@@ -4,9 +4,12 @@ import { assert, it } from "@effect/vitest";
 import { type ManagedPolicyDocument, ProjectId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Scope from "effect/Scope";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -19,7 +22,7 @@ const projectId = ProjectId.make("project:trust");
 const layerTrust = (policy?: ManagedPolicyDocument) =>
   Layer.merge(ClaudeProjectTrustWrites.layer, ClaudeProjectTrust.layer).pipe(
     Layer.provide(ManagedPolicy.layerTest(policy)),
-    Layer.provide(SqlitePersistence.layerMemory),
+    Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-claude-trust-" })),
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
@@ -170,61 +173,143 @@ it.layer(layerTrust())("ClaudeProjectTrust", (it) => {
     }),
   );
 
-  it.effect("each session gets its own folder, made anew at every start", () =>
+  it.effect("each start gets a folder of its own, kept while its session lasts", () =>
     Effect.gen(function* () {
       const { fileSystem, path, write, readJson, session } = yield* fixture;
       yield* write(".claude/settings.json", { hooks: { SessionStart: command("./setup.sh") } });
-      const first = yield* session(false, "one");
+      const scope = yield* Scope.make();
+      const first = yield* session(false, "one").pipe(Scope.provide(scope));
       const second = yield* session(false, "two");
       assert.isNotNull(first);
       assert.isNotNull(second);
       if (first === null || second === null) return;
       assert.notStrictEqual(first.projectConfigRoot, second.projectConfigRoot);
 
-      // What a session wrote into its folder is gone when that session starts again.
-      const settings = path.join(first.projectConfigRoot, ".claude", "settings.json");
-      yield* fileSystem.writeFileString(settings, JSON.stringify({ hooks: { Stop: [] } }));
+      // What a start wrote into its folder is gone when that session starts again.
       yield* fileSystem.writeFileString(
         path.join(first.projectConfigRoot, ".claude", "settings.local.json"),
-        "{}",
+        JSON.stringify({ hooks: { Stop: [] } }),
       );
       const again = yield* session(false, "one");
-      assert.strictEqual(again?.projectConfigRoot, first.projectConfigRoot);
-      assert.deepEqual(yield* readJson(settings), { permissions: { deny: [], ask: [] } });
+      assert.isNotNull(again);
+      if (again === null) return;
+      assert.isFalse(yield* fileSystem.exists(first.projectConfigRoot));
       assert.deepEqual(
-        yield* fileSystem.readDirectory(path.join(first.projectConfigRoot, ".claude")),
+        yield* fileSystem.readDirectory(path.join(again.projectConfigRoot, ".claude")),
         ["settings.json"],
       );
+      assert.deepEqual(
+        yield* readJson(path.join(again.projectConfigRoot, ".claude", "settings.json")),
+        {
+          permissions: { deny: [], ask: [] },
+        },
+      );
+
+      // The earlier session closing takes only its own folder, not the one that replaced it.
+      yield* Scope.close(scope, Exit.void);
+      assert.isTrue(yield* fileSystem.exists(again.projectConfigRoot));
+      assert.isTrue(yield* fileSystem.exists(second.projectConfigRoot));
     }),
   );
 
-  it.effect("listing a folder's commands reads a folder of its own, trusted or not", () =>
+  it.effect("a session's folder is removed when the session closes", () =>
     Effect.gen(function* () {
-      const { fileSystem, path, trust, writes, cwd, write, readJson } = yield* fixture;
-      assert.isNull(yield* Effect.scoped(trust.forListing(cwd)));
+      const { fileSystem, write, session } = yield* fixture;
+      yield* write(".claude/settings.json", { hooks: { SessionStart: command("./setup.sh") } });
+      const root = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const opened = yield* session(false, "closing");
+          assert.isTrue(opened !== null && (yield* fileSystem.exists(opened.projectConfigRoot)));
+          return opened?.projectConfigRoot;
+        }),
+      );
+      assert.isFalse(root === undefined || (yield* fileSystem.exists(root)));
+    }),
+  );
+
+  it.effect("outside a session, an untrusted project's folder is read through a substitute", () =>
+    Effect.gen(function* () {
+      const { fileSystem, path, trust, cwd, write, readJson } = yield* fixture;
+      assert.isNull(yield* Effect.scoped(trust.forFolder({ cwd, projectId })));
       yield* write(".claude/settings.json", {
         apiKeyHelper: "./key.sh",
         permissions: { deny: ["Read(./.env)"] },
       });
       yield* write(".claude/commands/review.md", "Review the change.\n");
-      yield* writes.set({ projectId, trusted: true });
       const root = yield* Effect.scoped(
         Effect.gen(function* () {
-          const listed = yield* trust.forListing(cwd);
-          assert.isNotNull(listed);
-          if (listed === null) return listed;
-          assert.deepEqual(yield* readJson(path.join(listed, ".claude", "settings.json")), {
+          const substitute = yield* trust.forFolder({ cwd, projectId });
+          assert.isNotNull(substitute);
+          if (substitute === null) return substitute;
+          assert.deepEqual(yield* readJson(path.join(substitute, ".claude", "settings.json")), {
             permissions: { deny: ["Read(./.env)"], ask: [] },
           });
           assert.isTrue(
-            yield* fileSystem.exists(path.join(listed, ".claude", "commands", "review.md")),
+            yield* fileSystem.exists(path.join(substitute, ".claude", "commands", "review.md")),
           );
-          return listed;
+          return substitute;
         }),
       );
-      // Kept only while the listing runs.
+      // Kept only while what asked for it runs.
       assert.isFalse(root === null || (yield* fileSystem.exists(root)));
+    }),
+  );
+
+  it.effect("outside a session, a trusted project's folder is read as it is", () =>
+    Effect.gen(function* () {
+      const { trust, writes, cwd, write } = yield* fixture;
+      yield* write(".claude/settings.json", { apiKeyHelper: "./key.sh" });
+      const folder = (id?: ProjectId) => Effect.scoped(trust.forFolder({ cwd, projectId: id }));
+      yield* writes.set({ projectId, trusted: true });
+      assert.isNull(yield* folder(projectId));
+      // Another project's trust does not cover it, and neither does a folder no project has.
+      assert.isNotNull(yield* folder(ProjectId.make("project:other")));
+      assert.isNotNull(yield* folder());
       yield* writes.set({ projectId, trusted: false });
+    }),
+  );
+
+  it.effect("a folder is looked up among project folders and thread worktrees", () =>
+    Effect.gen(function* () {
+      const { path, trust, writes, cwd, write } = yield* fixture;
+      const sql = yield* SqlClient.SqlClient;
+      const worktree = path.join(cwd, "worktree");
+      yield* write(".claude/settings.json", { apiKeyHelper: "./key.sh" });
+      yield* write("worktree/.claude/settings.json", { apiKeyHelper: "./key.sh" });
+      const folder = (folderCwd: string) => Effect.scoped(trust.forFolder({ cwd: folderCwd }));
+      const lookedUp = ProjectId.make("project:looked-up");
+      yield* sql`
+        INSERT INTO projection_projects (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES (${lookedUp}, 'Looked up', ${cwd}, '[]', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')
+      `;
+      const thread = (id: string, projectIdOfThread: ProjectId, deletedAt: string | null) => sql`
+        INSERT INTO orchestration_v2_projection_threads (
+          thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
+          created_at, updated_at, deleted_at, payload_json
+        ) VALUES (
+          ${id}, ${projectIdOfThread}, 'Thread', 'claudeAgent', 'full-access', 'default',
+          '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', ${deletedAt},
+          ${JSON.stringify({ worktreePath: worktree })}
+        )
+      `;
+      yield* thread("thread:worktree", lookedUp, null);
+
+      // Known, and not trusted yet.
+      assert.isNotNull(yield* folder(cwd));
+      assert.isNotNull(yield* folder(worktree));
+      yield* writes.set({ projectId: lookedUp, trusted: true });
+      assert.isNull(yield* folder(cwd));
+      assert.isNull(yield* folder(worktree));
+      // A folder under the project that is neither is not covered.
+      yield* write("nested/.claude/settings.json", { apiKeyHelper: "./key.sh" });
+      assert.isNotNull(yield* folder(path.join(cwd, "nested")));
+      // A deleted thread's worktree does not count for its project.
+      yield* thread("thread:deleted", ProjectId.make("project:gone"), "2026-01-02T00:00:00.000Z");
+      assert.isNull(yield* folder(worktree));
+      // A worktree shared with a project that is not trusted is not trusted.
+      yield* thread("thread:shared", ProjectId.make("project:untrusted"), null);
+      assert.isNotNull(yield* folder(worktree));
+      yield* writes.set({ projectId: lookedUp, trusted: false });
     }),
   );
 
@@ -324,6 +409,8 @@ it.layer(
         const opened = yield* session(fullAccess);
         assert.include(opened?.notice ?? "", "Example Corp's policy does not allow");
       }
+      // Outside a session too, whatever project the folder belongs to.
+      assert.isNotNull(yield* Effect.scoped(trust.forFolder({ cwd, projectId })));
       // Withdrawing is still possible.
       yield* writes.set({ projectId, trusted: false });
     }),

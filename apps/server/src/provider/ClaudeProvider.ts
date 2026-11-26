@@ -648,8 +648,8 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   machineSnapshot: ServerProvider,
   cwd: string,
   environment: NodeJS.ProcessEnv | undefined,
-  /** The probe lists the folder's commands; nobody asked it to run what the folder names. */
-  listingRoot: ClaudeProjectTrust["Service"]["forListing"],
+  /** The probe starts Claude Code in `cwd`: on the folder of a trusted project, else on a substitute. */
+  folderConfigRoot: ClaudeProjectTrust["Service"]["forFolder"],
 ): Effect.fn.Return<ProviderWorkspaceSnapshot, never, FileSystem.FileSystem | Path.Path> {
   if (!claudeSettings.enabled) return machineSnapshot;
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, environment);
@@ -657,7 +657,7 @@ export const probeClaudeWorkspaceSnapshot = Effect.fn("probeClaudeWorkspaceSnaps
   // A deleted worktree can never answer the probe. Pending would make clients rescan it forever.
   const cwdExists = yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true));
   const probeResult = cwdExists
-    ? yield* listingRoot(cwd).pipe(
+    ? yield* folderConfigRoot({ cwd }).pipe(
         Effect.flatMap((root) =>
           probeClaudeCapabilities(claudeSettings, environment, cwd, false, root ?? undefined),
         ),

@@ -48,22 +48,23 @@ export class ClaudeProjectTrust extends Context.Service<
     }) => Effect.Effect<WorkspaceClaudeProjectTrustResult, ClaudeProjectTrustError>;
     /**
      * For a session about to open in `cwd`. Null opens it on the folder as it is. `session` names
-     * the one process that reads the answer's folder at a time.
+     * the one process that reads the answer's folder at a time; the folder is kept for the scope.
      */
     readonly forSession: (input: {
       readonly projectId: ProjectId;
       readonly cwd: string;
       readonly session: string;
       readonly fullAccess: boolean;
-    }) => Effect.Effect<ClaudeUntrustedSessionConfig | null, ClaudeProjectTrustError>;
+    }) => Effect.Effect<ClaudeUntrustedSessionConfig | null, ClaudeProjectTrustError, Scope.Scope>;
     /**
-     * For Claude Code started only to list what `cwd` offers, such as its slash commands, which
-     * no person asked to run anything: the `projectConfigRoot` to give it, kept for the scope.
-     * Null when the folder names nothing to run.
+     * For Claude Code started in `cwd` outside a session, to list its commands or generate text:
+     * no permission mode there, so trust and policy alone decide. Null runs it on the folder;
+     * else its `projectConfigRoot`, kept for the scope. A folder of no project is not trusted.
      */
-    readonly forListing: (
-      cwd: string,
-    ) => Effect.Effect<string | null, ClaudeProjectTrustError, Scope.Scope>;
+    readonly forFolder: (input: {
+      readonly cwd: string;
+      readonly projectId?: ProjectId | null | undefined;
+    }) => Effect.Effect<string | null, ClaudeProjectTrustError, Scope.Scope>;
   }
 >()("t3/provider/ClaudeProjectTrust") {}
 
@@ -207,6 +208,40 @@ const make = Effect.gen(function* () {
           Effect.mapError(failed("Could not read whether the project is trusted.")),
         );
 
+  // The key is the one `orchestration_v2_projection_threads_worktree_path_key_idx` holds, so the
+  // lookup never scans; the exact comparison after it keeps a folder that differs in case out.
+  const findFolderProjects = SqlSchema.findAll({
+    Request: Schema.String,
+    Result: Schema.Struct({ projectId: ProjectId }),
+    execute: (folder) => sql`
+      SELECT project_id AS "projectId" FROM projection_projects
+      WHERE deleted_at IS NULL AND workspace_root = ${folder}
+      UNION
+      SELECT project_id AS "projectId" FROM orchestration_v2_projection_threads
+      WHERE deleted_at IS NULL
+        AND CASE WHEN json_valid(payload_json)
+          THEN lower(rtrim(replace(trim(json_extract(payload_json, '$.worktreePath')), '\\', '/'), '/'))
+        END = lower(rtrim(replace(trim(${folder}), '\\', '/'), '/'))
+        AND json_extract(payload_json, '$.worktreePath') = ${folder}
+    `,
+  });
+  /** Whether every project `cwd` is the folder or a thread worktree of is trusted. */
+  const folderIsTrusted = Effect.fn("ClaudeProjectTrust.folderIsTrusted")(function* (
+    cwd: string,
+    projectId: ProjectId | null | undefined,
+  ) {
+    if (offBy !== undefined) return false;
+    const projects =
+      projectId === null || projectId === undefined
+        ? (yield* findFolderProjects(path.resolve(cwd)).pipe(
+            Effect.mapError(failed("Could not read which project the folder belongs to.")),
+          )).map((row) => row.projectId)
+        : [projectId];
+    if (projects.length === 0) return false;
+    const statuses = yield* Effect.forEach(projects, statusOf);
+    return statuses.every((status) => status === "trusted");
+  });
+
   // A file Claude Code cannot read as settings gives it nothing to run either, so it counts as absent.
   const readJson = (file: string) =>
     fileSystem.readFileString(file).pipe(
@@ -289,6 +324,18 @@ const make = Effect.gen(function* () {
     return root;
   }, Effect.mapError(unprepared));
 
+  /** A folder of its own under the state directory, removed when the scope closes. */
+  const scopedConfigRoot = (prefix: string) =>
+    Effect.acquireRelease(
+      fileSystem
+        .makeDirectory(configRoots, { recursive: true })
+        .pipe(
+          Effect.andThen(fileSystem.makeTempDirectory({ directory: configRoots, prefix })),
+          Effect.mapError(unprepared),
+        ),
+      (root) => fileSystem.remove(root, { recursive: true, force: true }).pipe(Effect.ignore),
+    );
+
   return ClaudeProjectTrust.of({
     read: Effect.fn("ClaudeProjectTrust.read")(function* ({ projectId, cwd }) {
       return {
@@ -308,35 +355,41 @@ const make = Effect.gen(function* () {
       const folder = yield* readFolder(cwd);
       // A folder with nothing to leave out is opened as it is, so the user's own hooks run in it.
       if (folder.commands.length === 0) return null;
-      // One folder per session, made anew at each start, so none reads what another wrote there.
-      const root = path.join(
-        configRoots,
-        Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(session))).slice(
-          0,
-          32,
+      // One folder per start, so no process reads what another wrote there. An earlier start of
+      // the same session has ended or is being replaced, so what it left is removed here.
+      const prefix = `${Hex.encode(
+        yield* digest.digest(Digest.sha256, new TextEncoder().encode(session)),
+      ).slice(0, 32)}-`;
+      yield* fileSystem.readDirectory(configRoots).pipe(
+        Effect.orElseSucceed((): ReadonlyArray<string> => []),
+        Effect.flatMap(
+          Effect.forEach(
+            (entry) =>
+              entry.startsWith(prefix)
+                ? fileSystem.remove(path.join(configRoots, entry), { recursive: true, force: true })
+                : Effect.void,
+            { discard: true },
+          ),
         ),
+        Effect.mapError(unprepared),
       );
-      yield* fileSystem
-        .remove(root, { recursive: true, force: true })
-        .pipe(Effect.mapError(unprepared));
       return {
-        projectConfigRoot: yield* writeConfigRoot(cwd, root, folder.settings),
+        projectConfigRoot: yield* writeConfigRoot(
+          cwd,
+          yield* scopedConfigRoot(prefix),
+          folder.settings,
+        ),
         notice:
           offBy === undefined
             ? UNTRUSTED_NOTICE
             : `${managedPolicyDeniedMessage(offBy, "trusting a project's Claude Code settings")} ${LEFT_OUT}`,
       };
     }),
-    forListing: Effect.fn("ClaudeProjectTrust.forListing")(function* (cwd) {
+    forFolder: Effect.fn("ClaudeProjectTrust.forFolder")(function* ({ cwd, projectId }) {
       const folder = yield* readFolder(cwd);
       if (folder.commands.length === 0) return null;
-      yield* fileSystem
-        .makeDirectory(configRoots, { recursive: true })
-        .pipe(Effect.mapError(unprepared));
-      const root = yield* fileSystem
-        .makeTempDirectoryScoped({ directory: configRoots, prefix: "listing-" })
-        .pipe(Effect.mapError(unprepared));
-      return yield* writeConfigRoot(cwd, root, folder.settings);
+      if (yield* folderIsTrusted(cwd, projectId)) return null;
+      return yield* writeConfigRoot(cwd, yield* scopedConfigRoot("folder-"), folder.settings);
     }),
   });
 });
@@ -346,5 +399,5 @@ export const layer = Layer.effect(ClaudeProjectTrust, make);
 /** For code that opens Claude sessions where every project counts as trusted, as in tests. */
 export const layerTrusted = Layer.mock(ClaudeProjectTrust)({
   forSession: () => Effect.succeed(null),
-  forListing: () => Effect.succeed(null),
+  forFolder: () => Effect.succeed(null),
 });

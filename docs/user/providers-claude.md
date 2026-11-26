@@ -48,6 +48,7 @@ T3 Code asks once per project whether you trust its Claude Code settings, the wa
 - **Trusted**: Claude runs on the project's folder exactly as Claude Code would.
 - **Full access**: A thread in **Full access** runs everything without asking, trusted or not.
 - **Not trusted, below Full access**: The thread starts without the project's hooks, helper commands, MCP servers and environment variables, and says so in the conversation. The rest of the two settings files is left out too, except their deny and ask permission rules: allow rules, the default mode, model and plugin settings in them do not apply. `CLAUDE.md` and the other memory files, rules files, commands, skills and agents still apply, and so do your own Claude Code user settings and hooks.
+- **Outside a thread**: Generated commit messages, pull request text and branch names, and the composer's list of slash commands, have no permission mode. They follow trust alone: in a trusted project Claude Code reads the folder as it is, otherwise it leaves out the same things. Plugin commands a project enables in its own settings show in the composer once the project is trusted.
 - **When it applies**: Trusting and revoking apply when the next Claude session of a thread starts.
 - **Who can trust**: A client that can use the terminal (`terminal:operate`). Agents never trust a project. An administrator can stop projects from being trusted with [`claudeProjectHooks`](./managed-policy.md#other-capabilities).
 

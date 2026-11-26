@@ -1794,6 +1794,7 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
         projectConfigRoot: "/state/claude-project-config/abc",
         notice: "The project is not trusted.",
       };
+      const released: Array<string> = [];
       const opened = Effect.fnUntraced(function* (
         name: string,
         modes: Pick<
@@ -1819,16 +1820,19 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
           idAllocator,
           projectTrust: {
             read: () => Effect.die("unused"),
-            forListing: () => Effect.die("unused"),
+            forFolder: () => Effect.die("unused"),
             forSession: (input) =>
-              Effect.sync(() => {
-                asked.push({
-                  cwd: input.cwd,
-                  session: input.session,
-                  fullAccess: input.fullAccess,
-                });
-                return input.fullAccess ? null : belowFullAccess;
-              }),
+              Effect.acquireRelease(
+                Effect.sync(() => {
+                  asked.push({
+                    cwd: input.cwd,
+                    session: input.session,
+                    fullAccess: input.fullAccess,
+                  });
+                  return input.fullAccess ? null : belowFullAccess;
+                }),
+                () => Effect.sync(() => released.push(name)),
+              ),
           },
           queryRunner: {
             allocateSessionId: Effect.succeed(`native-thread-claude-trust-${name}`),
@@ -1955,6 +1959,12 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
         }),
         leftOut,
       );
+      // The folder a session was handed is kept until that session closes.
+      assert.deepStrictEqual(released, []);
+      yield* Effect.scoped(
+        opened("closing", { runtimeMode: "approval-required", interactionMode: "default" }),
+      );
+      assert.deepStrictEqual(released, ["closing"]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
