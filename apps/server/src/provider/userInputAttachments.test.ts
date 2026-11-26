@@ -672,7 +672,7 @@ describe("question answer paths", () => {
             "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
             "chapter.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Guide</title></head><body><ol><li>Before boarding<div><ul><li>Check passports</li></ul></div></li></ol>Intro<ul><li>Read the checklist</li></ul><dl><dt>Visa</dt><dd>Requirements<ul><li>Photo</li></ul></dd></dl><div>Carry<dl><dt>Passport</dt><dd>Required</dd></dl></div><div>Leave <ul></ul>room</div><div>Keep <ul><li hidden="">Draft</li></ul>walking</div><div>Safety note<blockquote>Check the gate.</blockquote>Continue to the terminal.</div><div>Keep some <blockquote></blockquote>space.</div></body></html>',
+              '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Guide</title></head><body><ol><li>Before boarding<div><ul><li>Check passports</li></ul></div></li></ol>Intro<ul><li>Read the checklist</li></ul><dl><dt>Visa</dt><dd>Requirements<ul><li>Photo</li></ul></dd></dl><div>Carry<dl><dt>Passport</dt><dd>Required</dd></dl></div><div>Leave <ul></ul>room</div><div>Keep <ul><li hidden="">Draft</li></ul>walking</div><div>Safety note<blockquote>Check the gate.</blockquote>Continue to the terminal.</div><div>Keep some <blockquote></blockquote>space.</div><div>Arrive at the platform.<hr/>Collect your luggage.</div><div>One<hr hidden=""/> scene.</div><div>Check the time.<hr/></div><div>Board promptly.</div><div>Example<hr/><pre>  <code>check()</code></pre></div></body></html>',
           },
           expected: [
             "Before boarding\nCheck passports",
@@ -683,6 +683,10 @@ describe("question answer paths", () => {
             "Keep walking",
             "Safety note\nCheck the gate.\nContinue to the terminal.",
             "Keep some space.",
+            "Arrive at the platform.\nCollect your luggage.",
+            "One scene.",
+            "Check the time.\nBoard promptly.",
+            "Example\n  check()",
           ],
         },
         {
