@@ -30,6 +30,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   TerminalProcessChangedError,
+  type TerminalWriteInput,
   type ContextMenuItem,
   type ProviderInstanceId,
   type ResolvedKeybindingsConfig,
@@ -544,26 +545,37 @@ function TerminalSessionViewport({
   );
   const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canReadFilesystem = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
-  const [linkPath, setLinkPath] = useState<string | null>(null);
+  const [hoveredLink, setHoveredLink] = useState<{ text: string; fallback?: string } | null>(null);
   const metadataThreadRef = useContext(FileMetadataThreadContext);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const hostname = serverConfig?.hostname;
   const readHostname = useEffectEvent(() => hostname);
-  const linkMetadataQuery =
-    linkPath !== null && canOpenHostEditor && canReadFilesystem
+  const hoveredMetadataQuery = (text: string | undefined) =>
+    text !== undefined && canOpenHostEditor && canReadFilesystem
       ? getFileMetadataQueryAtom(
           environmentId,
-          resolveTerminalLinkTarget(linkPath, cwd, hostname),
+          resolveTerminalLinkTarget(text, cwd, hostname),
           cwd,
           metadataThreadRef,
         )
       : null;
+  const linkMetadataQuery = hoveredMetadataQuery(hoveredLink?.text);
+  const fallbackMetadataQuery = hoveredMetadataQuery(hoveredLink?.fallback);
   const canActivateTerminalLink = useEffectEvent((text: string) => {
     if (isTerminalUrl(text)) return true;
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
-    if (text !== linkPath || !linkMetadataQuery) return false;
-    const metadata = AsyncResult.getOrElse(appAtomRegistry.get(linkMetadataQuery), () => null);
-    return metadata?.kind === "file" || metadata?.kind === "directory";
+    const exists = (query: typeof linkMetadataQuery) => {
+      const metadata = query ? AsyncResult.getOrElse(appAtomRegistry.get(query), () => null) : null;
+      return metadata?.kind === "file" || metadata?.kind === "directory";
+    };
+    if (text === hoveredLink?.text) return exists(linkMetadataQuery);
+    // The shorter reading stands in only once the whole candidate is known to be no file.
+    return (
+      text === hoveredLink?.fallback &&
+      (!linkMetadataQuery || AsyncResult.isSuccess(appAtomRegistry.get(linkMetadataQuery))) &&
+      !exists(linkMetadataQuery) &&
+      exists(fallbackMetadataQuery)
+    );
   });
   const validateTerminalLink = useEffectEvent(async (text: string) => {
     if (isTerminalUrl(text)) return true;
@@ -701,16 +713,15 @@ function TerminalSessionViewport({
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes the imperative terminal's hovered link after filesystem metadata or editor permissions change
   useEffect(() => {
-    if (!linkMetadataQuery) {
-      terminalRef.current?.refreshLinkActivation();
-      return;
-    }
-    return appAtomRegistry.subscribe(
-      linkMetadataQuery,
-      () => terminalRef.current?.refreshLinkActivation(),
-      { immediate: true },
+    const refresh = () => terminalRef.current?.refreshLinkActivation();
+    const unsubscribes = [linkMetadataQuery, fallbackMetadataQuery].flatMap((query) =>
+      query ? [appAtomRegistry.subscribe(query, refresh, { immediate: true })] : [],
     );
-  }, [linkMetadataQuery]);
+    if (unsubscribes.length === 0) refresh();
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+    };
+  }, [linkMetadataQuery, fallbackMetadataQuery]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- pushes visibility into the terminal surface before paint and consumes focus requests made while hidden
   useLayoutEffect(() => {
@@ -753,7 +764,12 @@ function TerminalSessionViewport({
         onLinkActivate: (text, event) => handleLinkActivate(text, event),
         canActivateLink: (text) => canActivateTerminalLink(text),
         validateLink: (text) => validateTerminalLink(text),
-        onLinkHover: (text) => setLinkPath(text !== null && !isTerminalUrl(text) ? text : null),
+        onLinkHover: (text, fallback) =>
+          setHoveredLink(
+            text !== null && !isTerminalUrl(text)
+              ? { text, ...(fallback === undefined ? {} : { fallback }) }
+              : null,
+          ),
         // Surface listeners start before WASM loading finishes and the terminal handler exists.
         onContextMenu: (event) => {
           if (terminalRef.current) void showTerminalContextMenu(event);
@@ -966,7 +982,11 @@ function TerminalSessionViewport({
       };
 
       const canWriteInput = () => readEnvironmentScope(environmentId, AuthTerminalOperateScope);
-      const writeInputChunk = (data: string, kind?: "binary" | "reply", expectedPid?: number) =>
+      const writeInputChunk = (
+        data: string,
+        kind?: "binary" | "reply",
+        options?: Pick<TerminalWriteInput, "bracketedPaste" | "plainWrite" | "expectedPid">,
+      ) =>
         retainedTerminalWrite.current({
           environmentId,
           input: {
@@ -974,7 +994,7 @@ function TerminalSessionViewport({
             terminalId,
             data,
             ...(kind === undefined ? {} : { [kind]: true }),
-            ...(expectedPid === undefined ? {} : { expectedPid }),
+            ...options,
           },
         });
       const sendTerminalInput = (
@@ -999,7 +1019,7 @@ function TerminalSessionViewport({
         };
         return writeInput(
           data,
-          async (chunk, split) => {
+          async (chunk, framing) => {
             if (terminalRef.current !== terminal) return "not-dispatched";
             const currentSession = appAtomRegistry.get(terminalSessionAtom);
             if (
@@ -1009,9 +1029,12 @@ function TerminalSessionViewport({
               return "not-dispatched";
             }
             const expectedPid =
-              split && session.supportsConditionalWrites ? session.pid : undefined;
+              framing && session.supportsConditionalWrites ? session.pid : undefined;
             if (expectedPid === null) return "not-dispatched";
-            const result = await writeInputChunk(chunk, kind, expectedPid);
+            const result = await writeInputChunk(chunk, kind, {
+              ...(kind ? {} : framing),
+              ...(expectedPid === undefined ? {} : { expectedPid }),
+            });
             if (result._tag === "Success") return true;
             const error = squashAtomCommandFailure(result);
             if (isTerminalProcessChanged(error)) return "not-dispatched";
@@ -1021,8 +1044,17 @@ function TerminalSessionViewport({
             return false;
           },
           // The attachment's PID stays with the paste even after the viewport detaches.
-          async () => {
-            if (session.pid === null) return true;
+          async (bracketed) => {
+            if (kind || session.pid === null) return true;
+            const expectedPid = session.supportsConditionalWrites ? session.pid : undefined;
+            const pidGuard = expectedPid === undefined ? {} : { expectedPid };
+            if (!bracketed) {
+              // Only releases the server's hold, which also ends when that process exits.
+              const current = appAtomRegistry.get(terminalSessionAtom);
+              if (current.lifecycleVersion !== lifecycleVersion) return true;
+              await writeInputChunk("", undefined, { plainWrite: "abort", ...pidGuard });
+              return true;
+            }
             if (!canWriteInput()) return false;
             if (!session.supportsConditionalWrites) {
               const attached =
@@ -1047,11 +1079,10 @@ function TerminalSessionViewport({
               }
               if (current.status !== "running" || current.pid !== session.pid) return false;
             }
-            const result = await writeInputChunk(
-              "\x1b[201~",
-              undefined,
-              session.supportsConditionalWrites ? session.pid : undefined,
-            );
+            const result = await writeInputChunk("\x1b[201~", undefined, {
+              bracketedPaste: "abort",
+              ...pidGuard,
+            });
             if (result._tag === "Success") return true;
             const error = squashAtomCommandFailure(result);
             if (isTerminalProcessChanged(error)) return true;

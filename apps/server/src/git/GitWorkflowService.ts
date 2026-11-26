@@ -167,7 +167,8 @@ export class GitWorkflowService extends Context.Service<
       GitManagerServiceError
     >;
     readonly readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"];
-    readonly readLocalStatusRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readLocalStatusRefSnapshot"];
+    readonly readStatusRefreshRefs: GitVcsDriver.GitVcsDriver["Service"]["readStatusRefreshRefs"];
+    readonly readStatusPoll: GitVcsDriver.GitVcsDriver["Service"]["readStatusPoll"];
     readonly resolveDefaultBranchName: (
       cwd: string,
       remoteName: string,
@@ -577,10 +578,18 @@ export const make = Effect.gen(function* () {
         },
       )(input),
     ),
-    readLocalStatusRefSnapshot: Effect.fn("GitWorkflowService.readLocalStatusRefSnapshot")((cwd) =>
+    readStatusRefreshRefs: Effect.fn("GitWorkflowService.readStatusRefreshRefs")((cwd) =>
       resolveWorkflowKind(cwd).pipe(
         Effect.flatMap((kind) =>
-          kind === "git" ? git.readLocalStatusRefSnapshot(cwd) : Effect.succeed(null),
+          kind === "git" ? git.readStatusRefreshRefs(cwd) : Effect.succeed(null),
+        ),
+        Effect.orElseSucceed(() => null),
+      ),
+    ),
+    readStatusPoll: Effect.fn("GitWorkflowService.readStatusPoll")((cwd, branch, refreshUpstream) =>
+      resolveWorkflowKind(cwd).pipe(
+        Effect.flatMap((kind) =>
+          kind === "git" ? git.readStatusPoll(cwd, branch, refreshUpstream) : Effect.succeed(null),
         ),
         Effect.orElseSucceed(() => null),
       ),

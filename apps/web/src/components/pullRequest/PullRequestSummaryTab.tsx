@@ -111,6 +111,7 @@ import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
+import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 
 function reviewerKey(login: string): string {
   return login.toLowerCase();
@@ -135,7 +136,12 @@ function CommentIdentity({
     : null;
   return (
     <h2 className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
-      <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
+      <PullRequestActorLabel
+        actor={actor}
+        profileUrl={profileUrl}
+        threadRef={threadRef}
+        className="max-w-full"
+      />
       <SharedTooltipTrigger
         render={
           url ? (
@@ -887,7 +893,9 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
         </div>
       ) : null;
     const moreReplies =
-      item.kind === "thread" && item.hasMoreReplies ? <PullRequestMoreReplies {...item} /> : null;
+      item.kind === "thread" && item.hasMoreReplies ? (
+        <PullRequestMoreReplies {...item} threadRef={threadRef} />
+      ) : null;
     if (isPullRequestCommentFinished(comment, thread)) {
       const chat = chatSubject(comment, thread);
       return (
@@ -1040,6 +1048,20 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
             </PullRequestMetaRow>
           ) : null}
         </div>
+        <WorkflowRunsAbout
+          environmentId={environmentId}
+          item={{
+            subject: detail.url,
+            pullRequest: {
+              projectId: reference.projectId,
+              repository: reference.repository,
+              number: reference.number,
+              host:
+                reference.host ??
+                (URL.canParse(detail.url) ? new URL(detail.url).hostname : undefined),
+            },
+          }}
+        />
       </section>
 
       <PullRequestSection

@@ -298,8 +298,8 @@ describe("GitWorkflowService", () => {
       yield* workflow.listRefs({ cwd: "/jj-repo" });
       assert.equal(yield* workflow.readRefSnapshot("/git-repo"), "git-refs");
       assert.isNull(yield* workflow.readRefSnapshot("/jj-repo"));
-      assert.equal(yield* workflow.readLocalStatusRefSnapshot("/git-repo"), "local-refs");
-      assert.isNull(yield* workflow.readLocalStatusRefSnapshot("/jj-repo"));
+      assert.equal(yield* workflow.readStatusRefreshRefs("/git-repo"), "local-refs");
+      assert.isNull(yield* workflow.readStatusRefreshRefs("/jj-repo"));
       assert.equal(yield* workflow.readRefSnapshot("/git-repo", "cached-refs"), "cached-refs");
 
       assert.equal(gitListRefs.mock.calls.length, 1);
@@ -310,7 +310,7 @@ describe("GitWorkflowService", () => {
           detect: ({ cwd }) => Effect.succeed(handleFor(cwd === "/jj-repo" ? "jj" : "git")),
           git: {
             listRefs: gitListRefs,
-            readLocalStatusRefSnapshot: () => Effect.succeed("local-refs"),
+            readStatusRefreshRefs: () => Effect.succeed("local-refs"),
             readRefSnapshot: (_cwd, refs) => Effect.succeed(refs ?? "git-refs"),
           },
           jj: { listRefs: jjListRefs },

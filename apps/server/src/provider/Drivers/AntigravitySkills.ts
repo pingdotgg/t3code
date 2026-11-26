@@ -59,6 +59,24 @@ const decodeSkillsConfig = Schema.decodeUnknownOption(
     }),
   ),
 );
+// agy reads only the first manifest present, and skips the plugin when that one does not parse.
+const PLUGIN_MANIFEST_PATHS = [
+  [".antigravity-plugin", "plugin.json"],
+  [".gemini-plugin", "plugin.json"],
+  ["plugin.json"],
+] as const;
+// agy ignores `skills` in an Agent Plugins manifest while its enable-agent-plugins-spec flag is on.
+const AGENT_PLUGINS_SCHEMA_PREFIX = "https://agent-plugins.org/schemas/";
+const decodePluginManifest = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      $schema: Schema.optional(Schema.Unknown),
+      skills: Schema.optional(
+        Schema.NullOr(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+      ),
+    }),
+  ),
+);
 const decodePluginPreferences = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
@@ -310,7 +328,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
 
     const sortedEntries = entries.toSorted();
     const skillFileName = sortedEntries.find((entry) => entry.toLowerCase() === "skill.md");
-    if (skillFileName !== undefined && (mode !== "agent-root" || skillFileName.endsWith(".md"))) {
+    // agy treats the automatic .agent(s)/skills roots as collections.
+    if (skillFileName !== undefined && mode !== "agent-root") {
       if (matchesSkillFilter(path.basename(directory), filter)) {
         yield* addSkillFile(path.join(directory, skillFileName), scope, pluginName);
       }
@@ -417,6 +436,38 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     );
   }
 
+  /** The skill paths a plugin's manifest adds to its skills/ folder, or undefined when agy skips the plugin. */
+  const readPluginSkillPaths = Effect.fn("readAntigravityPluginSkillPaths")(function* (
+    pluginDirectory: string,
+  ): Effect.fn.Return<
+    ReadonlyArray<string> | undefined,
+    AntigravitySkillsProbeError,
+    FileSystem.FileSystem
+  > {
+    for (const segments of PLUGIN_MANIFEST_PATHS) {
+      const manifestPath = path.join(pluginDirectory, ...segments);
+      const info = yield* readIfPresent(fileSystem.stat(manifestPath), manifestPath);
+      if (info?.type !== "File") continue;
+      if (info.size > BigInt(Math.min(MAX_SKILL_BYTES, budget.remainingBytes))) {
+        return yield* new AntigravitySkillsProbeError({
+          reason: "scan-budget-exhausted",
+          path: manifestPath,
+        });
+      }
+      const raw = yield* readIfPresent(fileSystem.readFileString(manifestPath), manifestPath);
+      if (raw === undefined) return undefined;
+      budget.remainingBytes -= Buffer.byteLength(raw, "utf8");
+      const manifest = decodePluginManifest(raw.replace(/^\uFEFF/, ""));
+      if (manifest._tag === "None") return undefined;
+      const { $schema, skills } = manifest.value;
+      if (typeof $schema === "string" && $schema.startsWith(AGENT_PLUGINS_SCHEMA_PREFIX)) return [];
+      return (typeof skills === "string" ? [skills] : (skills ?? [])).map((entry) =>
+        path.resolve(pluginDirectory, entry),
+      );
+    }
+    return undefined;
+  });
+
   const pluginsDirectory = path.join(input.profileDirectory, "config", "plugins");
   const plugins = yield* readIfPresent(
     fileSystem.readDirectory(pluginsDirectory),
@@ -446,6 +497,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       const pluginDirectory = path.join(pluginsDirectory, plugin);
       const info = yield* readIfPresent(fileSystem.stat(pluginDirectory), pluginDirectory);
       if (info?.type !== "Directory") continue;
+      const manifestSkillPaths = yield* readPluginSkillPaths(pluginDirectory);
+      if (manifestSkillPaths === undefined) continue;
       yield* scanDirectory(
         path.join(pluginDirectory, "skills"),
         "user",
@@ -453,6 +506,9 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
         EMPTY_SKILL_FILTER,
         plugin,
       );
+      for (const skillPath of manifestSkillPaths) {
+        yield* scanDirectory(skillPath, "user", "manifest", EMPTY_SKILL_FILTER, plugin);
+      }
     }
   }
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
