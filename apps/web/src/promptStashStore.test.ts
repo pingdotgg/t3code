@@ -115,16 +115,17 @@ describe("promptStashStore", () => {
     expect(usePromptStashStore.getState().takeEntry("citation-stash").entry).toBeNull();
   });
 
-  it("evicts the oldest entry past the cap and returns it", () => {
+  it("refuses a new entry when full instead of discarding the oldest", () => {
     const store = usePromptStashStore.getState();
     for (let index = 0; index < MAX_STASH_ENTRIES; index += 1) {
-      expect(store.stashEntry(makeEntry({ id: `entry-${index}` })).evicted).toBeNull();
+      expect(store.stashEntry(makeEntry({ id: `entry-${index}` })).written).toBe(true);
     }
-    const { evicted } = store.stashEntry(makeEntry({ id: "overflow" }));
-    expect(evicted?.id).toBe("entry-0");
+    const result = store.stashEntry(makeEntry({ id: "overflow" }));
+    expect(result).toEqual({ full: true, written: false, durable: false });
     const entries = usePromptStashStore.getState().entries;
     expect(entries).toHaveLength(MAX_STASH_ENTRIES);
-    expect(entries[0]?.id).toBe("overflow");
+    expect(entries.map((entry) => entry.id)).not.toContain("overflow");
+    expect(entries.map((entry) => entry.id)).toContain("entry-0");
   });
 
   // regression: #4787 stashed prompts were lost when switching providers

@@ -1,4 +1,4 @@
-import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownWindowsPaths";
+import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownLinks";
 
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
@@ -428,7 +428,7 @@ export function serializeTableElementToMarkdown(table: Element): string {
   return serializeTable(table).replaceAll(CODE_BOUNDARY, "").trim();
 }
 
-// The wrapper MarkdownMath puts on every formula it renders. The sanitizer drops
+// The wrapper wordsHast puts on every formula it renders. The sanitizer drops
 // the attribute from authored HTML.
 const MATH_SELECTOR = "[data-markdown-math]";
 
@@ -436,14 +436,11 @@ export function mathWrapperOf(element: Element | null): Element | null {
   return element?.closest(MATH_SELECTOR) ?? null;
 }
 
-/** A cell's text, with each formula as its TeX. */
+/** A cell's text on one line, with each formula as its TeX. */
 function csvCellText(cell: Element): string {
-  if (!cell.querySelector(MATH_SELECTOR)) return cell.textContent ?? "";
-  const copy = cell.cloneNode(true) as Element;
-  for (const wrapper of copy.querySelectorAll(MATH_SELECTOR)) {
-    wrapper.replaceWith(wrapper.getAttribute("data-markdown-copy")?.trim() ?? "");
-  }
-  return copy.textContent ?? "";
+  const parts: string[] = [];
+  collectHtmlCellText(cell, parts, false);
+  return parts.join("").replace(/[\u0001\u0002]+/g, " ");
 }
 
 function csvCell(value: string): string {

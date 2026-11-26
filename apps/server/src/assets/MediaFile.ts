@@ -45,6 +45,10 @@ const realpathLikeFileSystem = (filePath: string) =>
     NodeFS.realpath(filePath, (error, resolved) => (error ? reject(error) : resolve(resolved)));
   });
 
+/** Null when the path cannot be resolved. */
+export const realPathWithoutNativeResolver = (filePath: string) =>
+  Effect.promise(() => realpathLikeFileSystem(filePath).catch(() => null));
+
 const sameFileIdentity = (left: NodeFS.BigIntStats, right: NodeFS.BigIntStats) =>
   left.dev === right.dev && left.ino === right.ino;
 

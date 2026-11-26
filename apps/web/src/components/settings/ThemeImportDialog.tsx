@@ -233,19 +233,20 @@ function ThemeImportBody({
   const [isReading, setIsReading] = useState(false);
   const [isDropTarget, setIsDropTarget] = useState(false);
   const [conflicts, setConflicts] = useState<ReadonlyArray<ThemeDefinition> | null>(null);
-  // A newer read supersedes an older one still in flight.
+  // A new file selection supersedes a pending import even if the selection is rejected.
   const importRequestRef = useRef(0);
   const isCurrentRequest = (requestId: number) =>
     requestId === importRequestRef.current && !signal.aborted;
 
   const readThemeFile = async (file: ImportableThemeFile) => {
+    const requestId = ++importRequestRef.current;
     const oversized = describeOversizedThemeFile(file.size);
     if (oversized) {
+      setIsReading(false);
       setError(oversized);
       return;
     }
 
-    const requestId = ++importRequestRef.current;
     setIsReading(true);
     const fileText = await settlePromise(() => file.text());
     if (!isCurrentRequest(requestId)) return;

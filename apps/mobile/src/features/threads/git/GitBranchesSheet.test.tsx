@@ -20,6 +20,7 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("@react-navigation/native", () => ({
+  useFocusEffect: () => {},
   useNavigation: () => ({
     goBack: () => state.goBackCalls++,
     isFocused: () => state.focused,

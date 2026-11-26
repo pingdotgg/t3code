@@ -75,16 +75,11 @@ function unsupportedProvider(
   // Binding context does not create a second provider-operation span.
   return SourceControlProvider.SourceControlProvider.of({
     kind,
-    // Unknown hosts have no readable change requests; return none to avoid poll warnings on every refresh.
-    listChangeRequests: (input) =>
-      kind === "unknown"
-        ? Effect.succeed([])
-        : new SourceControlProviderError({
-            provider: kind,
-            operation: "listChangeRequests",
-            cwd: input.cwd,
-            detail: `No ${kind} source control provider is registered.`,
-          }),
+    // Unknown hosts, and hosts whose forge a feature flag leaves out, have no readable change
+    // requests; return none to avoid poll warnings on every refresh.
+    listChangeRequests: Effect.fn("SourceControlProviderRegistry.unsupported.listChangeRequests")(
+      () => Effect.succeed([]),
+    ),
     getChangeRequest: (input) =>
       new SourceControlProviderError({
         provider: kind,
@@ -227,6 +222,15 @@ function bindProviderContext(
         context: input.context ?? context,
       });
     }),
+    ...(provider.privateChangeRequestRemote === undefined
+      ? {}
+      : {
+          privateChangeRequestRemote: (input) =>
+            provider.privateChangeRequestRemote!({
+              ...input,
+              context: input.context ?? context,
+            }),
+        }),
     getRepositoryCloneUrls: Effect.fnUntraced(function* (input) {
       return yield* provider.getRepositoryCloneUrls({
         ...input,

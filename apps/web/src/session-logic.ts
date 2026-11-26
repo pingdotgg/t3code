@@ -245,6 +245,7 @@ const STANDALONE_V2_ITEM_TYPES = new Set<OrchestrationV2ProjectedTurnItem["item"
   "run_interrupt_request",
   "run_interrupt_result",
   "secret_request",
+  "feedback_request",
   "link_request",
   "subagent",
 ]);
@@ -254,6 +255,7 @@ const PERSISTENT_RESOURCE_V2_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"
   "thread_created",
   // Still answerable after a steer supersedes the attempt that asked.
   "secret_request",
+  "feedback_request",
   "link_request",
 ]);
 
@@ -1153,10 +1155,10 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
-// A missing snapshot (no git, or a side chat) still pins a conversation position; only
-// restoring files needs a ready one.
+// A missing or failed snapshot (no git, a side chat, a capture error) still pins a
+// conversation position; only restoring files needs a ready one.
 function isRewindableCheckpoint(checkpoint: Pick<OrchestrationV2Checkpoint, "status">) {
-  return checkpoint.status === "ready" || checkpoint.status === "missing";
+  return checkpoint.status !== "stale";
 }
 
 export function findRevertCheckpoint(

@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
+  isExecutableOnPath,
   isMissingExecutable,
   providerAuth,
   type SourceControlManagedCliDiscoverySpec,
@@ -102,23 +103,28 @@ export const makeDiscovery = Effect.gen(function* () {
       TanStackSource.settings,
       current?.sourceControlHosts[TanStackSource.definition.kind],
     );
-    const status = yield* sourceControlHost.process
-      .run({
-        operation: "source-control.discovery.auth",
-        command: "src",
-        args: ["auth", "status"],
-        cwd,
-        env: { SRC_NO_TELEMETRY: "1" },
-        allowNonZeroExit: true,
-        timeoutMs: 5_000,
-        maxOutputBytes: 8_000,
-        appendTruncationMarker: true,
-      })
-      .pipe(Effect.result);
-    const installed = Result.isSuccess(status) || !isMissingExecutable(status.failure);
-    const accounts = Result.isSuccess(status)
-      ? parseTanStackSourceAuthStatus(`${status.success.stdout}\n${status.success.stderr}`)
-      : [];
+    // An absent src is never spawned; a saved token or SRC_TOKEN still answers through the API.
+    const status = (yield* isExecutableOnPath("src"))
+      ? yield* sourceControlHost.process
+          .run({
+            operation: "source-control.discovery.auth",
+            command: "src",
+            args: ["auth", "status"],
+            cwd,
+            env: { SRC_NO_TELEMETRY: "1" },
+            allowNonZeroExit: true,
+            timeoutMs: 5_000,
+            maxOutputBytes: 8_000,
+            appendTruncationMarker: true,
+          })
+          .pipe(Effect.result)
+      : undefined;
+    const installed =
+      status !== undefined && (Result.isSuccess(status) || !isMissingExecutable(status.failure));
+    const accounts =
+      status !== undefined && Result.isSuccess(status)
+        ? parseTanStackSourceAuthStatus(`${status.success.stdout}\n${status.success.stderr}`)
+        : [];
     const item = (fields: {
       readonly auth: SourceControlProviderAuth;
       readonly available: boolean;
@@ -203,7 +209,7 @@ export const makeDiscovery = Effect.gen(function* () {
     return item({
       available: true,
       auth: providerAuth({
-        status: Result.isSuccess(status) ? "unauthenticated" : "unknown",
+        status: status !== undefined && Result.isSuccess(status) ? "unauthenticated" : "unknown",
         host: HOST,
         detail: failed?.error ?? `Run \`${LOGIN}\` to sign the src CLI in.`,
       }),
@@ -395,6 +401,18 @@ export const make = Effect.gen(function* () {
       },
     ),
     createsDraftChangeRequests: true,
+    privateChangeRequestRemote: Effect.fn(
+      "TanStackSourceSourceControlProvider.privateChangeRequestRemote",
+    )(function* (input) {
+      const target = yield* resolveTarget("privateChangeRequestRemote", input);
+      const companion = yield* read(
+        "privateChangeRequestRemote",
+        input.cwd,
+        { host: target.host, method: "POST", path: `/repos/${target.repository}/private-remote` },
+        Repository,
+      );
+      return { url: companion.cloneUrl, repository: `${companion.owner}/${companion.name}` };
+    }),
     createChangeRequest: Effect.fn("TanStackSourceSourceControlProvider.createChangeRequest")(
       function* (input) {
         const target = yield* resolveTarget("createChangeRequest", {
@@ -437,6 +455,7 @@ export const make = Effect.gen(function* () {
               base: input.target?.refName ?? input.baseRefName,
               ...(body.trim().length === 0 ? {} : { body }),
               ...(input.draft === true ? { draft: true } : {}),
+              ...(input.private === true ? { private: true } : {}),
             },
           })
           .pipe(
@@ -494,7 +513,8 @@ export const make = Effect.gen(function* () {
         return repository.defaultBranch;
       },
     ),
-    // Every pull request's head is published as `refs/pull/<n>/head`, forks and GitHub sync too.
+    // A pull request's head is published as `refs/pull/<n>/head`, forks and GitHub sync too. A
+    // private one has no such ref: its branch is read from the companion repository.
     checkoutChangeRequest: Effect.fn("TanStackSourceSourceControlProvider.checkoutChangeRequest")(
       function* (input) {
         const pull = yield* getPull(input);
@@ -519,9 +539,26 @@ export const make = Effect.gen(function* () {
                 });
           const operation = "TanStackSourceSourceControlProvider.checkoutChangeRequest";
           const branches = yield* git.listLocalBranchNames(input.cwd);
-          if (!pull.isCrossRepository) {
+          const companion =
+            pullRepository !== null &&
+            pull.headRepositoryNameWithOwner?.toLowerCase() ===
+              `${pullRepository}.private`.toLowerCase()
+              ? pull.headRepositoryNameWithOwner
+              : null;
+          if (!pull.isCrossRepository || companion !== null) {
             const localBranch = pull.headRefName;
-            const remoteBranch = { cwd: input.cwd, remoteName, remoteBranch: localBranch };
+            const remoteBranch = {
+              cwd: input.cwd,
+              remoteName:
+                companion === null
+                  ? remoteName
+                  : yield* git.ensureRemote({
+                      cwd: input.cwd,
+                      preferredName: companion.split("/")[0] ?? "private",
+                      url: `${Hosts.webRepositoryUrl(HOST, companion)}.git`,
+                    }),
+              remoteBranch: localBranch,
+            };
             if (input.force !== true && !branches.includes(localBranch))
               yield* git.fetchRemoteBranch({ ...remoteBranch, localBranch });
             else yield* git.fetchRemoteTrackingBranch(remoteBranch);
@@ -535,11 +572,18 @@ export const make = Effect.gen(function* () {
                   "--no-track",
                   "-B",
                   localBranch,
-                  `refs/remotes/${remoteName}/${localBranch}`,
+                  `refs/remotes/${remoteBranch.remoteName}/${localBranch}`,
                   "--",
                 ],
               });
             yield* git.setBranchUpstream({ ...remoteBranch, branch: localBranch });
+            // Whatever push defaults say, this branch must not be published to the public remote.
+            if (companion !== null)
+              yield* git.writeConfigValue({
+                cwd: input.cwd,
+                key: `branch.${localBranch}.pushRemote`,
+                value: remoteBranch.remoteName,
+              });
             yield* Effect.scoped(git.switchRef({ cwd: input.cwd, refName: localBranch }));
             return;
           }

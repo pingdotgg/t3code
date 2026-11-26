@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { FilePreviewItem } from "../components/ui/FilePreviewModal.types";
 import type { DraftComposerAttachment } from "./composerImages";
 import { composerImageGallery } from "./composerImageGallery";
+import { contextImageGallery } from "./contextImageGallery";
 import { messageImageGallery } from "../features/threads/messageImageGallery";
 import { filePreviewGallery, filePreviewKey } from "./filePreviewGallery";
 
@@ -66,6 +67,66 @@ describe("image preview groups", () => {
       expect(composerImageGallery(attachments)).toEqual(local);
     },
   );
+
+  it("gives every remote image page its own media actions", () => {
+    const environmentId = EnvironmentId.make("test");
+    const ids = ["a", "b"];
+    const galleries = [
+      messageImageGallery(
+        {
+          text: "",
+          attachments: ids.map((id) => ({
+            type: "image" as const,
+            id: `uploaded-${id}`,
+            name: `${id}.png`,
+            mimeType: "image/png",
+            sizeBytes: 3,
+          })),
+        },
+        { environmentId, threadId: ThreadId.make("thread"), workspaceRoot: null },
+      ),
+      composerImageGallery(
+        ids.map((id) => ({
+          id,
+          type: "image",
+          name: `${id}.png`,
+          mimeType: "image/png",
+          sizeBytes: 3,
+          previewUri: `data:image/png;base64,${id}`,
+          uploadedAttachmentId: `uploaded-${id}`,
+        })),
+        environmentId,
+      ),
+      contextImageGallery(
+        ids.map((id) => ({
+          version: 1,
+          kind: "image",
+          contextId: ComposerContextId.make(`context-${id}`),
+          label: `Screenshot ${id}`,
+          attachmentId: `uploaded-${id}`,
+          name: `${id}.png`,
+          mimeType: "image/png",
+          sizeBytes: 3,
+        })),
+        [],
+        environmentId,
+      ),
+    ];
+
+    for (const gallery of galleries) {
+      expect(filePreviewGallery(gallery[0]!, gallery)[1]?.actionsSource).toEqual({
+        name: "b.png",
+        mimeType: "image/png",
+        environmentId,
+        resource: {
+          _tag: "attachment",
+          attachmentId: "uploaded-b",
+          fileName: "b.png",
+          mimeType: "image/png",
+        },
+      });
+    }
+  });
 
   it("matches remote originals despite metadata and property order differences", () => {
     const environmentId = EnvironmentId.make("test");

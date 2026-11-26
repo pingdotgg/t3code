@@ -54,6 +54,18 @@ describe("Azure DevOps change request URLs", () => {
     }
   });
 
+  it("takes a pull request URL that leaves the project out as a checkout reference", () => {
+    for (const url of [
+      "https://dev.azure.com/acme/_git/web/pullrequest/17",
+      "https://acme.visualstudio.com/_git/web/pullrequest/17",
+    ]) {
+      expect(definition.isChangeRequestReference(url), url).toBe(true);
+    }
+    expect(
+      definition.isChangeRequestReference("https://dev.azure.com/_git/web/pullrequest/17"),
+    ).toBe(false);
+  });
+
   it.each([
     ["ssh.dev.azure.com", "v3/org/project/web"],
     ["org.visualstudio.com", "defaultcollection/project/_git/web"],

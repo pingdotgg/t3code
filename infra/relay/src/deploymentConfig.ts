@@ -6,6 +6,15 @@ const MANAGED_ENDPOINT_HASH_LENGTH = 16;
 const MANAGED_ENDPOINT_TUNNEL_PREFIX = "t3coderelay-managedendpoint";
 export const MANAGED_ENDPOINT_ZONE_OWNER_STAGE = "prod";
 
+// Workers Logs bills per GB; keep a sample of console output and uncaught exceptions for
+// crashes that never export a span. Invocation logs stay off: they record each request URL
+// as received, and request URLs are recorded only by the relay's own spans, which apply
+// route redaction before export to Axiom.
+export const RELAY_WORKER_OBSERVABILITY = {
+  enabled: true,
+  logs: { enabled: true, invocationLogs: false, headSamplingRate: 0.01 },
+} as const;
+
 export class RelayPublicDomainLabelTooLongError extends Schema.TaggedError<RelayPublicDomainLabelTooLongError>()(
   "RelayPublicDomainLabelTooLongError",
   {
