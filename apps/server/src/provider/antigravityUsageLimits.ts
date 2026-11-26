@@ -73,6 +73,7 @@ const REMOVED_ENV_KEYS = new Set([
   "SSH_CONNECTION",
   "SSH_CLIENT",
   "SSH_TTY",
+  "SSH_AUTH_SOCK",
 ]);
 
 const CliBucket = Schema.Struct({
@@ -231,11 +232,16 @@ export function antigravityOutputShowsModelTurn(stdout: string): boolean {
   return false;
 }
 
-function isSupportedCliVersion(raw: string): boolean {
+function extractSemver(raw: string): string | undefined {
   const match = raw.match(/\b(\d+\.\d+\.\d+)\b/u);
   const version = match?.[1];
-  if (!version || parseSemver(version) === null) return false;
-  return compareSemverVersions(version, MIN_USAGE_CLI_VERSION) >= 0;
+  return version && parseSemver(version) !== null ? version : undefined;
+}
+
+function classifyCliVersion(raw: string): "supported" | "unsupported" | "unknown" {
+  const version = extractSemver(raw);
+  if (version === undefined) return "unknown";
+  return compareSemverVersions(version, MIN_USAGE_CLI_VERSION) >= 0 ? "supported" : "unsupported";
 }
 
 function outputLooksSignedOut(output: string): boolean {
@@ -257,7 +263,10 @@ function outputLooksSignedOut(output: string): boolean {
   return false;
 }
 
-function buildUsageCliEnv(baseEnv: NodeJS.ProcessEnv): Record<string, string> {
+function buildUsageCliEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  profileDirectory: string | undefined,
+): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(baseEnv)) {
     if (value === undefined) continue;
@@ -271,6 +280,12 @@ function buildUsageCliEnv(baseEnv: NodeJS.ProcessEnv): Record<string, string> {
     }
     env[key] = value;
   }
+  // Bind CLI state/cache to the instance profile. Root `agy -p /usage` does not accept ACP's
+  // `--gemini-dir`/`--app-data-dir` flags, so GEMINI_HOME isolates its runtime directory while
+  // letting `agy` authenticate silently via the OS keyring.
+  if (profileDirectory) {
+    env.GEMINI_HOME = profileDirectory;
+  }
   // agy requires "true" (not "1") to suppress background self-updates during probes.
   env.AGY_CLI_DISABLE_AUTO_UPDATE = "true";
   return env;
@@ -279,6 +294,7 @@ function buildUsageCliEnv(baseEnv: NodeJS.ProcessEnv): Record<string, string> {
 export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* (input: {
   readonly authMethod: AntigravitySettings["authMethod"];
   readonly baseEnv: NodeJS.ProcessEnv;
+  readonly profileDirectory?: string;
   readonly resolveExecutable: Effect.Effect<AntigravityExecutable, AntigravityInstallationError>;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -291,17 +307,18 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   let latchedModelTurnPath: string | undefined;
   let signedOutHoldPath: string | undefined;
 
-  const isVersionSupported = Effect.fn("antigravityUsageLimits.checkVersion")(function* (
+  const checkVersion = Effect.fn("antigravityUsageLimits.checkVersion")(function* (
     executable: AntigravityExecutable,
     env: Record<string, string>,
-  ) {
+  ): Effect.fn.Return<"supported" | "unsupported" | "failed"> {
     if (executable.version !== null) {
-      return isSupportedCliVersion(executable.version);
+      const classified = classifyCliVersion(executable.version);
+      return classified === "supported" ? "supported" : "unsupported";
     }
     if (verifiedVersion?.path === executable.executablePath) {
-      return verifiedVersion.supported;
+      return verifiedVersion.supported ? "supported" : "unsupported";
     }
-    const output = yield* Effect.scoped(
+    const versionProbe = yield* Effect.scoped(
       Effect.gen(function* () {
         const child = yield* spawner.spawn(
           ChildProcess.make(executable.executablePath, ["--version"], {
@@ -311,7 +328,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
             stdin: "ignore",
           }),
         );
-        const [stdout, stderr] = yield* Effect.all(
+        const [stdout, stderr, exitCode] = yield* Effect.all(
           [
             collectUint8StreamText({ stream: child.stdout, maxBytes: 4_096 }),
             collectUint8StreamText({ stream: child.stderr, maxBytes: 4_096 }),
@@ -319,15 +336,18 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
           ],
           { concurrency: "unbounded" },
         );
-        return `${stdout.text}\n${stderr.text}`;
+        return { exitCode: Number(exitCode), output: `${stdout.text}\n${stderr.text}` };
       }),
-    ).pipe(
-      Effect.timeout(VERSION_TIMEOUT),
-      Effect.orElseSucceed(() => ""),
-    );
-    const supported = isSupportedCliVersion(output);
-    verifiedVersion = { path: executable.executablePath, supported };
-    return supported;
+    ).pipe(Effect.timeout(VERSION_TIMEOUT), Effect.option);
+    if (Option.isNone(versionProbe) || versionProbe.value.exitCode !== 0) {
+      return "failed";
+    }
+    const classified = classifyCliVersion(versionProbe.value.output);
+    if (classified === "unknown") {
+      return "failed";
+    }
+    verifiedVersion = { path: executable.executablePath, supported: classified === "supported" };
+    return classified;
   });
 
   const read = Effect.fn("antigravityUsageLimits.read")(function* () {
@@ -369,12 +389,20 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       });
     }
 
-    const env = buildUsageCliEnv(input.baseEnv);
-    if (!(yield* isVersionSupported(executable, env))) {
+    const env = buildUsageCliEnv(input.baseEnv, input.profileDirectory);
+    const versionStatus = yield* checkVersion(executable, env);
+    if (versionStatus === "unsupported") {
       return makeUnavailableUsageLimits({
         checkedAt,
         reason: "unsupported",
         message: `Antigravity CLI ${MIN_USAGE_CLI_VERSION} or newer is required to read usage limits.`,
+      });
+    }
+    if (versionStatus === "failed") {
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message: "Could not verify the Antigravity CLI version. Refresh provider status to retry.",
       });
     }
 

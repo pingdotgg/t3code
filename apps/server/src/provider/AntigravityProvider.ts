@@ -424,7 +424,9 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       const stored = deferFailure && state.draft.status === "ready" ? state : checked;
       return [checked, stored === state ? Option.none() : Option.some(stored)];
     });
-    if (initialized !== undefined) yield* refreshUsage();
+    if (initialized !== undefined && next.authRevision === before.authRevision) {
+      yield* refreshUsage();
+    }
     return yield* options.stampIdentity(next.draft);
   });
 

@@ -242,10 +242,12 @@ describe("makeAntigravityUsageProbe", () => {
         });
         const usage = yield* makeAntigravityUsageProbe({
           authMethod: "oauth-personal",
+          profileDirectory: "/tmp/t3-profile",
           baseEnv: {
             PATH: "/usr/bin",
             GEMINI_API_KEY: "secret",
             SSH_CONNECTION: "127.0.0.1 0 127.0.0.1 0",
+            SSH_AUTH_SOCK: "/tmp/ssh-agent.sock",
             ANTIGRAVITY_LS_ADDRESS: "127.0.0.1:9999",
           },
           resolveExecutable: Effect.succeed({
@@ -283,8 +285,10 @@ describe("makeAntigravityUsageProbe", () => {
           "/dev/null",
         ]);
         expect(calls[0]?.env.AGY_CLI_DISABLE_AUTO_UPDATE).toBe("true");
+        expect(calls[0]?.env.GEMINI_HOME).toBe("/tmp/t3-profile");
         expect(calls[0]?.env.GEMINI_API_KEY).toBeUndefined();
         expect(calls[0]?.env.SSH_CONNECTION).toBeUndefined();
+        expect(calls[0]?.env.SSH_AUTH_SOCK).toBeUndefined();
         expect(calls[0]?.env.ANTIGRAVITY_LS_ADDRESS).toBeUndefined();
 
         // Subsequent probe within cache TTL does not respawn agy.
@@ -392,6 +396,48 @@ describe("makeAntigravityUsageProbe", () => {
       const second = yield* usage.probe;
       expect(second.unavailable?.reason).toBe("unsupported");
       expect(spawns).toBe(1);
+    }),
+  );
+
+  it.effect("retries transient --version failures instead of caching unsupported forever", () =>
+    Effect.gen(function* () {
+      let versionCalls = 0;
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (command._tag !== "StandardCommand") return Effect.die("Expected StandardCommand");
+        if (command.args[0] === "--version") {
+          versionCalls++;
+          return versionCalls === 1
+            ? Effect.succeed(makeMockHandle({ exitCode: 1, stderr: "transient error" }))
+            : Effect.succeed(makeMockHandle({ exitCode: 0, stdout: "agy 1.5.14\n" }));
+        }
+        return Effect.succeed(makeMockHandle({ stdout: SAMPLE_USAGE_STDOUT }));
+      });
+      const usage = yield* makeAntigravityUsageProbe({
+        authMethod: "oauth-personal",
+        baseEnv: {},
+        resolveExecutable: Effect.succeed({
+          executablePath: "/usr/local/bin/agy",
+          source: "path",
+          version: null,
+          managedVersionDirectory: null,
+        }),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Layer.succeed(HostProcess.Platform, "linux"),
+          ),
+        ),
+      );
+      const first = yield* usage.probe;
+      expect(first.unavailable?.reason).toBe("probeFailed");
+      expect(versionCalls).toBe(1);
+
+      const second = yield* usage.probe;
+      expect(second.unavailable).toBeUndefined();
+      expect(second.windows).toHaveLength(4);
+      expect(versionCalls).toBe(2);
     }),
   );
 });

@@ -1178,6 +1178,43 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       expect((yield* republished)?.usageLimits).toEqual(failed);
     }),
   );
+
+  it.effect("skips starting a quota read when sign-out happens during a health check", () =>
+    Effect.gen(function* () {
+      const reads = yield* Ref.make(0);
+      const probeStarted = yield* Deferred.make<void>();
+      const probeRelease = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        probeUsage: Ref.update(reads, (count) => count + 1).pipe(
+          Effect.as({
+            checkedAt: "2026-10-09T12:00:00.000Z",
+            windows: [
+              { id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 10 },
+            ],
+          }),
+        ),
+      });
+      const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+      yield* harness.initialize;
+      yield* published;
+      expect(yield* Ref.get(reads)).toBe(1);
+      yield* Ref.set(
+        harness.probe,
+        Deferred.succeed(probeStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(probeRelease)),
+          Effect.as(initializeResult),
+        ),
+      );
+      const refresh = yield* harness.provider.snapshot.refresh.pipe(Effect.forkChild);
+      yield* Deferred.await(probeStarted);
+      yield* harness.provider.onSignedOut;
+      yield* Deferred.succeed(probeRelease, undefined);
+      yield* Fiber.join(refresh);
+      yield* Effect.yieldNow;
+      expect(yield* Ref.get(reads)).toBe(1);
+      expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+    }),
+  );
 });
 
 it.layer(makeLayerTest(true))("Antigravity periodic health checks", (it) => {
