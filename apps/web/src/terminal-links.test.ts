@@ -136,11 +136,13 @@ describe("extractTerminalLinks", () => {
   it.each([
     ["https://example.com/a(b)c)", "https://example.com/a(b)c"],
     ["https://example.com/(docs)", "https://example.com/(docs)"],
+    ["https://example.com/wiki/Dune_(2021)", "https://example.com/wiki/Dune_(2021)"],
     ["https://example.com/docs)}])", "https://example.com/docs)"],
     ["https://example.com/docs):", "https://example.com/docs):"],
     ["/tmp/a[b]c]", "/tmp/a[b]c"],
     ["/tmp/docs)}])", "/tmp/docs)"],
     ["/tmp/docs):", "/tmp/docs"],
+    ["/(60)", "/(60)"],
   ])("trims only unbalanced closing delimiters from %s", (raw, text) => {
     expect(extractTerminalLinks(`see ${raw}`)).toEqual([
       { kind: isTerminalUrl(text) ? "url" : "path", text, start: 4, end: 4 + text.length },
@@ -178,6 +180,7 @@ describe("extractTerminalLinks", () => {
     ["./src/a.js:4:1:function outer() {", "./src/a.js:4:1:function", "./src/a.js:4:1"],
     ["/app/top.rb:2:in `f': boom (RuntimeError)", "/app/top.rb:2:in", "/app/top.rb:2"],
     ["./data.csv:5:2024-01-01 ok", "./data.csv:5:2024-01-01", "./data.csv:5"],
+    ["./src/a.js:7:process.exit(1)", "./src/a.js:7:process.exit(1)", "./src/a.js:7"],
     [
       "/var/lib/bluetooth/AA:BB:CC:11:22:DD",
       "/var/lib/bluetooth/AA:BB:CC:11:22:DD",
@@ -192,6 +195,30 @@ describe("extractTerminalLinks", () => {
         end: text.length,
         fallback: { text: fallback, end: fallback.length },
       },
+    ]);
+  });
+
+  it.each([
+    [
+      "/app/src/Program.cs(12,5): error CS1002: ; expected",
+      "/app/src/Program.cs(12,5)",
+      "/app/src/Program.cs:12:5",
+    ],
+    [
+      String.raw`C:\app\UnitTest1.cs(12): error VSTEST1: Assert.True() Failure`,
+      String.raw`C:\app\UnitTest1.cs(12)`,
+      String.raw`C:\app\UnitTest1.cs:12`,
+    ],
+    [
+      "#0 /var/www/html/index.php(110): handle()",
+      "/var/www/html/index.php(110)",
+      "/var/www/html/index.php:110",
+    ],
+  ])("offers the parenthesized location in %s as the fallback", (line, text, fallback) => {
+    const start = line.indexOf(text);
+    const end = start + text.length;
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text, start, end, fallback: { text: fallback, end } },
     ]);
   });
 
