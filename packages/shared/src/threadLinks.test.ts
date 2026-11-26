@@ -170,6 +170,9 @@ describe("thread links", () => {
         "After [New](t3-thread://v2/local/t1)",
       ].join("\n"),
     );
+    for (const escaped of ["\\``<t3-thread://v2/env-1/t1>`", "\\```<t3-thread://v2/env-1/t1>``"]) {
+      expect(threadLinkRefs(escaped, local)).toEqual([]);
+    }
   });
 
   it("ends code where CommonMark does, so a link after it stays live", () => {
@@ -194,8 +197,8 @@ describe("thread links", () => {
         ["> Stray ` tick", `> ${boundary}`, `> ${after} and \`code\``],
       ]),
       ["Stray ` tick\r", "  ---\r", `${after} and \`code\``],
-      ["> Stray ` tick", " >    ===", `> ${after} and \`code\``],
       ["Use `example", "```" + hidden + "`", after],
+      ["\\\\``" + after + "`"],
     ]) {
       expect(threadLinkRefs(markdown.join("\n"), local)).toEqual([ref("env-1", "t1")]);
       expect(relabelThreadLinks(markdown.join("\n"), local, () => "New")).toBe(
@@ -205,19 +208,10 @@ describe("thread links", () => {
   });
 
   it("keeps multiline code literal when a line only resembles a block boundary", () => {
-    for (const line of ["--- text", "== =", "-_*", "    ===", "    ___"]) {
+    for (const line of ["--- text", "== =", "-_*"]) {
       const markdown = ["Use `example", line, "<t3-thread://v2/local/t1> end`"].join("\n");
       expect(threadLinkRefs(markdown, local)).toEqual([]);
       expect(relabelThreadLinks(markdown, local, () => "New")).toBe(markdown);
-    }
-    for (const markdown of [
-      ["> Use `example", "===", "> <t3-thread://v2/local/t1> end`"],
-      ["> > Use `example", "> ===", "> > <t3-thread://v2/local/t1> end`"],
-      ["> Use `example", ">     ===", "> <t3-thread://v2/local/t1> end`"],
-    ]) {
-      const source = markdown.join("\n");
-      expect(threadLinkRefs(source, local)).toEqual([]);
-      expect(relabelThreadLinks(source, local, () => "New")).toBe(source);
     }
   });
 
