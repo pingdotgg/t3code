@@ -247,10 +247,6 @@ export function BranchToolbarBranchSelector({
       currentWorktreePath: activeWorktreePath,
       effectiveEnvMode,
     });
-    if (!automatic) {
-      const selectedDraft = draftId ?? useComposerDraftStore.getState().getDraftIdByRef(threadRef);
-      if (selectedDraft) clearPendingWorkspaceDefault(selectedDraft);
-    }
     setDraftThreadContext(draftId ?? threadRef, {
       branch,
       worktreePath,
@@ -466,8 +462,15 @@ export function BranchToolbarBranchSelector({
     return resolveConfirmedSelectedRef(listedRef, result._tag === "Success" ? result.value : null);
   };
 
+  const keepDraftWorkspaceForBranchChoice = () => {
+    if (hasServerThread) return;
+    const selectedDraft = draftId ?? useComposerDraftStore.getState().getDraftIdByRef(threadRef);
+    if (selectedDraft) clearPendingWorkspaceDefault(selectedDraft);
+  };
+
   const selectBranch = async (listedRef: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
+    keepDraftWorkspaceForBranchChoice();
     const selectionId = ++latestSelectionIdRef.current;
 
     let latest = readLatestThreadState();
@@ -584,6 +587,7 @@ export function BranchToolbarBranchSelector({
     if (!canChangeThreadBranch) return;
     const name = sanitizeNewRefName(rawName);
     if (!branchCwd || !name || isBranchActionPending) return;
+    keepDraftWorkspaceForBranchChoice();
     latestSelectionIdRef.current++;
 
     setIsBranchMenuOpen(false);
