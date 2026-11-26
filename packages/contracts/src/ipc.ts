@@ -611,6 +611,13 @@ export interface DesktopPreviewFavicon {
   capturedAt: number;
 }
 
+export interface DesktopPreviewDialog {
+  id: number;
+  type: string;
+  message: string;
+  defaultValue: string;
+}
+
 export interface DesktopPreviewTabState {
   tabId: string;
   webContentsId: number | null;
@@ -626,6 +633,8 @@ export interface DesktopPreviewTabState {
   controller: "human" | "agent" | "none";
   /** A screenshot or stream of the guest is pending, so the client keeps it painting while hidden. */
   capturing: boolean;
+  /** A page dialog waiting for an answer; the guest stays blocked until the client or an agent answers. */
+  dialog?: DesktopPreviewDialog;
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
 }
@@ -1054,6 +1063,12 @@ export const DesktopPreviewSetAudioMutedInputSchema = Schema.Struct({
   audioMuted: Schema.Boolean,
 });
 
+export const DesktopPreviewAnswerDialogInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  dialogId: Schema.Number,
+  accept: Schema.Boolean,
+});
+
 export const DesktopPreviewSetShownInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   shown: Schema.Boolean,
@@ -1348,6 +1363,7 @@ export interface DesktopPreviewBridge {
   hardReload: (tabId: string) => Promise<void>;
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
   setAudioMuted: (tabId: string, audioMuted: boolean) => Promise<void>;
+  answerDialog: (tabId: string, dialogId: number, accept: boolean) => Promise<void>;
   findInPage: (
     tabId: string,
     text: string,

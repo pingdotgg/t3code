@@ -90,6 +90,7 @@ import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
 import type { MessageResolver } from "~/i18n/messages";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { Badge } from "~/components/ui/badge";
+import { BrowserDialogCard } from "~/browser/BrowserDialogCard";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import {
   alternatePreviewRuntime,
@@ -267,6 +268,7 @@ export function PreviewView({
   const serverStreamPending =
     isServerTab && !showEmptyState && !isUnreachable && serverStreamSettledTabId !== runtimeTabId;
   const controller = desktopOverlay?.controller ?? "none";
+  const pageDialog = desktopOverlay?.dialog;
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
   // IPC interprets undefined profile ids as all profiles.
@@ -1152,6 +1154,19 @@ export function PreviewView({
             recentEntries={recentHistoryEntries}
             onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
             onOpenUrl={(next) => void handleOpenServerUrl(next)}
+          />
+        ) : null}
+        {pageDialog && runtimeTabId ? (
+          <BrowserDialogCard
+            key={pageDialog.id}
+            dialog={pageDialog}
+            canAnswer
+            className="z-40"
+            onAnswer={(accept) =>
+              void previewBridge
+                ?.answerDialog(runtimeTabId, pageDialog.id, accept)
+                .catch(() => undefined)
+            }
           />
         ) : null}
         {snapshot && desktopOverlay ? (
