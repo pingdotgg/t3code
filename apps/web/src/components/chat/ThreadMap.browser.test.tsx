@@ -163,6 +163,22 @@ it("shows the selected turn and agent below the map and returns to the turn's me
   });
   expect(useThreadMapViewStore.getState().mapThreadKeys.size).toBe(0);
 });
+it("lets the turn shown in the conversation take over from a citation already followed", async () => {
+  setup();
+  await using screen = await render(
+    <div className="flex h-[640px] w-[960px] flex-col">
+      <ThreadMap threadRef={threadRef} projection={fixture()} bottomInset={0} />
+    </div>,
+    { router: "/thread#assistant-citation=cited" },
+  );
+  const details = screen.getByRole("group", { name: "Details" });
+
+  await screen.getByRole("button", { name: /^Turn 1, Prompt, Fix the build/ }).click();
+  await details.getByRole("button", { name: "Show in conversation" }).click();
+
+  await vi.waitFor(() => expect(useThreadMapViewStore.getState().mapThreadKeys.size).toBe(0));
+  expect(screen.router?.state.location.href).toBe("/thread");
+});
 
 it("fits the whole map when the opening view shows only the newest turns", async () => {
   setup();

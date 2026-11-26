@@ -139,6 +139,11 @@ const asRecord = (value: unknown): Readonly<Record<string, unknown>> | undefined
 
 const isThreadId = Schema.is(ThreadId);
 
+// The server derives a message's turn item ID from the message (IdAllocator derive.userTurnItem),
+// and a wake keeps that ID when its row becomes a notification.
+const messageTurnItemId = (messageId: MessageId) =>
+  `turn-item:message:${encodeURIComponent(messageId)}`;
+
 function sendTarget(
   item: Extract<Item, { readonly type: "dynamic_tool" }>,
   selfId: ThreadId,
@@ -260,13 +265,13 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
     const openingItem = userItemByMessageId.get(run.userMessageId);
     const openingMessage = messageById.get(run.userMessageId);
     const opening = openingItem ?? openingMessage;
-    // A wake's message becomes a notification row, which has no message ID. The server gives a
-    // turn's opening item the turn's first ordinal (run ordinal * 100); later items sit above it.
+    // A wake's message becomes a notification row, which has no message ID but keeps its ID.
+    const openingItemId = messageTurnItemId(run.userMessageId);
     const openingNotification =
       openingItem === undefined
         ? items.find(
             (item): item is Extract<Item, { readonly type: "notification" }> =>
-              item.type === "notification" && item.ordinal === run.ordinal * 100,
+              item.type === "notification" && item.id === openingItemId,
           )
         : undefined;
     const prompt =

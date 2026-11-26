@@ -22,6 +22,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
+
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { deriveThreadMap, layoutThreadMap, threadMapInitialView } from "./threadMap.logic";
 
@@ -395,7 +397,7 @@ describe("deriveThreadMap", () => {
           // A provider change hands context over just before the wake's notification.
           {
             ...itemBase("woken-handoff", "woken"),
-            ordinal: 99,
+            ordinal: 56,
             type: "handoff",
             contextHandoffId: ContextHandoffId.make("handoff"),
             fromProviderThreadIds: [],
@@ -405,21 +407,24 @@ describe("deriveThreadMap", () => {
             strategy: "full_thread_summary",
           },
           {
-            // The server opens a turn at its first ordinal: run ordinal * 100.
-            ...itemBase("woken-notification", "woken"),
-            ordinal: 100,
+            // A restart opens the turn at the next free ordinal, under its message's item ID.
+            ...itemBase(
+              derive.userTurnItem({ messageId: MessageId.make("woken-prompt") }),
+              "woken",
+            ),
+            ordinal: 57,
             type: "notification",
             source: { kind: "delegated_task", taskIds: [] },
             outcome: "completed",
             summary: "1 delegated task finished",
           },
-          { ...tool("woken-tool", "woken"), ordinal: 101 },
+          { ...tool("woken-tool", "woken"), ordinal: 58 },
         ],
       }),
     );
 
     expect(turn).toMatchObject({
-      rowId: "woken-notification",
+      rowId: derive.userTurnItem({ messageId: MessageId.make("woken-prompt") }),
       prompt: "1 delegated task finished",
       toolCalls: 1,
       moreToolCalls: false,
@@ -442,8 +447,8 @@ describe("deriveThreadMap", () => {
         items: [
           tool("after-work-tool", "after-work"),
           notice("after-work-notice", "after-work", 105),
-          // The window starts right at a report that arrived mid-turn.
-          notice("at-boundary-notice", "at-boundary", 205),
+          // The window starts right at a report that arrived mid-turn, in the turn's first slot.
+          notice("at-boundary-notice", "at-boundary", 200),
           tool("at-boundary-tool", "at-boundary"),
           notice("retained-notice", "retained", 305),
         ],

@@ -3,7 +3,7 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
   CornerDownRightIcon,
@@ -27,6 +27,7 @@ import {
 } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { withoutAssistantCitationHash } from "~/lib/assistantCitationNavigation";
 import { openSideThread } from "~/lib/sideChatPane";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
@@ -921,10 +922,11 @@ function TurnDetails({
   const update = useAssistantMessageText(threadRef, turn.updateItemId ?? undefined);
   const answer = useAssistantMessageText(threadRef, turn.answerItemId ?? undefined);
   const setThreadMapShown = useThreadMapViewStore((state) => state.setThreadMapShown);
+  const router = useRouter();
   const steers = turn.inputs.flatMap((input) => (input.kind === "steer" ? [input] : []));
   const sentTo = turn.outputs.flatMap((output) => (output.kind === "send" ? [output] : []));
   const agents = turn.outputs.length - sentTo.length;
-  const showInConversation = () => {
+  const showInConversation = async () => {
     // The timeline restores to a remembered row when it mounts, so the turn opens in view.
     const key = scopedThreadKey(threadRef);
     const remembered = readTimelinePosition(key);
@@ -945,6 +947,10 @@ function TurnDetails({
       },
       false,
     );
+    // A citation already shown stays in the URL, and a remounted conversation would reveal it again.
+    const href = router.state.location.href;
+    const plain = withoutAssistantCitationHash(href);
+    if (plain !== href) await router.navigate({ href: plain, replace: true });
     setThreadMapShown(threadRef, false);
   };
   return (
