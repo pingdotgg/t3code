@@ -1258,7 +1258,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (Option.isSome(next)) yield* emitIfCurrent(tabId, next.value);
     });
     const sync = () => runFork(syncState(true));
-    const syncNavigation = () => runFork(syncState(false, true));
+    // Electron resets guest zoom to the embedder's on every cross-document commit, then emits
+    // did-navigate synchronously; re-asserting here lands before the new page's first paint.
+    const syncNavigation = () =>
+      runFork(assertTabZoom(tabId).pipe(Effect.andThen(syncState(false, true))));
     const syncInPageNavigation = () => runFork(syncState(false));
     const restoreRecordingCursor = () =>
       runFork(
