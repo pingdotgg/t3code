@@ -29,11 +29,22 @@ export function normalizeDevinSessionUpdate(
   return routed;
 }
 
+const DEVIN_T3_MCP_TITLE = /^Called (?<tool>[A-Za-z0-9_.-]+) from t3-code$/;
+
 export function normalizeDevinToolCall(tool: AcpToolCallState): AcpToolCallState {
   const name = record(tool.data.meta)?.["cognition.ai/inferenceToolName"];
-  return typeof name === "string" && (!tool.title || tool.title === "Tool")
-    ? { ...tool, title: name }
-    : tool;
+  const named =
+    typeof name === "string" && (!tool.title || tool.title === "Tool")
+      ? { ...tool, title: name }
+      : tool;
+  // Devin's only server hint is its title; MCP identity reads the verbatim data.title.
+  const t3Tool =
+    typeof named.data.title === "string"
+      ? DEVIN_T3_MCP_TITLE.exec(named.data.title)?.groups?.tool
+      : undefined;
+  return t3Tool === undefined
+    ? named
+    : { ...named, data: { ...named.data, title: `mcp__t3-code__${t3Tool}` } };
 }
 
 export function extractDevinSubagentUpdate(
