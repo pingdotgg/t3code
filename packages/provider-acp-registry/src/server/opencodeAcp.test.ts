@@ -5,15 +5,12 @@ import { extractOpenCodeElicitationForm } from "./opencodeAcp.ts";
 
 type ElicitationRequest = Parameters<NonNullable<AcpAdapterV2Flavor["extractElicitationForm"]>>[0];
 
-const request = (
-  properties: Record<string, unknown>,
-  required: ReadonlyArray<string> = Object.keys(properties),
-): ElicitationRequest =>
+const request = (properties: Record<string, unknown>): ElicitationRequest =>
   ({
     mode: "form",
     sessionId: "session-id",
     message: "Questions",
-    requestedSchema: { type: "object", properties, required },
+    requestedSchema: { type: "object", properties },
   }) as ElicitationRequest;
 
 const colorQuestion = {
@@ -128,24 +125,6 @@ describe("OpenCode ACP question form", () => {
     expect(form?.respond({})).toEqual({ action: "cancel" });
     expect(form?.respond({ q0: "  " })).toEqual({ action: "cancel" });
     expect(form?.respond({ q0: ["red", "blue"] })).toEqual({ action: "cancel" });
-  });
-
-  it("lets questions the schema does not require go unanswered", () => {
-    const form = extractOpenCodeElicitationForm(
-      request(
-        {
-          q0: colorQuestion,
-          q0_custom: colorCompanion,
-          q1: { type: "string", title: "Notes", description: "Anything else?" },
-        },
-        [],
-      ),
-    );
-
-    expect(form?.questions.map((question) => question.required)).toEqual([false, false]);
-    expect(form?.respond({})).toEqual({ action: "accept", content: {} });
-    expect(form?.respond({ q1: "" })).toEqual({ action: "accept", content: {} });
-    expect(form?.respond({ q0: "red" })).toEqual({ action: "accept", content: { q0: "red" } });
   });
 
   it.each([

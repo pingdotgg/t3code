@@ -3,10 +3,7 @@ import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
 import * as Schema from "effect/Schema";
 
 const isForm = Schema.is(
-  Schema.Struct({
-    properties: Schema.Record(Schema.String, Schema.Unknown),
-    required: Schema.optional(Schema.Array(Schema.String)),
-  }),
+  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Unknown) }),
 );
 const choice = Schema.Struct({
   const: TrimmedNonEmptyString,
@@ -31,7 +28,6 @@ export const extractOmpElicitationForm: NonNullable<
 > = (request) => {
   if (request.mode !== "form" || !isForm(request.requestedSchema)) return undefined;
   const { properties } = request.requestedSchema;
-  const required = new Set(request.requestedSchema.required);
   const questions: OrchestrationV2UserInputQuestion[] = [];
   for (const [id, field] of Object.entries(properties)) {
     if (!/^q\d+$/.test(id)) continue;
@@ -47,7 +43,6 @@ export const extractOmpElicitationForm: NonNullable<
         value: option.const,
         description: option.description?.trim() || option.title,
       })),
-      ...(required.has(id) ? {} : { required: false }),
     });
   }
   // Do not hide unknown fields or partially reinterpret a different form.
@@ -59,7 +54,6 @@ export const extractOmpElicitationForm: NonNullable<
       const content: Record<string, string> = {};
       for (const question of questions) {
         const answer = Object.hasOwn(answers, question.id) ? answers[question.id] : undefined;
-        if (answer === undefined && question.required === false) continue;
         if (typeof answer !== "string" || !answer.trim()) return { action: "cancel" };
         if (question.options.some((option) => option.value === answer))
           content[question.id] = answer;
