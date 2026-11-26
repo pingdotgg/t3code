@@ -82,10 +82,10 @@ describe("resolveCodexFileCitationLink", () => {
 describe("codexFileCitationMarkdown", () => {
   it("escapes Markdown syntax in the visible filename", () => {
     const citation = resolveCodexFileCitationLink({
-      path: "reports/*draft*_[copy]`<&|.txt",
+      path: "reports/*draft*_[copy]`~<&|.txt",
     });
     expect(citation && codexFileCitationMarkdown(citation)).toBe(
-      "[\\*draft\\*\\_\\[copy\\]\\`\\<\\&\\|.txt](<./reports/*draft*_[copy]`%3C%26%7C.txt>)",
+      "[\\*draft\\*\\_\\[copy\\]\\`\\~\\<\\&\\|.txt](<./reports/*draft*_[copy]`~%3C%26%7C.txt>)",
     );
   });
 });
