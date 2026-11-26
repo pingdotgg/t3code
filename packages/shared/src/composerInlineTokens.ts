@@ -114,19 +114,13 @@ export function composerMathRanges(
   findMath: FindMathRanges,
   mentions: ReadonlyArray<ComposerInlineToken> = collectMentionTokens(text),
 ) {
+  const links = [
+    ...mentions.filter((mention) => mention.type === "mention" && mention.source.startsWith("[")),
+    ...collectComposerContextReferences(text),
+  ];
   let masked = text;
-  for (const mention of mentions) {
-    if (mention.type !== "mention" || !mention.source.startsWith("[")) continue;
-    masked =
-      masked.slice(0, mention.start) +
-      "x".repeat(mention.end - mention.start) +
-      masked.slice(mention.end);
-  }
-  for (const reference of collectComposerContextReferences(text)) {
-    masked =
-      masked.slice(0, reference.start) +
-      "x".repeat(reference.end - reference.start) +
-      masked.slice(reference.end);
+  for (const { start, end } of links) {
+    masked = masked.slice(0, start) + "x".repeat(end - start) + masked.slice(end);
   }
   return findMath(masked).map(({ start, end }) => ({
     start,

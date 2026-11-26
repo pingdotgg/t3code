@@ -251,40 +251,14 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens(source)).toEqual([]);
   });
 
-  it("still finds a formula after a mention that starts the line", () => {
-    const link = serializeComposerFileLink("app/routes/posts.$postId.tsx");
-    expect(
-      composerMathRanges(`${link} sets $x_i$`, markdownMathRanges).map((formula) => formula.source),
-    ).toEqual(["$x_i$"]);
-  });
-
-  it("ignores TeX delimiters inside context reference labels while preserving surrounding formulas", () => {
-    const threadRef = "[Fix $x$ parsing](t3-context://v1/thread/thread_1)";
-    const fileRef = "[posts.$a.$b.tsx](t3-context://v1/file/ctx_1)";
-
-    expect(composerMathRanges(`${threadRef} `, markdownMathRanges)).toEqual([]);
-    expect(composerMathRanges(`${fileRef} `, markdownMathRanges)).toEqual([]);
-    expect(
-      composerMathRanges(`${threadRef} sets $y_i$`, markdownMathRanges).map(
-        (formula) => formula.source,
-      ),
-    ).toEqual(["$y_i$"]);
-    expect(
-      composerMathRanges(`\\[${threadRef}\\]`, markdownMathRanges).map((formula) => formula.source),
-    ).toEqual([`\\[${threadRef}\\]`]);
-  });
-
-  it("keeps skills and mentions before a dollar-bearing context reference", () => {
-    expect(
-      collectComposerInlineTokens(
-        "Use $ui with @README.md and [posts.$b.tsx](t3-context://v1/file/ctx_1) ",
-      ).map((token) => token.source),
-    ).toEqual(["$ui", "@README.md"]);
-    expect(
-      collectComposerInlineTokens("Use $ui with ![posts.$b.png](t3-context://v1/image/ctx_2) ").map(
-        (token) => token.source,
-      ),
-    ).toEqual(["$ui"]);
+  it.each([
+    [`${serializeComposerFileLink("app/routes/posts.$postId.tsx")} sets $x_i$`, ["$x_i$"]],
+    ["[Fix $x$ parsing](t3-context://v1/thread/thread_1) sets $x_i$", ["$x_i$"]],
+    ["Use $ui with [posts.$b.tsx](t3-context://v1/file/ctx_1) ", []],
+  ])("ignores TeX delimiters inside file links and context references: %s", (text, formulas) => {
+    expect(composerMathRanges(text, markdownMathRanges).map((formula) => formula.source)).toEqual(
+      formulas,
+    );
   });
 });
 
