@@ -364,8 +364,9 @@ it("tests the selected model after download and preserves its transcript across 
           await expect.element(screen.getByText("No models match.")).toBeVisible();
           await userEvent.clear(search);
           const languages = screen.getByRole("button", { name: /^Filter by language/ });
+          const languageSearch = screen.getByRole("textbox", { name: "Search languages" });
           await userEvent.click(languages);
-          await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
+          await userEvent.fill(languageSearch, "fr");
           const french = screen.getByRole("menuitemcheckbox", { name: "French", exact: true });
           await userEvent.click(french);
           await userEvent.keyboard("{Escape}");
@@ -373,7 +374,11 @@ it("tests the selected model after download and preserves its transcript across 
           await expect.element(screen.getByText("B+", { exact: true })).toBeVisible();
           expect(screen.container.querySelector("#transcription-test")).toHaveAttribute("hidden");
           await userEvent.click(languages);
-          await userEvent.fill(screen.getByRole("textbox", { name: "Search languages" }), "fr");
+          await expect.element(languageSearch).toHaveValue("");
+          await expect
+            .element(screen.getByRole("menuitemcheckbox", { name: "All languages", exact: true }))
+            .toBeVisible();
+          await userEvent.fill(languageSearch, "fr");
           await userEvent.click(french);
           await userEvent.keyboard("{Escape}");
           await expect.element(result).toBeVisible();
@@ -584,6 +589,66 @@ it("recovers from a failed download progress poll without notifying, but reports
           expect.objectContaining({ title: "Could not load transcription models" }),
         ),
       );
+    },
+  );
+});
+
+it("holds the Language row while the model status loads, and drops it if loading fails", async () => {
+  const target = new PrimaryConnectionTarget({
+    environmentId: EnvironmentId.make("voice-language-loading"),
+    label: "Test environment",
+    httpBaseUrl: window.location.origin,
+    wsBaseUrl: "ws://localhost",
+  });
+  const prepared = { ...target, target, socketUrl: target.wsBaseUrl, httpAuthorization: null };
+  const status = {
+    supported: true,
+    state: "ready",
+    modelId: "tiny",
+    model: "Tiny",
+    size: 100,
+    supportsStreaming: false,
+    supportsTranslation: false,
+    supportsLanguageDetection: true,
+    acceleration: "cpu",
+    benchmarkTier: "cpu",
+    modelUnloadTimeout: "never",
+    gpuDevices: [],
+  };
+  const pending = [Promise.withResolvers<Response>(), Promise.withResolvers<Response>()];
+  let requests = 0;
+  const fetch = globalThis.fetch;
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+    if (url.pathname === "/api/voice/status") return pending[requests++]!.promise;
+    if (url.pathname === "/api/voice/models") return Promise.resolve(Response.json({ models: [] }));
+    return fetch(input, init);
+  });
+  using _notify = vi.spyOn(toastManager, "add").mockReturnValue("test");
+  await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
+    () => ({ environmentId: target.environmentId, label: target.label, grantId: "test", prepared }),
+    async () => {
+      const panel = (key: string) => (
+        <SettingsScopeProvider search={{}} onChange={() => {}}>
+          <VoiceSettingsPanel key={key} />
+        </SettingsScopeProvider>
+      );
+      await using screen = await render(panel("first"));
+      const checking = screen.getByText("Checking which languages the model supports…");
+      await expect.element(checking).toBeVisible();
+      pending[0]!.resolve(Response.json(status));
+      await expect
+        .element(screen.getByRole("combobox", { name: "Transcription language" }))
+        .toBeVisible();
+      await expect.element(checking).not.toBeInTheDocument();
+
+      await screen.rerender(panel("reopened"));
+      await expect.element(checking).toBeVisible();
+      pending[1]!.resolve(new Response(null, { status: 503 }));
+      await expect.element(checking).not.toBeInTheDocument();
+      await expect
+        .element(screen.getByRole("combobox", { name: "Transcription language" }))
+        .not.toBeInTheDocument();
     },
   );
 });

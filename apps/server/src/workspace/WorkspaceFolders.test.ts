@@ -297,7 +297,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
       const shared = path.join(tmp, "shared");
       const worktree = path.join(tmp, "tree");
       // `lib` is checked out with a submodule of its own; `docs` was never initialized. A path
-      // listed twice is one submodule.
+      // listed twice is one submodule. Git reads config keys in any case, so `PATH` declares one.
       // `ext` is a symlink out of the repository, so what it leads to is no submodule of it.
       const gitmodules =
         '[submodule "lib"]\n\tpath = vendor/lib\n[submodule "docs"]\n\tpath = docs\n[submodule "again"]\n\tpath = vendor/lib\n[submodule "out"]\n\tpath = ext/x\n';
@@ -310,7 +310,7 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
         yield* fileSystem.writeFileString(path.join(root, ".gitmodules"), gitmodules);
         yield* fileSystem.writeFileString(
           path.join(root, "vendor", "lib", ".gitmodules"),
-          '[submodule "deep"]\n\tpath = deep\n',
+          '[submodule "deep"]\n\tPATH = deep\n',
         );
       }
       for (const directory of [inside.path, path.join(repository.path, ".git"), shared]) {
@@ -475,6 +475,47 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           { folders: [], extraRoots: [] },
         );
       }).pipe(Effect.provide(layerFor({ workspaceRoot: ctx, trackedFolders })));
+    }),
+  );
+  it.effect("gives a task folder thread the tracked repositories checked out in it later", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* makeTempDir;
+      const project = path.join(tmp, "project");
+      const taskRoot = path.join(tmp, "worktrees", "feature");
+      for (const name of ["web", "backend", "mobile"]) {
+        yield* fileSystem.makeDirectory(path.join(project, name, ".git"), { recursive: true });
+      }
+      yield* fileSystem.makeDirectory(path.join(taskRoot, "web"), { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(taskRoot, "mobile"), { recursive: true });
+      // A linked worktree keeps `.git` as a file; `mobile` was never checked out.
+      yield* fileSystem.writeFileString(path.join(taskRoot, "web", ".git"), "gitdir: elsewhere\n");
+
+      yield* Effect.gen(function* () {
+        const taskFolders = yield* TaskFolderStore.TaskFolderStore;
+        const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
+        yield* taskFolders.put({
+          root: taskRoot,
+          projectId,
+          projectRoot: project,
+          anchor: project,
+          projectPath: taskRoot,
+          projectIsWorktree: true,
+          repositories: [],
+        });
+        assert.deepEqual(yield* workspaceFolders.forThread({ projectId, worktreePath: taskRoot }), {
+          folders: [
+            {
+              name: "web",
+              path: path.join(taskRoot, "web"),
+              isGitRepository: true,
+              repositoryPath: path.join(project, "web"),
+            },
+          ],
+          extraRoots: [],
+        });
+      }).pipe(Effect.provide(layerFor({ workspaceRoot: project, trackedFolders: [] })));
     }),
   );
 });
