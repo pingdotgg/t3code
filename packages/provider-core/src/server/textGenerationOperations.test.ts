@@ -45,6 +45,7 @@ it.effect("keeps structured intelligence available without allowing checkout inv
     const error = yield* runtime
       .generateReviewGuide({
         cwd: "/project",
+        projectCwd: "/project",
         modelSelection,
         number: 1,
         title: "API",
