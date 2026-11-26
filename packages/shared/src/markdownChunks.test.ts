@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { LARGE_MARKDOWN_CHUNK_MAX_CHARS, splitMarkdown } from "./markdownChunks.ts";
+import {
+  LARGE_MARKDOWN_CHUNK_MAX_CHARS,
+  splitMarkdown,
+  withMarkdownDefinitions,
+} from "./markdownChunks.ts";
 
 const splitLargeMarkdown = (text: string, targetChars?: number) =>
   splitMarkdown(text, targetChars).chunks;
@@ -223,5 +227,20 @@ describe("splitMarkdown", () => {
     expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
     const unclosed = ["---", ...Array<string>(1000).fill("text"), "[u]: /paragraph-text"];
     expect(splitMarkdown(unclosed.join("\n")).definitions).toBe("");
+  });
+
+  it("lets a piece resolve a footnote defined in a later piece", () => {
+    const text = [
+      "A footnote reference.[^1]",
+      "",
+      "Body text.",
+      "",
+      "[^1]: The footnote text.",
+    ].join("\n");
+    const { chunks, definitions } = splitMarkdown(text, 1);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(withMarkdownDefinitions(chunks[0]!.text, definitions)).toContain(
+      "[^1]: The footnote text.",
+    );
   });
 });
