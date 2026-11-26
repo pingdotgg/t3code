@@ -89,11 +89,18 @@ Two supported flows:
    - In **Settings → Teams → Add Team**, the user enters the Team Server URL, invite token / pairing credential, and chooses their `pseudo`.
    - The server validates pseudo uniqueness and creates/binds the member session.
 
+### Team identity & display name
+
+- Every Team created on a Team Server has a full team `name` (required, e.g., `Acme Engineering`) and a **`displayName`** (e.g., `acme`, editable later by `owner`/`admin`). If `displayName` is omitted at creation time, the server automatically copies `name` into `displayName`.
+- `displayName` is used as the thread prefix for team-owned threads (such as threads created by Team Scheduled Tasks: `acme: Nightly triage`), keeping titles decoupled from any individual human member.
+- Existing teams created prior to this field receive a backfill copying `name` into `display_name` during migration.
+
 ### Auto-attribution
 
-- **Thread creation:** Every thread created on a team project automatically stamps `creatorMemberId = session.memberId` in the orchestration event (`thread.created`) and projection.
-- **Turns / prompts:** Every user message / turn command stamps `authorMemberId = session.memberId`.
-- **UI rendering:** Team threads are prefixed dynamically as `${creatorPseudo}: ${title}`. Storing `creatorMemberId` separately from `title` avoids double-prefixing and keeps titles accurate if a member later changes their pseudo.
+- **Thread creation (human):** Every thread created by a member on a team project automatically stamps `ownerKind = "member"` and `creatorMemberId = session.memberId` in `team_thread_meta`.
+- **Thread creation (team scheduled task):** Every thread created by a team scheduled task stamps `ownerKind = "team"` and `creatorMemberId = null` (never attributed to the human who configured the schedule).
+- **Turns / prompts:** Every human user message / turn command stamps `authorMemberId = session.memberId`; automation-triggered turns record `authorKind = "team_automation"` (`authorMemberId = null`).
+- **UI rendering:** Member-owned team threads render dynamically as `${creatorPseudo}: ${title}`; team-owned threads render dynamically as `${team.displayName}: ${title}`. Storing attribution separately from `title` avoids double-prefixing and stays accurate if a member changes their pseudo or an admin updates `team.displayName`.
 
 ---
 
@@ -116,19 +123,23 @@ owner (4) > admin (3) > modo (2) > regular (1)
 
 #### Capability matrix
 
-| Action                                         | `regular`    | `modo`            | `admin`                    | `owner`      |
-| ---------------------------------------------- | ------------ | ----------------- | -------------------------- | ------------ |
-| Join team, manage own pseudo & GitHub token    | Yes          | Yes               | Yes                        | Yes          |
-| Invite members / assign role $\le$ own role    | No           | `regular`, `modo` | `regular`, `modo`, `admin` | All roles    |
-| Create / edit / delete Views                   | No           | No                | Yes                        | Yes          |
-| Change a thread's View                         | No           | Yes               | Yes                        | Yes          |
-| Create locked thread / lock & unlock threads   | No           | No                | Yes                        | Yes          |
-| Interrupt another user's ongoing turn          | No           | No                | Yes*                       | Yes*         |
-| `Send now` (steer queued message/note)         | Creator only | Creator only      | Creator only               | Creator only |
-| Manage team skills & pre-prompts               | No           | Yes               | Yes                        | Yes          |
-| Configure team providers & remote environments | No           | No                | Yes                        | Yes          |
-| Configure per-environment ACLs                 | No           | No                | Yes                        | Yes          |
-| Delete team / transfer last owner              | No           | No                | No                         | Yes          |
+| Action                                                                               | `regular`       | `modo`              | `admin`                    | `owner`             |
+| ------------------------------------------------------------------------------------ | --------------- | ------------------- | -------------------------- | ------------------- |
+| Join team, manage own pseudo & GitHub token                                          | Yes             | Yes                 | Yes                        | Yes                 |
+| Invite members / assign role $\le$ own role                                          | No              | `regular`, `modo`   | `regular`, `modo`, `admin` | All roles           |
+| Create / edit / delete Views                                                         | No              | No                  | Yes                        | Yes                 |
+| Change a thread's View                                                               | No              | Yes                 | Yes                        | Yes                 |
+| Create locked thread / lock & unlock threads                                         | No              | No                  | Yes                        | Yes                 |
+| Interrupt another user's ongoing turn                                                | No              | No                  | Yes*                       | Yes*                |
+| `Send now` (steer queued message/note)                                               | Creator only    | Creator only        | Creator only               | Creator only        |
+| Manage team skills & pre-prompts                                                     | No              | Yes                 | Yes                        | Yes                 |
+| View team scheduled tasks (accessible env/view)                                      | Read-only       | Yes                 | Yes                        | Yes                 |
+| Create / edit / delete / Run now (`minimal`) scheduled tasks                         | No              | Yes                 | Yes                        | Yes                 |
+| Configure `elevated` MCP / `locked` scheduled tasks & team automation GitHub account | No              | No                  | Yes                        | Yes                 |
+| Post in unlocked team-owned (scheduled task) thread                                  | `view.postRule` | Yes (no `Send now`) | Yes (no `Send now`)        | Yes (no `Send now`) |
+| Configure team providers & remote environments                                       | No              | No                  | Yes                        | Yes                 |
+| Configure per-environment ACLs                                                       | No              | No                  | Yes                        | Yes                 |
+| Delete team / transfer last owner                                                    | No              | No                  | No                         | Yes                 |
 
 _\*`owner`/`admin` cannot click `Send now` (steer) on another member's thread; they have an explicit **Interrupt** action instead (immediately revoking the active turn's GitHub credential lease). See [Section 6](#6-per-turn-github-identity-forwarding--turn-isolation)._
 
@@ -315,6 +326,38 @@ This solves the real-world case where a developer has a personal subscription (e
    - Connected local `t3server` instances and remote runners fetch deltas via `GET /api/team/assets?since=<revision>`, update their isolated `team:<teamId>:*` profile atomically, and refresh the provider's skill catalog so new skills appear immediately in the `/` picker.
    - A revision check also runs right before starting or resuming a turn so offline laptops catch up transparently on reconnect.
 
+### Team Scheduled Tasks (`(team, env)` Scoping & Automation Ownership)
+
+Upstream T3 Code scopes scheduled tasks solely by `environmentId`. In the Teams fork, scheduled tasks are scoped by **`(team, environment)`**:
+
+1. **`(team, env)` scoping & hidden virtual `"personal"` team:**
+   - Every scheduled task belongs conceptually to a `(teamScope, environmentId)` pair:
+     - **Non-team / personal environments:** resolved internally in code to a virtual `"personal"` team scope (`kind: "personal"` / `teamId: null`), **completely hidden in the UI** so personal scheduled tasks look and behave 100% identically to upstream.
+     - **Team environments:** stored in a sidecar table `team_scheduled_task_meta` (`task_id`, `team_id`, `environment_id`, `view_id`, `locked`, `mcp_access_level`, `created_by_member_id`, `updated_by_member_id`, `updated_at`) without altering upstream's `scheduled_tasks` table.
+   - In **Settings → Scheduled Tasks** and `ThreadAutomationsPanel`, team scheduled tasks are grouped/filtered by **Team** and **Environment**; personal environments never display the virtual `"personal"` label.
+2. **RBAC on Team Scheduled Tasks:**
+   - **Read:** Any active member with access to both the task's `environmentId` (per `team_environments.accessRule`) and its target `viewId` (`canReadTeamView`) sees the scheduled task (`regular` members in **read-only** mode).
+   - **Create / edit / enable-disable / delete / `Run now`:** Allowed for **`owner`, `admin`, and `modo`** (within environments and Views they can access).
+   - **Privileged task options (`owner` & `admin` only):** Only `owner` and `admin` may mark a task's generated threads as `locked`, set `mcpAccessLevel = "elevated"`, or edit/delete an existing `elevated` or `locked` scheduled task (preventing a `modo` from modifying the prompt or webhook template of an `elevated` task to escalate privileges).
+3. **Team-owned threads (`ownerKind: "team"`), sidebar visibility, and posting rules:**
+   - Threads created by a team scheduled task are attributed to the **team itself** (`ownerKind = "team"`, `creatorMemberId = null`), **never** to the member who configured the task. They display everywhere with the prefix **`${team.displayName}: ${title}`** (e.g., `acme: Nightly triage`).
+   - **Sidebar & Notifications:** Hidden by default in the sidebar just like colleagues' threads (revealed via the "All team threads" toggle or when explicitly followed via `Follow`), producing **zero** notifications unless the member follows the thread (or authors a follow-up turn on it).
+   - **Posting, `Send now`, and `Interrupt`:**
+     - If `locked === true`: only `owner` and `admin` may post.
+     - If `locked === false`: **`owner`, `admin`, and `modo`** may always post in a team-owned scheduled-task thread (provided they can read its View); `regular` members may post when `view.postRule` permits.
+     - **No `Send now` for `modo` (or on automation runs):** Mid-turn messages posted by `modo` (as well as `regular`, `admin`, `owner`) during an active automation run enter the native dashed queue (`QueuedRunsControl.tsx`) and never auto-steer; `modo` can never click `Send now` on a team-owned thread.
+     - **`Interrupt`:** Only `owner` and `admin` may interrupt an active automation run (human follow-up turn authors retain stop control over their own turn; `modo` and `regular` cannot interrupt automation runs or colleagues' turns).
+4. **MCP privilege containment for scheduled task runs (`team-automation` principal):**
+   - Scheduled task runs execute under a dedicated synthetic MCP principal **`team-automation`** (never inheriting the configuring member's personal session/role).
+   - Each task defines `mcpAccessLevel: "minimal" | "elevated"` (default **`"minimal"`**):
+     - **`"minimal"` (default):** Equivalent to `regular`, further narrowed strictly to the task's `projectId`, `environmentId`, and target `viewId` — cannot read `admin`-only Views, manage team members/views/settings, or edit scheduled tasks.
+     - **`"elevated"` (opt-in, `owner`/`admin` only):** Explicitly grants broader admin-level MCP capabilities for trusted internal automation tasks; immutable by `modo` (cannot edit prompt, schedule, webhook, or target of an `elevated` task).
+5. **Dedicated optional GitHub identity for Team Scheduled Tasks:**
+   - Team scheduled tasks **never** borrow a human member's personal GitHub PAT/OAuth token.
+   - `owner`/`admin` may optionally configure a **dedicated team automation GitHub account** (fine-grained PAT or GitHub App bot token encrypted in `ServerSecretStore` under `teamId`).
+   - **No GitHub account configured is valid and allowed:** If no team automation GitHub account is configured, the turn credential broker returns **no GitHub credentials** during scheduled task runs (cleanly supporting tasks that only inspect code, run checks, or report findings without GitHub access).
+   - When a human member posts a follow-up turn in a team-owned thread, the author switch (`team-automation` → `memberId`) triggers the standard warm session recycle and switches both the MCP token and the per-turn GitHub broker to that human member's identity.
+
 ---
 
 ## 5. UI, Filtering, and Notifications
@@ -359,6 +402,7 @@ In a shared environment, a single OS user runs the `t3server` and agent processe
 - **Phase 1 (initial implementation):** Per-user **encrypted fine-grained PAT** configured in Settings. This requires zero OAuth App / GitHub App registration for self-hosted teams and unlocks per-user attribution immediately.
 - **Phase 2 (follow-up):** **GitHub OAuth / GitHub App user-to-server tokens** for automatic short-lived token refresh and one-click sign-in.
 - Tokens are encrypted at rest in the Team Server's `ServerSecretStore`, keyed by `memberId`, and never exposed to any other member or read model.
+- **Dedicated Team Scheduled Task GitHub account (optional):** `owner`/`admin` may also configure a separate, optional team-level GitHub credential in `ServerSecretStore` specifically for `team-automation` scheduled-task runs. Scheduled tasks never use a human member's PAT; if no dedicated team automation GitHub account is configured, scheduled-task runs proceed with **no GitHub credentials** (broker returns empty).
 - When a member initiates a turn on an **attached remote environment** (not the Team Server itself), the Team Server mints a **single-turn, short-lived, scoped credential lease** for that remote environment, valid only for the duration of that `turnId`.
 
 ### Per-turn injection without credential leakage
@@ -432,7 +476,7 @@ To avoid SQLite migration number collisions and `ALTER TABLE` conflicts with ups
 
 ### Core team tables
 
-- `team_workspaces` (`id`, `name`, `default_view_id`, `created_at`, `updated_at`)
+- `team_workspaces` (`id`, `name`, `display_name`, `default_view_id`, `created_at`, `updated_at`)
 - `team_members` (`id`, `team_id`, `pseudo`, `role`, `status`, `github_login`, `github_name`, `github_email`, `created_at`, `updated_at`)
 - `team_invites` (`id`, `team_id`, `token_hash`, `role`, `prefilled_pseudo`, `max_uses`, `uses`, `expires_at`, `created_by_member_id`, `revoked_at`)
 - `team_views` (`id`, `team_id`, `name`, `is_default`, `read_roles_json`, `read_member_ids_json`, `post_roles_json`, `post_member_ids_json`, `created_at`, `updated_at`)
@@ -440,6 +484,7 @@ To avoid SQLite migration number collisions and `ALTER TABLE` conflicts with ups
 - `team_providers` (`id`, `team_id`, `provider_instance_id`, `config_json`, `proxy_enabled`, `created_at`, `updated_at`)
 - `team_skills` (`id`, `team_id`, `slug`, `provider_driver`, `skill_md`, `references_json`, `enabled`, `revision`, `content_hash`, `updated_by_member_id`, `updated_at`)
 - `team_preprompts` (`id`, `team_id`, `provider_driver`, `injection_scope`, `content`, `enabled`, `revision`, `updated_by_member_id`, `updated_at`)
+- `team_scheduled_task_meta` (`task_id PRIMARY KEY`, `team_id`, `environment_id`, `view_id`, `locked`, `mcp_access_level`, `created_by_member_id`, `updated_by_member_id`, `created_at`, `updated_at`)
 - `team_thread_follows` (`thread_id`, `member_id`, `created_at`)
 - `team_thread_notes` (`id`, `thread_id`, `team_id`, `author_member_id`, `original_body`, `original_content_hash`, `edited_body`, `edited_content_hash`, `status`, `anchor_turn_id`, `anchor_seq`, `included_in_turn_id`, `resolved_by_member_id`, `resolved_at`, `created_at`)
 
@@ -449,8 +494,8 @@ Instead of adding columns to upstream `sessions`, `projects`, `threads`, or `tur
 
 - `team_session_meta` (`session_id PRIMARY KEY`, `team_id`, `member_id`)
 - `team_project_meta` (`project_id PRIMARY KEY`, `team_id`, `default_view_id`)
-- `team_thread_meta` (`thread_id PRIMARY KEY`, `team_id`, `creator_member_id`, `view_id`, `locked`, `locked_by_member_id`, `execution_environment_id`, `is_local_synced`)
-- `team_turn_meta` (`turn_id PRIMARY KEY`, `thread_id`, `author_member_id`)
+- `team_thread_meta` (`thread_id PRIMARY KEY`, `team_id`, `owner_kind`, `creator_member_id`, `view_id`, `locked`, `locked_by_member_id`, `execution_environment_id`, `is_local_synced`)
+- `team_turn_meta` (`turn_id PRIMARY KEY`, `thread_id`, `author_kind`, `author_member_id`)
 
 ---
 
@@ -498,3 +543,4 @@ The following decisions are locked in for implementation:
 8. **Agent privilege containment (Member-bound MCP + Hub/Runner OS split)** — injected T3 MCP tokens are bound to `actingMemberId = turnAuthorMemberId` (inherited immutably by subagents/delegates) so agents obey the exact same RBAC/View/Lock/Env permissions as the triggering member; for OS-level containment on a shared server, the Team Server supports `--team-hub-only` mode under a dedicated OS user (`t3hub`, `0700` data dir) while an unprivileged `t3runner` user attached over loopback runs the Default Team Environment (with optional Linux `bwrap` worktree sandboxing).
 9. **Mid-turn queueing, `Send now`, and explicit `Interrupt`** — messages from non-creators (and approved Notes) arriving during an active turn are appended to the queue with a **dashed border/style** (`en pointillé`); **`Send now`** (mid-turn steering) is strictly restricted to the **thread creator only** (not even `owner`/`admin`), while `owner`/`admin` have an explicit **`Interrupt`** control that stops the active turn and immediately revokes its GitHub credential lease.
 10. **Team Skills & Pre-Prompts (Pure Markdown, Team Precedence, Thread/Turn Scope)** — `owner`, `admin`, and `modo` manage team-wide (`"*"`) or provider-specific (e.g., `"antigravity"`) pure-Markdown skills (`SKILL.md` + text references, no executable scripts) and pre-prompts (`injection_scope: "thread" | "turn"`) on the Team Server; they auto-sync into isolated `team:<teamId>:*` profiles on local and remote environments, keeping teammates' personal skills accessible while giving **team skills precedence on name collision**.
+11. **Team Scheduled Tasks (`(team, env)` Scoping, Team `displayName` & Dedicated Automation GitHub Account)** — scheduled tasks are scoped per `(team, env)` with a hidden virtual `"personal"` team in code for non-team environments (masked in UI); team creation supports a `displayName` (defaulting to a copy of `name` if omitted) used as the prefix (`<displayName>: <title>`) for team-owned threads (`ownerKind = "team"`, hidden by default in sidebar like colleagues' threads until toggled/followed, no default notifications); `owner`/`admin`/`modo` manage `minimal` tasks while `regular` view read-only and only `owner`/`admin` configure `elevated` MCP or `locked` tasks (and `modo` cannot edit `elevated`/`locked` tasks); `modo` may post in unlocked team-owned threads but cannot `Send now`; MCP executes under `team-automation` (`minimal` by default, opt-in `elevated` by `owner`/`admin`); GitHub uses an optional dedicated team automation account (never a human member's PAT, and runs cleanly with zero GitHub credentials when unconfigured).
