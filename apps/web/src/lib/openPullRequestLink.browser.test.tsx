@@ -19,6 +19,8 @@ vi.mock("../state/entities", async (original) => ({
   useProjects: () => [project],
   readProject: () => project,
   readThreadShell: () => ({ projectId: "project", worktreePath: null }),
+  useServerConfigs: () =>
+    new Map([[environmentId, { environment: { capabilities: { issues: true } } }]]),
 }));
 vi.mock("../state/server", async (original) => {
   const { Atom } = await import("effect/reactivity");
@@ -34,6 +36,7 @@ import { ToastProvider } from "../components/ui/toast";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { ISSUES_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import { useDiffPanelStore } from "../diffPanelStore";
+import { useOpenIssueLink } from "./openIssueLink";
 import { useOpenChangeRequestLink } from "./openPullRequestLink";
 
 const environmentId = EnvironmentId.make("local");
@@ -62,6 +65,17 @@ function CommitLink({ url = commitUrl }: { url?: string }) {
   return (
     <a href={url} onClick={(event) => open(event, url)}>
       Commit
+    </a>
+  );
+}
+
+const issueUrl = "https://github.com/Effect-TS/effect/issues/42";
+
+function IssueLink() {
+  const open = useOpenIssueLink(threadRef);
+  return (
+    <a href={issueUrl} onClick={(event) => open(event, issueUrl)}>
+      Issue
     </a>
   );
 }
@@ -184,4 +198,29 @@ it("opens a pull request linked on the Issues page beside its issues", async () 
     useRightPanelStore.getState().byThreadKey[scopedThreadKey(ISSUES_PANEL_REF)],
   ).toMatchObject({ isOpen: true, surfaces: [{ kind: "pull-request", number: 86 }] });
   expect(screen.router?.state.location.pathname).toBe("/issues");
+});
+
+it.each([true, false])("opens issue links in T3 Code only when enabled (%s)", async (openInApp) => {
+  setup();
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, issueLinksOpenInApp: openInApp });
+  await using screen = await render(
+    <AppAtomRegistryProvider>
+      <IssueLink />
+    </AppAtomRegistryProvider>,
+  );
+  const defaults: boolean[] = [];
+  screen.container.addEventListener("click", (nativeEvent) => {
+    defaults.push(nativeEvent.defaultPrevented);
+    nativeEvent.preventDefault();
+  });
+  await act(() =>
+    screen
+      .getByRole("link", { name: "Issue" })
+      .element()
+      .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })),
+  );
+  expect(defaults).toEqual([openInApp]);
+  expect(useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)] !== undefined).toBe(
+    openInApp,
+  );
 });

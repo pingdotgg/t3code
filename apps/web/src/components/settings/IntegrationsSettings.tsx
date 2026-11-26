@@ -873,6 +873,37 @@ export function PullRequestLinksOpenInAppSetting() {
   );
 }
 
+export function IssueLinksOpenInAppSetting() {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
+  const openInApp = useClientSettings((settings) => settings.issueLinksOpenInApp);
+  const updateSettings = useUpdatePrimarySettings();
+
+  return (
+    <SettingsRow
+      {...searchableSetting("issue-links-open-in-app")}
+      description={gt(
+        "Clicking an issue link opens it in T3 Code. Turn off to open issue links like any other link, on your issue tracker.",
+      )}
+      resetAction={
+        openInApp ? null : (
+          <SettingResetButton
+            ariaLabel={gt("Reset open issues in T3 Code to default")}
+            onClick={() => updateSettings({ issueLinksOpenInApp: true })}
+          />
+        )
+      }
+      control={
+        <Switch
+          checked={openInApp}
+          onCheckedChange={(checked) => updateSettings({ issueLinksOpenInApp: Boolean(checked) })}
+          aria-label={gt("Open issues in T3 Code")}
+        />
+      }
+    />
+  );
+}
+
 function DeviceIntegrationSettings() {
   const gt = useGT();
   const { search, environment: selected } = useSettingsScope();

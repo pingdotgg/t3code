@@ -13022,5 +13022,9 @@
       "v": "v"
     },
     " mais em Itens vinculados"
-  ]
+  ],
+  "61ef56dd7742b983": "Clicar em um link de issue abre no T3 Code. Desative para abrir links de issues como qualquer outro link, no seu rastreador de issues.",
+  "98c72eda1dc9194a": "Redefinir Abrir issues no T3 Code para o padrão",
+  "be5df0e61e80beb5": "Abrir issues no T3 Code",
+  "a7c271ab987c86c1": "issue item de trabalho ticket links linear jira azure github navegador externo clique padrão"
 }

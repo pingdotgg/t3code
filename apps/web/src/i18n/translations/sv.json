@@ -13029,5 +13029,9 @@
       "v": "v"
     },
     " till i Länkade objekt"
-  ]
+  ],
+  "61ef56dd7742b983": "Klick på en issue-länk öppnar den i T3 Code. Stäng av för att öppna issue-länkar som andra länkar, i din ärendehanterare.",
+  "98c72eda1dc9194a": "Återställ Öppna issues i T3 Code till standard",
+  "be5df0e61e80beb5": "Öppna issues i T3 Code",
+  "a7c271ab987c86c1": "issue ärende biljett länkar linear jira azure github webbläsare extern klick standard"
 }

@@ -12958,5 +12958,9 @@
       "v": "v"
     },
     " 件をリンクされた項目で表示"
-  ]
+  ],
+  "61ef56dd7742b983": "Issue リンクをクリックすると T3 Code で開きます。オフにすると、他のリンクと同様に Issue トラッカーで開きます。",
+  "98c72eda1dc9194a": "「Issue を T3 Code で開く」をデフォルトにリセット",
+  "be5df0e61e80beb5": "Issue を T3 Code で開く",
+  "a7c271ab987c86c1": "issue 課題 チケット リンク linear jira azure github ブラウザ 外部 クリック デフォルト"
 }

@@ -122,7 +122,10 @@ import { nativeLanguageName, SYSTEM_LANGUAGE } from "@t3tools/client-runtime/loc
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
-import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
+import {
+  IssueLinksOpenInAppSetting,
+  PullRequestLinksOpenInAppSetting,
+} from "./IntegrationsSettings";
 import { StorageCleanupSections } from "./StorageSettings";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
 import { environmentIdsKey } from "~/state/environmentAtomList";
@@ -783,6 +786,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       browserCustomSearchUrl: DEFAULT_UNIFIED_SETTINGS.browserCustomSearchUrl,
       browserAutoShowFloatingPreview: DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
       pullRequestLinksOpenInApp: DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp,
+      issueLinksOpenInApp: DEFAULT_UNIFIED_SETTINGS.issueLinksOpenInApp,
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
     });
     onRestored?.();
@@ -1846,6 +1850,7 @@ export function DiffsSettingsPanel() {
           }
         />
         <PullRequestLinksOpenInAppSetting />
+        <IssueLinksOpenInAppSetting />
       </SettingsSection>
     </SettingsPageContainer>
   );

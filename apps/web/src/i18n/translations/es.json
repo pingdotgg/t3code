@@ -13017,5 +13017,9 @@
       "v": "v"
     },
     " más en Elementos vinculados"
-  ]
+  ],
+  "61ef56dd7742b983": "Al hacer clic en un enlace de issue se abre en T3 Code. Desactívalo para abrir los enlaces de issues como cualquier otro enlace, en tu gestor de issues.",
+  "98c72eda1dc9194a": "Restablecer Abrir issues en T3 Code al valor predeterminado",
+  "be5df0e61e80beb5": "Abrir issues en T3 Code",
+  "a7c271ab987c86c1": "issue incidencia ticket enlaces linear jira azure github navegador externo clic predeterminado"
 }

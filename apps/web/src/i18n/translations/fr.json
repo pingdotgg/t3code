@@ -13022,5 +13022,9 @@
       "v": "v"
     },
     " de plus dans Éléments associés"
-  ]
+  ],
+  "61ef56dd7742b983": "Cliquer sur un lien d’issue l’ouvre dans T3 Code. Désactivez cette option pour ouvrir les liens d’issues comme n’importe quel autre lien, sur votre outil de suivi.",
+  "98c72eda1dc9194a": "Réinitialiser l’ouverture des issues dans T3 Code à la valeur par défaut",
+  "be5df0e61e80beb5": "Ouvrir les issues dans T3 Code",
+  "a7c271ab987c86c1": "issue ticket liens linear jira azure github navigateur externe clic défaut"
 }

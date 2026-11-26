@@ -13030,5 +13030,9 @@
       "v": "v"
     },
     " more in Linked items"
-  ]
+  ],
+  "61ef56dd7742b983": "Clicking an issue link opens it in T3 Code. Turn off to open issue links like any other link, on your issue tracker.",
+  "98c72eda1dc9194a": "Reset open issues in T3 Code to default",
+  "be5df0e61e80beb5": "Open issues in T3 Code",
+  "a7c271ab987c86c1": "issue work item ticket links linear jira azure github browser external click default"
 }

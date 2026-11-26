@@ -13036,5 +13036,9 @@
       "v": "v"
     },
     " 项"
-  ]
+  ],
+  "61ef56dd7742b983": "点击 issue 链接时在 T3 Code 中打开。关闭后将像其他链接一样在 issue 跟踪器中打开。",
+  "98c72eda1dc9194a": "将「在 T3 Code 中打开 issue」重置为默认值",
+  "be5df0e61e80beb5": "在 T3 Code 中打开 issue",
+  "a7c271ab987c86c1": "issue 工单 工作项 链接 linear jira azure github 浏览器 外部 点击 默认"
 }

@@ -1236,6 +1236,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "issue-links-open-in-app",
+    title: msg("Open issues in T3 Code"),
+    to: "/settings/diffs",
+    searchTerms: [
+      msg("issue work item ticket links linear jira azure github browser external click default"),
+    ],
+  },
+  {
     id: "browser-auto-show-floating-preview",
     title: msg("Auto-show floating preview"),
     to: "/settings/browser",
