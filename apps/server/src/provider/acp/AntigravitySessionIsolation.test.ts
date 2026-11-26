@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- tests inspect symlinks, NTFS/hard links, and native SQLite WAL files directly.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodeSqlite from "node:sqlite";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -274,6 +276,39 @@ it.layer(layerUsage)("Antigravity session isolation", (it) => {
           slotId,
         });
         expect(yield* fs.readFileString(slotToken)).toBe("win-token-v2");
+
+        // A cross-volume canonical token cannot be hard-linked; the slot must still share it.
+        const crossSlotId = "55555555-5555-4555-8555-555555555555";
+        const fsPromises = NodeFS.promises;
+        const realLink = fsPromises.link;
+        fsPromises.link = () =>
+          Promise.reject(Object.assign(new Error("cross-device link"), { code: "EXDEV" }));
+        NodeModule.syncBuiltinESMExports();
+        const prepareCrossVolume = prepareAntigravitySessionAppDataDir({
+          profile,
+          auth: personalAuth,
+          kind: "session",
+          slotId: crossSlotId,
+        });
+        const crossSlot = yield* prepareCrossVolume.pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              fsPromises.link = realLink;
+              NodeModule.syncBuiltinESMExports();
+            }),
+          ),
+        );
+        const crossToken = path.join(crossSlot.directory, "antigravity-oauth-token");
+        yield* fs.writeFileString(crossToken, "win-token-v3");
+        expect(yield* fs.readFileString(canonicalToken)).toBe("win-token-v3");
+        yield* prepareAntigravitySessionAppDataDir({
+          profile,
+          auth: personalAuth,
+          kind: "session",
+          slotId: crossSlotId,
+        });
+        expect(yield* fs.readFileString(crossToken)).toBe("win-token-v3");
+        expect(yield* fs.readFileString(canonicalToken)).toBe("win-token-v3");
       }),
   );
 

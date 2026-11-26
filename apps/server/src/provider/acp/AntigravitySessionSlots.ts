@@ -172,10 +172,17 @@ async function linkSharedFile(
     ) {
       return;
     }
+    if (
+      existingBigInt?.isSymbolicLink() &&
+      (await NodeFSP.readlink(target).catch(() => undefined)) === canonicalSource
+    ) {
+      return;
+    }
     if (existingBigInt !== undefined) await NodeFSP.rm(target, { force: true });
+    // Never copy: agy refreshes tokens in place, so a copy would diverge from the canonical file.
     await NodeFSP.link(canonicalSource, target).catch(async (error: unknown) => {
       if (!linkFallbackReason(error)) throw error;
-      await NodeFSP.copyFile(canonicalSource, target);
+      await symlinkPreservingExisting(canonicalSource, target, "file");
     });
     return;
   }
