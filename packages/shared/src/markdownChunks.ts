@@ -17,6 +17,7 @@ const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3
 const BLOCK_START = /^[\p{L}\p{N}`[!|>]/u;
 const ORDERED_ITEM = /^\d{1,9}[.)](?:[ \t]|\r?$)/;
 // CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
+const DISPLAY_MATH_OPEN = /^ {0,3}\$\$/;
 const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<(?:script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
   // "<!-->" and "<!--->" close themselves, so the closer is searched from just after "<!".
@@ -24,7 +25,7 @@ const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<\?/, /\?>/],
   [/^ {0,3}<!\[CDATA\[/, /\]\]>/],
   [/^ {0,3}<![A-Za-z]/, />/],
-  [/^ {0,3}\$\$/, /\$\$/],
+  [DISPLAY_MATH_OPEN, /\$\$/],
 ];
 
 // CommonMark type-6 block tags start an HTML block even with trailing text or across lines.
@@ -100,65 +101,52 @@ const FRONTMATTER_MAX_LINES = 1000;
 const hasFrontmatterClose = (lines: readonly string[]) =>
   lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
 
-// Footnotes are left alone so each piece does not grow a footnote section.
-const LINK_DEFINITION_LABEL = /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:/;
-const LINK_DEFINITION_DESTINATION =
-  /^[ \t]*(?:<[^<>\n]*>|([^\s<]\S*))(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
+// Footnotes stay in their own chunks.
+const LINK_DEFINITION_START = /^ {0,3}\[(?!\^)/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
-
-function isLinkDefinitionDestination(text: string): boolean {
-  const match = LINK_DEFINITION_DESTINATION.exec(text);
-  if (!match) return false;
-  const bareDestination = match[1];
-  if (bareDestination === undefined) return true;
-  let depth = 0;
-  for (let i = 0; i < bareDestination.length; i++) {
-    const ch = bareDestination[i];
-    if (ch === "\\") {
-      i++;
-    } else if (ch === "(") {
-      depth++;
-    } else if (ch === ")" && --depth < 0) {
-      return false;
-    }
-  }
-  return depth === 0;
-}
-
 const definitionParser = unified().use(remarkParse);
 
-function readLinkDefinition(lines: readonly string[], start: number) {
-  const line = lines[start]!;
-  const label = LINK_DEFINITION_LABEL.exec(line)?.[0];
-  if (label === undefined) return;
-  const rest = line.slice(label.length);
-  if (isLinkDefinitionDestination(rest)) return { text: line, end: start };
-  if (!BLANK_LINE.test(rest)) return;
-
-  const destination = lines[start + 1];
-  if (destination === undefined || BLANK_LINE.test(destination)) return;
-  let text = `${line}\n${destination}`;
-  if (text.length >= SHARED_DEFINITIONS_MAX_CHARS) return;
-
-  // A title can continue onto more lines. Bound the lookahead to the definition budget.
-  if (/[ \t]["'(]/.test(destination.trimStart()) || /^[ \t]*["'(]/.test(lines[start + 2] ?? "")) {
-    for (let index = start + 2; index < lines.length; index++) {
-      const continuation = lines[index]!;
-      if (
-        BLANK_LINE.test(continuation) ||
-        text.length + continuation.length + 1 >= SHARED_DEFINITIONS_MAX_CHARS
-      )
-        break;
-      text += `\n${continuation}`;
+function readLinkDefinitions(lines: readonly string[], start: number) {
+  const definitions = new Map<number, { text: string; end: number }>();
+  let chars = lines[start]!.length;
+  if (chars >= SHARED_DEFINITIONS_MAX_CHARS) return definitions;
+  let end = start + 1;
+  let capped = false;
+  for (; end < lines.length; end++) {
+    const line = lines[end]!;
+    // The preview treats display math as a block even when plain Remark would consume its opener.
+    if (
+      BLANK_LINE.test(line) ||
+      ATX_HEADING.test(line) ||
+      FENCE_OPEN.test(line) ||
+      DISPLAY_MATH_OPEN.test(line)
+    )
+      break;
+    chars += line.length + 1;
+    if (chars >= SHARED_DEFINITIONS_MAX_CHARS) {
+      capped = true;
+      break;
     }
   }
 
-  const node = definitionParser.parse(text).children[0];
-  const end = node?.position?.end;
-  if (node?.type === "definition" && end?.offset !== undefined) {
-    return { text: text.slice(0, end.offset), end: start + end.line - 1 };
+  const text = lines.slice(start, end).join("\n");
+  for (const node of definitionParser.parse(text).children) {
+    if (node.type !== "definition" || !node.position) break;
+    const { start: from, end: to } = node.position;
+    const firstLine = start + from.line - 1;
+    if (!LINK_DEFINITION_START.test(lines[firstLine]!)) break;
+    definitions.set(firstLine, {
+      text: text.slice(from.offset, to.offset),
+      end: start + to.line - 1,
+    });
   }
+  // Retry the last definition in the next batch, where its title may have more room.
+  if (capped && definitions.size > 1) {
+    const last = [...definitions.keys()].at(-1)!;
+    definitions.delete(last);
+  }
+  return definitions;
 }
 
 export interface SplitMarkdown {
@@ -181,6 +169,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let closes: ((line: string) => boolean) | null = null;
   let afterBlankLine = false;
   let definitionEnd = -1;
+  let pendingDefinitions: ReturnType<typeof readLinkDefinitions> | undefined;
   let afterHeading = false;
   let openedFence = false;
   let definitionChars = 0;
@@ -215,11 +204,19 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       if (first || afterBlankLine || lineIndex === definitionEnd + 1 || afterHeading) {
-        const definition = readLinkDefinition(sourceLines, lineIndex);
+        let definition = pendingDefinitions?.get(lineIndex);
+        if (
+          !definition &&
+          definitionChars < SHARED_DEFINITIONS_MAX_CHARS &&
+          LINK_DEFINITION_START.test(line)
+        ) {
+          pendingDefinitions = readLinkDefinitions(sourceLines, lineIndex);
+          definition = pendingDefinitions.get(lineIndex);
+        }
         if (definition) {
           definitionEnd = definition.end;
           if (definitionChars + definition.text.length < SHARED_DEFINITIONS_MAX_CHARS) {
-            definitions.push(definition.text.trim());
+            definitions.push(definition.text);
             definitionChars += definition.text.length + 1;
           }
         }

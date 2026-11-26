@@ -333,6 +333,60 @@ describe("withMarkdownDefinitions", () => {
     expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
   });
 
+  it.each([
+    ["a wrapped label with an inline destination", "[release\nnotes]: /first", "/first", ""],
+    ["a wrapped label with a next-line destination", "[release\nnotes]:\n  /first", "/first", ""],
+    [
+      "a title on the next line of the preceding definition",
+      '[other]: /other\n  "Other"\n[release notes]: /first',
+      "/first",
+      "",
+    ],
+    [
+      "a title starting on the destination line",
+      '[release notes]: /first "First\n  release"',
+      "/first",
+      'title="First\nrelease"',
+    ],
+    [
+      "a destination ending in a nonbreaking space",
+      "[release notes]:\n  /first\u00a0",
+      "/first%C2%A0",
+      "",
+    ],
+  ])("preserves the first reference with %s", (_, first, href, title) => {
+    const text = `[Release][release notes]\n\n${first}\n\n${"x".repeat(4100)}\n\n# Next\n[release notes]: /later`;
+    const { chunks, definitions } = splitMarkdown(text);
+    expect(chunks).toHaveLength(2);
+    const rendered = html(withMarkdownDefinitions(chunks[0]!.text, definitions));
+    expect(rendered).toContain(`href="${href}"`);
+    if (title) expect(rendered).toContain(title);
+  });
+
+  it("keeps a display math opener and its contents out of shared definitions", () => {
+    const text = "[actual]\n\n[unused]:\n$$\n\n[actual]: /wrong\n\n$$\n\n[actual]: /right";
+    const { chunks, definitions } = splitMarkdown(text, 1);
+    expect(html(withMarkdownDefinitions(chunks[0]!.text, definitions))).toContain('href="/right"');
+    expect(definitions).toBe("[actual]: /right");
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
+  });
+
+  it("collects a long run of titled references within the shared definition budget", () => {
+    const references = Array.from({ length: 2000 }, (_, index) => `[r${index}]:\n  /url "Title"`);
+    const source = references.join("\n");
+    // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- Opt-in benchmark.
+    const start = process.env.T3_BENCH_MARKDOWN_REFERENCES ? performance.now() : undefined;
+    const { definitions } = splitMarkdown(source);
+    if (start !== undefined) {
+      // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- Opt-in benchmark.
+      expect(performance.now() - start).toBeLessThan(2000);
+    }
+    expect(definitions).toBe(source.slice(0, definitions.length));
+    expect(definitions).toContain(references[500]);
+    expect(definitions.length).toBeLessThanOrEqual(16 * 1024);
+    expect(definitions).not.toContain("[r1999]");
+  });
+
   it("keeps frontmatter hidden and task offsets shifted by exactly the prefix", () => {
     const text = "\uFEFF---\r\ntitle: hidden\r\n---\r\n\r\n[ref]: /x\r\n\r\n- [ ] task";
     const { definitions } = splitMarkdown(text);
