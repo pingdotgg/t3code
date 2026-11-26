@@ -53,7 +53,10 @@ export function UsageModelDialog({
   const locale = useLocale();
   const usage = mergeAnsweredUsage(
     environments,
-    (bucket) => bucket.provider === model.provider && bucket.model === model.model,
+    (bucket) =>
+      bucket.provider === model.provider &&
+      bucket.model === model.model &&
+      bucket.upstreamProvider === model.upstreamProvider,
   );
   const providers = [model.provider];
   const presentation = PROVIDER_PRESENTATION[model.provider];
@@ -88,6 +91,7 @@ export function UsageModelDialog({
           </div>
           <DialogDescription>
             {presentation.label}
+            {model.upstreamProvider ? ` · ${model.upstreamProvider}` : ""}
             {costUnknown
               ? ""
               : ` · ${gt("{share} of cost", { share: formatPercent(model.costShare) })}`}
