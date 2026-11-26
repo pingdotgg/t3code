@@ -340,7 +340,10 @@ describe("AzureDevOpsCli.layer", () => {
           Effect.flip(az.getDefaultBranch({ cwd: "/repo", repository })),
           Effect.flip(az.createRepository({ cwd: "/repo", repository, visibility: "private" })),
         ]) {
-          assert.strictEqual((yield* failed)._tag, "AzureDevOpsCommandFailedError");
+          const error = yield* failed;
+          assert.strictEqual(error._tag, "AzureDevOpsCommandFailedError");
+          // The user sees why, not a generic failure.
+          expect(error.detail).not.toBe("Azure DevOps CLI command failed.");
         }
       }
       for (const reference of [

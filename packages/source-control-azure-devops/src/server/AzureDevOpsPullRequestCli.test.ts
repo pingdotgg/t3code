@@ -1179,7 +1179,19 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
             cli.readBlobs({ cwd: "/w", location, objectIds: ["a".repeat(40)] }),
           );
           assert.strictEqual(blobs._tag, "AzureDevOpsPullRequestReadError");
+          // What the user sees names the reason, not an unreadable response.
+          expect(item.detail).toContain("start with @");
         }
+        // A commit value from Azure is a query value az would expand the same way.
+        const commit = yield* Effect.flip(
+          cli.readItemContent({
+            cwd: "/w",
+            location: { project: "platform", repository: "web" },
+            path: "README.md",
+            commit: "@.env",
+          }),
+        );
+        expect(commit.detail).toContain("start with @");
         assert.strictEqual(mockedExecute.mock.calls.length, 0);
       }),
   );

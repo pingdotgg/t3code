@@ -87,10 +87,14 @@ export class AzureDevOpsPullRequestNotFoundError extends Schema.TaggedError<Azur
 
 export class AzureDevOpsCommandFailedError extends Schema.TaggedError<AzureDevOpsCommandFailedError>()(
   "AzureDevOpsCommandFailedError",
-  azureDevOpsCommandErrorFields,
+  {
+    ...azureDevOpsCommandErrorFields,
+    /** Why T3 refused the command before running az, shown in place of the generic detail. */
+    reason: Schema.optional(Schema.String),
+  },
 ) {
   get detail(): string {
-    return "Azure DevOps CLI command failed.";
+    return this.reason ?? "Azure DevOps CLI command failed.";
   }
 
   override get message(): string {
@@ -284,13 +288,14 @@ function normalizeChangeRequestId(reference: string): string | null {
 // argument on Windows.
 const UNSAFE_NAME = /[\u0000-\u001f\u007f"]/;
 
-const invalidArgument = (cwd: string, what: string) =>
+const invalidArgument = (cwd: string, reason: string) =>
   new AzureDevOpsCommandFailedError({
     operation: "execute",
     command: "az",
     cwd,
     argumentCount: 0,
-    cause: new Error(`Invalid Azure DevOps ${what}.`),
+    reason,
+    cause: new Error(reason),
   });
 
 /** The name and project options naming a repository, as `textOption`s so neither reads a file. */
@@ -298,15 +303,24 @@ function repositoryOptions(
   input: { readonly cwd: string; readonly repository: string },
   nameOption: string,
 ) {
+  if (UNSAFE_NAME.test(input.repository)) {
+    return Effect.fail(
+      invalidArgument(input.cwd, "Azure DevOps names cannot hold quotes or control characters."),
+    );
+  }
   const repository = parseRepositorySpecifier(input.repository);
-  const options = UNSAFE_NAME.test(input.repository)
-    ? null
-    : textOptions([
-        [nameOption, repository.name],
-        ...(repository.project ? [["--project", repository.project] as const] : []),
-      ]);
+  const options = textOptions([
+    [nameOption, repository.name],
+    ...(repository.project ? [["--project", repository.project] as const] : []),
+  ]);
+  // az reads a value starting with `@` from stdin here, and it has one stdin.
   return options === null
-    ? Effect.fail(invalidArgument(input.cwd, "repository name"))
+    ? Effect.fail(
+        invalidArgument(
+          input.cwd,
+          "A project and repository whose names both start with @ are not supported.",
+        ),
+      )
     : Effect.succeed(options);
 }
 
