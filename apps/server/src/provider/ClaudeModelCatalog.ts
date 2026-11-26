@@ -201,13 +201,13 @@ export function claudeReportedModels(
     const valueId = stripClaudeContextWindowSuffix(slug).toLowerCase();
     const resolvedId = stripClaudeContextWindowSuffix(info.resolvedModel ?? "").toLowerCase();
     const ids = [valueId, resolvedId].filter((id) => id.length > 0);
-    const catalogValue = catalogIds.has(valueId);
-    const catalogTarget = catalogIds.has(resolvedId);
-    const configuredGatewayModel =
-      valueId !== "" &&
-      customIds.has(valueId) &&
-      (!catalogValue || (resolvedId !== "" && !catalogTarget));
-    if (configuredGatewayModel || (!catalogValue && !catalogTarget)) {
+    const gatewayValue = !catalogIds.has(valueId);
+    const gatewayTarget = resolvedId !== "" && !catalogIds.has(resolvedId);
+    if (
+      customIds.has(valueId)
+        ? gatewayValue || gatewayTarget
+        : gatewayValue && !catalogIds.has(resolvedId)
+    ) {
       hasNonCatalogModels = true;
     }
     if (ids.some((id) => known.has(id))) continue;
