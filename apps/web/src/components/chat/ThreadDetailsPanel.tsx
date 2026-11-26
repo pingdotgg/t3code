@@ -361,7 +361,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                     ) : null}
                   </div>
                   {visible.usage || visible.context ? (
-                    <div className="flex flex-col gap-1.5 pt-1.5 pb-0.5">
+                    <div className="flex flex-col gap-1.5 px-0.5 pt-1.5 pb-0.5">
                       {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
                       {visible.context ? (
                         <div

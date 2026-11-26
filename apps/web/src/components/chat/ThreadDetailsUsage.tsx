@@ -27,7 +27,6 @@ import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { providerClients } from "../settings/providerDriverMeta";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Text } from "../ui/text";
@@ -35,6 +34,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import {
   foldLimitRows,
@@ -60,7 +60,7 @@ export interface ThreadDetailsUsageInput {
   readonly contextWindow: ContextWindowSnapshot | null;
 }
 
-/** Provider limits grouped by provider as number-only chips; each opens the usage page. */
+/** Provider limits grouped by provider as plain numbers with tints for low or fast-burning windows. */
 export function ThreadDetailsUsage({
   providerInstanceId,
   model,
@@ -125,9 +125,9 @@ export function ThreadDetailsUsage({
   return (
     <ThreadDetailsSection title={gt("Usage limits")} variant="usage">
       {notice || !rows.length ? (
-        <StatusTile
+        <StatusRow
           label={gt("Limits", { $context: "usage limits row label" })}
-          icon={<TimerIcon className="size-3.5 shrink-0" aria-hidden />}
+          icon={<TimerIcon className="size-4 shrink-0" aria-hidden />}
           value={
             poolNotice && !sources.some((source) => source.error)
               ? gt("Not linked", { $context: "usage limits row value" })
@@ -137,7 +137,7 @@ export function ThreadDetailsUsage({
           opensUsage
         />
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1.5">
           {groups.map((group, groupIndex) => {
             const providerLabel =
               group.driver === activeProvider?.driver &&
@@ -149,8 +149,8 @@ export function ThreadDetailsUsage({
                   : gt("Limits", { $context: "usage limits row label" });
             const maxAccounts = group.rows.reduce((max, row) => Math.max(max, row.accounts), 1);
             return (
-              <div key={group.driver ?? "limits"} className="flex flex-col gap-1">
-                <div className="flex min-h-5 items-center gap-1.5 px-1.5">
+              <div key={group.driver ?? "limits"} className="flex flex-col gap-0.5">
+                <div className="flex min-h-6 items-center gap-2.5 ps-2.5 pe-1">
                   {group.driver ? (
                     <ProviderInstanceIcon
                       driverKind={group.driver}
@@ -176,7 +176,7 @@ export function ThreadDetailsUsage({
                     </span>
                   ) : null}
                 </div>
-                <div className="grid grid-cols-2 gap-1">
+                <div className="grid grid-cols-2 gap-x-3.5 gap-y-0.5 ps-1 -me-0.5">
                   {group.rows.map(({ window, pace, runsOutBeforeReset, accounts, sources }) => (
                     <LimitTile
                       key={window.id}
@@ -199,7 +199,7 @@ export function ThreadDetailsUsage({
               variant="ghost-muted"
               aria-expanded={!folded}
               onClick={() => setFolded(!folded)}
-              className="self-start"
+              className="ms-0.5 self-start"
             >
               {folded ? gt("Show {count} more", { count: fold.hidden.length }) : gt("Show fewer")}
             </Button>
@@ -232,9 +232,9 @@ export function ThreadDetailsContext({
   if (!usage) {
     return (
       <ThreadDetailsSection title={gt("Context window")} variant="usage">
-        <StatusTile
+        <StatusRow
           label={gt("Context", { $context: "context window row label" })}
-          icon={<GaugeIcon className="size-3.5 shrink-0" aria-hidden />}
+          icon={<GaugeIcon className="size-4 shrink-0" aria-hidden />}
           value={gt("N/A", { $context: "context usage not reported" })}
           tooltip={gt("The provider has not reported context usage.")}
         />
@@ -268,36 +268,25 @@ export function ThreadDetailsContext({
         <div className="flex min-w-0 items-center gap-1">
           <CollapsibleTrigger
             aria-label={contextLabel}
-            render={
-              <Badge
-                size="lg"
-                variant="secondary"
-                className="min-w-0 flex-1"
-                render={<button type="button" />}
-              />
-            }
+            render={<ThreadDetailsControl part="row" className="min-w-0 flex-1" />}
           >
-            <span className="flex min-w-0 flex-1 items-center justify-between gap-1.5">
-              <span className="inline-flex min-w-0 items-center gap-1.5 text-foreground">
-                <GaugeIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-                <span className="truncate">
-                  {gt("Context", { $context: "context window row label" })}
+            <GaugeIcon className="size-4 shrink-0" aria-hidden />
+            <span className="min-w-0 truncate">
+              {gt("Context", { $context: "context window row label" })}
+            </span>
+            <span className="ms-auto inline-flex shrink-0 items-center gap-1.5 tabular-nums">
+              {maxTokensFormatted !== null ? (
+                <span className="text-caption text-muted-foreground">
+                  {gt("{used} / {max}", { used: usedTokens, max: maxTokensFormatted })}
                 </span>
-              </span>
-              <span className="inline-flex shrink-0 items-center gap-1.5 tabular-nums">
-                {maxTokensFormatted !== null ? (
-                  <span className="text-caption text-muted-foreground">
-                    {gt("{used} / {max}", { used: usedTokens, max: maxTokensFormatted })}
-                  </span>
-                ) : (
-                  <span className="text-caption text-muted-foreground">{usedTokens}</span>
-                )}
-                {used !== null ? (
-                  <Text variant="meta" tone="strong" numeric emphasis>
-                    {Math.round(used)}%
-                  </Text>
-                ) : null}
-              </span>
+              ) : (
+                <span className="text-caption text-muted-foreground">{usedTokens}</span>
+              )}
+              {used !== null ? (
+                <Text variant="meta" tone="strong" numeric emphasis>
+                  {Math.round(used)}%
+                </Text>
+              ) : null}
             </span>
           </CollapsibleTrigger>
           {onCompact ? (
@@ -322,7 +311,7 @@ export function ThreadDetailsContext({
           ) : null}
         </div>
         <CollapsiblePanel>
-          <div className="ps-1.5 pe-1">
+          <div className="ps-2.5 pe-1">
             {used !== null ? (
               <div className="pt-2 pb-0.5">
                 <ContextWindowSegments usage={usage} minSegmentWidth={2} />
@@ -331,7 +320,7 @@ export function ThreadDetailsContext({
             <dl className="text-meta">
               {contextWindowSegments(usage, m).map((segment) => (
                 <div key={segment.label} className="flex h-8 items-center justify-between gap-2">
-                  <dt className="flex min-w-0 items-center gap-1.5">
+                  <dt className="flex min-w-0 items-center gap-2.5">
                     <span className="flex size-4 shrink-0 items-center justify-center">
                       <span aria-hidden className={cn("size-2 rounded-xs", segment.color)} />
                     </span>
@@ -343,7 +332,7 @@ export function ThreadDetailsContext({
                 </div>
               ))}
               <div className="flex min-h-8 items-center justify-between gap-2">
-                <dt className="flex min-w-0 items-center gap-1.5">
+                <dt className="flex min-w-0 items-center gap-2.5">
                   <span aria-hidden className="size-4 shrink-0" />
                   <span className="truncate">
                     {maxTokens !== null
@@ -439,37 +428,36 @@ function LimitTile({
   ]
     .filter(Boolean)
     .join(", ");
-  const badgeVariant = tone === "error" ? "error" : tone === "warning" ? "warning" : "secondary";
   return (
     <div className={cn("min-w-0", wide && "col-span-2")}>
       <Tooltip>
         <TooltipTrigger
           render={
-            <Badge
-              size="lg"
-              variant={badgeVariant}
-              className="w-full min-w-0"
-              render={<Link to="/usage" aria-label={ariaLabel} />}
+            <Link
+              to="/usage"
+              aria-label={ariaLabel}
+              className={cn(
+                "relative flex h-7 w-full min-w-0 items-center justify-between gap-1 rounded-row px-1.5 text-meta outline-none transition-shadow focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring",
+                tone === "error"
+                  ? "bg-error-tint text-error-foreground hover:brightness-95 dark:hover:brightness-110"
+                  : tone === "warning"
+                    ? "bg-warning-tint text-warning-foreground hover:brightness-95 dark:hover:brightness-110"
+                    : "hover:surface-ghost-hover",
+              )}
             />
           }
         >
-          <span className="flex min-w-0 flex-1 items-center justify-between gap-1.5">
-            <span className={cn("truncate", tone === null && "text-foreground")}>
-              {displayLabel}
-            </span>
-            <span
-              className={cn(
-                "inline-flex shrink-0 items-center gap-1 tabular-nums",
-                tone === null && "text-strong-foreground",
-              )}
-            >
-              {runsOutBeforeReset ? (
-                <TrendingUpIcon className="size-3 shrink-0" aria-hidden />
-              ) : null}
-              <Text variant="meta" tone="inherit" numeric emphasis>
-                {left}%
-              </Text>
-            </span>
+          <span className={cn("truncate", tone === null && "text-foreground")}>{displayLabel}</span>
+          <span
+            className={cn(
+              "inline-flex shrink-0 items-center gap-0.5 tabular-nums",
+              tone === null && "text-strong-foreground",
+            )}
+          >
+            {runsOutBeforeReset ? <TrendingUpIcon className="size-3 shrink-0" aria-hidden /> : null}
+            <Text variant="meta" tone="inherit" numeric emphasis>
+              {left}%
+            </Text>
           </span>
         </TooltipTrigger>
         <TooltipPopup side="left" sideOffset={12}>
@@ -520,7 +508,7 @@ function LimitTile({
   );
 }
 
-function StatusTile({
+function StatusRow({
   label,
   icon,
   value,
@@ -539,10 +527,9 @@ function StatusTile({
     <Tooltip>
       <TooltipTrigger
         render={
-          <Badge
-            size="lg"
-            variant="unavailable"
-            className="w-full min-w-0"
+          <ThreadDetailsControl
+            part="row"
+            className={cn(!opensUsage && "cursor-default")}
             render={
               opensUsage ? (
                 <Link to="/usage" aria-label={ariaLabel} />
@@ -553,13 +540,9 @@ function StatusTile({
           />
         }
       >
-        <span className="flex min-w-0 flex-1 items-center justify-between gap-1.5">
-          <span className="inline-flex min-w-0 items-center gap-1.5 text-foreground">
-            <span className="shrink-0 text-muted-foreground">{icon}</span>
-            <span className="truncate">{label}</span>
-          </span>
-          <span className="shrink-0 text-muted-foreground tabular-nums">{value}</span>
-        </span>
+        {icon}
+        <span className="min-w-0 truncate">{label}</span>
+        <span className="ms-auto shrink-0 text-muted-foreground tabular-nums">{value}</span>
       </TooltipTrigger>
       <TooltipPopup side="left" sideOffset={12}>
         <div className="flex flex-col gap-0.5 text-muted-foreground">
