@@ -1,6 +1,6 @@
 # Keybindings
 
-Customize keyboard shortcuts in **Settings → Keybindings** on web and desktop. That page lists every available command ID and default binding.
+Customize keyboard shortcuts in **Settings → Keybindings** on web and desktop. That page lists every available command ID and default binding. Press `mod+/` (outside the terminal) or run **Open keyboard shortcuts** from the command palette to jump there.
 
 To free a default shortcut, choose **Unassign** from its row menu (**Reset to default** restores it).
 

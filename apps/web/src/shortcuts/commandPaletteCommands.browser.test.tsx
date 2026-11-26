@@ -16,6 +16,7 @@ const keybindings = compileResolvedKeybindingsConfig([
   { key: "mod+k", command: "commandPalette.toggle" },
   { key: "mod+alt+shift+t", command: "themeEditor.toggle" },
   { key: "mod+u", command: "usage.open" },
+  { key: "mod+/", command: "keybindings.open" },
 ]);
 
 function MountedPalette() {
@@ -153,7 +154,7 @@ describe("command palette shortcuts", () => {
     expect(useCommandPaletteStore.getState()).toMatchObject({ open: true, mode: "command" });
   });
 
-  it("ignore held theme editor and Usage shortcuts", async () => {
+  it("ignore held theme editor, Usage, and Keybindings shortcuts", async () => {
     setup();
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     await using screen = await render(<MountedPalette />, { router: "/" });
@@ -166,6 +167,7 @@ describe("command palette shortcuts", () => {
     for (const keys of [
       { key: "T", ctrlKey: true, altKey: true, shiftKey: true },
       { key: "u", ctrlKey: true },
+      { key: "/", ctrlKey: true },
     ]) {
       const event = new KeyboardEvent("keydown", {
         ...keys,
@@ -178,6 +180,23 @@ describe("command palette shortcuts", () => {
     }
     expect(useThemeEditorStore.getState().session).toBeNull();
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("open Keybindings settings and close the palette", async () => {
+    setup();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    await using screen = await render(<MountedPalette />, { router: "/" });
+    using commands = new DisposableStack();
+    commands.defer(
+      installCommandPaletteCommands(screen.router!, { keybindings: () => keybindings }),
+    );
+    using navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
+    dispatchCommandPalette({ _tag: "SetOpen", open: true });
+
+    await userEvent.keyboard("{Control>}/{/Control}");
+
+    expect(navigate).toHaveBeenCalledWith({ to: "/settings/keybindings" });
+    expect(useCommandPaletteStore.getState().open).toBe(false);
   });
 });
 
