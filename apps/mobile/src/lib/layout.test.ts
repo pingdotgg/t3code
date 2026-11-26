@@ -197,13 +197,12 @@ describe("deriveWorkspacePaneLayout", () => {
         auxiliaryPanePreferredWidth,
       });
 
-    expect(panes()).toMatchObject({
-      auxiliaryPaneWidth: 484,
+    expect(panes()).toMatchObject({ auxiliaryPaneWidth: 484, primarySidebarVisible: true });
+    expect(panes(10_000)).toMatchObject({
+      auxiliaryPaneWidth: width * 0.6,
       primarySidebarVisible: false,
       primarySidebarSuppressedByAuxiliary: true,
     });
-    expect(panes(260)).toMatchObject({ auxiliaryPaneWidth: 260, primarySidebarVisible: true });
-    expect(panes(10_000).auxiliaryPaneWidth).toBe(width - 560);
   });
 
   it("keeps an explicitly hidden thread sidebar hidden when the file inspector is visible", () => {

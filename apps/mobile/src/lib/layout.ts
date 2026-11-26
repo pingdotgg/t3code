@@ -55,10 +55,9 @@ export function deriveThreadWorkLogSizing(input: {
 
 const AUXILIARY_PANE_MIN_WIDTH = 260;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
-const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;
-// UIKit's inspector column keeps its own width, so the sidebar steps aside only when the page
-// would get narrower than this: landscape 11" and 13" iPads keep three columns, portrait ones don't.
-export const NATIVE_INSPECTOR_MIN_MAIN_WIDTH = 320;
+// The inspector keeps its own width, so the sidebar steps aside only when the page would get
+// narrower than this: landscape 11" and 13" iPads keep three columns, portrait ones don't.
+export const INSPECTOR_MIN_MAIN_WIDTH = 320;
 
 /**
  * The window's width class. Compact: the sidebar is the root and pages push over it. Medium: the
@@ -254,7 +253,7 @@ export function deriveWorkspacePaneLayout(input: {
       input.layout.listPaneWidth -
       (input.layout.listPaneGap ?? 0) -
       inspectorWidth <
-      (input.nativeWorkspace ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH : FILE_INSPECTOR_MIN_MAIN_WIDTH);
+      INSPECTOR_MIN_MAIN_WIDTH;
   const primarySidebarVisible =
     preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;
   const primarySidebarWidth = primarySidebarVisible ? preferredPrimarySidebarWidth : 0;
@@ -282,7 +281,7 @@ export function nativeInspectorColumnWidth(input: {
   const { viewportWidth } = input;
   const maxWidth = Math.min(
     viewportWidth * 0.6,
-    viewportWidth - input.horizontalSafeArea - NATIVE_INSPECTOR_MIN_MAIN_WIDTH,
+    viewportWidth - input.horizontalSafeArea - INSPECTOR_MIN_MAIN_WIDTH,
   );
   return Math.max(260, Math.min(maxWidth, viewportWidth * input.fraction));
 }
@@ -321,7 +320,7 @@ export function constrainAuxiliaryPaneWidth(input: {
   const viewportWidth = Number.isFinite(input.viewportWidth) ? Math.max(0, input.viewportWidth) : 0;
   const maxWidth = Math.max(
     AUXILIARY_PANE_MIN_WIDTH,
-    Math.min(viewportWidth * 0.6, viewportWidth - FILE_INSPECTOR_MIN_MAIN_WIDTH),
+    Math.min(viewportWidth * 0.6, viewportWidth - INSPECTOR_MIN_MAIN_WIDTH),
   );
   return clamp(Math.round(safePreferredWidth), AUXILIARY_PANE_MIN_WIDTH, maxWidth);
 }
