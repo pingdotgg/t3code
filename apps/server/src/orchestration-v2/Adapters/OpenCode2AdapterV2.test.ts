@@ -3730,17 +3730,33 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("finishes a workspace command whose stream dropped before its inbox event", () =>
+  it.effect("recovers a workspace command across reconnect without duplicating it next turn", () =>
     Effect.gen(function* () {
-      // session.command returns 204 without an inbox id; the stream drops before session.inbox.enqueued provides it.
+      const commandHistory = [
+        { id: "msg_idle_cmd", time: { created: 4 }, type: "idle", outcome: "succeeded" },
+        {
+          id: "msg_assistant_cmd",
+          time: { created: 3, streamed: 3, completed: 3 },
+          type: "assistant",
+          agent: "build",
+          model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+          content: [{ type: "text", text: "HELLO WORLD" }],
+          finish: "stop",
+        },
+        {
+          id: "msg_user_cmd",
+          time: { created: 2 },
+          text: "Reply with exactly: HELLO WORLD",
+          type: "user",
+        },
+        { id: "msg_idle_before", time: { created: 1 }, type: "idle", outcome: "succeeded" },
+      ];
       const { runtime, thread } = yield* resumed([
         out("command.list", "<any>"),
         reply("command.list", { location: { directory: WORK }, data: [{ name: "git/hello" }] }),
         out("message.list", { sessionID: SESSION, order: "desc", limit: "1" }),
         reply("message.list", {
-          data: [
-            { id: "msg_idle_before", time: { created: 1 }, type: "idle", outcome: "succeeded" },
-          ],
+          data: [commandHistory.at(-1)],
           cursor: {},
         }),
         out("session.command", { sessionID: SESSION, name: "git/hello", text: "WORLD" }),
@@ -3752,31 +3768,39 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         out("session.active"),
         replyData("session.active", {}),
         out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+        reply("message.list", { data: commandHistory, cursor: {} }),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
         reply("message.list", {
           data: [
-            { id: "msg_idle_cmd", time: { created: 4 }, type: "idle", outcome: "succeeded" },
+            ...commandHistory,
             {
-              id: "msg_assistant_cmd",
-              time: { created: 3 },
-              type: "assistant",
-              agent: "build",
-              model: { id: "big-pickle", providerID: "opencode", variant: "default" },
-              content: [{ type: "text", text: "HELLO WORLD" }],
-              finish: "stop",
-            },
-            {
-              id: "msg_user_cmd",
-              time: { created: 2 },
-              text: "Reply with exactly: HELLO WORLD",
+              id: `msg_t3_turn_${SESSION}:attempt:earlier`,
+              time: { created: 0 },
+              text: "An earlier T3 prompt",
               type: "user",
             },
-            { id: "msg_idle_before", time: { created: 1 }, type: "idle", outcome: "succeeded" },
           ],
           cursor: {},
         }),
+        out("session.prompt", { sessionID: SESSION, text: "hi" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.text.ended", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_after_cmd",
+          ordinal: 0,
+          text: "Next answer",
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
+      const commandEnded = yield* Deferred.make<void>();
       const events = yield* runtime.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.tap((event) =>
+          event.type === "turn.terminal" && event.runOrdinal === 1
+            ? Deferred.succeed(commandEnded, undefined)
+            : Effect.void,
+        ),
+        Stream.takeUntil((event) => event.type === "turn.terminal" && event.runOrdinal === 2),
         Stream.runCollect,
         Effect.forkScoped,
       );
@@ -3784,14 +3808,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ...turnInput(thread),
         message: { ...turnInput(thread).message, text: "/git/hello WORLD" },
       });
+      yield* Deferred.await(commandEnded);
+      yield* runtime.startTurn({ ...secondTurn(thread), nativeThreadHasTurns: true });
       const collected = yield* Fiber.join(events);
-      const texts = collected.flatMap((event) =>
-        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
-          ? [event.turnItem.text]
-          : [],
+      assert.deepEqual(
+        collected.flatMap((event) =>
+          event.type === "message.updated" ? [`${event.message.role}: ${event.message.text}`] : [],
+        ),
+        ["assistant: HELLO WORLD", "assistant: Next answer"],
       );
-      assert.include(texts, "HELLO WORLD");
-      assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      assert.deepEqual(
+        collected.flatMap((event) => (event.type === "turn.terminal" ? [event.status] : [])),
+        ["completed", "completed"],
+      );
     }),
   );
 
@@ -8495,6 +8524,156 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               : [],
           ),
           ["provider"],
+        );
+      }),
+  );
+
+  it.effect.each(["completed", "running", "already held as a wake"] as const)(
+    "sends the T3 prompt after a history read with an external execution %s",
+    (execution) =>
+      Effect.gen(function* () {
+        const previous = `msg_t3_turn_${SESSION}:attempt:previous`;
+        const own = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter`;
+        const inboxID = "msg_other_client";
+        const gate = makeProviderReplayGate(["external"]);
+        const reading = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const streamed = yield* Deferred.make<void>();
+        const offered =
+          yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+        const prompts: Array<unknown> = [];
+        const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const held = execution === "already held as a wake";
+        const external = [
+          event(
+            "session.inbox.enqueued",
+            {
+              sessionID: SESSION,
+              inboxID,
+              item: {
+                type: "user",
+                payload: { text: "External question", files: [] },
+                delivery: "steer",
+              },
+            },
+            "external",
+          ),
+          event("session.execution.started", { sessionID: SESSION }),
+          event("session.inbox.delivered", { sessionID: SESSION, inboxID }),
+          event("session.text.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_external_answer",
+            ordinal: 0,
+            text: "External answer",
+          }),
+          ...(execution === "completed"
+            ? [event("session.execution.succeeded", { sessionID: SESSION })]
+            : []),
+          event("session.model.selected", {
+            sessionID: SESSION,
+            model: { id: "external-model", providerID: "opencode" },
+          }),
+        ];
+        const { runtime, thread } = yield* resumed(
+          [
+            ...(held ? external : []),
+            out("session.instructions.entry.put", {
+              sessionID: SESSION,
+              key: "t3-code",
+              value: "<any>",
+            }),
+            reply("session.instructions.entry.put", null),
+            ...(held
+              ? []
+              : [
+                  out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+                  reply("message.list", {
+                    data: [
+                      {
+                        id: previous,
+                        time: { created: 1 },
+                        text: "Previous T3 prompt",
+                        type: "user",
+                      },
+                    ],
+                    cursor: {},
+                  }),
+                  ...external,
+                ]),
+            out("session.prompt", { sessionID: SESSION, id: own, text: "hi" }),
+            promptAccepted,
+            ...(execution === "completed"
+              ? [event("session.execution.started", { sessionID: SESSION })]
+              : []),
+            event("session.inbox.delivered", { sessionID: SESSION, inboxID: own }),
+            event("session.text.ended", {
+              sessionID: SESSION,
+              assistantMessageID: "msg_t3_answer",
+              ordinal: 0,
+              text: "T3 answer",
+            }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          {
+            previousHead: previous,
+            instructions: false,
+            replayGate: gate,
+            onPrompt: (prompt) => prompts.push(prompt),
+            beforeResponse: (path) =>
+              path.endsWith("/message")
+                ? Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(resume)))
+                : Effect.void,
+          },
+        ).pipe(
+          Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+            offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
+            take: Effect.never,
+          }),
+        );
+        const collected = yield* runtime.events.pipe(
+          Stream.tap((event) =>
+            Effect.gen(function* () {
+              seen.push(event);
+              if (
+                event.type === "provider_thread.updated" &&
+                event.providerThread.nativeMetadata?.modelSelection?.model ===
+                  "opencode/external-model"
+              ) {
+                yield* Deferred.succeed(streamed, undefined);
+              }
+            }),
+          ),
+          Stream.takeUntil((event) => event.type === "turn.terminal" && prompts.length > 0),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        if (held) {
+          gate.release("external");
+          const wake = yield* Deferred.await(offered);
+          yield* runtime.startTurn(turnInput(thread));
+          assert.isDefined(wake.dispatchIfCurrent);
+          assert.isTrue(Option.isNone(yield* wake.dispatchIfCurrent!(Effect.void)));
+        } else {
+          const start = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
+          yield* Deferred.await(reading);
+          gate.release("external");
+          yield* Deferred.await(streamed);
+          yield* Deferred.succeed(resume, undefined);
+          yield* Fiber.join(start);
+        }
+        assert.lengthOf(prompts, 1, "T3 sent its prompt");
+        yield* Fiber.join(collected);
+        assert.deepEqual(
+          seen.flatMap((event) =>
+            event.type === "message.updated"
+              ? [`${event.message.role}: ${event.message.text}`]
+              : [],
+          ),
+          ["user: External question", "assistant: External answer", "assistant: T3 answer"],
+        );
+        assert.deepEqual(
+          seen.flatMap((event) => (event.type === "turn.terminal" ? [event.status] : [])),
+          ["completed"],
         );
       }),
   );

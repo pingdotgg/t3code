@@ -265,7 +265,7 @@ interface ActiveTurn {
   readonly models: Set<string>;
   lastStep: Tokens | undefined;
   before: string | null | undefined;
-  commandPrompt: string | undefined;
+  command: { readonly before: string | null; prompt: string | undefined } | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
   todoPlanId: PlanId | undefined;
@@ -1741,7 +1741,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       models: new Set(),
       lastStep: undefined,
       before: undefined,
-      commandPrompt: undefined,
+      command: undefined,
       compaction: undefined,
       compactions: 0,
       todoPlanId: undefined,
@@ -3358,6 +3358,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn: ActiveTurn,
       end: TurnTerminal,
     ) {
+      if (turn.unsent && !turn.interrupted) return;
       if (end.status === "completed" && (turn.steers.size > 0 || goalHoldsTurn(state))) {
         turn.heldEnd = end;
         // OpenCode can pause a goal without telling this server, such as another process's
@@ -3600,7 +3601,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           state.subagent === undefined &&
           (isOwnPrompt(event.data.inboxID) ||
             external !== undefined ||
-            turn.commandPrompt === event.data.inboxID)
+            turn.command?.prompt === event.data.inboxID)
         ) {
           state.providerThread = {
             ...state.providerThread,
@@ -3628,16 +3629,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (event.type === "session.inbox.enqueued" && event.data.item.type === "user") {
         const text = event.data.item.payload.text;
         const turn = state.active;
+        const command = turn?.command;
         if (state.subagent !== undefined) {
           if (turn === undefined) state.subagent.prompt ??= text;
         } else if (!isOwnPrompt(event.data.inboxID)) {
           if (
             !held &&
-            turn !== undefined &&
-            turn.before !== undefined &&
-            turn.commandPrompt === undefined
+            command !== undefined &&
+            (command.prompt === undefined || command.prompt === event.data.inboxID)
           ) {
-            turn.commandPrompt = event.data.inboxID;
+            command.prompt = event.data.inboxID;
             return;
           }
           state.externalPrompts.set(event.data.inboxID, {
@@ -3695,7 +3696,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const turn = state.active;
       if (turn === undefined) return undefined;
       const promptId = promptOf(turn.providerTurn);
-      const { before } = turn;
+      const { command } = turn;
+      const before = command === undefined ? turn.before : command.before;
       if (promptId === undefined && before === undefined) return undefined;
       const start = before !== undefined ? before : promptId;
       const read = yield* OpenCode2Client.paginate(
@@ -3714,6 +3716,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const found = start === null || read.at(-1)?.id === start;
           if (!found) return undefined;
           const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
+          if (command !== undefined) {
+            const prompt = recent.findLast(
+              (message) =>
+                message.type === "user" &&
+                (command.prompt === undefined
+                  ? !isOwnPrompt(message.id)
+                  : message.id === command.prompt),
+            );
+            if (prompt !== undefined) {
+              command.prompt = prompt.id;
+              const head = state.providerThread.nativeConversationHeadRef?.nativeId;
+              if (!recent.some((message) => message.id === head)) {
+                state.providerThread = {
+                  ...state.providerThread,
+                  nativeConversationHeadRef: ref(prompt.id, "weak"),
+                };
+              }
+            }
+          }
           for (const message of recent) {
             if (message.type === "user" && turn.steers.delete(message.id)) {
               turn.settledInbox.add(message.id);
@@ -4543,12 +4564,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     });
 
-    const markBefore = (sessionId: string, before: string | null) =>
-      Effect.sync(() => {
-        const turn = threads.get(sessionId)?.active;
-        if (turn !== undefined) turn.before = before;
-      });
-
     const beginTurn = Effect.fn("OpenCode2Adapter.beginTurn")(function* (
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -4573,6 +4588,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         completedAt: null,
       };
       const turn = makeTurn(turnInput, providerTurn, { scope: "", awaitingStart });
+      turn.unsent = !isContinuation(turnInput);
       if (streamFailure !== undefined) {
         return yield* new ProviderAdapter.ProviderAdapterEventStreamError({
           driver,
@@ -4821,8 +4837,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // session.command neither accepts nor returns our ID; record the preceding history boundary.
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           const before = newest.data[0]?.id ?? null;
-          yield* markBefore(sessionId, before);
           if (!sending()) return;
+          turn.command = { before, prompt: undefined };
           if (goalCommand?.type === "pause" || goalCommand?.type === "clear") {
             // OpenCode rejects pausing or clearing a missing goal; Codex treats that as a no-op.
             yield* client.session.command({ sessionID, ...command }).pipe(
@@ -5202,7 +5218,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               if (stagedReverts.has(sessionId)) yield* clearRevert(sessionId);
               yield* prepareTurn(sessionId, state, turnInput);
               const turn = yield* begin;
-              turn.unsent = true;
               yield* lock.withPermit(takeRunningWake(state));
               return { state, sessionId, turn };
             }),
