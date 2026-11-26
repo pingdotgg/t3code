@@ -2884,6 +2884,108 @@ describe("TeamService", () => {
         expect(eventOrder[0]).toBe("pair:start");
         expect(eventOrder[1]).toBe("pair:remote-minted");
         expect(eventOrder[2]?.startsWith(`revoke:${envB}:`)).toBe(true);
+
+        // 9. Demoting an admin -> regular revokes their privileged remote grants across ALL
+        // linked/registered environments (even environments still accessible to regular members!),
+        // and blocks an in-flight admin-scoped pairing on a still-accessible environment.
+        const envShared = EnvironmentId.make("env-shared-all-roles");
+        const envUnregistered = EnvironmentId.make("env-unregistered-peer");
+        yield* team.attachEnvironment({
+          sessionId: aliceSession.sessionId,
+          payload: {
+            environmentId: envShared,
+            name: "Shared Worker",
+            accessRule: { roles: ["owner", "admin", "regular"], memberIds: [] },
+          },
+        });
+        const claraInvite = yield* team.createInvite({
+          sessionId: aliceSession.sessionId,
+          payload: { role: "admin", prefilledPseudo: "clara-demote" },
+        });
+        const claraRedeemed = yield* team.redeemInvite({
+          token: claraInvite.token,
+          pseudo: "clara-demote",
+          client: { deviceType: "desktop" },
+        });
+        const claraVerified = yield* sessions.verify(claraRedeemed.accessToken);
+        expect(claraVerified.scopes).toContain(AuthAccessWriteScope);
+
+        const claraPairStarted = yield* Deferred.make<void>();
+        const releaseClaraPair = yield* Deferred.make<void>();
+        const demoteEvents: Array<string> = [];
+        const demoteRevokedEnvs: Array<EnvironmentId> = [];
+        const demotePairing = {
+          request: (_input: { readonly environmentId: EnvironmentId }) =>
+            Effect.gen(function* () {
+              demoteEvents.push("pair:start");
+              yield* Deferred.succeed(claraPairStarted, undefined);
+              yield* Deferred.await(releaseClaraPair);
+              demoteEvents.push("pair:remote-minted");
+              return {
+                type: "credential" as const,
+                environmentId: envShared,
+                label: "Shared Worker",
+                urls: ["http://shared.test"],
+                credential: "over-privileged-admin-cred",
+                expiresAt: "2026-12-01T00:00:00.000Z",
+              };
+            }),
+          revokeSubject: (environmentId: EnvironmentId, prefix: string) =>
+            Effect.sync(() => {
+              demoteEvents.push(`revoke:${environmentId}:${prefix}`);
+              demoteRevokedEnvs.push(environmentId);
+              return { ok: true as const, revokedSessions: 1, revokedPairingLinks: 1 };
+            }),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerClientPairing"]
+        >;
+        const demotePeerLinks = {
+          list: Effect.succeed([
+            { environmentId: envShared, label: "Shared Worker" },
+            { environmentId: envUnregistered, label: "Unregistered Peer" },
+          ]),
+        } as unknown as NonNullable<
+          Parameters<
+            TeamService.TeamService["Service"]["drainPendingRemoteRevocations"]
+          >[0]["peerLinks"]
+        >;
+
+        const claraPairFiber = yield* Effect.forkChild(
+          Effect.exit(
+            team.pairRemoteEnvironmentForSession({
+              sessionId: claraVerified.sessionId,
+              scopes: claraVerified.scopes,
+              pairingInput: { environmentId: envShared },
+              peerClientPairing: demotePairing,
+              peerLinks: demotePeerLinks,
+            }),
+          ),
+        );
+        yield* Deferred.await(claraPairStarted);
+
+        const demoteFiber = yield* Effect.forkChild(
+          team.updateMemberRole({
+            sessionId: aliceSession.sessionId,
+            payload: { memberId: claraRedeemed.member.id, role: "regular" },
+            peerClientPairing: demotePairing,
+            peerLinks: demotePeerLinks,
+          }),
+        );
+        yield* Effect.yieldNow;
+        expect(demoteRevokedEnvs).toEqual([]);
+
+        yield* Deferred.succeed(releaseClaraPair, undefined);
+        const claraPairExit = yield* Fiber.join(claraPairFiber);
+        yield* Fiber.join(demoteFiber);
+
+        expect(claraPairExit._tag).toBe("Failure");
+        expect(demoteRevokedEnvs).toContain(envShared);
+        expect(demoteRevokedEnvs).toContain(envUnregistered);
+        expect(demoteEvents[0]).toBe("pair:start");
+        expect(demoteEvents[1]).toBe("pair:remote-minted");
+        expect(demoteEvents.slice(2).every((e) => e.startsWith("revoke:"))).toBe(true);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });

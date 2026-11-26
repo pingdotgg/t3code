@@ -787,42 +787,46 @@ const make = Effect.gen(function* () {
         if (item.unlinkAfterRevoke && !input.peerLinks) {
           continue;
         }
-        const result = yield* input.peerClientPairing.revokeSubject(
-          item.environmentId,
-          item.subjectPrefix,
+        yield* withRemoteRevocationBarrier(
+          Effect.gen(function* () {
+            const result = yield* input.peerClientPairing!.revokeSubject(
+              item.environmentId,
+              item.subjectPrefix,
+            );
+            if (result.ok || result.reason === "unknown_link") {
+              // Serialize unlink decisions with attachEnvironment so a concurrent re-attach during
+              // remote revocation never loses its newly attached peer link.
+              yield* remoteEnvLifecycleLock.withPermits(1)(
+                Effect.gen(function* () {
+                  const currentRows = yield* repository
+                    .listPendingRemoteRevocations(teamId)
+                    .pipe(Effect.orElseSucceed(() => []));
+                  const currentItem = currentRows.find((candidate) => candidate.id === item.id);
+                  if (!currentItem) return;
+                  const attachedEnv = yield* repository
+                    .getEnvironmentByEnvironmentId({
+                      teamId,
+                      environmentId: item.environmentId,
+                    })
+                    .pipe(Effect.orElseSucceed(() => Option.none<TeamEnvironment>()));
+                  if (
+                    currentItem.unlinkAfterRevoke &&
+                    Option.isNone(attachedEnv) &&
+                    result.ok &&
+                    input.peerLinks
+                  ) {
+                    const unlinked = yield* input.peerLinks.unlink(item.environmentId).pipe(
+                      Effect.as(true),
+                      Effect.orElseSucceed(() => false),
+                    );
+                    if (!unlinked) return;
+                  }
+                  yield* repository.deletePendingRemoteRevocation(item.id).pipe(Effect.ignore);
+                }),
+              );
+            }
+          }),
         );
-        if (result.ok || result.reason === "unknown_link") {
-          // Serialize unlink decisions with attachEnvironment so a concurrent re-attach during
-          // remote revocation never loses its newly attached peer link.
-          yield* remoteEnvLifecycleLock.withPermits(1)(
-            Effect.gen(function* () {
-              const currentRows = yield* repository
-                .listPendingRemoteRevocations(teamId)
-                .pipe(Effect.orElseSucceed(() => []));
-              const currentItem = currentRows.find((candidate) => candidate.id === item.id);
-              if (!currentItem) return;
-              const attachedEnv = yield* repository
-                .getEnvironmentByEnvironmentId({
-                  teamId,
-                  environmentId: item.environmentId,
-                })
-                .pipe(Effect.orElseSucceed(() => Option.none<TeamEnvironment>()));
-              if (
-                currentItem.unlinkAfterRevoke &&
-                Option.isNone(attachedEnv) &&
-                result.ok &&
-                input.peerLinks
-              ) {
-                const unlinked = yield* input.peerLinks.unlink(item.environmentId).pipe(
-                  Effect.as(true),
-                  Effect.orElseSucceed(() => false),
-                );
-                if (!unlinked) return;
-              }
-              yield* repository.deletePendingRemoteRevocation(item.id).pipe(Effect.ignore);
-            }),
-          );
-        }
       }
     },
   );
@@ -1486,8 +1490,15 @@ const make = Effect.gen(function* () {
         .listEnvironments(team.id)
         .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamEnvironment>));
       const registeredEnvIds = new Set(envs.map((env) => env.environmentId));
+      // Demoting from owner/admin strips admin-only session scopes, so revoke remote grants on
+      // ALL non-default environments (including still-accessible ones) to clear over-privileged sessions.
+      const demotedFromAdminTier = prevIsAdminTier && !nextIsAdminTier;
       const revokedEnvIds = envs
-        .filter((env) => !env.isDefault && !canMemberAccessTeamEnvironment(updatedMember, env))
+        .filter(
+          (env) =>
+            !env.isDefault &&
+            (demotedFromAdminTier || !canMemberAccessTeamEnvironment(updatedMember, env)),
+        )
         .map((env) => env.environmentId);
       // Demoting an admin/owner also revokes their sessions on unregistered peer links.
       if (input.peerLinks && !isTeamAdminOrOwner(updatedMember)) {
@@ -4949,14 +4960,48 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           yield* assertCanAccessEnvironment(input.sessionId, input.pairingInput.environmentId);
           const subjectOption = yield* getRemotePairingSubject(input.sessionId);
+          const memberBefore = Option.isSome(subjectOption)
+            ? yield* repository
+                .getMemberForSession(input.sessionId)
+                .pipe(
+                  Effect.mapError(() =>
+                    teamPostAuthError(
+                      "Could not resolve team membership for remote environment pairing.",
+                    ),
+                  ),
+                )
+            : Option.none<TeamMember>();
+          const effectiveScopes =
+            Option.isSome(memberBefore) && !isTeamAdminOrOwner(memberBefore.value)
+              ? input.scopes.filter((scope) => !ADMIN_ONLY_SESSION_SCOPES.has(scope))
+              : input.scopes;
+          const requestedAdminScopes = effectiveScopes.some((scope) =>
+            ADMIN_ONLY_SESSION_SCOPES.has(scope),
+          );
           const result = yield* input.peerClientPairing.request(input.pairingInput, {
             sessionId: input.sessionId,
-            scopes: input.scopes,
+            scopes: effectiveScopes,
             ...(Option.isSome(subjectOption) ? { teamMemberSubject: subjectOption.value } : {}),
           });
           if (Option.isSome(subjectOption) && result.type === "credential") {
             yield* assertCanAccessEnvironment(input.sessionId, input.pairingInput.environmentId);
             yield* getRemotePairingSubject(input.sessionId);
+            if (requestedAdminScopes) {
+              const memberAfter = yield* repository
+                .getMemberForSession(input.sessionId)
+                .pipe(
+                  Effect.mapError(() =>
+                    teamPostAuthError(
+                      "Could not verify team membership after remote environment pairing.",
+                    ),
+                  ),
+                );
+              if (Option.isNone(memberAfter) || !isTeamAdminOrOwner(memberAfter.value)) {
+                return yield* teamPostAuthError(
+                  "Your team role changed while pairing with this remote environment. Please retry.",
+                );
+              }
+            }
           }
           return result;
         }),
