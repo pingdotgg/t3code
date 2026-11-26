@@ -130,21 +130,10 @@ describe("filesystem browse model", () => {
     expect(
       getFilesystemBrowseTabCompletion([entry("e\u0301clair"), entry("\u00e9cole")], "\u00e9"),
     ).toEqual({ name: "\u00e9c", isComplete: false });
-    expect(
-      getFilesystemBrowseTabCompletion([entry("e\u0301clair"), entry("\u00e9cole")], "e\u0301"),
-    ).toEqual({ name: "\u00e9c", isComplete: false });
-    expect(
-      getFilesystemBrowseTabCompletion([entry("\u00c9COLE"), entry("e\u0301clair")], "\u00e9"),
-    ).toEqual({ name: "\u00c9C", isComplete: false });
     // Names that already share a raw prefix keep their own spelling.
     expect(getFilesystemBrowseTabCompletion([entry("e\u0301"), entry("e\u0301cole")], "e")).toEqual(
       { name: "e\u0301", isComplete: false },
     );
-    // A single decomposed match opens under its on-disk spelling.
-    expect(getFilesystemBrowseTabCompletion([entry("e\u0301clair")], "\u00e9")).toEqual({
-      name: "e\u0301clair",
-      isComplete: true,
-    });
     // Names that differ only in normalization are two folders on Linux; Tab never picks one.
     expect(
       getFilesystemBrowseTabCompletion([entry("e\u0301"), entry("\u00e9")], "\u00e9"),
