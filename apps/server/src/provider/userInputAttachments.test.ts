@@ -579,6 +579,7 @@ describe("question answer paths", () => {
             ],
           },
           { cell_type: "raw", source: [rawSource] },
+          { cell_type: "code", source: "total = 42", execution_count: null, outputs: [] },
         ],
       });
       NodeFS.writeFileSync(path, notebook);
@@ -601,6 +602,7 @@ describe("question answer paths", () => {
       expect(extracted).not.toContain("iVBORw0KGgo");
       expect(extracted).not.toContain("<script>");
       expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
+      expect(extracted).toMatch(/## Cell 4 \(code\)\ntotal = 42$/u);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
       );
@@ -670,6 +672,32 @@ describe("question answer paths", () => {
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const cases = [
+        {
+          ext: "epub",
+          bounded: true,
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="a" href="a.xhtml"/></manifest><spine><itemref idref="a"/></spine></package>',
+            "a.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Intro<p>Body paragraph</p></div><ul><li>Summary<p>Details</p></li></ul><div>Intro<h2>Section Title</h2></div><table><tr><td>First<p>Second</p></td><td>Neighbor</td></tr></table></body></html>',
+          },
+          expected: [
+            "## Chapter 1\nIntro\nBody paragraph",
+            "Summary\nDetails",
+            "Intro\n## Section Title",
+            "First Second\tNeighbor",
+          ],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Before</w:t></w:r><w:r><w:drawing><w:txbxContent><w:p><w:r><w:t>Box text</w:t></w:r></w:p></w:txbxContent></w:drawing></w:r><w:r><w:t>After</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["Before\nBox text\nAfter"],
+        },
         {
           ext: "epub",
           bounded: true,
@@ -1148,7 +1176,7 @@ describe("question answer paths", () => {
             "## Report & totals",
             "North\t12 34",
             "Annual report\tDraft",
-            "Before Inner After\tNeighbor\t\u2011\n\u2011\nDemoted\nIntro. # Box title",
+            "Before Inner After\tNeighbor\t\u2011\n\u2011\nDemoted\nIntro. \n# Box title",
           ],
         },
         {

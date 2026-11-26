@@ -334,6 +334,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield LINE_START;
     } else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
+      yield THEMATIC_BREAK;
       const style =
         all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
       const level =
@@ -634,7 +635,7 @@ function* notebook(source: string): Generator<string, void> {
     const kind = NOTEBOOK_CELL_TYPES.find((type) => type === cellType) ?? "markdown";
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
-    if ("outputs" in cell && Array.isArray(cell.outputs)) {
+    if ("outputs" in cell && Array.isArray(cell.outputs) && cell.outputs.length > 0) {
       yield "\nOutput:\n";
       for (const output of cell.outputs) {
         if (!output || typeof output !== "object") continue;
