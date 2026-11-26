@@ -30,7 +30,7 @@ const FONT_CHOICES: ReadonlyArray<FontChoice<MobileFontId>> = [
     id: "system",
     label: msg("System", { $context: "font choice: the device's own system font" }),
     // oxlint-disable-next-line t3code/no-untranslated-copy -- typeface names are not translated
-    detail: Platform.OS === "ios" ? "San Francisco" : "Roboto",
+    detail: Platform.OS === "ios" ? "SF Pro" : "Roboto",
   },
   { id: "dm-sans", label: msg("DM Sans", { $context: "font choice: the DM Sans typeface name" }) },
 ];
