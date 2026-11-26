@@ -11,7 +11,6 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
-import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
@@ -50,7 +49,6 @@ object AgentNotifications {
   private const val ACTIVITY_TAG = "t3-agent-activity"
   private const val ALERT_TAG = "t3-agent-alert"
   private const val ALERT_THREAD_TAG = "$ALERT_TAG-thread:"
-  private const val ALERT_UPDATED_AT = "t3_alert_updated_at"
   private const val ACTIVITY_ID = 73001
   private const val MAX_MESSAGE_AGE_MS = 10 * 60 * 1000L
   private const val RUNNING_LIFETIME_MS = 2 * 60 * 60 * 1000L
@@ -195,14 +193,9 @@ object AgentNotifications {
     val tag = threadGroup?.let { "$ALERT_THREAD_TAG$it" } ?: ALERT_TAG
     val id = if (threadGroup != null) 0 else alertId.hashCode()
     val group = threadGroup ?: ALERT_TAG
-    // A late or retried push for an earlier turn must not overwrite the thread's newer alert.
-    // updated_at is the relay's send time, which a retry advances, so order by the turn's time.
-    val updatedAt = data["alert_updated_at"]?.toLongOrNull() ?: 0L
-    if (threadGroup != null && isSuperseded(context, tag, id, updatedAt)) return
     val notification = base(context, ALERT_CHANNEL)
       .setContentTitle(title).setContentText(body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-      .addExtras(Bundle().apply { putLong(ALERT_UPDATED_AT, updatedAt) })
       .setAutoCancel(true)
       .setGroup(group)
       .setContentIntent(
@@ -212,14 +205,6 @@ object AgentNotifications {
     manager(context).notify(tag, id, notification)
     postGroupSummary(context, scheme, group, data)
   }
-
-  // Older relays send no alert_updated_at; those alerts keep plain replacement, since their id is
-  // already marked seen and a retry could not post them later.
-  private fun isSuperseded(context: Context, tag: String, id: Int, updatedAt: Long): Boolean =
-    updatedAt > 0L && manager(context).activeNotifications.any {
-      it.tag == tag && it.id == id &&
-        it.notification.extras.getLong(ALERT_UPDATED_AT, 0L) > updatedAt
-    }
 
   private fun postGroupSummary(
     context: Context,

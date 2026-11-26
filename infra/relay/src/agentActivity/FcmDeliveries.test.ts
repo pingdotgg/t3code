@@ -8,7 +8,6 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import type * as Cloudflare from "@alchemy.run/cloudflare";
 import * as FcmDeliveryQueueConsumer from "./FcmDeliveryQueueConsumer.ts";
 
@@ -265,7 +264,6 @@ describe("Android delivery routing", () => {
         alert_title: "Second thread",
         alert_body: "Input: Project",
         alert_path: "/threads/env/second-thread",
-        alert_updated_at: "0",
       });
     }).pipe(Effect.provide(h.layer));
   });
@@ -295,7 +293,6 @@ describe("Android delivery routing", () => {
       expect(h.sent[0]?.data).toMatchObject({
         alert_title: "Second thread",
         alert_body: "Input: Project",
-        alert_updated_at: "0",
       });
       yield* delivery.process({ ...h.job, state: h.current.otherStates[0] });
       expect(h.sent.filter((message) => message.alert)).toHaveLength(1);
@@ -352,7 +349,6 @@ describe("Android delivery routing", () => {
         expect(h.sent[0]?.data).toMatchObject({
           alert_title: "Fix notifications",
           alert_body: "Approval: Project",
-          alert_updated_at: "0",
         });
       }).pipe(Effect.provide(h.layer));
     },
@@ -412,11 +408,7 @@ describe("Android delivery routing", () => {
         preferences,
         nowMs: 0,
       }),
-    ).toMatchObject({
-      alert_title: "Second thread",
-      alert_body: "Input: Project",
-      alert_updated_at: "0",
-    });
+    ).toMatchObject({ alert_title: "Second thread", alert_body: "Input: Project" });
   });
 
   it("keeps notification groups distinct when identifiers contain slashes", () => {
@@ -459,7 +451,6 @@ describe("Android delivery routing", () => {
           alert_title: "Fix notifications",
           alert_body: "Done: Project",
           alert_path: "/threads/env/thread",
-          alert_updated_at: "0",
         });
       }).pipe(Effect.provide(h.layer));
     },
@@ -479,20 +470,8 @@ describe("Android delivery routing", () => {
         active: "false",
         alert_title: "Fix notifications",
         alert_body: "Done: Project",
-        alert_updated_at: "0",
       });
       expect(h.sent[0]?.data.user_id).toBe("user");
-    }).pipe(Effect.provide(h.layer));
-  });
-
-  it.effect("orders a thread alert by its turn time, not the send time a retry advances", () => {
-    const h = harness();
-    h.current.state = { ...state, phase: "completed", updatedAt: "1970-01-01T00:00:30.000Z" };
-    return Effect.gen(function* () {
-      yield* TestClock.setTime(90_000);
-      const delivery = yield* FcmDeliveries.FcmDeliveries;
-      yield* delivery.process({ ...h.job, state: h.current.state });
-      expect(h.sent[0]?.data).toMatchObject({ alert_updated_at: "30000", updated_at: "90000" });
     }).pipe(Effect.provide(h.layer));
   });
 

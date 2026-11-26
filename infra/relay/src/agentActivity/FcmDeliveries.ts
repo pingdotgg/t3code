@@ -58,15 +58,6 @@ export class FcmDeliveryError extends Schema.TaggedError<FcmDeliveryError>()("Fc
   }
 }
 
-// Android orders a thread's alerts by the turn's time; updated_at is send time, which retries advance.
-const alertUpdatedAt = (updatedAt: string) =>
-  String(
-    Option.match(DateTime.make(updatedAt), {
-      onNone: () => 0,
-      onSome: (dt) => dt.epochMilliseconds,
-    }),
-  );
-
 export function androidAlertForState(
   state: RelayAgentActivityState,
   preferences: RelayAgentAwarenessPreferences,
@@ -77,7 +68,6 @@ export function androidAlertForState(
   return {
     alert_id: JSON.stringify([state.environmentId, state.threadId, state.phase, state.updatedAt]),
     alert_group: JSON.stringify([state.environmentId, state.threadId]),
-    alert_updated_at: alertUpdatedAt(state.updatedAt),
     alert_title: notification.title,
     alert_body: notification.body,
     alert_path: notification.deepLink,
@@ -104,7 +94,6 @@ export function androidAlertForAggregate(input: {
     return {
       alert_id: JSON.stringify([first.environmentId, first.threadId, first.phase, first.updatedAt]),
       alert_group: JSON.stringify([first.environmentId, first.threadId]),
-      alert_updated_at: alertUpdatedAt(first.updatedAt),
       alert_title: notification.title,
       alert_body: notification.body,
       alert_path: notification.deepLink,
