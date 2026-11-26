@@ -1,16 +1,18 @@
 import { assert, describe, expect, it } from "vite-plus/test";
-import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { STATIC_KEYBINDING_COMMANDS, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   compileResolvedKeybindingsConfig,
   mergeWithDefaultKeybindings,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
+import type { MessageResolver } from "../../i18n/messages";
 import { resolveShortcutCommand } from "../../keybindings";
 
 import {
   buildKeybindingRows,
   buildWhenVariableOptions,
+  commandLabel,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -68,6 +70,15 @@ describe("KeybindingsSettings.logic", () => {
       ),
     );
     expect(unassigned.find((row) => row.key === "f8")?.defaultKey).toBe("mod+n");
+  });
+
+  it("gives every built-in command a translatable label", () => {
+    const translated = (() => "translated") as unknown as MessageResolver;
+    expect(
+      STATIC_KEYBINDING_COMMANDS.filter(
+        (command) => commandLabel(command, translated) !== "translated",
+      ),
+    ).toEqual([]);
   });
 
   it("shares a stable editor for resolved duplicates but separates commands, shortcuts, and conditions", () => {
@@ -426,6 +437,18 @@ describe("KeybindingsSettings.logic", () => {
     expect(
       keybindingConflictLabels(rows, { rowId: "new", key: "ctrl+k", when: "" }, expected.platform),
     ).toEqual(["Chat: New Local", ...expected.ctrl].toSorted());
+  });
+
+  it("treats a true condition like no condition when reporting conflicts", () => {
+    const rows = buildKeybindingRows(
+      compileResolvedKeybindingsConfig([
+        { command: "chat.new", key: "mod+k", when: "true" },
+        { command: "chat.newLocal", key: "mod+k", when: "terminalFocus" },
+      ]),
+      "Linux x86_64",
+    );
+
+    expect(rows.map((row) => row.conflicts)).toEqual([["Chat: New Local"], ["Chat: New"]]);
   });
 
   it("keeps mod and ctrl shortcuts apart when their when contexts differ", () => {

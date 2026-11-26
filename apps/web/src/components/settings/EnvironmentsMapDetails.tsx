@@ -456,13 +456,25 @@ function StackDetails({
       {members.length > MEMBER_LIST_ROWS ? (
         <div className="mb-1.5 flex items-center gap-3">
           <div className="w-56">
+            {/* Native search inputs clear on Escape even during IME composition. */}
             <Input
               size="compact"
-              type="search"
+              type="text"
+              role="searchbox"
               value={query}
               aria-label={gt("Filter these machines by name")}
               placeholder={gt("Filter by name")}
               onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Escape" || event.defaultPrevented) return;
+                if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+                const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+                if (!composing && !query && !event.repeat) return;
+                event.stopPropagation();
+                if (composing) return;
+                event.preventDefault();
+                setQuery("");
+              }}
             />
           </div>
           {needle === "" ? null : (

@@ -147,7 +147,21 @@ describe("splitMarkdown", () => {
     expect(starts(text)).toEqual(["---", "# Heading"]);
   });
 
-  it("collects link definitions outside code so every piece can resolve them", () => {
+  it.each([
+    ["one space", " # References"],
+    ["two spaces", "  ### References"],
+    ["three spaces", "   ###### References"],
+  ])("collects definitions after headings indented by %s without cutting there", (_, heading) => {
+    const intro = "[Release notes][release]\n";
+    const definition = "[release]: /releases";
+    const appendix = ["## Appendix", heading, definition].join("\n");
+    const result = splitMarkdown(`${intro}\n${appendix}`, 1);
+
+    expect(result.definitions).toBe(definition);
+    expect(result.chunks.map((chunk) => chunk.text)).toEqual([intro, appendix]);
+  });
+
+  it.each(["", " "])("collects link definitions outside code with fence indent %j", (indent) => {
     const text = [
       "[![badge][b]][site]",
       "",
@@ -173,9 +187,9 @@ describe("splitMarkdown", () => {
       "===",
       "[p]: /paragraph-text",
       "",
-      "```sh",
+      `${indent}\`\`\`sh`,
       "npm install",
-      "```",
+      `${indent}\`\`\``,
       "[fence]: /after-fence",
       "~~~",
       "~~~",
@@ -205,5 +219,9 @@ describe("splitMarkdown", () => {
     expect(splitMarkdown(text).definitions).toBe(
       "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment",
     );
+    const frontmatter = ["---", "title: x", "...", "[fm]: /after-frontmatter", "", "# A"];
+    expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
+    const unclosed = ["---", ...Array<string>(1000).fill("text"), "[u]: /paragraph-text"];
+    expect(splitMarkdown(unclosed.join("\n")).definitions).toBe("");
   });
 });
