@@ -19,6 +19,7 @@ import {
   isNearbyAddress,
   mergeLearnedRoutes,
   pendingRouteOrder,
+  relabelHostNamedRoutes,
   removedWithRelay,
   routeKeepsItsHost,
   routesAfterRemoving,
@@ -142,6 +143,30 @@ describe("connection routes", () => {
     expect(pendingRouteOrder(dragged, ["tailnet", "lan"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "public"])).toBeNull();
     expect(pendingRouteOrder(dragged, ["lan", "tailnet", "public"])).toBeNull();
+  });
+});
+
+describe("relabelHostNamedRoutes", () => {
+  const learnedLan = learned("learned:lan", "http://192.168.1.10:3773/");
+
+  it("renames T3 Connect and the routes learned over it, keeping what each route was", () => {
+    const routes = relabelHostNamedRoutes([learnedLan, RELAY], "Desk (alice)")!;
+    expect(routes.map((route) => route.target.label)).toEqual(["Desk (alice)", "Desk (alice)"]);
+    expect(Option.getOrThrow(routes[0]!.profile)).toMatchObject({
+      label: "Desk (alice)",
+      httpBaseUrl: "http://192.168.1.10:3773/",
+      learned: true,
+    });
+    expect(routes.map((route) => connectionRouteId(route.target))).toEqual([
+      "learned:lan",
+      "relay",
+    ]);
+  });
+
+  it("leaves a name the user could have chosen, and a name that already matches", () => {
+    expect(relabelHostNamedRoutes([LAN, RELAY], "Desk (alice)")).toBeNull();
+    expect(relabelHostNamedRoutes([LAN], "Desk (alice)")).toBeNull();
+    expect(relabelHostNamedRoutes([learnedLan, RELAY], "Desk")).toBeNull();
   });
 });
 

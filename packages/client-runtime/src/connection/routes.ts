@@ -12,7 +12,7 @@ import {
   type ConnectionCatalogEntry,
   type ConnectionRoute,
 } from "./catalog.ts";
-import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import { BearerConnectionTarget, RelayConnectionTarget, type ConnectionTarget } from "./model.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -404,6 +404,53 @@ export function sendsTokenInClear(
 export function usableRoutes(entry: ConnectionCatalogEntry): ReadonlyArray<ConnectionRoute> {
   const routes = connectionRoutes(entry);
   return routes.filter((route) => !sendsTokenInClear(routes, route));
+}
+
+/**
+ * The routes under the name the host now reports, or null when they keep theirs. Only a name
+ * nobody chose follows the host: T3 Connect copies it from the host and a learned route copies
+ * it from there, while a paired or SSH route may carry a name the user typed.
+ */
+export function relabelHostNamedRoutes(
+  routes: ReadonlyArray<ConnectionRoute>,
+  label: string,
+): ReadonlyArray<ConnectionRoute> | null {
+  if (
+    !routes.some((route) => route.target._tag === "RelayConnectionTarget") ||
+    !routes.every((route) => route.target._tag === "RelayConnectionTarget" || isLearned(route)) ||
+    routes.every((route) => route.target.label === label)
+  ) {
+    return null;
+  }
+  return routes.map((route): ConnectionRoute => {
+    const { target } = route;
+    const profile = Option.getOrNull(route.profile);
+    if (target._tag !== "BearerConnectionTarget" || profile?._tag !== "BearerConnectionProfile") {
+      return {
+        target: new RelayConnectionTarget({ environmentId: target.environmentId, label }),
+        profile: route.profile,
+      };
+    }
+    return {
+      target: new BearerConnectionTarget({
+        environmentId: target.environmentId,
+        label,
+        connectionId: target.connectionId,
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: profile.connectionId,
+          environmentId: profile.environmentId,
+          label,
+          httpBaseUrl: profile.httpBaseUrl,
+          wsBaseUrl: profile.wsBaseUrl,
+          ...(profile.learned === undefined ? {} : { learned: profile.learned }),
+          ...(profile.authorization === undefined ? {} : { authorization: profile.authorization }),
+          ...(profile.network === undefined ? {} : { network: profile.network }),
+        }),
+      ),
+    };
+  });
 }
 
 export interface ReportedEndpoint {

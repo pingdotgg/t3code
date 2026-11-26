@@ -101,3 +101,19 @@ it.effect("qualifies the inherited Windows hostname only inside WSL", () =>
     }
   }),
 );
+
+it.effect("names each Windows account on one computer", () =>
+  Effect.gen(function* () {
+    const resolve = (username: string | null) =>
+      resolveServerEnvironmentLabel({ cwdBaseName: "project" }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Hostname, "DESKTOP-PC"),
+        Effect.provideService(HostProcess.Username, username),
+        Effect.provideService(ProcessRunner.ProcessRunner, exitsWithFailure),
+        Effect.provide(FileSystem.layerNoop({})),
+      );
+    assert.equal(yield* resolve("alice"), "DESKTOP-PC (alice)");
+    assert.equal(yield* resolve("bob"), "DESKTOP-PC (bob)");
+    assert.equal(yield* resolve(null), "DESKTOP-PC");
+  }),
+);

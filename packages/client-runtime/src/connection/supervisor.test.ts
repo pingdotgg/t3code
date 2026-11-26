@@ -2848,8 +2848,11 @@ describe("EnvironmentSupervisor routes", () => {
                     version: 1 as const,
                     type: "snapshot" as const,
                     config: (discovery === "omitted"
-                      ? {}
-                      : { directEndpoints: [] }) as unknown as ServerConfig,
+                      ? { environment: { label: TARGET.label } }
+                      : {
+                          directEndpoints: [],
+                          environment: { label: TARGET.label },
+                        }) as unknown as ServerConfig,
                   }).pipe(Stream.ensuring(Deferred.succeed(initialProcessed, undefined))),
                   Stream.fromEffect(
                     Deferred.await(finishDiscovery).pipe(
@@ -2858,6 +2861,7 @@ describe("EnvironmentSupervisor routes", () => {
                         type: "snapshot" as const,
                         config: {
                           directEndpoints: [{ kind: "tailnet", httpBaseUrl: lateAddress }],
+                          environment: { label: TARGET.label },
                         } as unknown as ServerConfig,
                       }),
                     ),
@@ -2875,6 +2879,7 @@ describe("EnvironmentSupervisor routes", () => {
                 discovery !== "initial"
                   ? []
                   : [{ kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" }],
+              environment: { label: TARGET.label },
             } as unknown as ServerConfig),
         });
         const current = yield* Ref.make(relayEntry);
@@ -2882,6 +2887,7 @@ describe("EnvironmentSupervisor routes", () => {
           initiallyDesired: true,
           learnRoutes: ({ activeRoute, reported }) =>
             Effect.gen(function* () {
+              if (reported === undefined) return Option.none();
               yield* Deferred.succeed(discoveryStarted, undefined);
               const entry = yield* Ref.get(current);
               const routes = mergeLearnedRoutes({

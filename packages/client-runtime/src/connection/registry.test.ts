@@ -168,6 +168,7 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
     ) => Effect.Effect<ConnectionBlockedError | undefined>;
     readonly initialDisabled?: ReadonlyArray<EnvironmentId>;
     readonly directEndpoints?: ServerConfig["directEndpoints"];
+    readonly hostLabel?: string;
   },
 ) {
   const storedTargets = yield* Ref.make<ReadonlyArray<ConnectionTarget>>(initialTargets);
@@ -419,12 +420,15 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
               ? Effect.die(new Error("Config is not used by registry tests."))
               : Effect.succeed({ directEndpoints: options.directEndpoints } as ServerConfig),
           subscribeServerConfig: () =>
-            options?.directEndpoints === undefined
+            options?.directEndpoints === undefined && options?.hostLabel === undefined
               ? Stream.never
               : Stream.make({
                   version: 1 as const,
                   type: "snapshot" as const,
-                  config: { directEndpoints: options.directEndpoints } as ServerConfig,
+                  config: {
+                    directEndpoints: options.directEndpoints,
+                    environment: { label: options.hostLabel ?? target.label },
+                  } as ServerConfig,
                 }),
           ready: Effect.void,
           probe: Effect.void,
@@ -2320,6 +2324,80 @@ describe("EnvironmentRegistry routes", () => {
         });
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
+  );
+
+  it.effect("renames a T3 Connect environment and its learned routes after the host", () =>
+    Effect.gen(function* () {
+      const learnedId = `learned:${RELAY_TARGET.environmentId}:http://192.168.1.10:3773`;
+      const learned = new BearerConnectionTarget({
+        environmentId: RELAY_TARGET.environmentId,
+        label: RELAY_TARGET.label,
+        connectionId: learnedId,
+      });
+      const learnedProfile = new BearerConnectionProfile({
+        connectionId: learnedId,
+        environmentId: RELAY_TARGET.environmentId,
+        label: RELAY_TARGET.label,
+        httpBaseUrl: "http://192.168.1.10:3773/",
+        wsBaseUrl: "ws://192.168.1.10:3773/",
+        learned: true,
+        authorization: "t3-connect",
+      });
+      const harness = yield* makeHarness([learned, RELAY_TARGET], [learnedProfile], [], {
+        directEndpoints: [{ kind: "lan", httpBaseUrl: learnedProfile.httpBaseUrl }],
+        hostLabel: "DESKTOP-PC (alice)",
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* SubscriptionRef.changes(registry.entries).pipe(
+          Stream.filter(
+            (entries) =>
+              entries.get(RELAY_TARGET.environmentId)?.target.label === "DESKTOP-PC (alice)",
+          ),
+          Stream.runHead,
+        );
+        expect((yield* Ref.get(harness.storedTargets)).map((target) => target.label)).toEqual([
+          "DESKTOP-PC (alice)",
+          "DESKTOP-PC (alice)",
+        ]);
+        expect((yield* Ref.get(harness.storedProfiles)).get(learnedId)).toMatchObject({
+          label: "DESKTOP-PC (alice)",
+          learned: true,
+          authorization: "t3-connect",
+        });
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect(
+    "keeps the name of an environment paired by address when the host reports another",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness(
+          [LAN_TARGET, RELAY_TARGET],
+          [LAN_PROFILE],
+          [[LAN_TARGET.connectionId, BEARER_CREDENTIAL]],
+          {
+            directEndpoints: [{ kind: "lan", httpBaseUrl: LAN_PROFILE.httpBaseUrl }],
+            hostLabel: "DESKTOP-PC (alice)",
+          },
+        );
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.start;
+          yield* registry.stateChanges(RELAY_TARGET.environmentId).pipe(
+            Stream.filter((state) => state.phase === "connected"),
+            Stream.runHead,
+          );
+          yield* Effect.yieldNow;
+          expect((yield* Ref.get(harness.storedTargets)).map((target) => target.label)).toEqual([
+            RELAY_TARGET.label,
+            RELAY_TARGET.label,
+          ]);
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
   );
 
   it.effect("drops a learned route whose profile was not saved instead of duplicating it", () =>

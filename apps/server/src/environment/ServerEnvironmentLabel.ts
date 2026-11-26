@@ -219,6 +219,11 @@ export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironment
       const distro = normalizeLabel((yield* HostProcess.Environment).WSL_DISTRO_NAME);
       return distro ? `${hostname} WSL (${distro})` : `${hostname} WSL`;
     }
+    // Each Windows account runs its own environment under the one computer name.
+    if ((yield* HostProcess.Platform) === "win32") {
+      const username = normalizeLabel(yield* HostProcess.Username);
+      return username ? `${hostname} (${username})` : hostname;
+    }
     return hostname;
   }
 

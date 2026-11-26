@@ -53,6 +53,7 @@ import {
   findRouteToSameAddress,
   hasSavedBearerRoute,
   mergeLearnedRoutes,
+  relabelHostNamedRoutes,
   routesAfterRemoving,
   upsertRoute,
   type ReportedEndpoint,
@@ -933,7 +934,8 @@ export const make = Effect.gen(function* () {
   const learnRoutes = Effect.fn("EnvironmentRegistry.learnRoutes")(function* (input: {
     readonly environmentId: EnvironmentId;
     readonly activeRoute: ConnectionRoute;
-    readonly reported: ReadonlyArray<ReportedEndpoint>;
+    readonly reported: ReadonlyArray<ReportedEndpoint> | undefined;
+    readonly label: string;
   }) {
     return yield* withLeaseLock(
       input.environmentId,
@@ -943,12 +945,17 @@ export const make = Effect.gen(function* () {
         }
         const entry = (yield* SubscriptionRef.get(entries)).get(input.environmentId);
         if (entry === undefined) return Option.none<ConnectionCatalogEntry>();
-        const routes = mergeLearnedRoutes({
-          entry,
-          activeRoute: input.activeRoute,
-          reported: input.reported,
-          allowInsecure: allowInsecureRoutes,
-        });
+        const learned =
+          input.reported === undefined
+            ? null
+            : mergeLearnedRoutes({
+                entry,
+                activeRoute: input.activeRoute,
+                reported: input.reported,
+                allowInsecure: allowInsecureRoutes,
+              });
+        const routes =
+          relabelHostNamedRoutes(learned ?? connectionRoutes(entry), input.label) ?? learned;
         if (routes === null) return Option.none<ConnectionCatalogEntry>();
         const next = entryWithRoutes(entry, routes);
         const previousProfiles = new Map(
