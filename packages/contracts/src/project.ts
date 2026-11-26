@@ -122,6 +122,18 @@ const ProjectMonogramIcon = Schema.Struct({
   text: ProjectMonogramText,
   color: ProjectIconColor,
 });
+// File names on dashboardicons.com; clients build the CDN URL so state never carries one.
+const DashboardIconFile = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^\w[\w.-]*\.(?:svg|png|webp)$/),
+);
+export const ProjectDashboardIcon = Schema.Struct({
+  kind: Schema.Literal("dashboard-icon"),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  file: DashboardIconFile,
+  darkFile: Schema.optional(DashboardIconFile),
+});
+export type ProjectDashboardIcon = typeof ProjectDashboardIcon.Type;
 export const ProjectFaviconPath = TrimmedNonEmptyString.check(
   Schema.isMaxLength(1024),
   Schema.isPattern(/\.(?:avif|gif|icns|ico|jpe?g|png|svg|webp)$/i),
@@ -132,6 +144,7 @@ export const ProjectIconOverride = Schema.Union([
   ProjectLucideIcon,
   ProjectEmojiIcon,
   ProjectMonogramIcon,
+  ProjectDashboardIcon,
 ]);
 export type ProjectIconOverride = typeof ProjectIconOverride.Type;
 
@@ -144,6 +157,7 @@ const projectIconMembers = [
   ProjectLucideIconWithLegacyMonogram,
   ProjectEmojiIcon,
   ProjectMonogramIcon,
+  ProjectDashboardIcon,
 ] as const;
 type ProjectIconMember = (typeof projectIconMembers)[number]["Type"];
 

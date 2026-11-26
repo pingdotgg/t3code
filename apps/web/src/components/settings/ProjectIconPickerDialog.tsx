@@ -1,8 +1,15 @@
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { dashboardIconUrl } from "@t3tools/shared/dashboardIcons";
+import { AsyncResult } from "effect/reactivity";
 import { deriveProjectIdentity } from "../../projectIdentity";
 import { ProjectMonogram } from "../ProjectMonogram";
-import type { ProjectIconColor, ProjectIconOverride } from "@t3tools/contracts";
+import type {
+  ProjectDashboardIcon,
+  ProjectIconColor,
+  ProjectIconOverride,
+} from "@t3tools/contracts";
 import { T, useGT, useMessages } from "gt-react";
-import { createElement, useState } from "react";
+import { type ComponentProps, createElement, useState } from "react";
 import {
   filterProjectIconNames,
   firstEmoji,
@@ -13,6 +20,8 @@ import {
 } from "../../projectIconOptions";
 import { cn } from "~/lib/utils";
 import { lucideIconByName } from "../../lib/lucideIconByName";
+import { dashboardIconsAtom, findDashboardIcons } from "../../dashboardIcons";
+import { useRenderedAppearance } from "../../hooks/useTheme";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -28,6 +37,25 @@ import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 const DEFAULT_ICON = "folder-code";
+
+function PickerGridButton({
+  selected,
+  className,
+  ...props
+}: ComponentProps<"button"> & { readonly selected: boolean }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      className={cn(
+        "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        selected && "border-border bg-accent",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
 
 function PickerIcon({ name }: { name: string }) {
   const icon = lucideIconByName(name);
@@ -88,12 +116,15 @@ function ProjectIconPickerBody({
     current?.kind === "lucide" ? current.name : DEFAULT_ICON,
   );
   const [color, setColor] = useState<ProjectIconColor>(
-    current && current.kind !== "emoji" ? current.color : automatic.color,
+    current?.kind === "lucide" || current?.kind === "monogram" ? current.color : automatic.color,
   );
   const [letters, setLetters] = useState(
     current?.kind === "monogram" ? current.text : automatic.monogram,
   );
   const [emoji, setEmoji] = useState(current?.kind === "emoji" ? current.emoji : "💻");
+  const [dashboardIcon, setDashboardIcon] = useState<ProjectDashboardIcon | null>(
+    current?.kind === "dashboard-icon" ? current : null,
+  );
   const [query, setQuery] = useState("");
   const [customEmoji, setCustomEmoji] = useState("");
 
@@ -101,14 +132,18 @@ function ProjectIconPickerBody({
   const selectedColorClassName = projectIconColorClassName(color);
   const monogram = letters.normalize("NFKC").trim().toUpperCase();
   const validMonogram = isValidProjectMonogram(monogram);
+  const canSave =
+    mode === "monogram" ? validMonogram : mode === "dashboard-icon" ? dashboardIcon !== null : true;
   const save = () => {
-    if (mode === "monogram" && !validMonogram) return;
+    if (!canSave) return;
     onSelect(
       mode === "monogram"
         ? { kind: "monogram", text: monogram, color }
         : mode === "lucide"
           ? { kind: "lucide", name: iconName, color }
-          : { kind: "emoji", emoji },
+          : mode === "dashboard-icon" && dashboardIcon
+            ? dashboardIcon
+            : { kind: "emoji", emoji },
     );
     onClose();
   };
@@ -120,7 +155,7 @@ function ProjectIconPickerBody({
           <T>Choose project icon</T>
         </DialogTitle>
         <DialogDescription>
-          <T>Choose an icon, emoji, or monogram.</T>
+          <T>Choose an icon, emoji, monogram, or app logo.</T>
         </DialogDescription>
       </DialogHeader>
       <DialogPanel className="flex min-h-0 flex-col">
@@ -130,7 +165,15 @@ function ProjectIconPickerBody({
           value={[mode]}
           onValueChange={(next) => {
             const value = next[0];
-            if (value === "lucide" || value === "emoji" || value === "monogram") setMode(value);
+            if (
+              value === "lucide" ||
+              value === "emoji" ||
+              value === "monogram" ||
+              value === "dashboard-icon"
+            ) {
+              setMode(value);
+              setQuery("");
+            }
           }}
         >
           <Toggle value="lucide">
@@ -142,9 +185,12 @@ function ProjectIconPickerBody({
           <Toggle value="monogram">
             <T>Monogram</T>
           </Toggle>
+          <Toggle value="dashboard-icon">
+            <T context="tab listing app and service logos">Logos</T>
+          </Toggle>
         </ToggleGroup>
 
-        {mode !== "emoji" ? (
+        {mode === "lucide" || mode === "monogram" ? (
           <div>
             <div className="mb-2 text-xs font-medium text-muted-foreground">
               <T>Color</T>
@@ -169,15 +215,19 @@ function ProjectIconPickerBody({
           </div>
         ) : null}
 
-        {mode === "lucide" ? (
+        {mode === "lucide" || mode === "dashboard-icon" ? (
           <>
             {/* Native search inputs clear on Escape even during IME composition. */}
             <Input
               type="text"
               role="searchbox"
               value={query}
-              aria-label={gt("Search Lucide icons")}
-              placeholder={gt("Search all Lucide icons")}
+              aria-label={
+                mode === "lucide" ? gt("Search Lucide icons") : gt("Search dashboardicons.com")
+              }
+              placeholder={
+                mode === "lucide" ? gt("Search all Lucide icons") : gt("Search dashboardicons.com")
+              }
               onChange={(event) => setQuery(event.currentTarget.value)}
               onKeyDown={(event) => {
                 if (
@@ -195,32 +245,50 @@ function ProjectIconPickerBody({
                 sizes it because ScrollArea's own `size-full` beats a height class. */}
             <div className="h-64">
               <ScrollArea scrollFade>
-                {icons.length === 0 ? (
+                {mode === "dashboard-icon" ? (
+                  <DashboardIconGrid
+                    query={query}
+                    projectName={projectName}
+                    selected={dashboardIcon}
+                    onSelect={setDashboardIcon}
+                  />
+                ) : icons.length === 0 ? (
                   <p className="py-8 text-center text-sm text-muted-foreground">
                     <T>No icons found.</T>
                   </p>
                 ) : (
                   <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
                     {icons.map((name) => (
-                      <button
+                      <PickerGridButton
                         key={name}
-                        type="button"
                         aria-label={iconLabel(name)}
-                        aria-pressed={iconName === name}
-                        className={cn(
-                          "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                          iconName === name && "border-border bg-accent",
-                          selectedColorClassName,
-                        )}
+                        selected={iconName === name}
+                        className={selectedColorClassName}
                         onClick={() => setIconName(name)}
                       >
                         <PickerIcon name={name} />
-                      </button>
+                      </PickerGridButton>
                     ))}
                   </div>
                 )}
               </ScrollArea>
             </div>
+            {mode === "dashboard-icon" ? (
+              <p className="text-xs text-muted-foreground">
+                <T>
+                  Icons from{" "}
+                  <a
+                    className="underline"
+                    href="https://dashboardicons.com"
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    dashboardicons.com
+                  </a>
+                  . Brands belong to their owners.
+                </T>
+              </p>
+            ) : null}
           </>
         ) : mode === "monogram" ? (
           <div className="flex items-center gap-4 py-2">
@@ -251,19 +319,15 @@ function ProjectIconPickerBody({
             <ScrollArea scrollFade className="max-h-64">
               <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
                 {PROJECT_EMOJIS.map((option) => (
-                  <button
+                  <PickerGridButton
                     key={option.emoji}
-                    type="button"
                     aria-label={m(option.label)}
-                    aria-pressed={emoji === option.emoji}
-                    className={cn(
-                      "flex aspect-square items-center justify-center rounded-md border border-transparent text-xl outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      emoji === option.emoji && "border-border bg-accent",
-                    )}
+                    selected={emoji === option.emoji}
+                    className="text-xl"
                     onClick={() => setEmoji(option.emoji)}
                   >
                     {option.emoji}
-                  </button>
+                  </PickerGridButton>
                 ))}
               </div>
             </ScrollArea>
@@ -290,10 +354,99 @@ function ProjectIconPickerBody({
         <Button variant="outline" onClick={onClose}>
           <T>Cancel</T>
         </Button>
-        <Button onClick={save} disabled={mode === "monogram" && !validMonogram}>
+        <Button onClick={save} disabled={!canSave}>
           <T>Save icon</T>
         </Button>
       </DialogFooter>
+    </>
+  );
+}
+
+// Its own component so the catalog loads only once the Logos tab opens.
+function DashboardIconGrid({
+  query,
+  projectName,
+  selected,
+  onSelect,
+}: {
+  readonly query: string;
+  readonly projectName: string;
+  readonly selected: ProjectDashboardIcon | null;
+  readonly onSelect: (icon: ProjectDashboardIcon | null) => void;
+}) {
+  const appearance = useRenderedAppearance();
+  // Some catalog files fail on the CDN; hide them rather than show blank tiles.
+  const [failed, setFailed] = useState<ReadonlySet<string>>(() => new Set());
+  const result = useAtomValue(dashboardIconsAtom);
+  const retry = useAtomRefresh(dashboardIconsAtom);
+  const found = AsyncResult.isSuccess(result)
+    ? findDashboardIcons(result.value, query, projectName)
+    : [];
+  const icons = (
+    selected && !query.trim() && !found.some((icon) => icon.name === selected.name)
+      ? [selected, ...found]
+      : found
+  ).filter((icon) => !failed.has(dashboardIconUrl(icon, appearance)));
+
+  if (AsyncResult.isFailure(result)) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-8 text-center text-sm text-muted-foreground">
+        <p>
+          <T>Could not load dashboardicons.com.</T>
+        </p>
+        <Button size="sm" variant="outline" onClick={retry}>
+          <T>Try again</T>
+        </Button>
+      </div>
+    );
+  }
+  if (!AsyncResult.isSuccess(result)) {
+    return (
+      <p className="py-8 text-center text-sm text-muted-foreground" role="status">
+        <T>Loading icons…</T>
+      </p>
+    );
+  }
+  if (icons.length === 0) {
+    return (
+      <p className="py-8 text-center text-sm text-muted-foreground">
+        {query.trim() ? (
+          <T>No icons found.</T>
+        ) : (
+          <T>No suggestions for this project. Search for an app or service.</T>
+        )}
+      </p>
+    );
+  }
+  return (
+    <>
+      {query.trim() ? null : (
+        <div className="px-0.5 pb-1 text-xs font-medium text-muted-foreground">
+          <T context="heading for icons matched to the project name">Suggested</T>
+        </div>
+      )}
+      <div className="grid grid-cols-8 gap-1 p-0.5 sm:grid-cols-10">
+        {icons.map((icon) => (
+          <PickerGridButton
+            key={icon.name}
+            aria-label={icon.name}
+            selected={icon.name === selected?.name}
+            onClick={() => onSelect(icon)}
+          >
+            <img
+              src={dashboardIconUrl(icon, appearance)}
+              alt=""
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              className="size-6 object-contain"
+              onError={() => {
+                setFailed((current) => new Set(current).add(dashboardIconUrl(icon, appearance)));
+                if (icon.name === selected?.name) onSelect(null);
+              }}
+            />
+          </PickerGridButton>
+        ))}
+      </div>
     </>
   );
 }

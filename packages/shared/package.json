@@ -51,6 +51,10 @@
       "types": "./src/textDirection.ts",
       "import": "./src/textDirection.ts"
     },
+    "./dashboardIcons": {
+      "types": "./src/dashboardIcons.ts",
+      "import": "./src/dashboardIcons.ts"
+    },
     "./projectFavicon": {
       "types": "./src/projectFavicon.ts",
       "import": "./src/projectFavicon.ts"

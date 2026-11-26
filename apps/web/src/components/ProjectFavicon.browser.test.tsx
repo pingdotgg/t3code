@@ -9,6 +9,7 @@ import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 const state = vi.hoisted(() => ({
   favicon: undefined as Atom.Atom<string | null> | undefined,
   refresh: (() => {}) as () => void,
+  logoUrls: new Map<string, string>(),
 }));
 vi.mock(import("../state/assets"), () => ({
   projectFaviconUrlAtom: () => {
@@ -17,9 +18,13 @@ vi.mock(import("../state/assets"), () => ({
   },
   refreshProjectFaviconUrl: () => state.refresh(),
 }));
+vi.mock(import("@t3tools/shared/dashboardIcons"), () => ({
+  dashboardIconUrl: (icon) => state.logoUrls.get(icon.file) ?? `http://127.0.0.1:9/${icon.file}`,
+}));
 
 function setup() {
   state.refresh = () => {};
+  state.logoUrls.clear();
   const activeResources = new Set<string>();
   state.favicon = Atom.make((get) => {
     activeResources.add("favicon");
@@ -50,6 +55,8 @@ it("only activates the favicon resource after removing a custom icon", async () 
     await screen.rerender(view({ kind: "emoji", emoji: "🌱" }));
     expect(activeResources.size).toBe(0);
     await screen.rerender(view({ kind: "lucide", name: "leaf", color: "green" }));
+    expect(activeResources.size).toBe(0);
+    await screen.rerender(view({ kind: "dashboard-icon", name: "plex", file: "plex.svg" }));
     expect(activeResources.size).toBe(0);
     await screen.rerender(view(null));
     expect(activeResources.size).toBe(1);
@@ -120,6 +127,44 @@ it("asks for a new URL only once when the new URL fails too", async () => {
     });
     expect(refreshes).toBe(1);
   } finally {
+    registry.dispose();
+  }
+});
+
+it("drops a loaded logo when a newly picked logo fails", async () => {
+  setup();
+  const registry = AtomRegistry.make();
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>';
+  const plexUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  state.logoUrls.set("plex.svg", plexUrl);
+  const project: ProjectFaviconProject = {
+    environmentId: EnvironmentId.make("test"),
+    workspaceRoot: "/project",
+    title: "Project",
+    faviconPath: null,
+    projectIcon: { kind: "dashboard-icon", name: "plex", file: "plex.svg" },
+  };
+  const view = (file: string) => (
+    <RegistryContext value={registry}>
+      <ProjectFavicon
+        project={{ ...project, projectIcon: { kind: "dashboard-icon", name: file, file } }}
+      />
+    </RegistryContext>
+  );
+  try {
+    await using screen = await render(view("plex.svg"));
+    await expect
+      .poll(() => screen.container.querySelector("img:not(.hidden)")?.getAttribute("src"))
+      .toBe(plexUrl);
+    await screen.rerender(view("missing.svg"));
+    await vi.waitFor(() => {
+      const image = screen.container.querySelector<HTMLImageElement>('img[src$="missing.svg"]');
+      expect(image?.complete).toBe(true);
+    });
+    expect(screen.container.querySelector("img:not(.hidden)")).toBeNull();
+  } finally {
+    URL.revokeObjectURL(plexUrl);
     registry.dispose();
   }
 });

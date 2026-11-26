@@ -220,3 +220,20 @@ effectIt.effect("an icon kind from a newer server shows the default icon", () =>
     assert.strictEqual(broken._tag, "Failure");
   }),
 );
+
+effectIt.effect("dashboard icons store file names, never URLs or paths", () =>
+  Effect.gen(function* () {
+    const github = {
+      kind: "dashboard-icon",
+      name: "github",
+      file: "github.svg",
+      darkFile: "github-light.svg",
+    } as const;
+    assert.deepEqual(yield* decodeStoredIcon(github), github);
+    assert.deepEqual(yield* decodeReceivedIcon(github), github);
+    for (const file of ["https://evil.example/a.svg", "../secret.svg", "svg/github.svg", "a.gif"]) {
+      const exit = yield* Effect.exit(decodeStoredIcon({ ...github, file }));
+      assert.strictEqual(exit._tag, "Failure", file);
+    }
+  }),
+);

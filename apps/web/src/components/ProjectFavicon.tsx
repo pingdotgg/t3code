@@ -1,4 +1,6 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import type { ProjectDashboardIcon } from "@t3tools/contracts";
+import { dashboardIconUrl } from "@t3tools/shared/dashboardIcons";
 import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
@@ -8,6 +10,7 @@ import type { ComponentType } from "react";
 import { createElement, lazy, Suspense, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { projectFaviconUrlAtom, refreshProjectFaviconUrl } from "../state/assets";
+import { useRenderedAppearance } from "../hooks/useTheme";
 import { deriveProjectIdentity } from "../projectIdentity";
 import { projectIconColorClassName } from "../projectIconColors";
 import { ProjectMonogram } from "./ProjectMonogram";
@@ -56,6 +59,15 @@ export function ProjectFavicon(input: {
       />
     );
   }
+  if (project.projectIcon?.kind === "dashboard-icon") {
+    return (
+      <DashboardProjectIcon
+        icon={project.projectIcon}
+        projectName={project.title}
+        className={input.className}
+      />
+    );
+  }
   if (project.projectIcon?.kind === "lucide") {
     const colorClassName = projectIconColorClassName(project.projectIcon.color);
     const iconClassName = cn(
@@ -75,6 +87,28 @@ export function ProjectFavicon(input: {
     );
   }
   return <AutomaticProjectFavicon {...input} />;
+}
+
+function DashboardProjectIcon({
+  icon,
+  projectName,
+  className,
+}: {
+  readonly icon: ProjectDashboardIcon;
+  readonly projectName: string;
+  readonly className?: string | undefined;
+}) {
+  const src = dashboardIconUrl(icon, useRenderedAppearance());
+  return (
+    <ProjectFaviconImage
+      // A new pick resets a failed load; a theme switch keeps the shown logo until the other loads.
+      key={`${icon.file}:${icon.darkFile ?? ""}`}
+      src={src}
+      className={className}
+      fallbackIcon={FolderCodeIcon}
+      fallbackProjectName={projectName}
+    />
+  );
 }
 
 function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
@@ -162,7 +196,7 @@ function ProjectFaviconImage({
   readonly className?: string | undefined;
   readonly fallbackIcon: ComponentType<{ className?: string }>;
   readonly fallbackProjectName?: string | undefined;
-  readonly onRemoteLoadError: () => void;
+  readonly onRemoteLoadError?: () => void;
 }) {
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(() =>
     src.startsWith("data:image/") ? src : null,
@@ -174,7 +208,7 @@ function ProjectFaviconImage({
     setDisplayedSrc((currentSrc) => (currentSrc === failedSrc ? null : currentSrc));
     if (failedSrc.startsWith("data:") || refreshedAfterError) return;
     setRefreshedAfterError(true);
-    onRemoteLoadError();
+    onRemoteLoadError?.();
   };
 
   return (
@@ -190,6 +224,7 @@ function ProjectFaviconImage({
         <img
           src={displayedSrc}
           alt=""
+          referrerPolicy="no-referrer"
           className={cn("size-3.5 shrink-0 rounded-[25%] object-contain", className)}
           onError={() => handleLoadError(displayedSrc)}
         />
@@ -198,6 +233,7 @@ function ProjectFaviconImage({
         <img
           src={src}
           alt=""
+          referrerPolicy="no-referrer"
           className="hidden"
           onLoad={() => {
             setDisplayedSrc(src);
