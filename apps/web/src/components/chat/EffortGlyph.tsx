@@ -14,6 +14,8 @@ type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 // Max and Ultra sit above the bar scale. Default leaves the level to the agent.
 const NAMED_LEVELS = new Set(["ultracode", "max", "default", "ultra"]);
 const OFF_LEVELS = new Set(["off", "none"]);
+// Known ordinary levels from lowest to highest, used to spot a provider that lists them high to low.
+const RANKED_LEVELS = ["minimal", "low", "medium", "high", "xhigh"];
 // More bars than this no longer fit the glyph's height in whole pixels.
 const MAX_BARS = 7;
 
@@ -23,8 +25,9 @@ const MAX_BARS = 7;
  */
 export function resolveEffortGlyph(descriptor: SelectDescriptor, current: string | null) {
   const special = new Set([...(descriptor.promptInjectedValues ?? []), ...NAMED_LEVELS]);
-  const levels = descriptor.options.filter((option) => !special.has(option.id));
-  if (levels.length < 2 || levels.length > MAX_BARS || current === null) return null;
+  const advertised = descriptor.options.filter((option) => !special.has(option.id));
+  if (advertised.length < 2 || advertised.length > MAX_BARS || current === null) return null;
+  const levels = listsHighToLow(advertised) ? [...advertised].reverse() : advertised;
   const startsAtOff = OFF_LEVELS.has(levels[0]!.id);
   const count = startsAtOff ? levels.length - 1 : levels.length;
   if (special.has(current)) {
@@ -39,6 +42,15 @@ export function resolveEffortGlyph(descriptor: SelectDescriptor, current: string
     special: null,
     label: levels[index]!.label,
   };
+}
+
+/** True when the off level comes last, or the known levels fall from first to last. */
+function listsHighToLow(levels: SelectDescriptor["options"]) {
+  if (OFF_LEVELS.has(levels.at(-1)!.id) && !OFF_LEVELS.has(levels[0]!.id)) return true;
+  const ranks = levels
+    .map((option) => RANKED_LEVELS.indexOf(option.id))
+    .filter((rank) => rank >= 0);
+  return ranks.length >= 2 && ranks[0]! > ranks.at(-1)!;
 }
 
 /** Bar heights that rise by one whole-pixel step, from about half height up to `maxBar`. */
