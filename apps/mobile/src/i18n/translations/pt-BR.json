@@ -1,4 +1,5 @@
 {
+  "035aab5e99159bd8": "{count, plural, one {… {hidden} caractere do meio não é exibido.} other {… {hidden} caracteres do meio não são exibidos.}} O texto termina com:",
   "4bcfa3b976a421cf": "Chat paralelo",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread em {machine}",
@@ -4602,7 +4603,7 @@
   "55b562c00e37321b": "Não foi possível forçar a parada do agente",
   "ede15a83eedec569": "Turno parado; o agente ainda está encerrando",
   "f360accf1ccac178": "Turno parado; o processo do agente continuou em execução",
-  "967f83de030790dd": "{count, plural, =0 {Ele é compartilhado com outras threads em andamento. Pare-as para liberá-lo.} one {Ele é compartilhado com {count} thread em andamento. Pare-a para liberá-lo.} other {Ele é compartilhado com {count} threads em andamento. Pare-as para liberá-lo.}}",
+  "72e41eb83e88cefa": "{count, plural, =0 {Ele é compartilhado com outras threads em andamento. Pare-as para liberá-lo.} one {Ele é compartilhado com {count} thread em andamento. Pare-a para liberá-lo.} other {Ele é compartilhado com {count} threads em andamento. Pare-as para liberá-lo.}}",
   "5536ab75119ee3f9": "Não foi possível atualizar a thread",
   "04c7bba52daa6f53": "Não foi possível atualizar a meta",
   "f5f145b33e2a9380": "Parando...",
