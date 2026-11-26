@@ -72,35 +72,15 @@ test(
   async ({ app, browser, screen }) => {
     const origin = app.baseUrl ?? "";
     const environment = await runPromise(environmentId(origin));
+    // Read before anything changes, so a setup that fails part way is still rolled back.
     const before = await runPromise(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         // The home outlives an attempt; a retry must not see the last attempt's reads.
         yield* fs.remove(OP_CALLS, { force: true });
         const op = (yield* fs.exists(OP_BIN)) ? yield* fs.readFile(OP_BIN) : undefined;
-        yield* fs.writeFileString(
-          OP_BIN,
-          `#!/bin/sh\necho "$*" >> "${OP_CALLS}"\nprintf scenario-secret\n`,
-        );
-        yield* fs.chmod(OP_BIN, 0o755);
         const client = yield* rpcClient(T3_HOME, origin);
         const settings = yield* client["server.getSettings"]({});
-        yield* client["server.updateSettings"]({
-          patch: {
-            secretProviders: {
-              [PROVIDER]: {
-                kind: SecretProviderKind.make("one_password"),
-                label: "Scenario",
-                config: { account: "scenario" },
-              },
-            },
-            sourceControlHosts: {
-              github: {
-                tokens: { "github.com": { provider: PROVIDER, reference: UI_REFERENCE } },
-              },
-            },
-          },
-        });
         return {
           op,
           provider: settings.secretProviders[PROVIDER],
@@ -129,6 +109,34 @@ test(
         }).pipe(Effect.scoped),
       );
     try {
+      await runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.writeFileString(
+            OP_BIN,
+            `#!/bin/sh\necho "$*" >> "${OP_CALLS}"\nprintf scenario-secret\n`,
+          );
+          yield* fs.chmod(OP_BIN, 0o755);
+          const client = yield* rpcClient(T3_HOME, origin);
+          yield* client["server.updateSettings"]({
+            patch: {
+              secretProviders: {
+                [PROVIDER]: {
+                  kind: SecretProviderKind.make("one_password"),
+                  label: "Scenario",
+                  config: { account: "scenario" },
+                },
+              },
+              sourceControlHosts: {
+                github: {
+                  tokens: { "github.com": { provider: PROVIDER, reference: UI_REFERENCE } },
+                },
+              },
+            },
+          });
+        }).pipe(Effect.scoped),
+      );
+
       // The server is the boundary: ask it directly with the narrow session.
       const direct = await runPromise(narrowCheck(origin).pipe(Effect.scoped));
       const readByDirectCall = (await runPromise(opCalls)).includes(RPC_REFERENCE);
