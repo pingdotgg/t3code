@@ -1,3 +1,7 @@
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+
 import { maskMarkdownFrontmatter } from "./markdownFrontmatter.ts";
 
 // About one screen of rendered Markdown; parsing costs up to ~40 ms per KB with tables and math.
@@ -13,6 +17,7 @@ const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3
 // A column-0 paragraph, quote or table after a blank line closes any open list, quote or table.
 const BLOCK_START = /^[\p{L}\p{N}`[!|>]/u;
 const ORDERED_ITEM = /^\d{1,9}[.)](?:[ \t]|\r?$)/;
+const DISPLAY_MATH_OPEN = /^ {0,3}\$\$/;
 // CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
 const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<(?:script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
@@ -21,7 +26,7 @@ const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<\?/, /\?>/],
   [/^ {0,3}<!\[CDATA\[/, /\]\]>/],
   [/^ {0,3}<![A-Za-z]/, />/],
-  [/^ {0,3}\$\$/, /\$\$/],
+  [DISPLAY_MATH_OPEN, /\$\$/],
 ];
 
 // CommonMark type-6 block tags start an HTML block even with trailing text or across lines.
@@ -32,6 +37,10 @@ const HTML_STANDALONE_TAG =
   /^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ \t\r"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>|<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>)[ \t]*\r?$/;
 const BLANK_LINE = /^[ \t]*\r?$/;
 const closesAtBlankLine = (next: string) => BLANK_LINE.test(next);
+const flowParser = unified().use(remarkParse).use(remarkGfm).freeze();
+const HTML_FLOW_MAX_CHARS = 8 * 1024;
+// Parsing is far slower than the line scan, so a whole document shares one budget.
+const HTML_PARSE_BUDGET_CHARS = 16 * 1024;
 
 // A <details> or <table> wraps the Markdown between its tags, across the blank lines that end
 // each HTML block, so a cut waits until the ones an HTML block opened are closed.
@@ -59,8 +68,8 @@ function openedWrappers(line: string): number {
   return opened;
 }
 
-/** Returns how to recognize the end of a block that `line` opens, or null for none. */
-function blockCloser(line: string): ((line: string) => boolean) | null {
+/** Null means the block ends on this line. Undefined means no block opens. */
+function blockCloser(line: string): ((line: string) => boolean) | null | undefined {
   const fence = FENCE_OPEN.exec(line)?.[1];
   if (fence) {
     return (next) => {
@@ -80,8 +89,7 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
     if (opener === undefined) continue;
     return close.test(line.slice(opener.length)) ? null : (next) => close.test(next);
   }
-  // Other HTML blocks (CommonMark types 6 and 7) run until a blank line.
-  return HTML_BLOCK_TAG.test(line) || HTML_STANDALONE_TAG.test(line) ? closesAtBlankLine : null;
+  return HTML_BLOCK_TAG.test(line) ? closesAtBlankLine : undefined;
 }
 
 export interface MarkdownChunk {
@@ -97,30 +105,117 @@ const FRONTMATTER_MAX_LINES = 1000;
 const hasFrontmatterClose = (lines: readonly string[]) =>
   lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
 
-// A one-line link reference definition; footnotes are left alone so each piece does not grow
-// a footnote section.
-const LINK_DEFINITION =
-  /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|([^\s<]\S*))(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
+// Footnotes are left alone so each piece does not grow a footnote section.
+const LINK_DEFINITION_START = /^ {0,3}\[(?!\^)/;
+const LINK_LABEL_MAX_CHARS = 999;
+const LINK_TITLE_START = /^[ \t]*(["'(])/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
+const definitionParser = unified().use(remarkParse);
 
-function isLinkDefinition(line: string): boolean {
-  const match = LINK_DEFINITION.exec(line);
-  if (!match) return false;
-  const bareDestination = match[1];
-  if (bareDestination === undefined) return true;
-  let depth = 0;
-  for (let i = 0; i < bareDestination.length; i++) {
-    const ch = bareDestination[i];
-    if (ch === "\\") {
-      i++;
-    } else if (ch === "(") {
-      depth++;
-    } else if (ch === ")" && --depth < 0) {
-      return false;
+function hasDefinitionLabel(lines: readonly string[], start: number): boolean {
+  const opener = LINK_DEFINITION_START.exec(lines[start]!);
+  if (!opener) return false;
+
+  let column = opener[0].length;
+  let labelChars = 0;
+  for (let index = start; index < lines.length; index++) {
+    const line = lines[index]!;
+    if (BLANK_LINE.test(line)) return false;
+    const end = line.endsWith("\r") ? line.length - 1 : line.length;
+    for (; column < end && labelChars <= LINK_LABEL_MAX_CHARS; column++, labelChars++) {
+      const char = line[column];
+      if (char === "]") return line[column + 1] === ":";
+      if (char === "[") return false;
+      if (char === "\\" && /[\\[\]]/.test(line[column + 1] ?? "")) {
+        column++;
+        labelChars++;
+      }
+    }
+    if (labelChars > LINK_LABEL_MAX_CHARS) return false;
+    column = 0;
+  }
+  return false;
+}
+
+function endsDefinitionRun(line: string) {
+  // The preview treats display math as a block even when plain Remark would consume its opener.
+  return (
+    BLANK_LINE.test(line) ||
+    ATX_HEADING.test(line) ||
+    THEMATIC_BREAK.test(line) ||
+    FENCE_OPEN.test(line) ||
+    DISPLAY_MATH_OPEN.test(line)
+  );
+}
+
+function findTitleEnd(lines: readonly string[], start: number, opener: RegExpExecArray) {
+  const closer = opener[1] === "(" ? ")" : opener[1];
+  let column = opener[0].length;
+  for (let index = start; index < lines.length; index++) {
+    const line = lines[index]!;
+    if (endsDefinitionRun(line)) return;
+    for (; column < line.length; column++) {
+      const char = line[column];
+      if (char === closer) return BLANK_LINE.test(line.slice(column + 1)) ? index : undefined;
+      if (char === "\\" && (line[column + 1] === closer || line[column + 1] === "\\")) column++;
+    }
+    column = 0;
+  }
+}
+
+function readLinkDefinitions(lines: readonly string[], start: number) {
+  const definitions = new Map<number, { text?: string; end: number; identifier: string }>();
+  let chars = lines[start]!.length;
+  if (chars >= SHARED_DEFINITIONS_MAX_CHARS) return definitions;
+  let end = start + 1;
+  let capped = false;
+  for (; end < lines.length; end++) {
+    const line = lines[end]!;
+    if (endsDefinitionRun(line)) break;
+    chars += line.length + 1;
+    if (chars >= SHARED_DEFINITIONS_MAX_CHARS) {
+      capped = true;
+      break;
     }
   }
-  return depth === 0;
+
+  const text = lines.slice(start, end).join("\n");
+  let partialTitleStart: number | undefined;
+  for (const node of definitionParser.parse(text).children) {
+    if (node.type !== "definition" || !node.position) break;
+    const { start: from, end: to } = node.position;
+    const firstLine = start + from.line - 1;
+    if (!LINK_DEFINITION_START.test(lines[firstLine]!)) break;
+    const lastLine = start + to.line - 1;
+    definitions.set(firstLine, {
+      text: text.slice(from.offset, to.offset),
+      end: lastLine,
+      identifier: node.identifier,
+    });
+    partialTitleStart =
+      capped && node.title == null && LINK_TITLE_START.test(lines[lastLine + 1] ?? "")
+        ? firstLine
+        : undefined;
+  }
+  if (partialTitleStart !== undefined) {
+    // Retry at the candidate's label before looking beyond the batch limit.
+    if (partialTitleStart !== start) {
+      definitions.delete(partialTitleStart);
+    } else {
+      const titleStart = definitions.get(start)!.end + 1;
+      const opener = LINK_TITLE_START.exec(lines[titleStart]!)!;
+      const titleEnd = findTitleEnd(lines, titleStart, opener);
+      if (titleEnd !== undefined && titleEnd >= end) {
+        const full = definitionParser.parse(lines.slice(start, titleEnd + 1).join("\n"))
+          .children[0];
+        if (full?.type === "definition" && full.title != null) {
+          definitions.set(start, { end: titleEnd, identifier: full.identifier });
+        }
+      }
+    }
+  }
+  return definitions;
 }
 
 export interface SplitMarkdown {
@@ -137,12 +232,15 @@ export interface SplitMarkdown {
 export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): SplitMarkdown {
   const chunks: MarkdownChunk[] = [];
   const definitions: string[] = [];
+  const omittedDefinitions = new Set<string>();
   let lines: string[] = [];
   let first = true;
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
+  let ambiguousHtml = false;
   let afterBlankLine = false;
-  let afterDefinition = false;
+  let definitionEnd = -1;
+  let pendingDefinitions: ReturnType<typeof readLinkDefinitions> | undefined;
   let afterHeading = false;
   let openedFence = false;
   let definitionChars = 0;
@@ -155,33 +253,107 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     heldCut = 0;
   };
   const sourceLines = text.split("\n");
-  for (const line of sourceLines) {
+  let flowStart = 0;
+  let parsedThrough = 0;
+  let htmlStarts: Set<number> | undefined;
+  let parseBudget = HTML_PARSE_BUDGET_CHARS;
+  const resetFlow = (start: number) => {
+    flowStart = start;
+    parsedThrough = start;
+    htmlStarts = undefined;
+  };
+  for (const [lineIndex, line] of sourceLines.entries()) {
     if (closes !== null) {
-      if (closes(line)) closes = null;
+      if (closes(line)) {
+        closes = null;
+        resetFlow(lineIndex + 1);
+      }
     } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
       closes = (next) => {
         openedFence = FRONTMATTER_CLOSE.test(next);
         return openedFence;
       };
-    } else {
+    } else if (lineIndex > definitionEnd) {
       if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
       const cutPoint =
+        !ambiguousHtml &&
         chars >= targetChars &&
         ((line.startsWith("#") && ATX_HEADING.test(line)) ||
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
-      closes = blockCloser(line);
+      const closer = blockCloser(line);
+      closes = closer ?? null;
+      if (closer === null || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line)) {
+        resetFlow(lineIndex + 1);
+      } else if (closer === undefined && HTML_STANDALONE_TAG.test(line)) {
+        // Type-7 HTML cannot interrupt prose. Keep ambiguous tags beyond the parse
+        // budget with their following lines, as a cut could expose literal HTML as Markdown.
+        if (htmlStarts === undefined && lineIndex > flowStart) {
+          let end = flowStart;
+          let flowChars = 0;
+          const maxChars = Math.min(HTML_FLOW_MAX_CHARS, parseBudget);
+          for (; end < sourceLines.length; end++) {
+            const next = sourceLines[end]!;
+            flowChars += next.length + 1;
+            if (flowChars > maxChars || BLANK_LINE.test(next)) break;
+            // Include the boundary line, which can end a lazy container continuation.
+            if (
+              ATX_HEADING.test(next) ||
+              THEMATIC_BREAK.test(next) ||
+              blockCloser(next) !== undefined
+            ) {
+              end++;
+              break;
+            }
+          }
+          parsedThrough = end;
+          htmlStarts = new Set();
+          if (lineIndex < end) {
+            const flowText = sourceLines.slice(flowStart, end).join("\n");
+            parseBudget -= flowText.length;
+            const flow = flowParser.parse(flowText);
+            for (const node of flow.children) {
+              if (node.type === "html" && node.position) {
+                htmlStarts.add(flowStart + node.position.start.line - 1);
+              }
+            }
+          }
+        }
+        if (lineIndex === flowStart || htmlStarts?.has(lineIndex)) closes = closesAtBlankLine;
+        else if (lineIndex >= parsedThrough) ambiguousHtml = true;
+      }
       // Two or more spaces may put a fence in a list item, which this does not track.
       openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
-      const definition: boolean =
-        (first || afterBlankLine || afterDefinition || afterHeading) && isLinkDefinition(line);
-      afterDefinition = definition;
-      if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
-        definitions.push(line.trim());
-        definitionChars += line.length + 1;
+      if (
+        !ambiguousHtml &&
+        (first || afterBlankLine || lineIndex === definitionEnd + 1 || afterHeading)
+      ) {
+        let definition = pendingDefinitions?.get(lineIndex);
+        if (
+          !definition &&
+          definitionChars < SHARED_DEFINITIONS_MAX_CHARS &&
+          hasDefinitionLabel(sourceLines, lineIndex)
+        ) {
+          pendingDefinitions = readLinkDefinitions(sourceLines, lineIndex);
+          definition = pendingDefinitions.get(lineIndex);
+        }
+        if (definition) {
+          definitionEnd = definition.end;
+          if (!omittedDefinitions.has(definition.identifier)) {
+            if (
+              definition.text !== undefined &&
+              definitionChars + definition.text.length < SHARED_DEFINITIONS_MAX_CHARS
+            ) {
+              definitions.push(definition.text);
+              definitionChars += definition.text.length + 1;
+            } else {
+              omittedDefinitions.add(definition.identifier);
+            }
+          }
+        }
       }
     }
     if (closes === closesAtBlankLine)
@@ -198,6 +370,10 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       openWrappers = 0;
     }
     afterBlankLine = BLANK_LINE.test(line);
+    if (afterBlankLine) {
+      ambiguousHtml = false;
+      resetFlow(lineIndex + 1);
+    }
     afterHeading =
       closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
