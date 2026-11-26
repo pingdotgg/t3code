@@ -4520,38 +4520,32 @@ function claudeFileChangeText(output: ClaudeNativeToolOutput): string {
   return patch.hunks.length === 0 ? "" : formatPatch(patch, FILE_HEADERS_ONLY);
 }
 
+// Same bound as stored file-change diffs: the prompt is persisted and sent on every snapshot.
+const MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH = 32_768;
+
 // The approval card is shown before the tool result, so the diff has to come from the tool input.
 function claudeFileChangeApprovalPrompt(
   toolName: string,
   input: ClaudeNativeToolInput,
 ): string | undefined {
-  const path =
-    firstStringInputField(input, ["file_path", "notebook_path", "path", "filename", "fileName"]) ??
-    "file";
-  const diffText = (
-    oldFileName: string,
-    newFileName: string,
-    oldContent: string,
-    newContent: string,
-  ) => {
-    const patch = structuredPatch(oldFileName, newFileName, oldContent, newContent);
-    return patch.hunks.length === 0 ? undefined : formatPatch(patch, FILE_HEADERS_ONLY);
-  };
-  switch (classifyClaudeNativeTool(toolName).normalizedName) {
-    case "edit": {
-      const oldString = inputRecordValue(input, "old_string");
-      const newString = inputRecordValue(input, "new_string");
-      return typeof oldString === "string" && typeof newString === "string"
-        ? diffText(path, path, oldString, newString)
-        : undefined;
-    }
-    case "write": {
-      const content = inputRecordValue(input, "content");
-      return typeof content === "string" ? diffText("/dev/null", path, "", content) : undefined;
-    }
-    default:
-      return undefined;
+  const normalizedName = classifyClaudeNativeTool(toolName).normalizedName;
+  const oldString = normalizedName === "edit" ? inputRecordValue(input, "old_string") : "";
+  const newString = inputRecordValue(input, normalizedName === "edit" ? "new_string" : "content");
+  if (
+    (normalizedName !== "edit" && normalizedName !== "write") ||
+    typeof oldString !== "string" ||
+    typeof newString !== "string"
+  ) {
+    return undefined;
   }
+  // Write may replace an existing file, so its headers do not claim the file is new.
+  const path = firstStringInputField(input, ["file_path"]) ?? "file";
+  const patch = structuredPatch(path, path, oldString, newString);
+  if (patch.hunks.length === 0) return undefined;
+  const diff = formatPatch(patch, FILE_HEADERS_ONLY);
+  if (diff.length <= MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH) return diff;
+  const shown = withoutTrailingHighSurrogate(diff.slice(0, MAX_FILE_CHANGE_APPROVAL_PROMPT_LENGTH));
+  return `${shown}\n… ${(diff.length - shown.length).toLocaleString("en-US")} more characters of the diff are not shown`;
 }
 
 function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
