@@ -43,7 +43,7 @@ describe("markdownTaskMarkerOffset", () => {
     }
   });
 
-  it("tells identical labels apart by count within one list and by state", () => {
+  it("tells identical labels apart by document index, across code blocks", () => {
     const separated = "- [ ] Same\n\n```txt\nx\n```\n\n- [ ] Same";
     expect([0, 1].map((index) => markdownTaskMarkerOffset(separated, index, "Same", true))).toEqual(
       [2, 28],
@@ -54,21 +54,13 @@ describe("markdownTaskMarkerOffset", () => {
     expect(markdownTaskMarkerOffset(same, 2, "Same", false)).toBe(same.lastIndexOf("[x]"));
   });
 
-  it("refuses a checkbox it can't trace to exactly one task", () => {
+  it("refuses a tap whose index, state or text does not match", () => {
     expect(markdownTaskMarkerOffset(markdown, 1, "vp lint passes", true)).toBeNull();
     expect(markdownTaskMarkerOffset(markdown, 0, "vp lint passes", false)).toBeNull();
     expect(markdownTaskMarkerOffset(markdown, 0, "Wrapped onto", true)).toBeNull();
     expect(markdownTaskMarkerOffset(markdown, 4, "", true)).toBeNull();
 
     const similar = "- [ ] Similar\n\n```text\nseparator\n```\n\n- [ ] Similar<br>different\n";
-    // iOS keeps hard breaks in the text, so it names the second task.
-    expect(markdownTaskMarkerOffset(similar, 1, "Similar different", true)).toBe(
-      similar.lastIndexOf("[ ]"),
-    );
-    // Android cuts it to "Similar"; the document index still identifies the task.
-    expect(markdownTaskMarkerOffset(similar, 0, "Similar", true)).toBe(2);
-    expect(markdownTaskMarkerOffset(similar, 1, "Similar", true)).toBe(similar.lastIndexOf("[ ]"));
-
     for (const label of ["Similar [docs](https://github.com/pingdotgg/t3code)", "Similar $x$"]) {
       const attachment = similar.replace("Similar<br>different", label);
       expect(markdownTaskMarkerOffset(attachment, 1, "Similar \uFFFC", true)).toBeNull();

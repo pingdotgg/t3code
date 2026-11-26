@@ -28,7 +28,8 @@ function renderedTexts(item: ListItem): string[] {
 }
 
 /**
- * Marker offset at the native document task index, if its text and state match the tap.
+ * Marker offset of the task at the native renderer's document-wide task index, or null unless its
+ * text and pre-tap state match the tap.
  */
 export function markdownTaskMarkerOffset(
   markdown: string,
@@ -43,14 +44,11 @@ export function markdownTaskMarkerOffset(
     if (node.type === "listItem" && typeof node.checked === "boolean") tasks.push(node);
     if ("children" in node) node.children.forEach(collect);
   };
-  for (const block of parser.parse(markdown).children) {
-    collect(block);
-  }
-  const rendered = lettersAndDigits(renderedText);
-  const matches = tasks.filter(
-    (task, position) =>
-      task.checked === !checked && position === index && renderedTexts(task).includes(rendered),
-  );
-  const start = matches.length === 1 ? matches[0]?.position?.start.offset : undefined;
+  collect(parser.parse(markdown));
+  const task = tasks[index];
+  const start =
+    task?.checked === !checked && renderedTexts(task).includes(lettersAndDigits(renderedText))
+      ? task.position?.start.offset
+      : undefined;
   return start === undefined ? null : taskListMarkerOffset(markdown, start);
 }
