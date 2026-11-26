@@ -1023,7 +1023,14 @@ function insightSource(text: string, options: RenderOptions): InsightSource | nu
       tree,
       marker,
       toOriginal: (offset) => {
-        const line = offsets.findLast((entry) => entry.source <= offset) ?? offsets[0]!;
+        let low = 0;
+        let high = offsets.length - 1;
+        while (low < high) {
+          const mid = (low + high + 1) >>> 1;
+          if (offsets[mid]!.source <= offset) low = mid;
+          else high = mid - 1;
+        }
+        const line = offsets[low]!;
         return (
           line.original + Math.min(Math.max(offset - line.source - line.delta, 0), line.length)
         );

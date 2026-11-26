@@ -267,14 +267,27 @@ describe("wordsHast", () => {
       '<ul dir="ltr">\n<li>x\n<pre><code>★ Insight ─────\n</code></pre>\n</li>\n</ul>\n<div dir="ltr">\n★ Insight ─────\n</div>\n<blockquote dir="ltr">\n<p>q\n★ Insight ─────</p>\n</blockquote>',
     );
     // What follows an opening keeps its offsets in the message, which components slice.
-    const insight = "★ Insight ─────\nSee [a](./a.ts)\n```sh\nls\n```\n─────";
+    const insight =
+      "[x](./x.ts)\n\n★ Insight ─────\nSee [a](./a.ts)\n```sh\nls\n```\n─────\n\n[y](./y.ts)\n\n★ Insight ─────\n[z](./z.ts)\n─────";
     const tree = wordsHast(insight, { ...ASSISTANT, insights: true });
-    const quote = tree.children.find((child): child is Element => child.type === "element")!;
-    const sliced = (node: Element) =>
-      insight.slice(node.position!.start.offset, node.position!.end.offset);
-    const [paragraph, pre] = quote.children.filter((child) => child.type === "element");
-    const link = paragraph!.children.find((child): child is Element => child.type === "element")!;
-    expect([sliced(link), sliced(pre!)]).toEqual(["[a](./a.ts)", "```sh\nls\n```"]);
+    const sliced: string[] = [];
+    const visit = (node: Root | Element) => {
+      for (const child of node.children) {
+        if (child.type !== "element") continue;
+        if (child.tagName === "a" || child.tagName === "pre") {
+          sliced.push(insight.slice(child.position!.start.offset, child.position!.end.offset));
+        }
+        visit(child);
+      }
+    };
+    visit(tree);
+    expect(sliced).toEqual([
+      "[x](./x.ts)",
+      "[a](./a.ts)",
+      "```sh\nls\n```",
+      "[y](./y.ts)",
+      "[z](./z.ts)",
+    ]);
   });
 
   it("shows raw HTML as its text when asked", () => {
