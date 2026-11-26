@@ -522,8 +522,7 @@ export const pullRequestDiffStatKey = (row: {
   readonly projectId: string;
   readonly repository: string;
   readonly number: number;
-}) =>
-  `${row.environmentId}\u0000${row.projectId}\u0000${row.repository.trim().toLowerCase()}\u0000${row.number}`;
+}) => `${row.environmentId} ${row.projectId} ${row.repository.toLowerCase()} ${row.number}`;
 
 export interface MergedPullRequestList {
   readonly viewers: PullRequestViewers;

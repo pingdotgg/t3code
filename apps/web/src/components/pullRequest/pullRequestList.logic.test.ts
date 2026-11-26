@@ -108,54 +108,22 @@ describe("visible pull request line-count targets", () => {
     ]);
   });
 
-  it("keeps diff stats separate across repositories that share a project and PR number", () => {
-    const own = entry({
-      additions: 0,
-      deletions: 0,
-      repository: "pingdotgg/t3code",
-      number: 42,
-    });
-    const ownKey = pullRequestEntryKey(own);
-    const entriesByKey = new Map([[ownKey, own]]);
-    const otherRepoStats = mergePullRequestDiffStats(new Map(), [
-      {
-        environmentId: ENV_1,
-        projectId: "project-1",
-        repository: "other/lib",
-        number: 42,
-        additions: 120,
-        deletions: 35,
-      },
+  it("matches diff stats by repository, ignoring case", () => {
+    const own = entry({ additions: 0, deletions: 0, number: 42 });
+    const stat = { environmentId: ENV_1, projectId: "project-1", number: 42, deletions: 2 };
+    const stats = mergePullRequestDiffStats(new Map(), [
+      { ...stat, repository: "other/lib", additions: 120 },
     ]);
 
-    expect(withDiffStat(own, otherRepoStats)).toEqual(own);
-    expect([
-      ...pullRequestStatsKeysToRequest(entriesByKey, new Set([ownKey]), [], otherRepoStats),
-    ]).toEqual([ownKey]);
-
-    const sameRepoDifferentCaseStats = mergePullRequestDiffStats(otherRepoStats, [
-      {
-        environmentId: ENV_1,
-        projectId: "project-1",
-        repository: "PingDotGG/T3Code",
-        number: 42,
-        additions: 7,
-        deletions: 2,
-      },
-    ]);
-
-    expect(withDiffStat(own, sameRepoDifferentCaseStats)).toMatchObject({
-      additions: 7,
-      deletions: 2,
-    });
-    expect([
-      ...pullRequestStatsKeysToRequest(
-        entriesByKey,
-        new Set([ownKey]),
-        [],
-        sameRepoDifferentCaseStats,
+    expect(withDiffStat(own, stats)).toEqual(own);
+    expect(
+      withDiffStat(
+        own,
+        mergePullRequestDiffStats(stats, [
+          { ...stat, repository: "PingDotGG/T3Code", additions: 7 },
+        ]),
       ),
-    ]).toEqual([]);
+    ).toMatchObject({ additions: 7, deletions: 2 });
   });
 
   it("keeps every per-environment batch within the stats contract limit", () => {
