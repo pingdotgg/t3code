@@ -1,3 +1,4 @@
+import { applyProviderSessionEnvironmentOverride } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as DocumentText from "../../provider/DocumentText.ts";
 import {
   compactDynamicToolOutput,
@@ -6428,7 +6429,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const sessionEnvironment: NodeJS.ProcessEnv =
           input.sessionEnvironmentOverride !== undefined &&
           Object.keys(input.sessionEnvironmentOverride).length > 0
-            ? { ...adapterOptions.environment, ...input.sessionEnvironmentOverride }
+            ? applyProviderSessionEnvironmentOverride(
+                adapterOptions.environment,
+                input.sessionEnvironmentOverride,
+              )
             : adapterOptions.environment;
         const session = providerSession({
           providerSessionId: input.providerSessionId,

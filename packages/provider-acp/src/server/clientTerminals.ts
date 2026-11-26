@@ -14,6 +14,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
 import { ProcessSandbox, sanitizeHostEnvForSandboxLaunch } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { stripTeamGitHubAmbientEnv } from "@t3tools/provider-core/server/instanceEnvironment";
 import { gitForWindowsBash, SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 const MAX_LIVE_TERMINALS = 16;
@@ -249,7 +250,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
             );
           }
           // Thread credentials and identity must come from the requesting session.
-          const inheritedEnvironment = Object.fromEntries(
+          const inheritedEnvironment: NodeJS.ProcessEnv = Object.fromEntries(
             Object.entries(options.environment ?? (yield* HostProcess.Environment)).filter(
               ([name]) =>
                 !name.toUpperCase().startsWith("T3_ACP_MCP_") &&
@@ -257,6 +258,13 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
             ),
           );
           const sessionEnvironment = options.environmentForSession?.(request.sessionId);
+          if (sessionEnvironment !== undefined) {
+            stripTeamGitHubAmbientEnv(
+              inheritedEnvironment,
+              sessionEnvironment as Readonly<Record<string, string>>,
+              true,
+            );
+          }
           const environment = mergeEnvironments(isWindows, [
             Object.entries(inheritedEnvironment),
             Object.entries(sessionEnvironment ?? {}),

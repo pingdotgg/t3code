@@ -28,7 +28,10 @@ import {
   makeFxAcpRuntime,
   withFxSessionMode,
 } from "./acpSupport.ts";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  applyProviderSessionEnvironmentOverride,
+  mergeProviderInstanceEnvironment,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -201,7 +204,10 @@ function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor
       makeFxAcpRuntime({
         ...input,
         fxSettings: options.settings,
-        environment: { ...options.environment, ...processEnvironment },
+        environment: applyProviderSessionEnvironmentOverride(
+          options.environment,
+          processEnvironment,
+        ),
       }));
   // A runtime serves one folder; "Default" resolves there.
   const runtimeCwds = new WeakMap<AcpSessionRuntime.AcpSessionRuntime["Service"], string>();

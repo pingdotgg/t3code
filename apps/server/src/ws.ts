@@ -2338,6 +2338,32 @@ export const layerWsRpc = (
                     command: normalizedCommand,
                   });
                 let preparedThreadId: ThreadId | null = null;
+                let supersededActiveRunId: string | undefined;
+                if (
+                  Option.isSome(projectionStoreOption) &&
+                  (effectiveCommand.type === "queued-run.start" ||
+                    (effectiveCommand.type === "message.dispatch" &&
+                      (effectiveCommand.dispatchMode.type === "steer_active" ||
+                        effectiveCommand.dispatchMode.type === "restart_active" ||
+                        effectiveCommand.deliveryIntent === "steer" ||
+                        effectiveCommand.deliveryIntent === "restart")))
+                ) {
+                  if (
+                    effectiveCommand.type === "message.dispatch" &&
+                    effectiveCommand.dispatchMode.type === "steer_active"
+                  ) {
+                    supersededActiveRunId = effectiveCommand.dispatchMode.targetRunId;
+                  } else {
+                    const preRecords = yield* projectionStoreOption.value
+                      .getThreadRecords(effectiveCommand.threadId, ["runs"])
+                      .pipe(Effect.orElseSucceed(() => null));
+                    const activeRun = preRecords?.runs.findLast(
+                      (candidate) =>
+                        candidate.status === "running" || candidate.status === "starting",
+                    );
+                    supersededActiveRunId = activeRun?.id;
+                  }
+                }
                 return yield* Effect.gen(function* () {
                   preparedThreadId = yield* prepareTeamDispatchAttribution(
                     teamService,
@@ -2411,7 +2437,34 @@ export const layerWsRpc = (
                                       runId: effectiveCommand.targetRunId,
                                       reason: "promote_to_steer",
                                     })
-                                  : Effect.void,
+                                  : effectiveCommand.type === "queued-run.start"
+                                    ? teamService.notifyTurnInterrupted({
+                                        actor: { kind: "session", sessionId: currentSessionId },
+                                        threadId: effectiveCommand.threadId,
+                                        ...(supersededActiveRunId === undefined
+                                          ? {}
+                                          : { runId: supersededActiveRunId }),
+                                        reason: "promote_to_steer",
+                                      })
+                                    : effectiveCommand.type === "message.dispatch" &&
+                                        (effectiveCommand.dispatchMode.type === "steer_active" ||
+                                          effectiveCommand.dispatchMode.type === "restart_active" ||
+                                          effectiveCommand.deliveryIntent === "steer" ||
+                                          effectiveCommand.deliveryIntent === "restart")
+                                      ? teamService.notifyTurnInterrupted({
+                                          actor: { kind: "session", sessionId: currentSessionId },
+                                          threadId: effectiveCommand.threadId,
+                                          ...(supersededActiveRunId === undefined
+                                            ? {}
+                                            : { runId: supersededActiveRunId }),
+                                          reason:
+                                            effectiveCommand.dispatchMode.type ===
+                                              "restart_active" ||
+                                            effectiveCommand.deliveryIntent === "restart"
+                                              ? "interrupt"
+                                              : "promote_to_steer",
+                                        })
+                                      : Effect.void,
                           ),
                           Effect.andThen(recordClientCommandAnalytics(effectiveCommand)),
                         ),

@@ -19,6 +19,8 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   type RunId,
+  type TeamGitHubIdentity,
+  type TeamGitHubTurnAuthorKind,
   type TeamMemberId,
   ThreadId,
   type OrchestrationV2TurnItem,
@@ -84,7 +86,9 @@ import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
 } from "@t3tools/provider-core/server/subagentProjection";
+import * as TeamGitHubBroker from "../team/TeamGitHubBroker.ts";
 import * as TeamProviderManager from "../team/TeamProviderManager.ts";
+import * as TeamService from "../team/TeamService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -264,6 +268,16 @@ export interface ProviderSessionManagerV2Shape {
     readonly initialProviderItemIdentityVersion?: 2;
     /** Team member whose turn is opening this session; author changes recycle warm sessions and rotate MCP tokens. */
     readonly actingMemberId?: TeamMemberId | null;
+    /** Attached remote environment GitHub forwarding context (used when running on a non-Team-Server runner bound to a Team Server). */
+    readonly teamGitHubRemoteContext?: {
+      readonly authorKind?: TeamGitHubTurnAuthorKind;
+      readonly identityOverride:
+        | (Pick<TeamGitHubIdentity, "githubLogin" | "githubName" | "githubEmail"> & {
+            readonly apiBaseUrl?: string;
+          })
+        | null;
+      readonly identityKey: string;
+    };
   }) => Effect.Effect<
     ProviderAdapter.ProviderAdapterV2SessionRuntime,
     ProviderSessionManagerV2Error
@@ -361,6 +375,8 @@ interface LiveSessionEntry {
   readonly actingMemberIdByThread: ReadonlyMap<ThreadId, TeamMemberId | null>;
   /** Tracks the workspace cwd this live process was opened in (used for bwrap recycle on cwd switch). */
   readonly openedCwd: string | null;
+  /** Tracks remote team GitHub identity revision for warm-session recycle on attached remote runners. */
+  readonly remoteGitHubIdentityKey: string | null;
   readonly supportsMultipleProviderThreads: boolean;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
@@ -605,20 +621,23 @@ export const layerWithOptions = (
       const teamProviderManagerOption = yield* Effect.serviceOption(
         TeamProviderManager.TeamProviderManager,
       );
+      const teamGitHubBrokerOption = yield* Effect.serviceOption(TeamGitHubBroker.TeamGitHubBroker);
+      const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
       const activeSessionIdByThread = yield* Ref.make(new Map<ThreadId, ProviderSessionId>());
       const MEMBER_SESSION_SEPARATOR = "::member:";
       const SANDBOX_THREAD_SESSION_SEPARATOR = "::bwrap-thread:";
+      const AUTOMATION_SESSION_SUFFIX = "::automation";
+      const GHGEN_SESSION_SEPARATOR = "::ghgen:";
       const canonicalBaseSessionId = (id: ProviderSessionId): ProviderSessionId => {
         const raw = String(id);
-        const memberIdx = raw.indexOf(MEMBER_SESSION_SEPARATOR);
-        const sandboxIdx = raw.indexOf(SANDBOX_THREAD_SESSION_SEPARATOR);
-        const cutIdx =
-          memberIdx === -1
-            ? sandboxIdx
-            : sandboxIdx === -1
-              ? memberIdx
-              : Math.min(memberIdx, sandboxIdx);
-        return cutIdx === -1 ? id : ProviderSessionId.make(raw.slice(0, cutIdx));
+        const candidates = [
+          raw.indexOf(MEMBER_SESSION_SEPARATOR),
+          raw.indexOf(SANDBOX_THREAD_SESSION_SEPARATOR),
+          raw.indexOf(AUTOMATION_SESSION_SUFFIX),
+          raw.indexOf(GHGEN_SESSION_SEPARATOR),
+        ].filter((idx) => idx !== -1);
+        if (candidates.length === 0) return id;
+        return ProviderSessionId.make(raw.slice(0, Math.min(...candidates)));
       };
       const memberScopedSessionId = (
         base: ProviderSessionId,
@@ -634,6 +653,21 @@ export const layerWithOptions = (
         ProviderSessionId.make(
           `${canonicalBaseSessionId(base)}${SANDBOX_THREAD_SESSION_SEPARATOR}${threadId}`,
         );
+      const automationScopedSessionId = (base: ProviderSessionId): ProviderSessionId =>
+        ProviderSessionId.make(`${canonicalBaseSessionId(base)}${AUTOMATION_SESSION_SUFFIX}`);
+      const isDerivedSessionId = (canonicalBase: ProviderSessionId, candidate: string): boolean => {
+        const baseStr = String(canonicalBase);
+        return (
+          candidate === baseStr ||
+          candidate.startsWith(`${baseStr}${MEMBER_SESSION_SEPARATOR}`) ||
+          candidate.startsWith(`${baseStr}${SANDBOX_THREAD_SESSION_SEPARATOR}`) ||
+          candidate === `${baseStr}${AUTOMATION_SESSION_SUFFIX}` ||
+          candidate.startsWith(
+            `${baseStr}${AUTOMATION_SESSION_SUFFIX}${GHGEN_SESSION_SEPARATOR}`,
+          ) ||
+          candidate.startsWith(`${baseStr}${GHGEN_SESSION_SEPARATOR}`)
+        );
+      };
       const resolveThreadSessionId = (
         byThread: ReadonlyMap<ThreadId, ProviderSessionId>,
         base: ProviderSessionId,
@@ -642,9 +676,7 @@ export const layerWithOptions = (
         const canonicalBase = canonicalBaseSessionId(base);
         const activeForThread = byThread.get(threadId);
         return activeForThread !== undefined &&
-          (activeForThread === canonicalBase ||
-            activeForThread.startsWith(`${canonicalBase}${MEMBER_SESSION_SEPARATOR}`) ||
-            activeForThread.startsWith(`${canonicalBase}${SANDBOX_THREAD_SESSION_SEPARATOR}`))
+          isDerivedSessionId(canonicalBase, String(activeForThread))
           ? activeForThread
           : base;
       };
@@ -652,12 +684,10 @@ export const layerWithOptions = (
         current: ReadonlyMap<string, LiveSessionEntry>,
         base: ProviderSessionId,
       ): ReadonlyArray<ProviderSessionId> => {
-        const baseKey = sessionKey(canonicalBaseSessionId(base));
-        const memberPrefix = `${baseKey}${MEMBER_SESSION_SEPARATOR}`;
-        const sandboxPrefix = `${baseKey}${SANDBOX_THREAD_SESSION_SEPARATOR}`;
+        const canonicalBase = canonicalBaseSessionId(base);
         const matched: Array<ProviderSessionId> = [];
         for (const [key, entry] of current) {
-          if (key === baseKey || key.startsWith(memberPrefix) || key.startsWith(sandboxPrefix)) {
+          if (isDerivedSessionId(canonicalBase, key)) {
             matched.push(entry.runtime.providerSessionId);
           }
         }
@@ -1739,6 +1769,13 @@ export const layerWithOptions = (
                       },
                       { discard: true },
                     ).pipe(
+                      Effect.andThen(() =>
+                        Option.isSome(teamGitHubBrokerOption)
+                          ? teamGitHubBrokerOption.value
+                              .revokeSessionChannel(entry.runtime.providerSessionId)
+                              .pipe(Effect.ignore)
+                          : Effect.void,
+                      ),
                       Effect.andThen(() => {
                         const instanceId = entry.runtime.providerSession.providerInstanceId;
                         if (
@@ -1995,7 +2032,18 @@ export const layerWithOptions = (
             actingMemberIdByThread,
           });
           return updated;
-        });
+        }).pipe(
+          Effect.andThen(
+            Option.isSome(teamGitHubBrokerOption)
+              ? teamGitHubBrokerOption.value
+                  .detachThreadFromSessionChannel({
+                    providerSessionId: input.providerSessionId,
+                    threadId: input.threadId,
+                  })
+                  .pipe(Effect.ignore)
+              : Effect.void,
+          ),
+        );
 
       const isProviderThreadLoaded = (input: {
         readonly providerSessionId: ProviderSessionId;
@@ -2092,6 +2140,14 @@ export const layerWithOptions = (
               Effect.uninterruptible,
             );
             if (attached !== undefined) {
+              if (Option.isSome(teamGitHubBrokerOption)) {
+                yield* teamGitHubBrokerOption.value
+                  .attachThreadToSessionChannel({
+                    providerSessionId: input.providerSessionId,
+                    threadId: input.threadId,
+                  })
+                  .pipe(Effect.ignore);
+              }
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.providerInstanceId,
@@ -3463,10 +3519,50 @@ export const layerWithOptions = (
               // Recycle warm provider sessions whenever the acting team member changes between turns
               // so the child process restarts with a rotated MCP token bound to the new author.
               const liveAfterLinks = (yield* Ref.get(sessions)).get(sessionKey(previousSessionId));
-              if (liveAfterLinks !== undefined && input.actingMemberId !== undefined) {
+              const teamConfiguredForSession =
+                Option.isSome(teamServiceOption) &&
+                (yield* teamServiceOption.value.isTeamConfigured());
+              const nextAuthor = input.actingMemberId ?? null;
+              const nextRemoteIdentityKey = input.teamGitHubRemoteContext?.identityKey ?? null;
+              const currentGitHubGen =
+                teamConfiguredForSession && Option.isSome(teamGitHubBrokerOption)
+                  ? yield* teamGitHubBrokerOption.value
+                      .getCredentialGeneration({
+                        authorKind: nextAuthor !== null ? "member" : "team_automation",
+                        authorMemberId: nextAuthor,
+                      })
+                      .pipe(Effect.orElseSucceed(() => 0))
+                  : 0;
+              const isStaleGitHubSession = Effect.fn("ProviderSessionManager.isStaleGitHubSession")(
+                function* (
+                  candidateSessionId: ProviderSessionId,
+                  candidateEntry: LiveSessionEntry,
+                ) {
+                  if (candidateEntry.remoteGitHubIdentityKey !== nextRemoteIdentityKey) {
+                    return true;
+                  }
+                  if (teamConfiguredForSession && Option.isSome(teamGitHubBrokerOption)) {
+                    const sessionGen = yield* teamGitHubBrokerOption.value
+                      .getSessionCredentialGeneration(candidateSessionId)
+                      .pipe(Effect.orElseSucceed(() => null));
+                    if (sessionGen !== null && sessionGen !== currentGitHubGen) {
+                      return true;
+                    }
+                  }
+                  return false;
+                },
+              );
+              if (liveAfterLinks !== undefined) {
                 const previousAuthor = liveAfterLinks.actingMemberIdByThread.get(input.threadId);
-                const nextAuthor = input.actingMemberId ?? null;
-                if (previousAuthor !== undefined && previousAuthor !== nextAuthor) {
+                const authorSwitched =
+                  previousAuthor !== undefined &&
+                  previousAuthor !== nextAuthor &&
+                  (input.actingMemberId !== undefined || teamConfiguredForSession);
+                const githubCredentialRotated = yield* isStaleGitHubSession(
+                  previousSessionId,
+                  liveAfterLinks,
+                );
+                if (authorSwitched || githubCredentialRotated) {
                   if (
                     !liveAfterLinks.supportsMultipleProviderThreads ||
                     (liveAfterLinks.busyTurns.size === 0 &&
@@ -3475,8 +3571,9 @@ export const layerWithOptions = (
                     yield* releaseEntry({
                       providerSessionId: previousSessionId,
                       reason: "manual_shutdown",
-                      detail:
-                        "Turn author changed; recycling warm provider session with rotated MCP token.",
+                      detail: authorSwitched
+                        ? "Turn author changed; recycling warm provider session with rotated MCP and GitHub credentials."
+                        : "GitHub credential updated; recycling warm provider session.",
                       preserveTeamEphemeralTokens: true,
                     }).pipe(logReleaseFailure(previousSessionId));
                   } else {
@@ -3505,27 +3602,56 @@ export const layerWithOptions = (
                 [...entry.actingMemberIdByThread.values()].some(
                   (existingMember) => existingMember !== member,
                 );
-              const memberSessionId =
-                input.actingMemberId !== undefined && input.actingMemberId !== null
-                  ? memberScopedSessionId(baseSessionId, input.actingMemberId)
-                  : undefined;
-              const existingMemberEntry =
-                memberSessionId === undefined
+              const principalSessionId =
+                nextAuthor !== null
+                  ? memberScopedSessionId(baseSessionId, nextAuthor)
+                  : teamConfiguredForSession
+                    ? automationScopedSessionId(baseSessionId)
+                    : undefined;
+              const existingPrincipalEntry =
+                principalSessionId === undefined
                   ? undefined
-                  : currentSessions.get(sessionKey(memberSessionId));
+                  : currentSessions.get(sessionKey(principalSessionId));
               const baseOccupiedByOtherMember =
-                input.actingMemberId !== undefined &&
+                (input.actingMemberId !== undefined || teamConfiguredForSession) &&
                 baseEntry !== undefined &&
-                hasOtherMember(baseEntry, input.actingMemberId);
+                hasOtherMember(baseEntry, nextAuthor);
               // Isolate multi-thread sessions per thread when bwrap sandboxing is active (each
-              // sandbox mounts strictly one thread's worktree), or by canonical base + acting member.
-              const effectiveProviderSessionId =
+              // sandbox mounts strictly one thread's worktree), or by canonical base + principal
+              // (member or team_automation) so author switches never collide with another principal.
+              let effectiveProviderSessionId =
                 teamBwrapSandbox || processSandbox.enabled
                   ? sandboxThreadScopedSessionId(baseSessionId, input.threadId)
-                  : memberSessionId !== undefined &&
-                      (existingMemberEntry !== undefined || baseOccupiedByOtherMember)
-                    ? memberSessionId
+                  : principalSessionId !== undefined &&
+                      (existingPrincipalEntry !== undefined || baseOccupiedByOtherMember)
+                    ? principalSessionId
                     : baseSessionId;
+              // Never re-attach to a busy multi-thread session carrying a stale GitHub credential generation.
+              const candidateEntry = currentSessions.get(sessionKey(effectiveProviderSessionId));
+              if (
+                candidateEntry !== undefined &&
+                (yield* isStaleGitHubSession(effectiveProviderSessionId, candidateEntry))
+              ) {
+                if (
+                  !candidateEntry.supportsMultipleProviderThreads ||
+                  candidateEntry.busyTurns.size === 0
+                ) {
+                  yield* releaseEntry({
+                    providerSessionId: effectiveProviderSessionId,
+                    reason: "manual_shutdown",
+                    detail: "GitHub credential updated; recycling warm provider session.",
+                    preserveTeamEphemeralTokens: true,
+                  }).pipe(logReleaseFailure(effectiveProviderSessionId));
+                } else {
+                  const ghGenBase =
+                    teamBwrapSandbox || processSandbox.enabled
+                      ? effectiveProviderSessionId
+                      : (principalSessionId ?? effectiveProviderSessionId);
+                  effectiveProviderSessionId = ProviderSessionId.make(
+                    `${ghGenBase}${GHGEN_SESSION_SEPARATOR}${currentGitHubGen}:${nextRemoteIdentityKey ?? "local"}`,
+                  );
+                }
+              }
               const key = sessionKey(effectiveProviderSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
               if (
@@ -3545,13 +3671,13 @@ export const layerWithOptions = (
               if (existingAfterCwdCheck !== undefined) {
                 const existing = existingAfterCwdCheck;
                 if (
-                  input.actingMemberId !== undefined &&
-                  hasOtherMember(existing, input.actingMemberId)
+                  (input.actingMemberId !== undefined || teamConfiguredForSession) &&
+                  hasOtherMember(existing, nextAuthor)
                 ) {
                   return yield* new ProviderSessionOpenError({
                     instanceId: input.modelSelection.instanceId,
                     providerSessionId: effectiveProviderSessionId,
-                    cause: `Provider session ${effectiveProviderSessionId} is already bound to another team member.`,
+                    cause: `Provider session ${effectiveProviderSessionId} is already bound to another team principal.`,
                   });
                 }
                 const attached = existing.attachedThreadIds.has(input.threadId);
@@ -3625,6 +3751,66 @@ export const layerWithOptions = (
                       })
                       .pipe(Effect.orElseSucceed(() => null))
                   : null;
+              const teamGitHubSessionEnv =
+                (teamConfiguredForSession || input.teamGitHubRemoteContext !== undefined) &&
+                Option.isSome(teamGitHubBrokerOption)
+                  ? yield* teamGitHubBrokerOption.value
+                      .prepareSessionEnvironment({
+                        providerSessionId: effectiveProviderSessionId,
+                        threadId: input.threadId,
+                        authorKind:
+                          input.teamGitHubRemoteContext !== undefined
+                            ? (input.teamGitHubRemoteContext.authorKind ?? "member")
+                            : input.actingMemberId !== undefined && input.actingMemberId !== null
+                              ? "member"
+                              : "team_automation",
+                        authorMemberId: input.actingMemberId ?? null,
+                        ...(input.teamGitHubRemoteContext === undefined
+                          ? {}
+                          : { identityOverride: input.teamGitHubRemoteContext.identityOverride }),
+                      })
+                      .pipe(
+                        Effect.onError(() =>
+                          dropReservation.pipe(
+                            Effect.andThen(
+                              Option.isSome(teamProviderManagerOption) &&
+                                teamProxySessionEnv !== null
+                                ? teamProviderManagerOption.value
+                                    .revokeInternalProxySessionToken(effectiveProviderSessionId)
+                                    .pipe(Effect.ignore)
+                                : Effect.void,
+                            ),
+                            Effect.andThen(
+                              prepared.issued
+                                ? clearMcpSession(input.threadId, mcpCredentialId)
+                                : Effect.void,
+                            ),
+                            Effect.ensuring(
+                              closeScopeWithin(sessionScope, {
+                                providerSessionId: effectiveProviderSessionId,
+                                reason: "open_failed",
+                              }),
+                            ),
+                          ),
+                        ),
+                        Effect.mapError(
+                          (cause) =>
+                            new ProviderSessionOpenError({
+                              instanceId: input.modelSelection.instanceId,
+                              providerSessionId: effectiveProviderSessionId,
+                              cause,
+                            }),
+                        ),
+                      )
+                  : null;
+              const mergedSessionEnvOverride: Readonly<Record<string, string>> | null =
+                teamProxySessionEnv === null && teamGitHubSessionEnv === null
+                  ? null
+                  : Object.assign(
+                      {} as Record<string, string>,
+                      teamProxySessionEnv,
+                      teamGitHubSessionEnv,
+                    );
               const runtime = yield* installationGate
                 .execute(
                   input.modelSelection.instanceId,
@@ -3647,14 +3833,14 @@ export const layerWithOptions = (
                             initialProviderItemIdentityVersion:
                               input.initialProviderItemIdentityVersion,
                           }),
-                      ...(teamProxySessionEnv === null
+                      ...(mergedSessionEnvOverride === null
                         ? {}
-                        : { sessionEnvironmentOverride: teamProxySessionEnv }),
+                        : { sessionEnvironmentOverride: mergedSessionEnvOverride }),
                     })
                     .pipe(
                       Effect.provideService(
                         ProviderSessionEnvironmentOverride,
-                        teamProxySessionEnv ?? {},
+                        mergedSessionEnvOverride ?? {},
                       ),
                     ),
                 )
@@ -3667,6 +3853,13 @@ export const layerWithOptions = (
                         Option.isSome(teamProviderManagerOption) && teamProxySessionEnv !== null
                           ? teamProviderManagerOption.value
                               .revokeInternalProxySessionToken(effectiveProviderSessionId)
+                              .pipe(Effect.ignore)
+                          : Effect.void,
+                      ),
+                      Effect.andThen(
+                        Option.isSome(teamGitHubBrokerOption) && teamGitHubSessionEnv !== null
+                          ? teamGitHubBrokerOption.value
+                              .revokeSessionChannel(effectiveProviderSessionId)
                               .pipe(Effect.ignore)
                           : Effect.void,
                       ),
@@ -3712,6 +3905,7 @@ export const layerWithOptions = (
                 ownerActingMemberId: input.actingMemberId ?? null,
                 actingMemberIdByThread: new Map([[input.threadId, input.actingMemberId ?? null]]),
                 openedCwd: cwd,
+                remoteGitHubIdentityKey: nextRemoteIdentityKey,
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,
@@ -3808,6 +4002,11 @@ export const layerWithOptions = (
               );
               if (memberEntry !== undefined) {
                 return memberEntry.runtime.providerSessionId;
+              }
+            } else {
+              const autoEntry = current.get(sessionKey(automationScopedSessionId(base)));
+              if (autoEntry !== undefined) {
+                return autoEntry.runtime.providerSessionId;
               }
             }
             const baseEntry = current.get(sessionKey(base));
@@ -3932,6 +4131,11 @@ export const layerWithOptions = (
                 );
                 if (memberEntry !== undefined) {
                   targetId = memberEntry.runtime.providerSessionId;
+                }
+              } else {
+                const autoEntry = current.get(sessionKey(automationScopedSessionId(base)));
+                if (autoEntry !== undefined) {
+                  targetId = autoEntry.runtime.providerSessionId;
                 }
               }
               if (targetId === null) {

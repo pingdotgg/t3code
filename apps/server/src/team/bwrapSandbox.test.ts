@@ -1729,3 +1729,118 @@ it.live.skipIf(REAL_BWRAP_BINARY === null)(
       }
     }),
 );
+
+it.effect(
+  "extractSandboxBindsFromEnv and wrapCommandWithBwrap mount TeamGitHubBroker helpers RO, socket RW, and gh-runs as private tmpfs",
+  () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) !== "linux") return;
+      const hostEnv = yield* HostProcess.Environment;
+      const nodeExecPath = yield* HostProcess.ExecutablePath;
+      const root = makeTempFixtureDir("t3-bwrap-gh-broker-");
+      const wtDir = NodePath.join(root, "wt");
+      const ownStateDir = NodePath.join(root, "state");
+      const brokerDir = NodePath.join(root, "t3-gh-fixture");
+      const binDir = NodePath.join(brokerDir, "bin");
+      const ghConfigDir = NodePath.join(brokerDir, "gh-config");
+      const ghRunsDir = NodePath.join(brokerDir, "gh-runs");
+      const gitHomeDir = NodePath.join(brokerDir, "git-home");
+      const socketPath = NodePath.join(brokerDir, "s");
+      const askpassPath = NodePath.join(brokerDir, "t3-git-askpass");
+      const askpassCjsPath = NodePath.join(brokerDir, "t3-git-askpass.cjs");
+      const sshGuardPath = NodePath.join(brokerDir, "t3-git-ssh-guard");
+      const emptyGitConfigPath = NodePath.join(brokerDir, "empty-gitconfig");
+
+      let socketServer: NodeNet.Server | undefined;
+      try {
+        NodeFS.mkdirSync(wtDir, { recursive: true });
+        NodeFS.mkdirSync(ownStateDir, { recursive: true });
+        NodeFS.mkdirSync(binDir, { recursive: true });
+        NodeFS.mkdirSync(ghConfigDir, { recursive: true });
+        NodeFS.mkdirSync(ghRunsDir, { recursive: true });
+        NodeFS.mkdirSync(gitHomeDir, { recursive: true });
+        NodeFS.writeFileSync(askpassPath, "#!/bin/sh\necho ok\n", { mode: 0o700 });
+        NodeFS.writeFileSync(askpassCjsPath, "// askpass\n", { mode: 0o600 });
+        NodeFS.writeFileSync(sshGuardPath, "#!/bin/sh\nexit 128\n", { mode: 0o700 });
+        NodeFS.writeFileSync(emptyGitConfigPath, "", { mode: 0o600 });
+        NodeFS.writeFileSync(NodePath.join(binDir, "git"), "#!/bin/sh\necho WRAPPER_GIT\n", {
+          mode: 0o700,
+        });
+        NodeFS.writeFileSync(NodePath.join(binDir, "gh"), "#!/bin/sh\necho WRAPPER_GH\n", {
+          mode: 0o700,
+        });
+
+        socketServer = NodeNet.createServer();
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              socketServer!.once("error", reject);
+              socketServer!.listen(socketPath, () => resolve());
+            }),
+        );
+
+        const brokerEnv: NodeJS.ProcessEnv = {
+          ...hostEnv,
+          T3_TEAM_GH_BROKER_ENDPOINT: socketPath,
+          T3_TEAM_GH_BROKER_NODE: nodeExecPath,
+          GIT_ASKPASS: askpassPath,
+          GH_CONFIG_DIR: ghConfigDir,
+          PATH: `${binDir}:${hostEnv.PATH ?? "/usr/bin:/bin"}`,
+        };
+
+        const extracted = extractSandboxBindsFromEnv(brokerEnv);
+        expect(extracted.socketPaths).toContain(socketPath);
+        expect(extracted.helperRoPaths).toEqual(
+          expect.arrayContaining([
+            binDir,
+            askpassPath,
+            askpassCjsPath,
+            sshGuardPath,
+            emptyGitConfigPath,
+            gitHomeDir,
+            ghConfigDir,
+            nodeExecPath,
+          ]),
+        );
+        // Shared broker gh-config must NEVER be mounted RW across sandboxes.
+        expect(extracted.helperRwDirs).not.toContain(ghConfigDir);
+        expect(extracted.helperRwDirs).not.toContain(ghRunsDir);
+        expect(extracted.privateTmpfsDirs).toContain(ghRunsDir);
+
+        const wrapped = yield* wrapCommandWithBwrap({
+          bwrapBinaryPath: "/usr/bin/bwrap",
+          command: "/bin/sh",
+          args: ["-c", "true"],
+          cwd: wtDir,
+          env: brokerEnv,
+          ownStateDir,
+        });
+
+        const rwBinds = wrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--bind");
+        const roBinds = wrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--ro-bind");
+        const tmpfsBinds = wrapped.args.filter((_, idx, arr) => arr[idx - 1] === "--tmpfs");
+        expect(rwBinds).toContain(socketPath);
+        expect(rwBinds).not.toContain(ghConfigDir);
+        expect(rwBinds).not.toContain(ghRunsDir);
+        expect(roBinds).toEqual(
+          expect.arrayContaining([
+            binDir,
+            askpassPath,
+            askpassCjsPath,
+            sshGuardPath,
+            emptyGitConfigPath,
+            gitHomeDir,
+            ghConfigDir,
+          ]),
+        );
+        expect(tmpfsBinds).toContain(ghRunsDir);
+      } finally {
+        if (socketServer !== undefined) {
+          yield* Effect.promise(
+            () => new Promise<void>((resolve) => socketServer!.close(() => resolve())),
+          );
+        }
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+);

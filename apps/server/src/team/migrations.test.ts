@@ -27,6 +27,8 @@ describe("team sidecar migrations", () => {
         "team_asset_revisions",
         "team_asset_tombstones",
         "team_environments",
+        "team_github_automation_credentials",
+        "team_github_member_credentials",
         "team_invites",
         "team_local_bindings",
         "team_local_sync_tokens",

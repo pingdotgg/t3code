@@ -35,6 +35,7 @@ import {
   type TurnTokenUsage,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId, ProcessSandbox } from "@t3tools/shared/AgentScope";
+import { applyProviderSessionEnvironmentOverride } from "@t3tools/provider-core/server/instanceEnvironment";
 import { parseGrepOutput } from "@t3tools/shared/grepOutput";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
@@ -2177,6 +2178,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const useProviderThreadIdentity = (thread: OrchestrationV2ProviderThread): void => {
           itemIdentityVersion = thread.nativeMetadata?.itemIdentityVersion;
         };
+        const mergeAcpSessionEnvironment = (
+          processEnvironment: NodeJS.ProcessEnv | undefined,
+        ): NodeJS.ProcessEnv | undefined => {
+          if (processEnvironment === undefined && input.sessionEnvironmentOverride === undefined) {
+            return undefined;
+          }
+          return applyProviderSessionEnvironmentOverride(
+            processEnvironment ?? {},
+            input.sessionEnvironmentOverride,
+          );
+        };
         const terminalEnvironmentBySessionId = new Map<string, NodeJS.ProcessEnv>();
         interface PendingTerminalEnvironment {
           readonly environment: NodeJS.ProcessEnv | undefined;
@@ -2184,7 +2196,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           readonly sessionId: string | null;
         }
         let pendingTerminalEnvironment: PendingTerminalEnvironment | null = {
-          environment: (yield* readMcpContext(input.threadId)).processEnvironment,
+          environment: mergeAcpSessionEnvironment(
+            (yield* readMcpContext(input.threadId)).processEnvironment,
+          ),
           claimUnknownSession: input.initialNativeThreadId === undefined,
           sessionId: input.initialNativeThreadId ?? null,
         };
@@ -2193,14 +2207,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           sessionId?: string,
         ): void => {
           pendingTerminalEnvironment = {
-            environment: mcpContext.processEnvironment,
+            environment: mergeAcpSessionEnvironment(mcpContext.processEnvironment),
             claimUnknownSession: false,
             sessionId: sessionId ?? null,
           };
         };
         const prepareClaimableTerminalEnvironment = (mcpContext: AcpMcpContext): void => {
           pendingTerminalEnvironment = {
-            environment: mcpContext.processEnvironment,
+            environment: mergeAcpSessionEnvironment(mcpContext.processEnvironment),
             claimUnknownSession: true,
             sessionId: null,
           };
@@ -2209,7 +2223,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           sessionId: string,
           mcpContext: AcpMcpContext,
         ): void => {
-          const environment = mcpContext.processEnvironment;
+          const environment = mergeAcpSessionEnvironment(mcpContext.processEnvironment);
           pendingTerminalEnvironment = null;
           if (environment === undefined) {
             terminalEnvironmentBySessionId.delete(sessionId);
@@ -3038,6 +3052,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           onTermination: AcpAdapterV2RuntimeInput["onTermination"] = () =>
             handleRuntimeTerminationAtGeneration(runtimeGeneration),
         ): AcpAdapterV2RuntimeInput => {
+          const processEnvironment = mergeAcpSessionEnvironment(mcpContext.processEnvironment);
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
             runtimePolicy: input.runtimePolicy,
@@ -3047,15 +3062,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             mcpServers: mcpContext.servers,
             acpMcpServers: mcpContext.acpServers,
             httpMcpServers: mcpContext.httpServers,
-            ...(mcpContext.processEnvironment === undefined &&
-            input.sessionEnvironmentOverride === undefined
-              ? {}
-              : {
-                  processEnvironment: {
-                    ...mcpContext.processEnvironment,
-                    ...input.sessionEnvironmentOverride,
-                  },
-                }),
+            ...(processEnvironment === undefined ? {} : { processEnvironment }),
             ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
             interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
             clientCapabilities: {

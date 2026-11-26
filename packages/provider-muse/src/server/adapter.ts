@@ -1,4 +1,5 @@
 import { MspError, type ProcessExit, type SendUserTurnOptions } from "@muse-code/sdk";
+import { applyProviderSessionEnvironmentOverride } from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   MUSE_DEFAULT_MODEL,
   ProviderDriverKind,
@@ -1801,7 +1802,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const environment = McpProviderSession.withAgentDeviceEnvironment(
           input.sessionEnvironmentOverride !== undefined &&
             Object.keys(input.sessionEnvironmentOverride).length > 0
-            ? { ...options.environment, ...input.sessionEnvironmentOverride }
+            ? applyProviderSessionEnvironmentOverride(
+                options.environment,
+                input.sessionEnvironmentOverride,
+              )
             : options.environment,
           mcpSession,
         );

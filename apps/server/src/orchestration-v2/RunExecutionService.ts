@@ -63,6 +63,7 @@ import {
 import { makeInterruptResultTurnItem } from "./runInterruptResult.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as TeamGitHubBroker from "../team/TeamGitHubBroker.ts";
 import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -741,6 +742,7 @@ export const layer: Layer.Layer<
     const teamProviderManagerOption = yield* Effect.serviceOption(
       TeamProviderManager.TeamProviderManager,
     );
+    const teamGitHubBrokerOption = yield* Effect.serviceOption(TeamGitHubBroker.TeamGitHubBroker);
     const continuationRequestsOption = yield* Effect.serviceOption(
       ProviderContinuationRequests.ProviderContinuationRequests,
     );
@@ -1092,6 +1094,14 @@ export const layer: Layer.Layer<
         } else {
           yield* eventSink.writeWithEffects(finalization);
         }
+        if (Option.isSome(teamGitHubBrokerOption)) {
+          yield* teamGitHubBrokerOption.value
+            .revokeTurnLease({
+              threadId: input.run.threadId,
+              turnId: input.run.id,
+            })
+            .pipe(Effect.ignore);
+        }
         yield* turnAnalytics.runSettled({
           runId: input.run.id,
           status: input.terminal.status,
@@ -1231,6 +1241,14 @@ export const layer: Layer.Layer<
           ),
         );
         if (responseStreamingMode === null) {
+          if (Option.isSome(teamGitHubBrokerOption)) {
+            yield* teamGitHubBrokerOption.value
+              .revokeTurnLease({
+                threadId: input.run.threadId,
+                turnId: input.run.id,
+              })
+              .pipe(Effect.ignore);
+          }
           return;
         }
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
@@ -2094,6 +2112,34 @@ export const layer: Layer.Layer<
           yield* trackChildLifecycle(event, deliveredEvent !== null);
           yield* scheduleIdleFlush;
         });
+        const githubLeaseRenewFiber = Option.isSome(teamGitHubBrokerOption)
+          ? yield* Effect.sleep(Duration.minutes(5)).pipe(
+              Effect.andThen(
+                Effect.gen(function* () {
+                  if (yield* Ref.get(rootRunFinalized)) return false;
+                  const renewed = yield* teamGitHubBrokerOption.value
+                    .renewTurnLease({
+                      threadId: input.run.threadId,
+                      turnId: input.run.id,
+                    })
+                    .pipe(Effect.orElseSucceed(() => false));
+                  if (renewed) return true;
+                  // Retry transient timeouts/5xx while the existing lease remains active and
+                  // unrevoked; definitive revocation or local invalidation deletes the lease inside
+                  // renewTurnLease so hasActiveTurnLease returns false immediately.
+                  return yield* teamGitHubBrokerOption.value
+                    .hasActiveTurnLease({
+                      threadId: input.run.threadId,
+                      turnId: input.run.id,
+                    })
+                    .pipe(Effect.orElseSucceed(() => false));
+                }),
+              ),
+              Effect.repeat({ while: (keepRenewing) => keepRenewing }),
+              Effect.ignore,
+              Effect.forkIn(scope),
+            )
+          : null;
         const providerEventFiber = yield* eventSink
           .consumeProviderEvents(
             eventSubscription.events.pipe(
@@ -2327,6 +2373,21 @@ export const layer: Layer.Layer<
             ),
             Effect.ensuring(endPreviewActivity),
             Effect.ensuring(eventSubscription.close),
+            Effect.ensuring(
+              githubLeaseRenewFiber === null
+                ? Effect.void
+                : Fiber.interrupt(githubLeaseRenewFiber).pipe(Effect.ignore),
+            ),
+            Effect.ensuring(
+              Option.isSome(teamGitHubBrokerOption)
+                ? teamGitHubBrokerOption.value
+                    .revokeTurnLease({
+                      threadId: input.run.threadId,
+                      turnId: input.run.id,
+                    })
+                    .pipe(Effect.ignore)
+                : Effect.void,
+            ),
             Effect.forkDetach,
           );
 

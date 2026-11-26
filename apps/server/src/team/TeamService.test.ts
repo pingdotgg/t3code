@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Local mock GitHub API server for TeamService GitHub identity tests.
+import * as NodeHttp from "node:http";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -47,6 +49,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import { localSyncMirroredMessageId, localSyncMirroredRunId } from "./TeamLocalSyncService.ts";
 import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
+import * as TeamGitHubRepository from "./TeamGitHubRepository.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 import * as TeamService from "./TeamService.ts";
 import { recordTeamDispatchEvents, recordTeamThreadLaunch } from "./wsHandlers.ts";
@@ -62,26 +65,29 @@ const makeTestLayer = () => {
     Layer.provideMerge(platform),
   );
   const persistence = SqlitePersistence.layerMemory.pipe(Layer.provide(base));
+  const secretStore = ServerSecretStore.layer.pipe(Layer.provide(base));
   const authDeps = Layer.mergeAll(
     persistence,
-    ServerSecretStore.layer.pipe(Layer.provide(base)),
+    secretStore,
     AuthSessions.layer.pipe(Layer.provide(persistence)),
-    ServerEnvironment.layer.pipe(
-      Layer.provide(ServerSecretStore.layer.pipe(Layer.provide(base))),
-      Layer.provide(base),
-    ),
+    ServerEnvironment.layer.pipe(Layer.provide(secretStore), Layer.provide(base)),
   );
   const sessions = SessionStore.layer.pipe(Layer.provideMerge(authDeps), Layer.provide(base));
   const teamRepo = TeamRepository.layer.pipe(Layer.provide(persistence));
   const assetsRepo = TeamAssetsRepository.layer.pipe(Layer.provide(persistence));
+  const githubRepo = TeamGitHubRepository.layer.pipe(
+    Layer.provide(persistence),
+    Layer.provide(secretStore),
+  );
   const teamService = TeamService.layer.pipe(
     Layer.provideMerge(teamRepo),
     Layer.provideMerge(assetsRepo),
+    Layer.provideMerge(githubRepo),
     Layer.provideMerge(sessions),
-    Layer.provideMerge(ServerSecretStore.layer.pipe(Layer.provide(base))),
+    Layer.provideMerge(secretStore),
     Layer.provide(base),
   );
-  return Layer.mergeAll(teamService, teamRepo, assetsRepo, sessions, persistence);
+  return Layer.mergeAll(teamService, teamRepo, assetsRepo, githubRepo, sessions, persistence);
 };
 
 describe("TeamService", () => {
@@ -108,6 +114,8 @@ describe("TeamService", () => {
         skills: [],
         preprompts: [],
         assetsRevision: 0,
+        myGitHubIdentity: null,
+        automationGitHubIdentity: null,
       });
 
       const threadId = ThreadId.make("thread-personal-1");
@@ -3196,5 +3204,204 @@ describe("TeamService", () => {
         });
         expect(toggledPreprompt.contentHash).not.toBe(preprompt.contentHash);
       }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  const swapAllowedGitHubOrigins = (value: string | undefined): string | undefined => {
+    const prev = process.env.T3_TEAM_GITHUB_ALLOWED_API_ORIGINS;
+    if (value === undefined) {
+      delete process.env.T3_TEAM_GITHUB_ALLOWED_API_ORIGINS;
+    } else {
+      process.env.T3_TEAM_GITHUB_ALLOWED_API_ORIGINS = value;
+    }
+    return prev;
+  };
+
+  it.effect(
+    "Milestone 7: isolates member & automation GitHub identities across snapshots/streams and revokes on disconnect or suspension",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const githubRepo = yield* TeamGitHubRepository.TeamGitHubRepository;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const apiServer = yield* Effect.acquireRelease(
+          Effect.promise(
+            () =>
+              new Promise<{ readonly server: NodeHttp.Server; readonly origin: string }>(
+                (resolve) => {
+                  const server = NodeHttp.createServer((req, res) => {
+                    const auth = req.headers.authorization ?? "";
+                    if (req.url === "/user") {
+                      if (auth === "Bearer ghp_alice_secret") {
+                        res.writeHead(200, { "content-type": "application/json" });
+                        res.end(
+                          JSON.stringify({
+                            login: "alice-gh",
+                            name: "Alice Owner",
+                            email: "alice@acme.dev",
+                          }),
+                        );
+                        return;
+                      }
+                      if (auth === "Bearer ghp_bob_secret") {
+                        res.writeHead(200, { "content-type": "application/json" });
+                        res.end(
+                          JSON.stringify({
+                            login: "bob-gh",
+                            name: "Bob Regular",
+                            email: "bob@acme.dev",
+                          }),
+                        );
+                        return;
+                      }
+                      if (auth === "Bearer ghp_bot_secret") {
+                        res.writeHead(200, { "content-type": "application/json" });
+                        res.end(
+                          JSON.stringify({
+                            login: "acme-bot",
+                            name: "Acme Bot",
+                            email: "bot@acme.dev",
+                          }),
+                        );
+                        return;
+                      }
+                    }
+                    res.writeHead(401, { "content-type": "application/json" });
+                    res.end(JSON.stringify({ message: "Bad credentials" }));
+                  });
+                  server.listen(0, "127.0.0.1", () => {
+                    const addr = server.address();
+                    if (!addr || typeof addr === "string") {
+                      throw new Error("Expected TCP address");
+                    }
+                    resolve({ server, origin: `http://127.0.0.1:${addr.port}` });
+                  });
+                },
+              ),
+          ),
+          ({ server }) =>
+            Effect.promise(() => new Promise<void>((resolve) => server.close(() => resolve()))),
+        );
+
+        const ownerSession = yield* sessions.issue({ subject: "owner" });
+        yield* team.initializeTeam({
+          sessionId: ownerSession.sessionId,
+          payload: { name: "GitHub Privacy Corp", ownerPseudo: "alice" },
+        });
+        const bobInvite = yield* team.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob", maxUses: 1 },
+        });
+        const bobRedeemed = yield* team.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob",
+          client: testClient,
+        });
+        const bobSession = yield* sessions.verify(bobRedeemed.accessToken);
+
+        const credentialChanges: Array<{ readonly kind: string; readonly memberId?: string }> = [];
+        yield* team.registerGitHubCredentialChangeHook((event) =>
+          Effect.sync(() => {
+            credentialChanges.push(
+              event.kind === "member"
+                ? { kind: event.kind, memberId: event.memberId }
+                : { kind: event.kind },
+            );
+          }),
+        );
+
+        const bobStreamFiber = yield* team
+          .streamState(bobSession.sessionId)
+          .pipe(Stream.take(2), Stream.runCollect, Effect.forkChild);
+        const aliceStreamFiber = yield* team
+          .streamState(ownerSession.sessionId)
+          .pipe(Stream.take(3), Stream.runCollect, Effect.forkChild);
+        yield* Effect.yieldNow;
+
+        yield* Effect.acquireRelease(
+          Effect.sync(() => swapAllowedGitHubOrigins(apiServer.origin)),
+          (prev) =>
+            Effect.sync(() => {
+              swapAllowedGitHubOrigins(prev);
+            }),
+        );
+
+        // Alice connects her PAT -> Alice sees it, Bob NEVER sees Alice's identity or token.
+        const aliceIdentity = yield* team.connectMyGitHub({
+          sessionId: ownerSession.sessionId,
+          payload: {
+            token: "ghp_alice_secret",
+            apiBaseUrl: apiServer.origin,
+          },
+        });
+        expect(aliceIdentity.githubLogin).toBe("alice-gh");
+
+        // Owner sets optional Team Automation account -> only admin/owner sees it.
+        const automationIdentity = yield* team.setAutomationGitHub({
+          sessionId: ownerSession.sessionId,
+          payload: {
+            token: "ghp_bot_secret",
+            apiBaseUrl: apiServer.origin,
+          },
+        });
+        expect(automationIdentity.githubLogin).toBe("acme-bot");
+
+        // Regular Bob CANNOT set or clear the Team Automation account.
+        const bobAutoExit = yield* Effect.exit(
+          team.setAutomationGitHub({
+            sessionId: bobSession.sessionId,
+            payload: { token: "ghp_bot_secret", apiBaseUrl: apiServer.origin },
+          }),
+        );
+        expect(bobAutoExit._tag).toBe("Failure");
+
+        // Bob connects his own PAT so we can verify suspension wipes his secret and fires the hook.
+        const bobIdentity = yield* team.connectMyGitHub({
+          sessionId: bobSession.sessionId,
+          payload: {
+            token: "ghp_bob_secret",
+            apiBaseUrl: apiServer.origin,
+          },
+        });
+        expect(bobIdentity.githubLogin).toBe("bob-gh");
+
+        const bobState = yield* team.getState(bobSession.sessionId);
+        expect(bobState.myGitHubIdentity?.githubLogin).toBe("bob-gh");
+        expect(bobState.automationGitHubIdentity).toBeNull();
+
+        const aliceEvents = Array.from(yield* Fiber.join(aliceStreamFiber));
+        expect(aliceEvents.map((e) => e.type)).toEqual([
+          "snapshot",
+          "myGitHubIdentityUpdated",
+          "automationGitHubIdentityUpdated",
+        ]);
+        const bobEvents = Array.from(yield* Fiber.join(bobStreamFiber));
+        expect(bobEvents.map((e) => e.type)).toEqual(["snapshot", "myGitHubIdentityUpdated"]);
+
+        // Suspending Bob triggers immediate lease revocation hook; removing Bob also wipes his stored credential.
+        yield* team.updateMemberStatus({
+          sessionId: ownerSession.sessionId,
+          payload: { memberId: bobRedeemed.member.id, status: "suspended" },
+        });
+        expect(
+          credentialChanges.some(
+            (entry) => entry.kind === "member" && entry.memberId === bobRedeemed.member.id,
+          ),
+        ).toBe(true);
+        yield* team.updateMemberStatus({
+          sessionId: ownerSession.sessionId,
+          payload: { memberId: bobRedeemed.member.id, status: "removed" },
+        });
+        expect(Option.isNone(yield* githubRepo.getMemberCredential(bobRedeemed.member.id))).toBe(
+          true,
+        );
+
+        // Alice disconnects her own GitHub identity & clears team automation.
+        yield* team.disconnectMyGitHub({ sessionId: ownerSession.sessionId });
+        yield* team.clearAutomationGitHub({ sessionId: ownerSession.sessionId });
+        const aliceFinalState = yield* team.getState(ownerSession.sessionId);
+        expect(aliceFinalState.myGitHubIdentity).toBeNull();
+        expect(aliceFinalState.automationGitHubIdentity).toBeNull();
+      }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
   );
 });

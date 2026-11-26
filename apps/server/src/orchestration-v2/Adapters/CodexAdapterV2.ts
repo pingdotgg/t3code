@@ -1724,6 +1724,7 @@ function codexThreadRuntimeParams(input: {
   readonly stdioMcpServers?: ReadonlyArray<string>;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly sessionEnvironmentOverride?: Readonly<Record<string, string>>;
 }): {
   readonly cwd?: string;
   readonly model?: string;
@@ -1738,11 +1739,28 @@ function codexThreadRuntimeParams(input: {
           tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
           http_headers: { Authorization: mcpSession.authorizationHeader },
         };
+  // Codex's default shell_environment_policy filters *TOKEN*/*SECRET*/*KEY*; explicitly forward
+  // only the GitHub broker wrapper variables (never internal team proxy/provider API tokens).
+  const isCodexGitHubShellEnvKey = (name: string): boolean =>
+    !name.includes(".") &&
+    (name === "PATH" ||
+      name.startsWith("T3_TEAM_GH_") ||
+      name.startsWith("GIT_") ||
+      name.startsWith("GH_"));
+  const sessionShellEnvConfig =
+    input.sessionEnvironmentOverride === undefined
+      ? {}
+      : Object.fromEntries(
+          Object.entries(input.sessionEnvironmentOverride)
+            .filter(([name]) => isCodexGitHubShellEnvKey(name))
+            .map(([name, value]) => [`shell_environment_policy.set.${name}`, value]),
+        );
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...sessionShellEnvConfig,
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
       ...(input.threadId === null
         ? {}
@@ -8360,6 +8378,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       threadId: providerThread.appThreadId,
                       mcpSession,
                       stdioMcpServers,
+                      ...(input.sessionEnvironmentOverride === undefined
+                        ? {}
+                        : { sessionEnvironmentOverride: input.sessionEnvironmentOverride }),
                     }),
                   }),
                 ),
@@ -8543,6 +8564,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     stdioMcpServers,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
+                    ...(input.sessionEnvironmentOverride === undefined
+                      ? {}
+                      : { sessionEnvironmentOverride: input.sessionEnvironmentOverride }),
                   }),
                   // Codex tags the child's MCP calls with thread_source "subagent".
                   ...(IdAllocator.isDelegatedTaskThread(threadInput.threadId)
@@ -8592,6 +8616,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...(threadInput.runtimePolicy === undefined
                     ? {}
                     : { runtimePolicy: threadInput.runtimePolicy }),
+                  ...(input.sessionEnvironmentOverride === undefined
+                    ? {}
+                    : { sessionEnvironmentOverride: input.sessionEnvironmentOverride }),
                 }),
               });
               // Codex resumes an active goal's turns right after the response; own them before it.
@@ -9598,6 +9625,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     threadId: threadInput.providerThread.appThreadId,
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
                     stdioMcpServers: yield* readStdioMcpServers(undefined),
+                    ...(input.sessionEnvironmentOverride === undefined
+                      ? {}
+                      : { sessionEnvironmentOverride: input.sessionEnvironmentOverride }),
                   }),
                 });
               }
@@ -9652,6 +9682,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...(threadInput.runtimePolicy === undefined
                     ? {}
                     : { runtimePolicy: threadInput.runtimePolicy }),
+                  ...(input.sessionEnvironmentOverride === undefined
+                    ? {}
+                    : { sessionEnvironmentOverride: input.sessionEnvironmentOverride }),
                 }),
               });
               const response = yield* ensureInitialized.pipe(

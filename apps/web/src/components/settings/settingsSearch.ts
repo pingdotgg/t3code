@@ -1528,6 +1528,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("team workspace pseudo invite members colleagues shared server")],
   },
   {
+    id: "teams-github",
+    title: msg("Team GitHub identity"),
+    to: "/settings/teams",
+    targetId: "teams-github",
+    searchTerms: [msg("team github pat token identity commit author automation")],
+  },
+  {
     id: "teams-providers",
     title: msg("Team providers"),
     to: "/settings/teams",

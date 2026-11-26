@@ -16,14 +16,96 @@ export const ProviderSessionEnvironmentOverride = Context.Reference<
   defaultValue: () => ({}),
 });
 
+export const TEAM_GITHUB_SANITIZE_ENV = "T3_TEAM_GH_SANITIZE";
+export const TEAM_GITHUB_BROKER_TOKEN_ENV = "T3_TEAM_GH_BROKER_TOKEN";
+const TEAM_GITHUB_STRIPPED_ENV_KEYS = [
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_ENTERPRISE_TOKEN",
+  "GITHUB_ENTERPRISE_TOKEN",
+  "GITHUB_PAT",
+  "GH_HOST",
+  "GIT_CONFIG",
+  "GIT_CONFIG_SYSTEM",
+  "GIT_CONFIG_PARAMETERS",
+  "NETRC",
+] as const;
+const TEAM_GITHUB_AUTHOR_ENV_KEYS = [
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL",
+] as const;
+
+function stripEnvKey(env: NodeJS.ProcessEnv, key: string, caseInsensitive: boolean): void {
+  if (!caseInsensitive) {
+    delete env[key];
+    return;
+  }
+  const upper = key.toUpperCase();
+  for (const existing of Object.keys(env)) {
+    if (existing.toUpperCase() === upper) {
+      delete env[existing];
+    }
+  }
+}
+
+export function shouldSanitizeTeamGitHubEnv(
+  override?: Readonly<Record<string, string | undefined>>,
+): boolean {
+  if (!override) return false;
+  return (
+    typeof override[TEAM_GITHUB_SANITIZE_ENV] === "string" ||
+    typeof override[TEAM_GITHUB_BROKER_TOKEN_ENV] === "string"
+  );
+}
+
+const TEAM_GITHUB_GIT_CONFIG_ENV_RE = /^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+)$/i;
+
+export function stripTeamGitHubAmbientEnv(
+  env: NodeJS.ProcessEnv,
+  override?: Readonly<Record<string, string | undefined>>,
+  caseInsensitive = true,
+): void {
+  if (!shouldSanitizeTeamGitHubEnv(override)) return;
+  for (const key of TEAM_GITHUB_STRIPPED_ENV_KEYS) {
+    stripEnvKey(env, key, caseInsensitive);
+  }
+  for (const existing of Object.keys(env)) {
+    if (TEAM_GITHUB_GIT_CONFIG_ENV_RE.test(existing)) {
+      delete env[existing];
+    }
+  }
+  if (!override || typeof override.GIT_AUTHOR_NAME !== "string") {
+    for (const key of TEAM_GITHUB_AUTHOR_ENV_KEYS) {
+      stripEnvKey(env, key, caseInsensitive);
+    }
+  }
+}
+
 export function applyProviderSessionEnvironmentOverride(
   base: NodeJS.ProcessEnv,
-  override?: Readonly<Record<string, string>>,
+  override?: Readonly<Record<string, string | undefined>>,
+  options?: { readonly caseInsensitive?: boolean },
 ): NodeJS.ProcessEnv {
   if (!override) return base;
   const entries = Object.entries(override);
   if (entries.length === 0) return base;
-  return { ...base, ...override };
+  const next: NodeJS.ProcessEnv = { ...base };
+  const sanitize = shouldSanitizeTeamGitHubEnv(override);
+  stripTeamGitHubAmbientEnv(next, override, true);
+  const caseInsensitive = options?.caseInsensitive ?? sanitize;
+  for (const [key, value] of entries) {
+    if (caseInsensitive) {
+      stripEnvKey(next, key, true);
+    }
+    if (value === undefined) {
+      delete next[key];
+    } else {
+      next[key] = value;
+    }
+  }
+  return next;
 }
 
 export const mergeProviderInstanceEnvironment = Effect.fn(function* (
@@ -57,6 +139,7 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
       next[name] = expandHomeVariable(name, variable.value, home);
     }
   }
+  stripTeamGitHubAmbientEnv(next, sessionOverride, true);
   for (const [rawName, value] of sessionOverrideEntries) {
     const name = windows ? rawName.toUpperCase() : rawName;
     if (windows) {

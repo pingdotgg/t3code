@@ -80,6 +80,7 @@ import {
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
 import {
+  applyProviderSessionEnvironmentOverride,
   mergeProviderInstanceEnvironment,
   ProviderSessionEnvironmentOverride,
 } from "@t3tools/provider-core/server/instanceEnvironment";
@@ -259,7 +260,9 @@ export const AntigravityDriver: ProviderDriver<
       );
       const sessionOverride = yield* ProviderSessionEnvironmentOverride;
       const effectiveBaseEnv: NodeJS.ProcessEnv =
-        Object.keys(sessionOverride).length > 0 ? { ...baseEnv, ...sessionOverride } : baseEnv;
+        Object.keys(sessionOverride).length > 0
+          ? applyProviderSessionEnvironmentOverride(baseEnv, sessionOverride)
+          : baseEnv;
       // Only override the configured instance key from an explicit per-session override, never from ambient process.env.
       const sessionApiKey =
         (typeof sessionOverride.GEMINI_API_KEY === "string" &&
@@ -345,7 +348,7 @@ export const AntigravityDriver: ProviderDriver<
         runtimeInput.cwd,
         threadEnvironment === undefined
           ? processEnvironment
-          : { ...processEnvironment, ...threadEnvironment },
+          : applyProviderSessionEnvironmentOverride(processEnvironment, threadEnvironment),
         threadEnvironment?.GEMINI_API_KEY,
       );
       const runtime = yield* makeAntigravityAcpRuntime({

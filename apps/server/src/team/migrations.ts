@@ -449,6 +449,44 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
         `;
     }),
   },
+  {
+    id: 7,
+    name: "TeamGitHubIdentity",
+    up: Effect.fn("TeamMigrations.TeamGitHubIdentity")(function* (sql: SqlClient.SqlClient) {
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_github_member_credentials (
+            member_id TEXT PRIMARY KEY REFERENCES team_members(id) ON DELETE CASCADE,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            auth_method TEXT NOT NULL CHECK (auth_method IN ('pat', 'oauth', 'github_app')),
+            github_login TEXT NOT NULL,
+            github_name TEXT,
+            github_email TEXT,
+            api_base_url TEXT NOT NULL,
+            secret_key TEXT NOT NULL,
+            connected_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_github_member_credentials_team
+            ON team_github_member_credentials (team_id)
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_github_automation_credentials (
+            team_id TEXT PRIMARY KEY REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            auth_method TEXT NOT NULL CHECK (auth_method IN ('pat', 'oauth', 'github_app')),
+            github_login TEXT NOT NULL,
+            github_name TEXT,
+            github_email TEXT,
+            api_base_url TEXT NOT NULL,
+            secret_key TEXT NOT NULL,
+            updated_by_member_id TEXT NOT NULL REFERENCES team_members(id),
+            connected_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `;
+    }),
+  },
 ];
 
 const migrationLocks = new WeakMap<SqlClient.SqlClient, Semaphore.Semaphore>();

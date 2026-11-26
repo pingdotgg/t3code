@@ -65,7 +65,9 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as TeamGitHubBroker from "../team/TeamGitHubBroker.ts";
 import * as TeamProviderManager from "../team/TeamProviderManager.ts";
+import * as TeamService from "../team/TeamService.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -700,6 +702,8 @@ function layerTest(input: {
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
   readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
   readonly teamProviderManagerLayer?: Layer.Layer<TeamProviderManager.TeamProviderManager>;
+  readonly teamServiceLayer?: Layer.Layer<TeamService.TeamService>;
+  readonly teamGitHubBrokerLayer?: Layer.Layer<TeamGitHubBroker.TeamGitHubBroker>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -802,6 +806,8 @@ function layerTest(input: {
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
           ...(input.serverConfigLayer === undefined ? [] : [input.serverConfigLayer]),
           ...(input.teamProviderManagerLayer === undefined ? [] : [input.teamProviderManagerLayer]),
+          ...(input.teamServiceLayer === undefined ? [] : [input.teamServiceLayer]),
+          ...(input.teamGitHubBrokerLayer === undefined ? [] : [input.teamGitHubBrokerLayer]),
         ),
       ),
     ),
@@ -6975,6 +6981,539 @@ it.effect(
           }),
         ),
         Effect.provideService(ProcessSandbox, activeSandbox),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 recycles warm sessions on member -> team_automation switch and remote GitHub identity rotation",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const aliceId = TeamMemberId.make("member-alice-gh-recycle");
+      const threadId = ThreadId.make("thread-gh-recycle-1");
+      const preparedCalls: Array<{
+        readonly authorKind: string;
+        readonly authorMemberId: TeamMemberId | null;
+        readonly login: string | null;
+      }> = [];
+      let memberGen = 1;
+      const genBySession = new Map<ProviderSessionId, number>();
+
+      const teamServiceLayer = Layer.mock(TeamService.TeamService)({
+        isTeamConfigured: () => Effect.succeed(true),
+      });
+      const teamGitHubBrokerLayer = Layer.mock(TeamGitHubBroker.TeamGitHubBroker)({
+        getCredentialGeneration: (input) =>
+          Effect.succeed(input.authorKind === "member" ? memberGen : 0),
+        getSessionCredentialGeneration: (providerSessionId) =>
+          Effect.succeed(genBySession.get(providerSessionId) ?? null),
+        prepareSessionEnvironment: (input) =>
+          Effect.sync(() => {
+            preparedCalls.push({
+              authorKind: input.authorKind,
+              authorMemberId: input.authorMemberId,
+              login: input.identityOverride?.githubLogin ?? null,
+            });
+            genBySession.set(
+              input.providerSessionId,
+              input.authorKind === "member" ? memberGen : 0,
+            );
+            return {
+              T3_TEAM_GH_SANITIZE: "1",
+              T3_TEAM_GH_BROKER_TOKEN: `tok_${preparedCalls.length}`,
+            };
+          }),
+        attachThreadToSessionChannel: () => Effect.void,
+        detachThreadFromSessionChannel: () => Effect.void,
+        revokeSessionChannel: (providerSessionId) =>
+          Effect.sync(() => {
+            genBySession.delete(providerSessionId);
+          }),
+      });
+
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const baseSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+
+        // Turn 1: Alice (human member)
+        yield* manager.open({
+          threadId,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        assert.strictEqual(preparedCalls.length, 1);
+        assert.strictEqual(preparedCalls[0]?.authorKind, "member");
+
+        // Turn 2: Scheduled automation turn (actingMemberId omitted) MUST recycle warm session!
+        yield* manager.open({
+          threadId,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(preparedCalls.length, 2);
+        assert.strictEqual(preparedCalls[1]?.authorKind, "team_automation");
+        assert.isNull(preparedCalls[1]?.authorMemberId);
+
+        // Turn 3: Remote runner GitHub identity change MUST also recycle warm session!
+        yield* manager.open({
+          threadId,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          teamGitHubRemoteContext: {
+            identityOverride: {
+              githubLogin: "alice-remote-v1",
+              githubName: "Alice",
+              githubEmail: "alice@acme.dev",
+            },
+            identityKey: "alice-remote-v1:t1",
+          },
+        });
+        assert.strictEqual(preparedCalls.length, 3);
+        assert.strictEqual(preparedCalls[2]?.login, "alice-remote-v1");
+
+        yield* manager.open({
+          threadId,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          teamGitHubRemoteContext: {
+            identityOverride: {
+              githubLogin: "alice-remote-v2",
+              githubName: "Alice",
+              githubEmail: "alice@acme.dev",
+            },
+            identityKey: "alice-remote-v2:t2",
+          },
+        });
+        assert.strictEqual(preparedCalls.length, 4);
+        assert.strictEqual(preparedCalls[3]?.login, "alice-remote-v2");
+        // Turn 5: Personal non-team thread (teamGitHubRemoteContext: undefined) MUST NOT attach
+        // to the warm team-brokered session; it recycles/opens without team remote context!
+        yield* manager.open({
+          threadId,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(preparedCalls.length, 5);
+        assert.isNull(preparedCalls[4]?.login);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            teamServiceLayer,
+            teamGitHubBrokerLayer,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 isolates team_automation from a busy human member's multi-thread session and fails closed when GitHub broker startup fails",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const aliceId = TeamMemberId.make("member-alice-busy");
+      const threadAlice = ThreadId.make("thread-busy-alice");
+      const threadAuto = ThreadId.make("thread-busy-auto");
+      const preparedPrincipals: Array<{
+        readonly providerSessionId: ProviderSessionId;
+        readonly authorKind: string;
+        readonly authorMemberId: TeamMemberId | null;
+      }> = [];
+      let failBrokerPrepare = false;
+
+      const teamServiceLayer = Layer.mock(TeamService.TeamService)({
+        isTeamConfigured: () => Effect.succeed(true),
+      });
+      const teamGitHubBrokerLayer = Layer.mock(TeamGitHubBroker.TeamGitHubBroker)({
+        // Equal credential generation (0) for both Alice and automation!
+        getCredentialGeneration: () => Effect.succeed(0),
+        getSessionCredentialGeneration: () => Effect.succeed(0),
+        prepareSessionEnvironment: (input) =>
+          failBrokerPrepare
+            ? Effect.fail(
+                new TeamGitHubBroker.TeamGitHubBrokerStartError({
+                  cause: new Error("Simulated broker listener startup failure"),
+                }),
+              )
+            : Effect.sync(() => {
+                preparedPrincipals.push({
+                  providerSessionId: input.providerSessionId,
+                  authorKind: input.authorKind,
+                  authorMemberId: input.authorMemberId,
+                });
+                return {
+                  T3_TEAM_GH_SANITIZE: "1",
+                  T3_TEAM_GH_BROKER_TOKEN: `tok_${preparedPrincipals.length}`,
+                };
+              }),
+        attachThreadToSessionChannel: () => Effect.void,
+        detachThreadFromSessionChannel: () => Effect.void,
+        revokeSessionChannel: () => Effect.void,
+      });
+
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const baseSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadAlice, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadAuto, now }),
+          ],
+        });
+
+        // Alice opens a multi-thread (Codex) session on baseSessionId
+        const aliceRuntime = yield* manager.open({
+          threadId: threadAlice,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+
+        // team_automation opens on threadAuto while Alice's session is live on baseSessionId
+        // with EQUAL credential generation (0) -> MUST get its own ::automation session, NEVER join Alice's!
+        const autoRuntime = yield* manager.open({
+          threadId: threadAuto,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(autoRuntime.providerSessionId, aliceRuntime.providerSessionId);
+        assert.include(String(autoRuntime.providerSessionId), "::automation");
+        assert.strictEqual(preparedPrincipals.length, 2);
+        assert.strictEqual(preparedPrincipals[0]?.authorKind, "member");
+        assert.strictEqual(preparedPrincipals[1]?.authorKind, "team_automation");
+        assert.isNull(preparedPrincipals[1]?.authorMemberId);
+
+        // If the GitHub broker fails to initialize, team session open MUST fail closed!
+        failBrokerPrepare = true;
+        const threadFail = ThreadId.make("thread-broker-fail");
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId: threadFail, now })],
+        });
+        const failExit = yield* Effect.result(
+          manager.open({
+            threadId: threadFail,
+            providerSessionId: baseSessionId,
+            modelSelection,
+            runtimePolicy,
+            actingMemberId: TeamMemberId.make("member-bob-fail"),
+          }),
+        );
+        assert.strictEqual(failExit._tag, "Failure");
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            capabilities: CodexCapabilities,
+            teamServiceLayer,
+            teamGitHubBrokerLayer,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 scopes busy ::ghgen forks by principal and isolates remote non-team threads from team-brokered sessions",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const aliceId = TeamMemberId.make("member-alice-ghgen");
+      const bobId = TeamMemberId.make("member-bob-ghgen");
+      const currentGenByMember = new Map<TeamMemberId, number>([
+        [aliceId, 0],
+        [bobId, 0],
+      ]);
+      const sessionGenById = new Map<ProviderSessionId, number>();
+
+      const teamServiceLayer = Layer.mock(TeamService.TeamService)({
+        isTeamConfigured: () => Effect.succeed(true),
+      });
+      const teamGitHubBrokerLayer = Layer.mock(TeamGitHubBroker.TeamGitHubBroker)({
+        getCredentialGeneration: (input) =>
+          Effect.succeed(
+            input.authorMemberId !== null ? (currentGenByMember.get(input.authorMemberId) ?? 0) : 0,
+          ),
+        getSessionCredentialGeneration: (id) => Effect.succeed(sessionGenById.get(id) ?? null),
+        prepareSessionEnvironment: (input) =>
+          Effect.sync(() => {
+            const gen =
+              input.authorMemberId !== null
+                ? (currentGenByMember.get(input.authorMemberId) ?? 0)
+                : 0;
+            sessionGenById.set(input.providerSessionId, gen);
+            return {
+              T3_TEAM_GH_SANITIZE: "1",
+              T3_TEAM_GH_BROKER_TOKEN: `tok_${String(input.providerSessionId)}`,
+            };
+          }),
+        attachThreadToSessionChannel: () => Effect.void,
+        detachThreadFromSessionChannel: () => Effect.void,
+        revokeSessionChannel: () => Effect.void,
+      });
+
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const baseSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const tAlice1 = ThreadId.make("thread-ghgen-alice-1");
+        const tAlice2 = ThreadId.make("thread-ghgen-alice-2");
+        const tBob1 = ThreadId.make("thread-ghgen-bob-1");
+        const tBob2 = ThreadId.make("thread-ghgen-bob-2");
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: tAlice1, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: tAlice2, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: tBob1, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: tBob2, now }),
+          ],
+        });
+        const startBusyTurn = (
+          runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+          threadId: ThreadId,
+        ) =>
+          Effect.gen(function* () {
+            const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+            yield* runtime.startTurn({
+              appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+              threadId,
+              runId,
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+              rootNodeId: idAllocator.derive.rootNode({ runId }),
+              providerThread: makeProviderThread({
+                idAllocator,
+                threadId,
+                providerSessionId: runtime.providerSessionId,
+                now,
+              }),
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+                text: "busy turn",
+                attachments: [],
+              },
+              modelSelection,
+              runtimePolicy,
+            });
+          });
+
+        // Alice occupies baseSessionId at gen 0, starts a busy turn, then rotates PAT to gen 1
+        const aliceBase = yield* manager.open({
+          threadId: tAlice1,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        yield* startBusyTurn(aliceBase, tAlice1);
+        currentGenByMember.set(aliceId, 1);
+        const aliceFork = yield* manager.open({
+          threadId: tAlice2,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        assert.include(String(aliceFork.providerSessionId), `::member:${aliceId}::ghgen:1:`);
+
+        // Close Alice's old baseSessionId while Alice's ::ghgen:1 session stays live
+        yield* manager.release({
+          providerSessionId: aliceBase.providerSessionId,
+          reason: "manual_shutdown",
+        });
+
+        // Bob now occupies baseSessionId at gen 0, starts a busy turn, rotates PAT to gen 1,
+        // and opens a second thread -> MUST fork under ::member:bob::ghgen:1 without colliding!
+        const bobBase = yield* manager.open({
+          threadId: tBob1,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: bobId,
+        });
+        yield* startBusyTurn(bobBase, tBob1);
+        currentGenByMember.set(bobId, 1);
+        const bobFork = yield* manager.open({
+          threadId: tBob2,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: bobId,
+        });
+        assert.include(String(bobFork.providerSessionId), `::member:${bobId}::ghgen:1:`);
+        assert.notStrictEqual(bobFork.providerSessionId, aliceFork.providerSessionId);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            capabilities: CodexCapabilities,
+            teamServiceLayer,
+            teamGitHubBrokerLayer,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 isolates personal non-team threads from warm and busy remote-team sessions on attached runners (isTeamConfigured: false)",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      let prepareCalls = 0;
+      const teamServiceLayer = Layer.mock(TeamService.TeamService)({
+        isTeamConfigured: () => Effect.succeed(false),
+      });
+      const teamGitHubBrokerLayer = Layer.mock(TeamGitHubBroker.TeamGitHubBroker)({
+        getCredentialGeneration: () => Effect.succeed(0),
+        getSessionCredentialGeneration: () => Effect.succeed(0),
+        prepareSessionEnvironment: (input) =>
+          Effect.sync(() => {
+            prepareCalls += 1;
+            return {
+              T3_TEAM_GH_SANITIZE: "1",
+              T3_TEAM_GH_BROKER_TOKEN: `tok_remote_${prepareCalls}_${String(input.providerSessionId)}`,
+            };
+          }),
+        attachThreadToSessionChannel: () => Effect.void,
+        detachThreadFromSessionChannel: () => Effect.void,
+        revokeSessionChannel: () => Effect.void,
+      });
+
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const baseSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        const tTeam = ThreadId.make("thread-remote-runner-team");
+        const tPersonalIdle = ThreadId.make("thread-remote-runner-personal-idle");
+        const tPersonalBusy = ThreadId.make("thread-remote-runner-personal-busy");
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: tTeam, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: tPersonalIdle, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: tPersonalBusy, now }),
+          ],
+        });
+
+        // 1. Remote team thread opens with teamGitHubRemoteContext -> calls prepareSessionEnvironment
+        yield* manager.open({
+          threadId: tTeam,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          teamGitHubRemoteContext: {
+            identityOverride: {
+              githubLogin: "alice-remote",
+              githubName: "Alice",
+              githubEmail: "alice@acme.dev",
+            },
+            identityKey: "alice-remote:t1",
+          },
+        });
+        assert.strictEqual(prepareCalls, 1);
+
+        // 2. Personal non-team thread opens while team session is idle -> recycles without calling broker
+        yield* manager.open({
+          threadId: tPersonalIdle,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.strictEqual(prepareCalls, 1);
+
+        // 3. Remote team thread opens again and becomes busy; personal thread opens concurrently
+        // -> personal thread MUST fork its own clean session without attaching or calling broker!
+        const busyTeamRuntime = yield* manager.open({
+          threadId: tTeam,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+          teamGitHubRemoteContext: {
+            identityOverride: null,
+            identityKey: "none",
+          },
+        });
+        assert.strictEqual(prepareCalls, 2);
+        const runId = idAllocator.derive.run({ threadId: tTeam, ordinal: 1 });
+        yield* busyTeamRuntime.startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(tTeam)).thread,
+          threadId: tTeam,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId: tTeam,
+            providerSessionId: busyTeamRuntime.providerSessionId,
+            now,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId: tTeam, ordinal: 1 }),
+            text: "busy remote team turn",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const personalBusyRuntime = yield* manager.open({
+          threadId: tPersonalBusy,
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(
+          personalBusyRuntime.providerSessionId,
+          busyTeamRuntime.providerSessionId,
+        );
+        assert.strictEqual(prepareCalls, 2);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            capabilities: CodexCapabilities,
+            teamServiceLayer,
+            teamGitHubBrokerLayer,
+          }),
+        ),
       );
     }),
 );

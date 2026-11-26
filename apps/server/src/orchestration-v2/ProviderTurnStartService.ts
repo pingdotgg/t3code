@@ -9,6 +9,7 @@ import {
   withMessageSenderNote,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
@@ -16,10 +17,14 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isDeliveredProviderTurn,
+  MessageId,
   parseGoalCommand,
   RunId,
   RunAttemptId,
   NodeId,
+  type EnvironmentId,
+  type TeamGitHubRemoteLeaseIssueResponse,
+  type TeamGitHubTurnAuthorKind,
   type TeamMemberId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -85,6 +90,10 @@ import {
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as TeamAssetsRepository from "../team/TeamAssetsRepository.ts";
+import * as TeamGitHubBroker from "../team/TeamGitHubBroker.ts";
 import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import * as TeamService from "../team/TeamService.ts";
 import {
@@ -268,6 +277,71 @@ const startFailureMessage = (error: Error): string => {
   );
 };
 
+export const resolveIsScheduledAutomationRun = Effect.fn(
+  "ProviderTurnStartService.resolveIsScheduledAutomationRun",
+)(function* <E = never>(input: {
+  readonly threadId: ThreadId;
+  readonly run: OrchestrationV2Run;
+  readonly runs: ReadonlyArray<OrchestrationV2Run>;
+  readonly initialMessages: ReadonlyArray<OrchestrationV2ConversationMessage>;
+  readonly loadMessagesById: (
+    threadId: ThreadId,
+    messageIds: ReadonlyArray<MessageId>,
+  ) => Effect.Effect<ReadonlyMap<MessageId, OrchestrationV2ConversationMessage>, E>;
+}) {
+  const runsById = new Map(input.runs.map((candidate) => [candidate.id, candidate]));
+  const messagesById = new Map(input.initialMessages.map((candidate) => [candidate.id, candidate]));
+  const visited = new Set<RunId>();
+  let cursorRun: OrchestrationV2Run | undefined = input.run;
+  while (cursorRun !== undefined && !visited.has(cursorRun.id)) {
+    visited.add(cursorRun.id);
+    let cursorMsg: OrchestrationV2ConversationMessage | undefined;
+    if (cursorRun.userMessageId !== null) {
+      cursorMsg = messagesById.get(cursorRun.userMessageId);
+      if (cursorMsg === undefined) {
+        const loaded = yield* input.loadMessagesById(input.threadId, [cursorRun.userMessageId]);
+        for (const [id, message] of loaded) {
+          messagesById.set(id, message);
+        }
+        cursorMsg = messagesById.get(cursorRun.userMessageId);
+      }
+    }
+    if (cursorMsg?.scheduledTaskId !== undefined) {
+      return true;
+    }
+    if (
+      cursorMsg?.createdBy === "user" &&
+      cursorRun.restartContinuationOfRunId === undefined &&
+      cursorRun.usageLimitContinuationOfRunId === undefined &&
+      cursorMsg.delegatedCompletion === undefined &&
+      cursorMsg.notification === undefined
+    ) {
+      return false;
+    }
+    const cursorPriorExecutedRunId =
+      cursorMsg?.notification !== undefined
+        ? input.runs
+            .filter(
+              (candidate) =>
+                candidate.id !== cursorRun!.id &&
+                candidate.ordinal < cursorRun!.ordinal &&
+                candidate.startedAt !== null,
+            )
+            .toSorted((left, right) => right.ordinal - left.ordinal)[0]?.id
+        : undefined;
+    const nextRunId =
+      cursorRun.restartContinuationOfRunId ??
+      cursorRun.usageLimitContinuationOfRunId ??
+      cursorMsg?.delegatedCompletion?.parentRunId ??
+      cursorPriorExecutedRunId;
+    if (nextRunId === undefined) {
+      return false;
+    }
+    cursorRun = runsById.get(nextRunId);
+  }
+  return false;
+});
+
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
     readonly threadId: ThreadId;
@@ -330,6 +404,14 @@ export const layer: Layer.Layer<
     const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
     const teamProviderManagerOption = yield* Effect.serviceOption(
       TeamProviderManager.TeamProviderManager,
+    );
+    const teamGitHubBrokerOption = yield* Effect.serviceOption(TeamGitHubBroker.TeamGitHubBroker);
+    const teamAssetsRepoOption = yield* Effect.serviceOption(
+      TeamAssetsRepository.TeamAssetsRepository,
+    );
+    const secretStoreOption = yield* Effect.serviceOption(ServerSecretStore.ServerSecretStore);
+    const serverEnvironmentOption = yield* Effect.serviceOption(
+      ServerEnvironment.ServerEnvironment,
     );
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
@@ -565,6 +647,15 @@ export const layer: Layer.Layer<
       },
     );
 
+    type PendingRemoteLeaseCleanup = {
+      readonly teamServerUrl: string;
+      readonly environmentId: EnvironmentId;
+      readonly threadId: ThreadId;
+      readonly turnId: string;
+      readonly leaseId: string;
+      readonly leaseToken: string;
+    };
+
     const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (
       input: {
         readonly threadId: ThreadId;
@@ -572,6 +663,7 @@ export const layer: Layer.Layer<
         readonly willRetry?: boolean;
       },
       captureStartingRun: (run: OrchestrationV2Run) => void,
+      setPendingRemoteLease: (lease: PendingRemoteLeaseCleanup | null) => void,
     ) {
       const { runId } = input;
       const projection = yield* projectionStore.getTurnStartContext(input.threadId, runId);
@@ -1054,15 +1146,57 @@ export const layer: Layer.Layer<
         run.manualContinuationOfRunId ??
         runUserMessage?.delegatedCompletion?.parentRunId ??
         priorExecutedRunId;
+      // Walk the continuation chain (lazily fetching pruned ancestor messages via ProjectionStore)
+      // so restart, usage-limit, and delegated continuations of a scheduled automation run preserve
+      // `team_automation` instead of failing attribution or borrowing a member's PAT.
+      const isScheduledAutomationRun = yield* resolveIsScheduledAutomationRun({
+        threadId: projection.thread.id,
+        run,
+        runs: projection.runs,
+        initialMessages: projection.messages,
+        loadMessagesById: (threadId, messageIds) =>
+          typeof projectionStore.getMessagesById === "function"
+            ? projectionStore.getMessagesById(threadId, messageIds)
+            : Effect.succeed(new Map<MessageId, OrchestrationV2ConversationMessage>()),
+      });
+      const isTeamConfigured =
+        Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured());
+      type TeamTurnPrincipal =
+        | { readonly kind: "member"; readonly memberId: TeamMemberId }
+        | { readonly kind: "team_automation" };
+      let teamTurnPrincipal: TeamTurnPrincipal | null = null;
       let actingMemberId: TeamMemberId | undefined;
-      if (Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured())) {
+      if (isTeamConfigured && Option.isSome(teamServiceOption)) {
         const resolvedAuthor = yield* teamServiceOption.value.resolveTurnAuthorMemberId({
           threadId: projection.thread.id,
           runId: run.id,
           userMessageId: run.userMessageId,
           ...(continuedFromRunId === undefined ? {} : { continuedFromRunId }),
         });
-        if (Option.isNone(resolvedAuthor)) {
+        if (Option.isSome(resolvedAuthor)) {
+          // Persist resolved attribution onto run.id so multi-hop continuations and active-turn checks stay authoritative.
+          const persisted = yield* Effect.result(
+            teamServiceOption.value.requireTurnAuthoredByMember({
+              memberId: resolvedAuthor.value,
+              threadId: projection.thread.id,
+              turnId: run.id,
+            }),
+          );
+          if (persisted._tag === "Failure") {
+            yield* settleStartFailure({
+              signal: "team-turn-attribution-persist-failed",
+              title: "Unable to persist team turn attribution",
+              error: persisted.failure,
+              message: persisted.failure.message,
+            });
+            return;
+          }
+          actingMemberId = resolvedAuthor.value;
+          teamTurnPrincipal = { kind: "member", memberId: resolvedAuthor.value };
+        } else if (isScheduledAutomationRun) {
+          // Scheduled automation turns (and their continuations) execute under team_automation.
+          teamTurnPrincipal = { kind: "team_automation" };
+        } else {
           yield* settleStartFailure({
             signal: "team-turn-attribution-missing",
             title: "Missing team turn attribution",
@@ -1074,25 +1208,19 @@ export const layer: Layer.Layer<
           });
           return;
         }
-        // Persist resolved attribution onto run.id so multi-hop continuations and active-turn checks stay authoritative.
-        const persisted = yield* Effect.result(
-          teamServiceOption.value.requireTurnAuthoredByMember({
-            memberId: resolvedAuthor.value,
-            threadId: projection.thread.id,
-            turnId: run.id,
-          }),
-        );
-        if (persisted._tag === "Failure") {
-          yield* settleStartFailure({
-            signal: "team-turn-attribution-persist-failed",
-            title: "Unable to persist team turn attribution",
-            error: persisted.failure,
-            message: persisted.failure.message,
-          });
-          return;
-        }
-        actingMemberId = resolvedAuthor.value;
       }
+      const projectOptForTeam =
+        Option.isSome(teamProviderManagerOption) ||
+        (!isTeamConfigured && Option.isSome(teamAssetsRepoOption))
+          ? yield* projects
+              .getById(projection.thread.projectId, { includeDeleted: true })
+              .pipe(Effect.orElseSucceed(() => Option.none()))
+          : Option.none();
+      const repoIdentityKeyForTeam = Option.isSome(projectOptForTeam)
+        ? (projectOptForTeam.value.repositoryIdentity?.origin?.canonicalKey ??
+          projectOptForTeam.value.repositoryIdentity?.canonicalKey ??
+          null)
+        : null;
       let teamPrep: TeamProviderManager.TeamTurnPreparationResult = {
         teamId: null,
         recycleWarmSession: false,
@@ -1100,14 +1228,6 @@ export const layer: Layer.Layer<
         genericThreadPrepromptText: "",
       };
       if (Option.isSome(teamProviderManagerOption)) {
-        const projectOpt = yield* projects
-          .getById(projection.thread.projectId, { includeDeleted: true })
-          .pipe(Effect.orElseSucceed(() => Option.none()));
-        const repoIdentityKey = Option.isSome(projectOpt)
-          ? (projectOpt.value.repositoryIdentity?.origin?.canonicalKey ??
-            projectOpt.value.repositoryIdentity?.canonicalKey ??
-            null)
-          : null;
         const slashMessageIds = new Set(
           projection.messages.filter(isSlashCommandMessage).map((candidate) => candidate.id),
         );
@@ -1126,7 +1246,7 @@ export const layer: Layer.Layer<
         const prepResult = yield* Effect.result(
           teamProviderManagerOption.value.prepareForTurn({
             projectId: projection.thread.projectId,
-            repoIdentityKey,
+            repoIdentityKey: repoIdentityKeyForTeam,
             instanceId: run.providerInstanceId,
             driver: providerThread.driver,
             nativeThreadHasTurns: hasPriorTurnsOnProviderThread,
@@ -1160,6 +1280,84 @@ export const layer: Layer.Layer<
             .pipe(Effect.ignore);
         }
       }
+      const remoteAuthorKind: TeamGitHubTurnAuthorKind = isScheduledAutomationRun
+        ? "team_automation"
+        : "member";
+      let matchedRemoteTeamBinding = !isTeamConfigured && teamPrep.teamId !== null;
+      let remoteGitHubLeasePlan: {
+        readonly teamServerUrl: string;
+        readonly environmentId: EnvironmentId;
+        readonly authorKind: TeamGitHubTurnAuthorKind;
+        readonly issued: TeamGitHubRemoteLeaseIssueResponse | null;
+      } | null = null;
+      if (
+        !isTeamConfigured &&
+        Option.isSome(teamGitHubBrokerOption) &&
+        Option.isSome(teamAssetsRepoOption)
+      ) {
+        const bindings = yield* teamAssetsRepoOption.value
+          .listLocalBindings()
+          .pipe(Effect.orElseSucceed(() => []));
+        const matchedBinding = bindings.find(
+          (candidate) =>
+            (teamPrep.teamId !== null && candidate.teamId === teamPrep.teamId) ||
+            (repoIdentityKeyForTeam !== null &&
+              candidate.projects.some(
+                (project) => project.repoIdentityKey === repoIdentityKeyForTeam,
+              )),
+        );
+        if (matchedBinding !== undefined) {
+          matchedRemoteTeamBinding = true;
+          if (
+            matchedBinding.tokenSecretKey !== null &&
+            Option.isSome(secretStoreOption) &&
+            Option.isSome(serverEnvironmentOption)
+          ) {
+            const tokenBytesOpt = yield* secretStoreOption.value
+              .get(matchedBinding.tokenSecretKey)
+              .pipe(Effect.orElseSucceed(() => Option.none()));
+            const localEnvIdOpt = yield* serverEnvironmentOption.value.getEnvironmentId.pipe(
+              Effect.option,
+            );
+            if (Option.isSome(tokenBytesOpt) && Option.isSome(localEnvIdOpt)) {
+              const memberToken = new TextDecoder().decode(tokenBytesOpt.value).trim();
+              if (memberToken.length > 0) {
+                const issued = yield* teamGitHubBrokerOption.value
+                  .requestRemoteTurnLease({
+                    teamServerUrl: matchedBinding.teamServerUrl,
+                    memberToken,
+                    environmentId: localEnvIdOpt.value,
+                    threadId: projection.thread.id,
+                    turnId: run.id,
+                    authorKind: remoteAuthorKind,
+                  })
+                  .pipe(Effect.orElseSucceed(() => null));
+                remoteGitHubLeasePlan = {
+                  teamServerUrl: matchedBinding.teamServerUrl,
+                  environmentId: localEnvIdOpt.value,
+                  authorKind: remoteAuthorKind,
+                  issued,
+                };
+                if (
+                  issued !== null &&
+                  issued.hasCredential &&
+                  issued.leaseId !== null &&
+                  issued.leaseToken !== null
+                ) {
+                  setPendingRemoteLease({
+                    teamServerUrl: matchedBinding.teamServerUrl,
+                    environmentId: localEnvIdOpt.value,
+                    threadId: projection.thread.id,
+                    turnId: run.id,
+                    leaseId: issued.leaseId,
+                    leaseToken: issued.leaseToken,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,
@@ -1167,6 +1365,18 @@ export const layer: Layer.Layer<
           modelSelection: run.modelSelection,
           runtimePolicy: resolvedRuntimePolicy,
           ...(actingMemberId === undefined ? {} : { actingMemberId }),
+          ...(!matchedRemoteTeamBinding
+            ? {}
+            : {
+                teamGitHubRemoteContext: {
+                  authorKind: remoteAuthorKind,
+                  identityOverride: remoteGitHubLeasePlan?.issued?.identity ?? null,
+                  identityKey:
+                    remoteGitHubLeasePlan?.issued?.identity != null
+                      ? `${remoteAuthorKind}:${remoteGitHubLeasePlan.issued.identity.githubLogin}:${remoteGitHubLeasePlan.issued.identity.updatedAt}`
+                      : `${remoteAuthorKind}:none`,
+                },
+              }),
           ...(existingSessionProjection === undefined
             ? {}
             : { resumeFromSession: existingSessionProjection }),
@@ -2474,80 +2684,131 @@ export const layer: Layer.Layer<
         carriesPendingContext || carriesTeamTurnInstructions
           ? makeDeliverySession(session, startWithHandoffs)
           : session;
-      return runExecution.startRootRun({
-        commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
-        appThread: projection.thread,
-        providerSessionId: activeProviderSessionId,
-        session: deliverySession,
-        run: runningRun,
-        rootNode: runningRootNode,
-        checkpointScope,
-        providerThread: runningProviderThread,
-        attempt: runningAttempt,
-        attemptId: attempt.id,
-        baseline,
-        loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
-        relatedThreadIds: routableSubagents.flatMap((subagent) =>
-          subagent.childThreadId === null ? [] : [subagent.childThreadId],
+      const activateGitHubTurnLease =
+        Option.isSome(teamGitHubBrokerOption) && isTeamConfigured && teamTurnPrincipal !== null
+          ? teamGitHubBrokerOption.value
+              .activateLocalTurnLease({
+                threadId: projection.thread.id,
+                turnId: run.id,
+                providerSessionId: activeProviderSessionId,
+                authorKind: teamTurnPrincipal.kind,
+                authorMemberId:
+                  teamTurnPrincipal.kind === "member" ? teamTurnPrincipal.memberId : null,
+              })
+              .pipe(Effect.ignore)
+          : Option.isSome(teamGitHubBrokerOption) &&
+              remoteGitHubLeasePlan !== null &&
+              remoteGitHubLeasePlan.issued !== null &&
+              remoteGitHubLeasePlan.issued.hasCredential &&
+              remoteGitHubLeasePlan.issued.leaseId !== null &&
+              remoteGitHubLeasePlan.issued.leaseToken !== null &&
+              remoteGitHubLeasePlan.issued.expiresAt !== null
+            ? teamGitHubBrokerOption.value
+                .activateRemoteTurnLease({
+                  threadId: projection.thread.id,
+                  turnId: run.id,
+                  providerSessionId: activeProviderSessionId,
+                  environmentId: remoteGitHubLeasePlan.environmentId,
+                  teamServerUrl: remoteGitHubLeasePlan.teamServerUrl,
+                  leaseId: remoteGitHubLeasePlan.issued.leaseId,
+                  leaseToken: remoteGitHubLeasePlan.issued.leaseToken,
+                  expiresAt: remoteGitHubLeasePlan.issued.expiresAt,
+                  authorKind: remoteGitHubLeasePlan.authorKind,
+                  authorMemberId: null,
+                })
+                .pipe(
+                  Effect.tap(() => Effect.sync(() => setPendingRemoteLease(null))),
+                  Effect.ignore,
+                )
+            : Effect.void;
+      return activateGitHubTurnLease.pipe(
+        Effect.andThen(
+          runExecution.startRootRun({
+            commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
+            appThread: projection.thread,
+            providerSessionId: activeProviderSessionId,
+            session: deliverySession,
+            run: runningRun,
+            rootNode: runningRootNode,
+            checkpointScope,
+            providerThread: runningProviderThread,
+            attempt: runningAttempt,
+            attemptId: attempt.id,
+            baseline,
+            loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
+            relatedThreadIds: routableSubagents.flatMap((subagent) =>
+              subagent.childThreadId === null ? [] : [subagent.childThreadId],
+            ),
+            relatedProviderThreadIds: routableSubagents.flatMap((subagent) =>
+              subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
+            ),
+            providerTurnOrdinal:
+              Math.max(
+                0,
+                ...projection.providerTurns
+                  .filter((turn) => turn.providerThreadId === providerThread.id)
+                  .map((turn) => turn.ordinal),
+              ) + 1,
+            resume: manualResume && unsentResumeMessage === undefined,
+            nativeThreadHasTurns:
+              nativeInputRunIds.size > 0 ||
+              (legacyInputRunIds.size > 0 &&
+                sameNativeThread &&
+                !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
+            shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+            shouldFinalizeRun: runControls.shouldFinalizeRun,
+            hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
+            loadRunInterruptReason: runControls.loadRunInterruptReason,
+            hasWorkspaceMoved: runControls.hasWorkspaceMoved,
+            loadDroppedInlineHandoffs: () =>
+              inlineDeliveryLock.withPermits(1)(
+                Effect.sync(() => {
+                  promptDroppedOnTerminal = true;
+                  return inlineDeliveredHandoffs;
+                }),
+              ),
+            loadUnsettledWork: runControls.loadUnsettledWork,
+            message: {
+              messageId: message.id,
+              text: userText,
+              attachments: providerMessage.attachments,
+              createdBy: message.createdBy,
+              creationSource: message.creationSource,
+              ...(message.scheduledTaskId === undefined
+                ? {}
+                : { scheduledTaskId: message.scheduledTaskId }),
+              ...(message.senderThreadId === undefined
+                ? {}
+                : { senderThreadId: message.senderThreadId }),
+            },
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+            ...(actingMemberId === undefined ? {} : { actingMemberId }),
+            recycleSession: () =>
+              providerSessions
+                .release({
+                  providerSessionId: activeProviderSessionId,
+                  threadId: projection.thread.id,
+                  ...(actingMemberId === undefined ? {} : { actingMemberId }),
+                  reason: "manual_shutdown",
+                  detail:
+                    "Team OAuth lease rotated during active turn; recycling warm provider session.",
+                  preserveTeamEphemeralTokens: true,
+                })
+                .pipe(Effect.ignore),
+          }),
         ),
-        relatedProviderThreadIds: routableSubagents.flatMap((subagent) =>
-          subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
+        Effect.onError(() =>
+          Option.isSome(teamGitHubBrokerOption)
+            ? teamGitHubBrokerOption.value
+                .revokeTurnLease({
+                  threadId: projection.thread.id,
+                  turnId: run.id,
+                })
+                .pipe(Effect.ignore)
+            : Effect.void,
         ),
-        providerTurnOrdinal:
-          Math.max(
-            0,
-            ...projection.providerTurns
-              .filter((turn) => turn.providerThreadId === providerThread.id)
-              .map((turn) => turn.ordinal),
-          ) + 1,
-        resume: manualResume && unsentResumeMessage === undefined,
-        nativeThreadHasTurns:
-          nativeInputRunIds.size > 0 ||
-          (legacyInputRunIds.size > 0 &&
-            sameNativeThread &&
-            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
-        shouldStartProviderTurn: runControls.shouldStartProviderTurn,
-        shouldFinalizeRun: runControls.shouldFinalizeRun,
-        hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
-        loadRunInterruptReason: runControls.loadRunInterruptReason,
-        hasWorkspaceMoved: runControls.hasWorkspaceMoved,
-        loadDroppedInlineHandoffs: () =>
-          inlineDeliveryLock.withPermits(1)(
-            Effect.sync(() => {
-              promptDroppedOnTerminal = true;
-              return inlineDeliveredHandoffs;
-            }),
-          ),
-        loadUnsettledWork: runControls.loadUnsettledWork,
-        message: {
-          messageId: message.id,
-          text: userText,
-          attachments: providerMessage.attachments,
-          createdBy: message.createdBy,
-          creationSource: message.creationSource,
-          ...(message.scheduledTaskId === undefined
-            ? {}
-            : { scheduledTaskId: message.scheduledTaskId }),
-          ...(message.senderThreadId === undefined
-            ? {}
-            : { senderThreadId: message.senderThreadId }),
-        },
-        modelSelection: run.modelSelection,
-        runtimePolicy: resolvedRuntimePolicy,
-        ...(actingMemberId === undefined ? {} : { actingMemberId }),
-        recycleSession: () =>
-          providerSessions
-            .release({
-              providerSessionId: activeProviderSessionId,
-              threadId: projection.thread.id,
-              ...(actingMemberId === undefined ? {} : { actingMemberId }),
-              reason: "manual_shutdown",
-              detail:
-                "Team OAuth lease rotated during active turn; recycling warm provider session.",
-              preserveTeamEphemeralTokens: true,
-            })
-            .pipe(Effect.ignore),
-      });
+      );
     });
 
     const startWithWorkspaceLease: ProviderTurnStartServiceV2Shape["start"] = Effect.fn(
@@ -2555,8 +2816,12 @@ export const layer: Layer.Layer<
     )(
       function* (input) {
         let startingRun: OrchestrationV2Run | undefined;
+        let pendingRemoteLease: PendingRemoteLeaseCleanup | null = null;
         const captureStartingRun = (run: OrchestrationV2Run) => {
           startingRun = run;
+        };
+        const setPendingRemoteLease = (lease: PendingRemoteLeaseCleanup | null) => {
+          pendingRemoteLease = lease;
         };
         return yield* Effect.gen(function* () {
           // Storage cleanup removes worktrees under the same lease. Only startup
@@ -2568,16 +2833,16 @@ export const layer: Layer.Layer<
               .getById(thread.projectId, { includeDeleted: true })
               .pipe(Effect.map((project) => Option.getOrUndefined(project)?.workspaceRoot)));
           const providerTurn = yield* cwd === undefined
-            ? start(input, captureStartingRun)
+            ? start(input, captureStartingRun, setPendingRemoteLease)
             : withTurnStartReservation(
                 fileSystem,
                 path,
                 path.resolve(cwd),
                 thread.worktreePath === null
-                  ? start(input, captureStartingRun)
+                  ? start(input, captureStartingRun, setPendingRemoteLease)
                   : withWorkspaceLease(
                       path.resolve(thread.worktreePath),
-                      start(input, captureStartingRun),
+                      start(input, captureStartingRun, setPendingRemoteLease),
                     ),
               );
           if (providerTurn !== undefined && "worktreeSetup" in providerTurn) {
@@ -2598,6 +2863,15 @@ export const layer: Layer.Layer<
             );
           }
         }).pipe(
+          Effect.ensuring(
+            Effect.suspend(() => {
+              const unactivated = pendingRemoteLease;
+              pendingRemoteLease = null;
+              return unactivated !== null && Option.isSome(teamGitHubBrokerOption)
+                ? teamGitHubBrokerOption.value.revokeIssuedRemoteLease(unactivated)
+                : Effect.void;
+            }),
+          ),
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
             (cause) =>

@@ -59,6 +59,7 @@ const PROVIDER_PROFILE_ENV_VARS: ReadonlyArray<string> = [
 
 const TURN_HELPER_RO_ENV_VARS: ReadonlyArray<string> = [
   "GIT_ASKPASS",
+  "T3_TEAM_GH_BROKER_NODE",
   "T3_ACP_MCP_NODE",
   "T3_ACP_MCP_ENTRYPOINT",
 ];
@@ -226,6 +227,7 @@ export interface BwrapSandboxPlan {
   readonly extraRoBinds: ReadonlyArray<string>;
   readonly socketPaths: ReadonlyArray<string>;
   readonly helperPaths: ReadonlyArray<string>;
+  readonly privateTmpfsDirs?: ReadonlyArray<string> | undefined;
   readonly sandboxEnv?: Readonly<Record<string, string>> | undefined;
   readonly newSession?: boolean | undefined;
   readonly command: string;
@@ -237,6 +239,7 @@ export interface ExtractedEnvBinds {
   readonly helperRoPaths: ReadonlyArray<string>;
   readonly helperRwDirs: ReadonlyArray<string>;
   readonly socketPaths: ReadonlyArray<string>;
+  readonly privateTmpfsDirs: ReadonlyArray<string>;
 }
 
 export interface WrapCommandWithBwrapInput {
@@ -1211,6 +1214,7 @@ export function extractSandboxBindsFromEnv(env: NodeJS.ProcessEnv | undefined): 
   const helperRoPaths: Array<string> = [];
   const helperRwDirs: Array<string> = [];
   const socketPaths: Array<string> = [];
+  const privateTmpfsDirs: Array<string> = [];
 
   if (env !== undefined) {
     for (const key of PROVIDER_PROFILE_ENV_VARS) {
@@ -1225,9 +1229,39 @@ export function extractSandboxBindsFromEnv(env: NodeJS.ProcessEnv | undefined): 
         helperRoPaths.push(value);
       }
     }
+
+    // TeamGitHubBroker exposes a POSIX Unix socket at `<brokerDir>/s` via T3_TEAM_GH_BROKER_ENDPOINT
+    // alongside RO helper scripts (`bin/`, `t3-git-askpass*`, `t3-git-ssh-guard`, `empty-gitconfig`,
+    // `git-home`, `gh-config`) and an ephemeral per-invocation `gh-runs` dir mounted as private tmpfs
+    // so sandboxed sessions never share writable host directories across members.
+    const ghBrokerEndpoint = env.T3_TEAM_GH_BROKER_ENDPOINT?.trim();
+    let brokerStaticGhConfigDir: string | undefined;
+    if (ghBrokerEndpoint !== undefined && ghBrokerEndpoint.startsWith("/")) {
+      socketPaths.push(ghBrokerEndpoint);
+      const brokerDir = NodePath.posix.dirname(ghBrokerEndpoint);
+      brokerStaticGhConfigDir = normalizePosixPath(NodePath.posix.join(brokerDir, "gh-config"));
+      helperRoPaths.push(
+        NodePath.posix.join(brokerDir, "bin"),
+        NodePath.posix.join(brokerDir, "t3-git-askpass"),
+        NodePath.posix.join(brokerDir, "t3-git-askpass.cjs"),
+        NodePath.posix.join(brokerDir, "t3-git-ssh-guard"),
+        NodePath.posix.join(brokerDir, "empty-gitconfig"),
+        NodePath.posix.join(brokerDir, "git-home"),
+        brokerStaticGhConfigDir,
+      );
+      privateTmpfsDirs.push(NodePath.posix.join(brokerDir, "gh-runs"));
+    }
+
     for (const key of TURN_HELPER_RW_ENV_VARS) {
       const value = env[key]?.trim();
       if (value !== undefined && value.length > 0) {
+        if (
+          key === "GH_CONFIG_DIR" &&
+          brokerStaticGhConfigDir !== undefined &&
+          normalizePosixPath(value) === brokerStaticGhConfigDir
+        ) {
+          continue;
+        }
         helperRwDirs.push(value);
       }
     }
@@ -1244,6 +1278,7 @@ export function extractSandboxBindsFromEnv(env: NodeJS.ProcessEnv | undefined): 
     helperRoPaths,
     helperRwDirs,
     socketPaths,
+    privateTmpfsDirs,
   };
 }
 
@@ -1443,6 +1478,9 @@ function buildBwrapPrefixArgs(
   for (const helperPath of plan.helperPaths) {
     pushRo(helperPath);
   }
+  for (const tmpfsDir of plan.privateTmpfsDirs ?? []) {
+    args.push("--tmpfs", normalizePosixPath(tmpfsDir));
+  }
 
   // Apply untrusted per-request env vars strictly inside the sandbox (never on the host bwrap process).
   if (plan.sandboxEnv !== undefined) {
@@ -1607,6 +1645,33 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
       homeRoots,
     });
     helperPaths.push(validated);
+    const normalizedRaw = normalizePosixPath(raw);
+    if (normalizedRaw !== validated && !isCoveredBySystemRoBinds(normalizedRaw)) {
+      const lexicalRawError = assertLexicalPathNotForbidden({
+        candidate: normalizedRaw,
+        role: "helper",
+        ownStateRoots,
+        foreignForbiddenRoots,
+        homeRoots,
+      });
+      if (lexicalRawError !== undefined) {
+        return yield* lexicalRawError;
+      }
+      helperPaths.push(normalizedRaw);
+    }
+  }
+
+  const privateTmpfsDirs: Array<string> = [];
+  for (const raw of extracted.privateTmpfsDirs) {
+    const validated = yield* canonicalizeAndValidateBindPath({
+      rawPath: raw,
+      role: "helper",
+      ownStateRoots,
+      foreignForbiddenRoots,
+      homeRoots,
+      expectedType: "directory",
+    });
+    privateTmpfsDirs.push(validated);
   }
 
   // Bind trusted absolute executables outside OS RO binds (including system-dir symlinks targeting
@@ -1745,6 +1810,7 @@ export const wrapCommandWithBwrap = Effect.fn("bwrapSandbox.wrapCommand")(functi
     extraRoBinds,
     socketPaths,
     helperPaths,
+    ...(privateTmpfsDirs.length === 0 ? {} : { privateTmpfsDirs }),
     ...(validatedSandboxEnv === undefined ? {} : { sandboxEnv: validatedSandboxEnv }),
     ...(input.newSession === undefined ? {} : { newSession: input.newSession }),
   });

@@ -68,6 +68,7 @@ import {
 import {
   applyProviderSessionEnvironmentOverride,
   mergeProviderInstanceEnvironment,
+  shouldSanitizeTeamGitHubEnv,
 } from "@t3tools/provider-core/server/instanceEnvironment";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
@@ -1064,6 +1065,18 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
     }),
     openSession: Effect.fn("OpenCodeAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
+        if (
+          shouldSanitizeTeamGitHubEnv(input.sessionEnvironmentOverride) &&
+          options.settings.serverUrl?.trim()
+        ) {
+          return yield* new ProviderAdapter.ProviderAdapterOpenSessionError({
+            driver: OPENCODE_PROVIDER,
+            providerSessionId: input.providerSessionId,
+            cause: new Error(
+              "External OpenCode servers (serverUrl) cannot enforce per-turn Team GitHub credential isolation. Use a managed OpenCode server instead.",
+            ),
+          });
+        }
         const scope = yield* Effect.scope;
         const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
         const connection = yield* runtime.connectToOpenCodeServer({

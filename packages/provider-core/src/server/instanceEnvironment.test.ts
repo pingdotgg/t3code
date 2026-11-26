@@ -5,7 +5,12 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { mergeProviderInstanceEnvironment } from "./instanceEnvironment.ts";
+import {
+  applyProviderSessionEnvironmentOverride,
+  mergeProviderInstanceEnvironment,
+  ProviderSessionEnvironmentOverride,
+  TEAM_GITHUB_SANITIZE_ENV,
+} from "./instanceEnvironment.ts";
 
 describe("mergeProviderInstanceEnvironment", () => {
   it.effect.each([
@@ -156,5 +161,95 @@ describe("mergeProviderInstanceEnvironment", () => {
         PATH: "/bin",
       });
     }),
+  );
+
+  it.effect(
+    "strips all ambient GitHub and GHE credentials on both broker token and fail-closed sanitize sentinel",
+    () =>
+      Effect.gen(function* () {
+        const pollutedBase: NodeJS.ProcessEnv = {
+          GH_TOKEN: "host-gh",
+          GITHUB_TOKEN: "host-github",
+          GH_ENTERPRISE_TOKEN: "host-ghe",
+          GITHUB_ENTERPRISE_TOKEN: "host-github-ghe",
+          GITHUB_PAT: "host-github-pat",
+          github_pat: "mixed-case-pat",
+          GH_HOST: "ghe.host.local",
+          gh_enterprise_token: "mixed-case-ghe",
+          GIT_CONFIG: "/dev/null",
+          GIT_CONFIG_SYSTEM: "/etc/gitconfig",
+          GIT_CONFIG_PARAMETERS: "'http.extraHeader=Authorization: Basic host'",
+          GIT_CONFIG_COUNT: "6",
+          GIT_CONFIG_KEY_5: "http.https://github.com/.extraHeader",
+          GIT_CONFIG_VALUE_5: "Authorization: Basic STRAY_HOST_SECRET",
+          NETRC: "/home/host/.netrc",
+          GIT_AUTHOR_NAME: "Host Human",
+          GIT_AUTHOR_EMAIL: "human@host.local",
+          GIT_COMMITTER_NAME: "Host Human",
+          GIT_COMMITTER_EMAIL: "human@host.local",
+          SAFE_VAR: "keep",
+        };
+
+        // Fail-closed sanitize sentinel (e.g. when broker listener failed to start)
+        const failClosed = applyProviderSessionEnvironmentOverride(pollutedBase, {
+          [TEAM_GITHUB_SANITIZE_ENV]: "1",
+          GIT_TERMINAL_PROMPT: "0",
+        });
+        expect(failClosed.GH_TOKEN).toBeUndefined();
+        expect(failClosed.GITHUB_TOKEN).toBeUndefined();
+        expect(failClosed.GH_ENTERPRISE_TOKEN).toBeUndefined();
+        expect(failClosed.GITHUB_ENTERPRISE_TOKEN).toBeUndefined();
+        expect(failClosed.GITHUB_PAT).toBeUndefined();
+        expect(failClosed.github_pat).toBeUndefined();
+        expect(failClosed.GH_HOST).toBeUndefined();
+        expect(failClosed.gh_enterprise_token).toBeUndefined();
+        expect(failClosed.GIT_CONFIG).toBeUndefined();
+        expect(failClosed.GIT_CONFIG_SYSTEM).toBeUndefined();
+        expect(failClosed.GIT_CONFIG_PARAMETERS).toBeUndefined();
+        expect(failClosed.GIT_CONFIG_COUNT).toBeUndefined();
+        expect(failClosed.GIT_CONFIG_KEY_5).toBeUndefined();
+        expect(failClosed.GIT_CONFIG_VALUE_5).toBeUndefined();
+        expect(failClosed.NETRC).toBeUndefined();
+        expect(failClosed.GIT_AUTHOR_NAME).toBeUndefined();
+        expect(failClosed.GIT_COMMITTER_EMAIL).toBeUndefined();
+        expect(failClosed.SAFE_VAR).toBe("keep");
+
+        // mergeProviderInstanceEnvironment also strips via ProviderSessionEnvironmentOverride
+        const merged = yield* mergeProviderInstanceEnvironment(undefined, pollutedBase).pipe(
+          Effect.provideService(ProviderSessionEnvironmentOverride, {
+            [TEAM_GITHUB_SANITIZE_ENV]: "1",
+            GIT_AUTHOR_NAME: "Alice",
+            GIT_AUTHOR_EMAIL: "alice@acme.dev",
+          }),
+        );
+        expect(merged.GH_TOKEN).toBeUndefined();
+        expect(merged.GH_ENTERPRISE_TOKEN).toBeUndefined();
+        expect(merged.GITHUB_ENTERPRISE_TOKEN).toBeUndefined();
+        expect(merged.GITHUB_PAT).toBeUndefined();
+        expect(merged.github_pat).toBeUndefined();
+        expect(merged.GH_HOST).toBeUndefined();
+        expect(merged.GIT_AUTHOR_NAME).toBe("Alice");
+        expect(merged.GIT_AUTHOR_EMAIL).toBe("alice@acme.dev");
+
+        // ACP flavor second-stage merge (options.environment + processEnvironment: NodeJS.ProcessEnv)
+        // must also strip ambient GitHub credentials captured at driver creation time.
+        const acpProcessEnv: NodeJS.ProcessEnv = {
+          T3_TEAM_GH_SANITIZE: "1",
+          T3_TEAM_GH_BROKER_TOKEN: "t3ghs_acp_session",
+          T3_ACP_MCP_ENDPOINT: "http://127.0.0.1:9999",
+          OPTIONAL_UNSET: undefined,
+        };
+        const acpMerged = applyProviderSessionEnvironmentOverride(pollutedBase, acpProcessEnv);
+        expect(acpMerged.GH_TOKEN).toBeUndefined();
+        expect(acpMerged.GITHUB_TOKEN).toBeUndefined();
+        expect(acpMerged.GH_ENTERPRISE_TOKEN).toBeUndefined();
+        expect(acpMerged.GITHUB_ENTERPRISE_TOKEN).toBeUndefined();
+        expect(acpMerged.GITHUB_PAT).toBeUndefined();
+        expect(acpMerged.github_pat).toBeUndefined();
+        expect(acpMerged.GH_HOST).toBeUndefined();
+        expect(acpMerged.GIT_AUTHOR_NAME).toBeUndefined();
+        expect(acpMerged.T3_TEAM_GH_BROKER_TOKEN).toBe("t3ghs_acp_session");
+        expect(acpMerged.SAFE_VAR).toBe("keep");
+      }),
   );
 });

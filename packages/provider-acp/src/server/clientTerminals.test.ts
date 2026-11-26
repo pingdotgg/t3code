@@ -499,6 +499,61 @@ describe("AcpClientTerminals", () => {
       }),
     ),
   );
+
+  it.live(
+    "strips ambient GitHub credentials and applies team broker env inside ACP client terminals",
+    () =>
+      Effect.gen(function* () {
+        const terminals = yield* makeAcpClientTerminals({
+          defaultCwd: process.cwd(),
+          environment: {
+            ...process.env,
+            GH_TOKEN: "HOST_LEAKED_GH_TOKEN",
+            GITHUB_TOKEN: "HOST_LEAKED_GITHUB_TOKEN",
+            GH_ENTERPRISE_TOKEN: "HOST_LEAKED_GHE_TOKEN",
+            GITHUB_ENTERPRISE_TOKEN: "HOST_LEAKED_GITHUB_GHE_TOKEN",
+            GH_HOST: "leaked.ghe.local",
+          },
+          environmentForSession: (sessionId) =>
+            sessionId === "team-session"
+              ? {
+                  T3_TEAM_GH_SANITIZE: "1",
+                  T3_TEAM_GH_BROKER_TOKEN: "t3ghs_session_token",
+                  GIT_TERMINAL_PROMPT: "0",
+                  GIT_AUTHOR_NAME: "Alice Team",
+                }
+              : undefined,
+        });
+        yield* Effect.addFinalizer(() => terminals.disposeAll);
+
+        const created = yield* terminals.create({
+          sessionId: "team-session",
+          command: process.execPath,
+          args: [
+            "-e",
+            "console.log(JSON.stringify({ gh: process.env.GH_TOKEN ?? null, github: process.env.GITHUB_TOKEN ?? null, ghe: process.env.GH_ENTERPRISE_TOKEN ?? null, githubGhe: process.env.GITHUB_ENTERPRISE_TOKEN ?? null, ghHost: process.env.GH_HOST ?? null, broker: process.env.T3_TEAM_GH_BROKER_TOKEN ?? null, author: process.env.GIT_AUTHOR_NAME ?? null }))",
+          ],
+        });
+        const exit = yield* terminals.waitForExit({
+          sessionId: "team-session",
+          terminalId: created.terminalId,
+        });
+        expect(exit.exitCode).toBe(0);
+        const out = yield* terminals.output({
+          sessionId: "team-session",
+          terminalId: created.terminalId,
+        });
+        expect(JSON.parse(out.output.trim())).toEqual({
+          gh: null,
+          github: null,
+          ghe: null,
+          githubGhe: null,
+          ghHost: null,
+          broker: "t3ghs_session_token",
+          author: "Alice Team",
+        });
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("resolveEmbeddedTerminalContent", () => {

@@ -62,7 +62,10 @@ import {
   XAiAskUserQuestionRequest,
   XAiExitPlanModeRequest,
 } from "./xaiAcpExtension.ts";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  applyProviderSessionEnvironmentOverride,
+  mergeProviderInstanceEnvironment,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
 import {
   findModelConfigOption,
@@ -426,7 +429,7 @@ export function makeGrokAcpAdapterFlavor(
           environment:
             processEnvironment === undefined
               ? options.environment
-              : { ...options.environment, ...processEnvironment },
+              : applyProviderSessionEnvironmentOverride(options.environment, processEnvironment),
           runtimeMode: grokLaunchRuntimeMode(runtimePolicy),
         })),
     // Auto prompts represent classifier refusals and must reach the user.

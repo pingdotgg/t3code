@@ -11,6 +11,7 @@ import {
   CommandId,
   ContextHandoffId,
   ContextTransferId,
+  EventId,
   GitCommandError,
   MessageId,
   NodeId,
@@ -3591,4 +3592,221 @@ effectIt.effect("rejects citation expansion before opening a provider session", 
     ]);
     expect(harness.projection().messages[0]?.text).toBe(text);
   }),
+);
+
+effectIt.effect(
+  "resolveIsScheduledAutomationRun walks pruned ancestor messages via ProjectionStore.getMessagesById",
+  () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread_scheduled_continuation_pruned");
+      const projectId = ProjectId.make("project_scheduled_continuation_pruned");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const modelSelection = { instanceId: providerInstanceId, model: "gpt-5.4" };
+
+      yield* projectionStore.apply({
+        id: EventId.make("event_sched_cont_thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId,
+          title: "Scheduled automation continuation test",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+
+      const addRunAndMessage = Effect.fn("addRunAndMessage")(function* (spec: {
+        readonly ordinal: number;
+        readonly runId: RunId;
+        readonly messageId: MessageId;
+        readonly text: string;
+        readonly createdBy: "user" | "agent";
+        readonly scheduledTaskId?: ScheduledTaskId;
+        readonly restartContinuationOfRunId?: RunId;
+        readonly usageLimitContinuationOfRunId?: RunId;
+        readonly manualContinuationOfRunId?: RunId;
+        readonly delegatedParentRunId?: RunId;
+      }) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event_sched_cont_msg_${spec.ordinal}`),
+          type: "message.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: spec.messageId,
+            threadId,
+            runId: spec.runId,
+            nodeId: null,
+            role: "user",
+            text: spec.text,
+            attachments: [],
+            streaming: false,
+            createdBy: spec.createdBy,
+            creationSource: "web",
+            ...(spec.scheduledTaskId === undefined
+              ? {}
+              : { scheduledTaskId: spec.scheduledTaskId }),
+            ...(spec.delegatedParentRunId === undefined
+              ? {}
+              : {
+                  delegatedCompletion: {
+                    parentRunId: spec.delegatedParentRunId,
+                    generation: 1 as never,
+                    taskIds: [NodeId.make(`node_child_${spec.ordinal}`)],
+                  },
+                }),
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event_sched_cont_run_${spec.ordinal}`),
+          type: "run.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: spec.runId,
+            threadId,
+            ordinal: spec.ordinal,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: spec.messageId,
+            rootNodeId: NodeId.make(`node_sched_cont_${spec.ordinal}`),
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+            ...(spec.restartContinuationOfRunId === undefined
+              ? {}
+              : { restartContinuationOfRunId: spec.restartContinuationOfRunId }),
+            ...(spec.usageLimitContinuationOfRunId === undefined
+              ? {}
+              : { usageLimitContinuationOfRunId: spec.usageLimitContinuationOfRunId }),
+            ...(spec.manualContinuationOfRunId === undefined
+              ? {}
+              : { manualContinuationOfRunId: spec.manualContinuationOfRunId }),
+          },
+        });
+      });
+
+      const run1 = RunId.make("run_sched_1");
+      const msg1 = MessageId.make("msg_sched_1");
+      const run2 = RunId.make("run_sched_2_restart");
+      const msg2 = MessageId.make("msg_sched_2_restart");
+      const run3 = RunId.make("run_sched_3_usage_limit");
+      const msg3 = MessageId.make("msg_sched_3_usage_limit");
+      const run4 = RunId.make("run_sched_4_delegated");
+      const msg4 = MessageId.make("msg_sched_4_delegated");
+      const run5 = RunId.make("run_sched_5_restart_of_delegated");
+      const msg5 = MessageId.make("msg_sched_5_restart_of_delegated");
+      const run6 = RunId.make("run_sched_6_human_manual");
+      const msg6 = MessageId.make("msg_sched_6_human_manual");
+
+      // Run 1: scheduled task keeping task author's createdBy: "user", prompt does not start with "/".
+      yield* addRunAndMessage({
+        ordinal: 1,
+        runId: run1,
+        messageId: msg1,
+        text: "Run nightly checks",
+        createdBy: "user",
+        scheduledTaskId: ScheduledTaskId.make("task_nightly"),
+      });
+      yield* addRunAndMessage({
+        ordinal: 2,
+        runId: run2,
+        messageId: msg2,
+        text: "Continue after restart",
+        createdBy: "agent",
+        restartContinuationOfRunId: run1,
+      });
+      yield* addRunAndMessage({
+        ordinal: 3,
+        runId: run3,
+        messageId: msg3,
+        text: "Continue after usage limit",
+        createdBy: "agent",
+        usageLimitContinuationOfRunId: run1,
+      });
+      yield* addRunAndMessage({
+        ordinal: 4,
+        runId: run4,
+        messageId: msg4,
+        text: "Delegated task finished",
+        createdBy: "agent",
+        delegatedParentRunId: run1,
+      });
+      yield* addRunAndMessage({
+        ordinal: 5,
+        runId: run5,
+        messageId: msg5,
+        text: "Continue after restart on delegated completion",
+        createdBy: "agent",
+        restartContinuationOfRunId: run4,
+      });
+      yield* addRunAndMessage({
+        ordinal: 6,
+        runId: run6,
+        messageId: msg6,
+        text: "Human follow-up on scheduled thread",
+        createdBy: "user",
+        manualContinuationOfRunId: run1,
+      });
+
+      const checkRun = (targetRunId: RunId) =>
+        Effect.gen(function* () {
+          const context = yield* projectionStore.getTurnStartContext(threadId, targetRunId);
+          const run = context.runs.find((candidate) => candidate.id === targetRunId)!;
+          const isScheduled = yield* ProviderTurnStart.resolveIsScheduledAutomationRun({
+            threadId,
+            run,
+            runs: context.runs,
+            initialMessages: context.messages,
+            loadMessagesById: (t, ids) => projectionStore.getMessagesById(t, ids),
+          });
+          return { context, isScheduled };
+        });
+
+      const res1 = yield* checkRun(run1);
+      expect(res1.isScheduled).toBe(true);
+
+      for (const targetRunId of [run2, run3, run4, run5]) {
+        const res = yield* checkRun(targetRunId);
+        // Verify getTurnStartContext actually pruned the ancestor scheduled message.
+        expect(res.context.messages.some((m) => m.id === msg1)).toBe(false);
+        expect(res.isScheduled).toBe(true);
+      }
+
+      const res6 = yield* checkRun(run6);
+      expect(res6.isScheduled).toBe(false);
+    }).pipe(
+      Effect.provide(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory))),
+    ),
 );
