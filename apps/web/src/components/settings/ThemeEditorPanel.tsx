@@ -37,6 +37,7 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 import { getThemeRoleLabel, ThemeColorField } from "./ThemeColorPicker";
 import { ThemeCssEditor } from "./ThemeCssEditor";
 import {
@@ -953,12 +954,7 @@ export function ThemeEditorPanel({
       </Toggle>
     );
     if (lockReason === null) return button;
-    return (
-      <Tooltip>
-        <TooltipTrigger render={button} />
-        <TooltipPopup>{lockReason}</TooltipPopup>
-      </Tooltip>
-    );
+    return <SharedTooltipTrigger render={button} label={lockReason} />;
   };
 
   const renderAppearanceButtons = () => (
@@ -1004,6 +1000,14 @@ export function ThemeEditorPanel({
             aria-label={gt("Filter colors")}
             className="min-w-0 flex-1"
             onChange={(event) => setRoleQuery(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape" || !roleQuery) return;
+              if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              event.preventDefault();
+              event.stopPropagation();
+              setRoleQuery("");
+            }}
             placeholder={gt("Filter colors")}
             size="sm"
             value={roleQuery}
@@ -1186,7 +1190,7 @@ export function ThemeEditorPanel({
         if (!event.currentTarget.contains(event.target as Node)) return;
         // Base UI's document listener can dismiss on a bare IME Escape (keyCode 229).
         event.stopPropagation();
-        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+        if (event.repeat || event.nativeEvent.isComposing || event.keyCode === 229) return;
         onOpenChange(false);
       }}
       ref={panelRef}

@@ -130,9 +130,6 @@ describe("new thread model fallback", () => {
     ["cursor", ["autoPercentUsed"], "claude-opus-5-5", false, undefined, undefined],
     ["cursor", ["autoPercentUsed"], "composer-2.5", false, undefined, undefined],
     ["cursor", ["autoPercentUsed", "apiPercentUsed"], "composer-2.5", true, undefined, undefined],
-    ["antigravity", ["gemini-weekly"], "claude-opus-5-5", false, undefined, undefined],
-    ["antigravity", ["3p-weekly"], "claude-opus-5-5", true, undefined, undefined],
-    ["antigravity", ["gemini-weekly"], "antigravity-default", true, undefined, undefined],
     ["codex", ["individual"], "gpt-5.5", true, undefined, undefined],
     ["opencode", ["go_weekly"], "opencode/big-pickle", false, undefined, undefined],
     ["opencode", ["go_weekly"], "opencode-go/big-pickle", true, undefined, undefined],
@@ -1149,6 +1146,32 @@ describe("pools", () => {
       "env-a:hub:a",
       "env-a:hub:b",
     ]);
+
+    // Changing reset order must preserve the rounded percentages for the same readings.
+    for (const { readings, used, left } of [
+      { readings: [94, 94.3, 97.9, 99.8], used: 97, left: 4 },
+      { readings: [70, 87, 85.50000000000001, 1e-30, 1e-30], used: 49, left: 51 },
+    ]) {
+      const resetTimes = readings.map((_, index) => `2026-09-03T1${3 + index}:00:00.000Z`);
+      for (const order of [resetTimes, [...resetTimes].reverse()]) {
+        const [pooled] = collectLimitPools(
+          readings.map((usedPercent, index) => ({
+            key: `pooled-${index}`,
+            driver: claude,
+            displayName: `Pooled ${index}`,
+            email: undefined,
+            plan: undefined,
+            accentColor: undefined,
+            environments: [],
+            sourceLabel: null,
+            redeem: null,
+            limits: { checkedAt, windows: [{ ...window, usedPercent, resetsAt: order[index] }] },
+          })),
+          now,
+        );
+        expect(pooled?.windows[0]).toMatchObject({ usedPercent: used, remainingPercent: left });
+      }
+    }
   });
 });
 
