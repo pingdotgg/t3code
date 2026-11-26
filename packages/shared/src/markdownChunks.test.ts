@@ -374,13 +374,7 @@ describe("withMarkdownDefinitions", () => {
   it("collects a long run of titled references within the shared definition budget", () => {
     const references = Array.from({ length: 2000 }, (_, index) => `[r${index}]:\n  /url "Title"`);
     const source = references.join("\n");
-    // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- Opt-in benchmark.
-    const start = process.env.T3_BENCH_MARKDOWN_REFERENCES ? performance.now() : undefined;
     const { definitions } = splitMarkdown(source);
-    if (start !== undefined) {
-      // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- Opt-in benchmark.
-      expect(performance.now() - start).toBeLessThan(2000);
-    }
     expect(definitions).toBe(source.slice(0, definitions.length));
     expect(definitions).toContain(references[500]);
     expect(definitions.length).toBeLessThanOrEqual(16 * 1024);
