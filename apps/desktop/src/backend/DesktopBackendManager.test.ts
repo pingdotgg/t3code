@@ -500,6 +500,7 @@ describe("DesktopBackendManager", () => {
         >();
       const childExit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       const ready = yield* Ref.make(false);
+      const forgotten = yield* Ref.make(false);
       const layerSpawner = Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make(
@@ -532,7 +533,7 @@ describe("DesktopBackendManager", () => {
           Deferred.isDone(settle).pipe(
             Effect.flatMap((settled) => Deferred.succeed(recording, settled)),
             Effect.andThen(Deferred.await(finishRecording)),
-            Effect.as(Effect.void),
+            Effect.as(Ref.set(forgotten, true)),
           ),
       }).pipe(Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)), Effect.forkChild);
       const ackInput = yield* Deferred.await(ackStream);
@@ -547,29 +548,40 @@ describe("DesktopBackendManager", () => {
       assert.isTrue(yield* Deferred.await(recording), "recorded before the backend settled");
       assert.isFalse(yield* Ref.get(ready));
       assert.isUndefined(ack.pollUnsafe(), "acked before the record was written");
+      // If the backend dies mid-record, its PID may be reused; the run still forgets the record.
+      yield* Deferred.succeed(childExit, ChildProcessSpawner.ExitCode(0));
       // A record the worker could not write resolves the same way, so it acks too.
       yield* Deferred.succeed(finishRecording, undefined);
       assert.equal(yield* Fiber.join(ack), "\u0001");
-      yield* Deferred.succeed(childExit, ChildProcessSpawner.ExitCode(0));
       yield* Fiber.join(run);
+      assert.isTrue(yield* Ref.get(forgotten));
     }),
   );
 
-  it.effect("records nothing for a backend that exits before it settles", () =>
+  it.effect("stops a backend whose control channel ends before it settles, unrecorded", () =>
     Effect.gen(function* () {
       const recorded = yield* Ref.make(false);
+      const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       const layerSpawner = Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make(() =>
-          Effect.succeed(makeProcess({ getOutputFd: () => Stream.empty })),
+          Effect.succeed(
+            makeProcess({
+              getOutputFd: () => Stream.empty,
+              exitCode: Deferred.await(exit),
+              kill: () =>
+                Deferred.succeed(exit, ChildProcessSpawner.ExitCode(143)).pipe(Effect.asVoid),
+            }),
+          ),
         ),
       );
-      yield* DesktopBackendManager.runBackendProcess({
+      const result = yield* DesktopBackendManager.runBackendProcess({
         ...baseConfig,
         settledAckFd: 8,
         desktopTelemetryStream: Stream.empty,
         trackProcess: () => Ref.set(recorded, true).pipe(Effect.as(Effect.void)),
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
+      assert.deepEqual(result.code, Option.some(143));
       assert.isFalse(yield* Ref.get(recorded));
     }),
   );

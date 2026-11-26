@@ -71,15 +71,16 @@ if (!NodePath.basename(process.execPath).endsWith(" Helper")) {
 }
 
 // Now in its final process. Backend recovery identifies the backend by its audit token, which
-// the exec changed, so the desktop records it here, before the server can take the T3 home. The
-// desktop acks on its own descriptor once done: one byte, or end of file if it went away.
+// the exec changed, so the desktop records it here, before the server can take the T3 home. Only
+// the desktop's ack lets the backend start; anything else means the desktop went away unrecorded.
 try {
   NodeFS.writeSync(5, BACKEND_SETTLED_LINE);
-  NodeFS.readSync(BACKEND_SETTLED_ACK_FD, Buffer.alloc(1));
+  const ack = Buffer.alloc(1);
+  if (NodeFS.readSync(BACKEND_SETTLED_ACK_FD, ack) !== 1 || ack[0] !== 1) {
+    throw new Error("the desktop app did not acknowledge the backend");
+  }
+  NodeFS.closeSync(BACKEND_SETTLED_ACK_FD);
 } catch (cause) {
-  console.warn(`The desktop app may not recover this backend if it freezes: ${String(cause)}`);
-} finally {
-  try {
-    NodeFS.closeSync(BACKEND_SETTLED_ACK_FD);
-  } catch {}
+  console.error(`Stopping the backend before it starts: ${String(cause)}`);
+  process.exit(1);
 }

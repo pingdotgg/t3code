@@ -592,6 +592,16 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
           cause: Cause.pretty(cause),
         }),
       ),
+      // Without backendSettled on this channel the backend would wait for its ack forever.
+      Effect.ensuring(
+        options.settledAckFd === undefined
+          ? Effect.void
+          : Deferred.isDone(settled).pipe(
+              Effect.flatMap((isSettled) =>
+                isSettled ? Effect.void : handle.kill().pipe(Effect.ignore),
+              ),
+            ),
+      ),
       Effect.ensuring(
         handleControl({
           version: 1,
