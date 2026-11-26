@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { markdownProseDirection, textDirection } from "./textDirection";
+import { hasRightToLeftLetter, markdownProseDirection, textDirection } from "./textDirection";
 
 describe("textDirection", () => {
   it.each([
@@ -47,6 +47,12 @@ describe("textDirection", () => {
 
   it("leaves text without letters to its surroundings", () => {
     expect(textDirection("42 — 7 ✓")).toBeUndefined();
+  });
+});
+
+describe("hasRightToLeftLetter", () => {
+  it("does not count a byte order mark as a right-to-left letter", () => {
+    expect(hasRightToLeftLetter("\uFEFFHello")).toBe(false);
   });
 });
 
