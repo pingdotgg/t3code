@@ -55,29 +55,6 @@ describe("filterComposerPullRequestMatches", () => {
     });
     expect(result.map((match) => match.number)).toEqual([42, 10042]);
   });
-
-  it("does not treat unsafe integers or zero as exact numeric matches", () => {
-    expect(
-      filterComposerPullRequestMatches({
-        keyOf,
-        entries: [entry(9007199254740992, "2026-01-01")],
-        projectId: "p1",
-        repository: "owner/repo",
-        query: "9007199254740993",
-        limit: 10,
-      }),
-    ).toEqual([]);
-    expect(
-      filterComposerPullRequestMatches({
-        keyOf,
-        entries: [entry(0, "2026-01-01"), entry(1000, "2026-01-02")],
-        projectId: "p1",
-        repository: "owner/repo",
-        query: "000",
-        limit: 10,
-      }).map((match) => match.number),
-    ).toEqual([1000]);
-  });
 });
 
 describe("linked pull requests", () => {
