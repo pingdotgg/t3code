@@ -4,6 +4,7 @@ import {
   appendTerminalOutput,
   EMPTY_TERMINAL_OUTPUT,
   normalizeTerminalOutput,
+  TERMINAL_OUTPUT_TAIL_CHARS,
   TERMINAL_PALETTES,
   terminalOutputPlainText,
   terminalOutputResumeText,
@@ -56,14 +57,6 @@ describe("appendTerminalOutput", () => {
       "\u001b[2A\u001b[2Klayer a: done\n\u001b[2Klayer b: done\n",
     ];
     expect(feed(frames).text).toBe("layer a: done\nlayer b: done\n");
-  });
-
-  it("preserves scrolled-off output on the first redraw after resuming a cleared screen", () => {
-    const history = "Build started\n";
-    const source = feed([history + "working\n".repeat(63), "\u001b[2J", "Progress: 10%"]);
-    const redraw = "\u001b[1A\r\u001b[2KProgress: 20%";
-    expect(appendTerminalOutput(source, redraw).text).toBe(history + "Progress: 20%");
-    expect(feed([terminalOutputResumeText(source), redraw]).text).toBe(history + "Progress: 20%");
   });
 
   it("treats CRLF as one newline even when the pair is split across chunks", () => {
@@ -317,6 +310,23 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
       120,
     );
     expect(viewer.text).toBe(appendTerminalOutput(source, " edited", 120).text);
+  });
+
+  it("keeps scrollback when a redraw after a cleared screen moves above the live window", () => {
+    const history = "Build started\n";
+    const source = feed([history + "working\n".repeat(63), "\u001b[2J", "Progress: 10%"]);
+    const redraw = "\u001b[1A\r\u001b[2KProgress: 20%";
+    expect(feed([terminalOutputResumeText(source), redraw]).text).toBe(history + "Progress: 20%");
+  });
+
+  it("recovers scrollback hidden by a full output tail once a redraw shortens it", () => {
+    const history = "Build started\n";
+    const progress = "x".repeat(TERMINAL_OUTPUT_TAIL_CHARS);
+    const source = feed([history + "working\n".repeat(63) + "\u001b[2J" + progress]);
+    const viewer = feed([terminalOutputResumeText(source)]);
+    expect(viewer.text).toBe(progress);
+    const redraw = "\r\u001b[2KProgress: done";
+    expect(appendTerminalOutput(viewer, redraw).text).toBe(history + "Progress: done");
   });
 });
 
