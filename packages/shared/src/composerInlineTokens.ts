@@ -1,3 +1,4 @@
+import { collectComposerContextReferences } from "./composerContextReferences.ts";
 import { composerFileLinkPath } from "./composerTrigger.ts";
 import { fileBasename } from "./path.ts";
 
@@ -103,9 +104,10 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
 }
 
 /**
- * Formulas in composer text, ignoring `$` and `\[` inside file links such as `posts.$postId.tsx`.
- * Links are masked with letters, not spaces, so a leading link cannot become an indented code
- * block. Bare `@path` mentions stay unmasked so `@README.md$` can still close a formula.
+ * Formulas in composer text, ignoring `$` and `\[` inside file links such as `posts.$postId.tsx`
+ * and `t3-context://` references. Links are masked with letters, not spaces, so a leading link
+ * cannot become an indented code block. Bare `@path` mentions stay unmasked so `@README.md$` can
+ * still close a formula.
  */
 export function composerMathRanges(
   text: string,
@@ -119,6 +121,12 @@ export function composerMathRanges(
       masked.slice(0, mention.start) +
       "x".repeat(mention.end - mention.start) +
       masked.slice(mention.end);
+  }
+  for (const reference of collectComposerContextReferences(text)) {
+    masked =
+      masked.slice(0, reference.start) +
+      "x".repeat(reference.end - reference.start) +
+      masked.slice(reference.end);
   }
   return findMath(masked).map(({ start, end }) => ({
     start,
