@@ -45,7 +45,7 @@ export function resolveCodexFileCitationLink(
 }
 
 function markdownLabel(value: string): string {
-  return value.replace(/[\\[\]*_`<&]/g, "\\$&");
+  return value.replace(/[\\[\]*_`<&|]/g, "\\$&");
 }
 
 function markdownDestination(value: string): string {
@@ -54,6 +54,7 @@ function markdownDestination(value: string): string {
     .replaceAll("&", "%26")
     .replaceAll("<", "%3C")
     .replaceAll(">", "%3E")
+    .replaceAll("|", "%7C")
     .replaceAll("\r", "%0D")
     .replaceAll("\n", "%0A");
 }

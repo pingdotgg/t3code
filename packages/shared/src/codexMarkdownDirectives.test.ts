@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
@@ -118,6 +119,24 @@ describe.each([
 
     expect(link?.type).toBe("link");
     expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "/tmp/a&copy;.txt", line: 7 });
+  });
+
+  it("preserves a table row when the cited path contains a pipe", () => {
+    const markdown = render(
+      '| File | Note |\n| --- | --- |\n| :codex-file-citation{path="reports/a&#124;b.txt"} | ok |',
+    );
+    const table = unified().use(remarkParse).use(remarkGfm).parse(markdown).children[0] as TestNode;
+    const cells = table.children?.[1]?.children;
+    const link = cells?.[0]?.children?.[0];
+
+    expect(cells).toHaveLength(2);
+    expect(link).toMatchObject({
+      type: "link",
+      url: "./reports/a%7Cb.txt",
+      children: [{ type: "text", value: "a|b.txt" }],
+    });
+    expect(parseMarkdownFileLink(link?.url ?? "")).toEqual({ path: "./reports/a|b.txt" });
+    expect(cells?.[1]?.children).toMatchObject([{ type: "text", value: "ok" }]);
   });
 });
 
