@@ -313,17 +313,13 @@ vi.mock("./uuid", () => ({}));
 vi.mock("../features/threads/thread-context-divider", () => ({}));
 vi.mock("../features/threads/thread-handoff-row", () => ({ ThreadModelSwitchDivider: () => null }));
 vi.mock("../features/threads/ThreadGuestShareBar", () => ({ useThreadGuestShare: () => null }));
-vi.mock("react-native-gesture-handler", () => ({
-  InterceptingGestureDetector: (props: { children: ReactNode }) => props.children,
-  VirtualGestureDetector: (props: { children: ReactNode }) => props.children,
-}));
 vi.mock("../features/home/ThreadUndoNotice", () => ({ ThreadUndoNotice: () => null }));
 vi.mock("../features/layout/adaptive-workspace-context", () => ({
   useWorkspacePaneState: () => ({ panes: { primarySidebarVisible: false } }),
 }));
 vi.mock("../components/PullActionWheel", () => ({
   PullActionWheel: () => null,
-  usePullActionWheel: () => ({ scrollRef: { current: null }, swingGesture: null, wheel: null }),
+  usePullActionWheel: () => ({ scrollRef: { current: null }, wheel: null }),
 }));
 vi.mock("../features/threads/SecretRequestCard", () => ({}));
 vi.mock("../features/threads/LinkRequestCard", () => ({ LinkRequestCard: () => null }));

@@ -129,9 +129,7 @@ import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspace
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { isDuoDevice } from "../../lib/device-type";
 import {
-  createContext,
   memo,
-  use,
   useCallback,
   useEffect,
   useEffectEvent,
@@ -201,11 +199,6 @@ import {
 import { overscrollPastEnd } from "../../components/pull-action-wheel";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
 import { useWorkspacePaneState } from "../layout/adaptive-workspace-context";
-import {
-  InterceptingGestureDetector,
-  VirtualGestureDetector,
-  type useNativeGesture,
-} from "react-native-gesture-handler";
 import { T3ScrollPull } from "../../native/T3ScrollPull";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { splitMarkdownDetails } from "../../lib/markdownDetails";
@@ -1210,19 +1203,10 @@ const THREAD_MEDIA_VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 0 };
 // The composer and overlays beside the feed keep UIKit from finding it on its own, so
 // register it with the screen controller. Header minimization observes this scroll view.
 function ThreadFeedScrollView(props: ComponentPropsWithRef<typeof Animated.ScrollView>) {
-  const swingGesture = use(ThreadFeedSwingGestureContext);
-  const scrollView = <Animated.ScrollView {...props} />;
-  if (!swingGesture) {
-    return <NativeScrollViewMarker style={{ flex: 1 }}>{scrollView}</NativeScrollViewMarker>;
-  }
-  // The marker needs the scroll view as its direct child, so the gesture attaches through a
-  // virtual detector, which adds no view.
   return (
-    <InterceptingGestureDetector>
-      <NativeScrollViewMarker style={{ flex: 1 }}>
-        <VirtualGestureDetector gesture={swingGesture}>{scrollView}</VirtualGestureDetector>
-      </NativeScrollViewMarker>
-    </InterceptingGestureDetector>
+    <NativeScrollViewMarker style={{ flex: 1 }}>
+      <Animated.ScrollView {...props} />
+    </NativeScrollViewMarker>
   );
 }
 
@@ -1232,9 +1216,6 @@ function ThreadFeedUndoNotice(props: { readonly bottom: number }) {
   return <ThreadUndoNotice visible={!panes.primarySidebarVisible} bottom={props.bottom} />;
 }
 
-const ThreadFeedSwingGestureContext = createContext<ReturnType<typeof useNativeGesture> | null>(
-  null,
-);
 const NO_PULL_ACTIONS: ReadonlyArray<PullAction> = [];
 
 function ThreadMediaVisibility(props: {
@@ -3878,7 +3859,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const {
     scrollRef: pullScrollRef,
     stretchEvents: pullStretchEvents,
-    swingGesture,
+    onFinger: pullFinger,
     wheel: pullWheel,
   } = usePullActionWheel(props.pullActions ?? NO_PULL_ACTIONS, props.pullDefaultAction ?? 0);
   const [workGroupScrollPositions] = useState(
@@ -4365,125 +4346,124 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         <T3ScrollPull
           style={splitLayout && viewportWidth > 0 ? { flex: 1, width: viewportWidth } : { flex: 1 }}
           onPull={pullStretchEvents}
+          onFinger={pullFinger}
         >
           {perfProbe && !settling && props.feed.length > 0 ? (
             <PerfContentMark key={feedThreadKey} probe={perfProbe} thread={feedThreadKey} />
           ) : null}
-          <ThreadFeedSwingGestureContext value={swingGesture}>
-            {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
-            <KeyboardAwareLegendList
-              ref={attachList}
-              refScrollView={pullScrollRef}
-              dataKey={feedThreadKey}
-              style={settling ? { flex: 1, opacity: 0 } : { flex: 1 }}
-              // RN 0.81+ drops inset-area touches (facebook/react-native#54123), making blank post-send space unscrollable.
-              applyWorkaroundForContentInsetHitTestBug
-              {...(Platform.OS === "ios" ? { ScrollViewComponent: ThreadFeedScrollView } : {})}
-              contentInsetAdjustmentBehavior="never"
-              automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
-              scrollIndicatorInsets={{ top: anchorTopInset, bottom: 0 }}
-              {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-              contentInsetEndAdjustment={props.contentInsetEndAdjustment}
-              keyboardOffset={props.keyboardOffset}
-              {...(usesNativeAutomaticInsets
-                ? { contentInset: { top: heldTopInset ?? anchorTopInset } }
-                : {})}
-              freeze={props.freeze}
-              maintainScrollAtEnd={jumpReady ? false : THREAD_FEED_MAINTAIN_SCROLL_AT_END}
-              maintainScrollAtEndThreshold={THREAD_FEED_MAINTAIN_SCROLL_AT_END_THRESHOLD}
-              maintainVisibleContentPosition
-              data={groupedFeed}
-              extraData={listAppearanceData}
-              renderItem={renderItem}
-              viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
-              keyExtractor={(entry) => entry.id}
-              getItemType={(entry) => {
-                // Same container as the live fold that replaces it.
-                if (entry.type === "pending-fold") return "run-fold";
-                if (entry.type !== "message") return entry.type;
-                if (isCompactionCommandFeedEntry(entry)) return "message:compaction";
-                if (
-                  entry.message.role === "assistant" &&
-                  !terminalAssistantMessageIds.has(entry.message.id)
-                ) {
-                  return "message:assistant-progress";
-                }
-                const { attribution } = resolveUserMessagePresentation(entry.message);
-                return attribution === "automation" || attribution === "agent"
-                  ? `message:${attribution}`
-                  : `message:${entry.message.role}`;
-              }}
-              getFixedItemSize={getFixedItemSize}
-              drawDistance={500}
-              {...(retainedMediaRowId ? { alwaysRender: { keys: [retainedMediaRowId] } } : {})}
-              keyboardShouldPersistTaps="always"
-              keyboardDismissMode="none"
-              // Android scrolls a tapped selectable message into view when it takes focus, which reads
-              // as a user scroll and drops end following before the keyboard closes.
-              scrollsChildToFocus={false}
-              keyboardLiftBehavior={props.sendingWithKeyboard ? "persistent" : "whenAtEnd"}
-              // Seed the initial viewport before native onLayout.
-              {...(viewportHeight > 0 && viewportWidth > 0
-                ? { estimatedListSize: { height: viewportHeight, width: viewportWidth } }
-                : {})}
-              scrollToOverflowEnabled
-              estimatedItemSize={180}
-              alignItemsAtEnd
-              initialScrollAtEnd
-              onReady={() => {
-                setLoadedListKey(feedThreadKey);
-                reportMetrics(true);
-                // Never leave the feed hidden if end following stalls short of the end.
-                landingFallback.current = setTimeout(() => setLandedListKey(feedThreadKey), 1000);
-              }}
-              onLayout={handleMetricsChange}
-              onItemSizeChanged={handleItemSizeChanged}
-              onScroll={handleScroll}
-              scrollEventThrottle={16}
-              ListHeaderComponent={
+          {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
+          <KeyboardAwareLegendList
+            ref={attachList}
+            refScrollView={pullScrollRef}
+            dataKey={feedThreadKey}
+            style={settling ? { flex: 1, opacity: 0 } : { flex: 1 }}
+            // RN 0.81+ drops inset-area touches (facebook/react-native#54123), making blank post-send space unscrollable.
+            applyWorkaroundForContentInsetHitTestBug
+            {...(Platform.OS === "ios" ? { ScrollViewComponent: ThreadFeedScrollView } : {})}
+            contentInsetAdjustmentBehavior="never"
+            automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
+            scrollIndicatorInsets={{ top: anchorTopInset, bottom: 0 }}
+            {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
+            contentInsetEndAdjustment={props.contentInsetEndAdjustment}
+            keyboardOffset={props.keyboardOffset}
+            {...(usesNativeAutomaticInsets
+              ? { contentInset: { top: heldTopInset ?? anchorTopInset } }
+              : {})}
+            freeze={props.freeze}
+            maintainScrollAtEnd={jumpReady ? false : THREAD_FEED_MAINTAIN_SCROLL_AT_END}
+            maintainScrollAtEndThreshold={THREAD_FEED_MAINTAIN_SCROLL_AT_END_THRESHOLD}
+            maintainVisibleContentPosition
+            data={groupedFeed}
+            extraData={listAppearanceData}
+            renderItem={renderItem}
+            viewabilityConfig={THREAD_MEDIA_VIEWABILITY_CONFIG}
+            keyExtractor={(entry) => entry.id}
+            getItemType={(entry) => {
+              // Same container as the live fold that replaces it.
+              if (entry.type === "pending-fold") return "run-fold";
+              if (entry.type !== "message") return entry.type;
+              if (isCompactionCommandFeedEntry(entry)) return "message:compaction";
+              if (
+                entry.message.role === "assistant" &&
+                !terminalAssistantMessageIds.has(entry.message.id)
+              ) {
+                return "message:assistant-progress";
+              }
+              const { attribution } = resolveUserMessagePresentation(entry.message);
+              return attribution === "automation" || attribution === "agent"
+                ? `message:${attribution}`
+                : `message:${entry.message.role}`;
+            }}
+            getFixedItemSize={getFixedItemSize}
+            drawDistance={500}
+            {...(retainedMediaRowId ? { alwaysRender: { keys: [retainedMediaRowId] } } : {})}
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="none"
+            // Android scrolls a tapped selectable message into view when it takes focus, which reads
+            // as a user scroll and drops end following before the keyboard closes.
+            scrollsChildToFocus={false}
+            keyboardLiftBehavior={props.sendingWithKeyboard ? "persistent" : "whenAtEnd"}
+            // Seed the initial viewport before native onLayout.
+            {...(viewportHeight > 0 && viewportWidth > 0
+              ? { estimatedListSize: { height: viewportHeight, width: viewportWidth } }
+              : {})}
+            scrollToOverflowEnabled
+            estimatedItemSize={180}
+            alignItemsAtEnd
+            initialScrollAtEnd
+            onReady={() => {
+              setLoadedListKey(feedThreadKey);
+              reportMetrics(true);
+              // Never leave the feed hidden if end following stalls short of the end.
+              landingFallback.current = setTimeout(() => setLandedListKey(feedThreadKey), 1000);
+            }}
+            onLayout={handleMetricsChange}
+            onItemSizeChanged={handleItemSizeChanged}
+            onScroll={handleScroll}
+            scrollEventThrottle={16}
+            ListHeaderComponent={
+              <>
+                {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
+                {setupAnchorIndex < 0 && props.worktreeSetup ? (
+                  <WorktreeSetupCard
+                    key={props.threadId}
+                    {...props.worktreeSetup}
+                    detailsOpen={setupDetailsOpen}
+                    onOpenDetails={openSetupDetails}
+                  />
+                ) : setupAnchorIndex < 0 && props.preparingWorktree ? (
+                  <WorktreePreparingHeader />
+                ) : null}
+                {props.historyControls ? (
+                  <ThreadFeedLoadEarlierControl {...props.historyControls} />
+                ) : null}
+              </>
+            }
+            ListFooterComponent={
+              props.pendingHandoff || props.statusLines?.length ? (
                 <>
-                  {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
-                  {setupAnchorIndex < 0 && props.worktreeSetup ? (
-                    <WorktreeSetupCard
-                      key={props.threadId}
-                      {...props.worktreeSetup}
-                      detailsOpen={setupDetailsOpen}
-                      onOpenDetails={openSetupDetails}
+                  {props.pendingHandoff ? (
+                    <ThreadHandoffDivider
+                      environmentId={props.environmentId}
+                      endpoints={props.pendingHandoff}
+                      iconColor={iconSubtleColor}
+                      surfaceColor={screenColor}
+                      label={gt("Context handoff pending")}
                     />
-                  ) : setupAnchorIndex < 0 && props.preparingWorktree ? (
-                    <WorktreePreparingHeader />
                   ) : null}
-                  {props.historyControls ? (
-                    <ThreadFeedLoadEarlierControl {...props.historyControls} />
-                  ) : null}
+                  {props.statusLines?.map((line) => (
+                    <ThreadStatusLine key={line.key} line={line} iconColor={iconSubtleColor} />
+                  ))}
                 </>
-              }
-              ListFooterComponent={
-                props.pendingHandoff || props.statusLines?.length ? (
-                  <>
-                    {props.pendingHandoff ? (
-                      <ThreadHandoffDivider
-                        environmentId={props.environmentId}
-                        endpoints={props.pendingHandoff}
-                        iconColor={iconSubtleColor}
-                        surfaceColor={screenColor}
-                        label={gt("Context handoff pending")}
-                      />
-                    ) : null}
-                    {props.statusLines?.map((line) => (
-                      <ThreadStatusLine key={line.key} line={line} iconColor={iconSubtleColor} />
-                    ))}
-                  </>
-                ) : null
-              }
-              contentContainerStyle={{
-                ...(props.fitShortFeedToViewport ? { minHeight: "100%" } : {}),
-                paddingTop: FEED_PADDING_TOP,
-                paddingLeft: contentHorizontalPadding + contentLeftInset,
-                paddingRight: contentHorizontalPadding + contentRightInset,
-              }}
-            />
-          </ThreadFeedSwingGestureContext>
+              ) : null
+            }
+            contentContainerStyle={{
+              ...(props.fitShortFeedToViewport ? { minHeight: "100%" } : {}),
+              paddingTop: FEED_PADDING_TOP,
+              paddingLeft: contentHorizontalPadding + contentLeftInset,
+              paddingRight: contentHorizontalPadding + contentRightInset,
+            }}
+          />
         </T3ScrollPull>
         {presentedFeed.length === 0 &&
         !props.worktreeSetup &&

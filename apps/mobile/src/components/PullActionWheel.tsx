@@ -1,11 +1,11 @@
 import * as Haptics from "expo-haptics";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
-import { useNativeGesture } from "react-native-gesture-handler";
 import { useReanimatedKeyboardAnimation } from "react-native-keyboard-controller";
 import Animated, {
   interpolate,
   runOnJS,
+  runOnUI,
   useAnimatedProps,
   useAnimatedRef,
   useAnimatedStyle,
@@ -86,7 +86,7 @@ interface RegisteredEventHandler {
   };
 }
 
-// Wire scrollRef to the scroll view, plus stretchEvents (Android) or swingGesture (iOS).
+// Wire scrollRef to the scroll view, plus stretchEvents (Android) or onFinger (iOS).
 export function usePullActionWheel(actions: ReadonlyArray<PullAction>, defaultIndex: number) {
   const enabled = actions.length > 0;
   const count = actions.length;
@@ -215,27 +215,14 @@ export function usePullActionWheel(actions: ReadonlyArray<PullAction>, defaultIn
     },
     ["onPull", "onPullEnd"],
   );
-  // The scroll view's own gesture, so it watches the finger beside the pan and never takes it.
-  const swingGesture = useNativeGesture({
-    enabled: SCROLL_PULL_SWING_FROM_FEED_TOUCHES && enabled,
-    delaysChildPressedState: false,
-    onTouchesDown: (event) => {
-      "worklet";
-      const touch = event.allTouches[0];
-      if (!touch) return;
-      fingerX.set(touch.absoluteX);
-      fingerY.set(touch.absoluteY);
-    },
-    onTouchesMove: (event) => {
-      "worklet";
-      const touch = event.allTouches[0];
-      if (!touch) return;
-      fingerX.set(touch.absoluteX);
-      fingerY.set(touch.absoluteY);
-      const startX = pullStartX.get();
-      if (startX !== null) swing(touch.absoluteX - startX, pullStartY.get() - touch.absoluteY);
-    },
-  });
+  const touchAt = (x: number, y: number) => {
+    "worklet";
+    fingerX.set(x);
+    fingerY.set(y);
+    const startX = pullStartX.get();
+    if (startX !== null) swing(x - startX, pullStartY.get() - y);
+  };
+  const onFinger = (x: number, y: number) => runOnUI(touchAt)(x, y);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- LegendList owns the scroll view's event props, so the pull listens on its view tag the way Reanimated's useScrollOffset does
   useEffect(
     () =>
@@ -250,7 +237,7 @@ export function usePullActionWheel(actions: ReadonlyArray<PullAction>, defaultIn
   return {
     scrollRef,
     stretchEvents: enabled ? stretchEvents : undefined,
-    swingGesture,
+    onFinger: enabled && SCROLL_PULL_SWING_FROM_FEED_TOUCHES ? onFinger : undefined,
     wheel: enabled ? { actions, distance, armedAt, needle, selected } : null,
   };
 }
