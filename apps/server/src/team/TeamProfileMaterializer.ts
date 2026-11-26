@@ -19,6 +19,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 class TeamProfileMaterializerIoError extends Schema.TaggedError<TeamProfileMaterializerIoError>()(
   "TeamProfileMaterializerIoError",
@@ -41,6 +42,16 @@ const TEAM_PROFILE_MARKER_FILENAME = ".t3-team-profile.json";
 const TEAM_ANTIGRAVITY_SKILLS_DIRNAME = "team-skills";
 export const TEAM_ANTIGRAVITY_OAUTH_TOKEN_FILENAME = "antigravity-oauth-token";
 const TEAM_ANTIGRAVITY_ACP_DIRNAME = "antigravity-acp";
+
+const profileMaterializeLocks = new Map<string, Semaphore.Semaphore>();
+function getProfileMaterializeLock(profileDir: string): Semaphore.Semaphore {
+  let lock = profileMaterializeLocks.get(profileDir);
+  if (!lock) {
+    lock = Semaphore.makeUnsafe(1);
+    profileMaterializeLocks.set(profileDir, lock);
+  }
+  return lock;
+}
 
 export interface TeamProfilePaths {
   readonly profileDir: string;
@@ -300,187 +311,212 @@ export const materializeTeamProfileAssets = Effect.fn("TeamProfileMaterializer.m
       )
       .digest("hex");
 
-    const alreadyUpToDate = yield* Effect.tryPromise({
-      try: async () => {
-        const markerRaw = await NodeFSP.readFile(
-          NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
-          "utf8",
-        );
-        const markerOpt = decodeProfileMarker(markerRaw);
-        if (markerOpt._tag !== "Some" || markerOpt.value.assetsHash !== assetsHash) return false;
-        const skillsStat = await NodeFSP.stat(paths.skillsDir);
-        if (!skillsStat.isDirectory()) return false;
-        if (paths.instructionFile !== null) {
-          const expectsInstruction = threadPreprompts.length > 0;
-          const hasInstruction = await NodeFSP.stat(paths.instructionFile)
-            .then((s) => s.isFile())
-            .catch(() => false);
-          if (expectsInstruction !== hasInstruction) return false;
-        }
-        return true;
-      },
-      catch: () => false,
-    }).pipe(Effect.orElseSucceed(() => false));
-
-    if (alreadyUpToDate) {
-      return paths;
-    }
-
-    yield* Effect.tryPromise({
-      try: async () => {
-        await NodeFSP.mkdir(paths.profileDir, { recursive: true, mode: 0o700 });
-        if (platform !== "win32") {
-          await NodeFSP.chmod(paths.profileDir, 0o700).catch(() => undefined);
-        }
-
-        // Stage skills directory in a sibling temp folder and swap atomically so active agents
-        // never observe an empty or half-written team skills directory during sync.
-        const stagingSkillsDir = `${paths.skillsDir}.tmp-${NodeCrypto.randomUUID()}`;
-        const backupSkillsDir = `${paths.skillsDir}.old-${NodeCrypto.randomUUID()}`;
-        await NodeFSP.mkdir(stagingSkillsDir, { recursive: true, mode: 0o700 });
-        try {
-          for (const skill of activeSkills) {
-            const skillDir = NodePath.join(stagingSkillsDir, skill.slug);
-            assertPathContainedWithin(stagingSkillsDir, skillDir);
-            await NodeFSP.mkdir(skillDir, { recursive: true, mode: 0o700 });
-            const skillMdPath = NodePath.join(skillDir, "SKILL.md");
-            assertPathContainedWithin(skillDir, skillMdPath);
-            await NodeFSP.writeFile(skillMdPath, skill.skillMd, "utf8");
-            for (const ref of skill.references) {
-              const refPath = NodePath.join(skillDir, ...ref.path.split("/"));
-              assertPathContainedWithin(skillDir, refPath);
-              await NodeFSP.mkdir(NodePath.dirname(refPath), { recursive: true, mode: 0o700 });
-              await NodeFSP.writeFile(refPath, ref.content, "utf8");
-            }
-          }
-
-          if (input.driver === "codex") {
-            await syncDirectoryPersonalSkillLinks({
-              targetSkillsDir: stagingSkillsDir,
-              personalSkillsDir: NodePath.join(userHome, ".codex", "skills"),
-              teamSlugsLower,
-              platform,
-            });
-          } else if (input.driver === "claudeAgent") {
-            await syncDirectoryPersonalSkillLinks({
-              targetSkillsDir: stagingSkillsDir,
-              personalSkillsDir: NodePath.join(userHome, ".claude", "skills"),
-              teamSlugsLower,
-              platform,
-            });
-          }
-
-          const hadExisting = await NodeFSP.lstat(paths.skillsDir)
-            .then(() => true)
-            .catch(() => false);
-          if (hadExisting) {
-            await NodeFSP.rename(paths.skillsDir, backupSkillsDir);
-          }
-          try {
-            await NodeFSP.rename(stagingSkillsDir, paths.skillsDir);
-          } catch (swapError) {
-            if (hadExisting) {
-              await NodeFSP.rename(backupSkillsDir, paths.skillsDir).catch(() => undefined);
-            }
-            throw swapError;
-          }
-          if (hadExisting) {
-            await NodeFSP.rm(backupSkillsDir, { recursive: true, force: true }).catch(
-              () => undefined,
+    const lock = getProfileMaterializeLock(paths.profileDir);
+    return yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        const alreadyUpToDate = yield* Effect.tryPromise({
+          try: async () => {
+            const markerRaw = await NodeFSP.readFile(
+              NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
+              "utf8",
             );
-          }
-        } catch (stageError) {
-          await NodeFSP.rm(stagingSkillsDir, { recursive: true, force: true }).catch(
-            () => undefined,
-          );
-          throw stageError;
-        }
-
-        if (input.driver === "antigravity") {
-          // Register `<teamProfile>/team-skills` FIRST in `<teamProfile>/config/skills.json`,
-          // followed by the user's personal `~/.gemini` skill directories (read-only).
-          const configDir = NodePath.join(paths.profileDir, "config");
-          await NodeFSP.mkdir(configDir, { recursive: true, mode: 0o700 });
-          const personalConfigSkills = NodePath.join(userHome, ".gemini", "config", "skills");
-          const personalCliSkills = NodePath.join(userHome, ".gemini", "antigravity-cli", "skills");
-          const entries: Array<{ readonly path: string }> = [{ path: paths.skillsDir }];
-          for (const candidate of [personalConfigSkills, personalCliSkills]) {
-            const stat = await NodeFSP.stat(candidate).catch(() => undefined);
-            if (stat?.isDirectory()) {
-              entries.push({ path: candidate });
+            const markerOpt = decodeProfileMarker(markerRaw);
+            if (markerOpt._tag !== "Some" || markerOpt.value.assetsHash !== assetsHash) {
+              return false;
             }
-          }
-          const skillsConfigPath = NodePath.join(configDir, "skills.json");
-          const existingSkillsConfig = await NodeFSP.lstat(skillsConfigPath).catch(() => undefined);
-          if (existingSkillsConfig?.isSymbolicLink()) {
-            await NodeFSP.unlink(skillsConfigPath);
-          }
-          await NodeFSP.writeFile(skillsConfigPath, `${encodeJsonUnknown({ entries })}\n`, "utf8");
+            const skillsStat = await NodeFSP.stat(paths.skillsDir);
+            if (!skillsStat.isDirectory()) return false;
+            if (paths.instructionFile !== null) {
+              const expectsInstruction = threadPreprompts.length > 0;
+              const hasInstruction = await NodeFSP.stat(paths.instructionFile)
+                .then((s) => s.isFile())
+                .catch(() => false);
+              if (expectsInstruction !== hasInstruction) return false;
+            }
+            return true;
+          },
+          catch: () => false,
+        }).pipe(Effect.orElseSucceed(() => false));
+
+        if (alreadyUpToDate) {
+          return paths;
         }
-      },
-      catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
-    }).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("TeamProfileMaterializer.materializeAssets failed", {
-          virtualInstanceId: input.virtualInstanceId,
-          driver: input.driver,
-          cause,
-        }),
-      ),
-    );
 
-    if (paths.instructionFile !== null) {
-      const instructionPath = paths.instructionFile;
-      // Remove any pre-existing symlink pointing to personal `~/.gemini/GEMINI.md` before writing!
-      yield* Effect.tryPromise({
-        try: async () => {
-          const stat = await NodeFSP.lstat(instructionPath).catch(() => undefined);
-          if (stat?.isSymbolicLink()) {
-            await NodeFSP.unlink(instructionPath);
-          }
-        },
-        catch: () => undefined,
-      }).pipe(Effect.ignore);
+        let skillsMaterialized = true;
+        yield* Effect.tryPromise({
+          try: async () => {
+            await NodeFSP.mkdir(paths.profileDir, { recursive: true, mode: 0o700 });
+            if (platform !== "win32") {
+              await NodeFSP.chmod(paths.profileDir, 0o700).catch(() => undefined);
+            }
 
-      const rendered = renderTeamPrepromptsMarkdown(threadPreprompts);
-      if (rendered.length > 0) {
-        const header = `<!-- Managed by T3 Code Teams (revision ${input.revision}). Do not edit manually. -->\n\n`;
-        yield* writeFileStringAtomically({
-          filePath: instructionPath,
-          contents: `${header}${rendered}\n`,
+            // Stage skills directory in a sibling temp folder and swap atomically so active agents
+            // never observe an empty or half-written team skills directory during sync.
+            const stagingSkillsDir = `${paths.skillsDir}.tmp-${NodeCrypto.randomUUID()}`;
+            const backupSkillsDir = `${paths.skillsDir}.old-${NodeCrypto.randomUUID()}`;
+            await NodeFSP.mkdir(stagingSkillsDir, { recursive: true, mode: 0o700 });
+            try {
+              for (const skill of activeSkills) {
+                const skillDir = NodePath.join(stagingSkillsDir, skill.slug);
+                assertPathContainedWithin(stagingSkillsDir, skillDir);
+                await NodeFSP.mkdir(skillDir, { recursive: true, mode: 0o700 });
+                const skillMdPath = NodePath.join(skillDir, "SKILL.md");
+                assertPathContainedWithin(skillDir, skillMdPath);
+                await NodeFSP.writeFile(skillMdPath, skill.skillMd, "utf8");
+                for (const ref of skill.references) {
+                  const refPath = NodePath.join(skillDir, ...ref.path.split("/"));
+                  assertPathContainedWithin(skillDir, refPath);
+                  await NodeFSP.mkdir(NodePath.dirname(refPath), { recursive: true, mode: 0o700 });
+                  await NodeFSP.writeFile(refPath, ref.content, "utf8");
+                }
+              }
+
+              if (input.driver === "codex") {
+                await syncDirectoryPersonalSkillLinks({
+                  targetSkillsDir: stagingSkillsDir,
+                  personalSkillsDir: NodePath.join(userHome, ".codex", "skills"),
+                  teamSlugsLower,
+                  platform,
+                });
+              } else if (input.driver === "claudeAgent") {
+                await syncDirectoryPersonalSkillLinks({
+                  targetSkillsDir: stagingSkillsDir,
+                  personalSkillsDir: NodePath.join(userHome, ".claude", "skills"),
+                  teamSlugsLower,
+                  platform,
+                });
+              }
+
+              const hadExisting = await NodeFSP.lstat(paths.skillsDir)
+                .then(() => true)
+                .catch(() => false);
+              if (hadExisting) {
+                await NodeFSP.rename(paths.skillsDir, backupSkillsDir);
+              }
+              try {
+                await NodeFSP.rename(stagingSkillsDir, paths.skillsDir);
+              } catch (swapError) {
+                if (hadExisting) {
+                  await NodeFSP.rename(backupSkillsDir, paths.skillsDir).catch(() => undefined);
+                }
+                throw swapError;
+              }
+              if (hadExisting) {
+                await NodeFSP.rm(backupSkillsDir, { recursive: true, force: true }).catch(
+                  () => undefined,
+                );
+              }
+            } catch (stageError) {
+              await NodeFSP.rm(stagingSkillsDir, { recursive: true, force: true }).catch(
+                () => undefined,
+              );
+              throw stageError;
+            }
+
+            if (input.driver === "antigravity") {
+              // Register `<teamProfile>/team-skills` FIRST in `<teamProfile>/config/skills.json`,
+              // followed by the user's personal `~/.gemini` skill directories (read-only).
+              const configDir = NodePath.join(paths.profileDir, "config");
+              await NodeFSP.mkdir(configDir, { recursive: true, mode: 0o700 });
+              const personalConfigSkills = NodePath.join(userHome, ".gemini", "config", "skills");
+              const personalCliSkills = NodePath.join(
+                userHome,
+                ".gemini",
+                "antigravity-cli",
+                "skills",
+              );
+              const entries: Array<{ readonly path: string }> = [{ path: paths.skillsDir }];
+              for (const candidate of [personalConfigSkills, personalCliSkills]) {
+                const stat = await NodeFSP.stat(candidate).catch(() => undefined);
+                if (stat?.isDirectory()) {
+                  entries.push({ path: candidate });
+                }
+              }
+              const skillsConfigPath = NodePath.join(configDir, "skills.json");
+              const existingSkillsConfig = await NodeFSP.lstat(skillsConfigPath).catch(
+                () => undefined,
+              );
+              if (existingSkillsConfig?.isSymbolicLink()) {
+                await NodeFSP.unlink(skillsConfigPath);
+              }
+              await NodeFSP.writeFile(
+                skillsConfigPath,
+                `${encodeJsonUnknown({ entries })}\n`,
+                "utf8",
+              );
+            }
+          },
+          catch: (cause) => new TeamProfileMaterializerIoError({ cause }),
         }).pipe(
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.catch((cause) =>
-            Effect.logWarning("TeamProfileMaterializer.writeInstructionFile failed", {
-              instructionPath,
+          Effect.catch((cause) => {
+            skillsMaterialized = false;
+            return Effect.logWarning("TeamProfileMaterializer.materializeAssets failed", {
+              virtualInstanceId: input.virtualInstanceId,
+              driver: input.driver,
               cause,
-            }),
-          ),
+            });
+          }),
         );
-      } else {
-        yield* fs.remove(instructionPath, { force: true }).pipe(Effect.ignore);
-      }
-    }
 
-    // Write team profile marker after skills & instructions complete so assetsHash reflects disk state.
-    yield* Effect.tryPromise({
-      try: () =>
-        NodeFSP.writeFile(
-          NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
-          `${encodeJsonUnknown({
-            teamId: input.teamId,
-            virtualInstanceId: input.virtualInstanceId,
-            driver: input.driver,
-            revision: input.revision,
-            assetsHash,
-          })}\n`,
-          "utf8",
-        ),
-      catch: () => undefined,
-    }).pipe(Effect.ignore);
+        let instructionsMaterialized = true;
+        if (paths.instructionFile !== null) {
+          const instructionPath = paths.instructionFile;
+          // Remove any pre-existing symlink pointing to personal `~/.gemini/GEMINI.md` before writing!
+          yield* Effect.tryPromise({
+            try: async () => {
+              const stat = await NodeFSP.lstat(instructionPath).catch(() => undefined);
+              if (stat?.isSymbolicLink()) {
+                await NodeFSP.unlink(instructionPath);
+              }
+            },
+            catch: () => undefined,
+          }).pipe(Effect.ignore);
 
-    return paths;
+          const rendered = renderTeamPrepromptsMarkdown(threadPreprompts);
+          if (rendered.length > 0) {
+            const header = `<!-- Managed by T3 Code Teams (revision ${input.revision}). Do not edit manually. -->\n\n`;
+            yield* writeFileStringAtomically({
+              filePath: instructionPath,
+              contents: `${header}${rendered}\n`,
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.catch((cause) => {
+                instructionsMaterialized = false;
+                return Effect.logWarning("TeamProfileMaterializer.writeInstructionFile failed", {
+                  instructionPath,
+                  cause,
+                });
+              }),
+            );
+          } else {
+            yield* fs.remove(instructionPath, { force: true }).pipe(Effect.ignore);
+          }
+        }
+
+        // Only persist the assetsHash marker when both skills and instructions succeeded so
+        // transient disk errors are automatically repaired on the next materialization pass.
+        if (skillsMaterialized && instructionsMaterialized) {
+          yield* Effect.tryPromise({
+            try: () =>
+              NodeFSP.writeFile(
+                NodePath.join(paths.profileDir, TEAM_PROFILE_MARKER_FILENAME),
+                `${encodeJsonUnknown({
+                  teamId: input.teamId,
+                  virtualInstanceId: input.virtualInstanceId,
+                  driver: input.driver,
+                  revision: input.revision,
+                  assetsHash,
+                })}\n`,
+                "utf8",
+              ),
+            catch: () => undefined,
+          }).pipe(Effect.ignore);
+        }
+
+        return paths;
+      }),
+    );
   },
 );
 

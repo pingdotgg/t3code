@@ -12,6 +12,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   RunId,
   TeamId,
@@ -296,13 +297,46 @@ describe("TeamProviderManager", () => {
           expect(continuations).toHaveLength(1);
 
           // Pending recycle marker guarantees continuation turn recycles warm RAM-caching session even when lease is already fresh!
+          const sessionA = ProviderSessionId.make("sess-warm-a");
+          const sessionB = ProviderSessionId.make("sess-warm-b");
           const continuationPrep = yield* manager.prepareForTurn({
             projectId,
             instanceId: agyVirtualId,
             driver: ProviderDriverKind.make("antigravity"),
             nativeThreadHasTurns: true,
+            providerSessionId: sessionA,
           });
           expect(continuationPrep.recycleWarmSession).toBe(true);
+
+          // Register sessionB at the same lease generation (no recycle needed yet).
+          const sessionBInit = yield* manager.prepareForTurn({
+            projectId,
+            instanceId: agyVirtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            nativeThreadHasTurns: true,
+            providerSessionId: sessionB,
+          });
+          expect(sessionBInit.recycleWarmSession).toBe(false);
+
+          // Simulate a background lease rotation (forceRefresh outside prepareForTurn):
+          // BOTH warm sessions A and B MUST see recycleWarmSession === true on their next turn!
+          yield* manager.getLeasedAccessToken(agyVirtualId, { forceRefresh: true });
+          const afterRotateA = yield* manager.prepareForTurn({
+            projectId,
+            instanceId: agyVirtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            nativeThreadHasTurns: true,
+            providerSessionId: sessionA,
+          });
+          const afterRotateB = yield* manager.prepareForTurn({
+            projectId,
+            instanceId: agyVirtualId,
+            driver: ProviderDriverKind.make("antigravity"),
+            nativeThreadHasTurns: true,
+            providerSessionId: sessionB,
+          });
+          expect(afterRotateA.recycleWarmSession).toBe(true);
+          expect(afterRotateB.recycleWarmSession).toBe(true);
 
           // Now revoke member -> 403 immediately purges ephemeral token file and refuses auto-resume!
           revoked = true;

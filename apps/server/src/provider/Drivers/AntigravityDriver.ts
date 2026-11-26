@@ -79,7 +79,10 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  mergeProviderInstanceEnvironment,
+  ProviderSessionEnvironmentOverride,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 
@@ -253,10 +256,21 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      const sessionOverride = yield* ProviderSessionEnvironmentOverride;
+      const effectiveBaseEnv: NodeJS.ProcessEnv =
+        Object.keys(sessionOverride).length > 0
+          ? { ...processEnvironment, ...sessionOverride }
+          : processEnvironment;
+      const effectiveAuth: AntigravityAuthConfig =
+        auth.authMethod === "gemini-api-key" &&
+        typeof sessionOverride.GEMINI_API_KEY === "string" &&
+        sessionOverride.GEMINI_API_KEY.length > 0
+          ? { ...auth, apiKey: sessionOverride.GEMINI_API_KEY }
+          : auth;
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
-        baseEnv: processEnvironment,
-        auth,
+        baseEnv: effectiveBaseEnv,
+        auth: effectiveAuth,
         userHome,
         tempDirectory: directories.runtimeTemp,
       }).pipe(

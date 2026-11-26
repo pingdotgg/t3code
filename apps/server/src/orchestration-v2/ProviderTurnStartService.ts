@@ -1118,9 +1118,6 @@ export const layer: Layer.Layer<
           const turnRun = projection.runs.find((candidate) => candidate.rootNodeId === turn.nodeId);
           return turnRun === undefined || !slashMessageIds.has(turnRun.userMessageId);
         });
-        yield* teamProviderManagerOption.value
-          .setActiveTeamServerTurnMember(run.providerInstanceId, actingMemberId ?? null)
-          .pipe(Effect.ignore);
         const prepResult = yield* Effect.result(
           teamProviderManagerOption.value.prepareForTurn({
             projectId: projection.thread.projectId,
@@ -1128,6 +1125,8 @@ export const layer: Layer.Layer<
             instanceId: run.providerInstanceId,
             driver: providerThread.driver,
             nativeThreadHasTurns: hasPriorTurnsOnProviderThread,
+            providerSessionId,
+            ...(actingMemberId === undefined ? {} : { actingMemberId }),
           }),
         );
         if (prepResult._tag === "Failure") {
@@ -1149,6 +1148,7 @@ export const layer: Layer.Layer<
               providerSessionId,
               reason: "manual_shutdown",
               detail: "Team OAuth lease rotated; recycling warm provider session.",
+              preserveTeamEphemeralTokens: true,
             })
             .pipe(Effect.ignore);
         }
@@ -2534,6 +2534,7 @@ export const layer: Layer.Layer<
               reason: "manual_shutdown",
               detail:
                 "Team OAuth lease rotated during active turn; recycling warm provider session.",
+              preserveTeamEphemeralTokens: true,
             })
             .pipe(Effect.ignore),
       });

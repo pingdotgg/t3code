@@ -13,6 +13,7 @@ import {
   type ProjectId,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
+  ProviderSessionId,
   type ProviderThreadId,
   type RunId,
   type TeamMemberId,
@@ -46,6 +47,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { isAntigravitySignInRequiredError } from "../provider/antigravityAuthSupport.ts";
+import { resolveLocalOrigin } from "../startupAccess.ts";
 import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
 import {
   materializeEphemeralLeaseToken,
@@ -282,6 +284,8 @@ export class TeamProviderManager extends Context.Service<
       readonly instanceId: ProviderInstanceId;
       readonly driver: ProviderDriverKind;
       readonly nativeThreadHasTurns: boolean;
+      readonly providerSessionId?: ProviderSessionId;
+      readonly actingMemberId?: TeamMemberId | null;
     }) => Effect.Effect<TeamTurnPreparationResult, TeamProviderTurnGuardError>;
     /** In-memory leased OAuth access token lookup used by CodexManagedTokenBroker (zero token on disk). */
     readonly getLeasedAccessToken: (
@@ -295,16 +299,26 @@ export class TeamProviderManager extends Context.Service<
     readonly purgeEphemeralTokensForInstance: (
       virtualInstanceId: ProviderInstanceId,
     ) => Effect.Effect<void>;
-    /** Verifies an ephemeral in-memory Team Server loopback proxy token and attributes the active turn member. */
+    /** Mints a per-session ephemeral loopback proxy token scoped to `(teamId, providerInstanceId, memberId)` on Team Server hosts. */
+    readonly issueInternalProxySessionToken: (input: {
+      readonly virtualInstanceId: ProviderInstanceId;
+      readonly providerSessionId: ProviderSessionId;
+      readonly memberId: TeamMemberId | null;
+    }) => Effect.Effect<Readonly<Record<string, string>> | null>;
+    /** Revokes a session's ephemeral loopback proxy token and clears its lease-generation tracker on session release. */
+    readonly revokeInternalProxySessionToken: (
+      providerSessionId: ProviderSessionId,
+    ) => Effect.Effect<void>;
+    /** Verifies a per-session ephemeral Team Server loopback proxy token for a specific provider instance. */
     readonly verifyInternalProxyToken: (
       token: string,
       providerInstanceId?: ProviderInstanceId,
-    ) => Effect.Effect<{ readonly teamId: TeamId; readonly memberId: TeamMemberId | null } | null>;
-    /** Records the acting team member for a Team Server virtual provider turn so loopback proxy usage is attributed. */
-    readonly setActiveTeamServerTurnMember: (
-      virtualInstanceId: ProviderInstanceId,
-      memberId: TeamMemberId | null,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<{
+      readonly teamId: TeamId;
+      readonly sourceInstanceId: ProviderInstanceId;
+      readonly memberId: TeamMemberId | null;
+      readonly isAutomation: boolean;
+    } | null>;
     /**
      * Handles an auth/expiry error during an active turn on a `token-lease` virtual instance:
      * - Refreshes the lease (`forceRefresh: true`)
@@ -349,25 +363,36 @@ const make = Effect.gen(function* () {
     PubSub.shutdown,
   );
 
+  interface InternalProxySessionTokenRecord {
+    readonly teamId: TeamId;
+    readonly sourceInstanceId: ProviderInstanceId;
+    readonly memberId: TeamMemberId | null;
+    readonly isAutomation: boolean;
+    readonly providerSessionId: ProviderSessionId;
+  }
+
   const leasesRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, CachedLease>>(new Map());
+  const leaseGenerationByInstanceRef = yield* Ref.make<ReadonlyMap<ProviderInstanceId, number>>(
+    new Map(),
+  );
+  const sessionLeaseGenerationRef = yield* Ref.make<ReadonlyMap<ProviderSessionId, number>>(
+    new Map(),
+  );
   const renewalFibersRef = yield* Ref.make<
     ReadonlyMap<ProviderInstanceId, Fiber.Fiber<void, never>>
   >(new Map());
   const pendingRecycleInstancesRef = yield* Ref.make<ReadonlySet<ProviderInstanceId>>(new Set());
   const autoResumedRunsRef = yield* Ref.make<ReadonlySet<string>>(new Set());
-  const internalProxyTokensByTeamRef = yield* Ref.make<ReadonlyMap<TeamId, string>>(new Map());
-  const activeTurnMemberByInstanceRef = yield* Ref.make<
-    ReadonlyMap<ProviderInstanceId, TeamMemberId | null>
+  const internalProxySessionTokensRef = yield* Ref.make<
+    ReadonlyMap<string, InternalProxySessionTokenRecord>
   >(new Map());
 
-  const getOrCreateInternalProxyToken = (teamId: TeamId) =>
-    Ref.modify(internalProxyTokensByTeamRef, (current) => {
-      const existing = current.get(teamId);
-      if (existing !== undefined) return [existing, current] as const;
-      const generated = `t3teamint_${NodeCrypto.randomBytes(32).toString("base64url")}`;
+  const bumpLeaseGeneration = (virtualInstanceId: ProviderInstanceId) =>
+    Ref.modify(leaseGenerationByInstanceRef, (current) => {
+      const nextGen = (current.get(virtualInstanceId) ?? 0) + 1;
       const next = new Map(current);
-      next.set(teamId, generated);
-      return [generated, next] as const;
+      next.set(virtualInstanceId, nextGen);
+      return [nextGen, next] as const;
     });
 
   const cancelRenewalFiber = Effect.fn("TeamProviderManager.cancelRenewalFiber")(function* (
@@ -435,15 +460,26 @@ const make = Effect.gen(function* () {
               next.delete(virtualInstanceId);
               return next;
             });
-            yield* requestFreshLease(virtualInstanceId, { forceRefresh: true }).pipe(
-              Effect.asVoid,
-              Effect.catch((error) =>
-                Effect.logWarning("TeamProviderManager background lease renewal failed", {
-                  virtualInstanceId,
-                  errorTag: error._tag,
-                }),
-              ),
+            const refreshed = yield* Effect.result(
+              requestFreshLease(virtualInstanceId, { forceRefresh: true }),
             );
+            if (refreshed._tag === "Success") {
+              if (
+                refreshed.success.rotated &&
+                RAM_TOKEN_CACHING_DRIVERS.has(refreshed.success.lease.driver)
+              ) {
+                yield* Ref.update(pendingRecycleInstancesRef, (current) => {
+                  const next = new Set(current);
+                  next.add(virtualInstanceId);
+                  return next;
+                });
+              }
+            } else {
+              yield* Effect.logWarning("TeamProviderManager background lease renewal failed", {
+                virtualInstanceId,
+                errorTag: refreshed.failure._tag,
+              });
+            }
           }),
         ),
         Effect.forkIn(serviceScope),
@@ -458,7 +494,10 @@ const make = Effect.gen(function* () {
 
   const requestFreshLease = Effect.fn("TeamProviderManager.requestFreshLease")(function* (
     virtualInstanceId: ProviderInstanceId,
-    options?: { readonly forceRefresh?: boolean },
+    options?: {
+      readonly forceRefresh?: boolean;
+      readonly actingMemberId?: TeamMemberId | null;
+    },
   ): Effect.fn.Return<
     { readonly lease: TeamProviderLeaseResponse; readonly rotated: boolean },
     TeamProviderAccessRevokedError | TeamProviderLeaseFetchError
@@ -478,7 +517,14 @@ const make = Effect.gen(function* () {
     const workspaceOpt = yield* teamRepo
       .getWorkspace()
       .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isSome(workspaceOpt) && workspaceOpt.value.id === teamId) {
+    if (Option.isSome(workspaceOpt)) {
+      if (workspaceOpt.value.id !== teamId) {
+        return yield* new TeamProviderLeaseFetchError({
+          teamId,
+          instanceId: virtualInstanceId,
+          detail: `Team "${teamId}" is not hosted on this Team Server.`,
+        });
+      }
       const serverProviderOpt = yield* assetsRepo
         .getProviderByInstanceId(teamId, sourceInstanceId)
         .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -526,6 +572,9 @@ const make = Effect.gen(function* () {
         ? parsedExpiryMs
         : nowMs + lease.expiresInSeconds * 1000;
       const rotated = cached === undefined || cached.lease.accessToken !== lease.accessToken;
+      if (rotated) {
+        yield* bumpLeaseGeneration(virtualInstanceId);
+      }
       yield* Ref.update(leasesRef, (current) => {
         const next = new Map(current);
         next.set(virtualInstanceId, { lease, expiresAtMs, lastRefreshedAtMs: nowMs });
@@ -540,9 +589,8 @@ const make = Effect.gen(function* () {
       }).pipe(Effect.provideService(Digest.Digest, digest), Effect.provideService(Path.Path, path));
       yield* scheduleBackgroundRenewal(virtualInstanceId, expiresAtMs);
 
-      // Record Team Server lease usage attributed to the active turn member (or owner fallback).
-      const activeMemberId = (yield* Ref.get(activeTurnMemberByInstanceRef)).get(virtualInstanceId);
-      let usageMemberId: TeamMemberId | null = activeMemberId ?? null;
+      // Record Team Server lease usage attributed to the acting turn member (or owner fallback for automation).
+      let usageMemberId: TeamMemberId | null = options?.actingMemberId ?? null;
       if (usageMemberId === null) {
         const members = yield* teamRepo.listMembers(teamId).pipe(Effect.orElseSucceed(() => []));
         usageMemberId =
@@ -681,6 +729,9 @@ const make = Effect.gen(function* () {
       : nowMs + lease.expiresInSeconds * 1000;
 
     const rotated = cached === undefined || cached.lease.accessToken !== lease.accessToken;
+    if (rotated) {
+      yield* bumpLeaseGeneration(virtualInstanceId);
+    }
     yield* Ref.update(leasesRef, (current) => {
       const next = new Map(current);
       next.set(virtualInstanceId, { lease, expiresAtMs, lastRefreshedAtMs: nowMs });
@@ -782,11 +833,12 @@ const make = Effect.gen(function* () {
         proxyBase = `${input.mode.teamServerUrl.replace(/\/+$/, "")}/api/team/provider-proxy/${encodeURIComponent(provider.providerInstanceId)}`;
         proxyToken = input.mode.memberToken ?? "";
       } else if (provider.upstreamBaseUrl) {
-        // Route Team Server turns through the local Team Server proxy endpoint with an ephemeral
-        // in-memory token so raw company API keys never enter agent subprocess environments and
-        // usage is recorded identically to local-binding turns.
-        proxyBase = `http://127.0.0.1:${config.port}/api/team/provider-proxy/${encodeURIComponent(provider.providerInstanceId)}`;
-        proxyToken = yield* getOrCreateInternalProxyToken(teamId);
+        // Route Team Server turns through the local Team Server proxy endpoint.
+        // The non-secret placeholder here is replaced per-session at ProviderSessionManager.open()
+        // via ProviderSessionEnvironmentOverride with an ephemeral token bound to (team, provider, member, session).
+        const localOrigin = resolveLocalOrigin(config.host, config.port).replace(/\/+$/, "");
+        proxyBase = `${localOrigin}/api/team/provider-proxy/${encodeURIComponent(provider.providerInstanceId)}`;
+        proxyToken = "team-server-session-token-pending";
       }
       if (proxyBase !== null) {
         envVars.push(
@@ -1036,6 +1088,8 @@ const make = Effect.gen(function* () {
             return Option.some(byRepo.teamId);
           }
         }
+        // Team Server hosts never fall through to local bindings.
+        return Option.none();
       }
       return yield* assetsRepo
         .findLocalTeamIdForProject({
@@ -1079,7 +1133,24 @@ const make = Effect.gen(function* () {
       });
     }
     const parsed = parseTeamProviderInstanceId(input.instanceId)!;
-    // Check if running on a local binding where this provider is marked remote-only or disabled.
+    const workspaceOpt = yield* teamRepo
+      .getWorkspace()
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isSome(workspaceOpt)) {
+      // Check Team Server workspace provider table exclusively on Team Server hosts.
+      const serverProviderOpt = yield* assetsRepo
+        .getProviderByInstanceId(teamId, parsed.sourceInstanceId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      if (Option.isNone(serverProviderOpt) || !serverProviderOpt.value.enabled) {
+        return yield* new TeamProviderIsolationError({
+          teamId,
+          instanceId: input.instanceId,
+          detail: `Provider "${parsed.sourceInstanceId}" is not enabled on the Team Server.`,
+        });
+      }
+      return;
+    }
+    // Local environment: check local binding where this provider may be remote-only or disabled.
     const bindingOpt = yield* assetsRepo
       .getLocalBinding(teamId)
       .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -1103,17 +1174,11 @@ const make = Effect.gen(function* () {
       }
       return;
     }
-    // Check Team Server workspace provider table.
-    const serverProviderOpt = yield* assetsRepo
-      .getProviderByInstanceId(teamId, parsed.sourceInstanceId)
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isNone(serverProviderOpt) || !serverProviderOpt.value.enabled) {
-      return yield* new TeamProviderIsolationError({
-        teamId,
-        instanceId: input.instanceId,
-        detail: `Provider "${parsed.sourceInstanceId}" is not enabled on the Team Server.`,
-      });
-    }
+    return yield* new TeamProviderIsolationError({
+      teamId,
+      instanceId: input.instanceId,
+      detail: `Provider "${parsed.sourceInstanceId}" is not available for team "${teamId}".`,
+    });
   });
 
   const resolvePrepromptsForTeamDriver = Effect.fn(
@@ -1124,15 +1189,18 @@ const make = Effect.gen(function* () {
     readonly nativeThreadHasTurns: boolean;
   }) {
     let preprompts: ReadonlyArray<TeamPreprompt> = [];
-    const bindingOpt = yield* assetsRepo
-      .getLocalBinding(input.teamId)
+    const workspaceOpt = yield* teamRepo
+      .getWorkspace()
       .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isSome(bindingOpt)) {
-      preprompts = bindingOpt.value.preprompts;
-    } else {
+    if (Option.isSome(workspaceOpt)) {
       preprompts = yield* assetsRepo
         .listPreprompts(input.teamId)
         .pipe(Effect.orElseSucceed(() => []));
+    } else {
+      const bindingOpt = yield* assetsRepo
+        .getLocalBinding(input.teamId)
+        .pipe(Effect.orElseSucceed(() => Option.none()));
+      preprompts = Option.isSome(bindingOpt) ? bindingOpt.value.preprompts : [];
     }
 
     const turnPreprompts = selectTeamPrepromptsForDriver(preprompts, input.driver, "turn");
@@ -1371,23 +1439,12 @@ const make = Effect.gen(function* () {
         return [true, next] as const;
       });
       if (parsedVirtual !== null) {
-        const bindingOpt = yield* assetsRepo
-          .getLocalBinding(effectiveTeamId)
+        const workspaceOpt = yield* teamRepo
+          .getWorkspace()
           .pipe(Effect.orElseSucceed(() => Option.none()));
-        if (Option.isSome(bindingOpt)) {
-          // Pre-turn asset revision check catches up offline laptops transparently on reconnect.
-          yield* syncLocalAssetsDelta(effectiveTeamId);
-          const provider = bindingOpt.value.providers.find(
-            (p) => p.providerInstanceId === parsedVirtual.sourceInstanceId,
-          );
-          if (provider?.deliveryStrategy === "token-lease") {
-            const { rotated } = yield* requestFreshLease(input.instanceId);
-            if (rotated && RAM_TOKEN_CACHING_DRIVERS.has(provider.driver)) {
-              recycleWarmSession = true;
-            }
-          }
-        } else {
-          // Team Server workspace token-lease preparation.
+        let tokenLeaseDriver: ProviderDriverKind | null = null;
+        if (Option.isSome(workspaceOpt)) {
+          // Team Server workspace token-lease preparation (never reads local bindings).
           const serverProviderOpt = yield* assetsRepo
             .getProviderByInstanceId(effectiveTeamId, parsedVirtual.sourceInstanceId)
             .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -1396,11 +1453,58 @@ const make = Effect.gen(function* () {
             serverProviderOpt.value.enabled &&
             serverProviderOpt.value.deliveryStrategy === "token-lease"
           ) {
-            const { rotated } = yield* requestFreshLease(input.instanceId);
+            tokenLeaseDriver = serverProviderOpt.value.driver;
+            const { rotated } = yield* requestFreshLease(
+              input.instanceId,
+              input.actingMemberId !== undefined
+                ? { actingMemberId: input.actingMemberId }
+                : undefined,
+            );
             if (rotated && RAM_TOKEN_CACHING_DRIVERS.has(serverProviderOpt.value.driver)) {
               recycleWarmSession = true;
             }
           }
+        } else {
+          const bindingOpt = yield* assetsRepo
+            .getLocalBinding(effectiveTeamId)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isSome(bindingOpt)) {
+            // Pre-turn asset revision check catches up offline laptops transparently on reconnect.
+            yield* syncLocalAssetsDelta(effectiveTeamId);
+            const provider = bindingOpt.value.providers.find(
+              (p) => p.providerInstanceId === parsedVirtual.sourceInstanceId,
+            );
+            if (provider?.deliveryStrategy === "token-lease") {
+              tokenLeaseDriver = provider.driver;
+              const { rotated } = yield* requestFreshLease(input.instanceId);
+              if (rotated && RAM_TOKEN_CACHING_DRIVERS.has(provider.driver)) {
+                recycleWarmSession = true;
+              }
+            }
+          }
+        }
+
+        // Compare this live session's recorded lease generation against the current generation so
+        // background rotations or rotations triggered by another session recycle EVERY stale warm session.
+        if (
+          tokenLeaseDriver !== null &&
+          RAM_TOKEN_CACHING_DRIVERS.has(tokenLeaseDriver) &&
+          input.providerSessionId !== undefined
+        ) {
+          const trackedSessionId = input.actingMemberId
+            ? ProviderSessionId.make(`${input.providerSessionId}::member:${input.actingMemberId}`)
+            : input.providerSessionId;
+          const currentGen =
+            (yield* Ref.get(leaseGenerationByInstanceRef)).get(input.instanceId) ?? 0;
+          const sessionGen = (yield* Ref.get(sessionLeaseGenerationRef)).get(trackedSessionId);
+          if (sessionGen !== undefined && sessionGen < currentGen) {
+            recycleWarmSession = true;
+          }
+          yield* Ref.update(sessionLeaseGenerationRef, (current) => {
+            const next = new Map(current);
+            next.set(trackedSessionId, currentGen);
+            return next;
+          });
         }
       }
 
@@ -1438,18 +1542,23 @@ const make = Effect.gen(function* () {
         next.delete(virtualInstanceId);
         return next;
       });
-      const bindingOpt = yield* assetsRepo
-        .getLocalBinding(parsed.teamId)
+      const workspaceOpt = yield* teamRepo
+        .getWorkspace()
         .pipe(Effect.orElseSucceed(() => Option.none()));
-      let driver = Option.isSome(bindingOpt)
-        ? bindingOpt.value.providers.find((p) => p.providerInstanceId === parsed.sourceInstanceId)
-            ?.driver
-        : undefined;
-      if (!driver) {
+      let driver: ProviderDriverKind | undefined;
+      if (Option.isSome(workspaceOpt)) {
         const serverProviderOpt = yield* assetsRepo
           .getProviderByInstanceId(parsed.teamId, parsed.sourceInstanceId)
           .pipe(Effect.orElseSucceed(() => Option.none()));
         driver = Option.isSome(serverProviderOpt) ? serverProviderOpt.value.driver : undefined;
+      } else {
+        const bindingOpt = yield* assetsRepo
+          .getLocalBinding(parsed.teamId)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        driver = Option.isSome(bindingOpt)
+          ? bindingOpt.value.providers.find((p) => p.providerInstanceId === parsed.sourceInstanceId)
+              ?.driver
+          : undefined;
       }
       if (driver) {
         yield* purgeEphemeralLeaseTokens({
@@ -1464,36 +1573,101 @@ const make = Effect.gen(function* () {
       }
     }),
 
+    issueInternalProxySessionToken: Effect.fn("TeamProviderManager.issueInternalProxySessionToken")(
+      function* (input) {
+        const parsed = parseTeamProviderInstanceId(input.virtualInstanceId);
+        if (parsed === null) return null;
+        const workspaceOpt = yield* teamRepo
+          .getWorkspace()
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (Option.isNone(workspaceOpt) || workspaceOpt.value.id !== parsed.teamId) {
+          return null;
+        }
+        const serverProviderOpt = yield* assetsRepo
+          .getProviderByInstanceId(parsed.teamId, parsed.sourceInstanceId)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        if (
+          Option.isNone(serverProviderOpt) ||
+          !serverProviderOpt.value.enabled ||
+          serverProviderOpt.value.deliveryStrategy !== "proxy" ||
+          !serverProviderOpt.value.upstreamBaseUrl
+        ) {
+          return null;
+        }
+        const token = `t3teamint_${NodeCrypto.randomBytes(32).toString("base64url")}`;
+        yield* Ref.update(internalProxySessionTokensRef, (current) => {
+          const next = new Map(current);
+          for (const [existingToken, record] of next) {
+            if (record.providerSessionId === input.providerSessionId) {
+              next.delete(existingToken);
+            }
+          }
+          next.set(token, {
+            teamId: parsed.teamId,
+            sourceInstanceId: parsed.sourceInstanceId,
+            memberId: input.memberId,
+            isAutomation: input.memberId === null,
+            providerSessionId: input.providerSessionId,
+          });
+          return next;
+        });
+        return {
+          T3_TEAM_PROXY_TOKEN: token,
+          OPENAI_API_KEY: token,
+          ANTHROPIC_API_KEY: token,
+          GEMINI_API_KEY: token,
+          GOOGLE_API_KEY: token,
+        } as const;
+      },
+    ),
+
+    revokeInternalProxySessionToken: Effect.fn(
+      "TeamProviderManager.revokeInternalProxySessionToken",
+    )(function* (providerSessionId) {
+      yield* Ref.update(internalProxySessionTokensRef, (current) => {
+        let changed = false;
+        const next = new Map(current);
+        for (const [token, record] of next) {
+          if (record.providerSessionId === providerSessionId) {
+            next.delete(token);
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
+      yield* Ref.update(sessionLeaseGenerationRef, (current) => {
+        if (!current.has(providerSessionId)) return current;
+        const next = new Map(current);
+        next.delete(providerSessionId);
+        return next;
+      });
+    }),
+
     verifyInternalProxyToken: Effect.fn("TeamProviderManager.verifyInternalProxyToken")(
       function* (token, providerInstanceId) {
-        const tokens = yield* Ref.get(internalProxyTokensByTeamRef);
+        const tokens = yield* Ref.get(internalProxySessionTokensRef);
         const presentedBytes = textEncoder.encode(token);
-        for (const [teamId, expected] of tokens) {
+        for (const [expected, record] of tokens) {
           const expectedBytes = textEncoder.encode(expected);
           if (
             presentedBytes.byteLength === expectedBytes.byteLength &&
             NodeCrypto.timingSafeEqual(presentedBytes, expectedBytes)
           ) {
-            const activeMembers = yield* Ref.get(activeTurnMemberByInstanceRef);
-            const virtualId =
-              providerInstanceId !== undefined
-                ? makeTeamProviderInstanceId(teamId, providerInstanceId)
-                : null;
-            const memberId = virtualId !== null ? (activeMembers.get(virtualId) ?? null) : null;
-            return { teamId, memberId };
+            if (
+              providerInstanceId !== undefined &&
+              record.sourceInstanceId !== providerInstanceId
+            ) {
+              return null;
+            }
+            return {
+              teamId: record.teamId,
+              sourceInstanceId: record.sourceInstanceId,
+              memberId: record.memberId,
+              isAutomation: record.isAutomation,
+            };
           }
         }
         return null;
-      },
-    ),
-
-    setActiveTeamServerTurnMember: Effect.fn("TeamProviderManager.setActiveTeamServerTurnMember")(
-      function* (virtualInstanceId, memberId) {
-        yield* Ref.update(activeTurnMemberByInstanceRef, (current) => {
-          const next = new Map(current);
-          next.set(virtualInstanceId, memberId);
-          return next;
-        });
       },
     ),
 
@@ -1504,15 +1678,10 @@ const make = Effect.gen(function* () {
           return { handled: false, revoked: false };
         }
         let isTokenLease = false;
-        const bindingOpt = yield* assetsRepo
-          .getLocalBinding(parsed.teamId)
+        const workspaceOpt = yield* teamRepo
+          .getWorkspace()
           .pipe(Effect.orElseSucceed(() => Option.none()));
-        if (Option.isSome(bindingOpt)) {
-          const provider = bindingOpt.value.providers.find(
-            (p) => p.providerInstanceId === parsed.sourceInstanceId,
-          );
-          isTokenLease = provider?.deliveryStrategy === "token-lease";
-        } else {
+        if (Option.isSome(workspaceOpt)) {
           const serverProviderOpt = yield* assetsRepo
             .getProviderByInstanceId(parsed.teamId, parsed.sourceInstanceId)
             .pipe(Effect.orElseSucceed(() => Option.none()));
@@ -1520,6 +1689,16 @@ const make = Effect.gen(function* () {
             Option.isSome(serverProviderOpt) &&
             serverProviderOpt.value.enabled &&
             serverProviderOpt.value.deliveryStrategy === "token-lease";
+        } else {
+          const bindingOpt = yield* assetsRepo
+            .getLocalBinding(parsed.teamId)
+            .pipe(Effect.orElseSucceed(() => Option.none()));
+          if (Option.isSome(bindingOpt)) {
+            const provider = bindingOpt.value.providers.find(
+              (p) => p.providerInstanceId === parsed.sourceInstanceId,
+            );
+            isTokenLease = provider?.deliveryStrategy === "token-lease";
+          }
         }
         if (!isTokenLease) {
           return { handled: false, revoked: false };

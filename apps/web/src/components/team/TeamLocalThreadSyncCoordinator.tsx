@@ -187,6 +187,7 @@ export function TeamLocalThreadSyncCoordinator() {
   const syncedAssetsRevisionByTeamIdRef = useRef(new Map<TeamId, number>());
   const boundTeamIdsRef = useRef(new Set<TeamId>());
   const envIdByBoundTeamIdRef = useRef(new Map<TeamId, EnvironmentId>());
+  const connectedActiveMemberByEnvIdRef = useRef(new Map<EnvironmentId, string>());
 
   const syncedPayloadFingerprintByKeyRef = useRef(new Map<string, string>());
   const syncedShellFingerprintByKeyRef = useRef(new Map<string, string>());
@@ -634,6 +635,16 @@ export function TeamLocalThreadSyncCoordinator() {
         state.currentMember === null ||
         state.currentMember.status !== "active"
       ) {
+        // Clear cached sync token on disconnect/re-auth transition so reconnecting with a new
+        // AuthSession mints a fresh local-sync token bound to the new session.
+        if (connectedActiveMemberByEnvIdRef.current.delete(teamEnvId)) {
+          localSyncTokenByTeamEnvRef.current.delete(teamEnvId);
+          for (const [boundTeamId, boundEnvId] of envIdByBoundTeamIdRef.current) {
+            if (boundEnvId === teamEnvId) {
+              syncedBindingFingerprintByTeamIdRef.current.delete(boundTeamId);
+            }
+          }
+        }
         continue;
       }
       const env = envById.get(teamEnvId);
@@ -642,6 +653,12 @@ export function TeamLocalThreadSyncCoordinator() {
 
       const teamId = state.team.id;
       const teamName = state.team.name;
+      const previousConnectedMember = connectedActiveMemberByEnvIdRef.current.get(teamEnvId);
+      if (previousConnectedMember !== state.currentMember.id) {
+        connectedActiveMemberByEnvIdRef.current.set(teamEnvId, state.currentMember.id);
+        localSyncTokenByTeamEnvRef.current.delete(teamEnvId);
+        syncedBindingFingerprintByTeamIdRef.current.delete(teamId);
+      }
       activeTeamIds.add(teamId);
       envIdByBoundTeamIdRef.current.set(teamId, teamEnvId);
 

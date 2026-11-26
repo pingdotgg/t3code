@@ -1,4 +1,5 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { ProviderSessionEnvironmentOverride } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -284,6 +285,7 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly reason: ProviderSessionReleaseReason;
     readonly detail?: string;
+    readonly preserveTeamEphemeralTokens?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   readonly detach: (input: {
     readonly providerSessionId: ProviderSessionId;
@@ -1606,6 +1608,7 @@ export const layerWithOptions = (
         readonly keepIf?: Effect.Effect<boolean>;
         readonly gracefulSubscribers?: boolean;
         readonly eventStreamCause?: Cause.Cause<ProviderAdapter.ProviderAdapterV2Error>;
+        readonly preserveTeamEphemeralTokens?: boolean;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1714,16 +1717,26 @@ export const layerWithOptions = (
                         ) {
                           return Effect.void;
                         }
+                        const revokeSessionToken = teamProviderManagerOption.value
+                          .revokeInternalProxySessionToken(entry.runtime.providerSessionId)
+                          .pipe(Effect.ignore);
+                        if (input.preserveTeamEphemeralTokens === true) {
+                          return revokeSessionToken;
+                        }
                         const stillInUse = Array.from(current.values()).some(
                           (other) =>
                             other !== entry &&
                             other.runtime.providerSession.providerInstanceId === instanceId,
                         );
                         return stillInUse
-                          ? Effect.void
-                          : teamProviderManagerOption.value
-                              .purgeEphemeralTokensForInstance(instanceId)
-                              .pipe(Effect.ignore);
+                          ? revokeSessionToken
+                          : revokeSessionToken.pipe(
+                              Effect.andThen(
+                                teamProviderManagerOption.value
+                                  .purgeEphemeralTokensForInstance(instanceId)
+                                  .pipe(Effect.ignore),
+                              ),
+                            );
                       }),
                     ),
                   ),
@@ -3525,34 +3538,59 @@ export const layerWithOptions = (
               const sessionClosed = yield* Deferred.make<void>();
               yield* Scope.addFinalizer(sessionScope, Deferred.done(sessionClosed, Exit.void));
               yield* agentScope.clear(input.threadId);
+              const teamProxySessionEnv =
+                Option.isSome(teamProviderManagerOption) &&
+                isTeamProviderInstanceId(input.modelSelection.instanceId)
+                  ? yield* teamProviderManagerOption.value
+                      .issueInternalProxySessionToken({
+                        virtualInstanceId: input.modelSelection.instanceId,
+                        providerSessionId: effectiveProviderSessionId,
+                        memberId: input.actingMemberId ?? null,
+                      })
+                      .pipe(Effect.orElseSucceed(() => null))
+                  : null;
               const runtime = yield* installationGate
                 .execute(
                   input.modelSelection.instanceId,
-                  adapter.openSession({
-                    threadId: input.threadId,
-                    providerSessionId: effectiveProviderSessionId,
-                    modelSelection: input.modelSelection,
-                    runtimePolicy: input.runtimePolicy,
-                    promptSuggestions: promptSuggestionsEnabled,
-                    ...(input.resumeFromSession === undefined
-                      ? {}
-                      : { resumeFromSession: input.resumeFromSession }),
-                    ...(input.initialNativeThreadId === undefined
-                      ? {}
-                      : { initialNativeThreadId: input.initialNativeThreadId }),
-                    ...(input.initialProviderItemIdentityVersion === undefined
-                      ? {}
-                      : {
-                          initialProviderItemIdentityVersion:
-                            input.initialProviderItemIdentityVersion,
-                        }),
-                  }),
+                  adapter
+                    .openSession({
+                      threadId: input.threadId,
+                      providerSessionId: effectiveProviderSessionId,
+                      modelSelection: input.modelSelection,
+                      runtimePolicy: input.runtimePolicy,
+                      promptSuggestions: promptSuggestionsEnabled,
+                      ...(input.resumeFromSession === undefined
+                        ? {}
+                        : { resumeFromSession: input.resumeFromSession }),
+                      ...(input.initialNativeThreadId === undefined
+                        ? {}
+                        : { initialNativeThreadId: input.initialNativeThreadId }),
+                      ...(input.initialProviderItemIdentityVersion === undefined
+                        ? {}
+                        : {
+                            initialProviderItemIdentityVersion:
+                              input.initialProviderItemIdentityVersion,
+                          }),
+                    })
+                    .pipe(
+                      Effect.provideService(
+                        ProviderSessionEnvironmentOverride,
+                        teamProxySessionEnv ?? {},
+                      ),
+                    ),
                 )
                 .pipe(
                   Effect.provideService(Scope.Scope, sessionScope),
                   // Bound scope close after cleanup; a wedged finalizer must not hold the open lock or interrupter.
                   Effect.onError(() =>
                     dropReservation.pipe(
+                      Effect.andThen(
+                        Option.isSome(teamProviderManagerOption) && teamProxySessionEnv !== null
+                          ? teamProviderManagerOption.value
+                              .revokeInternalProxySessionToken(effectiveProviderSessionId)
+                              .pipe(Effect.ignore)
+                          : Effect.void,
+                      ),
                       Effect.andThen(
                         prepared.issued
                           ? clearMcpSession(input.threadId, mcpCredentialId)

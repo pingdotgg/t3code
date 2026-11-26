@@ -174,6 +174,16 @@ type TeamHttpAuthOutcome =
  */
 const encodeJsonUnknown = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
+function isLoopbackRemoteAddress(raw: string): boolean {
+  const normalized = raw.trim().toLowerCase();
+  return (
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "::ffff:127.0.0.1" ||
+    normalized === "localhost"
+  );
+}
+
 const authenticateTeamMemberHttpRequest = Effect.fn("TeamProviderProxyHttp.authenticateTeamMember")(
   function* (
     request: HttpServerRequest.HttpServerRequest,
@@ -211,18 +221,41 @@ const authenticateTeamMemberHttpRequest = Effect.fn("TeamProviderProxyHttp.authe
 
     const presentedToken = extractPresentedBearerLikeToken(request);
     if (presentedToken !== null) {
-      if (options?.allowInternalProxyToken === true && Option.isSome(teamProviderManagerOpt)) {
+      if (
+        options?.allowInternalProxyToken === true &&
+        options.providerInstanceId !== undefined &&
+        Option.isSome(teamProviderManagerOpt)
+      ) {
+        const remoteAddr = request.remoteAddress;
+        const loopbackAllowed =
+          Option.isNone(remoteAddr) || isLoopbackRemoteAddress(remoteAddr.value);
         const internalMatch = yield* teamProviderManagerOpt.value
           .verifyInternalProxyToken(presentedToken, options.providerInstanceId)
           .pipe(Effect.orElseSucceed(() => null));
-        if (internalMatch !== null && internalMatch.teamId === team.id) {
-          let memberOpt: Option.Option<TeamMember> = Option.none();
+        if (internalMatch !== null) {
+          if (!loopbackAllowed || internalMatch.teamId !== team.id) {
+            return {
+              ok: false,
+              status: 403,
+              code: "team_access_revoked",
+              message: "Internal team proxy credentials are only valid from loopback.",
+            };
+          }
           if (internalMatch.memberId !== null) {
-            memberOpt = yield* teamRepo
+            const memberOpt = yield* teamRepo
               .getMemberById(internalMatch.memberId)
               .pipe(Effect.orElseSucceed(() => Option.none()));
+            if (Option.isNone(memberOpt) || memberOpt.value.status !== "active") {
+              return {
+                ok: false,
+                status: 403,
+                code: "team_access_revoked",
+                message: "Your team membership is no longer active.",
+              };
+            }
+            return { ok: true, team, member: memberOpt.value };
           }
-          if (Option.isNone(memberOpt) || memberOpt.value.status !== "active") {
+          if (internalMatch.isAutomation) {
             const members = yield* teamRepo
               .listMembers(team.id)
               .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamMember>));
@@ -230,12 +263,15 @@ const authenticateTeamMemberHttpRequest = Effect.fn("TeamProviderProxyHttp.authe
               members.find((m) => m.status === "active" && m.role === "owner") ??
               members.find((m) => m.status === "active");
             if (fallbackOwner !== undefined) {
-              memberOpt = Option.some(fallbackOwner);
+              return { ok: true, team, member: fallbackOwner };
             }
           }
-          if (Option.isSome(memberOpt) && memberOpt.value.status === "active") {
-            return { ok: true, team, member: memberOpt.value };
-          }
+          return {
+            ok: false,
+            status: 403,
+            code: "team_access_revoked",
+            message: "Internal team proxy credential has no active member binding.",
+          };
         }
       }
 
@@ -252,23 +288,29 @@ const authenticateTeamMemberHttpRequest = Effect.fn("TeamProviderProxyHttp.authe
             message: "Your team access has been revoked.",
           };
         }
-        if (Option.isSome(authSessionsOpt)) {
-          const sessionOpt = yield* authSessionsOpt.value
-            .getById({ sessionId: tokenRecord.sessionId })
-            .pipe(Effect.orElseSucceed(() => Option.none()));
-          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-          if (
-            Option.isNone(sessionOpt) ||
-            sessionOpt.value.revokedAt !== null ||
-            DateTime.toEpochMillis(sessionOpt.value.expiresAt) <= nowMs
-          ) {
-            return {
-              ok: false,
-              status: 403,
-              code: "team_access_revoked",
-              message: "Your team session has expired or been revoked.",
-            };
-          }
+        if (Option.isNone(authSessionsOpt)) {
+          return {
+            ok: false,
+            status: 403,
+            code: "team_access_revoked",
+            message: "Session verification service is unavailable.",
+          };
+        }
+        const sessionOpt = yield* authSessionsOpt.value
+          .getById({ sessionId: tokenRecord.sessionId })
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        if (
+          Option.isNone(sessionOpt) ||
+          sessionOpt.value.revokedAt !== null ||
+          DateTime.toEpochMillis(sessionOpt.value.expiresAt) <= nowMs
+        ) {
+          return {
+            ok: false,
+            status: 403,
+            code: "team_access_revoked",
+            message: "Your team session has expired or been revoked.",
+          };
         }
         const memberOpt = yield* teamRepo
           .getMemberById(tokenRecord.memberId)

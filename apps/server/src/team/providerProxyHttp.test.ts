@@ -6,6 +6,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   TeamSkillSlug,
   type TeamAssetsDeltaResponse,
   type TeamProviderLeaseResponse,
@@ -346,39 +347,96 @@ describe("TeamProviderProxyHttp", () => {
             expect(redirectRes.status).toBe(302);
             expect(upstreamRequests.some((r) => r.url === "/redirect-target")).toBe(false);
 
-            // 4c. Team Server internal loopback proxy token keeps company API key out of agent env & records usage!
+            // 4c. Team Server per-session internal loopback proxy tokens keep raw company key out of
+            // agent env, isolate concurrent Alice & Bob turns cleanly, reject cross-provider use,
+            // reject suspended members immediately with ZERO owner fallback, and revoke on session close!
             const virtualConfigs = yield* teamProviderManager.getVirtualProviderConfigs;
             const virtualOpenAiKey = Object.keys(virtualConfigs).find((k) =>
               k.endsWith(":company-openai"),
             );
             expect(virtualOpenAiKey).toBeDefined();
             const virtualOpenAi = virtualConfigs[virtualOpenAiKey as ProviderInstanceId]!;
-            const internalProxyToken = virtualOpenAi.environment?.find(
-              (entry) => entry.name === "T3_TEAM_PROXY_TOKEN",
-            )?.value;
-            expect(internalProxyToken).toBeDefined();
-            expect(internalProxyToken).not.toBe("COMPANY_SECRET_API_KEY");
             expect(
               virtualOpenAi.environment?.some((entry) => entry.value === "COMPANY_SECRET_API_KEY"),
             ).toBe(false);
 
-            yield* teamProviderManager.setActiveTeamServerTurnMember(
-              virtualOpenAiKey as ProviderInstanceId,
-              bobRedeemed.member.id,
+            const aliceSessionId = ProviderSessionId.make("sess-alice-1");
+            const bobSessionId = ProviderSessionId.make("sess-bob-1");
+            const aliceOwnerMember = (yield* team.getState(aliceSession.sessionId)).currentMember!;
+            const aliceEnv = yield* teamProviderManager.issueInternalProxySessionToken({
+              virtualInstanceId: virtualOpenAiKey as ProviderInstanceId,
+              providerSessionId: aliceSessionId,
+              memberId: aliceOwnerMember.id,
+            });
+            const bobEnv = yield* teamProviderManager.issueInternalProxySessionToken({
+              virtualInstanceId: virtualOpenAiKey as ProviderInstanceId,
+              providerSessionId: bobSessionId,
+              memberId: bobRedeemed.member.id,
+            });
+            expect(aliceEnv?.T3_TEAM_PROXY_TOKEN).toBeDefined();
+            expect(bobEnv?.T3_TEAM_PROXY_TOKEN).toBeDefined();
+            expect(aliceEnv?.T3_TEAM_PROXY_TOKEN).not.toBe(bobEnv?.T3_TEAM_PROXY_TOKEN);
+
+            // Concurrent requests from Alice and Bob are each attributed to their own member ID!
+            const [aliceProxyRes, bobProxyRes] = yield* Effect.promise(() =>
+              Promise.all([
+                handler(
+                  new Request("http://team.local/api/team/provider-proxy/company-openai/v1/chat", {
+                    method: "POST",
+                    headers: {
+                      authorization: `Bearer ${aliceEnv!.T3_TEAM_PROXY_TOKEN}`,
+                      "content-type": "application/json",
+                    },
+                    body: JSON.stringify({ prompt: "from-alice" }),
+                  }),
+                ),
+                handler(
+                  new Request("http://team.local/api/team/provider-proxy/company-openai/v1/chat", {
+                    method: "POST",
+                    headers: {
+                      authorization: `Bearer ${bobEnv!.T3_TEAM_PROXY_TOKEN}`,
+                      "content-type": "application/json",
+                    },
+                    body: JSON.stringify({ prompt: "from-bob" }),
+                  }),
+                ),
+              ]),
             );
-            const internalProxyRes = yield* Effect.promise(() =>
+            expect(aliceProxyRes.status).toBe(200);
+            expect(bobProxyRes.status).toBe(200);
+
+            const concurrentUsage = yield* team.listProviderUsage(aliceSession.sessionId);
+            expect(
+              concurrentUsage.find(
+                (entry) =>
+                  entry.memberId === aliceOwnerMember.id &&
+                  entry.providerInstanceId === "company-openai",
+              )?.requestCount,
+            ).toBe(1);
+            // Bob made 3 company-openai proxy calls so far: initial /v1/chat, /redirect-secret (302), and concurrent internal proxy call.
+            expect(
+              concurrentUsage.find(
+                (entry) =>
+                  entry.memberId === bobRedeemed.member.id &&
+                  entry.providerInstanceId === "company-openai",
+              )?.requestCount,
+            ).toBe(3);
+
+            // Session release revokes Alice's ephemeral token immediately.
+            yield* teamProviderManager.revokeInternalProxySessionToken(aliceSessionId);
+            const afterCloseRes = yield* Effect.promise(() =>
               handler(
                 new Request("http://team.local/api/team/provider-proxy/company-openai/v1/chat", {
                   method: "POST",
                   headers: {
-                    authorization: `Bearer ${internalProxyToken}`,
+                    authorization: `Bearer ${aliceEnv!.T3_TEAM_PROXY_TOKEN}`,
                     "content-type": "application/json",
                   },
-                  body: JSON.stringify({ prompt: "from-team-server" }),
+                  body: JSON.stringify({ prompt: "after-close" }),
                 }),
               ),
             );
-            expect(internalProxyRes.status).toBe(200);
+            expect(afterCloseRes.status).toBe(401);
 
             // 4d. Revoking Bob's underlying AuthSession immediately rejects bobSync.token even while member stays active!
             const bobInvite2 = yield* team.createInvite({
@@ -426,6 +484,24 @@ describe("TeamProviderProxyHttp", () => {
             );
             expect(revokedProxy.status).toBe(403);
             expect(yield* Effect.promise(() => revokedProxy.text())).toContain(
+              "team_access_revoked",
+            );
+
+            // Bob's still-live internal per-session proxy token MUST ALSO immediately fail with 403 (NO fallback to owner)!
+            const revokedInternalProxy = yield* Effect.promise(() =>
+              handler(
+                new Request("http://team.local/api/team/provider-proxy/company-openai/v1/chat", {
+                  method: "POST",
+                  headers: {
+                    authorization: `Bearer ${bobEnv!.T3_TEAM_PROXY_TOKEN}`,
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({ prompt: "after-suspend-internal" }),
+                }),
+              ),
+            );
+            expect(revokedInternalProxy.status).toBe(403);
+            expect(yield* Effect.promise(() => revokedInternalProxy.text())).toContain(
               "team_access_revoked",
             );
 

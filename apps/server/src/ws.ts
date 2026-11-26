@@ -2928,7 +2928,15 @@ export const layerWsRpc = (
         [WS_METHODS.scheduledTasksUpsert]: (input) =>
           teamService
             .assertCanUseScheduledTasks(currentSessionId)
-            .pipe(Effect.andThen(scheduledTasks.upsert(input))),
+            .pipe(
+              Effect.andThen(
+                assertTeamProviderAllowedForProject(
+                  input.projectId,
+                  input.modelSelection.instanceId,
+                ),
+              ),
+              Effect.andThen(scheduledTasks.upsert(input)),
+            ),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),

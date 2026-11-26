@@ -28,6 +28,10 @@ import {
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
 import {
+  filterProviderEntriesForTeamProject,
+  resolveProjectTeamAssignment,
+} from "@t3tools/client-runtime/team";
+import {
   managedUpdatesDenial,
   managedUpdatesMessage,
 } from "@t3tools/client-runtime/contract-labels";
@@ -81,12 +85,14 @@ import {
 import { useTextGenerationTargets } from "../../textGenerators";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
+import { useProjects } from "../../state/entities";
 import {
   useEnvironmentProviders,
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { useTeamStatesByEnvironment } from "../../state/team";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
@@ -1944,11 +1950,27 @@ export function ThreadsSettingsPanel() {
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
+  const allProjects = useProjects();
+  const teamStates = useTeamStatesByEnvironment();
   const providersByEnvironment = useEnvironmentProviders();
   const serverProviders =
     (environment?.serverConfig
       ? providersByEnvironment.get(environment.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
+  const targetProject =
+    target?.projectId != null
+      ? allProjects.find(
+          (project) =>
+            project.id === target.projectId && project.environmentId === target.environmentId,
+        )
+      : undefined;
+  const targetTeamAssignment = targetProject
+    ? resolveProjectTeamAssignment({ project: targetProject, teamStates })
+    : null;
+  const scopedTextGenerationProviders = filterProviderEntriesForTeamProject({
+    entries: serverProviders.filter((provider) => provider.supportsTextGeneration !== false),
+    teamAssignment: targetTeamAssignment,
+  });
   const supportsAutoSettlementScope = connectedEnvironments.every(
     (target) => target.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
   );
@@ -1956,7 +1978,7 @@ export function ThreadsSettingsPanel() {
   const textGenerationTargets = useTextGenerationTargets({
     environmentId,
     settings,
-    providers: serverProviders.filter((provider) => provider.supportsTextGeneration !== false),
+    providers: scopedTextGenerationProviders,
     projectId: target?.projectId ?? null,
     selections: [settings.textGenerationModelSelection],
   });
