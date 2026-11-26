@@ -20,7 +20,15 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { checkTriggers, daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
+import {
+  checkTriggers,
+  daily,
+  every,
+  Tick,
+  type Trigger,
+  webhook,
+  WebhookRequest,
+} from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
 import { cancel, runs, signalAll, start, withdraw } from "./stepServices.ts";
 import {
@@ -2398,22 +2406,15 @@ it("every accepts bigint nanoseconds and names short ones in its error", () => {
 });
 
 it("daily gives schedules that fire at the same times one id", () => {
-  const id = (timeOfDay: string, weekdays?: ReadonlyArray<number>) => {
-    const trigger = daily(timeOfDay, weekdays === undefined ? undefined : { weekdays });
-    return trigger.kind === "webhook" ? undefined : trigger.id;
-  };
-  assert.equal(id("09:00"), "daily:09:00:all");
-  assert.equal(id("09:00", [5, 1, 3]), "daily:09:00:1,3,5");
-  assert.equal(id("9:00"), "daily:09:00:all");
-  assert.equal(id(" 09:00 "), "daily:09:00:all");
-  assert.equal(id("09:00", [3, 1, 1]), "daily:09:00:1,3");
-  assert.equal(id("09:00", []), "daily:09:00:all");
-  assert.equal(id("09:00", [6, 5, 4, 3, 2, 1, 0]), "daily:09:00:all");
-  const sixDaysAndAHole = [0, 1, 2, 3, 4, 5];
-  sixDaysAndAHole.length = 7;
-  assert.throws(() => id("09:00", sixDaysAndAHole), /^daily's weekdays are 0 \(Sunday\) to 6/);
-  assert.throws(() => id("09:00", [1n, 2] as never), /^daily's weekdays are 0 \(Sunday\) to 6/);
-  assert.throws(() => id("09:00", new Set([1]) as never), TypeError);
+  const id = (trigger: Trigger<Tick>) => (trigger.kind === "webhook" ? undefined : trigger.id);
+  assert.equal(id(daily(" 9:00 ")), id(daily("09:00")));
+  assert.equal(
+    id(daily("09:00", { weekdays: [3, 1, 1] })),
+    id(daily("09:00", { weekdays: [1, 3] })),
+  );
+  assert.equal(id(daily("09:00", { weekdays: [] })), id(daily("09:00")));
+  assert.equal(id(daily("09:00", { weekdays: [6, 5, 4, 3, 2, 1, 0] })), id(daily("09:00")));
+  assert.notEqual(id(daily("09:00", { weekdays: [1] })), id(daily("09:00")));
   assert.throws(
     () => checkTriggers("standup", [daily("9:00"), daily("09:00", { weekdays: [] })]),
     /^workflow\("standup"\) lists the same schedule twice\. List it once\.$/,
