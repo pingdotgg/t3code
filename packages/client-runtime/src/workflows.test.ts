@@ -759,6 +759,11 @@ describe("workflowOneLine", () => {
       "Run __init__, *glob* and [api](url) now.",
     );
   });
+
+  it("skips fenced code to the reply's first sentence", () => {
+    expect(workflowOneLine('```json\n{"ok": true}\n```\nAll good. Next.')).toBe("All good.");
+    expect(workflowOneLine("~~~\nconst x = 1;\n~~~\nDone here.")).toBe("Done here.");
+  });
 });
 
 describe("workflowWithdrawal", () => {
