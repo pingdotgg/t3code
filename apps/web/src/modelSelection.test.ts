@@ -494,16 +494,16 @@ describe("instance-scoped model selection", () => {
     });
   });
 
-  it("falls back from an explicit non-OpenCode draft with a missing model", () => {
-    const instanceId = ProviderInstanceId.make("codex");
-    const driver = ProviderDriverKind.make("codex");
-    const providers = [provider({ provider: driver, instanceId, models: ["gpt-5.6-sol"] })];
+  it("falls back from an explicit draft with a missing model on a static catalog", () => {
+    const instanceId = ProviderInstanceId.make("claudeAgent");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const providers = [provider({ provider: driver, instanceId, models: ["claude-opus-5-5"] })];
     const state = deriveEffectiveComposerModelState({
       threadStarted: false,
       draft: {
         activeProvider: instanceId,
         modelSelectionByProvider: {
-          [instanceId]: createModelSelection(instanceId, "gpt-missing", [
+          [instanceId]: createModelSelection(instanceId, "claude-missing", [
             { id: "effort", value: "max" },
           ]),
         },
@@ -522,7 +522,7 @@ describe("instance-scoped model selection", () => {
       modelOptions: state.modelOptions?.[instanceId],
     });
 
-    expect(state.selectedModel).toBe("gpt-5.6-sol");
+    expect(state.selectedModel).toBe("claude-opus-5-5");
     expect(dispatch.modelOptionsForDispatch).toBeUndefined();
   });
 
