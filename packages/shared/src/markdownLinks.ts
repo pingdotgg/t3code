@@ -459,19 +459,32 @@ export function extractInlineCodeSpans(text: string): string[] {
     for (const line of segment.split("\n")) {
       const runs = line.includes("`") ? [...line.matchAll(BACKTICK_RUN_PATTERN)] : [];
       if (runs.length < 2) continue;
-      const nextByLength = new Array<number>(runs.length);
-      const lastByLength = new Map<number, number>();
-      for (let i = runs.length - 1; i >= 0; i -= 1) {
-        const length = runs[i]![0].length;
-        nextByLength[i] = lastByLength.get(length) ?? -1;
-        lastByLength.set(length, i);
+      const runsByLength = new Map<number, number[]>();
+      for (const [i, run] of runs.entries()) {
+        const indexes = runsByLength.get(run[0].length);
+        if (indexes) indexes.push(i);
+        else runsByLength.set(run[0].length, [i]);
       }
+      const cursorByLength = new Map<number, number>();
+      let textStart = 0;
       for (let i = 0; i < runs.length; i += 1) {
-        const close = nextByLength[i]!;
-        if (close < 0) continue;
-        const span = line.slice(runs[i]!.index + runs[i]![0].length, runs[close]!.index).trim();
+        const run = runs[i]!;
+        let backslashes = 0;
+        while (run.index - backslashes > textStart && line[run.index - backslashes - 1] === "\\") {
+          backslashes += 1;
+        }
+        // An escaped backtick is literal outside code spans; only closers keep backslashes literal.
+        const length = run[0].length - (backslashes % 2);
+        const candidates = runsByLength.get(length) ?? [];
+        let cursor = cursorByLength.get(length) ?? 0;
+        while (cursor < candidates.length && candidates[cursor]! <= i) cursor += 1;
+        cursorByLength.set(length, cursor);
+        const close = candidates[cursor];
+        if (length === 0 || close === undefined) continue;
+        const span = line.slice(run.index + run[0].length, runs[close]!.index).trim();
         if (span) spans.push(span);
         i = close;
+        textStart = runs[close]!.index + runs[close]![0].length;
       }
     }
   }
