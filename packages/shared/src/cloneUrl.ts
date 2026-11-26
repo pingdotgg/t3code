@@ -2,7 +2,7 @@ import { isWindowsDrivePath } from "./path.ts";
 
 export type CloneProtocol = "ssh" | "https";
 
-const SCP_LIKE_URL = /^(?:[^@/\s]+@)?(\[[^\]@/\s]+\]|[^:/\s[\]]+):(?!\/)(.+)$/;
+const SCP_LIKE_URL = /^(?:[^:/\s]+@)?(\[[^\]@/\s]+\]|[^@:/\s[\]]+):(?!\/)(.+)$/;
 // Userinfo may contain `@`; the last one before the first slash separates the host.
 const SSH_URL = /^ssh:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
 const HTTPS_URL = /^https?:\/\/(?:[^/\s]*@)?(\[[^\]@/\s]+\]|[^@:/\s]+)(:\d+)?\/(.+)$/;
