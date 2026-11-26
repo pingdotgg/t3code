@@ -1,8 +1,9 @@
 import type { IssueDetail } from "@t3tools/contracts";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 
 const url = "https://github.com/owner/repo/issues/7";
 const detail = vi.hoisted(() => ({
@@ -23,10 +24,10 @@ const detail = vi.hoisted(() => ({
   commentCount: 0,
   projectId: "project-1",
   projectTitle: "Project",
-  writable: false,
+  writable: true,
   capabilities: {
     create: false,
-    edit: false,
+    edit: true,
     comment: false,
     labels: false,
     assignees: false,
@@ -39,7 +40,7 @@ const detail = vi.hoisted(() => ({
   viewerPermissions: {
     setState: false,
     comment: false,
-    edit: false,
+    edit: true,
     labels: false,
     assignees: false,
   },
@@ -60,12 +61,18 @@ vi.mock(import("~/state/issues"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const actual = await original();
   const detailAtom = Atom.make(AsyncResult.success(detail));
+  const allowed = Atom.make(true);
   return {
     ...actual,
-    issueEnvironment: { ...actual.issueEnvironment, detail: (() => detailAtom) as never },
+    issueEnvironment: {
+      ...actual.issueEnvironment,
+      detail: (() => detailAtom) as never,
+      comment: { ...actual.issueEnvironment.comment, permissionAtom: () => allowed },
+    },
   };
 });
 
+import { RightPanelSheet } from "../RightPanelSheet";
 import { IssueDetailPanel } from "./IssueDetailPanel";
 
 const reference = {
@@ -129,5 +136,27 @@ describe("IssueDetailPanel", () => {
     expect(click.defaultPrevented).toBe(true);
     expect(state.openLink).toHaveBeenCalledOnce();
     expect(state.openLink).toHaveBeenCalledWith(commentUrl, { event: expect.anything() });
+  });
+
+  it("Escape cancels the title edit without closing the right panel sheet", async () => {
+    setComments([]);
+    const onCloseSheet = vi.fn();
+    await using _screen = await render(
+      <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
+        <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />
+      </RightPanelSheet>,
+    );
+    await act(() =>
+      (page.getByRole("button", { name: "Edit title" }).element() as HTMLElement).click(),
+    );
+    const input = page.getByRole("textbox", { name: "Issue title" });
+    await expect.element(input).toHaveFocus();
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(input).not.toBeInTheDocument();
+    expect(onCloseSheet).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+    expect(onCloseSheet).toHaveBeenCalledTimes(1);
   });
 });

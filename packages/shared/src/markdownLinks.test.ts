@@ -17,6 +17,12 @@ describe("isMarkdownFileLinkLabel", () => {
     ["example.ts:99", "/repo/src/example.ts:12", false],
     ["example.ts:12-20", "/repo/src/example.ts:12-20", true],
     ["example.ts:12-20", "/repo/src/example.ts:12", false],
+    ["src/main.ts#L10-L20", "/repo/src/main.ts#L10-L20", true],
+    ["main.ts#L42C7", "/repo/src/main.ts:42:7", true],
+    ["src/main.ts#L10-L20", "/repo/src/main.ts#L10", false],
+    ["src/main.ts:10#L20", "/repo/src/main.ts:10", false],
+    ["C#/Program.cs#L10", "./C%23/Program.cs#L10", true],
+    ["src/main.ts#L10", "./src/main.ts%23L10", true],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });
@@ -63,6 +69,8 @@ describe("inlineCodeFilePathCandidate", () => {
     ["/bin/echo hello world.txt", null],
     ["~/bin/run tests.sh", null],
     ["/Users/me/notes with spaces.md", "/Users/me/notes with spaces.md"],
+    ["~/Videos/clips/<thread-slug>/shot.png", null],
+    ["clips/<name>.mp4", null],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -190,6 +198,11 @@ describe("extractMarkdownLinkHrefs", () => {
     ["[".repeat(32_000), []],
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
+    [
+      "[![a](a.png)](src/index.ts) [![b](b.png)](lib/index.ts)",
+      ["a.png", "src/index.ts", "b.png", "lib/index.ts"],
+    ],
+    [String.raw`[\![a](a.png)](src/index.ts) [label!](ok)`, ["a.png", "ok"]],
     ["See [the [docs] guide](docs/guide.md) and [[1]](src/a.ts)", ["docs/guide.md", "src/a.ts"]],
     ["[a [b](x) [c \\[d](y) [e\\]](z)", ["x", "y", "z"]],
     ["[a [b]\n\nc](src/a.ts) [outer [inner]()](src/b.ts)", []],
@@ -205,6 +218,9 @@ describe("extractMarkdownLinkHrefs", () => {
     ],
     ['[a](/tmp/a(1).txt "title") after', ["/tmp/a(1).txt"]],
     [`[a](a.ts "it's a title") [b](b.ts 'a "quoted" title') [c](ok)`, ["a.ts", "b.ts", "ok"]],
+    [`[a.ts](src/a.ts "say \\"hello\\"") [a.ts](lib/a.ts)`, ["src/a.ts", "lib/a.ts"]],
+    [`[a](a.ts 'it\\'s') [b](b.ts "ends in \\\\") [c](ok)`, ["a.ts", "b.ts", "ok"]],
+    [`[a](a.ts "unclosed \\") [b](b.ts)`, ["b.ts"]],
     [`[a](a.ts "mixed') [b](b.ts)`, ["b.ts"]],
     [`[a](a.ts "it's\n\n[b](lib/a.ts)")`, ["lib/a.ts"]],
     ["[a](a(b(c))d) [b](ok)", ["a(b(c))d", "ok"]],
