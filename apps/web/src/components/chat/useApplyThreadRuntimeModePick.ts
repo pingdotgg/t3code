@@ -48,9 +48,14 @@ export function useApplyThreadRuntimeModePick() {
       input: { threadId: target.threadId, runtimeMode, createdAt: new Date().toISOString() },
     });
     const releasable = settle(result._tag === "Success");
-    // Released on the reply, so a later change from another client shows.
+    // Released so a later change from another client shows, but only once the shell holds the
+    // saved mode: until then the composer would fall back to the old one.
     const store = useComposerDraftStore.getState();
-    if (releasable !== null && store.getComposerDraft(target)?.runtimeMode === releasable) {
+    if (
+      releasable !== null &&
+      registry.get(environmentThreadShells.threadShellAtom(target))?.runtimeMode === releasable &&
+      store.getComposerDraft(target)?.runtimeMode === releasable
+    ) {
       store.setRuntimeMode(target, null);
     }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

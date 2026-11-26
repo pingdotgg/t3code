@@ -57,8 +57,14 @@ export function selectThreadRuntimeMode(
     { label: "change permission mode", reportFailure: true, reportDefect: true },
   ).then((result) => {
     const releasable = settle(result._tag === "Success");
-    // Released on the reply, so a later change from another client shows.
-    if (releasable !== null) releaseComposerDraftRuntimeMode(threadKey, releasable);
+    // Released so a later change from another client shows, but only once the shell holds the
+    // saved mode: until then a queued message would capture the old one and send it back.
+    if (
+      releasable !== null &&
+      appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref))?.runtimeMode === releasable
+    ) {
+      releaseComposerDraftRuntimeMode(threadKey, releasable);
+    }
     if (result._tag !== "Success") {
       const error = squashAtomCommandFailure(result);
       Dialog.alert(

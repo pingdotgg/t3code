@@ -243,13 +243,17 @@ it("keeps a queued edit's model pick in its own draft", async () => {
 // Other threads, PR watches, and schedules start turns in the thread's stored mode, not the draft.
 it("saves a runtime mode pick on an idle thread right away", async () => {
   const { setModelSelection: command } = setup();
-  command.mockResolvedValue(AsyncResult.success(undefined));
   const thread = {
     ...cursorThread("thread-mode-idle"),
     runtimeMode: "full-access",
     runtime: null,
   } as EnvironmentThreadShell;
   appAtomRegistry.set(shellAtom(thread.id), thread);
+  // The shell event for the save lands before its reply.
+  command.mockImplementation(async () => {
+    appAtomRegistry.set(shellAtom(thread.id), { ...thread, runtimeMode: "auto" });
+    return AsyncResult.success(undefined);
+  });
   await using _screen = await render(
     <AppAtomRegistryProvider>
       <Picker thread={thread} runtime={null} />
