@@ -11,9 +11,12 @@ export const LARGE_MARKDOWN_CHUNK_MAX_CHARS = 128 * 1024;
 // A backtick fence's info string cannot contain a backtick, so "```a``` is inline" is a code span.
 const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,})/;
 const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|\r?$)/;
-// A thematic break, or a "---" setext underline; no paragraph stays open after either. A lone
-// "===" is paragraph text unless it underlines one, so it is left out.
+// Thematic breaks and setext underlines leave no paragraph open; a lone "===" or "--" stays text.
 const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?$/;
+const SETEXT_UNDERLINE = /^ {0,3}(?:=+|-+)[ \t]*\r?$/;
+const CONTAINER_LINE = /^ {0,3}(?:(>)|(?:[-+*]|(\d{1,9})[.)])(?:[ \t]|\r?$)|(\[\^[^\]]+\]:))/;
+const TABLE_DELIMITER = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*(?:\|[ \t]*)?\r?$/;
+const SINGLE_LINE_HTML = /^ {0,3}(?:<(?:script|pre|style|textarea)(?=[\s>]|$)|<[!?])/i;
 // A column-0 paragraph, quote or table after a blank line closes any open list, quote or table.
 const BLOCK_START = /^[\p{L}\p{N}`[!|>]/u;
 const LIST_ITEM = /^( {0,3}(?:[-*+]|\d{1,9}[.)]))([ \t]+|(?=\r?$))/;
@@ -432,6 +435,179 @@ export interface SplitMarkdown {
   readonly footnotes?: MarkdownFootnotes | undefined;
 }
 
+function tableCellCount(line: string): number {
+  const trimmed = line.replace(/^[ \t]+|[ \t\r]+$/g, "");
+  if (!trimmed) return 0;
+  const start = trimmed[0] === "|" ? 1 : 0;
+  let end = trimmed.length;
+  if (end > start && trimmed[end - 1] === "|") {
+    let slashes = 0;
+    for (let i = end - 2; i >= start && trimmed[i] === "\\"; i--) slashes++;
+    if (slashes % 2 === 0) end--;
+  }
+  if (start === end && trimmed.length === 1) return 0;
+  let cells = 1;
+  for (let i = start; i < end; i++) {
+    if (trimmed[i] === "\\") {
+      i++;
+      continue;
+    }
+    if (trimmed[i] === "|") cells++;
+  }
+  return cells;
+}
+
+type BlockKind = "none" | "paragraph" | "container" | "list" | "emptyList";
+interface BlockState {
+  readonly kind: BlockKind;
+  readonly listIndent: number | null;
+  readonly quoteDepth: number;
+}
+const EMPTY_BLOCK: BlockState = { kind: "none", listIndent: null, quoteDepth: 0 };
+
+function stripIndent(line: string, cols: number): string | null {
+  let col = 0;
+  let i = 0;
+  while (i < line.length && col < cols) {
+    const ch = line[i];
+    if (ch === " ") {
+      col++;
+      i++;
+    } else if (ch === "\t") {
+      const next = col + 4 - (col % 4);
+      i++;
+      if (next > cols) return " ".repeat(next - cols) + line.slice(i);
+      col = next;
+    } else {
+      return null;
+    }
+  }
+  return col >= cols ? line.slice(i) : null;
+}
+
+function listContentIndent(line: string, markerMatch: RegExpExecArray): number {
+  const afterMarker = markerMatch[0].replace(/[ \t\r]+$/, "").length;
+  let col = afterMarker;
+  let i = afterMarker;
+  while (i < line.length) {
+    if (line[i] === " ") col++;
+    else if (line[i] === "\t") col += 4 - (col % 4);
+    else break;
+    i++;
+  }
+  const hasContent = i < line.length && line[i] !== "\r";
+  return !hasContent || col - afterMarker >= 5 ? afterMarker + 1 : col;
+}
+
+function stripBlockquote(line: string): { readonly text: string; readonly depth: number } {
+  let rest = line;
+  let depth = 0;
+  while (true) {
+    const m = /^ {0,3}>/.exec(rest);
+    if (!m) return { text: rest, depth };
+    depth++;
+    const after = m[0].length;
+    if (rest[after] === " ") rest = rest.slice(after + 1);
+    else if (rest[after] === "\t") rest = " ".repeat(3 - (after % 4)) + rest.slice(after + 1);
+    else rest = rest.slice(after);
+  }
+}
+
+function isLeafBlockEnd(line: string): boolean {
+  return ATX_HEADING.test(line) || THEMATIC_BREAK.test(line) || SINGLE_LINE_HTML.test(line);
+}
+
+function isTableDelimiter(prevLine: string, line: string): boolean {
+  return TABLE_DELIMITER.test(line) && tableCellCount(prevLine) === tableCellCount(line);
+}
+
+function quotedOpensParagraph(
+  quoted: string,
+  depth: number,
+  prevLine: string,
+  prevQuoteDepth: number,
+): boolean {
+  if (BLANK_LINE.test(quoted)) return false;
+  if (
+    isLeafBlockEnd(quoted) ||
+    FENCE_OPEN.test(quoted) ||
+    HTML_BLOCK_TAG.test(quoted) ||
+    HTML_STANDALONE_TAG.test(quoted)
+  ) {
+    return false;
+  }
+  const sameQuoteDepth = prevQuoteDepth > 0 && depth === prevQuoteDepth;
+  if (sameQuoteDepth && SETEXT_UNDERLINE.test(quoted)) return false;
+  if (depth > prevQuoteDepth && /^(?: {4}|\t)/.test(quoted)) return false;
+  const nested = CONTAINER_LINE.exec(quoted);
+  if (nested) return nested[3] !== undefined || !BLANK_LINE.test(quoted.slice(nested[0].length));
+  if (sameQuoteDepth && isTableDelimiter(stripBlockquote(prevLine).text, quoted)) return false;
+  return true;
+}
+
+function nextBlockState(
+  prev: BlockState,
+  line: string,
+  prevLine: string,
+  closed: boolean,
+): BlockState {
+  if (BLANK_LINE.test(line)) {
+    return prev.kind === "emptyList"
+      ? EMPTY_BLOCK
+      : { kind: "none", listIndent: prev.listIndent, quoteDepth: 0 };
+  }
+  if (prev.listIndent !== null) {
+    const inner = stripIndent(line, prev.listIndent);
+    if (inner !== null) {
+      const endsParagraph =
+        closed ||
+        isLeafBlockEnd(inner) ||
+        (prev.kind === "list" && SETEXT_UNDERLINE.test(inner)) ||
+        (prev.kind !== "list" && /^(?: {4}|\t)/.test(inner));
+      return { kind: endsParagraph ? "none" : "list", listIndent: prev.listIndent, quoteDepth: 0 };
+    }
+    if (prev.kind === "list" && !closed && !isLeafBlockEnd(line) && !CONTAINER_LINE.test(line)) {
+      return prev;
+    }
+  }
+  const kind = prev.listIndent !== null ? "none" : prev.kind;
+  if (closed || isLeafBlockEnd(line)) return EMPTY_BLOCK;
+  const m = CONTAINER_LINE.exec(line);
+  if (m) {
+    if (m[1]) {
+      const { text: quoted, depth } = stripBlockquote(line);
+      const prevQuoteDepth = kind === "container" ? prev.quoteDepth : 0;
+      const opensParagraph = quotedOpensParagraph(quoted, depth, prevLine, prevQuoteDepth);
+      return opensParagraph
+        ? { kind: "container", listIndent: null, quoteDepth: Math.max(prevQuoteDepth, depth) }
+        : EMPTY_BLOCK;
+    }
+    if (m[3]) return { kind: "container", listIndent: null, quoteDepth: 0 };
+    const nonEmpty = !BLANK_LINE.test(line.slice(m[0].length));
+    if (kind !== "paragraph") {
+      return {
+        kind: nonEmpty ? "list" : "emptyList",
+        listIndent: listContentIndent(line, m),
+        quoteDepth: 0,
+      };
+    }
+    if (nonEmpty && (!m[2] || Number(m[2]) === 1)) {
+      return { kind: "list", listIndent: listContentIndent(line, m), quoteDepth: 0 };
+    }
+  }
+  if (kind === "paragraph") {
+    return {
+      kind: isTableDelimiter(prevLine, line) ? "container" : "paragraph",
+      listIndent: null,
+      quoteDepth: 0,
+    };
+  }
+  if (kind === "none" && !/^(?: {4}|\t)/.test(line)) {
+    return { kind: "paragraph", listIndent: null, quoteDepth: 0 };
+  }
+  return { kind, listIndent: null, quoteDepth: kind === "container" ? prev.quoteDepth : 0 };
+}
+
 /**
  * Cuts Markdown into pieces of roughly `targetChars`, only at column-0 headings or paragraphs
  * that start a new top-level block. Leading frontmatter stays in the first piece. Link
@@ -467,6 +643,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let listMarker = "";
   let emptyListItem = false;
   let paragraphOpen = false;
+  let block: BlockState = EMPTY_BLOCK;
+  let prevLine = "";
   let definitionChars = 0;
   let footnoteChars = 0;
   let footnoteCapExceeded = false;
@@ -537,13 +715,21 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     const dedented = indent < listContentIndent;
     let handledAsFootnote = false;
     let interruptedFootnote = false;
+    const prevBlock = block;
+    let setextHeading = false;
 
     if (closes !== null) {
       if (closes(line)) {
         closes = null;
         resetFlow(lineIndex + 1);
       }
+      block =
+        prevBlock.listIndent !== null &&
+        (BLANK_LINE.test(line) || stripIndent(line, prevBlock.listIndent) !== null)
+          ? { kind: "none", listIndent: prevBlock.listIndent, quoteDepth: 0 }
+          : EMPTY_BLOCK;
     } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
+      block = EMPTY_BLOCK;
       closes = (next) => {
         openedFence = FRONTMATTER_CLOSE.test(next);
         return openedFence;
@@ -611,9 +797,16 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           openedFence = false;
           handledAsFootnote = true;
         } else {
+          setextHeading =
+            !ambiguousHtml && prevBlock.kind === "paragraph" && SETEXT_UNDERLINE.test(line);
           const closer = blockCloser(line);
           closes = closer ?? null;
-          if (closer === null || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line)) {
+          if (
+            closer === null ||
+            setextHeading ||
+            ATX_HEADING.test(line) ||
+            THEMATIC_BREAK.test(line)
+          ) {
             resetFlow(lineIndex + 1);
           } else if (closer === undefined && HTML_STANDALONE_TAG.test(line)) {
             // Type-7 HTML cannot interrupt prose. Keep ambiguous tags beyond the parse
@@ -732,6 +925,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           paragraphOpen =
             !blank &&
             !isDefinition &&
+            !setextHeading &&
             closes === null &&
             (canStartBlock || paragraphOpen) &&
             (item && opensItem
@@ -749,9 +943,17 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           ) {
             isBodyLine[lineIndex] = 1;
           }
+          block = nextBlockState(
+            prevBlock,
+            line,
+            prevLine,
+            closes !== null || closer === null || setextHeading || lineIndex <= definitionEnd,
+          );
         }
       }
     }
+
+    if (handledAsFootnote) block = EMPTY_BLOCK;
 
     if (closes === closesAtBlankLine)
       openWrappers = Math.max(0, openWrappers + openedWrappers(line));
@@ -773,7 +975,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     afterHeading =
       !handledAsFootnote &&
       closes === null &&
-      (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
+      (openedFence || setextHeading || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
+    prevLine = line;
   }
   if (inFootnoteDef) finishFootnoteDef();
   flush(sourceLines.length);
