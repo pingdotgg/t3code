@@ -10,7 +10,7 @@ it("reads rendered formulas the way screen readers say them, and TeX when math s
   const markdown =
     "The loss is $x^2 + y^2$ over $n$ samples.\n\n$$\n\\frac{a}{b}\n$$\n\nPrices stay $5 and $10.";
   const speakMath = await prepareReadAloudMath(markdown);
-  expect(readAloudText(markdown, true, speakMath)).toBe(
+  expect(readAloudText(markdown, true, { math: speakMath })).toBe(
     "The loss is x squared plus y squared over n samples.\na over b.\nPrices stay $5 and $10.",
   );
 

@@ -14,8 +14,10 @@ import {
   spokenWordAt,
   type ReadAloudSpeech,
   type ReadAloudPosition,
+  type ReadAloudWords,
   type SpeakMath,
 } from "@t3tools/shared/read-aloud";
+import { prepareReadAloudEmoji } from "./readAloudEmoji.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
@@ -282,7 +284,7 @@ export function createReadAloudController(
     readonly id: string;
     readonly markdown: string;
     readonly settings: ReadAloudSettings;
-    readonly speakMath: SpeakMath | undefined;
+    readonly words: ReadAloudWords;
   } | null = null;
   const stop = () => {
     reading = null;
@@ -309,11 +311,14 @@ export function createReadAloudController(
     from?: number,
     fromWord = false,
   ) => {
-    // Only replies with formulas wait for them, so others start reading in the same turn.
+    // Only replies with formulas or emoji wait for their words, so others start in the same turn.
     const pendingMath = prepareMath(markdown);
-    const speakMath =
-      pendingMath instanceof Promise ? await pendingMath.catch(() => undefined) : pendingMath;
-    const speech = readAloudSpeech(markdown, settings.skipCodeBlocks, speakMath);
+    const pendingEmoji = prepareReadAloudEmoji(markdown);
+    const words: ReadAloudWords = {
+      math: pendingMath instanceof Promise ? await pendingMath.catch(() => undefined) : pendingMath,
+      emoji: pendingEmoji && (await pendingEmoji.catch(() => undefined)),
+    };
+    const speech = readAloudSpeech(markdown, settings.skipCodeBlocks, words);
     const offset =
       from === undefined
         ? 0
@@ -324,7 +329,7 @@ export function createReadAloudController(
     if (offset === undefined) return;
     stop();
     if (settings.provider === "off") return;
-    reading = { id, markdown, settings, speakMath };
+    reading = { id, markdown, settings, words };
     // Platform speech engines cap utterance length; environments stream a whole reply.
     const chunks = splitReadAloudSpans(
       speech.text.slice(offset),
@@ -464,7 +469,7 @@ export function createReadAloudController(
       const speech = readAloudSpeech(
         reading.markdown,
         reading.settings.skipCodeBlocks,
-        reading.speakMath,
+        reading.words,
       );
       const at = spokenWordStart(speech, from);
       if (at === undefined) return null;
@@ -484,7 +489,7 @@ export function createReadAloudController(
       const speech = readAloudSpeech(
         current.markdown,
         current.settings.skipCodeBlocks,
-        current.speakMath,
+        current.words,
       );
       const from = speech.sources.slice(spokenAt).find((source) => source >= 0);
       return from === undefined

@@ -3,12 +3,19 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import { mayContainMath, parseMarkdownWithMath } from "./markdownMath.ts";
+import {
+  inlineCodeFilePathCandidate,
+  isMarkdownFileLinkLabel,
+  parseMarkdownFileLink,
+} from "./markdownLinks.ts";
+import { fileBasename } from "./path.ts";
 
 const parser = unified().use(remarkParse).use(remarkGfm);
 
 // Already ends a sentence, allowing closing quotes or brackets after the punctuation.
 const SENTENCE_END = /[.!?…:;。！？：；]["'”’)\]]*$/u;
 const SPACE = /\s/;
+const PAUSE = /[,.;:!?…]/;
 
 /** Marks a spoken character that the markdown does not contain, such as an added full stop. */
 const ADDED = -1;
@@ -85,17 +92,104 @@ function located(markdown: string, value: string, node: Positioned): Run {
 /** Words for a TeX formula, or undefined to read its source. */
 export type SpeakMath = (tex: string) => string | undefined;
 
+/** Words for an emoji, or undefined to leave it to the voice. */
+export type SpeakEmoji = (emoji: string) => string | undefined;
+
+/** Words for what a reply shows as something other than text. */
+export interface ReadAloudWords {
+  readonly math?: SpeakMath | undefined;
+  readonly emoji?: SpeakEmoji | undefined;
+}
+
+const EMOJI =
+  /\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]*(?:\u200D\p{Extended_Pictographic}[\uFE0F\p{Emoji_Modifier}]*)*/gu;
+
+/** Says each emoji `speakEmoji` names as its name, spread over the emoji's source. */
+function voiceEmoji(run: Run, speakEmoji: SpeakEmoji | undefined): Run {
+  if (!speakEmoji) return run;
+  const parts: Run[] = [];
+  let from = 0;
+  for (const match of run.text.matchAll(EMOJI)) {
+    const name = speakEmoji(match[0]);
+    if (!name) continue;
+    const words = ` ${name} `;
+    const sources = run.sources.slice(match.index, match.index + match[0].length);
+    parts.push(
+      { text: run.text.slice(from, match.index), sources: run.sources.slice(from, match.index) },
+      {
+        text: words,
+        sources: Array.from(
+          words,
+          (_, index) => sources[Math.floor((index * sources.length) / words.length)] ?? ADDED,
+        ),
+      },
+    );
+    from = match.index + match[0].length;
+  }
+  if (!parts.length) return run;
+  parts.push({ text: run.text.slice(from), sources: run.sources.slice(from) });
+  return concat(parts);
+}
+
+/** What a file chip shows, as words: its file name and lines. */
+function spokenFile(href: string) {
+  const file = parseMarkdownFileLink(href);
+  if (!file) return undefined;
+  const name = fileBasename(file.path).normalize("NFC");
+  if (file.line === undefined) return name;
+  return file.endLine === undefined
+    ? `${name} line ${file.line}`
+    : `${name} lines ${file.line} to ${file.endLine}`;
+}
+
+const WEB_URL = /^https?:\/\/(?:[^@/?#]*@)?([^/?#:]+)(?::\d+)?([^?#]*)([?#].*)?$/i;
+// A host and one short path segment, such as `t3.codes/docs`, is read whole.
+const SHORT_URL = 32;
+
+/** A bare web address as words: a place on a code host, a short address, or else its host. */
+function spokenUrl(href: string) {
+  const match = WEB_URL.exec(href);
+  if (!match?.[1]) return href;
+  const host = match[1].toLowerCase().replace(/^www\./, "");
+  const path = (match[2] ?? "").split("/").filter(Boolean);
+  const short = [host, ...path].join("/");
+  return (
+    sourceControlPlace(host, path) ??
+    (!match[3] && path.length <= 1 && short.length <= SHORT_URL ? short : host)
+  );
+}
+
+function sourceControlPlace(host: string, path: ReadonlyArray<string>) {
+  const site = host === "github.com" ? "GitHub" : host === "gitlab.com" ? "GitLab" : undefined;
+  if (!site || path.length === 0) return undefined;
+  // GitLab nests groups, and puts `-` between a project and its pages.
+  const dash = site === "GitLab" ? path.indexOf("-") : -1;
+  const project = dash > 0 ? path.slice(0, dash) : site === "GitLab" ? path : path.slice(0, 2);
+  const [kind, id, ...rest] = dash > 0 ? path.slice(dash + 1) : path.slice(project.length);
+  const repo = project.at(-1);
+  if (kind === "pull" && id) return `${repo} pull request ${id}`;
+  if (kind === "merge_requests" && id) return `${repo} merge request ${id}`;
+  if (kind === "issues" && id) return `${repo} issue ${id}`;
+  if (kind === "commit" && id) return `${repo} commit ${id.slice(0, 7)}`;
+  if (kind === "blob" && rest.length) return `${rest.at(-1)} in ${repo}`;
+  return `${repo} on ${site}`;
+}
+
+const nodeText = (node: RootContent): string =>
+  "children" in node ? node.children.map(nodeText).join("") : "value" in node ? node.value : "";
+
 /**
  * Plain text with one sentence per line, and where each spoken character came from in the
  * markdown. Speech engines read newlines as spaces, so every heading, paragraph, list item, and
- * table row ends in punctuation to keep its pause. With `speakMath`, for replies that render
+ * table row ends in punctuation to keep its pause. With `words.math`, for replies that render
  * formulas, each formula is read as its words; without it, as the text the reply shows.
  */
 export function readAloudSpeech(
   markdown: string,
   skipCodeBlocks: boolean,
-  speakMath?: SpeakMath,
+  words: ReadAloudWords = {},
 ): ReadAloudSpeech {
+  const speakMath = words.math;
   let text = "";
   const sources: number[] = [];
   const blocks: ReadAloudBlock[] = [];
@@ -114,6 +208,12 @@ export function readAloudSpeech(
         const character = run.text.charAt(index);
         const space = SPACE.test(character);
         if (space && line.text.endsWith(" ")) continue;
+        // Words put in for an emoji or address are padded with spaces; none goes before a comma.
+        const next = index + 1 < lineEnd ? run.text.charAt(index + 1) : " ";
+        if (PAUSE.test(character) && SPACE.test(next) && line.text.endsWith(" ")) {
+          line.text = line.text.slice(0, -1);
+          line.sources.pop();
+        }
         line.text += space ? " " : character;
         line.sources.push(run.sources[index] ?? ADDED);
       }
@@ -137,7 +237,22 @@ export function readAloudSpeech(
       return added("");
     if (node.type === "inlineMath")
       return spread(` ${speakMath?.(node.value) ?? node.value} `, node);
+    // Files show as chips and bare addresses in full; both are read the way a person would say them.
+    if (node.type === "inlineCode") {
+      const path = inlineCodeFilePathCandidate(node.value);
+      const file = path ? spokenFile(path) : undefined;
+      if (file) return spread(file, node);
+    }
+    if (node.type === "link") {
+      const label = nodeText(node);
+      const file = isMarkdownFileLinkLabel(label, node.url) ? spokenFile(node.url) : undefined;
+      if (file) return spread(file, node);
+      const bare =
+        WEB_URL.test(node.url) && [label, `http://${label}`, `https://${label}`].includes(node.url);
+      if (bare) return spread(` ${spokenUrl(node.url)} `, node);
+    }
     if ("children" in node) return concat(node.children.map(inline));
+    if (node.type === "text") return voiceEmoji(located(markdown, node.value, node), words.emoji);
     return "value" in node ? located(markdown, node.value, node) : added("");
   };
   const block = (node: Root | RootContent) => {
@@ -169,8 +284,8 @@ export function readAloudSpeech(
   return { text, sources, blocks };
 }
 
-export function readAloudText(markdown: string, skipCodeBlocks: boolean, speakMath?: SpeakMath) {
-  return readAloudSpeech(markdown, skipCodeBlocks, speakMath).text;
+export function readAloudText(markdown: string, skipCodeBlocks: boolean, words?: ReadAloudWords) {
+  return readAloudSpeech(markdown, skipCodeBlocks, words).text;
 }
 
 /** Splits at sentence ends below `limit`; `start` is each piece's offset in `text`. */
