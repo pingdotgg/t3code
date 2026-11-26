@@ -254,7 +254,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       const moved = changesProject(originalDraft, projectRef);
       const defaults = moved ? resolveRetargetedDraftWorkspace(originalDraft, projectRef) : null;
       const workspace = defaults?.load ? await defaults.load() : defaults?.workspace;
-      if (mountedRoutingScope.current !== scope) return false;
       const isWorktree = (workspace?.envMode ?? originalDraft.envMode) === "worktree";
       const branch =
         isWorktree && (moved || originalDraft.branch === null)
