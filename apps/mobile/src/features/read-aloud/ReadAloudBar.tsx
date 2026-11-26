@@ -89,29 +89,9 @@ function ReadAloudBarControls(props: {
       <View
         accessibilityRole="toolbar"
         accessibilityLabel={gt("Read aloud")}
-        className="h-11 flex-row items-center"
+        className="h-11 flex-row items-center px-1"
       >
-        <View className="h-11 w-11 items-center justify-center">
-          <CompactVoiceWaveform audioLevels={status === "playing" ? levels : silent} />
-        </View>
-        <Menu
-          accessible
-          accessibilityRole="button"
-          accessibilityLabel={gt("Playback speed: {speed}×", { speed: settings.speed })}
-          title={gt("Playback speed")}
-          actions={SPEEDS.map((speed) => ({
-            id: String(speed),
-            title: gt("{speed}×", { speed }),
-            state: speed === settings.speed ? ("on" as const) : ("off" as const),
-          }))}
-          onPressAction={({ nativeEvent }) => changeSpeed(Number(nativeEvent.event))}
-        >
-          <View className="h-11 min-w-11 items-center justify-center px-2">
-            <Text className="font-t3-medium text-sm tabular-nums text-foreground">
-              {speedLabel}
-            </Text>
-          </View>
-        </Menu>
+        {/* Matches desktop: pause or play on the left; jump, waveform, speed and stop on the right. */}
         {status === "loading" ? (
           <View
             accessible
@@ -131,8 +111,7 @@ function ReadAloudBarControls(props: {
             }}
           />
         )}
-        <BarButton label={gt("Stop reading")} icon="stop.fill" onPress={readAloudController.stop} />
-        <View className="min-w-0 flex-1 flex-row justify-end">
+        <View className="min-w-0 flex-1 flex-row items-center justify-end">
           {away?.id === id ? (
             <Pressable
               accessibilityRole="button"
@@ -155,6 +134,28 @@ function ReadAloudBarControls(props: {
             </Pressable>
           ) : null}
         </View>
+        <View className="h-11 w-11 items-center justify-center">
+          <CompactVoiceWaveform audioLevels={status === "playing" ? levels : silent} />
+        </View>
+        <Menu
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={gt("Playback speed: {speed}×", { speed: settings.speed })}
+          title={gt("Playback speed")}
+          actions={SPEEDS.map((speed) => ({
+            id: String(speed),
+            title: gt("{speed}×", { speed }),
+            state: speed === settings.speed ? ("on" as const) : ("off" as const),
+          }))}
+          onPressAction={({ nativeEvent }) => changeSpeed(Number(nativeEvent.event))}
+        >
+          <View className="h-11 min-w-11 items-center justify-center px-2">
+            <Text className="font-t3-medium text-sm tabular-nums text-foreground">
+              {speedLabel}
+            </Text>
+          </View>
+        </Menu>
+        <BarButton label={gt("Stop reading")} icon="stop.fill" onPress={readAloudController.stop} />
       </View>
     </ComposerSurface>
   );
