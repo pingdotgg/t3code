@@ -1,14 +1,17 @@
 import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
+import { extractMarkdownLinkHrefs } from "@t3tools/shared/markdownLinks";
 
 import {
+  decodeMarkdownLinkEscapes,
   renderCodexDirectivesForCopy,
   renderCodexInlineDirectivesAsMarkdown,
 } from "./markdownText";
 import {
   codexDirectiveSources,
   markdownReferenceDefinitions,
+  markdownTree,
   wordsHast,
   type WordsHastOptions,
 } from "./wordsHast";
@@ -23,6 +26,18 @@ const ASSISTANT: WordsHastOptions = {
 
 const wordsHtml = (markdown: string, options: Partial<WordsHastOptions> = {}) =>
   toHtml(wordsHast(markdown, { ...ASSISTANT, ...options }));
+
+it.each([
+  [String.raw`/tmp/a\&amp;b/index.ts`, "/tmp/a&amp;b/index.ts"],
+  ["/tmp/a&#92;&amp;b/index.ts", String.raw`/tmp/a\&b/index.ts`],
+  [String.raw`C:\work\&amp;b\index.ts`, String.raw`C:\work\&b\index.ts`],
+])("decodes link destination %s as the renderer does", (href, expected) => {
+  const markdown = `[index.ts](${href})`;
+  const paragraph = markdownTree(markdown).children[0] as Element;
+  const anchor = paragraph.children[0] as Element;
+  expect(decodeURIComponent(String(anchor.properties.href))).toBe(expected);
+  expect(decodeMarkdownLinkEscapes(extractMarkdownLinkHrefs(markdown)[0]!)).toBe(expected);
+});
 
 // The chat's syntax in the shapes agents and review bots write it, and raw HTML, with the HTML
 // remark and the chat's plugins rendered for it before Words replaced them.
@@ -422,6 +437,16 @@ describe("wordsHast", () => {
     ["[not\n```\ndef]: x\n```\n\n[a]: https://x.dev", ["[a]: <https://x.dev>"]],
   ])("finds the reference definitions in %j as Words reads them", (markdown, definitions) => {
     expect(markdownReferenceDefinitions(markdown)).toEqual(definitions);
+  });
+
+  it.each([
+    ["https://example.com/?x=1&amp;copy;", "a &amp;copy; &amp;quot; &amp;#65;"],
+    ["https://example.com/?x=1&amp;#65;", "a &amp;amp; b"],
+  ])("preserves the reference destination and title when reserializing %s", (url, title) => {
+    const content = "Read [ref] and ![alt][ref].";
+    const markdown = `${content}\n\n[ref]: ${url} "${title}"`;
+    const definitions = markdownReferenceDefinitions(markdown);
+    expect(wordsHtml(`${content}\n\n${definitions.join("\n")}`)).toBe(wordsHtml(markdown));
   });
 
   it("keeps authored SVG and ids out of the math it restores", () => {
