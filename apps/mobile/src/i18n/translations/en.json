@@ -1,4 +1,5 @@
 {
+  "035aab5e99159bd8": "{count, plural, one {… {hidden} character in the middle is not shown.} other {… {hidden} characters in the middle are not shown.}} The text ends with:",
   "4bcfa3b976a421cf": "Side chat",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread on {machine}",
@@ -4610,7 +4611,7 @@
   "55b562c00e37321b": "Could not force stop the agent",
   "ede15a83eedec569": "Turn stopped; the agent is still shutting down",
   "f360accf1ccac178": "Turn stopped; the agent process kept running",
-  "967f83de030790dd": "{count, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {count} working thread. Stop those to free it.} other {It is shared with {count} working threads. Stop those to free it.}}",
+  "72e41eb83e88cefa": "{count, plural, =0 {It is shared with other working threads. Stop those to free it.} one {It is shared with {count} working thread. Stop that thread to free it.} other {It is shared with {count} working threads. Stop those to free it.}}",
   "5536ab75119ee3f9": "Could not update thread",
   "04c7bba52daa6f53": "Could not update goal",
   "f5f145b33e2a9380": "Stopping...",

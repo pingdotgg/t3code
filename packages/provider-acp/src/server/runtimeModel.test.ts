@@ -568,6 +568,43 @@ describe("AcpRuntimeModel", () => {
     expect(parsePermissionRequest(request)).toMatchObject({ kind: "read", detail: "git status" });
   });
 
+  it("keeps the edges of the command or title a permission request asks about", () => {
+    const detail = (toolCall: Record<string, unknown>) =>
+      parsePermissionRequest({
+        sessionId: "session-1",
+        options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+        toolCall: { toolCallId: "tool-1", ...toolCall },
+      }).detail;
+
+    for (const end of ["\r", "\r\n", "\n\r", "\u200D", " "]) {
+      expect(detail({ kind: "execute", rawInput: { command: `git status${end}` } })).toBe(
+        `git status${end}`,
+      );
+      expect(detail({ kind: "execute", rawInput: { command: ["git", `status${end}`] } })).toBe(
+        `git status${end}`,
+      );
+      expect(
+        detail({ kind: "execute", rawInput: { executable: "git", args: `status${end}` } }),
+      ).toBe(`git status${end}`);
+      expect(detail({ kind: "execute", title: `Run \`git status${end}\`` })).toBe(
+        `git status${end}`,
+      );
+      // A title shown as it was sent keeps its edges too.
+      expect(detail({ kind: "other", title: `Open example.test${end}` })).toBe(
+        `Open example.test${end}`,
+      );
+    }
+    // The tool call itself keeps its trimmed command, and a blank command is still no command.
+    const request = parsePermissionRequest({
+      sessionId: "session-1",
+      options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
+      toolCall: { toolCallId: "tool-1", kind: "execute", rawInput: { command: "\rgit status\r" } },
+    });
+    expect(request.detail).toBe("\rgit status\r");
+    expect(request.toolCall?.command).toBe("git status");
+    expect(detail({ kind: "execute", rawInput: { command: " \r\n" } })).toBe("Ran command");
+  });
+
   it("keeps explicitly cleared permission request fields over the tracked tool call", () => {
     const request = withTrackedPermissionToolCall(
       {
