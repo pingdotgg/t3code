@@ -10,8 +10,13 @@ const delegatedCompletion = {
   taskIds: ["task:child"],
 };
 
+const requestTimes = [
+  ["different times", "09:59:00", "10:03:00"],
+  ["equal times", "10:02:00", "10:02:00"],
+] as const;
+
 describe("queued run delivery order", () => {
-  it("delivers completions and queued messages in request order, keeping manual queue order", () => {
+  it.each(requestTimes)("keeps request and manual order with %s", (_, earlier, later) => {
     const projection = {
       messages: [
         { id: "message:old" },
@@ -40,7 +45,7 @@ describe("queued run delivery order", () => {
           id: "run:earlier-completion",
           ordinal: 2,
           queuePosition: 3,
-          requestedAt: at("09:59:00"),
+          requestedAt: at(earlier),
           status: "queued",
           userMessageId: "message:earlier-completion",
         },
@@ -48,7 +53,7 @@ describe("queued run delivery order", () => {
           id: "run:later-completion",
           ordinal: 5,
           queuePosition: 4,
-          requestedAt: at("10:03:00"),
+          requestedAt: at(later),
           status: "queued",
           userMessageId: "message:later-completion",
         },
