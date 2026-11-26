@@ -1,15 +1,17 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The scenario stages a local ACP executable.
-import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
-
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { T3_HOME } from "../e2e.config.ts";
 import { makeState, rpcClient, runPromise, test, WEB } from "./t3.ts";
 
 const PLAN = "```md\n```\u00a0\n# Sample heading\n```\n\n# Release plan\n\nRun a smoke check.";
+const SettingsJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const decodeSettings = Schema.decodeEffect(SettingsJson);
+const encodeSettings = Schema.encodeEffect(SettingsJson);
 const ACP = `
 import { createInterface } from "node:readline";
 
@@ -38,22 +40,36 @@ test(
   WEB,
   async ({ t3, app, browser, screen }) => {
     const project = await t3.project("demo", { "plan-agent.mjs": ACP });
-    const settingsPath = NodePath.join(T3_HOME, "userdata/settings.json");
-    const originalSettings = await NodeFSP.readFile(settingsPath, "utf8");
-    const settings = JSON.parse(originalSettings);
-    settings.providerInstances["plan-agent"] = {
-      driver: "acpRegistry",
-      displayName: "Plan Agent",
-      enabled: true,
-      config: {
-        source: "local",
-        commandPath: process.execPath,
-        commandArgs: [NodePath.join(project, "plan-agent.mjs")],
-      },
-    };
+    const restoreSettings = await runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const settingsPath = path.join(T3_HOME, "userdata/settings.json");
+        const original = yield* fs.readFileString(settingsPath);
+        const settings = yield* decodeSettings(original);
+        const planAgent = {
+          driver: "acpRegistry",
+          displayName: "Plan Agent",
+          enabled: true,
+          config: {
+            source: "local",
+            commandPath: process.execPath,
+            commandArgs: [path.join(project, "plan-agent.mjs")],
+          },
+        };
+        const providerInstances = {
+          ...(settings.providerInstances as object),
+          "plan-agent": planAgent,
+        };
+        yield* fs.writeFileString(
+          settingsPath,
+          yield* encodeSettings({ ...settings, providerInstances }),
+        );
+        return fs.writeFileString(settingsPath, original);
+      }),
+    );
 
     try {
-      await NodeFSP.writeFile(settingsPath, JSON.stringify(settings));
       await runPromise(
         Effect.gen(function* () {
           const client = yield* rpcClient(T3_HOME, app.baseUrl ?? "");
@@ -93,7 +109,7 @@ test(
       await app.screenshot("proposed-plan-title");
       await expect(browser.locator("h3[data-thread-find-text]")).toHaveText("Release plan");
     } finally {
-      await NodeFSP.writeFile(settingsPath, originalSettings);
+      await runPromise(restoreSettings);
     }
   },
 );
