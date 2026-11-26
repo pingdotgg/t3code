@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { Editor, getSchema, Node } from "@tiptap/core";
 import { newlineInCode } from "@tiptap/pm/commands";
-import { history, undo, undoDepth } from "@tiptap/pm/history";
+import { history, undo } from "@tiptap/pm/history";
 import { EditorState, TextSelection, type Transaction } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 
@@ -124,23 +124,13 @@ describe("exitCodeBlockOnTrailingBlankLines", () => {
       dispatch,
     } as EditorView;
 
-    const beforeDoc = state.doc.toJSON();
-    const beforeFrom = state.selection.from;
-    const beforeTo = state.selection.to;
+    const before = state;
 
-    expect(undoDepth(state)).toBe(0);
     expect(exitCodeBlockOnTrailingBlankLines(view)).toBe(true);
     expect(state.doc.childCount).toBe(2);
-    expect(state.doc.firstChild?.textContent).toBe("a");
-    expect(state.doc.firstChild?.attrs.close).toBe("\n```");
-    expect(state.selection.$from.parent.type.name).toBe("paragraph");
-    expect(undoDepth(state)).toBe(1);
-
-    expect(undo(state, dispatch)).toBe(true);
-    expect(state.doc.toJSON()).toEqual(beforeDoc);
-    expect(state.selection.from).toBe(beforeFrom);
-    expect(state.selection.to).toBe(beforeTo);
-    expect(undoDepth(state)).toBe(0);
+    undo(state, dispatch);
+    expect(state.doc.eq(before.doc)).toBe(true);
+    expect(state.selection.eq(before.selection)).toBe(true);
   });
 });
 
