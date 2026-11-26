@@ -226,7 +226,7 @@ export function SnapShotAttachmentDetails({
         <img src={source.appIconDataUrl} alt="" className="size-7 shrink-0 rounded-md" />
       ) : (
         <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-white/20 text-3xs font-medium text-white uppercase">
-          {source.appName.slice(0, 1)}
+          {[...source.appName][0]}
         </div>
       )}
       <div className="min-w-0 flex-1">
