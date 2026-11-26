@@ -719,7 +719,10 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               >
                 <T>Repository</T>
               </label>
-              <div className="flex items-stretch overflow-hidden rounded-md border border-input bg-background focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-ring">
+              <div
+                dir="ltr"
+                className="flex items-stretch overflow-hidden rounded-md border border-input bg-background focus-within:outline-2 focus-within:-outline-offset-2 focus-within:outline-ring"
+              >
                 <span className="flex shrink-0 items-center gap-1.5 border-r border-input bg-muted/50 px-2.5 font-mono text-xs text-muted-foreground">
                   <currentPublishProvider.Icon className="size-3.5" />
                   {publishHost}/
@@ -2026,7 +2029,7 @@ function CheckoutGitActionsControl({
           </DialogHeader>
           <DialogFooter variant="bare" className="sm:items-center">
             <Button
-              className="w-full sm:mr-auto sm:w-auto"
+              className="w-full sm:me-auto sm:w-auto"
               variant="outline"
               size="sm"
               onClick={() => setPendingDefaultBranchAction(null)}

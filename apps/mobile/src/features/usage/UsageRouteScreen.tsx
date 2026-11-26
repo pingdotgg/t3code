@@ -778,7 +778,7 @@ function CostSection(props: { readonly merged: MergedUsage; readonly wide: boole
           <View
             className={
               props.wide
-                ? "min-w-0 flex-1 border-l border-border-subtle"
+                ? "min-w-0 flex-1 border-s border-border-subtle"
                 : "border-t border-border-subtle"
             }
           >
@@ -873,7 +873,7 @@ function ModelsSection(props: {
             className={cn(
               "flex-row items-center gap-3 p-4",
               index >= props.columns && "border-t border-border-subtle",
-              index % props.columns === 1 && "border-l border-border-subtle",
+              index % props.columns === 1 && "border-s border-border-subtle",
             )}
             style={{ width: `${100 / props.columns}%` }}
           >

@@ -310,13 +310,15 @@ export function ShimmeringWorkContent(props: {
 
   // The React Compiler memoizes these, so re-renders don't rebuild the native
   // animation nodes.
+  // Transforms are physical, so the sweep runs right to left over an RTL label.
+  const sweepSign = useInterfaceDirection() === "rtl" ? -1 : 1;
   const sweepTranslateX = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [-SHIMMER_WIDTH, contentWidth],
+    outputRange: [-SHIMMER_WIDTH * sweepSign, contentWidth * sweepSign],
   });
   const counterSweepTranslateX = progress.interpolate({
     inputRange: [0, 1],
-    outputRange: [SHIMMER_WIDTH, -contentWidth],
+    outputRange: [SHIMMER_WIDTH * sweepSign, -contentWidth * sweepSign],
   });
 
   return (
@@ -348,7 +350,7 @@ export function ShimmeringWorkContent(props: {
             position: "absolute",
             top: 0,
             bottom: 0,
-            left: 0,
+            start: 0,
             overflow: "hidden",
             width: SHIMMER_WIDTH,
             transform: [{ translateX: sweepTranslateX }],

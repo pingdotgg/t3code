@@ -437,7 +437,7 @@ function QueueRowSwipeable(props: {
   const swipeableRef = useRef<SwipeableMethods | null>(null);
   const gt = useGT();
   const m = useMessages();
-  const direction = useInterfaceDirection();
+  const interfaceDirection = useInterfaceDirection();
   return (
     <ReanimatedSwipeable
       ref={swipeableRef}
@@ -452,7 +452,7 @@ function QueueRowSwipeable(props: {
         flex: 1,
         direction: SWIPEABLE_DIRECTION,
       }}
-      childrenContainerStyle={{ backgroundColor: props.background, direction }}
+      childrenContainerStyle={{ backgroundColor: props.background, direction: interfaceDirection }}
       onSwipeableOpen={(direction) => {
         if (direction !== "right") return;
         swipeableRef.current?.close();
