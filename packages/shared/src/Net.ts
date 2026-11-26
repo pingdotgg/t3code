@@ -6,7 +6,7 @@ import * as Context from "effect/Context";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-import { listensOnLoopback } from "./hostClassification.ts";
+import { isWildcardHost, listensOnLoopback } from "./hostClassification.ts";
 
 export class NetError extends Schema.TaggedError<NetError>()("NetError", {
   message: Schema.String,
@@ -136,6 +136,9 @@ export const make = () => {
     port: number,
     host: string | undefined,
   ): Effect.fn.Return<boolean> {
+    if (host !== undefined && isWildcardHost(host)) {
+      return yield* canListenOnHost(port, host);
+    }
     if (host === undefined || listensOnLoopback(host)) {
       return yield* isPortAvailableOnLoopback(port);
     }
@@ -186,7 +189,9 @@ export const make = () => {
       if (preferred > 0 && (yield* isPortAvailableForHost(preferred, host))) {
         return preferred;
       }
-      return yield* reserveLoopbackPort(listensOnLoopback(host) ? undefined : host);
+      return yield* reserveLoopbackPort(
+        listensOnLoopback(host) && !isWildcardHost(host) ? undefined : host,
+      );
     }),
   } satisfies NetServiceShape;
 };
