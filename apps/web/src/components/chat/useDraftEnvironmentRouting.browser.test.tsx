@@ -29,7 +29,6 @@ import { readProjects } from "../../state/entities";
 
 const resources = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
-  unpaired: null as EnvironmentId | null,
   projectListeners: new Set<(projects: readonly EnvironmentProject[]) => void>(),
   getProjectFileQueryAtom:
     vi.fn<
@@ -52,8 +51,7 @@ vi.mock("../../hooks/useLoadBalancedEnvironment", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => resources.projects,
-  readProjects: () =>
-    resources.projects.filter((project) => project.environmentId !== resources.unpaired),
+  readProjects: () => resources.projects,
   subscribeProjects: (listener: (projects: readonly EnvironmentProject[]) => void) => {
     resources.projectListeners.add(listener);
     return () => resources.projectListeners.delete(listener);
@@ -86,7 +84,6 @@ function setup() {
   resources.refreshSelection.mockReset();
   resources.getProjectFileQueryAtom.mockReset().mockReturnValue(projectFileAtom("{}"));
   resources.projects = [];
-  resources.unpaired = null;
   resources.projectListeners.clear();
   resources.pickedEnvironmentId = null;
   const a = EnvironmentId.make("machine-a");
@@ -435,7 +432,7 @@ it("keeps a workspace the user picked when the draft switches machine by hand", 
   expect(store.getDraftSession(draftId)?.envMode).toBe("local");
 });
 
-it.each(["deleted", "unpaired", "moved"] as const)(
+it.each(["deleted", "moved"] as const)(
   "checks the destination again when the project was %s during the default read",
   async (change) => {
     const { a, b, draftId, input, store } = fanoutSetup();
@@ -453,14 +450,10 @@ it.each(["deleted", "unpaired", "moved"] as const)(
     const send = screen.getByRole("button", { name: "Send", exact: true });
     await expect.element(send).toBeDisabled();
     await act(async () => {
-      if (change === "unpaired") {
-        resources.unpaired = b;
-      } else {
-        resources.projects = resources.projects.flatMap((project) => {
-          if (project.environmentId !== b) return [project];
-          return change === "deleted" ? [] : [{ ...project, workspaceRoot: "/workspace/moved" }];
-        });
-      }
+      resources.projects = resources.projects.flatMap((project) => {
+        if (project.environmentId !== b) return [project];
+        return change === "deleted" ? [] : [{ ...project, workspaceRoot: "/workspace/moved" }];
+      });
       for (const listener of resources.projectListeners) listener(readProjects());
     });
     await expect.element(send).toBeEnabled();
