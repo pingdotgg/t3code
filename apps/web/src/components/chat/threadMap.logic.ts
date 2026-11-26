@@ -193,7 +193,12 @@ export function deriveThreadMap(projection: ThreadStructure): ReadonlyArray<Thre
     if (item.type === "user_message") userItemByMessageId.set(item.messageId, item);
     if (item.runId === null) continue;
     if (item.type === "subagent") subagentItemRun.set(item.subagentId, item.runId);
-    if (item.type === "notification" && item.source.kind === "delegated_task") {
+    // An "updated" wake carries a task's question, not its result.
+    if (
+      item.type === "notification" &&
+      item.source.kind === "delegated_task" &&
+      item.outcome !== "updated"
+    ) {
       for (const taskId of item.source.taskIds) deliveryRunByTask.set(taskId, item.runId);
     }
     const items = itemsByRun.get(item.runId);

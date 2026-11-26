@@ -292,7 +292,13 @@ describe("deriveThreadMap", () => {
   it("draws a return only into a loaded turn the client can tell received the result", () => {
     const turns = deriveThreadMap(
       projection({
-        runs: [run("launch", 1), run("receive", 2), run("later", 3), run("woken", 4)],
+        runs: [
+          run("launch", 1),
+          run("receive", 2),
+          run("later", 3),
+          run("woken", 4),
+          run("asked", 5),
+        ],
         items: [
           prompt("launch", "Delegate"),
           { ...itemBase("orphan-item", "launch"), ...subagentItem("orphan") },
@@ -308,6 +314,17 @@ describe("deriveThreadMap", () => {
             source: { kind: "delegated_task", taskIds: [NodeId.make("notified")] },
             outcome: "completed",
             summary: 'Delegated task "Notified" finished',
+          },
+          // A task's question wakes the parent too, but brings no result back.
+          {
+            ...itemBase(
+              derive.userTurnItem({ messageId: MessageId.make("asked-prompt") }),
+              "asked",
+            ),
+            type: "notification",
+            source: { kind: "delegated_task", taskIds: [NodeId.make("asking")] },
+            outcome: "updated",
+            summary: 'Delegated task "Asking" has a question',
           },
         ],
         messages: [
@@ -332,6 +349,7 @@ describe("deriveThreadMap", () => {
           // Recorded without its run: the parent-side item names it.
           subagent("orphan", null),
           subagent("notified", "launch"),
+          subagent("asking", "launch"),
           subagent("elsewhere", "not-loaded"),
         ],
       }),
@@ -347,6 +365,7 @@ describe("deriveThreadMap", () => {
       ["unloaded", null],
       ["orphan", null],
       ["notified", "woken"],
+      ["asking", null],
     ]);
     expect(agents?.[1]).toMatchObject({ title: "Reviewer", model: "gpt-5.4" });
   });
