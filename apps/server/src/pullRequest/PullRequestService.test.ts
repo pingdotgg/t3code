@@ -3877,7 +3877,15 @@ it.effect.each(["github", "azure-devops"])(
             getChangeRequest: () =>
               Effect.succeed({
                 ...hostedChangeRequest("Description"),
-                checks: [{ name: "build", status: "success", description: null, url: null }],
+                checks: [
+                  {
+                    name: "build",
+                    status: provider === "github" ? "action-required" : "success",
+                    description: null,
+                    url: null,
+                  },
+                ],
+                ...(provider === "github" ? { workflowApprovalsRequired: 1 } : {}),
               }),
             getChangeRequestChecks: () =>
               Effect.sync(() => {
@@ -3893,6 +3901,7 @@ it.effect.each(["github", "azure-devops"])(
         state: detail.state,
         checks: detail.checks,
         observedAt: detail.observedAt,
+        ...(provider === "github" ? { workflowApprovalsRequired: 1 } : {}),
       });
       expect(reads).toBe(0);
       yield* TestClock.adjust("16 seconds");
@@ -5173,6 +5182,66 @@ it.effect("authorizes cold source reads with paginated paths without fetching pa
   }),
 );
 
+const activityListing = (...oids: ReadonlyArray<string>) => ({
+  getChangeRequestActivity: () =>
+    Effect.succeed({
+      comments: [],
+      commentCount: 0,
+      commentsTruncated: false,
+      reviewThreads: [],
+      commits: oids.map((oid) => ({
+        oid,
+        messageHeadline: "Change",
+        committedDate: "2026-01-01T00:00:00.000Z",
+      })),
+    }),
+});
+
+it.effect("reads a commit's diff only for a commit the change request lists", () =>
+  Effect.gen(function* () {
+    const listed = "a".repeat(40);
+    const read: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          ...activityListing(listed, "b".repeat(40)),
+          getDiff: (input) =>
+            Effect.sync(() => {
+              read.push(input.commit);
+              return {
+                patch: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n+x\n",
+                truncated: false,
+                nextCursor: null,
+              };
+            }),
+          getDiffFileContents: (input) =>
+            Effect.sync(() => {
+              read.push(input.commit);
+              return { oldContents: "old", newContents: "new" };
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const file = { changeType: "change" as const, oldPath: "a.ts", newPath: "a.ts" };
+
+    for (const commit of ["c".repeat(40), "abcdef", "A".repeat(41), ""]) {
+      const diff = yield* service.diff({ ...ref, commit }).pipe(Effect.flip);
+      const contents = yield* service
+        .diffFileContents({ ...ref, ...file, commit })
+        .pipe(Effect.flip);
+      assert.strictEqual(diff.reason, "not-found");
+      assert.strictEqual(contents.reason, "not-found");
+    }
+    assert.deepStrictEqual(read, []);
+
+    yield* service.diff({ ...ref, commit: "AAAAAAA" });
+    yield* service.diffFileContents({ ...ref, ...file, commit: "aaaaaaa" });
+    assert.deepStrictEqual(read, [listed, listed]);
+  }),
+);
+
 it.effect.each(["commit", "credential", "expiry", "refresh"] as const)(
   "keeps cold metadata membership in its original scope through an in-flight %s",
   (boundary) =>
@@ -5192,6 +5261,7 @@ it.effect.each(["commit", "credential", "expiry", "refresh"] as const)(
               Effect.suspend(() =>
                 use({ accountId: "101", viewer: "octocat", credentialFingerprint: credential }),
               ),
+            ...activityListing("a".repeat(40)),
             getDiff: () => Effect.die("Membership must not fetch patch hunks"),
             getDiffFilePaths: (input) =>
               Effect.gen(function* () {
@@ -5356,6 +5426,7 @@ it.effect.each(["commit", "credential"] as const)(
               Effect.suspend(() =>
                 use({ accountId: "101", viewer: "octocat", credentialFingerprint: credential }),
               ),
+            ...activityListing("a".repeat(40)),
             getDiff: () =>
               Effect.sync(() => ({
                 patch:
@@ -5413,6 +5484,7 @@ it.effect.each(["expiry", "commit expiry", "cache hit", "commit cache hit", "ref
         ],
         providers: [
           fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            ...activityListing("a".repeat(40)),
             getDiff: () =>
               Effect.gen(function* () {
                 if (++diffReads !== 1) return { patch: "", truncated: false, nextCursor: null };

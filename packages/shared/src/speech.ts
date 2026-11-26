@@ -117,6 +117,11 @@ export function effectiveSpeechLanguage(
   return model.languages.find((language) => language === "en") ?? model.languages[0] ?? "auto";
 }
 
+/** Rounds down, so a download still in progress never reads 100. */
+export function speechModelDownloadPercent(downloaded: number, size: number) {
+  return Math.floor((downloaded * 100) / size);
+}
+
 /**
  * The model first-run setup offers: the selected one, else the benchmark pick, else any that the
  * server would really transcribe the person's language with. Without a language hint,

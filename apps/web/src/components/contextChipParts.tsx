@@ -19,9 +19,9 @@ import { middleTruncateAttachmentName } from "./composerInlineChip";
 import { PullRequestContextDetails } from "./PullRequestContextDetails";
 import { ContextChip, ContextChipLabel, type ContextChipKind } from "./ContextChip";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "./ui/popover";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { usePullRequestPreviewTarget } from "~/lib/openPullRequestLink";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 
 export const PULL_REQUEST_CHIP_KINDS = {
   open: "pr-open",
@@ -52,14 +52,7 @@ export function ContextChipShell({
     </ContextChip>
   );
   if (!tooltip) return chip;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={chip} />
-      <TooltipPopup side="top" className="whitespace-pre-wrap">
-        {tooltip}
-      </TooltipPopup>
-    </Tooltip>
-  );
+  return <SharedTooltipTrigger render={chip} label={tooltip} className="whitespace-pre-wrap" />;
 }
 
 export function ContextChipPopover(props: {
@@ -144,12 +137,14 @@ export function PullRequestChip(props: {
     );
   }
   return (
-    <Tooltip>
-      <TooltipTrigger render={button} />
-      <TooltipPopup side="top">
-        <PullRequestContextDetails metadata={props.metadata} />
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={button}
+      label={
+        <>
+          <PullRequestContextDetails metadata={props.metadata} />
+        </>
+      }
+    />
   );
 }
 
@@ -235,28 +230,25 @@ export function FileChip(props: {
     "data-context-unresolved": props.unresolved ? "true" : undefined,
   } as const;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          props.onOpen ? (
-            <ContextChip
-              render={<button type="button" disabled={props.disabled} />}
-              onClick={props.onOpen}
-              {...attributes}
-            >
-              {content}
-            </ContextChip>
-          ) : (
-            <ContextChip tabIndex={0} {...attributes}>
-              {content}
-            </ContextChip>
-          )
-        }
-      />
-      <TooltipPopup side="top" className="whitespace-pre-wrap">
-        {props.tooltip}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        props.onOpen ? (
+          <ContextChip
+            render={<button type="button" disabled={props.disabled} />}
+            onClick={props.onOpen}
+            {...attributes}
+          >
+            {content}
+          </ContextChip>
+        ) : (
+          <ContextChip tabIndex={0} {...attributes}>
+            {content}
+          </ContextChip>
+        )
+      }
+      label={props.tooltip}
+      className="whitespace-pre-wrap"
+    />
   );
 }
 
@@ -296,27 +288,24 @@ function SvgFileChip(props: ComponentProps<typeof FileChip>) {
     return <FileChip {...props} svgPreview={undefined} />;
   }
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <ImageChipButton
-            name={props.name}
-            size={props.size}
-            previewUrl={url}
-            suffix={props.suffix}
-            disabled={props.disabled}
-            onClick={props.onOpen}
-            onPreviewError={() => setFailedPreviewUrl(url)}
-            data-markdown-copy={props.copyMarkdown}
-            aria-label={props.accessibleLabel}
-            {...(props.error ? { state: "invalid" as const } : {})}
-          />
-        }
-      />
-      <TooltipPopup side="top" className="whitespace-pre-wrap">
-        {props.tooltip}
-      </TooltipPopup>
-    </Tooltip>
+    <SharedTooltipTrigger
+      render={
+        <ImageChipButton
+          name={props.name}
+          size={props.size}
+          previewUrl={url}
+          suffix={props.suffix}
+          disabled={props.disabled}
+          onClick={props.onOpen}
+          onPreviewError={() => setFailedPreviewUrl(url)}
+          data-markdown-copy={props.copyMarkdown}
+          aria-label={props.accessibleLabel}
+          {...(props.error ? { state: "invalid" as const } : {})}
+        />
+      }
+      label={props.tooltip}
+      className="whitespace-pre-wrap"
+    />
   );
 }
 

@@ -30,7 +30,7 @@ import { isWindowsAbsolutePath } from "./path.ts";
 import {
   CHAT_MARKDOWN_SANITIZE_SCHEMA,
   chatMarkdownImageSource,
-  rehypeNormalizeLocalEditorLinks,
+  rehypeNormalizeLocalFileLinks,
   rehypePreserveImageSourceMeta,
   type ChatMarkdownImageProperties,
 } from "./markdownHast.ts";
@@ -210,7 +210,7 @@ export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
   rehypePreserveBareAnchorPlaceholders,
   rehypeRawWhenPresent,
   rehypePreserveImageSourceMeta,
-  rehypeNormalizeLocalEditorLinks,
+  rehypeNormalizeLocalFileLinks,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ];
 
@@ -229,6 +229,18 @@ const startsLine = (node: PhrasingContent | undefined) =>
   node.type === "break" ||
   (node.type === "text" && /^[ \t]*\n/.test(node.value));
 
+// A caption line ending in a screenshot reads as a figure, so the trailing images get a line.
+function trailingImagesStart(children: readonly PhrasingContent[]): number | undefined {
+  let start: number | undefined;
+  for (let index = children.length - 1; index >= 0; index--) {
+    const child = children[index]!;
+    if (isImageNode(child)) start = index;
+    else if (child.type !== "break" && !(child.type === "text" && !child.value.trim()))
+      return start;
+  }
+  return undefined;
+}
+
 function breakLinesAroundImages(paragraph: Paragraph) {
   const children = paragraph.children;
   if (!children.some(isImageNode)) return;
@@ -236,19 +248,26 @@ function breakLinesAroundImages(paragraph: Paragraph) {
     isImageNode(children[index]) &&
     endsLine(children[index - 1]) &&
     startsLine(children[index + 1]);
+  const trailingStart = trailingImagesStart(children);
   paragraph.children = children.flatMap((child, index): PhrasingContent[] => {
-    if (child.type !== "text") return [child];
+    // Kept indentation after a line ending already sits on a line of its own.
+    const beforeTrailing =
+      index + 1 === trailingStart &&
+      !(child.type === "text" && !child.value.trim() && endsLine(children[index - 1]));
+    if (child.type !== "text") {
+      return beforeTrailing && child.type !== "break" ? [child, { type: "break" }] : [child];
+    }
     const afterImage = ownsLine(index - 1);
     const beforeImage = ownsLine(index + 1);
-    if (!afterImage && !beforeImage) return [child];
+    if (!afterImage && !beforeImage && !beforeTrailing) return [child];
     const parts: PhrasingContent[] = [];
     let value = child.value;
     if (afterImage) {
       value = value.replace(/^[ \t]*\n/, "");
       parts.push({ type: "break" });
     }
-    const breakAfter = beforeImage && /\n[ \t]*$/.test(value);
-    if (breakAfter) value = value.replace(/[ \t]*\n[ \t]*$/, "");
+    const breakAfter = (beforeImage && /\n[ \t]*$/.test(value)) || beforeTrailing;
+    if (breakAfter) value = value.replace(/[ \t]*(?:\n[ \t]*)?$/, "");
     if (value) parts.push({ type: "text", value });
     if (breakAfter) parts.push({ type: "break" });
     return parts;

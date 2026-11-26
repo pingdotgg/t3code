@@ -107,6 +107,17 @@ describe("splitMarkdownDetails", () => {
 });
 
 describe("withReferenceDefinitions", () => {
+  it.each([
+    [
+      "\uFEFF[docs]: https://example.com/guide\n\n[other]: https://example.com/other",
+      ["[docs]: https://example.com/guide", "[other]: https://example.com/other"],
+    ],
+    ["intro\n\n\uFEFF[docs]: https://example.com/guide", []],
+    ["\uFEFF\uFEFF[docs]: https://example.com/guide", []],
+  ])("extracts complete reference definitions after BOM in %j", (markdown, expected) => {
+    expect(markdownReferenceDefinitions(markdown)).toEqual(expected);
+  });
+
   it("resolves a fragment's references from the whole reply, its own definitions first", async () => {
     const fold = "\n\n<details><summary>A</summary>a</details>\n\n";
     for (const [reply, pick, expected] of [

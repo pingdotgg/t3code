@@ -4,7 +4,7 @@ const CHUNK_TARGET_CHARS = 4 * 1024;
 export const LARGE_MARKDOWN_CHUNK_MAX_CHARS = 128 * 1024;
 // A backtick fence's info string cannot contain a backtick, so "```a``` is inline" is a code span.
 const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,})/;
-const ATX_HEADING = /^#{1,6}(?:[ \t]|\r?$)/;
+const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|\r?$)/;
 // A thematic break, or a "---" setext underline; no paragraph stays open after either. A lone
 // "===" is paragraph text unless it underlines one, so it is left out.
 const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?$/;
@@ -14,7 +14,8 @@ const ORDERED_ITEM = /^\d{1,9}[.)](?:[ \t]|\r?$)/;
 // CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
 const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<(?:script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
-  [/^ {0,3}<!--/, /-->/],
+  // "<!-->" and "<!--->" close themselves, so the closer is searched from just after "<!".
+  [/^ {0,3}<!(?=--)/, /-->/],
   [/^ {0,3}<\?/, /\?>/],
   [/^ {0,3}<!\[CDATA\[/, /\]\]>/],
   [/^ {0,3}<![A-Za-z]/, />/],
@@ -112,30 +113,39 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterBlankLine = false;
   let afterDefinition = false;
   let afterHeading = false;
+  let openedFence = false;
   let definitionChars = 0;
   let openWrappers = 0;
+  let heldCut = 0;
   const flush = () => {
     chunks.push({ text: lines.join("\n"), lines: lines.length });
     lines = [];
     chars = 0;
+    heldCut = 0;
   };
   for (const line of text.split("\n")) {
     if (closes !== null) {
       if (closes(line)) closes = null;
     } else if (first && FRONTMATTER_OPEN.test(line)) {
       let seen = 0;
-      closes = (next) => FRONTMATTER_CLOSE.test(next) || ++seen >= FRONTMATTER_MAX_LINES;
+      closes = (next) => {
+        // Only a real closer lets a definition follow; an opener with none was a thematic break.
+        openedFence = FRONTMATTER_CLOSE.test(next);
+        return openedFence || ++seen >= FRONTMATTER_MAX_LINES;
+      };
     } else {
       if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
-      const cut =
+      const cutPoint =
         chars >= targetChars &&
-        openWrappers === 0 &&
-        (ATX_HEADING.test(line) ||
+        ((line.startsWith("#") && ATX_HEADING.test(line)) ||
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
-      if (cut) flush();
+      if (cutPoint && openWrappers === 0) flush();
+      else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
-      // A definition cannot interrupt a paragraph, so it follows a blank line, a heading or
-      // another definition.
+      // An indented fence may sit in a list item, which this does not track.
+      openedFence = /^[`~]/.test(line) && FENCE_OPEN.test(line);
+      // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
+      // a closing code fence or frontmatter, or another definition.
       const definition: boolean =
         (first || afterBlankLine || afterDefinition || afterHeading) && LINK_DEFINITION.test(line);
       afterDefinition = definition;
@@ -149,8 +159,17 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     first = false;
     lines.push(line);
     chars += line.length + 1;
+    // A piece too large to render goes back to the last cut a wrapper held.
+    if (heldCut > 0 && chars - 1 > LARGE_MARKDOWN_CHUNK_MAX_CHARS) {
+      const rest = lines.splice(heldCut);
+      flush();
+      lines = rest;
+      chars = rest.reduce((sum, kept) => sum + kept.length + 1, 0);
+      openWrappers = 0;
+    }
     afterBlankLine = line.trim() === "";
-    afterHeading = closes === null && (ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
+    afterHeading =
+      closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
   flush();
   return { chunks, definitions: definitions.join("\n") };
