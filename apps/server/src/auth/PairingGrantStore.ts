@@ -771,23 +771,10 @@ const make = Effect.gen(function* () {
     "PairingGrantStore.approveConnectRequest",
   )(function* (pairingLinkId) {
     const now = yield* DateTime.now;
-    const row = yield* pairingLinks
-      .getActiveById({ id: pairingLinkId, now })
-      .pipe(Effect.mapError((cause) => new BootstrapCredentialLookupError({ cause })));
-    if (
-      Option.isNone(row) ||
-      row.value.requiresConnectApproval !== 1 ||
-      row.value.proofKeyThumbprint === null
-    ) {
-      return false;
-    }
-    yield* connectDevices
-      .trust({
-        proofKeyThumbprint: row.value.proofKeyThumbprint,
-        client: row.value.requestedClient,
-        approvedAt: now,
-      })
+    const approved = yield* connectDevices
+      .approveRequest({ pairingLinkId, now })
       .pipe(Effect.mapError((cause) => new ConnectDevicesError({ operation: "trust", cause })));
+    if (!approved) return false;
     yield* emitRemoved(pairingLinkId);
     yield* emitConnectDevicesChanged;
     return true;

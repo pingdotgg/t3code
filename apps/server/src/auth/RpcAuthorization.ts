@@ -333,6 +333,9 @@ const requiredScopesForRpcCall = (
     ];
   }
   if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
+  if (method === WS_METHODS.serverCheckSecretSource) {
+    return [AuthSettingsWriteScope, AuthProvidersManageScope];
+  }
   // These send the credential they are given to a URL the caller names, as a saved setting would.
   if (
     (method === WS_METHODS.deviceSimlockIdentity ||

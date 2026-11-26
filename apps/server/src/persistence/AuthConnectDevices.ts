@@ -23,6 +23,11 @@ const TrustInput = Schema.Struct({
   approvedAt: Schema.DateTimeUtcFromString,
 });
 
+const ApproveRequestInput = Schema.Struct({
+  pairingLinkId: Schema.String,
+  now: Schema.DateTimeUtcFromString,
+});
+
 const ThumbprintInput = Schema.Struct({ proofKeyThumbprint: Schema.String });
 
 const RemoveAllExceptInput = Schema.Struct({
@@ -37,6 +42,10 @@ export class AuthConnectDeviceRepository extends Context.Service<
     readonly trust: (
       input: typeof TrustInput.Type,
     ) => Effect.Effect<void, AuthPairingLinkRepositoryError>;
+    /** Atomically trusts the device behind an active approval request; false if gone or denied. */
+    readonly approveRequest: (
+      input: typeof ApproveRequestInput.Type,
+    ) => Effect.Effect<boolean, AuthPairingLinkRepositoryError>;
     readonly isTrusted: (
       proofKeyThumbprint: string,
     ) => Effect.Effect<boolean, AuthPairingLinkRepositoryError>;
@@ -68,6 +77,26 @@ export const make = Effect.gen(function* () {
         VALUES (${proofKeyThumbprint}, ${client}, ${approvedAt})
         ON CONFLICT (proof_key_thumbprint) DO UPDATE
           SET client_json = COALESCE(excluded.client_json, auth_connect_devices.client_json)
+      `,
+  });
+
+  const approveRequestRows = SqlSchema.findAll({
+    Request: ApproveRequestInput,
+    Result: Schema.Struct({ proofKeyThumbprint: Schema.String }),
+    execute: ({ pairingLinkId, now }) =>
+      sql`
+        INSERT INTO auth_connect_devices (proof_key_thumbprint, client_json, approved_at)
+        SELECT proof_key_thumbprint, requested_client_json, ${now}
+        FROM auth_pairing_links
+        WHERE id = ${pairingLinkId}
+          AND revoked_at IS NULL
+          AND consumed_at IS NULL
+          AND expires_at > ${now}
+          AND requires_connect_approval = 1
+          AND proof_key_thumbprint IS NOT NULL
+        ON CONFLICT (proof_key_thumbprint) DO UPDATE
+          SET client_json = COALESCE(excluded.client_json, auth_connect_devices.client_json)
+        RETURNING proof_key_thumbprint AS "proofKeyThumbprint"
       `,
   });
 
@@ -121,6 +150,12 @@ export const make = Effect.gen(function* () {
   const trust: AuthConnectDeviceRepository["Service"]["trust"] = (input) =>
     trustRow(input).pipe(Effect.mapError(sqlError("AuthConnectDeviceRepository.trust")));
 
+  const approveRequest: AuthConnectDeviceRepository["Service"]["approveRequest"] = (input) =>
+    approveRequestRows(input).pipe(
+      Effect.map((rows) => rows.length > 0),
+      Effect.mapError(sqlError("AuthConnectDeviceRepository.approveRequest")),
+    );
+
   const isTrusted: AuthConnectDeviceRepository["Service"]["isTrusted"] = (proofKeyThumbprint) =>
     isTrustedRow({ proofKeyThumbprint }).pipe(
       NodeSqliteClient.readOnly,
@@ -150,6 +185,7 @@ export const make = Effect.gen(function* () {
 
   return {
     trust,
+    approveRequest,
     isTrusted,
     list,
     remove,

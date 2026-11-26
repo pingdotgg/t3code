@@ -1029,3 +1029,57 @@ it.effect("requires provider management to send /logout through chat", () =>
     ]);
   }).pipe(Effect.scoped),
 );
+
+it.effect(
+  "requires provider management as well as settings permission to check a secret source",
+  () =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            typeof WS_METHODS.serverCheckSecretSource
+          > => tag !== WS_METHODS.serverCheckSecretSource,
+        ),
+      );
+      let handled = 0;
+      const handler = group.toLayerHandler(WS_METHODS.serverCheckSecretSource, () =>
+        Effect.sync(() => {
+          handled++;
+          return { _tag: "Resolved" as const };
+        }),
+      );
+      const clientWith = (...scopes: Parameters<typeof RpcAuthorization.layer>[0]) =>
+        RpcTest.makeClient(group).pipe(
+          Effect.provide(Layer.merge(handler, RpcAuthorization.layer(scopes))),
+        );
+      const input = {
+        source: {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/OpenAI/credential",
+        },
+      };
+
+      const settingsOnly = yield* clientWith(AuthSettingsWriteScope);
+      expect(
+        yield* settingsOnly[WS_METHODS.serverCheckSecretSource](input).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthProvidersManageScope,
+      });
+      const manageOnly = yield* clientWith(AuthProvidersManageScope);
+      expect(
+        yield* manageOnly[WS_METHODS.serverCheckSecretSource](input).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthSettingsWriteScope,
+      });
+      expect(handled).toBe(0);
+
+      const both = yield* clientWith(AuthSettingsWriteScope, AuthProvidersManageScope);
+      expect(yield* both[WS_METHODS.serverCheckSecretSource](input)).toEqual({ _tag: "Resolved" });
+      expect(handled).toBe(1);
+    }).pipe(Effect.scoped),
+);

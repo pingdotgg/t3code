@@ -379,6 +379,17 @@ export class ProofKeySessionsError extends Schema.TaggedError<ProofKeySessionsEr
   }
 }
 
+export class PeerLinkSessionsRevocationError extends Schema.TaggedError<PeerLinkSessionsRevocationError>()(
+  "PeerLinkSessionsRevocationError",
+  {
+    ...sessionCredentialInternalErrorContext,
+  },
+) {
+  override get message(): string {
+    return "Failed to revoke peer-link sessions.";
+  }
+}
+
 export const SessionCredentialInternalError = Schema.Union([
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
@@ -389,6 +400,7 @@ export const SessionCredentialInternalError = Schema.Union([
   SessionRevocationError,
   OtherSessionsRevocationError,
   ProofKeySessionsError,
+  PeerLinkSessionsRevocationError,
 ]);
 export type SessionCredentialInternalError = typeof SessionCredentialInternalError.Type;
 
@@ -483,6 +495,7 @@ export class SessionStore extends Context.Service<
     readonly revokeByProofKey: (
       proofKeyThumbprint: string,
     ) => Effect.Effect<number, SessionCredentialInternalError>;
+    readonly revokePeerLinks: () => Effect.Effect<number, SessionCredentialInternalError>;
     readonly markConnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
     readonly markDisconnected: (sessionId: AuthSessionId) => Effect.Effect<void, never>;
   }
@@ -771,6 +784,7 @@ const make = Effect.gen(function* () {
         issuedAt,
         expiresAt: sessionExpiresAt,
         ...(claims.jkt ? { proofKeyThumbprint: claims.jkt } : {}),
+        ...(input?.peerLink === true ? { peerLink: true } : {}),
       } satisfies AuthSessions.CreateAuthSessionInput;
       const replacedSessionIds = yield* (
         input?.replaceSessionId !== undefined || input?.replaceActiveForSubjectAndMethod
@@ -1223,6 +1237,24 @@ const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   });
 
+  const revokePeerLinks: SessionStore["Service"]["revokePeerLinks"] = Effect.fn(
+    "SessionStore.revokePeerLinks",
+  )(function* () {
+    const revokedAt = yield* DateTime.now;
+    const revokedSessionIds = yield* authSessions
+      .revokePeerLinks({ revokedAt })
+      .pipe(Effect.mapError((cause) => new PeerLinkSessionsRevocationError({ cause })));
+    if (revokedSessionIds.length > 0) {
+      yield* Ref.update(connectedSessionsRef, (current) => {
+        const next = new Map(current);
+        for (const revokedSessionId of revokedSessionIds) next.delete(revokedSessionId);
+        return next;
+      });
+      yield* Effect.forEach(revokedSessionIds, emitRemoved, { discard: true });
+    }
+    return revokedSessionIds.length;
+  });
+
   const revokeAllExcept: SessionStore["Service"]["revokeAllExcept"] = Effect.fn(
     "SessionStore.revokeAllExcept",
   )(function* (sessionId) {
@@ -1356,6 +1388,7 @@ const make = Effect.gen(function* () {
     revokeAllExcept,
     proofKeyThumbprintOf,
     revokeByProofKey,
+    revokePeerLinks,
     markConnected,
     markDisconnected,
   });

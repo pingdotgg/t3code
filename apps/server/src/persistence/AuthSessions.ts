@@ -53,6 +53,7 @@ export const CreateAuthSessionInput = Schema.Struct({
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
   proofKeyThumbprint: Schema.optionalKey(Schema.String),
+  peerLink: Schema.optionalKey(Schema.Boolean),
 });
 export type CreateAuthSessionInput = typeof CreateAuthSessionInput.Type;
 
@@ -102,6 +103,11 @@ export const RevokeAuthSessionsByProofKeyInput = Schema.Struct({
 });
 export type RevokeAuthSessionsByProofKeyInput = typeof RevokeAuthSessionsByProofKeyInput.Type;
 
+export const RevokePeerLinkAuthSessionsInput = Schema.Struct({
+  revokedAt: Schema.DateTimeUtcFromString,
+});
+export type RevokePeerLinkAuthSessionsInput = typeof RevokePeerLinkAuthSessionsInput.Type;
+
 export const SetAuthSessionLastConnectedAtInput = Schema.Struct({
   sessionId: AuthSessionId,
   lastConnectedAt: Schema.DateTimeUtcFromString,
@@ -144,6 +150,9 @@ export class AuthSessionRepository extends Context.Service<
     ) => Effect.Effect<Option.Option<string>, AuthSessionRepositoryError>;
     readonly revokeByProofKey: (
       input: RevokeAuthSessionsByProofKeyInput,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    readonly revokePeerLinks: (
+      input: RevokePeerLinkAuthSessionsInput,
     ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
   }
 >()("t3/persistence/AuthSessions/AuthSessionRepository") {}
@@ -243,7 +252,8 @@ export const make = Effect.gen(function* () {
           issued_at,
           expires_at,
           revoked_at,
-          proof_key_thumbprint
+          proof_key_thumbprint,
+          peer_link
         )
         VALUES (
           ${input.sessionId},
@@ -259,7 +269,8 @@ export const make = Effect.gen(function* () {
           ${input.issuedAt},
           ${input.expiresAt},
           NULL,
-          ${input.proofKeyThumbprint ?? null}
+          ${input.proofKeyThumbprint ?? null},
+          ${input.peerLink ? 1 : 0}
         )
         ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
@@ -397,6 +408,19 @@ export const make = Effect.gen(function* () {
         UPDATE auth_sessions
         SET revoked_at = ${revokedAt}
         WHERE proof_key_thumbprint = ${proofKeyThumbprint}
+          AND revoked_at IS NULL
+        RETURNING session_id AS "sessionId"
+      `,
+  });
+
+  const revokePeerLinkRows = SqlSchema.findAll({
+    Request: RevokePeerLinkAuthSessionsInput,
+    Result: Schema.Struct({ sessionId: AuthSessionId }),
+    execute: ({ revokedAt }) =>
+      sql`
+        UPDATE auth_sessions
+        SET revoked_at = ${revokedAt}
+        WHERE peer_link = 1
           AND revoked_at IS NULL
         RETURNING session_id AS "sessionId"
       `,
@@ -586,6 +610,17 @@ export const make = Effect.gen(function* () {
       Effect.map((rows) => rows.map((row) => row.sessionId)),
     );
 
+  const revokePeerLinks: AuthSessionRepository["Service"]["revokePeerLinks"] = (input) =>
+    revokePeerLinkRows(input).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "AuthSessionRepository.revokePeerLinks:query",
+          "AuthSessionRepository.revokePeerLinks:decodeRows",
+        ),
+      ),
+      Effect.map((rows) => rows.map((row) => row.sessionId)),
+    );
+
   return {
     create,
     createReplacingActive,
@@ -598,6 +633,7 @@ export const make = Effect.gen(function* () {
     setLastConnectedAt,
     getProofKeyThumbprint,
     revokeByProofKey,
+    revokePeerLinks,
   } satisfies AuthSessionRepository["Service"];
 });
 

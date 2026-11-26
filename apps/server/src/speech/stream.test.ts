@@ -1,16 +1,31 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { expect } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Socket from "effect/socket/Socket";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
-import { SpeechStreamEvent, DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS } from "@t3tools/contracts";
-import type { SpeechService, SpeechStream } from "./SpeechService.ts";
-import { runSpeechSocket } from "./stream.ts";
+import {
+  SpeechStreamEvent,
+  SPEECH_STREAM_PATH,
+  DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+} from "@t3tools/contracts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import { SpeechService, type SpeechStream } from "./SpeechService.ts";
+import { runSpeechSocket, speechStreamRouteLayer } from "./stream.ts";
 import type * as NetAddress from "effect/net/NetAddress";
 
 const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamEvent));
@@ -197,4 +212,101 @@ it.effect("releases the stream when a started client goes silent", () =>
     yield* TestClock.adjust("1 minute");
     expect(yield* Deferred.isDone(released)).toBe(true);
   }),
+);
+
+const withAuthenticatedServer = (
+  startStream: SpeechService["Service"]["startStream"],
+  run: (input: {
+    readonly baseWsUrl: string;
+    readonly auth: EnvironmentAuth.EnvironmentAuth["Service"];
+    readonly sessions: SessionStore.SessionStore["Service"];
+  }) => Effect.Effect<void, unknown, Scope.Scope>,
+) =>
+  Effect.gen(function* () {
+    yield* Layer.build(
+      HttpRouter.serve(speechStreamRouteLayer, { disableLogger: true, disableListenLog: true }),
+    );
+    const server = yield* HttpServer.HttpServer;
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const sessions = yield* SessionStore.SessionStore;
+    const address = server.address as NetAddress.InetAddress;
+    const host = address._tag === "InetAddressV6" ? "[::1]" : "127.0.0.1";
+    yield* run({
+      baseWsUrl: `ws://${host}:${address.port}${SPEECH_STREAM_PATH}`,
+      auth,
+      sessions,
+    });
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeHttpServer.layerTest,
+        Layer.mock(SpeechService)({ startStream }),
+        EnvironmentAuth.layer.pipe(
+          Layer.provide(ManagedPolicy.layerTest()),
+          Layer.provideMerge(SqlitePersistence.layerMemory),
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(ServerEnvironment.layerIdentity),
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-speech-stream-" })),
+        ),
+      ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+    ),
+  );
+
+it.live.each(["session", "device-key"] as const)(
+  "closes an open voice stream and releases its speech stream on %s revocation",
+  (revocationKind) => {
+    const released = Promise.withResolvers<void>();
+    const stream: SpeechStream = {
+      feed: () => Effect.never,
+      finish: Effect.succeed("unexpected"),
+    };
+    return withAuthenticatedServer(
+      () =>
+        Effect.acquireRelease(Effect.succeed(stream), () => Effect.sync(() => released.resolve())),
+      ({ baseWsUrl, auth, sessions }) =>
+        Effect.gen(function* () {
+          const deviceKey = "Kq3vZ8sYbTn0eW1pLr5uXc7dHf9gJm2aQs4tVw6yBzE";
+          let sessionIdToRevoke: Parameters<typeof auth.revokeSession>[0];
+          let ticket: string;
+          if (revocationKind === "session") {
+            const issued = yield* auth.issueSession({ label: "Troy Barnes" });
+            const verified = yield* sessions.verify(issued.token);
+            sessionIdToRevoke = verified.sessionId;
+            ticket = Redacted.value(
+              (yield* auth.issueWebSocketTicket(verified, { use: "media" })).ticket,
+            );
+          } else {
+            const pairing = yield* auth.issuePairingCredential({ label: "Abed Nadir" });
+            const exchanged = yield* auth.exchangeBootstrapCredentialForAccessToken(
+              pairing.credential,
+              undefined,
+              { deviceType: "mobile" },
+              { proofKeyThumbprint: deviceKey },
+            );
+            const verified = yield* sessions.verify(exchanged.access_token);
+            sessionIdToRevoke = verified.sessionId;
+            ticket = Redacted.value(
+              (yield* auth.issueWebSocketTicket(verified, { use: "media" })).ticket,
+            );
+          }
+          const connection = yield* Effect.promise(async () => {
+            const conn = client(`${baseWsUrl}?wsTicket=${encodeURIComponent(ticket)}`);
+            expect(await conn.next()).toEqual({ type: "ready" });
+            return conn;
+          });
+          yield* Effect.addFinalizer(() => Effect.sync(() => connection.socket.close()));
+          const socketClosed = new Promise<void>((resolve) =>
+            connection.socket.addEventListener("close", () => resolve(), { once: true }),
+          );
+
+          if (revocationKind === "session") {
+            expect(yield* auth.revokeSession(sessionIdToRevoke)).toBe(true);
+          } else {
+            expect(yield* auth.revokeConnectDevice(deviceKey)).toBe(true);
+          }
+          yield* Effect.promise(() => Promise.all([socketClosed, released.promise]));
+        }),
+    );
+  },
 );

@@ -7,7 +7,9 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
@@ -1208,6 +1210,173 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(
         Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
       ),
+    );
+
+    it.effect(
+      "revokes peer-link codes, peer-link sessions, and remote MCP client sessions when policy disallows remote clients",
+      () =>
+        Effect.gen(function* () {
+          const unmanagedAuth = yield* EnvironmentAuth.EnvironmentAuth;
+          const peerLinkCode = yield* unmanagedAuth.issuePairingCredential({
+            access: "auto",
+            purpose: "peer-link",
+          });
+          const mcpApprovalCode = yield* unmanagedAuth.issuePairingCredential({
+            access: "read-only",
+          });
+          const peerLinkSession = yield* unmanagedAuth.issueMcpClientSession({
+            label: "T3 Code · Greendale",
+            access: "auto",
+            peerLink: true,
+            client: { deviceType: "bot", ipAddress: "127.0.0.1" },
+          });
+          const remoteMcpSession = yield* unmanagedAuth.issueMcpClientSession({
+            label: "Remote Agent",
+            access: "auto",
+            peerLink: false,
+            client: { deviceType: "bot", ipAddress: "192.168.1.23" },
+          });
+          const localMcpSession = yield* unmanagedAuth.issueMcpClientSession({
+            label: "Local Agent",
+            access: "auto",
+            peerLink: false,
+            client: { deviceType: "bot", ipAddress: "127.0.0.1" },
+          });
+
+          const restrictedAuth = yield* EnvironmentAuth.make.pipe(
+            Effect.provide(
+              Layer.merge(
+                ManagedPolicy.layerTest({
+                  schemaVersion: 1,
+                  organization: "Greendale Community College",
+                  limits: { clients: ["desktop", "local-browser"] },
+                }),
+                ServerSecretStore.layer.pipe(Layer.provideMerge(layerServerConfig())),
+              ),
+            ),
+          );
+
+          expect(
+            (yield* restrictedAuth
+              .consumeMcpApprovalCode(peerLinkCode.credential, "auto", true)
+              .pipe(Effect.flip))._tag,
+          ).toBe("ServerAuthMcpApprovalCodeError");
+          expect(
+            (yield* restrictedAuth
+              .consumeMcpApprovalCode(mcpApprovalCode.credential, "read-only", false)
+              .pipe(Effect.flip))._tag,
+          ).toBe("ServerAuthMcpApprovalCodeError");
+
+          const activeSessionIds = (yield* restrictedAuth.listSessions()).map(
+            (session) => session.sessionId,
+          );
+          expect(activeSessionIds).toContain(localMcpSession.sessionId);
+          expect(activeSessionIds).not.toContain(peerLinkSession.sessionId);
+          expect(activeSessionIds).not.toContain(remoteMcpSession.sessionId);
+
+          expect(
+            (yield* restrictedAuth
+              .authenticateMcpClient(makeBearerRequest(peerLinkSession.token))
+              .pipe(Effect.flip))._tag,
+          ).toBe("ServerAuthInvalidCredentialError");
+          expect(
+            (yield* restrictedAuth
+              .authenticateMcpClient(makeBearerRequest(remoteMcpSession.token))
+              .pipe(Effect.flip))._tag,
+          ).toBe("ServerAuthInvalidCredentialError");
+          expect(
+            (yield* restrictedAuth.authenticateMcpClient(makeBearerRequest(localMcpSession.token)))
+              .sessionId,
+          ).toBe(localMcpSession.sessionId);
+        }).pipe(Effect.provide(layerEnvironmentAuth())),
+    );
+
+    it.effect(
+      "serializes Connect device approval and denial so a denied request never becomes trusted",
+      () =>
+        Effect.gen(function* () {
+          const pairingLinks = yield* PairingGrantStore.PairingGrantStore;
+          const revokeEntered = yield* Deferred.make<void>();
+          const releaseRevoke = yield* Deferred.make<void>();
+          let pauseRevoke = false;
+          let approveEntered = false;
+          const serverAuth = yield* EnvironmentAuth.make.pipe(
+            Effect.provideService(PairingGrantStore.PairingGrantStore, {
+              ...pairingLinks,
+              revoke: (id) =>
+                Effect.gen(function* () {
+                  if (pauseRevoke) {
+                    yield* Deferred.succeed(revokeEntered, undefined);
+                    yield* Deferred.await(releaseRevoke);
+                  }
+                  return yield* pairingLinks.revoke(id);
+                }),
+              approveConnectRequest: (id) =>
+                Effect.sync(() => {
+                  approveEntered = true;
+                }).pipe(Effect.andThen(pairingLinks.approveConnectRequest(id))),
+            }),
+            Effect.provide(
+              Layer.merge(
+                ManagedPolicy.layerTest(),
+                ServerSecretStore.layer.pipe(Layer.provideMerge(layerServerConfig())),
+              ),
+            ),
+          );
+
+          const pausedKey = "Kq3vZ8sYbTn0eW1pLr5uXc7dHf9gJm2aQs4tVw6yBzE";
+          yield* serverAuth.issueConnectCredential({
+            proofKeyThumbprint: pausedKey,
+            requireApproval: true,
+          });
+          const [pausedRequest] = (yield* serverAuth.listPairingLinks()).filter(
+            (link) => link.connectDeviceRequest !== undefined,
+          );
+          pauseRevoke = true;
+          const revokeFiber = yield* serverAuth
+            .revokePairingLink(pausedRequest!.id)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(revokeEntered);
+          const approveFiber = yield* serverAuth
+            .approveConnectDevice(pausedRequest!.id)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          expect(approveEntered).toBe(false);
+          yield* Deferred.succeed(releaseRevoke, undefined);
+          const [revoked, approved] = yield* Effect.all([
+            Fiber.join(revokeFiber),
+            Fiber.join(approveFiber),
+          ]);
+          pauseRevoke = false;
+
+          expect(revoked).toBe(true);
+          expect(approved).toBe(false);
+          expect(yield* serverAuth.listConnectDevices()).toEqual([]);
+
+          for (let index = 0; index < 4; index++) {
+            const raceKey = `RaceKey${index}8sYbTn0eW1pLr5uXc7dHf9gJm2aQs4tVw6y`;
+            yield* serverAuth.issueConnectCredential({
+              proofKeyThumbprint: raceKey,
+              requireApproval: true,
+            });
+            const [raceRequest] = (yield* serverAuth.listPairingLinks()).filter(
+              (link) =>
+                link.connectDeviceRequest?.verificationCode ===
+                connectDeviceVerificationCode(raceKey),
+            );
+            const [raceApproved, raceDenied] = yield* Effect.all(
+              [
+                serverAuth.approveConnectDevice(raceRequest!.id),
+                serverAuth.revokePairingLink(raceRequest!.id),
+              ],
+              { concurrency: "unbounded" },
+            );
+            expect(raceApproved !== raceDenied).toBe(true);
+            const trusted = (yield* serverAuth.listConnectDevices()).some(
+              (device) => device.proofKeyThumbprint === raceKey,
+            );
+            expect(trusted).toBe(raceApproved);
+          }
+        }).pipe(Effect.provide(layerEnvironmentAuth())),
     );
   },
 );

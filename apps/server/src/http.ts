@@ -477,9 +477,14 @@ export const layerOtlpTracesProxyRoute = HttpRouter.add(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
         Effect.as(HttpServerResponse.empty({ status: 204 })),
         Effect.tapError((cause) =>
+          // The URL can carry userinfo or an intake API key in its query string, and the error keeps
+          // the request it failed on; the host, failure kind, and status are enough to diagnose.
           Effect.logWarning("Failed to export browser OTLP traces", {
-            cause,
-            otlpTracesUrl,
+            host: URL.canParse(otlpTracesUrl) ? new URL(otlpTracesUrl).host : undefined,
+            reason: cause.reason._tag,
+            ...(cause.reason._tag === "StatusCodeError"
+              ? { status: cause.reason.response.status }
+              : {}),
           }),
         ),
         Effect.orElseSucceed(() =>

@@ -256,4 +256,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       }
     }).pipe(Effect.scoped, Effect.provide(layerPairingGrantStore())),
   );
+
+  it.effect(
+    "atomically races Connect approval against revocation so a revoked request never becomes trusted",
+    () =>
+      Effect.gen(function* () {
+        const grants = yield* PairingGrantStore.PairingGrantStore;
+        for (let index = 0; index < 6; index++) {
+          const proofKeyThumbprint = `ConnectRace${index}YbTn0eW1pLr5uXc7dHf9gJm2aQs4tVw`;
+          const issued = yield* grants.issueOneTimeToken({
+            proofKeyThumbprint,
+            requiresConnectApproval: true,
+          });
+          const [approved, revoked] = yield* Effect.all(
+            [grants.approveConnectRequest(issued.id), grants.revoke(issued.id)],
+            { concurrency: "unbounded" },
+          );
+          expect(approved !== revoked).toBe(true);
+          expect(yield* grants.isConnectDeviceTrusted(proofKeyThumbprint)).toBe(approved);
+        }
+      }).pipe(Effect.provide(layerPairingGrantStore())),
+  );
 });

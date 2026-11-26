@@ -1280,6 +1280,7 @@ export const make = Effect.gen(function* () {
 
   const revokePairingLink: EnvironmentAuth["Service"]["revokePairingLink"] = (id) =>
     bootstrapCredentials.revoke(id).pipe(
+      connectTrustLock.withPermits(1),
       Effect.mapError((cause) => new ServerAuthPairingLinkRevocationError({ cause })),
       Effect.withSpan("EnvironmentAuth.revokePairingLink"),
     );
@@ -1332,6 +1333,7 @@ export const make = Effect.gen(function* () {
     pairingLinkId,
   ) =>
     bootstrapCredentials.approveConnectRequest(pairingLinkId).pipe(
+      connectTrustLock.withPermits(1),
       Effect.mapError((cause) => new ServerAuthConnectDevicesError({ cause })),
       Effect.withSpan("EnvironmentAuth.approveConnectDevice"),
     );
@@ -1671,6 +1673,11 @@ export const make = Effect.gen(function* () {
               diagnostic: "Only MCP client sessions are accepted here.",
             });
           }
+          if (session.peerLink === true && !ManagedLimits.allowsRemoteClients(managedPolicy)) {
+            return yield* new ServerAuthInvalidCredentialError({
+              diagnostic: "Peer links are not allowed by the managed policy.",
+            });
+          }
           const client = {
             sessionId: session.sessionId,
             label: session.client.label ?? "MCP client",
@@ -1838,25 +1845,30 @@ const revokePairedClientsThePolicyDisallows = Effect.fn(
   const sessions = (yield* stores.sessions.listActive()).filter(
     (session) =>
       disallowed.has(session.subject) ||
-      // The startup link also pairs browsers on this machine; only a device elsewhere goes.
+      // The startup link and MCP clients also serve this machine; only a client elsewhere goes.
       (!remoteAllowed &&
-        session.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT &&
+        (session.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT ||
+          session.subject === MCP_CLIENT_SUBJECT) &&
         session.client.ipAddress !== undefined &&
         !isLocalLoopbackHost(session.client.ipAddress)),
   );
   const links = (yield* stores.pairingLinks.listActive()).filter(
     (link) =>
       disallowed.has(link.subject) ||
-      // Approval codes let an agent elsewhere sign in, as plain codes do.
-      (!remoteAllowed && link.subject.startsWith(MCP_APPROVAL_SUBJECT_PREFIX)),
+      // Approval and peer-link codes let an agent or environment elsewhere sign in, as plain codes do.
+      (!remoteAllowed &&
+        (link.subject.startsWith(MCP_APPROVAL_SUBJECT_PREFIX) ||
+          link.subject.startsWith(PEER_LINK_PAIRING_SUBJECT_PREFIX))),
   );
   yield* Effect.forEach(sessions, (session) => stores.sessions.revoke(session.sessionId), {
     discard: true,
   });
+  const revokedPeerLinks = remoteAllowed ? 0 : yield* stores.sessions.revokePeerLinks();
   yield* Effect.forEach(links, (link) => stores.pairingLinks.revoke(link.id), { discard: true });
-  if (sessions.length > 0 || links.length > 0) {
+  const revokedSessions = sessions.length + revokedPeerLinks;
+  if (revokedSessions > 0 || links.length > 0) {
     yield* Effect.logInfo("Revoked clients the managed policy does not allow.", {
-      sessions: sessions.length,
+      sessions: revokedSessions,
       pairingLinks: links.length,
     });
   }

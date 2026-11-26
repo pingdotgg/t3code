@@ -4,6 +4,8 @@ import * as Schema from "effect/Schema";
 import {
   AuthEnvironmentScopes,
   AuthEnvironmentScope,
+  AuthProvidersManageScope,
+  AuthSettingsWriteScope,
   authScopeRequiredResponse,
   AuthGrantScopes,
   AuthStandardClientScopes,
@@ -11,6 +13,8 @@ import {
   AuthSessionState,
   sessionGrantsScope,
 } from "./auth.ts";
+import { clientRpcRequiredScopes } from "./clientRpcPermissions.ts";
+import { WS_METHODS } from "./rpc.ts";
 
 describe("authorization grants", () => {
   it("decodes legacy review credentials without offering them in new grants", () => {
@@ -128,5 +132,12 @@ describe("authorization grants", () => {
     },
   ] as const)("sessionGrantsScope accepts $label", ({ session, scope, expected }) => {
     expect(sessionGrantsScope(session, scope)).toBe(expected);
+  });
+
+  it("requires providers:manage alongside settings:write for secret source checks", () => {
+    expect(clientRpcRequiredScopes(WS_METHODS.serverCheckSecretSource, undefined)).toEqual([
+      AuthSettingsWriteScope,
+      AuthProvidersManageScope,
+    ]);
   });
 });

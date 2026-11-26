@@ -137,6 +137,9 @@ export function clientRpcRequiredScopes(
   if (method === WS_METHODS.guestShareCreate) {
     return [AuthAccessWriteScope, AuthOrchestrationReadScope];
   }
+  if (method === WS_METHODS.serverCheckSecretSource) {
+    return [AuthSettingsWriteScope, AuthProvidersManageScope];
+  }
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
     : [];

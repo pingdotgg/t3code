@@ -11,11 +11,20 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
-import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
+import {
+  HttpClient,
+  HttpClientError,
+  HttpClientRequest,
+  HttpClientResponse,
+  HttpRouter,
+  HttpServerResponse,
+} from "effect/http";
+import { OtlpSerialization } from "effect/observability";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
 import {
@@ -25,14 +34,20 @@ import {
   injectMcpAppThemeBootstrap,
   MCP_APP_MAX_HTML_BYTES,
 } from "@t3tools/shared/mcpApp";
-import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSessionId,
+  ORCHESTRATION_PROTOCOL_HEADER,
+} from "@t3tools/contracts";
 import {
   DESKTOP_READINESS_PROOF_PATH,
   isValidDesktopReadinessProof,
 } from "@t3tools/shared/desktopReadinessProof";
 import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
 
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ServerConfig from "./config.ts";
+import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 
 import { assetResponseHeaders, assetFileResponse, downloadContentDisposition } from "./http.ts";
 import * as ServerHttp from "./http.ts";
@@ -1007,4 +1022,93 @@ describe("downloadContentDisposition", () => {
       `attachment; filename="bad_name.pdf"; filename*=UTF-8''bad%EF%BF%BDname.pdf`,
     );
   });
+});
+
+describe("browser OTLP trace proxy", () => {
+  it.effect("keeps userinfo and query secrets out of warning logs when export fails", () =>
+    Effect.gen(function* () {
+      const logged: Array<unknown> = [];
+      const captureLogger = Logger.make((options) => {
+        logged.push(options.message);
+      });
+      let attempt = 0;
+      const failingClient = HttpClient.make((request) =>
+        attempt++ === 0
+          ? Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
+            )
+          : Effect.fail(
+              new HttpClientError.HttpClientError({
+                reason: new HttpClientError.TransportError({ request }),
+              }),
+            ),
+      );
+      const web = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          HttpRouter.toWebHandler(
+            ServerHttp.layerOtlpTracesProxyRoute.pipe(
+              Layer.provideMerge(
+                Layer.effect(
+                  ServerConfig.ServerConfig,
+                  Effect.map(ServerConfig.ServerConfig, (config) => ({
+                    ...config,
+                    otlpTracesUrl:
+                      "https://troy:barnes-secret-pass@otlp.greendale.example/v1/traces?api_key=greendale-api-key&token=greendale-tok",
+                  })),
+                ).pipe(
+                  Layer.provide(
+                    ServerConfig.layerTest(process.cwd(), { prefix: "http-otlp-proxy-test-" }),
+                  ),
+                ),
+              ),
+              Layer.provideMerge(
+                Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+                  authenticateHttpRequest: () =>
+                    Effect.succeed({
+                      sessionId: AuthSessionId.make("otlp-test"),
+                      subject: "otlp-test",
+                      method: "bearer-access-token",
+                      scopes: [AuthOrchestrationOperateScope],
+                    }),
+                }),
+              ),
+              Layer.provideMerge(
+                Layer.mock(BrowserTraceCollector.BrowserTraceCollector)({
+                  record: () => Effect.void,
+                }),
+              ),
+              Layer.provideMerge(Layer.succeed(HttpClient.HttpClient, failingClient)),
+              Layer.provideMerge(OtlpSerialization.layerJson),
+              Layer.provideMerge(Logger.layer([captureLogger], { mergeWithExisting: false })),
+              Layer.provide(NodeServices.layer),
+            ),
+            { disableLogger: true },
+          ),
+        ),
+        ({ dispose }) => Effect.promise(() => dispose()),
+      );
+
+      for (let i = 0; i < 2; i++) {
+        const response = yield* Effect.promise(() =>
+          web.handler(
+            new Request("http://127.0.0.1/api/observability/v1/traces", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ resourceSpans: [] }),
+            }),
+          ),
+        );
+        expect(response.status).toBe(502);
+      }
+
+      const serialized = JSON.stringify(logged);
+      expect(serialized).toContain("otlp.greendale.example");
+      expect(serialized).toContain("StatusCodeError");
+      expect(serialized).toContain("503");
+      expect(serialized).toContain("TransportError");
+      expect(serialized).not.toContain("barnes-secret-pass");
+      expect(serialized).not.toContain("greendale-api-key");
+      expect(serialized).not.toContain("greendale-tok");
+    }).pipe(Effect.scoped),
+  );
 });
