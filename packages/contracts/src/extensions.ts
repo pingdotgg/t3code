@@ -50,11 +50,21 @@ export type ExtensionPlugin = typeof ExtensionPlugin.Type;
 export const ExtensionSkillSource = Schema.Literals(["library", "local"]);
 export type ExtensionSkillSource = typeof ExtensionSkillSource.Type;
 
+/**
+ * For a subscription's own skill: whether the library already has one with this name, and if
+ * so whether its files are the same.
+ */
+export const ExtensionSkillLibraryCopy = Schema.Literals(["none", "same", "different"]);
+export type ExtensionSkillLibraryCopy = typeof ExtensionSkillLibraryCopy.Type;
+
 export const ExtensionSkill = Schema.Struct({
   name: TrimmedNonEmptyString,
   description: Schema.NullOr(Schema.String),
   source: ExtensionSkillSource,
   path: Schema.String,
+  /** A link whose target is gone. Safe to delete: there is nothing behind it. */
+  brokenLink: Schema.Boolean,
+  libraryCopy: ExtensionSkillLibraryCopy,
   health: ExtensionHealth,
   detail: Schema.NullOr(Schema.String),
 });
@@ -177,6 +187,18 @@ export const ExtensionsMutation = Schema.Union([
     name: TrimmedNonEmptyString,
   }),
   Schema.TaggedStruct("SkillUnlink", {
+    instanceId: ProviderInstanceId,
+    name: TrimmedNonEmptyString,
+  }),
+  /** Deletes the subscription's links whose target no longer exists. */
+  Schema.TaggedStruct("SkillRemoveBrokenLinks", {
+    instanceId: ProviderInstanceId,
+  }),
+  /**
+   * Replaces a subscription's own copy with a link to the library skill of the same name. The
+   * old copy is kept in a hidden backup folder beside it, never deleted.
+   */
+  Schema.TaggedStruct("SkillUseLibraryCopy", {
     instanceId: ProviderInstanceId,
     name: TrimmedNonEmptyString,
   }),

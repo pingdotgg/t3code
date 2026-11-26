@@ -82,7 +82,9 @@ import {
   listLibrarySkills,
   moveSkillToLibrary,
   SKILL_LIBRARY_SEGMENTS,
+  removeBrokenLinks,
   unlinkSkill,
+  useLibraryCopy,
   type SkillOutcome,
 } from "./skills.ts";
 
@@ -579,7 +581,8 @@ const make = Effect.gen(function* () {
 
   const requireSubscriptions = Effect.fn("ExtensionsService.requireSubscriptions")(function* (
     instanceIds: ReadonlyArray<ProviderInstanceId>,
-    capability: Capability,
+    // null: any listed subscription, such as cleaning up its broken skill links.
+    capability: Capability | null,
   ) {
     const subscriptions = yield* resolveSubscriptions();
     const required: Array<Subscription> = [];
@@ -590,7 +593,7 @@ const make = Effect.gen(function* () {
           message: `"${instanceId}" isn't an enabled Claude, Codex or Antigravity subscription.`,
         });
       }
-      if (!subscription.capabilities[capability]) {
+      if (capability !== null && !subscription.capabilities[capability]) {
         return yield* new ExtensionsError({
           message: `${subscription.displayName} doesn't support ${CAPABILITY_LABELS[capability]} here.`,
         });
@@ -883,6 +886,25 @@ const make = Effect.gen(function* () {
           const targets = yield* requireSubscriptions([mutation.instanceId], "skills");
           return yield* forEachSubscription(targets, (target) =>
             skillOutcome(target, unlinkSkill(skillInput(target, mutation.name))),
+          );
+        }
+        case "SkillRemoveBrokenLinks": {
+          const targets = yield* requireSubscriptions([mutation.instanceId], null);
+          return yield* forEachSubscription(targets, (target) =>
+            skillOutcome(target, removeBrokenLinks(target.skillsDirs)),
+          );
+        }
+        case "SkillUseLibraryCopy": {
+          yield* requireSkillName(mutation.name);
+          const targets = yield* requireSubscriptions([mutation.instanceId], "skills");
+          const timestamp = DateTime.formatIso(yield* DateTime.now)
+            .replace(/\.\d+Z$/, "Z")
+            .replace(/[-:]/g, "");
+          return yield* forEachSubscription(targets, (target) =>
+            skillOutcome(
+              target,
+              useLibraryCopy({ ...skillInput(target, mutation.name), timestamp }),
+            ),
           );
         }
         case "SkillMoveToLibrary": {
