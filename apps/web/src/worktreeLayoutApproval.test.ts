@@ -18,12 +18,14 @@ const state = vi.hoisted(() => ({
   policy: undefined as ManagedPolicySummary | undefined,
   approveFails: false,
   approved: [] as unknown[],
+  reads: 0,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
   ...(await original()),
   runAtomCommand: (async (_registry: unknown, command: string, value: { input: unknown }) => {
     if (command === "read") {
+      state.reads += 1;
       return state.commands === null
         ? { _tag: "Failure", cause: new Error("unavailable") }
         : { _tag: "Success", value: { commands: state.commands } };
@@ -39,7 +41,11 @@ vi.mock(
   import("./state/filesystem"),
   () =>
     ({
-      filesystemEnvironment: { readLayoutCommands: "read", approveLayoutCommands: "approve" },
+      filesystemEnvironment: {
+        layoutCommands: () => "layout-commands",
+        readLayoutCommands: "read",
+        approveLayoutCommands: "approve",
+      },
     }) as never,
 );
 vi.mock(
@@ -61,7 +67,10 @@ vi.mock(
   import("./rpc/atomRegistry"),
   () =>
     ({
-      appAtomRegistry: { get: () => new Map([[environmentId, { managedPolicy: state.policy }]]) },
+      appAtomRegistry: {
+        get: () => new Map([[environmentId, { managedPolicy: state.policy }]]),
+        refresh: () => {},
+      },
     }) as never,
 );
 
@@ -97,6 +106,7 @@ describe("worktree layout approval before a worktree thread starts", () => {
     state.policy = undefined;
     state.approveFails = false;
     state.approved = [];
+    state.reads = 0;
   });
 
   it("shows both unapproved commands and records the texts shown once the user approves", async () => {
@@ -179,6 +189,30 @@ describe("worktree layout approval before a worktree thread starts", () => {
     state.commands = [];
     await expect(ensure()).resolves.toEqual({ status: "proceed" });
     expect(readWorktreeLayoutApprovalState().open).toBe(false);
+  });
+
+  it("decides from an answer read while the draft was written without reading again", async () => {
+    await expect(
+      ensureWorktreeLayoutApproved({
+        environmentId,
+        projectId,
+        projectTitle: "Shop",
+        known: { commands: [] },
+      }),
+    ).resolves.toEqual({ status: "proceed" });
+    const unmount = subscribeWorktreeLayoutApprovalHost(() => {});
+    const outcome = ensureWorktreeLayoutApproved({
+      environmentId,
+      projectId,
+      projectTitle: "Shop",
+      known: { commands: [remove] },
+    });
+    await untilAsked();
+    expect(readWorktreeLayoutApprovalState().request?.commands).toEqual([remove]);
+    respond(true);
+    await expect(outcome).resolves.toEqual({ status: "proceed" });
+    expect(state.reads).toBe(0);
+    unmount();
   });
 
   it("stops with a reason on a connection that cannot approve", async () => {
