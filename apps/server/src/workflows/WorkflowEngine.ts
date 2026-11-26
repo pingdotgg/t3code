@@ -1338,6 +1338,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             ? pullRequestReferenceOf(item.pullRequest, { url: item.subject })
             : undefined;
       // Each partition is capped on its own, as in `list`, so skipped runs cannot push out the rest.
+      const newestFirst = (left: { started_at: string }, right: { started_at: string }) =>
+        right.started_at.localeCompare(left.started_at);
       const found = [];
       for (const skippedTopLevel of [false, true]) {
         const rows = [
@@ -1351,21 +1353,11 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         ];
         found.push(
           ...[...new Map(rows.map((row) => [row.run_id, row])).values()]
-            .toSorted((left, right) =>
-              left.started_at === right.started_at
-                ? 0
-                : left.started_at < right.started_at
-                  ? 1
-                  : -1,
-            )
+            .toSorted(newestFirst)
             .slice(0, 500),
         );
       }
-      const runs = [...new Map(found.map((row) => [row.run_id, row])).values()]
-        .toSorted((left, right) =>
-          left.started_at === right.started_at ? 0 : left.started_at < right.started_at ? 1 : -1,
-        )
-        .map(toRun);
+      const runs = found.toSorted(newestFirst).map(toRun);
       const about = new Set(runs.map((run) => run.runId));
       const open = yield* questions;
       return { runs, questions: open.filter((question) => about.has(question.runId)) };
