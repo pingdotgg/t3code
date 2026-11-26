@@ -13,13 +13,22 @@ const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${H
 const THREAD_HREF = String.raw`t3-thread:\/\/v[12]\/`;
 // A label stops at any bracket, so a run of unclosed brackets is scanned once, not once per bracket.
 const LABEL = String.raw`[^[\]\n]*`;
+// CommonMark fences start on their own line (optional blockquotes, indentation, or list markers)
+// and close on a line with at least as many of the same marker; backtick info strings hold no `.
+const fencedCode = (char: "`" | "~", name: string) => {
+  const bq = `${name}Bq`;
+  const info = char === "`" ? "[^`\\r\\n]*" : "[^\\r\\n]*";
+  const closer = String.raw`\k<${bq}>[ \t]*\k<${name}>${char}*(?!${char})[ \t]*\r?$`;
+  return String.raw`^(?<${bq}>(?:[ \t]*>)*)[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:\r?\n(?!${closer})\k<${bq}>[^\r\n]*)*(?:\r?\n${closer})?`;
+};
 // Earlier alternatives claim text so later ones cannot match inside it: an escaped character opens
 // nothing, code is literal, and a link to anywhere else keeps a thread URL in its label or href.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
   [
     String.raw`\\[!-/:-@[-\`{-~]`,
-    String.raw`(?<fence>(\`{3,}|~{3,})[\s\S]*?(?:\2|$))`,
-    String.raw`(?<span>(\`+)[^\n]*?\4)`,
+    fencedCode("`", "bt"),
+    fencedCode("~", "tl"),
+    String.raw`(?<span>(?<!\`)(?<spanTicks>\`+)(?!\`)[^\n]*?(?<!\`)\k<spanTicks>(?!\`))`,
     // A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
     String.raw`\[(?<label>${LABEL})\]\((?:<(?<angleHref>${THREAD_HREF}[^\s<>]+|${HOSTED_LINK})>|(?<href>${THREAD_HREF}[^\s>)]+|${HOSTED_LINK}))\)`,
     String.raw`\[${LABEL}\]\((?:<[^<>\n]*>|[^\s()]*(?:\([^\s()]*\)[^\s()]*)*)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'))?\)`,
@@ -27,7 +36,7 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
     // After a URL character the hosted link is part of a longer URL, such as a redirect target.
     String.raw`(?<![A-Za-z0-9%/?#=&@+-])(?<bare>${HOSTED_LINK})(?![\w%/?#-])`,
   ].join("|"),
-  "g",
+  "gm",
 );
 
 const decodeThreadId = Schema.decodeUnknownOption(ThreadId);
