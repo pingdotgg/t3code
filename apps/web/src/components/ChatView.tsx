@@ -196,6 +196,7 @@ import {
   useThreadPreviewCanvasSource,
 } from "./preview/ThreadPreviewMiniPlayer";
 import { createChatCanvasStore, resolveChatCanvasModel } from "./chat/canvasStore";
+import { KaluwaMainBackdrop } from "./kaluwaBackdrop/KaluwaBackdrop";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
@@ -3646,8 +3647,10 @@ export default function ChatView(props: ChatViewProps) {
             />
             <div
               {...conversationArea}
-              className="relative flex min-h-0 flex-1 flex-col bg-background"
+              // Fork: `isolate` keeps Kaluwa's backdrop art above this background, below the thread.
+              className="relative isolate flex min-h-0 flex-1 flex-col bg-background"
             >
+              {embedded ? null : <KaluwaMainBackdrop view={isDraftHeroState ? "home" : "thread"} />}
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline
                   pendingApprovals={pendingApprovals}

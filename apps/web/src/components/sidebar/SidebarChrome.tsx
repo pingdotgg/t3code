@@ -16,6 +16,7 @@ import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
 import { KaluwaBrandMark, KaluwaStageBackdrop } from "../KaluwaBrand";
+import { KaluwaDitherBand, useKaluwaSidebarBand } from "../kaluwaBackdrop/KaluwaBackdrop";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -52,10 +53,12 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const gt = useGT();
-  const backdropVariant = resolveSidebarStageBackdropVariant(
-    stageLabel,
-    environmentIdentificationMode,
-  );
+  // Fork: Kaluwa's "Sidebar band" setting swaps its wave for a dithered band or nothing.
+  const kaluwaBand = useKaluwaSidebarBand();
+  const kaluwaBandOff = isLocalStage(stageLabel) && kaluwaBand !== "wave";
+  const backdropVariant = kaluwaBandOff
+    ? null
+    : resolveSidebarStageBackdropVariant(stageLabel, environmentIdentificationMode);
   const pillLabel =
     environmentIdentificationMode === "pill"
       ? resolveEnvironmentIdentificationPillLabel(stageLabel)
@@ -68,6 +71,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         isElectron && "drag-region",
       )}
     >
+      {kaluwaBandOff && kaluwaBand === "dither" ? <KaluwaDitherBand /> : null}
       {backdropVariant ? (
         // Fork: the local build has its own blue backdrop.
         isLocalStage(stageLabel) ? (

@@ -713,6 +713,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --kaluwa-wave-soft: #7aa2ff;
     --kaluwa-line: #a9c1ff;
   }
+  /* Fork: Kaluwa's dithered sidebar band fades out toward the thread list. */
+  .kaluwa-dither-band {
+    opacity: 0.7;
+    mask-image: linear-gradient(to bottom, #000 45%, transparent);
+  }
   :root {
     /* Keep the original T3 Code artwork palettes as the defaults. Built-in
        themes override them with their own pigments in the components layer. */
