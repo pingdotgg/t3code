@@ -525,3 +525,56 @@ it.effect("sql: a subagent thread becomes a candidate once its parent is done", 
     assert.deepEqual(new Set(yield* ids()), new Set([child, orphan]));
   }).pipe(Effect.provide(layerSql)),
 );
+
+it.effect("sql: a finished subagent waits for its active parent to hold the result", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const parent = yield* createThread("result-parent");
+    const child = yield* createThread("result-child", {
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+    });
+    const ids = () =>
+      store.getSettlementCandidates().pipe(Effect.map((rows) => rows.map((row) => row.id)));
+    assert.deepEqual(yield* ids(), [parent]);
+
+    const taskId = NodeId.make("node:result-task");
+    for (const state of ["pending", "delivered"] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:settlement:result-task:${state}`),
+        type: "subagent.updated",
+        threadId: parent,
+        nodeId: taskId,
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: taskId,
+          threadId: parent,
+          runId: null,
+          parentNodeId: NodeId.make("node:result-parent"),
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId: child,
+          nativeTaskRef: null,
+          prompt: "Reply PONG",
+          title: null,
+          model: null,
+          completionDelivery: { state, observedByRunId: null },
+          status: "completed",
+          result: "PONG",
+          startedAt: old,
+          completedAt: old,
+          updatedAt: now,
+        },
+      });
+      if (state === "pending") {
+        yield* createRun(child, "completed");
+        assert.deepEqual(yield* ids(), [parent]);
+      }
+    }
+    assert.deepEqual(new Set(yield* ids()), new Set([parent, child]));
+  }).pipe(Effect.provide(layerSql)),
+);

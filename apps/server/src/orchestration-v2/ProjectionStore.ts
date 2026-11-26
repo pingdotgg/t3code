@@ -8979,6 +8979,19 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     AND json_extract(parent.payload_json, '$.archivedAt') IS NULL
                     AND json_extract(parent.payload_json, '$.settledOverride') IS NOT 'settled'
                 )
+                -- A pinned or long-lived parent may never settle, so a child also settles once
+                -- its own run has ended and its parent holds every result it produced.
+                OR (
+                  r.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_subagents task
+                    WHERE task.child_thread_id = t.thread_id
+                      AND (
+                        task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted')
+                        OR task.completion_delivery_state IN ('pending', 'claimed')
+                      )
+                  )
+                )
               )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runs active
