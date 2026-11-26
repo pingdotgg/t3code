@@ -1345,6 +1345,8 @@ describe("source control tools", () => {
     interface CheckoutNow {
       branch: string;
       head: string;
+      /** The commit the branch's remote has it at. */
+      upstreamHead: string;
       baseBranch: string;
       needsPush: boolean;
       remoteName: string | null;
@@ -1364,6 +1366,7 @@ describe("source control tools", () => {
       const now: CheckoutNow = {
         branch: "tools",
         head: "1a2b3c4d5e6f7a8b9c0d1a2b3c4d5e6f7a8b9c0d",
+        upstreamHead: "1a2b3c4d5e6f7a8b9c0d1a2b3c4d5e6f7a8b9c0d",
         baseBranch: "main",
         needsPush,
         remoteName: "origin",
@@ -1393,6 +1396,7 @@ describe("source control tools", () => {
           branch: now.branch,
           head: now.head,
           headRef: push === null ? `origin/${now.branch}` : null,
+          headRefCommit: push === null ? now.upstreamHead : null,
           baseBranch: input.baseBranch ?? now.baseBranch,
           push,
         };
@@ -1925,6 +1929,30 @@ describe("source control tools", () => {
             /^Open a pull request for "tools" at "1a2b3c4d5e" \("origin\/tools"\) into "main" in T3Tools\/T3Code\? \(request [0-9a-f]{8}\)$/,
           );
           expect(asked.kept?.pushHooks).toBeUndefined();
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+      );
+
+      it.effect("a branch behind its remote is asked about with the commit the remote has", () =>
+        Effect.gen(function* () {
+          const sessions = yield* shown;
+          const behind = checkout(() => null, false);
+          behind.now.upstreamHead = "9".repeat(40);
+          const harness = yield* makeHarness({ thread: lowerThread(), git: behind.git });
+          const asked = yield* ask(harness, sessions, "pull_request_create", args);
+          expect(asked.message).toMatch(
+            /^Open a pull request for "tools" at "1a2b3c4d5e" \("origin\/tools" at "9999999999"\) into "main" /,
+          );
+          // The remote's branch moves on while the person reads: another request.
+          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+          behind.now.upstreamHead = "8".repeat(40);
+          const client = asClient({ action: "accept", state: asked.state });
+          yield* harness
+            .call("pull_request_create", args)
+            .pipe(client.provide(sessions), Effect.flip);
+          const next = Ref.getUnsafe(client.request)?.requestState;
+          expect(next).toBeDefined();
+          expect(next).not.toBe(asked.state);
+          expect(behind.attempts).toEqual([]);
         }).pipe(Effect.provide(McpProviderSessions.layer)),
       );
 

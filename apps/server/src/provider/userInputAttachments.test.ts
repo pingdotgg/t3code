@@ -672,7 +672,7 @@ describe("question answer paths", () => {
             "book.opf":
               '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
             "chapter.xhtml":
-              '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Guide</title></head><body><ol><li>Before boarding<div><ul><li>Check passports</li></ul></div></li></ol>Intro<ul><li>Read the checklist</li></ul><dl><dt>Visa</dt><dd>Requirements<ul><li>Photo</li></ul></dd></dl><div>Carry<dl><dt>Passport</dt><dd>Required</dd></dl></div><div>Leave <ul></ul>room</div><div>Keep <ul><li hidden="">Draft</li></ul>walking</div></body></html>',
+              '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Guide</title></head><body><ol><li>Before boarding<div><ul><li>Check passports</li></ul></div></li></ol>Intro<ul><li>Read the checklist</li></ul><dl><dt>Visa</dt><dd>Requirements<ul><li>Photo</li></ul></dd></dl><div>Carry<dl><dt>Passport</dt><dd>Required</dd></dl></div><div>Leave <ul></ul>room</div><div>Keep <ul><li hidden="">Draft</li></ul>walking</div><div>Safety note<blockquote>Check the gate.</blockquote>Continue to the terminal.</div><div>Keep some <blockquote></blockquote>space.</div><div>Arrive at the platform.<hr/>Collect your luggage.</div><div>One<hr hidden=""/> scene.</div><div>Check the time.<hr/></div><div>Board promptly.</div><div>Example<hr/><pre>  <code>check()</code></pre></div></body></html>',
           },
           expected: [
             "Before boarding\nCheck passports",
@@ -681,6 +681,12 @@ describe("question answer paths", () => {
             "Carry\nPassport\nRequired",
             "Leave room",
             "Keep walking",
+            "Safety note\nCheck the gate.\nContinue to the terminal.",
+            "Keep some space.",
+            "Arrive at the platform.\nCollect your luggage.",
+            "One scene.",
+            "Check the time.\nBoard promptly.",
+            "Example\n  check()",
           ],
         },
         {
@@ -694,6 +700,28 @@ describe("question answer paths", () => {
               '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Guide</title></head><body><table><tr><th>Region</th><th>Month</th><th>Revenue</th></tr><tr><td rowspan="2">North</td><td>June</td><td>400</td></tr><tr><td>July</td><td>520</td></tr></table></body></html>',
           },
           expected: ["North\tJune\t400\n\tJuly\t520"],
+        },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><div>Example command:<pre><code>git status --short\n  git log -1</code></pre><p>Inspect the output.</p></div></body></html>',
+          },
+          expected: ["Example command:\ngit status --short\n  git log -1\nInspect the output."],
+        },
+        {
+          ext: "epub",
+          parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><manifest><item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="chapter"/></spine></package>',
+            "chapter.xhtml":
+              '<html xmlns="http://www.w3.org/1999/xhtml"><body><figure><img alt="Map of the river"/><figcaption>Figure 1. River crossings</figcaption></figure><p>Water levels rose in May.</p></body></html>',
+          },
+          expected: ["Map of the river\nFigure 1. River crossings\nWater levels rose in May."],
         },
         // A prefixed span attribute is foreign markup, not an XHTML span.
         {

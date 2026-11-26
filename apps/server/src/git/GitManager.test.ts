@@ -5418,6 +5418,37 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         }),
       );
 
+      it.effect(
+        "an approval to open from a branch behind its remote is for what the remote has",
+        () =>
+          Effect.gen(function* () {
+            const repo = yield* hookedRepo();
+            yield* runGit(repo.repoDir, ["push", "-u", "origin", "feature/hooked"]);
+            const local = (yield* runGit(repo.repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+            // Someone else pushes to the branch, and the checkout fetches it without moving.
+            const pushOther = Effect.fn(function* (file: string) {
+              const other = yield* makeTempDir("t3code-git-manager-other-");
+              yield* runGit(other, ["clone", "--branch", "feature/hooked", repo.remoteDir, "."]);
+              yield* runGit(other, ["config", "user.email", "test@example.com"]);
+              yield* runGit(other, ["config", "user.name", "Test"]);
+              NodeFS.writeFileSync(NodePath.join(other, file), `${file}\n`);
+              yield* runGit(other, ["add", file]);
+              yield* runGit(other, ["commit", "-m", file]);
+              yield* runGit(other, ["push", "origin", "feature/hooked"]);
+              yield* runGit(repo.repoDir, ["fetch", "origin"]);
+              return (yield* runGit(other, ["rev-parse", "HEAD"])).stdout.trim();
+            });
+            const theirs = yield* pushOther("theirs.txt");
+            const approved = yield* repo.opening();
+            expect(approved).toMatchObject({ push: null, head: local, headRefCommit: theirs });
+
+            // The remote's branch moves again after the approval.
+            yield* pushOther("later.txt");
+            const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+            expect(refused.message).toContain(CHANGED);
+          }),
+      );
+
       it.effect("a push address is named without anything a URL may carry beside it", () =>
         Effect.gen(function* () {
           const repo = yield* hookedRepo();
@@ -5432,6 +5463,42 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           expect(approved.push?.urls).toEqual(["https://example.com/org/repo.git"]);
           expect(approved.key).not.toContain("secret");
         }),
+      );
+
+      it.effect(
+        "a private push is refused when its remote leads elsewhere after the approval",
+        () =>
+          Effect.gen(function* () {
+            const companionDir = yield* createBareRemote();
+            const elsewhere = yield* createBareRemote();
+            // The host is asked for the companion a second time only by the second create below.
+            let asked = 0;
+            const repo = yield* hookedRepo({
+              privateRemote: { url: companionDir, repository: "pingdotgg/codething-mvp.private" },
+              onPrivateRemote: () => void (asked += 1),
+            });
+            // A first private opening leaves the companion as the branch's push remote.
+            yield* repo.createApproved(yield* repo.opening());
+            const remoteName = (yield* runGit(repo.repoDir, [
+              "config",
+              "branch.feature/hooked.pushRemote",
+            ])).stdout.trim();
+            const before = (yield* runGit(repo.repoDir, ["ls-remote", "--heads", companionDir]))
+              .stdout;
+            yield* repo.commit("later.txt");
+            const approved = yield* repo.opening();
+            // Its address changes after the person was asked.
+            yield* runGit(repo.repoDir, ["remote", "set-url", "--push", remoteName, elsewhere]);
+            const refused = yield* repo.createApproved(approved).pipe(Effect.flip);
+            expect(refused.message).toContain("does not push only to");
+            expect((yield* runGit(repo.repoDir, ["ls-remote", "--heads", elsewhere])).stdout).toBe(
+              "",
+            );
+            expect(
+              (yield* runGit(repo.repoDir, ["ls-remote", "--heads", companionDir])).stdout,
+            ).toBe(before);
+            expect(asked).toBeGreaterThan(0);
+          }),
       );
 
       it.effect("a private push goes to a remote that pushes to the companion alone", () =>

@@ -140,7 +140,8 @@ model.
   reads the branch, the commit at its tip, the base, whether a push is needed, the remote and
   branch it goes to with every address the remote pushes to (shown and compared without the
   login, query or fragment a URL may carry), the branch on its remote the pull request is of
-  when nothing is pushed, and the hooks a push would run, all with repository hooks off, and
+  when nothing is pushed and the commit that branch is at as last fetched, and the hooks a
+  push would run, all with repository hooks off, and
   reads the hooks only when there is a push. The question names these (a private pull
   request's push is named as going to the repository's private companion, which the host
   makes only when the push is under way). `createPullRequest` given that reading back reads
@@ -148,8 +149,10 @@ model.
   as its last step before Git starts, that the branch is at the approved commit and that the
   remote still pushes to the approved addresses and branch, and sends that commit by its id;
   it refuses a push Git would have to pick the destination of, and does not report a branch
-  as already pushed unless it is at that commit. No push is made when none was approved, a
-  private push goes only to a remote that pushes to the companion alone, the pull request is
+  as already pushed unless it is at that commit. An approved push is made with submodule
+  recursion off, so it writes to that one remote whatever Git's configuration says. No push
+  is made when none was approved, a private push goes only to a remote that pushes to the
+  companion alone (checked again as that push starts), the pull request is
   opened against the approved base, and one already open for the branch is returned as it
   is. A remote's address changed in the moment between that last check and Git starting is
   not caught. Which repository the host's own tool opens the pull request in is the host's
