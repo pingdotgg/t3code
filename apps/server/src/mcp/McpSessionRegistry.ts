@@ -22,6 +22,8 @@ export interface McpCredentialRequest {
   readonly subagent?: boolean;
   /** Team member whose permissions bound this turn-scoped MCP token. */
   readonly actingMemberId?: TeamMemberId;
+  /** Synthetic team-automation principal for scheduled-task runs (never widened). */
+  readonly teamAutomation?: McpInvocationContext.McpTeamAutomationPrincipal;
 }
 
 export interface McpIssuedCredential {
@@ -137,6 +139,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           subagent: request.subagent === true,
           ...(request.actingMemberId !== undefined
             ? { actingMemberId: request.actingMemberId }
+            : {}),
+          ...(request.teamAutomation !== undefined
+            ? { teamAutomation: request.teamAutomation }
             : {}),
         },
         client: undefined,

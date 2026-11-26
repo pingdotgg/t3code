@@ -98,7 +98,8 @@ import {
   responseContextReference,
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { threadEnvironment } from "../../state/threads";
+import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
+import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -1100,11 +1101,24 @@ export function useComposerSend(input: ComposerSendInput) {
       environmentContexts: composerEnvironmentContextsSnapshot,
       messageText: messageTextForSend,
     } = sendSnapshot;
+    const activeProjectionForSend = isServerThread
+      ? appAtomRegistry.get(
+          environmentThreadDetails.quietThreadAtom({
+            environmentId,
+            threadId: threadIdForSend,
+          }),
+        )?.projection
+      : undefined;
+    const activeWorkflowForSend = activeProjectionForSend
+      ? deriveThreadQueueWorkflowState(activeProjectionForSend)
+      : null;
     const canSteerTeamActiveTurn =
       !isServerThread ||
       canCurrentMemberSteerActiveTurn({
         teamState: readTeamEnvironmentStateFromRegistry(appAtomRegistry, environmentId),
         threadId: threadIdForSend,
+        activeRunId: activeWorkflowForSend?.activeRun?.id ?? null,
+        activeUserMessageId: activeWorkflowForSend?.activeRun?.userMessageId ?? null,
       });
     const effectiveDispatchMode =
       !canSteerTeamActiveTurn && (phase === "running" || phase === "connecting")

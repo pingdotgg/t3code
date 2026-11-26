@@ -555,6 +555,7 @@ it("gates team thread notifications by creator, follow state, and completing tur
     team: {
       id: teamId,
       name: "Core",
+      displayName: "Core",
       defaultViewId: viewId,
       createdAt: "2026-09-13T07:00:00.000Z",
       updatedAt: "2026-09-13T07:00:00.000Z",
@@ -585,6 +586,8 @@ it("gates team thread notifications by creator, follow state, and completing tur
     assetsRevision: 0,
     myGitHubIdentity: null,
     automationGitHubIdentity: null,
+    scheduledTaskMetas: [],
+    scheduledTaskMetaByTaskId: new Map(),
   };
 
   state.teamStates.set("one", baseTeamState);
@@ -700,6 +703,7 @@ it("defers notifications and sound across team stream races without leaking coll
     team: {
       id: teamId,
       name: "Race Team",
+      displayName: "Race Team",
       defaultViewId: viewId,
       createdAt: "2026-09-13T07:00:00.000Z",
       updatedAt: "2026-09-13T07:00:00.000Z",
@@ -730,6 +734,8 @@ it("defers notifications and sound across team stream races without leaking coll
     assetsRevision: 0,
     myGitHubIdentity: null,
     automationGitHubIdentity: null,
+    scheduledTaskMetas: [],
+    scheduledTaskMetaByTaskId: new Map(),
   };
 
   // Race A: Shell completes while team metadata is still loading -> must NOT notify or play sound.

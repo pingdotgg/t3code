@@ -1,15 +1,19 @@
 import {
   canChangeThreadTeamView,
+  canManagePrivilegedTeamScheduledTasks,
+  canManageTeamScheduledTasks,
   canMemberAccessTeamEnvironment,
   canMemberCreateThreadInTeamView,
   canMemberInterruptTeamTurn,
   canMemberLeaveTeamThreadNote,
   canMemberManageTeamQueuedRun,
+  canMemberMutateTeamScheduledTask,
   canMemberPromoteTeamQueuedRun,
   canMemberReadTeamView,
   canMemberSteerActiveTeamTurn,
   canToggleTeamThreadLock,
   isTeamAdminRole,
+  isTeamOwnedThreadAttribution,
   isTeamProviderInstanceId,
   isTeamProviderInstanceIdForTeam,
   resolveTeamThreadEnvironmentAccess,
@@ -19,29 +23,56 @@ import {
   type ProjectId,
   type ProviderInstanceId,
   type RepositoryIdentity,
+  type ScheduledTaskId,
   type TeamEnvironment,
   type TeamMemberId,
   type TeamProjectAssignment,
   type TeamProvider,
+  type TeamScheduledTaskMeta,
   type TeamThreadEnvironmentAccess,
   type TeamThreadNote,
   type TeamThreadPostBlockReason,
+  type TeamTurnAuthorKind,
   type TeamView,
   type TeamWorkspace,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { TeamEnvironmentState } from "./state.ts";
 
-export function resolveTeamThreadCreatorPseudo(input: {
-  readonly environmentId: EnvironmentId;
-  readonly threadId: ThreadId;
-  readonly teamStates: ReadonlyMap<EnvironmentId, TeamEnvironmentState>;
-}): string | null {
-  const teamState = input.teamStates.get(input.environmentId);
+export function resolveTeamThreadCreatorPseudo(
+  input:
+    | {
+        readonly environmentId: EnvironmentId;
+        readonly threadId: ThreadId;
+        readonly teamStates: ReadonlyMap<EnvironmentId, TeamEnvironmentState>;
+      }
+    | {
+        readonly teamState: TeamEnvironmentState | null | undefined;
+        readonly threadId: ThreadId;
+      },
+): string | null {
+  const teamState =
+    "teamState" in input ? input.teamState : input.teamStates.get(input.environmentId);
   if (!teamState || teamState.team === null) return null;
   const attribution = teamState.attributionByThreadId.get(input.threadId);
   if (!attribution) return null;
+  if (isTeamOwnedThreadAttribution(attribution)) {
+    return teamState.team.displayName || attribution.teamDisplayName || teamState.team.name;
+  }
+  if (attribution.creatorMemberId === null) {
+    return teamState.team.displayName || attribution.teamDisplayName || teamState.team.name;
+  }
   return teamState.memberById.get(attribution.creatorMemberId)?.pseudo ?? attribution.creatorPseudo;
+}
+
+export function isTeamOwnedThread(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly threadId: ThreadId;
+}): boolean {
+  const { teamState, threadId } = input;
+  if (!teamState || teamState.team === null) return false;
+  const attribution = teamState.attributionByThreadId.get(threadId);
+  return attribution !== undefined && isTeamOwnedThreadAttribution(attribution);
 }
 
 /**
@@ -132,6 +163,7 @@ export function resolveTeamThreadNotificationDecision(input: {
   const allowed = shouldNotifyTeamMemberForThread({
     hasTeam: true,
     memberId: teamState.currentMember?.id ?? null,
+    ownerKind: attribution.ownerKind ?? (attribution.creatorMemberId === null ? "team" : "member"),
     creatorMemberId: attribution.creatorMemberId,
     isFollowing: teamState.followedThreadIds.has(threadId),
     activeTurnAuthorMemberId,
@@ -379,38 +411,77 @@ export function resolveTeamQueuedRunAuthorPseudo(input: {
   if (!teamState || teamState.team === null) return null;
   const turn = resolveTurnAttribution({ teamState, threadId, runId, userMessageId });
   if (!turn) return null;
+  if (turn.authorKind === "team_automation" || turn.authorMemberId === null) {
+    return teamState.team.displayName || teamState.team.name;
+  }
   return teamState.memberById.get(turn.authorMemberId)?.pseudo ?? turn.authorPseudo;
+}
+
+function resolveActiveTurnAuthorKindForClient(input: {
+  readonly teamState: TeamEnvironmentState;
+  readonly threadId: ThreadId;
+  readonly activeRunId?: string | null | undefined;
+  readonly activeUserMessageId?: string | null | undefined;
+}): TeamTurnAuthorKind | null {
+  const activeTurn = resolveTurnAttribution({
+    teamState: input.teamState,
+    threadId: input.threadId,
+    runId: input.activeRunId,
+    userMessageId: input.activeUserMessageId,
+  });
+  if (!activeTurn) return null;
+  return (
+    activeTurn.authorKind ?? (activeTurn.authorMemberId === null ? "team_automation" : "member")
+  );
 }
 
 export function canCurrentMemberSteerActiveTurn(input: {
   readonly teamState: TeamEnvironmentState | null | undefined;
   readonly threadId: ThreadId;
+  readonly activeRunId?: string | null | undefined;
+  readonly activeUserMessageId?: string | null | undefined;
 }): boolean {
-  const { teamState, threadId } = input;
+  const { teamState, threadId, activeRunId, activeUserMessageId } = input;
   if (!teamState || teamState.team === null) return true;
   const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
   if (attribution === null) return true;
   const view = resolveTeamThreadView({ teamState, threadId });
+  const activeTurnAuthorKind = resolveActiveTurnAuthorKindForClient({
+    teamState,
+    threadId,
+    activeRunId,
+    activeUserMessageId,
+  });
   return canMemberSteerActiveTeamTurn({
     member: teamState.currentMember,
     attribution,
     view,
+    activeTurnAuthorKind,
   });
 }
 
 export function canCurrentMemberPromoteQueuedRun(input: {
   readonly teamState: TeamEnvironmentState | null | undefined;
   readonly threadId: ThreadId;
+  readonly activeRunId?: string | null | undefined;
+  readonly activeUserMessageId?: string | null | undefined;
 }): boolean {
-  const { teamState, threadId } = input;
+  const { teamState, threadId, activeRunId, activeUserMessageId } = input;
   if (!teamState || teamState.team === null) return true;
   const attribution = teamState.attributionByThreadId.get(threadId) ?? null;
   if (attribution === null) return true;
   const view = resolveTeamThreadView({ teamState, threadId });
+  const activeTurnAuthorKind = resolveActiveTurnAuthorKindForClient({
+    teamState,
+    threadId,
+    activeRunId,
+    activeUserMessageId,
+  });
   return canMemberPromoteTeamQueuedRun({
     member: teamState.currentMember,
     attribution,
     view,
+    activeTurnAuthorKind,
   });
 }
 
@@ -445,7 +516,7 @@ export function canCurrentMemberInterruptThread(input: {
     userMessageId: activeUserMessageId,
   });
   const activeTurnAuthorMemberId: TeamMemberId | null =
-    activeTurn?.authorMemberId ?? attribution.creatorMemberId;
+    activeTurn !== undefined ? activeTurn.authorMemberId : attribution.creatorMemberId;
   const canInterrupt = canMemberInterruptTeamTurn({
     member,
     attribution,
@@ -514,8 +585,18 @@ export function resolveTeamThreadTurnControls(input: {
   });
   return {
     isTeamThread: true,
-    canSteerActiveTurn: canCurrentMemberSteerActiveTurn({ teamState, threadId }),
-    canPromoteQueuedRun: canCurrentMemberPromoteQueuedRun({ teamState, threadId }),
+    canSteerActiveTurn: canCurrentMemberSteerActiveTurn({
+      teamState,
+      threadId,
+      activeRunId,
+      activeUserMessageId,
+    }),
+    canPromoteQueuedRun: canCurrentMemberPromoteQueuedRun({
+      teamState,
+      threadId,
+      activeRunId,
+      activeUserMessageId,
+    }),
     canInterrupt: interrupt.canInterrupt,
     isExplicitAdminInterrupt: interrupt.isExplicitAdminInterrupt,
   };
@@ -713,4 +794,70 @@ export function listRemoteOnlyTeamProviders(
   return teamAssignment.teamState.providers.filter(
     (provider) => provider.enabled && provider.deliveryStrategy === "remote-only",
   );
+}
+
+export function resolveTeamScheduledTaskMeta(
+  teamState: TeamEnvironmentState | null | undefined,
+  taskId: ScheduledTaskId,
+): TeamScheduledTaskMeta | null {
+  if (!teamState || teamState.team === null) return null;
+  return teamState.scheduledTaskMetaByTaskId.get(taskId) ?? null;
+}
+
+export function canCurrentMemberConfigurePrivilegedTeamScheduledTask(
+  teamState: TeamEnvironmentState | null | undefined,
+): boolean {
+  if (!teamState || teamState.team === null || teamState.currentMember === null) return false;
+  return (
+    teamState.currentMember.status === "active" &&
+    canManagePrivilegedTeamScheduledTasks(teamState.currentMember.role)
+  );
+}
+
+export function canCurrentMemberCreateTeamScheduledTask(
+  teamState: TeamEnvironmentState | null | undefined,
+  environmentId?: EnvironmentId | null,
+): boolean {
+  if (!teamState || teamState.team === null) return true;
+  const member = teamState.currentMember;
+  if (member === null || member.status !== "active" || !canManageTeamScheduledTasks(member.role)) {
+    return false;
+  }
+  const targetEnv =
+    environmentId != null
+      ? (teamState.environmentById.get(environmentId) ??
+        teamState.environments.find((env) => env.isDefault) ??
+        null)
+      : (teamState.environments.find((env) => env.isDefault) ?? teamState.environments[0] ?? null);
+  if (targetEnv !== null && !canMemberAccessTeamEnvironment(member, targetEnv)) {
+    return false;
+  }
+  return listAccessibleTeamViews(teamState).length > 0;
+}
+
+export function canCurrentMemberMutateTeamScheduledTask(input: {
+  readonly teamState: TeamEnvironmentState | null | undefined;
+  readonly taskId: ScheduledTaskId;
+  readonly environmentId?: EnvironmentId | null;
+}): boolean {
+  const { teamState, taskId, environmentId } = input;
+  if (!teamState || teamState.team === null) return true;
+  const member = teamState.currentMember;
+  if (member === null || member.status !== "active") return false;
+  const meta = teamState.scheduledTaskMetaByTaskId.get(taskId) ?? null;
+  const targetEnvId = meta?.environmentId ?? environmentId ?? null;
+  const environment =
+    targetEnvId !== null
+      ? (teamState.environmentById.get(targetEnvId) ??
+        teamState.environments.find((env) => env.isDefault) ??
+        null)
+      : (teamState.environments.find((env) => env.isDefault) ?? null);
+  const viewId = meta?.viewId ?? teamState.team.defaultViewId;
+  const view = teamState.viewById.get(viewId) ?? resolveTeamDefaultView(teamState);
+  return canMemberMutateTeamScheduledTask({
+    member,
+    environment,
+    view,
+    existingMeta: meta ? { locked: meta.locked, mcpAccessLevel: meta.mcpAccessLevel } : null,
+  });
 }

@@ -13456,5 +13456,31 @@
       "v": "v"
     }
   ],
-  "f947fce5db2e50d6": "Tu identidad de GitHub"
+  "f947fce5db2e50d6": "Tu identidad de GitHub",
+  "d97e97834d9daca8": "Ver {title}",
+  "dc16df827cd79560": "Ver automatización",
+  "c36724cb93a21a54": "Ver tarea",
+  "d0d2ad9792462271": "Vista de destino",
+  "aa6a5418188bcf59": "Vista predeterminada",
+  "394f78d4634f44b1": "Nivel de acceso MCP",
+  "19584b520a4cf4ac": "Elevado (acceso MCP de administrador)",
+  "9951087766f7f13d": "Mínimo (limitado a vista y proyecto)",
+  "5932e39f562fbbdf": "Ámbito",
+  "43cc6cb2160c6829": "MCP elevado",
+  "00513a3b28638818": "Ver",
+  "f2412357542f0270": "La URL del webhook y el secreto de firma están ocultos para tu rol.",
+  "55355c820ab6f37a": "Esta tarea usa ajustes de propietario/administrador (hilos bloqueados o acceso MCP elevado) y es de solo lectura para tu rol.",
+  "74ef386a8c21d4c2": "Bloquear hilos generados",
+  "a6763e92e96e3c82": "Solo los propietarios y administradores pueden publicar en los hilos iniciados por esta tarea.",
+  "5cfa9f784e140f07": "Mínimo (limitado a vista y proyecto)",
+  "5aedf19bc7bf6f5d": "Elevado (acceso MCP de administrador)",
+  "6cfbfadf301a290b": "No se pudo actualizar el nombre para mostrar",
+  "f9b36b20b5dfa079": "Introduce un nombre para mostrar del equipo.",
+  "10dafc730b8d7b27": "Nombre para mostrar del equipo actualizado",
+  "07a77796f959b70c": "Los hilos de automatización del equipo ahora se muestran como {displayName}.",
+  "3b20060b626a77d5": "Por defecto, el nombre del equipo",
+  "f83b990c1244d596": "Nombre para mostrar del equipo",
+  "32bbfee4ac2f750f": "Se muestra como prefijo en los hilos de tareas programadas del equipo (por ejemplo, {displayName}: Daily triage).",
+  "6c037e26ecbefe2e": "Nombre para mostrar (opcional)",
+  "7d63b70705da219f": "Usa el nombre del equipo si se deja vacío. Se muestra como prefijo en los hilos de tareas programadas del equipo."
 }

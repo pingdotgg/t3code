@@ -13461,5 +13461,31 @@
       "v": "v"
     }
   ],
-  "f947fce5db2e50d6": "Deine GitHub-Identität"
+  "f947fce5db2e50d6": "Deine GitHub-Identität",
+  "d97e97834d9daca8": "{title} anzeigen",
+  "dc16df827cd79560": "Automatisierung anzeigen",
+  "c36724cb93a21a54": "Aufgabe anzeigen",
+  "d0d2ad9792462271": "Zielansicht",
+  "aa6a5418188bcf59": "Standardansicht",
+  "394f78d4634f44b1": "MCP-Zugriffsebene",
+  "19584b520a4cf4ac": "Erweitert (Admin-MCP-Zugriff)",
+  "9951087766f7f13d": "Minimal (auf Ansicht & Projekt beschränkt)",
+  "5932e39f562fbbdf": "Bereich",
+  "43cc6cb2160c6829": "Erweitertes MCP",
+  "00513a3b28638818": "Anzeigen",
+  "f2412357542f0270": "Webhook-URL und Signaturgeheimnis sind für deine Rolle ausgeblendet.",
+  "55355c820ab6f37a": "Diese Aufgabe verwendet Owner-/Admin-Einstellungen (gesperrte Threads oder erweiterten MCP-Zugriff) und ist für deine Rolle schreibgeschützt.",
+  "74ef386a8c21d4c2": "Erzeugte Threads sperren",
+  "a6763e92e96e3c82": "Nur Owner und Admins können in Threads posten, die von dieser Aufgabe gestartet wurden.",
+  "5cfa9f784e140f07": "Minimal (auf Ansicht & Projekt beschränkt)",
+  "5aedf19bc7bf6f5d": "Erweitert (Admin-MCP-Zugriff)",
+  "6cfbfadf301a290b": "Anzeigename konnte nicht aktualisiert werden",
+  "f9b36b20b5dfa079": "Gib einen Team-Anzeigenamen ein.",
+  "10dafc730b8d7b27": "Team-Anzeigename aktualisiert",
+  "07a77796f959b70c": "Team-Automatisierungs-Threads werden jetzt als {displayName} angezeigt.",
+  "3b20060b626a77d5": "Standardmäßig der Teamname",
+  "f83b990c1244d596": "Team-Anzeigename",
+  "32bbfee4ac2f750f": "Wird als Präfix für Team-Threads aus geplanten Aufgaben angezeigt (z. B. {displayName}: Daily triage).",
+  "6c037e26ecbefe2e": "Anzeigename (optional)",
+  "7d63b70705da219f": "Verwendet standardmäßig den Teamnamen, wenn leer. Wird als Präfix für Team-Threads aus geplanten Aufgaben angezeigt."
 }

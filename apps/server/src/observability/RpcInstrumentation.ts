@@ -279,6 +279,7 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamGetState]: "team",
   [TEAM_WS_METHODS.teamSubscribeState]: "team",
   [TEAM_WS_METHODS.teamInitialize]: "team",
+  [TEAM_WS_METHODS.teamUpdateDisplayName]: "team",
   [TEAM_WS_METHODS.teamUpdateMyPseudo]: "team",
   [TEAM_WS_METHODS.teamCreateInvite]: "team",
   [TEAM_WS_METHODS.teamRevokeInvite]: "team",

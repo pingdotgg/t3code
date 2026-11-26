@@ -62,6 +62,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import type { McpTeamAutomationPrincipal } from "../mcp/McpInvocationContext.ts";
 import {
   isTeamHubOnlyServer,
   TEAM_HUB_ONLY_AGENT_ERROR_MESSAGE,
@@ -268,6 +269,8 @@ export interface ProviderSessionManagerV2Shape {
     readonly initialProviderItemIdentityVersion?: 2;
     /** Team member whose turn is opening this session; author changes recycle warm sessions and rotate MCP tokens. */
     readonly actingMemberId?: TeamMemberId | null;
+    /** Synthetic team-automation principal for scheduled-task turns; principal changes recycle warm sessions and rotate MCP tokens. */
+    readonly teamAutomation?: McpTeamAutomationPrincipal | null;
     /** Attached remote environment GitHub forwarding context (used when running on a non-Team-Server runner bound to a Team Server). */
     readonly teamGitHubRemoteContext?: {
       readonly authorKind?: TeamGitHubTurnAuthorKind;
@@ -295,6 +298,7 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId: ThreadId;
     readonly actingMemberId?: TeamMemberId | null;
+    readonly teamAutomation?: McpTeamAutomationPrincipal | null;
   }) => Effect.Effect<ProviderSessionId | null>;
   readonly close: (
     providerSessionId: ProviderSessionId,
@@ -306,6 +310,7 @@ export interface ProviderSessionManagerV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly threadId?: ThreadId;
     readonly actingMemberId?: TeamMemberId | null;
+    readonly teamAutomation?: McpTeamAutomationPrincipal | null;
     readonly reason: ProviderSessionReleaseReason;
     readonly detail?: string;
     readonly preserveTeamEphemeralTokens?: boolean;
@@ -373,6 +378,10 @@ interface LiveSessionEntry {
   readonly ownerActingMemberId: TeamMemberId | null;
   /** Tracks which team member's MCP token is bound to each attached thread so author switches recycle warm sessions. */
   readonly actingMemberIdByThread: ReadonlyMap<ThreadId, TeamMemberId | null>;
+  /** Tracks the synthetic team-automation scope key owning this live process so automation principals never collide. */
+  readonly ownerTeamAutomationKey: string | null;
+  /** Tracks which team-automation scope key is bound to each attached thread. */
+  readonly teamAutomationKeyByThread: ReadonlyMap<ThreadId, string | null>;
   /** Tracks the workspace cwd this live process was opened in (used for bwrap recycle on cwd switch). */
   readonly openedCwd: string | null;
   /** Tracks remote team GitHub identity revision for warm-session recycle on attached remote runners. */
@@ -653,8 +662,21 @@ export const layerWithOptions = (
         ProviderSessionId.make(
           `${canonicalBaseSessionId(base)}${SANDBOX_THREAD_SESSION_SEPARATOR}${threadId}`,
         );
-      const automationScopedSessionId = (base: ProviderSessionId): ProviderSessionId =>
-        ProviderSessionId.make(`${canonicalBaseSessionId(base)}${AUTOMATION_SESSION_SUFFIX}`);
+      const teamAutomationPrincipalKey = (
+        principal: McpTeamAutomationPrincipal | null | undefined,
+      ): string | null =>
+        principal === undefined || principal === null
+          ? null
+          : `${principal.teamId}:${principal.taskId}:${principal.projectId}:${principal.environmentId}:${principal.viewId}:${principal.mcpAccessLevel}`;
+      const automationScopedSessionId = (
+        base: ProviderSessionId,
+        automationKey?: string | null,
+      ): ProviderSessionId =>
+        ProviderSessionId.make(
+          automationKey !== undefined && automationKey !== null
+            ? `${canonicalBaseSessionId(base)}${AUTOMATION_SESSION_SUFFIX}:${automationKey}`
+            : `${canonicalBaseSessionId(base)}${AUTOMATION_SESSION_SUFFIX}`,
+        );
       const isDerivedSessionId = (canonicalBase: ProviderSessionId, candidate: string): boolean => {
         const baseStr = String(canonicalBase);
         return (
@@ -662,6 +684,7 @@ export const layerWithOptions = (
           candidate.startsWith(`${baseStr}${MEMBER_SESSION_SEPARATOR}`) ||
           candidate.startsWith(`${baseStr}${SANDBOX_THREAD_SESSION_SEPARATOR}`) ||
           candidate === `${baseStr}${AUTOMATION_SESSION_SUFFIX}` ||
+          candidate.startsWith(`${baseStr}${AUTOMATION_SESSION_SUFFIX}:`) ||
           candidate.startsWith(
             `${baseStr}${AUTOMATION_SESSION_SUFFIX}${GHGEN_SESSION_SEPARATOR}`,
           ) ||
@@ -740,6 +763,7 @@ export const layerWithOptions = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
         actingMemberId?: TeamMemberId | null,
+        teamAutomation?: McpTeamAutomationPrincipal | null,
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
           ? mcpSessions
@@ -794,8 +818,10 @@ export const layerWithOptions = (
                       resolved.capabilities.has("background-wait") === backgroundWait.value) &&
                     // A credential issued while the lineage read failed is replaced once it works.
                     (resolved.thread.subagent === true) === subagent &&
-                    // Rotate MCP credentials whenever the acting team member changes between turns.
-                    (resolved.thread.actingMemberId ?? null) === (actingMemberId ?? null)
+                    // Rotate MCP credentials whenever the acting team member or automation principal changes between turns.
+                    (resolved.thread.actingMemberId ?? null) === (actingMemberId ?? null) &&
+                    teamAutomationPrincipalKey(resolved.thread.teamAutomation) ===
+                      teamAutomationPrincipalKey(teamAutomation)
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -810,6 +836,9 @@ export const layerWithOptions = (
                   subagent,
                   ...(actingMemberId !== undefined && actingMemberId !== null
                     ? { actingMemberId }
+                    : {}),
+                  ...(teamAutomation !== undefined && teamAutomation !== null
+                    ? { teamAutomation }
                     : {}),
                 });
                 yield* mcpSessions.set({
@@ -2121,6 +2150,7 @@ export const layerWithOptions = (
         readonly threadId: ThreadId;
         readonly providerInstanceId: ProviderInstanceId;
         readonly actingMemberId?: TeamMemberId | null;
+        readonly teamAutomation?: McpTeamAutomationPrincipal | null;
       }) =>
         Effect.suspend(() => {
           let attachedTo: ProviderAdapter.ProviderAdapterV2SessionRuntime | undefined;
@@ -2152,8 +2182,10 @@ export const layerWithOptions = (
                 input.threadId,
                 input.providerInstanceId,
                 input.actingMemberId,
+                input.teamAutomation,
               );
               preparedForCleanup = prepared;
+              const nextAutomationKey = teamAutomationPrincipalKey(input.teamAutomation);
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
                 yield* Ref.update(sessions, (current) => {
@@ -2164,11 +2196,14 @@ export const layerWithOptions = (
                   mcpCredentialIdByThread.set(input.threadId, mcpCredentialId);
                   const actingMemberIdByThread = new Map(entry.actingMemberIdByThread);
                   actingMemberIdByThread.set(input.threadId, input.actingMemberId ?? null);
+                  const teamAutomationKeyByThread = new Map(entry.teamAutomationKeyByThread);
+                  teamAutomationKeyByThread.set(input.threadId, nextAutomationKey);
                   const updated = new Map(current);
                   updated.set(key, {
                     ...entry,
                     mcpCredentialIdByThread,
                     actingMemberIdByThread,
+                    teamAutomationKeyByThread,
                   });
                   return updated;
                 });
@@ -2179,8 +2214,14 @@ export const layerWithOptions = (
                   if (entry === undefined) return current;
                   const actingMemberIdByThread = new Map(entry.actingMemberIdByThread);
                   actingMemberIdByThread.set(input.threadId, input.actingMemberId ?? null);
+                  const teamAutomationKeyByThread = new Map(entry.teamAutomationKeyByThread);
+                  teamAutomationKeyByThread.set(input.threadId, nextAutomationKey);
                   const updated = new Map(current);
-                  updated.set(key, { ...entry, actingMemberIdByThread });
+                  updated.set(key, {
+                    ...entry,
+                    actingMemberIdByThread,
+                    teamAutomationKeyByThread,
+                  });
                   return updated;
                 });
               }
@@ -3523,6 +3564,11 @@ export const layerWithOptions = (
                 Option.isSome(teamServiceOption) &&
                 (yield* teamServiceOption.value.isTeamConfigured());
               const nextAuthor = input.actingMemberId ?? null;
+              const nextAutomationKey = teamAutomationPrincipalKey(input.teamAutomation);
+              const hasExplicitTeamPrincipal =
+                input.actingMemberId !== undefined ||
+                input.teamAutomation !== undefined ||
+                teamConfiguredForSession;
               const nextRemoteIdentityKey = input.teamGitHubRemoteContext?.identityKey ?? null;
               const currentGitHubGen =
                 teamConfiguredForSession && Option.isSome(teamGitHubBrokerOption)
@@ -3554,10 +3600,14 @@ export const layerWithOptions = (
               );
               if (liveAfterLinks !== undefined) {
                 const previousAuthor = liveAfterLinks.actingMemberIdByThread.get(input.threadId);
+                const previousAutomationKey = liveAfterLinks.teamAutomationKeyByThread.get(
+                  input.threadId,
+                );
                 const authorSwitched =
-                  previousAuthor !== undefined &&
-                  previousAuthor !== nextAuthor &&
-                  (input.actingMemberId !== undefined || teamConfiguredForSession);
+                  hasExplicitTeamPrincipal &&
+                  ((previousAuthor !== undefined && previousAuthor !== nextAuthor) ||
+                    (previousAutomationKey !== undefined &&
+                      previousAutomationKey !== nextAutomationKey));
                 const githubCredentialRotated = yield* isStaleGitHubSession(
                   previousSessionId,
                   liveAfterLinks,
@@ -3597,25 +3647,33 @@ export const layerWithOptions = (
               }
               const currentSessions = yield* Ref.get(sessions);
               const baseEntry = currentSessions.get(sessionKey(baseSessionId));
-              const hasOtherMember = (entry: LiveSessionEntry, member: TeamMemberId | null) =>
+              const hasOtherMember = (
+                entry: LiveSessionEntry,
+                member: TeamMemberId | null,
+                automationKey: string | null,
+              ) =>
                 entry.ownerActingMemberId !== member ||
+                entry.ownerTeamAutomationKey !== automationKey ||
                 [...entry.actingMemberIdByThread.values()].some(
                   (existingMember) => existingMember !== member,
+                ) ||
+                [...entry.teamAutomationKeyByThread.values()].some(
+                  (existingKey) => existingKey !== automationKey,
                 );
               const principalSessionId =
                 nextAuthor !== null
                   ? memberScopedSessionId(baseSessionId, nextAuthor)
-                  : teamConfiguredForSession
-                    ? automationScopedSessionId(baseSessionId)
+                  : teamConfiguredForSession || nextAutomationKey !== null
+                    ? automationScopedSessionId(baseSessionId, nextAutomationKey)
                     : undefined;
               const existingPrincipalEntry =
                 principalSessionId === undefined
                   ? undefined
                   : currentSessions.get(sessionKey(principalSessionId));
               const baseOccupiedByOtherMember =
-                (input.actingMemberId !== undefined || teamConfiguredForSession) &&
+                hasExplicitTeamPrincipal &&
                 baseEntry !== undefined &&
-                hasOtherMember(baseEntry, nextAuthor);
+                hasOtherMember(baseEntry, nextAuthor, nextAutomationKey);
               // Isolate multi-thread sessions per thread when bwrap sandboxing is active (each
               // sandbox mounts strictly one thread's worktree), or by canonical base + principal
               // (member or team_automation) so author switches never collide with another principal.
@@ -3671,8 +3729,8 @@ export const layerWithOptions = (
               if (existingAfterCwdCheck !== undefined) {
                 const existing = existingAfterCwdCheck;
                 if (
-                  (input.actingMemberId !== undefined || teamConfiguredForSession) &&
-                  hasOtherMember(existing, nextAuthor)
+                  hasExplicitTeamPrincipal &&
+                  hasOtherMember(existing, nextAuthor, nextAutomationKey)
                 ) {
                   return yield* new ProviderSessionOpenError({
                     instanceId: input.modelSelection.instanceId,
@@ -3696,6 +3754,9 @@ export const layerWithOptions = (
                   ...(input.actingMemberId === undefined
                     ? {}
                     : { actingMemberId: input.actingMemberId }),
+                  ...(input.teamAutomation === undefined
+                    ? {}
+                    : { teamAutomation: input.teamAutomation }),
                 });
                 yield* Ref.update(activeSessionIdByThread, (current) =>
                   new Map(current).set(input.threadId, effectiveProviderSessionId),
@@ -3719,6 +3780,7 @@ export const layerWithOptions = (
                 input.threadId,
                 input.modelSelection.instanceId,
                 input.actingMemberId,
+                input.teamAutomation,
               );
               const mcpCredentialId = prepared.mcpCredentialId;
               let reservationDropped = mcpCredentialId === undefined;
@@ -3904,6 +3966,8 @@ export const layerWithOptions = (
                     : new Map([[input.threadId, mcpCredentialId]]),
                 ownerActingMemberId: input.actingMemberId ?? null,
                 actingMemberIdByThread: new Map([[input.threadId, input.actingMemberId ?? null]]),
+                ownerTeamAutomationKey: nextAutomationKey,
+                teamAutomationKeyByThread: new Map([[input.threadId, nextAutomationKey]]),
                 openedCwd: cwd,
                 remoteGitHubIdentityKey: nextRemoteIdentityKey,
                 supportsMultipleProviderThreads:
@@ -3987,10 +4051,13 @@ export const layerWithOptions = (
               input.threadId,
             );
             const threadEntry = current.get(sessionKey(threadSessionId));
+            const targetAutomationKey = teamAutomationPrincipalKey(input.teamAutomation);
             if (threadEntry !== undefined) {
               if (
-                input.actingMemberId === undefined ||
-                threadEntry.ownerActingMemberId === (input.actingMemberId ?? null)
+                (input.actingMemberId === undefined ||
+                  threadEntry.ownerActingMemberId === (input.actingMemberId ?? null)) &&
+                (input.teamAutomation === undefined ||
+                  threadEntry.ownerTeamAutomationKey === targetAutomationKey)
               ) {
                 return threadEntry.runtime.providerSessionId;
               }
@@ -4004,7 +4071,9 @@ export const layerWithOptions = (
                 return memberEntry.runtime.providerSessionId;
               }
             } else {
-              const autoEntry = current.get(sessionKey(automationScopedSessionId(base)));
+              const autoEntry = current.get(
+                sessionKey(automationScopedSessionId(base, targetAutomationKey)),
+              );
               if (autoEntry !== undefined) {
                 return autoEntry.runtime.providerSessionId;
               }
@@ -4013,7 +4082,9 @@ export const layerWithOptions = (
             if (
               baseEntry !== undefined &&
               (input.actingMemberId === undefined ||
-                baseEntry.ownerActingMemberId === (input.actingMemberId ?? null))
+                baseEntry.ownerActingMemberId === (input.actingMemberId ?? null)) &&
+              (input.teamAutomation === undefined ||
+                baseEntry.ownerTeamAutomationKey === targetAutomationKey)
             ) {
               return baseEntry.runtime.providerSessionId;
             }
@@ -4105,7 +4176,12 @@ export const layerWithOptions = (
         ),
         release: Effect.fn("ProviderSessionManager.release")(function* (input) {
           const current = yield* Ref.get(sessions);
-          if (input.threadId !== undefined || input.actingMemberId !== undefined) {
+          if (
+            input.threadId !== undefined ||
+            input.actingMemberId !== undefined ||
+            input.teamAutomation !== undefined
+          ) {
+            const targetAutomationKey = teamAutomationPrincipalKey(input.teamAutomation);
             let targetId: ProviderSessionId | null = null;
             if (input.threadId !== undefined) {
               const byThread = yield* Ref.get(activeSessionIdByThread);
@@ -4118,7 +4194,9 @@ export const layerWithOptions = (
               if (
                 entry !== undefined &&
                 (input.actingMemberId === undefined ||
-                  entry.ownerActingMemberId === (input.actingMemberId ?? null))
+                  entry.ownerActingMemberId === (input.actingMemberId ?? null)) &&
+                (input.teamAutomation === undefined ||
+                  entry.ownerTeamAutomationKey === targetAutomationKey)
               ) {
                 targetId = entry.runtime.providerSessionId;
               }
@@ -4133,7 +4211,9 @@ export const layerWithOptions = (
                   targetId = memberEntry.runtime.providerSessionId;
                 }
               } else {
-                const autoEntry = current.get(sessionKey(automationScopedSessionId(base)));
+                const autoEntry = current.get(
+                  sessionKey(automationScopedSessionId(base, targetAutomationKey)),
+                );
                 if (autoEntry !== undefined) {
                   targetId = autoEntry.runtime.providerSessionId;
                 }
@@ -4143,7 +4223,9 @@ export const layerWithOptions = (
                 if (
                   baseEntry !== undefined &&
                   (input.actingMemberId === undefined ||
-                    baseEntry.ownerActingMemberId === (input.actingMemberId ?? null))
+                    baseEntry.ownerActingMemberId === (input.actingMemberId ?? null)) &&
+                  (input.teamAutomation === undefined ||
+                    baseEntry.ownerTeamAutomationKey === targetAutomationKey)
                 ) {
                   targetId = baseEntry.runtime.providerSessionId;
                 }

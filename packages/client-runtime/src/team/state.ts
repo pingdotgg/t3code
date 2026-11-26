@@ -3,6 +3,7 @@ import {
   TEAM_WS_METHODS,
   type EnvironmentId,
   type ProjectId,
+  type ScheduledTaskId,
   type TeamAutomationGitHubIdentity,
   type TeamEnvironment,
   type TeamGitHubIdentity,
@@ -12,6 +13,7 @@ import {
   type TeamPreprompt,
   type TeamProjectAssignment,
   type TeamProvider,
+  type TeamScheduledTaskMeta,
   type TeamSkill,
   type TeamStateSnapshot,
   type TeamStateStreamEvent,
@@ -76,6 +78,8 @@ export interface TeamEnvironmentState {
   readonly assetsRevision: number;
   readonly myGitHubIdentity: TeamGitHubIdentity | null;
   readonly automationGitHubIdentity: TeamAutomationGitHubIdentity | null;
+  readonly scheduledTaskMetas: ReadonlyArray<TeamScheduledTaskMeta>;
+  readonly scheduledTaskMetaByTaskId: ReadonlyMap<ScheduledTaskId, TeamScheduledTaskMeta>;
 }
 
 export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
@@ -103,6 +107,8 @@ export const EMPTY_TEAM_ENVIRONMENT_STATE: TeamEnvironmentState = {
   assetsRevision: 0,
   myGitHubIdentity: null,
   automationGitHubIdentity: null,
+  scheduledTaskMetas: [],
+  scheduledTaskMetaByTaskId: new Map(),
 };
 
 function sortTeamEnvironments(
@@ -177,6 +183,10 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
   for (const [threadId, notes] of notesGrouped) {
     threadNotesByThreadId.set(threadId, sortTeamThreadNotes(notes));
   }
+  const scheduledTaskMetas = snapshot.scheduledTaskMetas ?? [];
+  const scheduledTaskMetaByTaskId = new Map<ScheduledTaskId, TeamScheduledTaskMeta>(
+    scheduledTaskMetas.map((meta) => [meta.taskId, meta] as const),
+  );
   return {
     team: snapshot.team,
     currentMember: snapshot.currentMember,
@@ -202,6 +212,8 @@ function buildStateFromSnapshot(snapshot: TeamStateSnapshot): TeamEnvironmentSta
     assetsRevision: snapshot.assetsRevision ?? 0,
     myGitHubIdentity: snapshot.myGitHubIdentity ?? null,
     automationGitHubIdentity: snapshot.automationGitHubIdentity ?? null,
+    scheduledTaskMetas,
+    scheduledTaskMetaByTaskId,
   };
 }
 
@@ -213,8 +225,33 @@ export function applyTeamStreamEvent(
     case "snapshot":
       return buildStateFromSnapshot(event.payload);
 
-    case "teamUpdated":
-      return { ...current, team: event.payload };
+    case "teamUpdated": {
+      const nextTeam = event.payload;
+      const attributionByThreadId = new Map(current.attributionByThreadId);
+      let attributionsChanged = false;
+      for (const [threadId, attribution] of attributionByThreadId) {
+        if (
+          (attribution.ownerKind === "team" || attribution.creatorMemberId === null) &&
+          attribution.teamDisplayName !== nextTeam.displayName
+        ) {
+          attributionByThreadId.set(threadId, {
+            ...attribution,
+            teamDisplayName: nextTeam.displayName,
+          });
+          attributionsChanged = true;
+        }
+      }
+      return {
+        ...current,
+        team: nextTeam,
+        ...(attributionsChanged
+          ? {
+              threadAttributions: [...attributionByThreadId.values()],
+              attributionByThreadId,
+            }
+          : {}),
+      };
+    }
 
     case "memberUpserted": {
       const member = event.payload;
@@ -352,6 +389,14 @@ export function applyTeamStreamEvent(
           attributionsChanged = true;
         }
       }
+      const scheduledTaskMetaByTaskId = new Map(current.scheduledTaskMetaByTaskId);
+      let metasChanged = false;
+      for (const [taskId, meta] of scheduledTaskMetaByTaskId) {
+        if (meta.viewId === viewId) {
+          scheduledTaskMetaByTaskId.set(taskId, { ...meta, viewId: fallbackViewId });
+          metasChanged = true;
+        }
+      }
       return {
         ...current,
         views: sortTeamViews(viewById.values()),
@@ -360,6 +405,12 @@ export function applyTeamStreamEvent(
           ? {
               threadAttributions: [...attributionByThreadId.values()],
               attributionByThreadId,
+            }
+          : {}),
+        ...(metasChanged
+          ? {
+              scheduledTaskMetas: [...scheduledTaskMetaByTaskId.values()],
+              scheduledTaskMetaByTaskId,
             }
           : {}),
       };
@@ -592,6 +643,27 @@ export function applyTeamStreamEvent(
         automationGitHubIdentity: event.payload.identity,
       };
     }
+
+    case "scheduledTaskMetaUpserted": {
+      const meta = event.payload;
+      const scheduledTaskMetaByTaskId = new Map(current.scheduledTaskMetaByTaskId);
+      scheduledTaskMetaByTaskId.set(meta.taskId, meta);
+      return {
+        ...current,
+        scheduledTaskMetas: [...scheduledTaskMetaByTaskId.values()],
+        scheduledTaskMetaByTaskId,
+      };
+    }
+
+    case "scheduledTaskMetaDeleted": {
+      const scheduledTaskMetaByTaskId = new Map(current.scheduledTaskMetaByTaskId);
+      if (!scheduledTaskMetaByTaskId.delete(event.payload.taskId)) return current;
+      return {
+        ...current,
+        scheduledTaskMetas: [...scheduledTaskMetaByTaskId.values()],
+        scheduledTaskMetaByTaskId,
+      };
+    }
   }
 }
 
@@ -628,6 +700,10 @@ export function createTeamEnvironmentAtoms<R, E>(
     initialize: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:initialize",
       tag: TEAM_WS_METHODS.teamInitialize,
+    }),
+    updateDisplayName: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:team:update-display-name",
+      tag: TEAM_WS_METHODS.teamUpdateDisplayName,
     }),
     updateMyPseudo: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:team:update-my-pseudo",

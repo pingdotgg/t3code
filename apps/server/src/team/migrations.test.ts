@@ -26,6 +26,7 @@ describe("team sidecar migrations", () => {
       expect(tables.map((row) => row.name)).toEqual([
         "team_asset_revisions",
         "team_asset_tombstones",
+        "team_automation_turn_scopes",
         "team_environments",
         "team_github_automation_credentials",
         "team_github_member_credentials",
@@ -41,6 +42,7 @@ describe("team sidecar migrations", () => {
         "team_provider_usage",
         "team_providers",
         "team_relay_binding",
+        "team_scheduled_task_meta",
         "team_schema_migrations",
         "team_session_meta",
         "team_session_scope_ceilings",

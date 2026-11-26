@@ -433,18 +433,23 @@ export function useQueuedRunEdit(input: {
 
   // The same move as the queued row's "Send now" while a turn runs.
   const steerSavedRun = async (edited: EditingQueuedRun) => {
-    const teamState = readTeamEnvironmentStateFromRegistry(appAtomRegistry, environmentId);
-    if (
-      teamState !== null &&
-      !canCurrentMemberPromoteQueuedRun({ teamState, threadId: edited.threadId })
-    ) {
-      return;
-    }
     const projection = appAtomRegistry.get(
       environmentThreadDetails.quietThreadAtom({ environmentId, threadId: edited.threadId }),
     )?.projection;
     if (!projection) return;
     const workflow = deriveThreadQueueWorkflowState(projection);
+    const teamState = readTeamEnvironmentStateFromRegistry(appAtomRegistry, environmentId);
+    if (
+      teamState !== null &&
+      !canCurrentMemberPromoteQueuedRun({
+        teamState,
+        threadId: edited.threadId,
+        activeRunId: workflow.activeRun?.id ?? null,
+        activeUserMessageId: workflow.activeRun?.userMessageId ?? null,
+      })
+    ) {
+      return;
+    }
     const queued = workflow.queuedRuns.find(({ run }) => run.id === edited.runId);
     if (
       queued === undefined ||

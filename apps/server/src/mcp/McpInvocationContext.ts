@@ -5,11 +5,16 @@ import {
   McpCapabilityUnavailableError,
   OrchestratorMcpFailure,
   PreviewAutomationUnavailableError,
+  type ProjectId,
   type ProviderInstanceId,
   type ProviderInteractionMode,
   type OrchestrationV2LinkedSender,
   type RuntimeMode,
+  type ScheduledTaskId,
+  type TeamId,
   type TeamMemberId,
+  type TeamScheduledTaskMcpAccessLevel,
+  type TeamViewId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -29,6 +34,15 @@ const ALL_MCP_CAPABILITIES = [
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
+export interface McpTeamAutomationPrincipal {
+  readonly taskId: ScheduledTaskId;
+  readonly teamId: TeamId;
+  readonly projectId: ProjectId;
+  readonly environmentId: EnvironmentId;
+  readonly viewId: TeamViewId;
+  readonly mcpAccessLevel: TeamScheduledTaskMcpAccessLevel;
+}
+
 export interface McpThreadCaller {
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
@@ -37,6 +51,8 @@ export interface McpThreadCaller {
   readonly subagent?: boolean;
   /** Team member whose permissions bound this turn-scoped MCP token (never widened). */
   readonly actingMemberId?: TeamMemberId;
+  /** Synthetic team-automation principal bounding scheduled-task MCP calls (never widened). */
+  readonly teamAutomation?: McpTeamAutomationPrincipal;
 }
 
 export interface McpClientCaller {

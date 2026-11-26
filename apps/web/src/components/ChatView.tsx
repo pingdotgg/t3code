@@ -58,6 +58,7 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import {
   filterProviderEntriesForTeamProject,
   resolveProjectTeamAssignment,
+  resolveTeamThreadCreatorPseudo,
 } from "@t3tools/client-runtime/team";
 import { resolveWorktreeRepositorySelection } from "@t3tools/client-runtime/state/thread-repositories";
 import { useTeamStatesByEnvironment } from "../state/team";
@@ -2853,10 +2854,10 @@ export default function ChatView(props: ChatViewProps) {
     isTeamNoteModeRequested;
   const teamThreadAttribution =
     teamThreadContext.teamState.attributionByThreadId.get(threadId) ?? null;
-  const teamThreadOwnerPseudo = teamThreadAttribution
-    ? (teamThreadContext.teamState.memberById.get(teamThreadAttribution.creatorMemberId)?.pseudo ??
-      teamThreadAttribution.creatorPseudo)
-    : null;
+  const teamThreadOwnerPseudo = resolveTeamThreadCreatorPseudo({
+    teamState: teamThreadContext.teamState,
+    threadId,
+  });
   const teamThreadEnvLabel = teamThreadAttribution?.executionEnvironmentLabel ?? null;
   const hasPendingTeamNotes =
     isServerThread &&

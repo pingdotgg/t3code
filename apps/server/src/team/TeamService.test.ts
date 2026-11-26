@@ -21,6 +21,7 @@ import {
   ProviderInstanceId,
   RunId,
   RuntimeRequestId,
+  ScheduledTaskId,
   TeamMemberId,
   ThreadId,
   effectiveTeamThreadNoteHash,
@@ -28,6 +29,7 @@ import {
   type ModelSelection,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadProjection,
+  type ScheduledTask,
   type TeamStateStreamEvent,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -116,6 +118,7 @@ describe("TeamService", () => {
         assetsRevision: 0,
         myGitHubIdentity: null,
         automationGitHubIdentity: null,
+        scheduledTaskMetas: [],
       });
 
       const threadId = ThreadId.make("thread-personal-1");
@@ -3402,6 +3405,235 @@ describe("TeamService", () => {
         const aliceFinalState = yield* team.getState(ownerSession.sessionId);
         expect(aliceFinalState.myGitHubIdentity).toBeNull();
         expect(aliceFinalState.automationGitHubIdentity).toBeNull();
+      }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "Milestone 8: manages team displayName, scheduled-task RBAC/anti-escalation/webhook redaction, and team-owned threads",
+    () =>
+      Effect.gen(function* () {
+        const team = yield* TeamService.TeamService;
+        const repo = yield* TeamRepository.TeamRepository;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const ownerSession = yield* sessions.issue({ subject: "m8-owner" });
+        const init = yield* team.initializeTeam({
+          sessionId: ownerSession.sessionId,
+          payload: { name: "Platform Team", ownerPseudo: "alice" },
+        });
+        // displayName defaults to team name when omitted.
+        expect(init.team.displayName).toBe("Platform Team");
+
+        const modoInvite = yield* team.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "modo", prefilledPseudo: "charlie" },
+        });
+        const modoRedeemed = yield* team.redeemInvite({
+          token: modoInvite.token,
+          pseudo: "charlie",
+          client: testClient,
+        });
+        const modoSession = yield* sessions.verify(modoRedeemed.accessToken);
+
+        const regularInvite = yield* team.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob" },
+        });
+        const regularRedeemed = yield* team.redeemInvite({
+          token: regularInvite.token,
+          pseudo: "bob",
+          client: testClient,
+        });
+        const regularSession = yield* sessions.verify(regularRedeemed.accessToken);
+
+        // Only owner/admin can update displayName.
+        expect(
+          (yield* Effect.exit(
+            team.updateDisplayName({
+              sessionId: modoSession.sessionId,
+              payload: { displayName: "Blocked Bot" },
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        const updatedWorkspace = yield* team.updateDisplayName({
+          sessionId: ownerSession.sessionId,
+          payload: { displayName: "Platform Bot" },
+        });
+        expect(updatedWorkspace.displayName).toBe("Platform Bot");
+
+        const projectId = ProjectId.make("proj-m8");
+        const baseTaskInput = {
+          title: "Daily Triage",
+          prompt: "Triage open issues",
+          enabled: true,
+          schedule: { type: "webhook" as const, signature: null },
+          projectId,
+          threadId: null,
+          workspaceStrategy: { type: "root" as const },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("devReplay"),
+            model: "multi-turn",
+          },
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          creationSource: "web" as const,
+        };
+
+        // Regular cannot create tasks.
+        expect(
+          (yield* Effect.exit(
+            team.authorizeScheduledTaskUpsert({
+              sessionId: regularSession.sessionId,
+              input: baseTaskInput,
+              existingTask: null,
+            }),
+          ))._tag,
+        ).toBe("Failure");
+
+        // Modo can create a minimal unlocked task, but CANNOT set locked or elevated.
+        const modoAuthOpt = yield* team.authorizeScheduledTaskUpsert({
+          sessionId: modoSession.sessionId,
+          input: baseTaskInput,
+          existingTask: null,
+        });
+        expect(Option.isSome(modoAuthOpt)).toBe(true);
+        const minTaskId = ScheduledTaskId.make("task-m8-min");
+        yield* team.saveScheduledTaskMeta({
+          ...Option.getOrThrow(modoAuthOpt),
+          taskId: minTaskId,
+        });
+
+        expect(
+          (yield* Effect.exit(
+            team.authorizeScheduledTaskUpsert({
+              sessionId: modoSession.sessionId,
+              input: { ...baseTaskInput, teamMeta: { locked: true } },
+              existingTask: null,
+            }),
+          ))._tag,
+        ).toBe("Failure");
+        expect(
+          (yield* Effect.exit(
+            team.authorizeScheduledTaskUpsert({
+              sessionId: modoSession.sessionId,
+              input: { ...baseTaskInput, teamMeta: { mcpAccessLevel: "elevated" } },
+              existingTask: null,
+            }),
+          ))._tag,
+        ).toBe("Failure");
+
+        // Owner creates a locked + elevated task -> modo cannot mutate or see its webhook.
+        const elevAuthOpt = yield* team.authorizeScheduledTaskUpsert({
+          sessionId: ownerSession.sessionId,
+          input: {
+            ...baseTaskInput,
+            title: "Admin Release",
+            teamMeta: { locked: true, mcpAccessLevel: "elevated" },
+          },
+          existingTask: null,
+        });
+        const elevTaskId = ScheduledTaskId.make("task-m8-elev");
+        yield* team.saveScheduledTaskMeta({
+          ...Option.getOrThrow(elevAuthOpt),
+          taskId: elevTaskId,
+        });
+
+        expect(
+          (yield* Effect.exit(team.assertCanMutateScheduledTask(modoSession.sessionId, elevTaskId)))
+            ._tag,
+        ).toBe("Failure");
+        yield* team.assertCanMutateScheduledTask(modoSession.sessionId, minTaskId);
+        yield* team.assertCanMutateScheduledTask(ownerSession.sessionId, elevTaskId);
+
+        const mkTask = (id: ScheduledTaskId, title: string): ScheduledTask => ({
+          id,
+          title,
+          prompt: "Prompt",
+          enabled: true,
+          schedule: { type: "webhook", signature: null },
+          webhook: { path: `/api/webhooks/${id}`, url: null, hasSecret: true },
+          projectId,
+          threadId: null,
+          workspaceStrategy: { type: "root" },
+          modelSelection: baseTaskInput.modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          nextRunAt: null,
+          lastRunAt: null,
+          lastRunStatus: "never",
+          lastRunError: null,
+          runCount: 0,
+        });
+        const allTasks = [mkTask(minTaskId, "Daily Triage"), mkTask(elevTaskId, "Admin Release")];
+
+        // Regular sees both tasks read-only with BOTH webhooks redacted.
+        const regularVisible = yield* team.filterReadableScheduledTasks(
+          regularSession.sessionId,
+          allTasks,
+        );
+        expect(regularVisible).toHaveLength(2);
+        expect(regularVisible.every((t) => t.webhook === undefined)).toBe(true);
+
+        // Modo sees webhook for minimal task, NOT for locked/elevated task.
+        const modoVisible = yield* team.filterReadableScheduledTasks(
+          modoSession.sessionId,
+          allTasks,
+        );
+        expect(modoVisible.find((t) => t.id === minTaskId)?.webhook).toBeDefined();
+        expect(modoVisible.find((t) => t.id === elevTaskId)?.webhook).toBeUndefined();
+
+        // Owner sees webhooks for both tasks.
+        const ownerVisible = yield* team.filterReadableScheduledTasks(
+          ownerSession.sessionId,
+          allTasks,
+        );
+        expect(ownerVisible.every((t) => t.webhook !== undefined)).toBe(true);
+
+        // Team-owned thread attribution & turn principal + interrupt/notification checks.
+        const autoThreadId = ThreadId.make("thread-m8-auto");
+        const prepared = yield* team.prepareTeamAutomationThreadAttribution({
+          taskId: minTaskId,
+          threadId: autoThreadId,
+          projectId,
+        });
+        expect(prepared).toBe(true);
+        const attr = Option.getOrThrow(yield* repo.getThreadAttribution(autoThreadId));
+        expect(attr.ownerKind).toBe("team");
+        expect(attr.creatorMemberId).toBeNull();
+        expect(attr.teamDisplayName).toBe("Platform Bot");
+
+        const principalOpt = yield* team.recordTeamAutomationTurn({
+          threadId: autoThreadId,
+          turnId: "run-m8-1",
+          taskId: minTaskId,
+          projectId,
+        });
+        expect(Option.isSome(principalOpt)).toBe(true);
+        expect(Option.getOrThrow(principalOpt).mcpAccessLevel).toBe("minimal");
+
+        const resolvedPrincipal = yield* team.resolveTurnPrincipal({
+          threadId: autoThreadId,
+          runId: "run-m8-1",
+        });
+        expect(Option.getOrThrow(resolvedPrincipal).kind).toBe("team_automation");
+
+        // Zero default notifications on team-owned thread; owner can interrupt, modo cannot.
+        const defaultRecipients = yield* team.listNotificationRecipientsForThread({
+          threadId: autoThreadId,
+          turnId: "run-m8-1",
+        });
+        expect(defaultRecipients.isTeamThread).toBe(true);
+        expect(defaultRecipients.recipientMemberIds).toHaveLength(0);
+        yield* team.assertCanInterruptThread(ownerSession.sessionId, autoThreadId, "run-m8-1");
+        expect(
+          (yield* Effect.exit(
+            team.assertCanInterruptThread(modoSession.sessionId, autoThreadId, "run-m8-1"),
+          ))._tag,
+        ).toBe("Failure");
       }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
   );
 });

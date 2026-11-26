@@ -117,14 +117,19 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       yield* assertLocalAgentMcpExecutionAllowed;
-      yield* TeamMcpAccess.assertCanUseScheduledTasks();
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
-      if (!tasks.some((task) => task.id === input.taskId))
+      const targetTask = tasks.find((task) => task.id === input.taskId);
+      if (targetTask === undefined)
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
+      yield* TeamMcpAccess.assertCanMutateScheduledTask(
+        targetTask.id,
+        targetTask.threadId === null ? null : ThreadId.make(targetTask.threadId),
+        { isRunNow: true },
+      );
       const { task, threadId } = yield* scheduler
         .runNow({ id: input.taskId })
         .pipe(
@@ -214,6 +219,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           const targetThreadId = ThreadId.make(`${commandId}:fork`);
           const teamChildAuth = yield* TeamMcpAccess.authorizeChildThreadCreation({
             sourceThreadId: projection.thread.id,
+            projectId: projection.thread.projectId,
           });
           const maybeTeam = yield* Effect.serviceOption(TeamService.TeamService);
           const preparedAttribution = Option.isSome(maybeTeam)
@@ -221,9 +227,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
                 .prepareThreadInheritedFromParent({
                   parentThreadId: projection.thread.id,
                   threadId: targetThreadId,
-                  ...(Option.isSome(teamChildAuth)
-                    ? { creatorMemberId: teamChildAuth.value.memberId }
-                    : {}),
+                  ...(Option.isSome(teamChildAuth) && teamChildAuth.value.teamAutomation !== null
+                    ? { teamAutomation: teamChildAuth.value.teamAutomation }
+                    : Option.isSome(teamChildAuth) && teamChildAuth.value.memberId !== null
+                      ? { creatorMemberId: teamChildAuth.value.memberId }
+                      : {}),
                 })
                 .pipe(
                   Effect.mapError(
@@ -258,9 +266,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
             yield* maybeTeam.value.recordThreadInheritedFromParent({
               parentThreadId: projection.thread.id,
               threadId: targetThreadId,
-              ...(Option.isSome(teamChildAuth)
-                ? { creatorMemberId: teamChildAuth.value.memberId }
-                : {}),
+              ...(Option.isSome(teamChildAuth) && teamChildAuth.value.teamAutomation !== null
+                ? { teamAutomation: teamChildAuth.value.teamAutomation }
+                : Option.isSome(teamChildAuth) && teamChildAuth.value.memberId !== null
+                  ? { creatorMemberId: teamChildAuth.value.memberId }
+                  : {}),
             });
           }
           return { sequence: result.sequence, targetThreadId };

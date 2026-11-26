@@ -13,6 +13,8 @@ import {
   type RuntimeMode,
   type ProviderInteractionMode,
   type ServerSettings,
+  type TeamScheduledTaskMcpAccessLevel,
+  type TeamScheduledTaskMeta,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -152,6 +154,9 @@ export interface DraftState {
   readonly filters: ReadonlyArray<WebhookFilterDraft>;
   /** The filter rows the form opened with. */
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
+  readonly teamViewId: string;
+  readonly teamLocked: boolean;
+  readonly teamMcpAccessLevel: TeamScheduledTaskMcpAccessLevel;
 }
 
 export const WEBHOOK_SIGNATURE_DEFAULTS = {
@@ -308,7 +313,10 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   };
 }
 
-export function taskToDraft(task: ScheduledTask): DraftState {
+export function taskToDraft(
+  task: ScheduledTask,
+  teamMeta?: TeamScheduledTaskMeta | null,
+): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
   const weekdays =
@@ -366,6 +374,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         : "",
     filters,
     savedFilters: filters,
+    teamViewId: teamMeta?.viewId ?? "",
+    teamLocked: teamMeta?.locked ?? false,
+    teamMcpAccessLevel: teamMeta?.mcpAccessLevel ?? "minimal",
   };
 }
 

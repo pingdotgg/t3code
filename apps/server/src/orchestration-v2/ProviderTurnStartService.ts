@@ -23,6 +23,7 @@ import {
   RunAttemptId,
   NodeId,
   type EnvironmentId,
+  type ScheduledTaskId,
   type TeamGitHubRemoteLeaseIssueResponse,
   type TeamGitHubTurnAuthorKind,
   type TeamMemberId,
@@ -92,6 +93,7 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import type { McpTeamAutomationPrincipal } from "../mcp/McpInvocationContext.ts";
 import * as TeamAssetsRepository from "../team/TeamAssetsRepository.ts";
 import * as TeamGitHubBroker from "../team/TeamGitHubBroker.ts";
 import * as TeamProviderManager from "../team/TeamProviderManager.ts";
@@ -277,8 +279,8 @@ const startFailureMessage = (error: Error): string => {
   );
 };
 
-export const resolveIsScheduledAutomationRun = Effect.fn(
-  "ProviderTurnStartService.resolveIsScheduledAutomationRun",
+const resolveScheduledAutomationTaskId = Effect.fn(
+  "ProviderTurnStartService.resolveScheduledAutomationTaskId",
 )(function* <E = never>(input: {
   readonly threadId: ThreadId;
   readonly run: OrchestrationV2Run;
@@ -288,7 +290,7 @@ export const resolveIsScheduledAutomationRun = Effect.fn(
     threadId: ThreadId,
     messageIds: ReadonlyArray<MessageId>,
   ) => Effect.Effect<ReadonlyMap<MessageId, OrchestrationV2ConversationMessage>, E>;
-}) {
+}): Effect.fn.Return<ScheduledTaskId | null, E> {
   const runsById = new Map(input.runs.map((candidate) => [candidate.id, candidate]));
   const messagesById = new Map(input.initialMessages.map((candidate) => [candidate.id, candidate]));
   const visited = new Set<RunId>();
@@ -307,7 +309,7 @@ export const resolveIsScheduledAutomationRun = Effect.fn(
       }
     }
     if (cursorMsg?.scheduledTaskId !== undefined) {
-      return true;
+      return cursorMsg.scheduledTaskId;
     }
     if (
       cursorMsg?.createdBy === "user" &&
@@ -316,7 +318,7 @@ export const resolveIsScheduledAutomationRun = Effect.fn(
       cursorMsg.delegatedCompletion === undefined &&
       cursorMsg.notification === undefined
     ) {
-      return false;
+      return null;
     }
     const cursorPriorExecutedRunId =
       cursorMsg?.notification !== undefined
@@ -335,12 +337,24 @@ export const resolveIsScheduledAutomationRun = Effect.fn(
       cursorMsg?.delegatedCompletion?.parentRunId ??
       cursorPriorExecutedRunId;
     if (nextRunId === undefined) {
-      return false;
+      return null;
     }
     cursorRun = runsById.get(nextRunId);
   }
-  return false;
+  return null;
 });
+
+export const resolveIsScheduledAutomationRun = <E = never>(input: {
+  readonly threadId: ThreadId;
+  readonly run: OrchestrationV2Run;
+  readonly runs: ReadonlyArray<OrchestrationV2Run>;
+  readonly initialMessages: ReadonlyArray<OrchestrationV2ConversationMessage>;
+  readonly loadMessagesById: (
+    threadId: ThreadId,
+    messageIds: ReadonlyArray<MessageId>,
+  ) => Effect.Effect<ReadonlyMap<MessageId, OrchestrationV2ConversationMessage>, E>;
+}): Effect.Effect<boolean, E> =>
+  resolveScheduledAutomationTaskId(input).pipe(Effect.map((taskId) => taskId !== null));
 
 export interface ProviderTurnStartServiceV2Shape {
   readonly start: (input: {
@@ -1149,7 +1163,7 @@ export const layer: Layer.Layer<
       // Walk the continuation chain (lazily fetching pruned ancestor messages via ProjectionStore)
       // so restart, usage-limit, and delegated continuations of a scheduled automation run preserve
       // `team_automation` instead of failing attribution or borrowing a member's PAT.
-      const isScheduledAutomationRun = yield* resolveIsScheduledAutomationRun({
+      const scheduledAutomationTaskId = yield* resolveScheduledAutomationTaskId({
         threadId: projection.thread.id,
         run,
         runs: projection.runs,
@@ -1159,25 +1173,35 @@ export const layer: Layer.Layer<
             ? projectionStore.getMessagesById(threadId, messageIds)
             : Effect.succeed(new Map<MessageId, OrchestrationV2ConversationMessage>()),
       });
+      const isScheduledAutomationRun = scheduledAutomationTaskId !== null;
       const isTeamConfigured =
         Option.isSome(teamServiceOption) && (yield* teamServiceOption.value.isTeamConfigured());
       type TeamTurnPrincipal =
         | { readonly kind: "member"; readonly memberId: TeamMemberId }
-        | { readonly kind: "team_automation" };
+        | { readonly kind: "team_automation"; readonly principal?: McpTeamAutomationPrincipal };
       let teamTurnPrincipal: TeamTurnPrincipal | null = null;
       let actingMemberId: TeamMemberId | undefined;
+      let teamAutomation: McpTeamAutomationPrincipal | undefined;
       if (isTeamConfigured && Option.isSome(teamServiceOption)) {
-        const resolvedAuthor = yield* teamServiceOption.value.resolveTurnAuthorMemberId({
-          threadId: projection.thread.id,
-          runId: run.id,
-          userMessageId: run.userMessageId,
-          ...(continuedFromRunId === undefined ? {} : { continuedFromRunId }),
-        });
-        if (Option.isSome(resolvedAuthor)) {
+        const resolvedPrincipal =
+          typeof teamServiceOption.value.resolveTurnPrincipal === "function"
+            ? yield* teamServiceOption.value.resolveTurnPrincipal({
+                threadId: projection.thread.id,
+                runId: run.id,
+                userMessageId: run.userMessageId,
+                ...(continuedFromRunId === undefined ? {} : { continuedFromRunId }),
+              })
+            : (yield* teamServiceOption.value.resolveTurnAuthorMemberId({
+                threadId: projection.thread.id,
+                runId: run.id,
+                userMessageId: run.userMessageId,
+                ...(continuedFromRunId === undefined ? {} : { continuedFromRunId }),
+              })).pipe(Option.map((memberId) => ({ kind: "member" as const, memberId })));
+        if (Option.isSome(resolvedPrincipal) && resolvedPrincipal.value.kind === "member") {
           // Persist resolved attribution onto run.id so multi-hop continuations and active-turn checks stay authoritative.
           const persisted = yield* Effect.result(
             teamServiceOption.value.requireTurnAuthoredByMember({
-              memberId: resolvedAuthor.value,
+              memberId: resolvedPrincipal.value.memberId,
               threadId: projection.thread.id,
               turnId: run.id,
             }),
@@ -1191,11 +1215,44 @@ export const layer: Layer.Layer<
             });
             return;
           }
-          actingMemberId = resolvedAuthor.value;
-          teamTurnPrincipal = { kind: "member", memberId: resolvedAuthor.value };
-        } else if (isScheduledAutomationRun) {
-          // Scheduled automation turns (and their continuations) execute under team_automation.
-          teamTurnPrincipal = { kind: "team_automation" };
+          actingMemberId = resolvedPrincipal.value.memberId;
+          teamTurnPrincipal = { kind: "member", memberId: resolvedPrincipal.value.memberId };
+        } else if (
+          Option.isSome(resolvedPrincipal) &&
+          resolvedPrincipal.value.kind === "team_automation"
+        ) {
+          if (typeof teamServiceOption.value.recordTeamAutomationTurn === "function") {
+            yield* teamServiceOption.value.recordTeamAutomationTurn({
+              threadId: projection.thread.id,
+              turnId: run.id,
+              principal: resolvedPrincipal.value.principal,
+            });
+          }
+          teamAutomation = resolvedPrincipal.value.principal;
+          teamTurnPrincipal = {
+            kind: "team_automation",
+            principal: resolvedPrincipal.value.principal,
+          };
+        } else if (scheduledAutomationTaskId !== null) {
+          // Scheduled automation turns (and their continuations) execute under synthetic team_automation.
+          const persistedPrincipal =
+            typeof teamServiceOption.value.recordTeamAutomationTurn === "function"
+              ? yield* teamServiceOption.value.recordTeamAutomationTurn({
+                  threadId: projection.thread.id,
+                  turnId: run.id,
+                  taskId: scheduledAutomationTaskId,
+                  projectId: projection.thread.projectId,
+                })
+              : Option.none<McpTeamAutomationPrincipal>();
+          if (Option.isSome(persistedPrincipal)) {
+            teamAutomation = persistedPrincipal.value;
+            teamTurnPrincipal = {
+              kind: "team_automation",
+              principal: persistedPrincipal.value,
+            };
+          } else {
+            teamTurnPrincipal = { kind: "team_automation" };
+          }
         } else {
           yield* settleStartFailure({
             signal: "team-turn-attribution-missing",
@@ -1242,6 +1299,7 @@ export const layer: Layer.Layer<
           providerSessionId,
           threadId: projection.thread.id,
           ...(actingMemberId === undefined ? {} : { actingMemberId }),
+          ...(teamAutomation === undefined ? {} : { teamAutomation }),
         });
         const prepResult = yield* Effect.result(
           teamProviderManagerOption.value.prepareForTurn({
@@ -1273,6 +1331,7 @@ export const layer: Layer.Layer<
               providerSessionId: activeWarmSessionId,
               threadId: projection.thread.id,
               ...(actingMemberId === undefined ? {} : { actingMemberId }),
+              ...(teamAutomation === undefined ? {} : { teamAutomation }),
               reason: "manual_shutdown",
               detail: "Team OAuth lease rotated; recycling warm provider session.",
               preserveTeamEphemeralTokens: true,
@@ -1365,6 +1424,7 @@ export const layer: Layer.Layer<
           modelSelection: run.modelSelection,
           runtimePolicy: resolvedRuntimePolicy,
           ...(actingMemberId === undefined ? {} : { actingMemberId }),
+          ...(teamAutomation === undefined ? {} : { teamAutomation }),
           ...(!matchedRemoteTeamBinding
             ? {}
             : {

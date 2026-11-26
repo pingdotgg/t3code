@@ -13461,5 +13461,31 @@
       "v": "v"
     }
   ],
-  "f947fce5db2e50d6": "Votre identité GitHub"
+  "f947fce5db2e50d6": "Votre identité GitHub",
+  "d97e97834d9daca8": "Afficher {title}",
+  "dc16df827cd79560": "Afficher l’automatisation",
+  "c36724cb93a21a54": "Afficher la tâche",
+  "d0d2ad9792462271": "Vue cible",
+  "aa6a5418188bcf59": "Vue par défaut",
+  "394f78d4634f44b1": "Niveau d’accès MCP",
+  "19584b520a4cf4ac": "Élevé (accès MCP administrateur)",
+  "9951087766f7f13d": "Minimal (limité à la vue et au projet)",
+  "5932e39f562fbbdf": "Portée",
+  "43cc6cb2160c6829": "MCP élevé",
+  "00513a3b28638818": "Afficher",
+  "f2412357542f0270": "L’URL du webhook et le secret de signature sont masqués pour votre rôle.",
+  "55355c820ab6f37a": "Cette tâche utilise des paramètres propriétaire/administrateur (fils verrouillés ou accès MCP élevé) et est en lecture seule pour votre rôle.",
+  "74ef386a8c21d4c2": "Verrouiller les fils générés",
+  "a6763e92e96e3c82": "Seuls les propriétaires et administrateurs peuvent publier dans les fils démarrés par cette tâche.",
+  "5cfa9f784e140f07": "Minimal (limité à la vue et au projet)",
+  "5aedf19bc7bf6f5d": "Élevé (accès MCP administrateur)",
+  "6cfbfadf301a290b": "Impossible de mettre à jour le nom d’affichage",
+  "f9b36b20b5dfa079": "Saisissez un nom d’affichage d’équipe.",
+  "10dafc730b8d7b27": "Nom d’affichage de l’équipe mis à jour",
+  "07a77796f959b70c": "Les fils d’automatisation de l’équipe s’affichent désormais sous {displayName}.",
+  "3b20060b626a77d5": "Nom de l’équipe par défaut",
+  "f83b990c1244d596": "Nom d’affichage de l’équipe",
+  "32bbfee4ac2f750f": "Affiché comme préfixe sur les fils de tâches planifiées de l’équipe (par exemple, {displayName}: Daily triage).",
+  "6c037e26ecbefe2e": "Nom d’affichage (facultatif)",
+  "7d63b70705da219f": "Utilise le nom de l’équipe par défaut si laissé vide. Affiché comme préfixe sur les fils de tâches planifiées de l’équipe."
 }

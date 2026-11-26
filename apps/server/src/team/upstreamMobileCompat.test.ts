@@ -10,6 +10,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  ScheduledTaskId,
   TEAM_CLIENT_CAPABILITY_HEADER,
   TEAM_CLIENT_CAPABILITY_QUERY_PARAM,
   TEAM_CLIENT_CAPABILITY_VALUE,
@@ -1029,6 +1030,93 @@ describe("upstreamMobileCompat integration", () => {
           sessions.verify(narrowToken.access_token),
         );
         expect(Exit.isFailure(verifyAfterFailedCeilingRead)).toBe(true);
+      }).pipe(Effect.provide(makeTestLayer())),
+  );
+
+  it.effect(
+    "Milestone 8: prefixes team-owned threads with live team.displayName, strips prefix on rename, and hides unfollowed team threads in owned_and_followed mode",
+    () =>
+      Effect.gen(function* () {
+        const teamService = yield* TeamService.TeamService;
+        const sessions = yield* SessionStore.SessionStore;
+
+        const ownerSession = yield* sessions.issue({
+          method: "browser-session-cookie",
+          subject: "m8-mobile-owner",
+          scopes: AuthStandardClientScopes,
+          client: desktopClientMeta,
+        });
+        yield* teamService.initializeTeam({
+          sessionId: ownerSession.sessionId,
+          payload: { name: "Acme Corp", displayName: "Acme Bot", ownerPseudo: "alice" },
+        });
+        const bobInvite = yield* teamService.createInvite({
+          sessionId: ownerSession.sessionId,
+          payload: { role: "regular", prefilledPseudo: "bob" },
+        });
+        const bobRedeemed = yield* teamService.redeemInvite({
+          token: bobInvite.token,
+          pseudo: "bob",
+          client: clientMeta,
+        });
+        const bobMobileSession = yield* sessions.verify(bobRedeemed.accessToken);
+
+        const taskId = ScheduledTaskId.make("task-m8-mobile");
+        const teamThreadId = ThreadId.make("thread-m8-mobile-team");
+        yield* teamService.prepareTeamAutomationThreadAttribution({
+          taskId,
+          threadId: teamThreadId,
+          projectId: ProjectId.make("proj-m8-mobile"),
+        });
+
+        // 1. Dynamic prefix uses team.displayName & rename strips it.
+        const ctxMap1 = yield* teamService.getThreadTitlePrefixContextMap([teamThreadId]);
+        const ctx1 = ctxMap1.get(teamThreadId);
+        expect(formatUpstreamCompatThreadTitle("Daily triage", ctx1)).toBe(
+          "Acme Bot: Daily triage",
+        );
+        expect(stripUpstreamCompatThreadTitlePrefix("Acme Bot: Daily triage v2", ctx1)).toBe(
+          "Daily triage v2",
+        );
+
+        // 2. Updating team.displayName updates prefix dynamically.
+        yield* teamService.updateDisplayName({
+          sessionId: ownerSession.sessionId,
+          payload: { displayName: "Ops Bot" },
+        });
+        const ctxMap2 = yield* teamService.getThreadTitlePrefixContextMap([teamThreadId]);
+        expect(formatUpstreamCompatThreadTitle("Daily triage", ctxMap2.get(teamThreadId))).toBe(
+          "Ops Bot: Daily triage",
+        );
+
+        // 3. In default `owned_and_followed` mode, Bob does NOT see unfollowed team-owned threads until following.
+        const snapshot = {
+          snapshotSequence: 1,
+          projects: [],
+          threads: [makeThreadShell(teamThreadId, "Daily triage")],
+          archivedThreads: [],
+        } as unknown as OrchestrationV2ShellSnapshot;
+        const beforeFollow = yield* adaptShellSnapshotForUpstreamCompat(
+          teamService,
+          bobMobileSession.sessionId,
+          snapshot,
+          true,
+        );
+        expect(beforeFollow.threads).toHaveLength(0);
+
+        yield* teamService.followThread({
+          sessionId: bobMobileSession.sessionId,
+          payload: { threadId: teamThreadId },
+        });
+        const afterFollow = yield* adaptShellSnapshotForUpstreamCompat(
+          teamService,
+          bobMobileSession.sessionId,
+          snapshot,
+          true,
+        );
+        expect(afterFollow.threads.map((t) => [t.id, t.title])).toEqual([
+          [teamThreadId, "Ops Bot: Daily triage"],
+        ]);
       }).pipe(Effect.provide(makeTestLayer())),
   );
 });

@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ScheduledTaskId,
   TeamEnvironmentRecordId,
   TeamId,
   TeamMemberId,
@@ -31,9 +32,12 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   applyTeamStreamEvent,
   canCurrentMemberChangeThreadView,
+  canCurrentMemberConfigurePrivilegedTeamScheduledTask,
+  canCurrentMemberCreateTeamScheduledTask,
   canCurrentMemberInterruptThread,
   canCurrentMemberLeaveThreadNote,
   canCurrentMemberManageQueuedRun,
+  canCurrentMemberMutateTeamScheduledTask,
   canCurrentMemberPromoteQueuedRun,
   canCurrentMemberResolveThreadNotes,
   canCurrentMemberSteerActiveTurn,
@@ -45,12 +49,14 @@ import {
   hasActiveTeamEnvironment,
   isFollowingTeamThread,
   isTeamColleagueThread,
+  isTeamOwnedThread,
   isTeamThreadLocked,
   listAccessibleTeamEnvironments,
   listAccessibleTeamViews,
   listRemoteOnlyTeamProviders,
   resolveProjectTeamAssignment,
   resolveTeamQueuedRunAuthorPseudo,
+  resolveTeamScheduledTaskMeta,
   resolveTeamThreadAcceptedNotes,
   resolveTeamThreadCreatorPseudo,
   resolveTeamThreadEnvironmentAccessForClient,
@@ -76,6 +82,7 @@ const bobThreadId = ThreadId.make("thread-bob");
 const team: TeamWorkspace = {
   id: teamId,
   name: "Core Team",
+  displayName: "Core Team",
   defaultViewId: viewId,
   createdAt: "2026-01-01T00:00:00.000Z",
   updatedAt: "2026-01-01T00:00:00.000Z",
@@ -1226,7 +1233,14 @@ describe("team client-runtime state and presentation", () => {
       version: 1,
       type: "snapshot",
       payload: {
-        team: { id: teamId, name: "Acme", defaultViewId: viewId, createdAt: now, updatedAt: now },
+        team: {
+          id: teamId,
+          name: "Acme",
+          displayName: "Acme",
+          defaultViewId: viewId,
+          createdAt: now,
+          updatedAt: now,
+        },
         currentMember: {
           id: aliceId,
           teamId,
@@ -1310,5 +1324,223 @@ describe("team client-runtime state and presentation", () => {
       payload: { identity: null },
     });
     expect(state.automationGitHubIdentity).toBeNull();
+  });
+
+  it("handles Milestone 8 team displayName updates, team-owned threads, and scheduled-task metadata/RBAC", () => {
+    const teamThreadId = ThreadId.make("thread-team-auto-1");
+    const taskMinId = ScheduledTaskId.make("task-min");
+    const taskElevId = ScheduledTaskId.make("task-elev");
+    const secondaryViewId = TeamViewId.make("view-ops");
+    const now = IsoDateTime.make("2026-11-26T12:00:00.000Z");
+    const modoMember: TeamMember = {
+      id: bobId,
+      teamId,
+      pseudo: "charlie" as TeamPseudo,
+      role: "modo",
+      status: "active",
+      createdAt: now,
+      updatedAt: now,
+    };
+    const defaultView: TeamView = {
+      id: viewId,
+      teamId,
+      name: "Default",
+      description: null,
+      isDefault: true,
+      readRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+      postRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+      createdAt: now,
+      updatedAt: now,
+    };
+    const opsView: TeamView = {
+      id: secondaryViewId,
+      teamId,
+      name: "Ops",
+      description: null,
+      isDefault: false,
+      readRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+      postRule: { roles: ["owner", "admin", "modo"], memberIds: [] },
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    let state = applyTeamStreamEvent(EMPTY_TEAM_ENVIRONMENT_STATE, {
+      version: 1,
+      type: "snapshot",
+      payload: {
+        team: { ...team, displayName: "Acme Bot" },
+        currentMember: modoMember,
+        members: [alice, modoMember],
+        views: [defaultView, opsView],
+        invites: [],
+        threadAttributions: [
+          {
+            threadId: teamThreadId,
+            teamId,
+            ownerKind: "team",
+            creatorMemberId: null,
+            creatorPseudo: null,
+            teamDisplayName: "Acme Bot",
+            viewId: secondaryViewId,
+            locked: false,
+            lockedByMemberId: null,
+            createdAt: now,
+          },
+        ],
+        followedThreadIds: [],
+        latestTurnAttributions: [
+          {
+            turnId: "run-auto-1",
+            threadId: teamThreadId,
+            authorKind: "team_automation",
+            authorMemberId: null,
+            authorPseudo: null,
+            createdAt: now,
+          },
+        ],
+        environments: [
+          {
+            id: TeamEnvironmentRecordId.make("tenv-1"),
+            teamId,
+            environmentId: envId,
+            name: "Team Server",
+            isDefault: true,
+            peerLinkId: null,
+            accessRule: { roles: [...ALL_TEAM_ROLES], memberIds: [] },
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        scheduledTaskMetas: [
+          {
+            taskId: taskMinId,
+            teamId,
+            environmentId: envId,
+            viewId: secondaryViewId,
+            locked: false,
+            mcpAccessLevel: "minimal",
+            createdByMemberId: bobId,
+            updatedByMemberId: bobId,
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            taskId: taskElevId,
+            teamId,
+            environmentId: envId,
+            viewId,
+            locked: true,
+            mcpAccessLevel: "elevated",
+            createdByMemberId: aliceId,
+            updatedByMemberId: aliceId,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      },
+    });
+
+    // Team-owned thread renders with displayName, hides by default like colleagues, and produces zero notifications.
+    expect(isTeamOwnedThread({ teamState: state, threadId: teamThreadId })).toBe(true);
+    expect(isTeamColleagueThread({ teamState: state, threadId: teamThreadId })).toBe(true);
+    expect(resolveTeamThreadCreatorPseudo({ teamState: state, threadId: teamThreadId })).toBe(
+      "Acme Bot",
+    );
+    const teamStates = new Map([[envId, state]]);
+    expect(
+      shouldShowThreadInTeamFilter({
+        environmentId: envId,
+        threadId: teamThreadId,
+        teamStates,
+        showColleaguesThreads: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowThreadInTeamFilter({
+        environmentId: envId,
+        threadId: teamThreadId,
+        teamStates,
+        showColleaguesThreads: true,
+      }),
+    ).toBe(true);
+    expect(
+      resolveTeamThreadNotificationDecision({
+        teamState: state,
+        threadId: teamThreadId,
+        latestRunId: "run-auto-1",
+      }),
+    ).toBe("suppress");
+
+    // Live teamUpdated updates displayName on team-owned thread prefix & queued automation label.
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "teamUpdated",
+      payload: { ...team, displayName: "Ops Bot" },
+    });
+    expect(resolveTeamThreadCreatorPseudo({ teamState: state, threadId: teamThreadId })).toBe(
+      "Ops Bot",
+    );
+    expect(
+      resolveTeamQueuedRunAuthorPseudo({
+        teamState: state,
+        threadId: teamThreadId,
+        runId: "run-auto-1",
+      }),
+    ).toBe("Ops Bot");
+
+    // Modo cannot steer/promote or interrupt an active automation turn on the team-owned thread.
+    expect(
+      canCurrentMemberSteerActiveTurn({
+        teamState: state,
+        threadId: teamThreadId,
+        activeRunId: "run-auto-1",
+      }),
+    ).toBe(false);
+    expect(
+      canCurrentMemberPromoteQueuedRun({
+        teamState: state,
+        threadId: teamThreadId,
+        activeRunId: "run-auto-1",
+      }),
+    ).toBe(false);
+    expect(
+      canCurrentMemberInterruptThread({
+        teamState: state,
+        threadId: teamThreadId,
+        activeRunId: "run-auto-1",
+      }).canInterrupt,
+    ).toBe(false);
+
+    // Scheduled task RBAC for modo: can create & mutate minimal task, cannot configure privileged or mutate elevated task.
+    expect(canCurrentMemberCreateTeamScheduledTask(state, envId)).toBe(true);
+    expect(canCurrentMemberConfigurePrivilegedTeamScheduledTask(state)).toBe(false);
+    expect(
+      canCurrentMemberMutateTeamScheduledTask({
+        teamState: state,
+        taskId: taskMinId,
+        environmentId: envId,
+      }),
+    ).toBe(true);
+    expect(
+      canCurrentMemberMutateTeamScheduledTask({
+        teamState: state,
+        taskId: taskElevId,
+        environmentId: envId,
+      }),
+    ).toBe(false);
+
+    // View deletion reassigns scheduledTaskMeta to fallback view; scheduledTaskMetaDeleted removes it.
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "viewDeleted",
+      payload: { viewId: secondaryViewId, fallbackViewId: viewId },
+    });
+    expect(resolveTeamScheduledTaskMeta(state, taskMinId)?.viewId).toBe(viewId);
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "scheduledTaskMetaDeleted",
+      payload: { taskId: taskMinId },
+    });
+    expect(resolveTeamScheduledTaskMeta(state, taskMinId)).toBeNull();
   });
 });

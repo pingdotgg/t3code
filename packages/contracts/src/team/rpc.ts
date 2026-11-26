@@ -81,6 +81,7 @@ import {
   TeamThreadNote,
   TeamUnassignProjectInput,
   TeamUnassignProjectResult,
+  TeamUpdateDisplayNameInput,
   TeamUpdateEnvironmentInput,
   TeamUpdateMemberRoleInput,
   TeamUpdateMemberStatusInput,
@@ -91,12 +92,14 @@ import {
   TeamUpsertProviderInput,
   TeamUpsertSkillInput,
   TeamView,
+  TeamWorkspace,
 } from "./schemas.ts";
 
 export const TEAM_WS_METHODS = {
   teamGetState: "team.getState",
   teamSubscribeState: "team.subscribeState",
   teamInitialize: "team.initialize",
+  teamUpdateDisplayName: "team.updateDisplayName",
   teamUpdateMyPseudo: "team.updateMyPseudo",
   teamUpdateMemberRole: "team.updateMemberRole",
   teamUpdateMemberStatus: "team.updateMemberStatus",
@@ -148,6 +151,7 @@ export const TEAM_WS_METHODS = {
 
 export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamInitialize]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamUpdateDisplayName]: AuthAccessWriteScope,
   [TEAM_WS_METHODS.teamUpdateMyPseudo]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamUpdateMyMobileVisibility]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamCreateMobilePairingLink]: AuthOrchestrationReadScope,
@@ -221,6 +225,12 @@ const WsTeamSubscribeStateRpc = Rpc.make(TEAM_WS_METHODS.teamSubscribeState, {
 const WsTeamInitializeRpc = Rpc.make(TEAM_WS_METHODS.teamInitialize, {
   payload: TeamInitializeInput,
   success: TeamInitializeResult,
+  error: TeamRpcError,
+});
+
+const WsTeamUpdateDisplayNameRpc = Rpc.make(TEAM_WS_METHODS.teamUpdateDisplayName, {
+  payload: TeamUpdateDisplayNameInput,
+  success: TeamWorkspace,
   error: TeamRpcError,
 });
 
@@ -510,6 +520,7 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamGetStateRpc,
   WsTeamSubscribeStateRpc,
   WsTeamInitializeRpc,
+  WsTeamUpdateDisplayNameRpc,
   WsTeamUpdateMyPseudoRpc,
   WsTeamUpdateMemberRoleRpc,
   WsTeamUpdateMemberStatusRpc,

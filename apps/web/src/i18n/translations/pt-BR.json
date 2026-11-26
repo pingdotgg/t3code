@@ -13461,5 +13461,31 @@
       "v": "v"
     }
   ],
-  "f947fce5db2e50d6": "Sua identidade GitHub"
+  "f947fce5db2e50d6": "Sua identidade GitHub",
+  "d97e97834d9daca8": "Visualizar {title}",
+  "dc16df827cd79560": "Visualizar automação",
+  "c36724cb93a21a54": "Visualizar tarefa",
+  "d0d2ad9792462271": "Visualização de destino",
+  "aa6a5418188bcf59": "Visualização padrão",
+  "394f78d4634f44b1": "Nível de acesso MCP",
+  "19584b520a4cf4ac": "Elevado (acesso MCP de administrador)",
+  "9951087766f7f13d": "Mínimo (restrito à visualização e ao projeto)",
+  "5932e39f562fbbdf": "Escopo",
+  "43cc6cb2160c6829": "MCP elevado",
+  "00513a3b28638818": "Visualizar",
+  "f2412357542f0270": "A URL do webhook e o segredo de assinatura estão ocultos para sua função.",
+  "55355c820ab6f37a": "Esta tarefa usa configurações de proprietário/administrador (tópicos bloqueados ou acesso MCP elevado) e é somente leitura para sua função.",
+  "74ef386a8c21d4c2": "Bloquear tópicos gerados",
+  "a6763e92e96e3c82": "Somente proprietários e administradores podem postar em tópicos iniciados por esta tarefa.",
+  "5cfa9f784e140f07": "Mínimo (restrito à visualização e ao projeto)",
+  "5aedf19bc7bf6f5d": "Elevado (acesso MCP de administrador)",
+  "6cfbfadf301a290b": "Não foi possível atualizar o nome de exibição",
+  "f9b36b20b5dfa079": "Digite um nome de exibição da equipe.",
+  "10dafc730b8d7b27": "Nome de exibição da equipe atualizado",
+  "07a77796f959b70c": "Os tópicos de automação da equipe agora são exibidos como {displayName}.",
+  "3b20060b626a77d5": "Padrão: nome da equipe",
+  "f83b990c1244d596": "Nome de exibição da equipe",
+  "32bbfee4ac2f750f": "Exibido como prefixo nos tópicos de tarefas agendadas da equipe (por exemplo, {displayName}: Daily triage).",
+  "6c037e26ecbefe2e": "Nome de exibição (opcional)",
+  "7d63b70705da219f": "Usa o nome da equipe se ficar em branco. Exibido como prefixo nos tópicos de tarefas agendadas da equipe."
 }

@@ -19,9 +19,12 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderSessionId,
+  ProviderSessionId,
   RunId,
+  ScheduledTaskId,
+  TeamId,
   TeamMemberId,
+  TeamViewId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -7512,6 +7515,120 @@ it.effect(
             capabilities: CodexCapabilities,
             teamServiceLayer,
             teamGitHubBrokerLayer,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 recycles warm sessions and rotates MCP tokens on team_automation <-> human member and minimal <-> elevated transitions",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const aliceId = TeamMemberId.make("member-alice-m8");
+      const threadId = ThreadId.make("thread-m8-recycle");
+      const minAutomation = {
+        taskId: ScheduledTaskId.make("task-m8-recycle-min"),
+        teamId: TeamId.make("team-m8-recycle"),
+        projectId: ProjectId.make("proj-m8-recycle"),
+        environmentId: EnvironmentId.make("env-m8-recycle"),
+        viewId: TeamViewId.make("view-m8-recycle"),
+        mcpAccessLevel: "minimal" as const,
+      };
+      const elevAutomation = {
+        ...minAutomation,
+        mcpAccessLevel: "elevated" as const,
+      };
+
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const mcpRegistry = yield* McpSessionRegistry.McpSessionRegistry;
+        const providerSessionId = ProviderSessionId.make("session-m8-recycle");
+        const modelSelection = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.3-codex",
+        };
+        const runtimePolicy = {
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          cwd: null,
+        };
+
+        // Turn 1: Minimal team-automation opens session & issues teamAutomation-bound token.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          teamAutomation: minAutomation,
+        });
+        assert.strictEqual((yield* Ref.get(state)).openCount, 1);
+        const token1 = (yield* Ref.get(mcpConfigs))[0]?.authorizationHeader.replace(
+          /^Bearer\s+/,
+          "",
+        );
+        assert.isDefined(token1);
+        const resolved1 = yield* mcpRegistry.resolve(token1!);
+        assert.deepStrictEqual(resolved1?.thread.teamAutomation, minAutomation);
+        assert.isUndefined(resolved1?.thread.actingMemberId);
+
+        // Turn 2: Same minimal team-automation reuses warm session.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          teamAutomation: minAutomation,
+        });
+        assert.strictEqual((yield* Ref.get(state)).openCount, 1);
+        assert.strictEqual((yield* Ref.get(state)).closeCount, 0);
+
+        // Turn 3: Human follow-up (Alice) recycles warm session, revokes automation token, issues Alice token.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        assert.strictEqual((yield* Ref.get(state)).closeCount, 1);
+        assert.strictEqual((yield* Ref.get(state)).openCount, 2);
+        assert.isUndefined(yield* mcpRegistry.resolve(token1!));
+        const token2 = (yield* Ref.get(mcpConfigs))[1]?.authorizationHeader.replace(
+          /^Bearer\s+/,
+          "",
+        );
+        const resolved2 = yield* mcpRegistry.resolve(token2!);
+        assert.strictEqual(resolved2?.thread.actingMemberId, aliceId);
+        assert.isUndefined(resolved2?.thread.teamAutomation);
+
+        // Turn 4: Elevated team-automation recycles warm session again and issues elevated automation token.
+        yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          teamAutomation: elevAutomation,
+        });
+        assert.strictEqual((yield* Ref.get(state)).closeCount, 2);
+        assert.strictEqual((yield* Ref.get(state)).openCount, 3);
+        assert.isUndefined(yield* mcpRegistry.resolve(token2!));
+        const token3 = (yield* Ref.get(mcpConfigs))[2]?.authorizationHeader.replace(
+          /^Bearer\s+/,
+          "",
+        );
+        const resolved3 = yield* mcpRegistry.resolve(token3!);
+        assert.deepStrictEqual(resolved3?.thread.teamAutomation, elevAutomation);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            mcpConfigs,
+            capabilities: ExclusiveCapabilities,
           }),
         ),
       );

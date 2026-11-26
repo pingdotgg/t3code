@@ -487,6 +487,148 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
         `;
     }),
   },
+  {
+    id: 8,
+    name: "TeamScheduledTasksAndDisplayName",
+    up: Effect.fn("TeamMigrations.TeamScheduledTasksAndDisplayName")(function* (
+      sql: SqlClient.SqlClient,
+    ) {
+      // 1. Add `display_name` to `team_workspaces` and backfill from `name`.
+      const workspaceColumns = yield* sql<{ readonly name: string }>`
+        PRAGMA table_info(team_workspaces)
+      `;
+      if (!workspaceColumns.some((column) => column.name === "display_name")) {
+        yield* sql`ALTER TABLE team_workspaces ADD COLUMN display_name TEXT`;
+      }
+      yield* sql`
+        UPDATE team_workspaces
+        SET display_name = name
+        WHERE display_name IS NULL OR TRIM(display_name) = ''
+      `;
+
+      // 2. Extend `team_thread_meta` with `owner_kind` ('member' | 'team') and nullable `creator_member_id`.
+      const threadMetaColumns = yield* sql<{ readonly name: string }>`
+        PRAGMA table_info(team_thread_meta)
+      `;
+      if (!threadMetaColumns.some((column) => column.name === "owner_kind")) {
+        yield* sql`
+          CREATE TABLE team_thread_meta_v8 (
+            thread_id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            owner_kind TEXT NOT NULL DEFAULT 'member' CHECK (owner_kind IN ('member', 'team')),
+            creator_member_id TEXT REFERENCES team_members(id),
+            view_id TEXT NOT NULL,
+            locked INTEGER NOT NULL DEFAULT 0,
+            locked_by_member_id TEXT,
+            execution_environment_id TEXT,
+            is_local_synced INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            CHECK (
+              (owner_kind = 'member' AND creator_member_id IS NOT NULL)
+              OR (owner_kind = 'team' AND creator_member_id IS NULL)
+            )
+          )
+        `;
+        yield* sql`
+          INSERT INTO team_thread_meta_v8 (
+            thread_id, team_id, owner_kind, creator_member_id, view_id,
+            locked, locked_by_member_id, execution_environment_id, is_local_synced, created_at
+          )
+          SELECT
+            thread_id, team_id, 'member', creator_member_id, view_id,
+            locked, locked_by_member_id, execution_environment_id, is_local_synced, created_at
+          FROM team_thread_meta
+        `;
+        yield* sql`DROP TABLE team_thread_meta`;
+        yield* sql`ALTER TABLE team_thread_meta_v8 RENAME TO team_thread_meta`;
+        yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_thread_meta_team_creator
+            ON team_thread_meta (team_id, creator_member_id)
+        `;
+        yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_thread_meta_team_view
+            ON team_thread_meta (team_id, view_id)
+        `;
+      }
+
+      // 3. Extend `team_turn_meta` with `author_kind` ('member' | 'team_automation') and nullable `author_member_id`.
+      const turnMetaColumns = yield* sql<{ readonly name: string }>`
+        PRAGMA table_info(team_turn_meta)
+      `;
+      if (!turnMetaColumns.some((column) => column.name === "author_kind")) {
+        yield* sql`
+          CREATE TABLE team_turn_meta_v8 (
+            turn_id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            author_kind TEXT NOT NULL DEFAULT 'member' CHECK (author_kind IN ('member', 'team_automation')),
+            author_member_id TEXT REFERENCES team_members(id),
+            created_at TEXT NOT NULL,
+            CHECK (
+              (author_kind = 'member' AND author_member_id IS NOT NULL)
+              OR (author_kind = 'team_automation' AND author_member_id IS NULL)
+            )
+          )
+        `;
+        yield* sql`
+          INSERT INTO team_turn_meta_v8 (
+            turn_id, thread_id, author_kind, author_member_id, created_at
+          )
+          SELECT
+            turn_id, thread_id, 'member', author_member_id, created_at
+          FROM team_turn_meta
+        `;
+        yield* sql`DROP TABLE team_turn_meta`;
+        yield* sql`ALTER TABLE team_turn_meta_v8 RENAME TO team_turn_meta`;
+        yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_turn_meta_thread_id
+            ON team_turn_meta (thread_id)
+        `;
+      }
+
+      // 4. Sidecar metadata table for team-scoped scheduled tasks (never altering upstream `scheduled_tasks`).
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS team_scheduled_task_meta (
+          task_id TEXT PRIMARY KEY,
+          team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+          environment_id TEXT NOT NULL,
+          view_id TEXT NOT NULL,
+          locked INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),
+          mcp_access_level TEXT NOT NULL DEFAULT 'minimal' CHECK (mcp_access_level IN ('minimal', 'elevated')),
+          created_by_member_id TEXT REFERENCES team_members(id),
+          updated_by_member_id TEXT REFERENCES team_members(id),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `;
+      yield* sql`
+        CREATE INDEX IF NOT EXISTS idx_team_scheduled_task_meta_team_env
+          ON team_scheduled_task_meta (team_id, environment_id)
+      `;
+      yield* sql`
+        CREATE INDEX IF NOT EXISTS idx_team_scheduled_task_meta_team_view
+          ON team_scheduled_task_meta (team_id, view_id)
+      `;
+
+      // 5. Immutable per-turn automation MCP scope table for crash-safe propagation across continuations & delegates.
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS team_automation_turn_scopes (
+          turn_id TEXT PRIMARY KEY,
+          thread_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+          project_id TEXT NOT NULL,
+          environment_id TEXT NOT NULL,
+          view_id TEXT NOT NULL,
+          mcp_access_level TEXT NOT NULL CHECK (mcp_access_level IN ('minimal', 'elevated')),
+          created_at TEXT NOT NULL
+        )
+      `;
+      yield* sql`
+        CREATE INDEX IF NOT EXISTS idx_team_automation_turn_scopes_thread_id
+          ON team_automation_turn_scopes (thread_id)
+      `;
+    }),
+  },
 ];
 
 const migrationLocks = new WeakMap<SqlClient.SqlClient, Semaphore.Semaphore>();

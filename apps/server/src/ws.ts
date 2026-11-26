@@ -3081,44 +3081,129 @@ export const layerWsRpc = (
             .pipe(Effect.andThen(workflowDefinitions.remove(input.name))),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           Stream.unwrap(
-            teamService
-              .assertCanUseScheduledTasks(currentSessionId)
-              .pipe(
-                Effect.as(scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls))),
-              ),
-          ),
-        [WS_METHODS.scheduledTasksUpsert]: (input) =>
-          teamService
-            .assertCanUseScheduledTasks(currentSessionId)
-            .pipe(
-              Effect.andThen(
-                assertTeamProviderAllowedForProject(
-                  input.projectId,
-                  input.modelSelection.instanceId,
+            Effect.gen(function* () {
+              const accessChanges = yield* teamService.openAccessChangeSubscription();
+              yield* teamService.assertActorIsActiveMember({
+                kind: "session",
+                sessionId: currentSessionId,
+              });
+              const filterTaskList = (result: ScheduledTaskListResult) =>
+                teamService
+                  .filterReadableScheduledTasks(currentSessionId, result.tasks)
+                  .pipe(Effect.map((tasks) => withVisibleWebhookUrls({ ...result, tasks })));
+              const baseStream = scheduledTasks
+                .subscribeList()
+                .pipe(Stream.mapEffect(filterTaskList));
+              const accessRefreshStream = accessChanges.pipe(
+                Stream.filter(
+                  (change) =>
+                    change.type === "workspace" ||
+                    change.type === "view" ||
+                    change.type === "member" ||
+                    change.type === "environment" ||
+                    change.type === "threadView" ||
+                    change.type === "scheduledTaskMeta",
                 ),
-              ),
-              Effect.andThen(scheduledTasks.upsert(input)),
-            ),
+                Stream.mapEffect(() => scheduledTasks.list().pipe(Effect.flatMap(filterTaskList))),
+              );
+              return Stream.merge(baseStream, accessRefreshStream, { haltStrategy: "left" });
+            }),
+          ),
+        [WS_METHODS.scheduledTasksUpsert]: Effect.fn("Ws.scheduledTasksUpsert")(function* (input) {
+          const targetId =
+            input.id ??
+            (input.commandId !== undefined
+              ? ScheduledTasks.scheduledTaskIdForCommand(input.commandId)
+              : undefined);
+          const existingTask =
+            targetId !== undefined
+              ? ((yield* scheduledTasks.list()).tasks.find(
+                  (candidate) => candidate.id === targetId,
+                ) ?? null)
+              : null;
+          const teamMetaPlan = yield* teamService.authorizeScheduledTaskUpsert({
+            sessionId: currentSessionId,
+            input,
+            existingTask,
+          });
+          yield* assertTeamProviderAllowedForProject(
+            input.projectId,
+            input.modelSelection.instanceId,
+          );
+          const saved = yield* scheduledTasks.upsert(input);
+          if (Option.isSome(teamMetaPlan)) {
+            yield* teamService.saveScheduledTaskMeta({
+              taskId: saved.task.id,
+              ...teamMetaPlan.value,
+            });
+          }
+          return saved;
+        }),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
-            Effect.andThen(scheduledTasks.setEnabled(input)),
+            Effect.andThen(
+              Effect.gen(function* () {
+                const existing = (yield* scheduledTasks.list()).tasks.find(
+                  (candidate) => candidate.id === input.id,
+                );
+                yield* teamService.assertCanMutateScheduledTask(
+                  currentSessionId,
+                  input.id,
+                  existing?.threadId ? ThreadId.make(existing.threadId) : null,
+                );
+                return yield* scheduledTasks.setEnabled(input);
+              }),
+            ),
           ),
         [WS_METHODS.scheduledTasksDelete]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
-            Effect.andThen(scheduledTasks.delete(input)),
+            Effect.andThen(
+              Effect.gen(function* () {
+                const existing = (yield* scheduledTasks.list()).tasks.find(
+                  (candidate) => candidate.id === input.id,
+                );
+                yield* teamService.assertCanMutateScheduledTask(
+                  currentSessionId,
+                  input.id,
+                  existing?.threadId ? ThreadId.make(existing.threadId) : null,
+                );
+                return yield* scheduledTasks.delete(input);
+              }),
+            ),
           ),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(assertLocalAgentRpcExecutionAllowed),
-            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
-            Effect.andThen(scheduledTasks.runNow(input)),
+            Effect.andThen(
+              Effect.gen(function* () {
+                const existing = (yield* scheduledTasks.list()).tasks.find(
+                  (candidate) => candidate.id === input.id,
+                );
+                yield* teamService.assertCanMutateScheduledTask(
+                  currentSessionId,
+                  input.id,
+                  existing?.threadId ? ThreadId.make(existing.threadId) : null,
+                  { isRunNow: true },
+                );
+                return yield* scheduledTasks.runNow(input);
+              }),
+            ),
           ),
         [WS_METHODS.scheduledTasksRotateWebhookToken]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
-            Effect.andThen(scheduledTasks.rotateWebhookToken(input)),
+            Effect.andThen(
+              Effect.gen(function* () {
+                const existing = (yield* scheduledTasks.list()).tasks.find(
+                  (candidate) => candidate.id === input.id,
+                );
+                yield* teamService.assertCanMutateScheduledTask(
+                  currentSessionId,
+                  input.id,
+                  existing?.threadId ? ThreadId.make(existing.threadId) : null,
+                );
+                return yield* scheduledTasks.rotateWebhookToken(input);
+              }),
+            ),
           ),
         [WS_METHODS.guestShareCreate]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
@@ -3143,13 +3228,35 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
-            Effect.andThen(scheduledTasks.listWebhookDeliveries(input)),
+            Effect.andThen(
+              Effect.gen(function* () {
+                const existing = (yield* scheduledTasks.list()).tasks.find(
+                  (candidate) => candidate.id === input.id,
+                );
+                yield* teamService.assertCanReadScheduledTask(
+                  currentSessionId,
+                  input.id,
+                  existing?.threadId ? ThreadId.make(existing.threadId) : null,
+                );
+                return yield* scheduledTasks.listWebhookDeliveries(input);
+              }),
+            ),
           ),
         [WS_METHODS.scheduledTasksGetWebhookDelivery]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
-            Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
+            Effect.andThen(
+              Effect.gen(function* () {
+                const existing = (yield* scheduledTasks.list()).tasks.find(
+                  (candidate) => candidate.id === input.id,
+                );
+                yield* teamService.assertCanReadScheduledTask(
+                  currentSessionId,
+                  input.id,
+                  existing?.threadId ? ThreadId.make(existing.threadId) : null,
+                );
+                return yield* scheduledTasks.getWebhookDelivery(input);
+              }),
+            ),
           ),
         [WS_METHODS.serverProbe]: (_input) =>
           Effect.map(DateTime.now, (now) => ({ serverTime: DateTime.formatIso(now) })),

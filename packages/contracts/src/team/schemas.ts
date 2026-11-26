@@ -11,6 +11,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "../baseSchemas.ts";
@@ -172,6 +173,27 @@ export function canManageTeamAutomationGitHub(role: TeamRole): boolean {
   return isTeamAdminRole(role);
 }
 
+/** Editing team displayName is restricted to owner/admin. */
+export function canManageTeamDisplayName(role: TeamRole): boolean {
+  return isTeamAdminRole(role);
+}
+
+/** Creating/editing/toggling/deleting/running minimal unlocked team scheduled tasks starts at modo. */
+export function canManageTeamScheduledTasks(role: TeamRole): boolean {
+  return TEAM_ROLE_RANK[role] >= TEAM_ROLE_RANK.modo;
+}
+
+/** Creating/editing/deleting locked or elevated-MCP team scheduled tasks is restricted to owner/admin. */
+export function canManagePrivilegedTeamScheduledTasks(role: TeamRole): boolean {
+  return isTeamAdminRole(role);
+}
+
+/** Resolves effective team displayName: copies `name` when `displayName` is omitted or blank after trim. */
+export function resolveTeamDisplayName(name: string, displayName?: string | null): string {
+  const trimmedDisplay = displayName?.trim() ?? "";
+  return trimmedDisplay.length > 0 ? trimmedDisplay : name.trim();
+}
+
 /** Regular authors require an explicit UI confirmation dialog before note approval/edit-approval. */
 export function requiresTeamNoteApprovalConfirmation(authorRole: TeamRole): boolean {
   return authorRole === "regular";
@@ -215,6 +237,7 @@ export type TeamPseudo = typeof TeamPseudo.Type;
 export const TeamWorkspace = Schema.Struct({
   id: TeamId,
   name: TrimmedNonEmptyString,
+  displayName: TrimmedNonEmptyString,
   defaultViewId: TeamViewId,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -381,9 +404,132 @@ export function canMemberAccessTeamEnvironment(
  * Evaluates whether a member can leave a note on an inaccessible-environment thread:
  * requires read access, unlocked (or admin), and post permission under the View's `postRule`.
  */
+export const TeamThreadOwnerKind = Schema.Literals(["member", "team"]);
+export type TeamThreadOwnerKind = typeof TeamThreadOwnerKind.Type;
+
+export const TeamTurnAuthorKind = Schema.Literals(["member", "team_automation"]);
+export type TeamTurnAuthorKind = typeof TeamTurnAuthorKind.Type;
+
+export const TeamScheduledTaskMcpAccessLevel = Schema.Literals(["minimal", "elevated"]);
+export type TeamScheduledTaskMcpAccessLevel = typeof TeamScheduledTaskMcpAccessLevel.Type;
+
+export const TeamScheduledTaskScope = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("personal"),
+    teamId: Schema.Null,
+    environmentId: EnvironmentId,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("team"),
+    teamId: TeamId,
+    environmentId: EnvironmentId,
+  }),
+]);
+export type TeamScheduledTaskScope = typeof TeamScheduledTaskScope.Type;
+
+/**
+ * Resolves internal `(teamScope, environmentId)` scoping for scheduled tasks.
+ * Non-team environments map to a virtual `"personal"` scope in code (hidden in UI).
+ */
+export function resolveScheduledTaskScope(
+  teamId: TeamId | null | undefined,
+  environmentId: EnvironmentId,
+): TeamScheduledTaskScope {
+  if (teamId != null) {
+    return { kind: "team", teamId, environmentId };
+  }
+  return { kind: "personal", teamId: null, environmentId };
+}
+
+export const TeamScheduledTaskMeta = Schema.Struct({
+  taskId: ScheduledTaskId,
+  teamId: TeamId,
+  environmentId: EnvironmentId,
+  viewId: TeamViewId,
+  locked: Schema.Boolean,
+  mcpAccessLevel: TeamScheduledTaskMcpAccessLevel,
+  createdByMemberId: Schema.NullOr(TeamMemberId),
+  updatedByMemberId: Schema.NullOr(TeamMemberId),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type TeamScheduledTaskMeta = typeof TeamScheduledTaskMeta.Type;
+
+export const TeamScheduledTaskMetaDeletedPayload = Schema.Struct({
+  taskId: ScheduledTaskId,
+});
+export type TeamScheduledTaskMetaDeletedPayload = typeof TeamScheduledTaskMetaDeletedPayload.Type;
+
+export const TeamScheduledTaskUpsertMetaInput = Schema.Struct({
+  environmentId: Schema.optionalKey(EnvironmentId),
+  viewId: Schema.optionalKey(TeamViewId),
+  locked: Schema.optionalKey(Schema.Boolean),
+  mcpAccessLevel: Schema.optionalKey(TeamScheduledTaskMcpAccessLevel),
+});
+export type TeamScheduledTaskUpsertMetaInput = typeof TeamScheduledTaskUpsertMetaInput.Type;
+
+export function isTeamOwnedThreadAttribution(
+  attribution: Pick<TeamThreadAttribution, "ownerKind" | "creatorMemberId"> | null | undefined,
+): boolean {
+  if (!attribution) return false;
+  return attribution.ownerKind === "team" || attribution.creatorMemberId === null;
+}
+
+export function canMemberReadTeamScheduledTask(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly environment: Pick<TeamEnvironment, "accessRule"> | null | undefined;
+  readonly view: Pick<TeamView, "readRule"> | null | undefined;
+}): boolean {
+  if (!input.member || input.member.status !== "active") return false;
+  if (!canMemberAccessTeamEnvironment(input.member, input.environment)) return false;
+  return canMemberReadTeamView(input.member, input.view);
+}
+
+export function canMemberMutateTeamScheduledTask(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly environment: Pick<TeamEnvironment, "accessRule"> | null | undefined;
+  readonly view: Pick<TeamView, "readRule"> | null | undefined;
+  readonly existingMeta?: Pick<TeamScheduledTaskMeta, "locked" | "mcpAccessLevel"> | null;
+  readonly nextLocked?: boolean;
+  readonly nextMcpAccessLevel?: TeamScheduledTaskMcpAccessLevel;
+}): boolean {
+  const { member, environment, view, existingMeta, nextLocked, nextMcpAccessLevel } = input;
+  if (!member || member.status !== "active") return false;
+  if (!canManageTeamScheduledTasks(member.role)) return false;
+  if (!canMemberReadTeamScheduledTask({ member, environment, view })) return false;
+  const existingPrivileged =
+    existingMeta != null && (existingMeta.locked || existingMeta.mcpAccessLevel === "elevated");
+  const nextPrivileged = nextLocked === true || nextMcpAccessLevel === "elevated";
+  if (
+    (existingPrivileged || nextPrivileged) &&
+    !canManagePrivilegedTeamScheduledTasks(member.role)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Webhook URLs/tokens can trigger automation runs, so they are redacted for `regular`
+ * members and for `modo` on `elevated` or `locked` tasks.
+ */
+export function canMemberSeeTeamScheduledTaskWebhook(input: {
+  readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
+  readonly environment: Pick<TeamEnvironment, "accessRule"> | null | undefined;
+  readonly view: Pick<TeamView, "readRule"> | null | undefined;
+  readonly meta: Pick<TeamScheduledTaskMeta, "locked" | "mcpAccessLevel"> | null | undefined;
+}): boolean {
+  return canMemberMutateTeamScheduledTask({
+    member: input.member,
+    environment: input.environment,
+    view: input.view,
+    existingMeta: input.meta ?? null,
+  });
+}
+
 export function canMemberLeaveTeamThreadNote(input: {
   readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
-  readonly attribution: Pick<TeamThreadAttribution, "creatorMemberId" | "locked">;
+  readonly attribution: Pick<TeamThreadAttribution, "ownerKind" | "creatorMemberId" | "locked">;
   readonly view: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
 }): boolean {
   return canMemberPostInTeamThread(input);
@@ -429,8 +575,13 @@ export function resolveTeamThreadEnvironmentAccess(input: {
   }
   if (attribution.isLocalSynced === true) {
     const label =
-      attribution.executionEnvironmentLabel ?? `${attribution.creatorPseudo}'s local environment`;
-    if (viewingOnLocalExecutionEnvironment && attribution.creatorMemberId === member.id) {
+      attribution.executionEnvironmentLabel ??
+      `${attribution.creatorPseudo ?? "Member"}'s local environment`;
+    if (
+      viewingOnLocalExecutionEnvironment &&
+      attribution.creatorMemberId !== null &&
+      attribution.creatorMemberId === member.id
+    ) {
       return { canExecute: true, reason: "ok" };
     }
     return {
@@ -508,7 +659,7 @@ export type TeamThreadPostBlockReason = "ok" | "locked" | "view_read_only" | "no
 
 export function resolveTeamThreadPostBlockReason(input: {
   readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
-  readonly attribution: Pick<TeamThreadAttribution, "creatorMemberId" | "locked">;
+  readonly attribution: Pick<TeamThreadAttribution, "ownerKind" | "creatorMemberId" | "locked">;
   readonly view: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
 }): TeamThreadPostBlockReason {
   const { member, attribution, view } = input;
@@ -517,6 +668,16 @@ export function resolveTeamThreadPostBlockReason(input: {
   }
   if (attribution.locked) {
     return isTeamAdminRole(member.role) ? "ok" : "locked";
+  }
+  if (isTeamOwnedThreadAttribution(attribution)) {
+    // Unlocked team-owned threads allow owner/admin/modo (who can read its View), plus regular per postRule.
+    if (TEAM_ROLE_RANK[member.role] >= TEAM_ROLE_RANK.modo) {
+      return "ok";
+    }
+    if (view && matchesTeamAccessRule(view.postRule, member)) {
+      return "ok";
+    }
+    return "view_read_only";
   }
   if (attribution.creatorMemberId === member.id) {
     return "ok";
@@ -529,7 +690,7 @@ export function resolveTeamThreadPostBlockReason(input: {
 
 export function canMemberPostInTeamThread(input: {
   readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
-  readonly attribution: Pick<TeamThreadAttribution, "creatorMemberId" | "locked">;
+  readonly attribution: Pick<TeamThreadAttribution, "ownerKind" | "creatorMemberId" | "locked">;
   readonly view: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
 }): boolean {
   return resolveTeamThreadPostBlockReason(input) === "ok";
@@ -537,18 +698,22 @@ export function canMemberPostInTeamThread(input: {
 
 /**
  * Only the thread creator may steer an active turn or promote a queued run (`Send now`).
- * Even `owner` and `admin` cannot steer/promote on someone else's thread.
+ * Even `owner` and `admin` cannot steer/promote on someone else's thread, and nobody may
+ * `Send now` / steer on team-owned threads or active automation runs.
  */
 export function canMemberSteerActiveTeamTurn(input: {
   readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
   readonly attribution:
-    | Pick<TeamThreadAttribution, "creatorMemberId" | "locked">
+    | Pick<TeamThreadAttribution, "ownerKind" | "creatorMemberId" | "locked">
     | null
     | undefined;
   readonly view?: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
+  readonly activeTurnAuthorKind?: TeamTurnAuthorKind | null | undefined;
 }): boolean {
-  const { member, attribution, view } = input;
+  const { member, attribution, view, activeTurnAuthorKind } = input;
   if (!member || member.status !== "active" || !attribution) return false;
+  if (isTeamOwnedThreadAttribution(attribution)) return false;
+  if (activeTurnAuthorKind === "team_automation") return false;
   if (attribution.creatorMemberId !== member.id) return false;
   if (attribution.locked && !isTeamAdminRole(member.role)) return false;
   if (view !== undefined && !canMemberReadTeamThread({ member, view })) return false;
@@ -563,12 +728,12 @@ export function canMemberPromoteTeamQueuedRun(
 
 /**
  * Team turn interrupt rules: `owner`/`admin`, the thread creator, or the active turn author may
- * interrupt; `regular`/`modo` non-creators cannot interrupt another member's turn.
+ * interrupt; `regular`/`modo` non-creators cannot interrupt automation runs or colleagues' turns.
  */
 export function canMemberInterruptTeamTurn(input: {
   readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
   readonly attribution:
-    | Pick<TeamThreadAttribution, "creatorMemberId" | "locked">
+    | Pick<TeamThreadAttribution, "ownerKind" | "creatorMemberId" | "locked">
     | null
     | undefined;
   readonly view?: Pick<TeamView, "readRule"> | null | undefined;
@@ -581,7 +746,11 @@ export function canMemberInterruptTeamTurn(input: {
   if (activeTurnAuthorMemberId != null && activeTurnAuthorMemberId === member.id) {
     return true;
   }
-  if (attribution && attribution.creatorMemberId === member.id) {
+  if (
+    attribution &&
+    !isTeamOwnedThreadAttribution(attribution) &&
+    attribution.creatorMemberId === member.id
+  ) {
     return true;
   }
   return false;
@@ -594,7 +763,7 @@ export function canMemberInterruptTeamTurn(input: {
 export function canMemberManageTeamQueuedRun(input: {
   readonly member: Pick<TeamMember, "id" | "role" | "status"> | null | undefined;
   readonly attribution:
-    | Pick<TeamThreadAttribution, "creatorMemberId" | "locked">
+    | Pick<TeamThreadAttribution, "ownerKind" | "creatorMemberId" | "locked">
     | null
     | undefined;
   readonly view?: Pick<TeamView, "readRule" | "postRule"> | null | undefined;
@@ -605,7 +774,13 @@ export function canMemberManageTeamQueuedRun(input: {
   if (view !== undefined && !canMemberReadTeamThread({ member, view })) return false;
   if (isTeamAdminRole(member.role)) return true;
   if (attribution?.locked) return false;
-  if (attribution && attribution.creatorMemberId === member.id) return true;
+  if (
+    attribution &&
+    !isTeamOwnedThreadAttribution(attribution) &&
+    attribution.creatorMemberId === member.id
+  ) {
+    return true;
+  }
   if (queuedRunAuthorMemberId != null && queuedRunAuthorMemberId === member.id) return true;
   return false;
 }
@@ -613,8 +788,10 @@ export function canMemberManageTeamQueuedRun(input: {
 export const TeamThreadAttribution = Schema.Struct({
   threadId: ThreadId,
   teamId: TeamId,
-  creatorMemberId: TeamMemberId,
-  creatorPseudo: TeamPseudo,
+  ownerKind: Schema.optionalKey(TeamThreadOwnerKind),
+  creatorMemberId: Schema.NullOr(TeamMemberId),
+  creatorPseudo: Schema.NullOr(TeamPseudo),
+  teamDisplayName: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   viewId: TeamViewId,
   locked: Schema.Boolean,
   lockedByMemberId: Schema.NullOr(TeamMemberId),
@@ -628,8 +805,9 @@ export type TeamThreadAttribution = typeof TeamThreadAttribution.Type;
 export const TeamTurnAttribution = Schema.Struct({
   turnId: TrimmedNonEmptyString,
   threadId: ThreadId,
-  authorMemberId: TeamMemberId,
-  authorPseudo: TeamPseudo,
+  authorKind: Schema.optionalKey(TeamTurnAuthorKind),
+  authorMemberId: Schema.NullOr(TeamMemberId),
+  authorPseudo: Schema.NullOr(TeamPseudo),
   createdAt: IsoDateTime,
 });
 export type TeamTurnAttribution = typeof TeamTurnAttribution.Type;
@@ -1001,6 +1179,8 @@ export const TeamStateSnapshot = Schema.Struct({
   myGitHubIdentity: Schema.optionalKey(Schema.NullOr(TeamGitHubIdentity)),
   /** Visible only to `owner`/`admin` — null for `modo`/`regular`. */
   automationGitHubIdentity: Schema.optionalKey(Schema.NullOr(TeamAutomationGitHubIdentity)),
+  /** Sidecar metadata for team scheduled tasks visible to `currentMember`. */
+  scheduledTaskMetas: Schema.optionalKey(Schema.Array(TeamScheduledTaskMeta)),
 });
 export type TeamStateSnapshot = typeof TeamStateSnapshot.Type;
 
@@ -1130,12 +1310,23 @@ export const TeamStateStreamEvent = Schema.Union([
     type: Schema.Literal("automationGitHubIdentityUpdated"),
     payload: TeamAutomationGitHubIdentityUpdatedPayload,
   }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("scheduledTaskMetaUpserted"),
+    payload: TeamScheduledTaskMeta,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    type: Schema.Literal("scheduledTaskMetaDeleted"),
+    payload: TeamScheduledTaskMetaDeletedPayload,
+  }),
 ]);
 export type TeamStateStreamEvent = typeof TeamStateStreamEvent.Type;
 
 export interface TeamThreadNotificationEligibilityInput {
   readonly hasTeam: boolean;
   readonly memberId: TeamMemberId | null;
+  readonly ownerKind?: TeamThreadOwnerKind | undefined;
   readonly creatorMemberId: TeamMemberId | null;
   readonly isFollowing: boolean;
   readonly activeTurnAuthorMemberId: TeamMemberId | null;
@@ -1143,19 +1334,24 @@ export interface TeamThreadNotificationEligibilityInput {
 
 /**
  * Determines whether a team member should be notified for a thread event.
- * Personal mode (`!hasTeam`) and unattributed threads always remain enabled.
+ * Personal mode (`!hasTeam`) and unattributed legacy threads (`ownerKind === undefined && creatorMemberId === null`)
+ * always remain enabled. Team-owned threads (`ownerKind === "team"`) suppress default notifications
+ * unless the member explicitly follows the thread or authored the completing turn.
  */
 export function shouldNotifyTeamMemberForThread(
   input: TeamThreadNotificationEligibilityInput,
 ): boolean {
-  if (!input.hasTeam || input.creatorMemberId === null) {
+  if (!input.hasTeam) {
+    return true;
+  }
+  if (input.ownerKind === undefined && input.creatorMemberId === null) {
     return true;
   }
   if (input.memberId === null) {
     return false;
   }
   return (
-    input.creatorMemberId === input.memberId ||
+    (input.creatorMemberId !== null && input.creatorMemberId === input.memberId) ||
     input.isFollowing ||
     (input.activeTurnAuthorMemberId !== null && input.activeTurnAuthorMemberId === input.memberId)
   );
@@ -1163,9 +1359,15 @@ export function shouldNotifyTeamMemberForThread(
 
 export const TeamInitializeInput = Schema.Struct({
   name: TrimmedNonEmptyString,
+  displayName: Schema.optionalKey(Schema.NullOr(Schema.String)),
   ownerPseudo: TrimmedNonEmptyString,
 });
 export type TeamInitializeInput = typeof TeamInitializeInput.Type;
+
+export const TeamUpdateDisplayNameInput = Schema.Struct({
+  displayName: TrimmedNonEmptyString,
+});
+export type TeamUpdateDisplayNameInput = typeof TeamUpdateDisplayNameInput.Type;
 
 export const TeamInitializeResult = Schema.Struct({
   team: TeamWorkspace,
