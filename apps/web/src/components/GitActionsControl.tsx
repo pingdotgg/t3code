@@ -1113,7 +1113,7 @@ function CheckoutGitActionsControl({
   // the worktree root from the same status snapshot, not the project cwd.
   const workingTreeRoot = gitStatusForActions?.workingTree.rootPath ?? null;
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
-  const allSelected = excludedFiles.size === 0;
+  const allSelected = selectedFiles.length === allFiles.length;
   const noneSelected = selectedFiles.length === 0;
 
   const initAction = useVcsInitAction(sourceControlScope);
@@ -1296,28 +1296,27 @@ function CheckoutGitActionsControl({
     });
   };
 
-  // Keep a typed message for the retry unless the user already started a new one.
-  const restoreDialogCommitMessageOnFailure = (commitMessage: string) => (committed: boolean) => {
-    if (committed || !commitMessage) return;
-    setDialogCommitMessage((current) => current || commitMessage);
-  };
-
-  const runDialogActionOnNewBranch = () => {
+  const runDialogAction = async (featureBranch: boolean) => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
 
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
-    setExcludedFiles(new Set());
     setIsEditingFiles(false);
 
-    void runGitActionWithToast({
+    const committed = await runGitActionWithToast({
       action: "commit",
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
-      featureBranch: true,
-      skipDefaultBranchPrompt: true,
-    }).then(restoreDialogCommitMessageOnFailure(commitMessage));
+      ...(excludedFiles.size > 0 ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      featureBranch,
+      skipDefaultBranchPrompt: featureBranch,
+    });
+    if (committed) {
+      setExcludedFiles((current) => (current === excludedFiles ? new Set() : current));
+    } else if (commitMessage) {
+      // Keep a typed message for the retry unless the user already started a new one.
+      setDialogCommitMessage((current) => current || commitMessage);
+    }
   };
 
   const runQuickAction = () => {
@@ -1390,23 +1389,8 @@ function CheckoutGitActionsControl({
       void runGitActionWithToast({ action: "create_pr" });
       return;
     }
-    setExcludedFiles(new Set());
     setIsEditingFiles(false);
     setIsCommitDialogOpen(true);
-  };
-
-  const runDialogAction = () => {
-    if (!isCommitDialogOpen) return;
-    const commitMessage = dialogCommitMessage.trim();
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-    void runGitActionWithToast({
-      action: "commit",
-      ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
-    }).then(restoreDialogCommitMessageOnFailure(commitMessage));
   };
 
   const openChangedFileInEditor = (filePath: string) => {
@@ -1957,14 +1941,14 @@ function CheckoutGitActionsControl({
               variant="outline"
               size="sm"
               disabled={!canCreateFeatureBranch || noneSelected}
-              onClick={runDialogActionOnNewBranch}
+              onClick={() => void runDialogAction(true)}
             >
               <T>Commit on new branch</T>
             </Button>
             <Button
               size="sm"
               disabled={!canWriteSourceControl || noneSelected}
-              onClick={runDialogAction}
+              onClick={() => void runDialogAction(false)}
             >
               <T context="verb">Commit</T>
             </Button>
