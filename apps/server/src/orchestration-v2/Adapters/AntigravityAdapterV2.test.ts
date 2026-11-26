@@ -893,8 +893,29 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     status: "completed",
                   });
                   // A script runs the terminal fallback, so no command line names the tool.
-                  yield* mcpSessions.recordHtmlRender(threadId, failed, page("scripted"));
-                  for (const toolCallId of ["scripted", "scripted", "unissued"]) {
+                  const result = (name: string) =>
+                    JSON.stringify({
+                      content: [],
+                      structuredContent: { htmlRender: page(name) },
+                      isError: false,
+                    });
+                  for (const name of ["", "-stdout", "-combined", "-output"]) {
+                    yield* mcpSessions.recordHtmlRender(threadId, failed, page(`scripted${name}`));
+                  }
+                  for (const [toolCallId, rawOutput] of [
+                    [
+                      "scripted",
+                      { output: `Exit code: 0\nCommand output:\n${result("scripted")}` },
+                    ],
+                    [
+                      "scripted",
+                      { output: `Exit code: 0\nCommand output:\n${result("scripted")}` },
+                    ],
+                    ["scripted-stdout", { stdout: `${result("scripted-stdout")}\n` }],
+                    ["scripted-combined", { combinedOutput: result("scripted-combined") }],
+                    ["scripted-output", { output: `warning\n${result("scripted-output")}` }],
+                    ["unissued", { stdout: result("unissued") }],
+                  ] as const) {
                     yield* send({
                       sessionUpdate: "tool_call",
                       toolCallId,
@@ -909,13 +930,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                       sessionUpdate: "tool_call_update",
                       toolCallId,
                       status: "completed",
-                      rawOutput: {
-                        output: `Exit code: 0\nCommand output:\n${JSON.stringify({
-                          content: [],
-                          structuredContent: { htmlRender: page(toolCallId) },
-                          isError: false,
-                        })}`,
-                      },
+                      rawOutput,
                     });
                   }
                   return { stopReason: "end_turn" as const };
@@ -1044,7 +1059,15 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         [page("report"), page("report"), page("replacement"), page("replacement")],
       );
       assert.deepEqual(tool("unissued"), undefined);
-      for (const name of ["failed-retry", "error-retry", "agy-1.5.8", "scripted"]) {
+      for (const name of [
+        "failed-retry",
+        "error-retry",
+        "agy-1.5.8",
+        "scripted",
+        "scripted-stdout",
+        "scripted-combined",
+        "scripted-output",
+      ]) {
         assert.deepEqual(tool(name), {
           status: "completed",
           toolName: "t3-code.html_render",

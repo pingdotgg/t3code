@@ -5671,10 +5671,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // its output reports is shown only when this thread's MCP session published it.
           let commandPage = context.commandHtmlRenders.get(toolCall.toolCallId);
           if (mcpIdentity === undefined && commandPage === undefined && status === "completed") {
-            const reportedPage = htmlRenderFromToolItem({
-              toolName: HTML_RENDER_TOOL_NAME,
-              output: acpMcpToolCallOutput(rawOutput),
-            });
+            // Agents report a command's output under different fields, often after other lines.
+            const text = textFromUnknown(rawOutput)?.trimEnd();
+            const reportedPage = [
+              acpMcpToolCallOutput(rawOutput),
+              text,
+              text?.slice(text.lastIndexOf("\n") + 1),
+            ]
+              .map((output) => htmlRenderFromToolItem({ toolName: HTML_RENDER_TOOL_NAME, output }))
+              .find((page) => page !== undefined);
             if (reportedPage !== undefined) {
               commandPage = yield* mcpSessions.takeHtmlRender(
                 context.input.threadId,
