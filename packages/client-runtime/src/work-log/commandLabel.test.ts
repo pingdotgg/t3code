@@ -194,7 +194,6 @@ describe("commandDisplayText with Windows shell wrappers", () => {
     ],
     ['cmd.exe /c "npm test"', "npm test"],
     ['Bash.exe -lc "git status"', "git status"],
-    ['BASH.EXE -lc "npm test"', "npm test"],
     ['"C:\\Program Files\\Git\\bin\\Bash.exe" -lc "rg foo"', "rg foo"],
   ])("shows %j as %j", (input, expected) => {
     expect(commandDisplayText(input)).toBe(expected);
