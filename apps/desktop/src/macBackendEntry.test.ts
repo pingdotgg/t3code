@@ -24,11 +24,16 @@ const serverCode = `
     'require("node:worker_threads").parentPort.postMessage(process.execArgv)',
     { eval: true },
   );
-  const [workerExecArgv] = await once(worker, "message");
-  const [workerExit] = await once(worker, "exit");
+  // Listen for both at once: the exit can land before a later once() is attached.
+  const [[workerExecArgv], [workerExit]] = await Promise.all([
+    once(worker, "message"),
+    once(worker, "exit"),
+  ]);
   const child = fork(process.argv[2], { stdio: ["ignore", "ignore", "inherit", "ipc"] });
-  const [forkExecArgv] = await once(child, "message");
-  const [forkExit] = await once(child, "exit");
+  const [[forkExecArgv], [forkExit]] = await Promise.all([
+    once(child, "message"),
+    once(child, "exit"),
+  ]);
   process.stdout.write(JSON.stringify({
     main: import.meta.main,
     args: process.argv.slice(1),
