@@ -13153,6 +13153,135 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
+    it.effect("resumes a goal paused for a delegated wake after the adapter restarts", () =>
+      Effect.gen(function* () {
+        const turnStart = (id: number, text: string) =>
+          Effect.map(
+            CodexAdapterV2.buildCodexTurnStartParams({
+              nativeThreadId,
+              codexInput: [{ type: "text", text }],
+              runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+              modelSelection: CODEX_TEST_MODEL_SELECTION,
+              hasT3Mcp: true,
+            }),
+            (params): CodexReplay.CodexAppServerReplayEntry => ({
+              type: "expect_outbound",
+              label: "turn/start",
+              frame: { id, method: "turn/start", params },
+            }),
+          );
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const registerWakeSession = (threadId: ThreadId, pendingWake: boolean) =>
+          mcpSessions.set({
+            environmentId: EnvironmentId.make("test"),
+            threadId,
+            providerSessionId: "wake-session",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: "Bearer test",
+            browserToolsAvailable: true,
+            hasPendingWake: Effect.succeed(pendingWake),
+          });
+
+        const beforeRestart = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "goal-paused-for-wake-before-restart",
+            entries: [
+              ...sessionStart,
+              yield* turnStart(3, "Delegate and wait"),
+              ...withReplayRequestId(
+                codexReplayPreamble({
+                  nativeThreadId,
+                  nativeTurnId: "goal-turn",
+                  prompt: "",
+                }).slice(6),
+                3,
+              ),
+              notification("goal active", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: "goal-turn",
+                goal: codexGoal("active", 10),
+              }),
+              notification("turn done", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "goal-turn", status: "completed" }),
+              }),
+              ...request(
+                4,
+                "thread/goal/set",
+                { threadId: nativeThreadId, status: "paused" },
+                { goal: codexGoal("paused", 10) },
+              ),
+            ],
+          }),
+        );
+        yield* registerWakeSession(beforeRestart.threadId, true);
+        yield* beforeRestart.runtime.startTurn(
+          yield* goalTurnInput(beforeRestart, "Delegate and wait"),
+        );
+        yield* beforeRestart.firstTerminal;
+        assert.deepEqual(providerGoals(beforeRestart.events), ["active", "paused"]);
+        const projected = beforeRestart.events.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        assert(projected?.type === "provider_thread.updated");
+
+        // A new adapter instance stands in for the server restart: only the projection survives.
+        const goalRequests: Array<unknown> = [];
+        const afterRestart = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "goal-paused-for-wake-after-restart",
+            entries: [
+              ...sessionStart,
+              yield* turnStart(3, "Child finished"),
+              ...withReplayRequestId(
+                codexReplayPreamble({
+                  nativeThreadId,
+                  nativeTurnId: "wake-turn",
+                  prompt: "",
+                }).slice(6),
+                3,
+              ),
+              ...request(
+                4,
+                "thread/goal/set",
+                { threadId: nativeThreadId, status: "active" },
+                { goal: codexGoal("active", 10) },
+              ),
+              notification("goal resumed", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: "wake-turn",
+                goal: codexGoal("active", 10),
+              }),
+            ],
+          }),
+          undefined,
+          (method, params) =>
+            Effect.sync(() => {
+              if (method === "thread/goal/set") goalRequests.push(params);
+            }),
+        );
+        yield* registerWakeSession(afterRestart.threadId, false);
+        yield* afterRestart.runtime.startTurn(
+          yield* goalTurnInput(
+            { threadId: afterRestart.threadId, providerThread: projected.providerThread },
+            "Child finished",
+          ),
+        );
+        assert.includeDeepMembers(goalRequests, [{ threadId: nativeThreadId, status: "active" }]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
     it.effect("stops a turn Codex starts while the expiry pause is in flight", () =>
       Effect.gen(function* () {
         const prompt = "Keep going";
