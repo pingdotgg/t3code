@@ -2,8 +2,9 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import type { EnvironmentPresentation } from "../../state/environments";
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ProjectReadFileResult, ServerProvider } from "@t3tools/contracts";
 import {
   scopedThreadKey,
   scopeProjectRef,
@@ -24,9 +25,18 @@ import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import { appAtomRegistry, AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
+import { readProjects } from "../../state/entities";
 
 const resources = vi.hoisted(() => ({
   projects: [] as EnvironmentProject[],
+  projectListeners: new Set<(projects: readonly EnvironmentProject[]) => void>(),
+  getProjectFileQueryAtom:
+    vi.fn<
+      (
+        environmentId: EnvironmentId,
+        root: string,
+      ) => Atom.Atom<AsyncResult.AsyncResult<ProjectReadFileResult, never>>
+    >(),
   pickedEnvironmentId: null as EnvironmentId | null,
   refreshSelection: vi.fn<(ids: readonly EnvironmentId[]) => Promise<EnvironmentId | null>>(),
 }));
@@ -41,6 +51,11 @@ vi.mock("../../hooks/useLoadBalancedEnvironment", () => ({
 }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => resources.projects,
+  readProjects: () => resources.projects,
+  subscribeProjects: (listener: (projects: readonly EnvironmentProject[]) => void) => {
+    resources.projectListeners.add(listener);
+    return () => resources.projectListeners.delete(listener);
+  },
   readThreadShells: () => [],
   readProject: (ref: { environmentId: EnvironmentId; projectId: ProjectId }) =>
     resources.projects.find(
@@ -49,9 +64,27 @@ vi.mock("../../state/entities", () => ({
 }));
 vi.mock("../../hooks/useScratchProject", () => ({ useScratchProject: () => ({}) }));
 
+vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
+  ...(await original()),
+  getProjectFileQueryAtom: resources.getProjectFileQueryAtom,
+}));
+
+function projectFileAtom(contents: string) {
+  return Atom.make(
+    AsyncResult.success<ProjectReadFileResult>({
+      relativePath: "t3.json",
+      byteLength: new TextEncoder().encode(contents).byteLength,
+      contents,
+      truncated: false,
+    }),
+  );
+}
+
 function setup() {
   resources.refreshSelection.mockReset();
+  resources.getProjectFileQueryAtom.mockReset().mockReturnValue(projectFileAtom("{}"));
   resources.projects = [];
+  resources.projectListeners.clear();
   resources.pickedEnvironmentId = null;
   const a = EnvironmentId.make("machine-a");
   const b = EnvironmentId.make("machine-b");
@@ -164,7 +197,9 @@ function RoutingProbe({ input, onPrepared }: HarnessProps) {
         </button>
       ))}
       <span>{draft?.environmentId}</span>
+      <button onClick={routing.onAutoEnvironmentStable}>Auto balance</button>
       <button
+        disabled={routing.isEnvironmentChanging}
         onClick={async () => {
           const ready = await routing.refreshBeforeSend();
           onPrepared?.(ready);
@@ -396,3 +431,64 @@ it("keeps a workspace the user picked when the draft switches machine by hand", 
   await expect.element(screen.getByText(b)).toBeInTheDocument();
   expect(store.getDraftSession(draftId)?.envMode).toBe("local");
 });
+
+it.each(["deleted", "moved"] as const)(
+  "checks the destination again when the project was %s during the default read",
+  async (change) => {
+    const { a, b, draftId, input, store } = fanoutSetup();
+    const pending = Atom.make(AsyncResult.initial<ProjectReadFileResult, never>());
+    const moved = projectFileAtom('{"defaultThreadEnvMode":"worktree"}');
+    resources.getProjectFileQueryAtom.mockImplementation((_environmentId, root) =>
+      root === "/workspace/moved" ? moved : pending,
+    );
+    store.setDraftThreadContext(draftId, { envMode: "local" });
+
+    await using screen = await render(
+      <Harness input={{ ...input, automaticEnvironment: false }} />,
+    );
+    await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+    const send = screen.getByRole("button", { name: "Send", exact: true });
+    await expect.element(send).toBeDisabled();
+    await act(async () => {
+      resources.projects = resources.projects.flatMap((project) => {
+        if (project.environmentId !== b) return [project];
+        return change === "deleted" ? [] : [{ ...project, workspaceRoot: "/workspace/moved" }];
+      });
+      for (const listener of resources.projectListeners) listener(readProjects());
+    });
+    await expect.element(send).toBeEnabled();
+    expect(store.getDraftSession(draftId)).toMatchObject({
+      environmentId: change === "moved" ? b : a,
+      envMode: change === "moved" ? "worktree" : "local",
+    });
+    expect(store.getComposerDraft(draftId)?.prompt).toBe("Keep this prompt");
+  },
+);
+
+it.each(["leave the draft", "choose automatic routing", "switch to another machine"] as const)(
+  "stops watching the destination when users %s before the default loads",
+  async (action) => {
+    const { a, b, input } = fanoutSetup();
+    const pending = Atom.make(AsyncResult.initial<ProjectReadFileResult, never>());
+    const settled = projectFileAtom("{}");
+    resources.getProjectFileQueryAtom.mockImplementation((environmentId) =>
+      environmentId === b ? pending : settled,
+    );
+    await using screen = await render(
+      <Harness input={{ ...input, automaticEnvironment: false }} />,
+    );
+    await screen.getByRole("button", { name: `Switch to ${b}` }).click();
+    const send = screen.getByRole("button", { name: "Send", exact: true });
+    await expect.element(send).toBeDisabled();
+    expect(resources.projectListeners.size).toBe(1);
+
+    if (action === "leave the draft") {
+      await screen.unmount();
+    } else {
+      const button = action === "choose automatic routing" ? "Auto balance" : `Switch to ${a}`;
+      await screen.getByRole("button", { name: button, exact: true }).click();
+      await expect.element(send).toBeEnabled();
+    }
+    expect(resources.projectListeners.size).toBe(0);
+  },
+);
