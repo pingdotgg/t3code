@@ -10,6 +10,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  chatMarkdownImageSources,
   remarkAssistantInsights,
   remarkEnableOrderedListNumbers,
 } from "./markdownPipeline.ts";
@@ -953,6 +954,8 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
   ];
   const images = (node: Node): Node[] =>
     node.tagName === "img" ? [node] : (node.children ?? []).flatMap(images);
+  const nbspPicture =
+    '<picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/a\u00a0b.png 2x"><img src="https://example.com/light.png"></picture>';
   const tree = processor.runSync(
     processor.parse(
       [
@@ -966,15 +969,43 @@ it("moves a <picture>'s color-scheme sources onto its <img>, which the renderer 
         '<picture><source media="(prefers-color-scheme: light)" srcset="javascript:alert(1)"><img src="docs/dark.webp"></picture>',
         "",
         String.raw`<picture><source media="(prefers-color-scheme: dark)" srcset="C:\shots\dark.png"><img src="C:\shots\light.png"></picture>`,
+        "",
+        nbspPicture,
+        "",
+        '<picture><source media="(prefers-color-scheme: light)" srcset=" \thttps://example.com/\u00a0light\u00a0v2.png,\thttps://example.com/2x.png 2x"><img src="https://example.com/dark.png"></picture>',
       ].join("\n"),
     ),
   ) as Node;
 
-  expect(tags(tree)).toEqual(["picture", "img", "p", "picture", "img", "p", "picture", "img"]);
+  expect(tags(tree)).toEqual([
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+    "p",
+    "picture",
+    "img",
+  ]);
   expect(images(tree).map((image) => image.properties)).toEqual([
     { src: "docs/light.webp", alt: "Studio", dataDarkSrc: "docs/dark.webp" },
     { src: "docs/dark.webp" },
     { dataLocalSrc: String.raw`C:\shots\light.png`, dataDarkSrc: "file:///C:/shots/dark.png" },
+    { src: "https://example.com/light.png", dataDarkSrc: "https://example.com/a\u00a0b.png" },
+    {
+      src: "https://example.com/dark.png",
+      dataLightSrc: "https://example.com/\u00a0light\u00a0v2.png",
+    },
+  ]);
+  expect(chatMarkdownImageSources(nbspPicture)).toEqual([
+    "https://example.com/light.png",
+    "https://example.com/a\u00a0b.png",
   ]);
 });
 
