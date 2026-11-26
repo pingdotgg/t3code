@@ -53,6 +53,28 @@ describe("resolveEffortGlyph", () => {
     });
   });
 
+  it("fills bars by effort when a provider lists its levels high to low", () => {
+    const descending = descriptor(["xhigh", "high", "low", "none"]);
+    expect(resolveEffortGlyph(descending, "xhigh")).toEqual({
+      count: 3,
+      filled: 3,
+      special: null,
+      label: "Xhigh",
+    });
+    expect(resolveEffortGlyph(descending, "high")).toMatchObject({ count: 3, filled: 2 });
+    expect(resolveEffortGlyph(descending, "low")).toMatchObject({ count: 3, filled: 1 });
+    expect(resolveEffortGlyph(descending, "none")).toMatchObject({ count: 3, filled: 0 });
+    const noOff = descriptor(["high", "medium", "low"]);
+    expect(resolveEffortGlyph(noOff, "high")).toMatchObject({ count: 3, filled: 3 });
+  });
+
+  it("keeps a low-to-high list that starts at off as it was", () => {
+    const ascending = descriptor(["none", "low", "high", "xhigh"]);
+    expect(resolveEffortGlyph(ascending, "none")).toMatchObject({ count: 3, filled: 0 });
+    expect(resolveEffortGlyph(ascending, "low")).toMatchObject({ count: 3, filled: 1 });
+    expect(resolveEffortGlyph(ascending, "xhigh")).toMatchObject({ count: 3, filled: 3 });
+  });
+
   it("falls back to the word when the value is unknown or the scale is too short or long", () => {
     expect(resolveEffortGlyph(claude, "unknown")).toBeNull();
     expect(resolveEffortGlyph(descriptor(["high"]), "high")).toBeNull();
