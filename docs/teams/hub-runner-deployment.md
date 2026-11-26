@@ -148,13 +148,14 @@ sudo sysctl --system
 
 #### Ubuntu 24.04+ AppArmor unprivileged userns restriction
 
-Ubuntu 24.04 sets `kernel.apparmor_restrict_unprivileged_userns=1` by default, which causes `bwrap` to fail with `bwrap: setting up uid map: Permission denied` unless `bwrap` has an AppArmor profile granting `userns`. Check whether it is active and ensure `/etc/apparmor.d/bwrap` exists:
+Ubuntu 24.04 sets `kernel.apparmor_restrict_unprivileged_userns=1` by default, which causes `bwrap` to fail with `bwrap: setting up uid map: Permission denied` unless a loaded AppArmor profile grants `userns`. First check whether Ubuntu already ships a loaded `bwrap` profile:
 
 ```bash
 sysctl kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
+sudo aa-status 2>/dev/null | grep -i bwrap || true
 ```
 
-If `kernel.apparmor_restrict_unprivileged_userns = 1` and `/etc/apparmor.d/bwrap` is absent, install the minimal `bwrap` AppArmor profile:
+If `kernel.apparmor_restrict_unprivileged_userns = 1` and no `bwrap` profile is loaded, install `/etc/apparmor.d/bwrap`:
 
 ```bash
 sudo tee /etc/apparmor.d/bwrap <<'EOF'
@@ -171,6 +172,8 @@ EOF
 sudo apparmor_parser -r /etc/apparmor.d/bwrap
 ```
 
+> **Important `NoNewPrivileges=true` note on Ubuntu 24.04:** When `kernel.apparmor_restrict_unprivileged_userns=1` is active, systemd's `NoNewPrivileges=true` blocks an unconfined `t3runner` process from transitioning into the `/etc/apparmor.d/bwrap` profile on `execve("/usr/bin/bwrap")`. Either omit `NoNewPrivileges=true` on `t3runner.service` (every sandboxed child inside `bwrap` still receives kernel `PR_SET_NO_NEW_PRIVS` from `bwrap` itself), or attach an explicit `AppArmorProfile=t3runner` profile that grants `userns` directly to `t3runner`.
+
 Confirm `t3runner` can run `bwrap` with PID/IPC/UTS/mount namespaces:
 
 ```bash
@@ -183,7 +186,9 @@ sudo -u t3runner bwrap \
 
 ### 5.2 Enable `/proc` `hidepid=2` (Host-Wide + systemd Unit)
 
-Mounting `/proc` with `hidepid=2` prevents unprivileged users from viewing `/proc/<pid>` entries belonging to other OS users (such as `t3hub` or root services). Combine host-wide `/etc/fstab` hardening with systemd's per-unit `ProtectProc=invisible` + `ProcSubset=pid` on `t3runner.service`:
+Mounting `/proc` with `hidepid=2` prevents unprivileged users from viewing `/proc/<pid>` entries belonging to **other OS users** (such as `t3hub` or root services). Same-UID isolation between concurrent turns under `t3runner` is enforced by `bwrap --unshare-pid` (each turn receives its own PID namespace and private `/proc`). Combine host-wide `/etc/fstab` `hidepid=2` with systemd's `ProtectProc=invisible` on `t3runner.service`:
+
+> **Do NOT set `ProcSubset=pid` on `t3runner.service`:** Mounting `/proc` with `subset=pid` hides `/proc/meminfo` and `/proc/cpuinfo` (breaking Node/libuv telemetry and `AgentScope` memory limits) and causes Linux to reject unprivileged `bwrap --unshare-pid --proc /proc` mounts with `EPERM` (`mount_too_revealing`). Use `ProtectProc=invisible` alone.
 
 #### Option A — Host-wide `/etc/fstab` `hidepid=2`
 
@@ -203,7 +208,7 @@ sudo mount -o remount,hidepid=2,gid=proc /proc
 
 #### Option B — systemd per-unit `/proc` isolation + `--team-bwrap-sandbox`
 
-Update `/etc/systemd/system/t3runner.service` to enable `--team-bwrap-sandbox` (or `T3CODE_TEAM_BWRAP_SANDBOX=1`), `ProtectProc=invisible`, and `ProcSubset=pid`:
+Update `/etc/systemd/system/t3runner.service` to enable `--team-bwrap-sandbox` (or `T3CODE_TEAM_BWRAP_SANDBOX=1`) and `ProtectProc=invisible`:
 
 ```ini
 [Unit]
@@ -220,10 +225,10 @@ ExecStart=/usr/local/bin/t3 serve --team-bwrap-sandbox --host 127.0.0.1 --port 3
 Restart=on-failure
 RestartSec=3
 UMask=0077
-NoNewPrivileges=true
+# Omit NoNewPrivileges=true when relying on Ubuntu 24.04's /etc/apparmor.d/bwrap transition
+# (or set AppArmorProfile=t3runner with `userns,`). bwrap enforces PR_SET_NO_NEW_PRIVS inside sandboxes.
 PrivateTmp=true
 ProtectProc=invisible
-ProcSubset=pid
 InaccessiblePaths=/var/lib/t3hub
 
 [Install]
@@ -238,7 +243,11 @@ sudo systemctl restart t3runner
 sudo systemctl status t3runner --no-pager
 ```
 
-> **Note on shared-daemon providers:** Providers that run a single shared background server across workspaces (`cursor`, `opencode`) fail closed when `--team-bwrap-sandbox` is enabled. Per-worktree providers (`claudeAgent`, `codex`, `antigravity`/ACP, `pi`, `muse`) and runner shell terminals all run inside per-thread `bwrap` sandboxes. For trust-tier isolation across different team roles, you can also run separate runner OS users (for example `t3runner-default` and `t3runner-admin`) gated by `team_environments` ACLs.
+> **Layer 2 threat-model notes:**
+>
+> - **Workspace parent permissions:** Keep workspaces under a dedicated runner-owned directory (`/srv/t3-workspaces` or `/var/lib/t3runner/worktrees`) whose parent directories are never mounted writable inside sandboxes, so a sandboxed agent cannot swap a worktree path with a symlink.
+> - **Shared-daemon providers:** Providers that run a single shared background server across workspaces (`cursor`, `opencode`) fail closed when `--team-bwrap-sandbox` is enabled. Per-worktree providers (`claudeAgent`, `codex`, `antigravity`/ACP, `pi`, `muse`) and runner shell terminals run inside per-thread `bwrap` sandboxes.
+> - **Network & broker scope:** `--unshare-net` is intentionally omitted so agents can reach upstream model APIs and local MCP/proxy HTTP endpoints on `127.0.0.1` (gated by bearer tokens). Note that `CodexManagedTokenBroker` serves tokens over a runner-scoped Unix socket keyed by `instanceId`; if multiple independent teams share a single host, deploy separate runner OS users (for example `t3runner-team-a` and `t3runner-team-b`, or `t3runner-default` and `t3runner-admin`) gated by `team_environments` ACLs.
 
 ### 5.3 Verify Layer 2 Hardening
 
@@ -250,9 +259,11 @@ sudo systemctl status t3runner --no-pager
    # Expected: { ..., "teamBwrapSandbox": true }
    ```
 
-2. **Verify `/proc` `hidepid=2` hides `t3hub` and other users' processes from `t3runner`:**
+2. **Verify host-wide `/proc` `hidepid=2` hides other OS users' processes from `t3runner`:**
 
    ```bash
+   # Tests host-wide /etc/fstab hidepid=2 (Option A). To verify per-unit ProtectProc=invisible
+   # (Option B) alone, run `ps -eo user,pid,comm` inside a sandboxed turn or via `systemd-run -p ProtectProc=invisible`.
    sudo -u t3runner sh -c 'ps -eo user,pid,comm | grep -E "t3hub|sshd|root"' || echo "Foreign processes hidden (OK)"
    ```
 

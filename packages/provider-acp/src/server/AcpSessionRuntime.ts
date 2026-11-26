@@ -1499,29 +1499,32 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     );
   }
   const processSandbox = yield* ProcessSandbox;
-  const effectiveSpawnCommand = processSandbox.enabled
-    ? {
-        ...(yield* processSandbox
-          .wrap({
-            command: spawnCommand.command,
-            args: spawnCommand.args,
-            cwd: options.spawn.cwd ?? options.cwd,
-            env: commandLookupEnv,
-            name: "acp",
-            threadId: yield* AgentScopeThreadId,
-          })
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new EffectAcpErrors.AcpSpawnError({
-                  command: options.spawn.command,
-                  cause,
-                }),
-            ),
-          )),
-        shell: false,
-      }
-    : spawnCommand;
+  const sandboxedResult = processSandbox.enabled
+    ? yield* processSandbox
+        .wrap({
+          command: spawnCommand.command,
+          args: spawnCommand.args,
+          cwd: options.spawn.cwd ?? options.cwd,
+          env: commandLookupEnv,
+          name: "acp",
+          threadId: yield* AgentScopeThreadId,
+        })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EffectAcpErrors.AcpSpawnError({
+                command: options.spawn.command,
+                cause,
+              }),
+          ),
+        )
+    : undefined;
+  const effectiveSpawnCommand =
+    sandboxedResult === undefined
+      ? spawnCommand
+      : { command: sandboxedResult.command, args: sandboxedResult.args, shell: false };
+  const effectiveHostEnv = sandboxedResult?.hostEnv ?? options.spawn.env;
+  const effectiveLookupEnv = sandboxedResult?.hostEnv ?? commandLookupEnv;
   const containedTargetCommand =
     linuxCgroupLease === undefined || NodePath.isAbsolute(effectiveSpawnCommand.command)
       ? effectiveSpawnCommand.command
@@ -1546,7 +1549,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           args: effectiveSpawnCommand.args,
           name: "acp",
           threadId: yield* AgentScopeThreadId,
-          env: commandLookupEnv,
+          env: effectiveLookupEnv,
         });
   const scopedSpawnCommand =
     scopedLaunch === undefined ? effectiveSpawnCommand : { ...scopedLaunch, shell: false };
@@ -1568,9 +1571,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         };
   const spawnEnvironment =
     linuxCgroupLease === undefined
-      ? options.spawn.env
+      ? effectiveHostEnv
       : {
-          ...options.spawn.env,
+          ...effectiveHostEnv,
           ELECTRON_RUN_AS_NODE: "1",
           T3_ACP_CGROUP_WRAPPER: "1",
         };

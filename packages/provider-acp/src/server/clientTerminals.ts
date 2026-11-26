@@ -12,7 +12,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
-import { ProcessSandbox } from "@t3tools/shared/AgentScope";
+import { ProcessSandbox, sanitizeHostEnvForSandboxLaunch } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { gitForWindowsBash, SpawnExecutableResolution } from "@t3tools/shared/shell";
 
@@ -276,11 +276,18 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                   options.shellCommands === true && (request.args?.length ?? 0) === 0;
                 const rawCommand = isShellSource ? "/bin/sh" : request.command;
                 const rawArgs = isShellSource ? ["-c", request.command] : (request.args ?? []);
-                // Only pass server-owned env (never untrusted request.env) when resolving sandbox binds.
+                // Only pass server-owned env (never untrusted request.env) when resolving sandbox binds
+                // and when launching the host bwrap binary; forward request.env strictly inside bwrap.
                 const trustedEnv = mergeEnvironments(isWindows, [
                   Object.entries(inheritedEnvironment),
                   Object.entries(sessionEnvironment ?? {}),
                 ]);
+                const requestEnvRecord =
+                  request.env !== undefined && request.env.length > 0
+                    ? Object.fromEntries(
+                        request.env.map((variable) => [variable.name, variable.value] as const),
+                      )
+                    : undefined;
                 const wrapped = yield* processSandbox
                   .wrap({
                     command: rawCommand,
@@ -288,6 +295,8 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                     cwd: options.defaultCwd,
                     ...(request.cwd == null ? {} : { chdir: request.cwd }),
                     env: trustedEnv,
+                    ...(requestEnvRecord === undefined ? {} : { sandboxEnv: requestEnvRecord }),
+                    allowExternalExecutableBind: false,
                     name: "acp-terminal",
                   })
                   .pipe(
@@ -300,7 +309,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                   );
                 return ChildProcess.make(wrapped.command, wrapped.args, {
                   cwd: options.defaultCwd,
-                  env: environment,
+                  env: wrapped.hostEnv ?? sanitizeHostEnvForSandboxLaunch(trustedEnv),
                   forceKillAfter,
                   shell: false,
                 });

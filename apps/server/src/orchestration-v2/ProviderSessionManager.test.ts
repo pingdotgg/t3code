@@ -6945,6 +6945,23 @@ it.effect(
         });
         assert.notStrictEqual(first.providerSessionId, second.providerSessionId);
         assert.strictEqual(openedSessionIds.length, 2);
+
+        // Changing a thread's cwd under bwrap recycles the warm session instead of reusing the old mount namespace.
+        yield* manager.open({
+          threadId: ThreadId.make("thread-bwrap-1"),
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd: "/tmp" },
+        });
+        assert.strictEqual(openedSessionIds.length, 3);
+        // Re-opening with the same cwd reuses the warm sandboxed session.
+        yield* manager.open({
+          threadId: ThreadId.make("thread-bwrap-1"),
+          providerSessionId: baseSessionId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd: "/tmp" },
+        });
+        assert.strictEqual(openedSessionIds.length, 3);
       }).pipe(
         Effect.provide(
           layerTest({

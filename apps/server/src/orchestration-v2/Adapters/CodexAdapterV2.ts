@@ -16,7 +16,10 @@ import {
   type CodexTurnTokenUsageState,
 } from "../../provider/CodexTurnTokenUsage.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
-import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.ts";
+import type {
+  CodexEffectiveRuntime,
+  CodexManagedSandboxBinds,
+} from "../../provider/CodexManagedRuntime.ts";
 import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts";
 import {
   buildCodexInitializeParams,
@@ -1667,6 +1670,7 @@ export interface CodexAppServerClientFactoryShape {
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
+    readonly sandboxBinds?: CodexManagedSandboxBinds | undefined;
   }) => Effect.Effect<
     CodexClient.CodexAppServerClient["Service"],
     ProviderAdapter.ProviderAdapterOpenSessionError,
@@ -1799,6 +1803,9 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly extendEnv?: boolean | undefined;
   readonly threadId?: string | undefined;
+  readonly extraProviderProfileDirs?: ReadonlyArray<string> | undefined;
+  readonly extraSocketPaths?: ReadonlyArray<string> | undefined;
+  readonly extraHelperPaths?: ReadonlyArray<string> | undefined;
 }) {
   const processSandbox = yield* ProcessSandbox;
   const sandboxed = processSandbox.enabled
@@ -1809,23 +1816,33 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
         env: input.env,
         name: "codex",
         threadId: input.threadId,
+        ...(input.extraProviderProfileDirs === undefined
+          ? {}
+          : { extraProviderProfileDirs: input.extraProviderProfileDirs }),
+        ...(input.extraSocketPaths === undefined
+          ? {}
+          : { extraSocketPaths: input.extraSocketPaths }),
+        ...(input.extraHelperPaths === undefined
+          ? {}
+          : { extraHelperPaths: input.extraHelperPaths }),
       })
-    : { command: input.command, args: input.args };
+    : { command: input.command, args: input.args, hostEnv: input.env };
+  const effectiveEnv = processSandbox.enabled ? sandboxed.hostEnv : input.env;
   const launch = yield* (yield* AgentScope).wrap({
     command: sandboxed.command,
     args: sandboxed.args,
     name: "codex",
     threadId: input.threadId,
-    env: input.env,
+    env: effectiveEnv,
     shared: !processSandbox.enabled,
   });
   const spawnCommand = yield* resolveSpawnCommand(launch.command, launch.args, {
-    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(effectiveEnv === undefined ? {} : { env: effectiveEnv }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
   });
   return ChildProcess.make(spawnCommand.command, spawnCommand.args, {
     ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
-    ...(input.env === undefined ? {} : { env: input.env }),
+    ...(effectiveEnv === undefined ? {} : { env: effectiveEnv }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
     shell: spawnCommand.shell,
     forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
@@ -2011,6 +2028,15 @@ export const layerAppServerClientFactory: Layer.Layer<
           ...(input.runtimePolicy.cwd === null ? {} : { cwd: input.runtimePolicy.cwd }),
           env: environment,
           threadId: input.threadId,
+          ...(input.sandboxBinds?.providerProfileDirs === undefined
+            ? {}
+            : { extraProviderProfileDirs: input.sandboxBinds.providerProfileDirs }),
+          ...(input.sandboxBinds?.socketPaths === undefined
+            ? {}
+            : { extraSocketPaths: input.sandboxBinds.socketPaths }),
+          ...(input.sandboxBinds?.helperPaths === undefined
+            ? {}
+            : { extraHelperPaths: input.sandboxBinds.helperPaths }),
         }).pipe(
           Effect.provideService(AgentScope, agentScope),
           Effect.provideService(ProcessSandbox, processSandbox),
@@ -2193,6 +2219,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           runtimePolicy: input.runtimePolicy,
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment: sessionEnvironment,
+          ...(resolvedRuntime?.sandboxBinds === undefined
+            ? {}
+            : { sandboxBinds: resolvedRuntime.sandboxBinds }),
         });
         const codexZone = codexTimeZone(sessionEnvironment);
         const additionalContextByThread = yield* Ref.make(

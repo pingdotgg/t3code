@@ -563,6 +563,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   args: launch.args,
                   cwd,
                   env: launch.env,
+                  extraRoBinds: [extensionPath],
+                  ...(sessionPath !== undefined
+                    ? { extraRwBinds: [path.dirname(sessionPath)] }
+                    : {}),
                   name: "pi",
                   threadId: input.threadId,
                 })

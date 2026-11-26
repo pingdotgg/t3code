@@ -359,6 +359,8 @@ interface LiveSessionEntry {
   readonly ownerActingMemberId: TeamMemberId | null;
   /** Tracks which team member's MCP token is bound to each attached thread so author switches recycle warm sessions. */
   readonly actingMemberIdByThread: ReadonlyMap<ThreadId, TeamMemberId | null>;
+  /** Tracks the workspace cwd this live process was opened in (used for bwrap recycle on cwd switch). */
+  readonly openedCwd: string | null;
   readonly supportsMultipleProviderThreads: boolean;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
@@ -3526,7 +3528,22 @@ export const layerWithOptions = (
                     : baseSessionId;
               const key = sessionKey(effectiveProviderSessionId);
               const existing = (yield* Ref.get(sessions)).get(key);
-              if (existing !== undefined) {
+              if (
+                existing !== undefined &&
+                (teamBwrapSandbox || processSandbox.enabled) &&
+                existing.openedCwd !== cwd
+              ) {
+                yield* releaseEntry({
+                  providerSessionId: effectiveProviderSessionId,
+                  reason: "manual_shutdown",
+                  detail:
+                    "Thread workspace cwd changed; recycling sandboxed provider session for new worktree.",
+                  preserveTeamEphemeralTokens: true,
+                }).pipe(logReleaseFailure(effectiveProviderSessionId));
+              }
+              const existingAfterCwdCheck = (yield* Ref.get(sessions)).get(key);
+              if (existingAfterCwdCheck !== undefined) {
+                const existing = existingAfterCwdCheck;
                 if (
                   input.actingMemberId !== undefined &&
                   hasOtherMember(existing, input.actingMemberId)
@@ -3694,6 +3711,7 @@ export const layerWithOptions = (
                     : new Map([[input.threadId, mcpCredentialId]]),
                 ownerActingMemberId: input.actingMemberId ?? null,
                 actingMemberIdByThread: new Map([[input.threadId, input.actingMemberId ?? null]]),
+                openedCwd: cwd,
                 supportsMultipleProviderThreads:
                   runtime.providerSession.capabilities.sessions
                     .supportsMultipleProviderThreadsPerSession,

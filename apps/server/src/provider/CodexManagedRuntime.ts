@@ -90,10 +90,17 @@ function makeTeamLeasedCodexAuth(
   };
 }
 
+export interface CodexManagedSandboxBinds {
+  readonly socketPaths?: ReadonlyArray<string> | undefined;
+  readonly providerProfileDirs?: ReadonlyArray<string> | undefined;
+  readonly helperPaths?: ReadonlyArray<string> | undefined;
+}
+
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly revision: string;
+  readonly sandboxBinds?: CodexManagedSandboxBinds | undefined;
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
 const managedCodexLaunchArgs = (command: string, args: ReadonlyArray<string>) =>
@@ -205,6 +212,10 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     delete environment.T3CODE_CODEX_LAUNCH_ARGS;
     delete environment.OPENAI_API_KEY;
     delete environment.OPENAI_BASE_URL;
+    const helperPaths = [
+      invocation.command,
+      ...(invocation.entrypoint === undefined ? [] : [invocation.entrypoint]),
+    ];
     return {
       config: decodeSettings({
         enabled: options.enabled,
@@ -215,6 +226,12 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       }),
       environment,
       revision: profileKey,
+      sandboxBinds: {
+        socketPaths: [endpoint],
+        providerProfileDirs:
+          homeLayout.sharedHomePath !== homePath ? [homeLayout.sharedHomePath] : [],
+        helperPaths,
+      },
     } satisfies CodexEffectiveRuntime;
   });
   return { auth, resolve, installation, homePath, homeLayout };

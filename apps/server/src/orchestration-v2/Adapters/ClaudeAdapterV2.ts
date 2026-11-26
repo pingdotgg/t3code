@@ -1739,11 +1739,33 @@ export const layerQueryRunner: Layer.Layer<
           [PortScanner.AGENT_THREAD_ENV]: input.threadId,
         },
       };
-      // The SDK can prepend a scope wrapper to native binaries; script entries run through node.
+      // The SDK can prepend a scope wrapper to native binaries; script entries and the default
+      // bundled SDK executable are wrapped inside spawnClaudeCodeProcess using pre-validated bwrap prefixArgs.
       const binaryPath = queryOptions.pathToClaudeCodeExecutable;
       const isNativeBinary =
         binaryPath !== undefined &&
         !CLAUDE_SCRIPT_EXTENSIONS.some((ext) => binaryPath.endsWith(ext));
+      const claudeExtraRoBinds = (() => {
+        if (!processSandbox.enabled || isNativeBinary) return [] as Array<string>;
+        const dirs = new Set<string>();
+        if (binaryPath !== undefined && path.isAbsolute(binaryPath)) {
+          dirs.add(path.dirname(binaryPath));
+        }
+        try {
+          const sdkPackageUrl = import.meta.resolve("@anthropic-ai/claude-agent-sdk/package.json");
+          if (sdkPackageUrl.startsWith("file://")) {
+            const sdkPkgDir = path.dirname(new URL(sdkPackageUrl).pathname);
+            dirs.add(sdkPkgDir);
+            const scopeDir = path.dirname(sdkPkgDir);
+            if (path.basename(scopeDir) === "@anthropic-ai") {
+              dirs.add(scopeDir);
+            }
+          }
+        } catch {
+          // Best-effort resolution; explicit binaryPath or system RO binds still apply.
+        }
+        return [...dirs];
+      })();
       const nativeSandboxLaunch =
         isNativeBinary && processSandbox.enabled
           ? yield* processSandbox
@@ -1762,19 +1784,30 @@ export const layerQueryRunner: Layer.Layer<
           ? yield* processSandbox
               .wrap({
                 command: process.execPath,
-                args: ["__t3_claude_sandbox_target__"],
+                args: [],
                 cwd: queryOptions.cwd,
                 env: queryOptions.env,
                 name: "claude",
                 threadId: input.threadId,
                 ...(binaryPath !== undefined ? { extraHelperPaths: [binaryPath] } : {}),
+                ...(claudeExtraRoBinds.length > 0 ? { extraRoBinds: claudeExtraRoBinds } : {}),
               })
               .pipe(
-                Effect.map((wrapped) => ({
-                  command: wrapped.command,
-                  args: wrapped.args.slice(0, Math.max(0, wrapped.args.length - 2)),
-                })),
                 Effect.mapError((cause) => queryRunnerError(cause, "query")),
+                Effect.flatMap((wrapped) =>
+                  wrapped.prefixArgs !== undefined
+                    ? Effect.succeed({
+                        command: wrapped.command,
+                        prefixArgs: wrapped.prefixArgs,
+                        hostEnv: wrapped.hostEnv,
+                      })
+                    : Effect.fail(
+                        queryRunnerError(
+                          "Active ProcessSandbox did not return prefixArgs for Claude script launch.",
+                          "query",
+                        ),
+                      ),
+                ),
               )
           : undefined;
       const launch = !isNativeBinary
@@ -1784,7 +1817,7 @@ export const layerQueryRunner: Layer.Layer<
             args: nativeSandboxLaunch?.args ?? [],
             name: "claude",
             threadId: input.threadId,
-            env: queryOptions.env,
+            env: nativeSandboxLaunch?.hostEnv ?? queryOptions.env,
           });
       const options =
         launch === undefined || launch.args.length === 0
@@ -1793,6 +1826,9 @@ export const layerQueryRunner: Layer.Layer<
               ...queryOptions,
               pathToClaudeCodeExecutable: launch.command,
               executableArgs: [...launch.args, ...(queryOptions.executableArgs ?? [])],
+              ...(nativeSandboxLaunch?.hostEnv === undefined
+                ? {}
+                : { env: nativeSandboxLaunch.hostEnv }),
             };
       const unit = launch?.unit;
       const stopScope = unit === undefined ? undefined : () => void runFork(agentScope.stop(unit));
@@ -1810,19 +1846,7 @@ export const layerQueryRunner: Layer.Layer<
       let descendants: ReturnType<typeof trackDescendants> | undefined;
       const spawnProcess =
         options.spawnClaudeCodeProcess ??
-        ((rawSpawnOptions: ClaudeSpawnOptions) => {
-          const spawnOptions =
-            scriptSandboxPrefix === undefined
-              ? rawSpawnOptions
-              : {
-                  ...rawSpawnOptions,
-                  command: scriptSandboxPrefix.command,
-                  args: [
-                    ...scriptSandboxPrefix.args,
-                    rawSpawnOptions.command,
-                    ...rawSpawnOptions.args,
-                  ],
-                };
+        ((spawnOptions: ClaudeSpawnOptions) => {
           if (platform !== "win32") {
             // Node can report "exit" before it has read the stderr the CLI wrote.
             let stderrDone = () => {};
@@ -1853,7 +1877,23 @@ export const layerQueryRunner: Layer.Layer<
       let spawnedProcess: ClaudeSpawnedProcess | undefined;
       let processExited = false;
       let processExit: Promise<void> | undefined;
-      const spawnClaudeCodeProcess = (spawnOptions: ClaudeSpawnOptions) => {
+      const spawnClaudeCodeProcess = (rawSpawnOptions: ClaudeSpawnOptions) => {
+        // Apply script/bundled-SDK sandbox wrapping before delegating to default or custom spawners.
+        const spawnOptions =
+          scriptSandboxPrefix === undefined
+            ? rawSpawnOptions
+            : {
+                ...rawSpawnOptions,
+                command: scriptSandboxPrefix.command,
+                args: [
+                  ...scriptSandboxPrefix.prefixArgs,
+                  rawSpawnOptions.command,
+                  ...rawSpawnOptions.args,
+                ],
+                ...(scriptSandboxPrefix.hostEnv === undefined
+                  ? {}
+                  : { env: scriptSandboxPrefix.hostEnv }),
+              };
         const child = spawnProcess(spawnOptions);
         spawnedProcess = child;
         // A spawn that fails emits only "error".
