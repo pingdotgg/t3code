@@ -27,9 +27,13 @@ export function BrowserSurfaceSlot(props: {
   // The lease lives as long as this element for one tab, so the ref callback owns it.
   const attachSurface = (element: HTMLDivElement) => {
     let lease = acquireBrowserSurface(tabId, fitSourceContent);
+    // The webview lives in a fixed layer outside the slot, so a sheet's stacking context would cover it.
+    const sheet = element.closest('[data-slot="sheet-viewport"]');
+    const minZIndex = sheet ? Number(getComputedStyle(sheet).zIndex) + 1 || 0 : 0;
     const update = () => {
       const rect = element.getBoundingClientRect();
       const presentation = presentationRef.current;
+      const zIndex = Math.max(presentation.zIndex, minZIndex);
       const presented = lease.present(
         {
           x: Math.round(rect.x),
@@ -39,7 +43,7 @@ export function BrowserSurfaceSlot(props: {
         },
         presentation.visible && rect.width > 0 && rect.height > 0,
         presentation.cornerRadius,
-        presentation.zIndex,
+        zIndex,
       );
       if (presentation.visible && !presented) {
         lease.release();
@@ -53,7 +57,7 @@ export function BrowserSurfaceSlot(props: {
           },
           rect.width > 0 && rect.height > 0,
           presentation.cornerRadius,
-          presentation.zIndex,
+          zIndex,
         );
       }
     };
