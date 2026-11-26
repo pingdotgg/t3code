@@ -34,7 +34,7 @@ const fencedCode = (char: "`" | "~", name: string) => {
   return String.raw`^[ \t]*${LIST_MARKERS}(?<${bq}>(?:>(?:[ \t]*>)*)?)(?:(?<=>)[ \t]*${LIST_MARKERS})?(?<${name}>${char}{3,}(?!${char}))${info}(?=\r?$)(?:(?:\r\n?|\n)(?!${closer})[ \t]*\k<${bq}>[^\r\n]*)*(?:(?:\r\n?|\n)${closer})?`;
 };
 // A code span may wrap lines until its paragraph ends: a blank line, heading, list item, fence, rule,
-// setext underline, or deeper blockquote.
+// setext underline, HTML comment, or deeper blockquote.
 const SPAN_BREAK_LINE =
   /[ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|(?:[-*+]|\d{1,9}[.)])[ \t]|`{3,}[^`\r\n]*\r?$|~{3,})/my;
 const LINE_PREFIX = /([ \t]*)(>|(?:[-*+]|\d{1,9}[.)])[ \t]+)?/y;
@@ -101,11 +101,12 @@ function codeSpanLines(markdown: string) {
     const indent = content.slice(0, content.length - text.length).replace(/\t/g, "    ").length;
     const containerIndent = hasList ? 0 : (listIndents[depth] ?? 0);
     const lazy = indent < containerIndent || depth < (paragraphDepth ?? 0);
-    // Rules and setext underlines end a paragraph unless indented as code; a lazy line is never an underline.
+    // Block boundaries end a paragraph unless indented as code; a lazy line is never an underline.
     const breaksSpan =
       !hasList &&
       (lazy ? indent : indent - containerIndent) <= 3 &&
       (THEMATIC_BREAK.test(text) ||
+        text.startsWith("<!--") ||
         (paragraphDepth !== undefined && !lazy && SETEXT_UNDERLINE.test(text)));
     const endsParagraph =
       breaksSpan ||
