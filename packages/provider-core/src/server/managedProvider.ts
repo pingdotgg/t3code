@@ -371,11 +371,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     const probed = yield* input.checkUsageLimits;
     if (input.pollUsageLimits === true) {
       // A failed read can mean the stored session expired or was revoked, which only the full
-      // check can renew or detect. Run it when reads start failing, not on every interval, and
-      // always for the recheck a deferred failure scheduled (deferFailure is false then).
+      // check can renew or detect. Run it when reads start failing, not on every interval. The
+      // recheck a deferred failure scheduled (deferFailure is false then) always runs it.
       const failed = probed?.unavailable?.reason === "probeFailed";
       const failedBefore = yield* Ref.getAndSet(lastUsageReadFailed, failed);
-      if (failed && (!failedBefore || !deferFailure)) {
+      if (!deferFailure || (failed && !failedBefore)) {
         yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true, deferFailure });
         return;
       }

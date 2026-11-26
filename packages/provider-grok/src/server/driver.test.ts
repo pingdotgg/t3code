@@ -8,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
@@ -342,6 +343,7 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
         });
         // Each billing request takes the next answer: a used percent, or 401 for a rejected key.
         const billing: Array<number | 401> = [97, 9, 401, 401, 401, 12, 401, 30, 401, 40];
+        const served = yield* Queue.unbounded<void>();
         const httpClient = HttpClient.make((request) => {
           // Only Grok's billing endpoint answers; version advisories see an unknown latest version.
           if (request.url !== GROK_USAGE_URL) {
@@ -350,12 +352,14 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
             );
           }
           const answer = billing.shift();
-          return Effect.succeed(
-            HttpClientResponse.fromWeb(
-              request,
-              answer === 401
-                ? Response.json({ error: "unauthorized" }, { status: 401 })
-                : Response.json({ config: { creditUsagePercent: answer } }),
+          return Queue.offer(served, undefined).pipe(
+            Effect.as(
+              HttpClientResponse.fromWeb(
+                request,
+                answer === 401
+                  ? Response.json({ error: "unauthorized" }, { status: 401 })
+                  : Response.json({ config: { creditUsagePercent: answer } }),
+              ),
             ),
           );
         });
@@ -371,7 +375,9 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
           config: { ...GrokDriver.defaultConfig(), binaryPath },
         }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
         const launchCount = fs.readFileString(launches).pipe(Effect.map((text) => text.length));
-        const readingAfter = (adjust: Effect.Effect<void>, percent: number) =>
+        // Waits for the billing requests a step makes; a full check reads billing after its CLI
+        // runs, so the launch count is settled once its request arrives.
+        const readingAfter = (adjust: Effect.Effect<void>, requests: number, percent: number) =>
           Effect.gen(function* () {
             const reading = yield* instance.snapshot.streamChanges.pipe(
               Stream.filter(
@@ -384,26 +390,27 @@ it.layer(layerUsageTest)("GrokDriver usage limits", (it) => {
             );
             yield* Effect.yieldNow;
             yield* adjust;
+            for (let request = 0; request < requests; request++) yield* Queue.take(served);
             yield* Fiber.join(reading);
             return yield* launchCount;
           });
         const nextInterval = TestClock.adjust("5 minutes");
 
-        const started = yield* readingAfter(Effect.void, 97);
-        expect(yield* readingAfter(nextInterval, 9)).toBe(started);
+        const started = yield* readingAfter(Effect.void, 1, 97);
+        expect(yield* readingAfter(nextInterval, 1, 9)).toBe(started);
 
         // A rejected key runs the full check, which starts the CLI to renew it; here it stays rejected.
-        const renewed = yield* readingAfter(nextInterval, 9);
+        const renewed = yield* readingAfter(nextInterval, 2, 9);
         expect(renewed).toBeGreaterThan(started);
         // While reads keep failing, the CLI is not started again.
-        expect(yield* readingAfter(nextInterval, 9)).toBe(renewed);
-        expect(yield* readingAfter(nextInterval, 12)).toBe(renewed);
+        expect(yield* readingAfter(nextInterval, 1, 9)).toBe(renewed);
+        expect(yield* readingAfter(nextInterval, 1, 12)).toBe(renewed);
 
         // Once a read succeeds, the next rejection runs the full check again, and so does the
         // rejection after a full check that read successfully.
-        const renewedAgain = yield* readingAfter(nextInterval, 30);
+        const renewedAgain = yield* readingAfter(nextInterval, 2, 30);
         expect(renewedAgain).toBeGreaterThan(renewed);
-        expect(yield* readingAfter(nextInterval, 40)).toBeGreaterThan(renewedAgain);
+        expect(yield* readingAfter(nextInterval, 2, 40)).toBeGreaterThan(renewedAgain);
         expect(billing).toEqual([]);
       }),
   );
