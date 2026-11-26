@@ -6,6 +6,7 @@ export function proposedPlanTitle(planMarkdown: string): string | null {
       if (marker[0] === fence[0] && marker.length >= fence.length && !info.trim()) fence = "";
       continue;
     }
+    // CommonMark: a backtick fence's info string cannot contain a backtick.
     if (marker && (marker[0] !== "`" || !info.includes("`"))) {
       fence = marker;
       continue;
