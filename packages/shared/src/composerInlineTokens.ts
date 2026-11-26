@@ -59,10 +59,10 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     try {
       path = decodeURIComponent(encodedPath);
     } catch {}
+    const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
     path = composerFileLinkPath(encodedPath, path);
     const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
     const basename = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
-    const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
     if (!path || hasExternalScheme || label !== basename) {
       continue;
     }
@@ -81,7 +81,8 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     const fullMatch = match[0];
     const prefix = match[1] ?? "";
     const quotedPath = match[2];
-    const path = quotedPath !== undefined ? quotedPath.replace(/\\(.)/g, "$1") : (match[3] ?? "");
+    const path =
+      quotedPath !== undefined ? quotedPath.replace(/\\(["\\])/g, "$1") : (match[3] ?? "");
     if (
       !path ||
       (quotedPath === undefined &&
@@ -173,11 +174,21 @@ export function collectComposerInlineTokens(
     matches.length > 0 && options.findMath
       ? composerMathRanges(text, options.findMath, matches)
       : [];
-  return matches
+  const sorted = matches
     .filter(
       (match) => !math.some((formula) => match.start < formula.end && match.end > formula.start),
     )
-    .sort((left, right) => left.start - right.start);
+    .sort((left, right) => left.start - right.start || right.end - left.end);
+  const resolved: ComposerInlineToken[] = [];
+  let cursor = 0;
+  for (const token of sorted) {
+    if (token.start < cursor) {
+      continue;
+    }
+    resolved.push(token);
+    cursor = token.end;
+  }
+  return resolved;
 }
 
 /** Shows each `@`-file link by its file name, as its composer chip does, for one-line previews. */

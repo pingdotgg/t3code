@@ -350,6 +350,15 @@ describe("media on custom hosts", () => {
     expect(split(body)).toEqual([expect.objectContaining({ kind: "attachment", media })]);
   });
 
+  it.each([
+    "[Open report](https://example.com/report?file=demo.mp4)",
+    "https://example.com/report#demo.png",
+  ])("keeps %s a link when only its query or fragment names media", (body) => {
+    expect(split(body)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: body, sourceOffset: 0 },
+    ]);
+  });
+
   it("keeps inline links and media examples in code as prose", () => {
     const body =
       "See [recording](https://drop.example.com/a.mp4) for context.\n\n```md\nhttps://drop.example.com/a.png\n```";
