@@ -207,9 +207,25 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       return true;
     });
   };
+  const environmentChangeScope = `${draftId ?? ""}:${activeProjectKey ?? ""}`;
+  // The busy state belongs to the request that set it, so an older request settling late
+  // (abandoned, or superseded by a newer switch) can never clear a newer one's.
+  const [busyEnvironmentChange, setBusyEnvironmentChange] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly scope: string;
+  } | null>(null);
+  const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the resolved load-balanced environment into the draft store once the async pick settles
   useEffect(() => {
-    if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
+    if (
+      !needsLoadBalancing ||
+      loadBalancing.pending ||
+      !draftId ||
+      isEnvironmentChanging ||
+      sendInFlightRef.current
+    )
+      return;
     const target = logicalProjectEnvironments.find(
       (environment) => environment.environmentId === loadBalancing.environmentId,
     );
@@ -225,50 +241,14 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     needsLoadBalancing,
     loadBalancing.pending,
     loadBalancing.environmentId,
+    isEnvironmentChanging,
     draftId,
     logicalProjectEnvironments,
     sendInFlightRef,
     getDraftSession,
     setDraftThreadContext,
   ]);
-  const onAutoEnvironment = () => {
-    if (envLocked || !draftId || sendInFlightRef.current) return;
-    if (composerHasAttachments) {
-      toastManager.add({
-        type: "warning",
-        id: "load-balancing-attachments",
-        title: m(msg("Keep attachments on this machine")),
-        description: m(
-          msg(
-            "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
-          ),
-        ),
-      });
-      return;
-    }
-    loadBalancing.refresh(
-      logicalProjectEnvironments.map((environment) => environment.environmentId),
-    );
-    setDraftThreadContext(draftId, {
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: null,
-      branch: null,
-      worktreePath: null,
-    });
-  };
-  const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
-  const autoEnvironmentLabel = automaticEnvironment
-    ? draftThread?.loadBalancedEnvironmentId
-      ? gt("Auto balance")
-      : loadBalancing.pending
-        ? gt("Checking machines…")
-        : loadBalancing.failed
-          ? gt("Auto balance unavailable")
-          : gt("Auto balance")
-    : undefined;
-
   // A change in flight belongs to the draft and project it started on.
-  const environmentChangeScope = `${draftId ?? ""}:${activeProjectKey ?? ""}`;
   const environmentChangeRef = useRef<{
     readonly environmentId: EnvironmentId;
     readonly scope: string;
@@ -292,13 +272,43 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const pending = environmentChangeRef.current;
     return pending !== null && pending.scope === environmentChangeScopeRef.current ? pending : null;
   };
-  // The busy state belongs to the request that set it, so an older request settling late
-  // (abandoned, or superseded by a newer switch) can never clear a newer one's.
-  const [busyEnvironmentChange, setBusyEnvironmentChange] = useState<{
-    readonly environmentId: EnvironmentId;
-    readonly scope: string;
-  } | null>(null);
-  const isEnvironmentChanging = busyEnvironmentChange?.scope === environmentChangeScope;
+  const onAutoEnvironment = () => {
+    if (envLocked || !draftId || sendInFlightRef.current) return;
+    if (composerHasAttachments) {
+      toastManager.add({
+        type: "warning",
+        id: "load-balancing-attachments",
+        title: m(msg("Keep attachments on this machine")),
+        description: m(
+          msg(
+            "Remove attachments before choosing automatic routing, then attach them on the selected machine.",
+          ),
+        ),
+      });
+      return;
+    }
+    environmentChangeRef.current = null;
+    setBusyEnvironmentChange(null);
+    loadBalancing.refresh(
+      logicalProjectEnvironments.map((environment) => environment.environmentId),
+    );
+    setDraftThreadContext(draftId, {
+      environmentSelection: "auto",
+      loadBalancedEnvironmentId: null,
+      branch: null,
+      worktreePath: null,
+    });
+  };
+  const onAutoEnvironmentStable = useStableCallback(onAutoEnvironment);
+  const autoEnvironmentLabel = automaticEnvironment
+    ? draftThread?.loadBalancedEnvironmentId
+      ? gt("Auto balance")
+      : loadBalancing.pending
+        ? gt("Checking machines…")
+        : loadBalancing.failed
+          ? gt("Auto balance unavailable")
+          : gt("Auto balance")
+    : undefined;
 
   const onEnvironmentChange = (nextEnvironmentId: EnvironmentId) => {
     if (envLocked || !draftId || sendInFlightRef.current) return;
@@ -311,8 +321,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const request = { environmentId: target.environmentId, scope: environmentChangeScope };
     environmentChangeRef.current = request;
     setBusyEnvironmentChange(null);
-    // `triagePrompt` is the prompt the target machine prepared for a triage draft.
-    const retarget = (project: (typeof allProjects)[number], triagePrompt?: string) => {
+    const readSwitchingDraft = () => {
       const currentDraft = getDraftSession(draftId);
       if (
         environmentChangeRef.current !== request ||
@@ -323,7 +332,21 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         currentDraft.environmentId !== originalDraft.environmentId ||
         currentDraft.projectId !== originalDraft.projectId
       )
-        return;
+        return null;
+      return currentDraft;
+    };
+    // `triagePrompt` is the prompt the target machine prepared for a triage draft.
+    const retarget = async (project: (typeof allProjects)[number], triagePrompt?: string) => {
+      const draft = readSwitchingDraft();
+      if (!draft) return;
+      const projectRef = scopeProjectRef(target.environmentId, project.id);
+      const defaultWorkspace = await retargetDraftWorkspace(draft, projectRef);
+      const currentDraft = readSwitchingDraft();
+      if (!currentDraft) return;
+      const workspace =
+        currentDraft.workspaceExplicit || currentDraft.worktreePath !== null
+          ? {}
+          : defaultWorkspace;
       if (triagePrompt !== undefined) {
         // Read now, so text typed while the machine prepared the session is kept.
         const prompt = getComposerDraft(draftId)?.prompt ?? "";
@@ -331,8 +354,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         if (nextPrompt !== prompt) setPrompt(draftId, nextPrompt);
       }
       carryFanoutSelections(currentDraft, target.environmentId);
-      const projectRef = scopeProjectRef(target.environmentId, project.id);
-      const workspace = retargetDraftWorkspace(currentDraft, projectRef);
       if (activeProjectIsScratch) {
         setLogicalProjectDraftThreadId(
           deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
@@ -360,8 +381,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     );
     // The playbook and context files exist only on the machine that prepared them.
     const followsTriage = isTriagePrompt(getComposerDraft(draftId)?.prompt ?? "");
-    if (target.projectId !== null && !(knownProject && followsTriage)) {
-      if (knownProject) retarget(knownProject);
+    if (target.projectId !== null && !knownProject) {
       finish();
       return;
     }
@@ -389,7 +409,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       const project =
         knownProject ??
         (await openScratchProject(target.environmentId, m(msg("Could not switch machine"))));
-      if (project) retarget(project, triagePrompt);
+      if (project) await retarget(project, triagePrompt);
     };
     setBusyEnvironmentChange(request);
     void switchMachine().finally(finish);
