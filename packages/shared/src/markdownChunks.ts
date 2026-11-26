@@ -108,19 +108,13 @@ const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
 function isLinkDefinition(line: string): boolean {
   const match = LINK_DEFINITION.exec(line);
   if (!match) return false;
-  const [, label, bareDestination] = match;
-  if (!label || label.length > MAX_LINK_LABEL_LENGTH || !/[^ \t]/.test(label)) {
-    return false;
-  }
-  if (label.includes("\t")) {
-    const start = line.indexOf("[") + 1;
-    let column = start;
-    // The Markdown tokenizer counts tabs as spaces up to the next four-column stop.
-    for (let i = 0; i < label.length; i++) {
-      column += label[i] === "\t" ? 4 - (column % 4) : 1;
-    }
-    if (column - start > MAX_LINK_LABEL_LENGTH) return false;
-  }
+  const [, label = "", bareDestination] = match;
+  if (!/[^ \t]/.test(label)) return false;
+  const start = line.indexOf("[") + 1;
+  let column = start;
+  // The Markdown tokenizer counts tabs as spaces up to the next four-column stop.
+  for (let i = 0; i < label.length; i++) column += label[i] === "\t" ? 4 - (column % 4) : 1;
+  if (column - start > MAX_LINK_LABEL_LENGTH) return false;
   if (bareDestination === undefined) return true;
   let depth = 0;
   for (let i = 0; i < bareDestination.length; i++) {
