@@ -5199,8 +5199,16 @@ describe("AcpAdapterV2", () => {
       const title =
         "skill discovery warning: candidate was skipped because its metadata is invalid";
       assert.deepEqual(
-        items.flatMap((item) => (item.type === "system_notice" ? [item.message] : [])),
-        [title],
+        items.flatMap((item) =>
+          item.type === "system_notice" ? [{ message: item.message, level: item.level }] : [],
+        ),
+        [
+          { message: title, level: "info" },
+          { message: "warning notice", level: "warning" },
+          { message: "error notice", level: "error" },
+          { message: "_mock.custom notice", level: "info" },
+        ],
+        "only warning and error notices are shown as warnings",
       );
       const replies = new Map(
         items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),
