@@ -461,6 +461,8 @@ describe("wordsHast", () => {
 
   it.each([
     ["# Title\n[a]: https://x.dev", ["[a]: <https://x.dev>"]],
+    ["\uFEFF[docs]: https://example.com/guide", ["[docs]: <https://example.com/guide>"]],
+    ["intro\n\n\uFEFF[docs]: https://example.com/guide", []],
     ['> [a]:\n> https://x.dev "The\n> guide"', ['[a]: <https://x.dev> "The guide"']],
     ["- [a]: https://x.dev\n\n[A]: https://second.dev", ["[a]: <https://x.dev>"]],
     ["<div>\n[a]: https://x.dev\n</div>", []],
