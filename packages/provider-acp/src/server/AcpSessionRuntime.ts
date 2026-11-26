@@ -1197,6 +1197,7 @@ export class AcpSessionRuntime extends Context.Service<
       payload: Omit<EffectAcpSchema.PromptRequest, "sessionId">,
       options?: {
         readonly sessionId?: string;
+        readonly stop?: Deferred.Deferred<void>;
         readonly dispatched?: Deferred.Deferred<void>;
         readonly released?: Deferred.Deferred<void>;
       },
@@ -2838,7 +2839,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           return runResumeSession(
             requestPayload,
             started.initializeResult,
-            acp.agent.resumeSession(requestPayload),
+            withStartupTimeout("session/resume", acp.agent.resumeSession(requestPayload)),
           ).pipe(
             Effect.flatMap((response) => adoptSession(sessionId, response)),
             sessionLoadSemaphore.withPermit,
@@ -2860,7 +2861,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
               runLoggedRequest(
                 "session/fork",
                 requestPayload,
-                acp.agent.forkSession(requestPayload),
+                withStartupTimeout("session/fork", acp.agent.forkSession(requestPayload)),
               ),
             ),
             Effect.flatMap((response) => adoptSession(response.sessionId, response)),
@@ -2987,7 +2988,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           (state._tag === "Started" ? state.result.sessionId : options.resumeSessionId);
         return yield* promptSerializationSemaphore.withPermit(
           Effect.acquireUseRelease(
-            Deferred.make<void>().pipe(
+            (promptOptions?.stop ? Effect.succeed(promptOptions.stop) : Deferred.make<void>()).pipe(
               Effect.tap((stop) => Ref.set(waitingPromptStopRef, Option.some(stop))),
             ),
             (stop) =>

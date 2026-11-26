@@ -11655,6 +11655,17 @@ describe("AcpAdapterV2", () => {
             ),
             original,
           );
+          assertNoToolRows(
+            yield* collectUpdate(
+              session.send({
+                sessionUpdate: "tool_call_update",
+                toolCallId,
+                status: "failed",
+                rawOutput: { stderr: "ambiguous" },
+              }),
+            ),
+          );
+          assert.lengthOf(session.continuations, offers);
         }
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
