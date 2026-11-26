@@ -3,20 +3,23 @@ import { KeyboardController, KeyboardEvents } from "react-native-keyboard-contro
 
 // `useKeyboardState` only flips on willShow and didHide. This follows the will-events, so a
 // layout that makes room for the keyboard gives it back as soon as the keyboard starts hiding.
+// Android reports a keyboard it did not animate, such as one a Modal or the share sheet closed,
+// with a did-event alone, so those count too.
 let keyboardShowing = KeyboardController.isVisible();
 function subscribeKeyboardShowing(onChange: () => void) {
   keyboardShowing = KeyboardController.isVisible();
-  const willShow = KeyboardEvents.addListener("keyboardWillShow", () => {
-    keyboardShowing = true;
+  const follow = (showing: boolean) => () => {
+    keyboardShowing = showing;
     onChange();
-  });
-  const willHide = KeyboardEvents.addListener("keyboardWillHide", () => {
-    keyboardShowing = false;
-    onChange();
-  });
+  };
+  const subscriptions = [
+    KeyboardEvents.addListener("keyboardWillShow", follow(true)),
+    KeyboardEvents.addListener("keyboardDidShow", follow(true)),
+    KeyboardEvents.addListener("keyboardWillHide", follow(false)),
+    KeyboardEvents.addListener("keyboardDidHide", follow(false)),
+  ];
   return () => {
-    willShow.remove();
-    willHide.remove();
+    for (const subscription of subscriptions) subscription.remove();
   };
 }
 const getKeyboardShowing = () => keyboardShowing;

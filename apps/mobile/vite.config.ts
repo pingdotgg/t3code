@@ -68,6 +68,7 @@ const reactTests = [
   "src/features/connection/LinkedEnvironmentsSection.test.tsx",
   "src/features/devices/device-stream.browser.test.ts",
   "src/features/keyboard/keyboardControllerState.test.tsx",
+  "src/features/keyboard/useSoftKeyboardShowing.test.tsx",
   "src/features/voice-input/useVoiceInputController.test.tsx",
 ];
 
