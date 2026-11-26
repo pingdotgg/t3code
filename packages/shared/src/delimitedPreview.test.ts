@@ -73,6 +73,14 @@ describe("delimited file previews", () => {
         expect(parseDelimitedPreview(`${prefix}name\r\n`, delimiter).rows).toEqual([["name"]]);
         expect(parseDelimitedPreview(`${prefix}""`, delimiter).rows).toEqual([[""]]);
       }
+      expect(
+        parseDelimitedPreview(`\ufeff"kept"${delimiter}last\n`, delimiter, {
+          maxRows: 10,
+          maxColumns: 10,
+          maxCellLength: 100,
+          stripBom: false,
+        }).rows,
+      ).toEqual([['\ufeff"kept"', "last"]]);
     });
     it("keeps a quoted empty record at the row limit", () => {
       const text = `${"name\n".repeat(99)}""`;
