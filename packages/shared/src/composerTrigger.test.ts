@@ -1,3 +1,4 @@
+import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { assert, describe, expect, it } from "vite-plus/test";
@@ -20,7 +21,7 @@ function parsedLinkLabel(markdown: string): string | undefined {
     node.value ?? (node.children ?? []).map(textOf).join("");
   const find = (node: MarkdownNode): MarkdownNode | undefined =>
     node.type === "link" ? node : node.children?.map(find).find(Boolean);
-  const link = find(unified().use(remarkParse).parse(markdown) as MarkdownNode);
+  const link = find(unified().use(remarkParse).use(remarkGfm).parse(markdown) as MarkdownNode);
   return link && textOf(link);
 }
 
@@ -189,6 +190,9 @@ describe("serializeComposerFileLink", () => {
   it.each([
     ["pkg/__init__.py", "__init__.py"],
     ["notes/*draft*.md", "*draft*.md"],
+    ["notes/[TODO].md", "[TODO].md"],
+    ["notes/~~draft~~.md", "~~draft~~.md"],
+    ["notes/&#91;TODO&#93;.md", "&#91;TODO&#93;.md"],
   ])("renders the mention of %j with its file name as the label", (path, basename) => {
     expect(parsedLinkLabel(serializeComposerFileLink(path))).toBe(basename);
   });
