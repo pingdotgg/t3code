@@ -1,6 +1,8 @@
 #!/bin/sh
-# Builds this checkout as an unsigned macOS arm64 Nightly DMG and installs it
-# over T3 Code (Nightly).app without touching the stable app.
+# Builds this checkout as a macOS arm64 Nightly DMG, signs the staged app with
+# a local code-signing identity, and installs it over T3 Code (Nightly).app
+# without touching the stable app. The stable identity keeps macOS TCC grants
+# (Full Disk Access, camera, microphone, ...) across reinstalls.
 #
 # When the Nightly app is running, the script asks before quitting it. A
 # detached helper then waits for the app to exit, replaces it, and reopens it;
@@ -19,6 +21,13 @@
 #   T3CODE_NIGHTLY_ASSUME_YES   skip the quit confirmation dialog
 #   T3CODE_NIGHTLY_NO_LAUNCH    do not reopen the app after installing
 #   T3CODE_NIGHTLY_VERBOSE      stream electron-builder output
+#   T3CODE_NIGHTLY_SIGN_IDENTITY
+#                               code-signing identity for the installed app
+#                               (default: T3 Code Nightly Local Signing)
+#   T3CODE_NIGHTLY_SIGN_DIR     keychain and password location
+#                               (default: ~/.t3/nightly-signing)
+#   T3CODE_NIGHTLY_KEEP_ARTIFACTS
+#                               keep older installer artifacts after install
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -26,6 +35,15 @@ REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 SELF="$SCRIPT_DIR/$(basename -- "$0")"
 APP_NAME="T3 Code (Nightly).app"
 OUTPUT_DIR="$REPO_ROOT/release"
+SIGN_IDENTITY=${T3CODE_NIGHTLY_SIGN_IDENTITY:-T3 Code Nightly Local Signing}
+SIGN_STATE_DIR=${T3CODE_NIGHTLY_SIGN_DIR:-$HOME/.t3/nightly-signing}
+case "$SIGN_STATE_DIR" in
+  /*) ;;
+  *) SIGN_STATE_DIR="$PWD/$SIGN_STATE_DIR" ;;
+esac
+SIGN_KEYCHAIN="$SIGN_STATE_DIR/signing.keychain-db"
+SIGN_PASSWORD_FILE="$SIGN_STATE_DIR/keychain-password"
+SEARCH_LIST_LOCK="${TMPDIR:-/tmp}/t3-nightly-signing-search-list.$(id -u).lock"
 
 fail() {
   printf '\nbuild-install-nightly: %s\n' "$1" >&2
@@ -41,6 +59,193 @@ is_true() {
     1 | true | TRUE | yes | YES) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+has_signing_identity() {
+  security find-identity -p codesigning "$SIGN_KEYCHAIN" 2>/dev/null |
+    grep -F "\"$SIGN_IDENTITY\"" >/dev/null
+}
+
+keychain_in_search_list() {
+  security list-keychains -d user |
+    sed -e 's/^[[:space:]]*//' -e 's/^"//' -e 's/"$//' |
+    grep -Fxq "$SIGN_KEYCHAIN"
+}
+
+acquire_search_list_lock() {
+  waited=0
+  while ! mkdir "$SEARCH_LIST_LOCK" 2>/dev/null; do
+    owner=
+    if [ -f "$SEARCH_LIST_LOCK/pid" ]; then
+      owner=$(cat "$SEARCH_LIST_LOCK/pid" 2>/dev/null || true)
+    fi
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+      rm -rf "$SEARCH_LIST_LOCK" 2>/dev/null || true
+      continue
+    fi
+    [ "$waited" -ge 300 ] && fail "timed out waiting for $SEARCH_LIST_LOCK"
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  printf '%s' "$$" >"$SEARCH_LIST_LOCK/pid" || {
+    rm -rf "$SEARCH_LIST_LOCK" 2>/dev/null || true
+    fail "could not write $SEARCH_LIST_LOCK/pid"
+  }
+}
+
+release_search_list_lock() {
+  rm -rf "$SEARCH_LIST_LOCK" 2>/dev/null || true
+}
+
+ensure_keychain_in_search_list() {
+  keychain_in_search_list && return 0
+  acquire_search_list_lock
+  status=0
+  if ! keychain_in_search_list; then
+    old_keychains=$(security list-keychains -d user |
+      sed -e 's/^[[:space:]]*//' -e 's/^"//' -e 's/"$//')
+    IFS='
+'
+    set -- $old_keychains
+    unset IFS
+    # codesign only searches keychains on the user search list. Keep this one
+    # there so signing never has to restore a temporarily edited list.
+    security list-keychains -d user -s "$SIGN_KEYCHAIN" "$@" || status=1
+  fi
+  release_search_list_lock
+  [ "$status" -eq 0 ] ||
+    fail "could not add $SIGN_KEYCHAIN to the keychain search list"
+}
+
+read_keychain_password() {
+  [ -f "$SIGN_PASSWORD_FILE" ] ||
+    fail "missing $SIGN_PASSWORD_FILE for $SIGN_KEYCHAIN"
+  keychain_password=$(cat "$SIGN_PASSWORD_FILE") ||
+    fail "could not read $SIGN_PASSWORD_FILE"
+  [ -n "$keychain_password" ] ||
+    fail "empty $SIGN_PASSWORD_FILE for $SIGN_KEYCHAIN"
+}
+
+unlock_keychain() {
+  read_keychain_password
+  security -i >/dev/null <<EOF || fail "could not unlock $SIGN_KEYCHAIN"
+unlock-keychain -p "$keychain_password" "$SIGN_KEYCHAIN"
+EOF
+}
+
+create_signing_identity() {
+  say "Creating local code-signing identity \"$SIGN_IDENTITY\""
+  mkdir -p "$SIGN_STATE_DIR" || fail "could not create $SIGN_STATE_DIR"
+  chmod 700 "$SIGN_STATE_DIR" 2>/dev/null || true
+
+  keychain_password=
+  if [ -f "$SIGN_PASSWORD_FILE" ]; then
+    read_keychain_password
+  fi
+  if [ -z "$keychain_password" ]; then
+    keychain_password=$(openssl rand -hex 32) ||
+      fail "could not generate a keychain password"
+    (umask 077 && printf '%s' "$keychain_password" >"$SIGN_PASSWORD_FILE") ||
+      fail "could not write $SIGN_PASSWORD_FILE"
+    chmod 600 "$SIGN_PASSWORD_FILE" || fail "could not secure $SIGN_PASSWORD_FILE"
+  fi
+
+  (
+    tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/t3-nightly-signing.XXXXXX") ||
+      fail "could not create a signing temp directory"
+    trap 'rm -rf "$tmp_dir"' EXIT INT TERM
+
+    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+      -keyout "$tmp_dir/key.pem" -out "$tmp_dir/cert.pem" \
+      -subj "/CN=$SIGN_IDENTITY" \
+      -addext "basicConstraints=critical,CA:false" \
+      -addext "keyUsage=critical,digitalSignature" \
+      -addext "extendedKeyUsage=codeSigning" >/dev/null 2>&1 ||
+      fail "could not generate a signing certificate"
+
+    # OpenSSL 3+ needs legacy algorithms for macOS's PKCS#12 importer;
+    # LibreSSL rejects the flag, so fall back to a plain export.
+    if ! printf '%s' "$keychain_password" |
+      openssl pkcs12 -export -legacy -inkey "$tmp_dir/key.pem" -in "$tmp_dir/cert.pem" \
+        -out "$tmp_dir/cert.p12" -passout stdin >/dev/null 2>&1; then
+      printf '%s' "$keychain_password" |
+        openssl pkcs12 -export -inkey "$tmp_dir/key.pem" -in "$tmp_dir/cert.pem" \
+          -out "$tmp_dir/cert.p12" -passout stdin >/dev/null 2>&1 ||
+        fail "could not package the signing certificate"
+    fi
+
+    # security(1) has no passphrase-file input; feed commands through -i so
+    # passwords stay out of the process arguments.
+    security -i >/dev/null <<EOF || fail "could not create $SIGN_KEYCHAIN"
+create-keychain -p "$keychain_password" "$SIGN_KEYCHAIN"
+EOF
+    chmod 600 "$SIGN_KEYCHAIN" || fail "could not secure $SIGN_KEYCHAIN"
+    security -i >/dev/null <<EOF || fail "could not unlock $SIGN_KEYCHAIN"
+unlock-keychain -p "$keychain_password" "$SIGN_KEYCHAIN"
+EOF
+    security -i >/dev/null <<EOF || fail "could not import the signing certificate"
+import "$tmp_dir/cert.p12" -k "$SIGN_KEYCHAIN" -P "$keychain_password" -T /usr/bin/codesign -T /usr/bin/security
+EOF
+    security -i >/dev/null <<EOF || fail "could not authorize codesign for $SIGN_KEYCHAIN"
+set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$SIGN_KEYCHAIN"
+EOF
+  )
+
+  has_signing_identity ||
+    fail "created $SIGN_KEYCHAIN but it does not contain \"$SIGN_IDENTITY\""
+  ensure_keychain_in_search_list
+}
+
+ensure_signing_identity() {
+  if [ -f "$SIGN_KEYCHAIN" ]; then
+    unlock_keychain
+    has_signing_identity ||
+      fail "$SIGN_KEYCHAIN does not contain \"$SIGN_IDENTITY\"; remove $SIGN_STATE_DIR and retry"
+    ensure_keychain_in_search_list
+    return 0
+  fi
+  create_signing_identity
+}
+
+sign_app() {
+  app=$1
+  ensure_signing_identity
+
+  say "Signing $(basename "$app") with \"$SIGN_IDENTITY\""
+  status=0
+  codesign --force --deep --sign "$SIGN_IDENTITY" --keychain "$SIGN_KEYCHAIN" "$app" ||
+    status=$?
+  security lock-keychain "$SIGN_KEYCHAIN" 2>/dev/null || true
+  [ "$status" -eq 0 ] || fail "could not sign $app"
+
+  codesign --verify --deep --strict "$app" ||
+    fail "signature verification failed for $app"
+}
+
+cleanup_old_artifacts() {
+  keep_version=$1
+  removed=0
+  for file in \
+    "$OUTPUT_DIR"/T3-Code-*-arm64.dmg \
+    "$OUTPUT_DIR"/T3-Code-*-arm64.dmg.blockmap \
+    "$OUTPUT_DIR"/T3-Code-*-arm64.zip \
+    "$OUTPUT_DIR"/T3-Code-*-arm64.zip.blockmap; do
+    [ -f "$file" ] || continue
+    name=${file##*/}
+    version=${name#T3-Code-}
+    version=${version%-arm64.*}
+    [ "$version" = "$keep_version" ] && continue
+    rm -f -- "$file" || return 1
+    removed=$((removed + 1))
+  done
+  if [ "$removed" -gt 0 ]; then
+    say "Removed $removed older installer artifact(s)"
+  fi
+}
+
+maybe_cleanup_artifacts() {
+  is_true "${T3CODE_NIGHTLY_KEEP_ARTIFACTS:-}" && return 0
+  cleanup_old_artifacts "$1" || say "Could not remove older installer artifacts"
 }
 
 app_is_running() {
@@ -233,6 +438,7 @@ install_app() {
   mkdir -p "$stage_dir"
   ditto "$app_source" "$stage_dir/$APP_NAME" || fail "could not copy the app out of the DMG"
   xattr -dr com.apple.quarantine "$stage_dir/$APP_NAME" 2>/dev/null || true
+  sign_app "$stage_dir/$APP_NAME"
 
   if [ -d "$target" ]; then
     say "Replacing the installed Nightly"
@@ -296,7 +502,9 @@ if [ "${1:-}" = "--finish-install" ]; then
 fi
 
 if "$finish_install"; then
+  ensure_signing_identity
   install_app "$dmg_path" "$nightly_version" "$install_dir" "$target_app" 1
+  maybe_cleanup_artifacts "$nightly_version"
   if [ "$launch" = 1 ] && ! is_true "${T3CODE_NIGHTLY_NO_LAUNCH:-}"; then
     say "Opening T3 Code (Nightly)"
     open "$target_app" || fail "installed, but could not open $target_app"
@@ -452,6 +660,10 @@ if [ ! -f "$dmg_path" ]; then
   [ -n "$dmg_path" ] || fail "build finished but no DMG for version $nightly_version was found"
 fi
 
+# Create the identity before quitting the app; a signing failure must not leave
+# the user with a closed app and no update.
+ensure_signing_identity
+
 if app_is_running "$target_app"; then
   if ! is_true "${T3CODE_NIGHTLY_ASSUME_YES:-}"; then
     if ! confirm_quit "$nightly_version"; then
@@ -467,7 +679,13 @@ if app_is_running "$target_app"; then
   launch=1
   if is_true "${T3CODE_NIGHTLY_NO_LAUNCH:-}"; then launch=0; fi
   launchctl submit -l "$label" -o "$log_path" -e "$log_path" -- \
-    /bin/sh "$SELF" --finish-install "$dmg_path" "$nightly_version" "$install_dir" "$target_app" "$launch" ||
+    /usr/bin/env \
+    PATH="$PATH" \
+    T3CODE_NIGHTLY_SIGN_IDENTITY="$SIGN_IDENTITY" \
+    T3CODE_NIGHTLY_SIGN_DIR="$SIGN_STATE_DIR" \
+    T3CODE_NIGHTLY_KEEP_ARTIFACTS="${T3CODE_NIGHTLY_KEEP_ARTIFACTS:-}" \
+    /bin/sh "$SELF" --finish-install \
+    "$dmg_path" "$nightly_version" "$install_dir" "$target_app" "$launch" ||
     fail "could not start the background installer"
 
   say "Quitting T3 Code (Nightly); the update continues in the background."
@@ -477,3 +695,8 @@ if app_is_running "$target_app"; then
 fi
 
 install_app "$dmg_path" "$nightly_version" "$install_dir" "$target_app"
+maybe_cleanup_artifacts "$nightly_version"
+if ! is_true "${T3CODE_NIGHTLY_NO_LAUNCH:-}"; then
+  say "Opening $(basename "$target_app")"
+  open "$target_app" || fail "installed, but could not open $target_app"
+fi
