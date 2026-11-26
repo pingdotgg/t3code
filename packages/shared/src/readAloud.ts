@@ -2,6 +2,7 @@ import type { Node, RootContent, Root } from "mdast";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { mayContainMath, parseMarkdownWithMath } from "./markdownMath.ts";
 
 const parser = unified().use(remarkParse).use(remarkGfm);
 
@@ -47,6 +48,21 @@ function trim(run: Run): Run {
   return { text: run.text.slice(start, end), sources: run.sources.slice(start, end) };
 }
 
+/** Words said for a node shown some other way, such as a formula, spread over its source. */
+function spread(value: string, node: Positioned): Run {
+  const start = node.position?.start.offset;
+  const end = node.position?.end.offset;
+  if (start === undefined || end === undefined) return added(value);
+  const span = Math.max(end - start, 1);
+  return {
+    text: value,
+    sources: Array.from(
+      { length: value.length },
+      (_, index) => start + Math.floor((index * span) / Math.max(value.length, 1)),
+    ),
+  };
+}
+
 /** A node's text with the markdown offset of each character. */
 function located(markdown: string, value: string, node: Positioned): Run {
   const start = node.position?.start.offset;
@@ -66,12 +82,20 @@ function located(markdown: string, value: string, node: Positioned): Run {
   };
 }
 
+/** Words for a TeX formula, or undefined to read its source. */
+export type SpeakMath = (tex: string) => string | undefined;
+
 /**
  * Plain text with one sentence per line, and where each spoken character came from in the
  * markdown. Speech engines read newlines as spaces, so every heading, paragraph, list item, and
- * table row ends in punctuation to keep its pause.
+ * table row ends in punctuation to keep its pause. With `speakMath`, for replies that render
+ * formulas, each formula is read as its words; without it, as the text the reply shows.
  */
-export function readAloudSpeech(markdown: string, skipCodeBlocks: boolean): ReadAloudSpeech {
+export function readAloudSpeech(
+  markdown: string,
+  skipCodeBlocks: boolean,
+  speakMath?: SpeakMath,
+): ReadAloudSpeech {
   let text = "";
   const sources: number[] = [];
   const blocks: ReadAloudBlock[] = [];
@@ -111,6 +135,8 @@ export function readAloudSpeech(markdown: string, skipCodeBlocks: boolean): Read
     if (node.type === "break") return added("\n");
     if (node.type === "html" || node.type === "image" || node.type === "imageReference")
       return added("");
+    if (node.type === "inlineMath")
+      return spread(` ${speakMath?.(node.value) ?? node.value} `, node);
     if ("children" in node) return concat(node.children.map(inline));
     return "value" in node ? located(markdown, node.value, node) : added("");
   };
@@ -126,17 +152,25 @@ export function readAloudSpeech(markdown: string, skipCodeBlocks: boolean): Read
         ),
         node,
       );
+    else if (node.type === "math" || (speakMath && node.type === "code" && node.lang === "math"))
+      speak(spread(speakMath?.(node.value) ?? node.value, node), node);
     else if (node.type === "code") {
-      if (!skipCodeBlocks) speak(located(markdown, node.value, node), node);
+      // A diagram's source says nothing a listener can follow.
+      if (!skipCodeBlocks && node.lang !== "mermaid")
+        speak(located(markdown, node.value, node), node);
     } else if (node.type !== "html" && node.type !== "definition" && "children" in node)
       for (const child of node.children) block(child);
   };
-  block(parser.parse(markdown));
+  block(
+    speakMath && mayContainMath(markdown)
+      ? parseMarkdownWithMath(markdown)
+      : parser.parse(markdown),
+  );
   return { text, sources, blocks };
 }
 
-export function readAloudText(markdown: string, skipCodeBlocks: boolean) {
-  return readAloudSpeech(markdown, skipCodeBlocks).text;
+export function readAloudText(markdown: string, skipCodeBlocks: boolean, speakMath?: SpeakMath) {
+  return readAloudSpeech(markdown, skipCodeBlocks, speakMath).text;
 }
 
 /** Splits at sentence ends below `limit`; `start` is each piece's offset in `text`. */

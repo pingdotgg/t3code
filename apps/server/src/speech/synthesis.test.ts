@@ -12,7 +12,13 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as ServerSettings from "../serverSettings.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import { localSynthesisLanguage, localSynthesisRuntime } from "./LocalSpeechSynthesis.ts";
-import { encodeMp3, leadingSentence, pcm16Mono } from "./synthesisAudio.ts";
+import {
+  encodeMp3,
+  pcm16Mono,
+  speechLines,
+  splitAtPunctuation,
+  supertonicText,
+} from "./synthesisAudio.ts";
 
 it("encodes model samples as clipped mono 16-bit PCM", () => {
   const pcm = pcm16Mono(Float32Array.of(0, 1, -1, 2, -2, Number.NaN, 0.5), 1);
@@ -20,13 +26,28 @@ it("encodes model samples as clipped mono 16-bit PCM", () => {
   expect([...pcm16Mono(Float32Array.of(1, -1, 0.5, 0.5), 2)]).toEqual([0, 16383]);
 });
 
-const longLine = `${"word ".repeat(40)}end.`;
-it.each([
-  ["Fixed it.\nThe cause was a race.\nDone.", ["Fixed it.", "The cause was a race.\nDone."]],
-  ["Only one sentence.", ["Only one sentence."]],
-  [`${longLine}\nNext.`, [`${longLine}\nNext.`]],
-])("synthesizes a short opening sentence on its own: %j", (text, parts) => {
-  expect(leadingSentence(text)).toEqual(parts);
+it("speaks one line at a time and halves a refused line at its latest break before the middle", () => {
+  expect(speechLines("Fixed it.\n\nThe cause was a race.\nDone.")).toEqual([
+    "Fixed it.",
+    "The cause was a race.",
+    "Done.",
+  ]);
+  // Kokoro's reference waterfall: sentence ends, then clauses, then commas, then any space.
+  expect(splitAtPunctuation("It took 2 min. Memory fell 66%. Version 1.2.3 ships today.")).toEqual([
+    "It took 2 min. ",
+    "Memory fell 66%. Version 1.2.3 ships today.",
+  ]);
+  expect(splitAtPunctuation("First, second, third, fourth and fifth")).toEqual([
+    "First, second, ",
+    "third, fourth and fifth",
+  ]);
+  expect(splitAtPunctuation("word")).toBeUndefined();
+});
+
+it("cleans text the way Supertonic's reference implementation does before it reads it", () => {
+  expect(supertonicText("Done 🎉 — all 12 pass 👍.\n✅ passing, “quoted” at @claude")).toBe(
+    'Done - all 12 pass.\npassing, "quoted" at at claude',
+  );
 });
 
 // An MPEG audio frame header's version bits and sample-rate index give the encoded rate.

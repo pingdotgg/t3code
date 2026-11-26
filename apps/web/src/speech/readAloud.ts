@@ -1,4 +1,5 @@
 import { getActiveLocale, m } from "~/i18n/messages";
+import { prepareReadAloudMath } from "./readAloudMath";
 import { speechSpeedAppliedByProvider, type SpeechSynthesisCatalog } from "@t3tools/contracts";
 import {
   createReadAloudController,
@@ -83,95 +84,99 @@ export const warmReadAloud = createReadAloudWarmup(async (environmentId, model) 
   await runEnvironmentSpeech(prepareSpeechSynthesis(prepared, model));
 });
 
-export const readAloudController = createReadAloudController(async (text, settings, signal) => {
-  if (settings.provider === "system")
-    return systemPlayback(text, settings.voice, settings.speed, settings.language);
-  if (settings.provider === "off") throw new Error("Enable read aloud in Settings → Voice.");
-  const prepared = settings.environmentId ? readPreparedConnection(settings.environmentId) : null;
-  if (!prepared)
-    throw new Error("Connect to the read-aloud environment selected in Settings → Voice.");
-  const alignment = readAloudWordAlignment(settings, getActiveLocale());
-  let pendingCatalog = catalogs.get(signal);
-  if (!pendingCatalog) {
-    pendingCatalog = runEnvironmentSpeech(
-      getSpeechSynthesisModels(prepared, settings.provider, alignment),
+export const readAloudController = createReadAloudController(
+  async (text, settings, signal) => {
+    if (settings.provider === "system")
+      return systemPlayback(text, settings.voice, settings.speed, settings.language);
+    if (settings.provider === "off") throw new Error("Enable read aloud in Settings → Voice.");
+    const prepared = settings.environmentId ? readPreparedConnection(settings.environmentId) : null;
+    if (!prepared)
+      throw new Error("Connect to the read-aloud environment selected in Settings → Voice.");
+    const alignment = readAloudWordAlignment(settings, getActiveLocale());
+    let pendingCatalog = catalogs.get(signal);
+    if (!pendingCatalog) {
+      pendingCatalog = runEnvironmentSpeech(
+        getSpeechSynthesisModels(prepared, settings.provider, alignment),
+        { signal },
+      );
+      catalogs.set(signal, pendingCatalog);
+    }
+    const catalog = await pendingCatalog;
+    signal.throwIfAborted();
+    if (catalog.error) throw new Error(catalog.error);
+    const model = settings.model || catalog.defaultModel;
+    const { url, token } = await runEnvironmentSpeech(
+      startSpeechSynthesis(prepared, settings.provider, {
+        text,
+        model,
+        voice: settings.voice,
+        speed: settings.speed,
+        language: settings.language,
+        alignment,
+      }),
       { signal },
     );
-    catalogs.set(signal, pendingCatalog);
-  }
-  const catalog = await pendingCatalog;
-  signal.throwIfAborted();
-  if (catalog.error) throw new Error(catalog.error);
-  const model = settings.model || catalog.defaultModel;
-  const { url, token } = await runEnvironmentSpeech(
-    startSpeechSynthesis(prepared, settings.provider, {
-      text,
-      model,
-      voice: settings.voice,
-      speed: settings.speed,
-      language: settings.language,
-      alignment,
-    }),
-    { signal },
-  );
-  signal.throwIfAborted();
-  const audio = new Audio();
-  // CORS mode, like the environment's API requests, so the waveform can read what plays.
-  audio.crossOrigin = "anonymous";
-  audio.src = url;
-  // Audio a provider already sped up plays at 1×; later speed changes are relative to it.
-  const synthesizedSpeed = speechSpeedAppliedByProvider(catalog, model) ? settings.speed : 1;
-  audio.playbackRate = settings.speed / synthesizedSpeed;
-  let done: () => void = () => {};
-  const finished = new Promise<void>((resolve, reject) => {
-    done = resolve;
-    audio.onended = () => resolve();
-    audio.onerror = () => reject(new Error("Could not play the generated speech."));
-  });
-  let timed: ReturnType<typeof createTimedWords> | null = null;
-  return {
-    play: () => audio.play(),
-    pause: () => audio.pause(),
-    stop: () => {
-      if (timed) for (const type of CLOCK_EVENTS) audio.removeEventListener(type, timed.refresh);
-      timed?.stop();
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.load();
-      done();
-    },
-    finished,
-    words: (listener) => {
-      if (!timed) {
-        timed = createTimedWords({
-          text,
-          load: (after, signal) =>
-            runEnvironmentSpeech(getSpeechSynthesisTimings(prepared, token, after), { signal }),
-          clock: () => ({
-            seconds: audio.currentTime,
-            rate: audio.playbackRate,
-            playing: !audio.paused,
-          }),
-        });
-        for (const type of CLOCK_EVENTS) audio.addEventListener(type, timed.refresh);
-      }
-      return timed.subscribe(listener);
-    },
-    seek: (at) => {
-      const seconds = timed?.secondsAt(at);
-      // A live stream ignores seeks beyond what the browser can seek, so those read again instead.
-      if (seconds === undefined || !seekable(audio, seconds)) return false;
-      audio.currentTime = seconds;
-      timed?.refresh();
-      return true;
-    },
-    setSpeed: (speed) => {
-      audio.playbackRate = speed / synthesizedSpeed;
-      timed?.refresh();
-    },
-    levels: (listener) => playbackLevels(audio, listener),
-  };
-}, m);
+    signal.throwIfAborted();
+    const audio = new Audio();
+    // CORS mode, like the environment's API requests, so the waveform can read what plays.
+    audio.crossOrigin = "anonymous";
+    audio.src = url;
+    // Audio a provider already sped up plays at 1×; later speed changes are relative to it.
+    const synthesizedSpeed = speechSpeedAppliedByProvider(catalog, model) ? settings.speed : 1;
+    audio.playbackRate = settings.speed / synthesizedSpeed;
+    let done: () => void = () => {};
+    const finished = new Promise<void>((resolve, reject) => {
+      done = resolve;
+      audio.onended = () => resolve();
+      audio.onerror = () => reject(new Error("Could not play the generated speech."));
+    });
+    let timed: ReturnType<typeof createTimedWords> | null = null;
+    return {
+      play: () => audio.play(),
+      pause: () => audio.pause(),
+      stop: () => {
+        if (timed) for (const type of CLOCK_EVENTS) audio.removeEventListener(type, timed.refresh);
+        timed?.stop();
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+        done();
+      },
+      finished,
+      words: (listener) => {
+        if (!timed) {
+          timed = createTimedWords({
+            text,
+            load: (after, signal) =>
+              runEnvironmentSpeech(getSpeechSynthesisTimings(prepared, token, after), { signal }),
+            clock: () => ({
+              seconds: audio.currentTime,
+              rate: audio.playbackRate,
+              playing: !audio.paused,
+            }),
+          });
+          for (const type of CLOCK_EVENTS) audio.addEventListener(type, timed.refresh);
+        }
+        return timed.subscribe(listener);
+      },
+      seek: (at) => {
+        const seconds = timed?.secondsAt(at);
+        // A live stream ignores seeks beyond what the browser can seek, so those read again instead.
+        if (seconds === undefined || !seekable(audio, seconds)) return false;
+        audio.currentTime = seconds;
+        timed?.refresh();
+        return true;
+      },
+      setSpeed: (speed) => {
+        audio.playbackRate = speed / synthesizedSpeed;
+        timed?.refresh();
+      },
+      levels: (listener) => playbackLevels(audio, listener),
+    };
+  },
+  m,
+  prepareReadAloudMath,
+);
 
 function seekable(audio: HTMLAudioElement, seconds: number) {
   for (let index = 0; index < audio.seekable.length; index++)

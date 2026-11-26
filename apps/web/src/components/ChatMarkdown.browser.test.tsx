@@ -287,6 +287,31 @@ it("reads from a clicked block or a selected point only while that reply is read
   await reading;
 });
 
+it("highlights the words of a block whose last word renders as a chip or with a footnote mark", async () => {
+  const markdown =
+    "Run the tests and open `apps/server/src/speech/SpeechAligner.ts:120`\n\nThis is cited[^1]\n\n[^1]: The spec.";
+  await using _screen = await render(
+    <div ref={readAloudHighlightRoot("reply")}>
+      <ChatMarkdown cwd="/tmp/project" text={markdown} />
+    </div>,
+  );
+  const reading = readAloudController.start("reply", markdown, {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "system",
+  });
+  await vi.waitFor(() => expect(readAloudController.getSnapshot().status).toBe("playing"));
+  const spoken = readAloudText(markdown, true);
+  const painted = async (word: string) => {
+    const at = spoken.indexOf(word);
+    await act(() => readAloudWords.emit({ start: at, end: at + word.length }));
+    return [...(CSS.highlights.get("t3-read-aloud-word") ?? [])].map(String);
+  };
+  expect(await painted("tests")).toEqual(["tests"]);
+  expect(await painted("This")).toEqual(["This"]);
+  readAloudController.stop();
+  await reading;
+});
+
 function setup() {
   appearance.value = "light";
   parsedSources.length = 0;

@@ -19,7 +19,7 @@ const HOVER_HOLD_MS = 1_500;
 /** The word stays in the middle of the timeline; leaving that band scrolls it to 40%. */
 const FOLLOW_BAND = { top: 0.2, bottom: 0.8, target: 0.4 };
 /** The elements read aloud as one block each; matches `rehypeSpeechOffsets`. */
-const SPEECH_BLOCK_SELECTOR = "p, li, h1, h2, h3, h4, h5, h6, tr";
+const SPEECH_BLOCK_SELECTOR = "p, li, h1, h2, h3, h4, h5, h6, tr, pre";
 /** Elements that keep their own clicks: links, controls, code blocks, and math. */
 const INTERACTIVE_SELECTOR =
   "a, button, input, textarea, select, summary, label, pre, [role=button], [role=link], [contenteditable=true], .katex";
@@ -172,14 +172,22 @@ function blockElement(root: HTMLElement, block: ReadAloudHighlight["block"]) {
  * carry no range. Take the first innermost block whose text holds the block's first and last words.
  */
 function blockElementByText(root: HTMLElement, block: ReadAloudHighlight["block"]) {
-  for (const element of root.querySelectorAll<HTMLElement>(SPEECH_BLOCK_SELECTOR)) {
-    if (element.querySelector(SPEECH_BLOCK_SELECTOR)) continue;
-    const text = spokenText(element);
+  const candidates = [...root.querySelectorAll<HTMLElement>(SPEECH_BLOCK_SELECTOR)]
+    .filter((element) => !element.querySelector(SPEECH_BLOCK_SELECTOR))
+    .map((element) => ({ element, text: spokenText(element) }));
+  for (const { element, text } of candidates) {
     const first = locate(text, block.first);
     const last = locate(text, block.last);
     if (first && last && first.start <= last.start) return element;
   }
-  return null;
+  // A chip, footnote mark, or rendered formula can show an end word differently from how it is
+  // spoken; the block still starts or ends with the other one.
+  const edge = (text: string) => text.trim().replace(/[^\p{L}\p{N}]+$/u, "");
+  return (
+    candidates.find(({ text }) => text.value.trimStart().startsWith(block.first.text))?.element ??
+    candidates.find(({ text }) => edge(text.value).endsWith(edge(block.last.text)))?.element ??
+    null
+  );
 }
 
 /**

@@ -24,6 +24,23 @@ it("reads visible prose and identifiers without link targets or fenced code", ()
   );
 });
 
+it("never reads diagram source, and reads formulas as the words it is given for them", () => {
+  const diagram = "Flow:\n\n```mermaid\ngraph TD\n  A-->B\n```\n\nDone.";
+  expect(readAloudText(diagram, false)).toBe("Flow:\nDone.");
+
+  const markdown = "Area is $\\pi r^2$ here.\n\n$$\n\\frac{a}{b}\n$$\n\nCosts $5 or $10.";
+  const words: Record<string, string> = { "\\pi r^2": "pi r squared", "\\frac{a}{b}": "a over b" };
+  const speech = readAloudSpeech(markdown, true, (tex) => words[tex]);
+  expect(speech.text).toBe("Area is pi r squared here.\na over b.\nCosts $5 or $10.");
+  // The words stand for the formula, so they map back into its source.
+  const squared = speech.text.indexOf("squared");
+  const formula = markdown.indexOf("$\\pi");
+  expect(speech.sources[squared]).toBeGreaterThanOrEqual(formula);
+  expect(speech.sources[squared]).toBeLessThan(markdown.indexOf(" here"));
+  // Without a reader, formulas read as the TeX the reply shows.
+  expect(readAloudText(markdown, true)).toContain("$\\pi r^2$");
+});
+
 it("ends every heading, list item, and table row as its own sentence", () => {
   const text = [
     "## Next steps",

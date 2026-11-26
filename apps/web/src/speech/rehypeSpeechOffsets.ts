@@ -1,7 +1,7 @@
 import type { Element, Root, RootContent } from "hast";
 
 // Not `table`: each row is read as its own block.
-const SPEECH_BLOCK_TAGS = new Set(["p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr"]);
+const SPEECH_BLOCK_TAGS = new Set(["p", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "pre"]);
 
 /** Tags block elements with their markdown range so read aloud can find the block it reads. */
 export function rehypeSpeechOffsets() {

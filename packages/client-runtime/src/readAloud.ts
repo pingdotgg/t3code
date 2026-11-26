@@ -14,6 +14,7 @@ import {
   spokenWordAt,
   type ReadAloudSpeech,
   type ReadAloudPosition,
+  type SpeakMath,
 } from "@t3tools/shared/read-aloud";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -207,6 +208,9 @@ export function createReadAloudController(
     signal: AbortSignal,
   ) => Promise<SpeechPlayback>,
   resolve: MFunctionType = mFallback,
+  /** Words for the reply's formulas when replies render them, so they are not read as TeX. */
+  prepareMath: (markdown: string) => SpeakMath | undefined | Promise<SpeakMath | undefined> = () =>
+    undefined,
 ) {
   type State = {
     id: string | null;
@@ -278,6 +282,7 @@ export function createReadAloudController(
     readonly id: string;
     readonly markdown: string;
     readonly settings: ReadAloudSettings;
+    readonly speakMath: SpeakMath | undefined;
   } | null = null;
   const stop = () => {
     reading = null;
@@ -304,7 +309,11 @@ export function createReadAloudController(
     from?: number,
     fromWord = false,
   ) => {
-    const speech = readAloudSpeech(markdown, settings.skipCodeBlocks);
+    // Only replies with formulas wait for them, so others start reading in the same turn.
+    const pendingMath = prepareMath(markdown);
+    const speakMath =
+      pendingMath instanceof Promise ? await pendingMath.catch(() => undefined) : pendingMath;
+    const speech = readAloudSpeech(markdown, settings.skipCodeBlocks, speakMath);
     const offset =
       from === undefined
         ? 0
@@ -315,7 +324,7 @@ export function createReadAloudController(
     if (offset === undefined) return;
     stop();
     if (settings.provider === "off") return;
-    reading = { id, markdown, settings };
+    reading = { id, markdown, settings, speakMath };
     // Platform speech engines cap utterance length; environments stream a whole reply.
     const chunks = splitReadAloudSpans(
       speech.text.slice(offset),
@@ -452,7 +461,11 @@ export function createReadAloudController(
      */
     seek(id: string, from: number) {
       if (!reading || !isReading(id)) return null;
-      const speech = readAloudSpeech(reading.markdown, reading.settings.skipCodeBlocks);
+      const speech = readAloudSpeech(
+        reading.markdown,
+        reading.settings.skipCodeBlocks,
+        reading.speakMath,
+      );
       const at = spokenWordStart(speech, from);
       if (at === undefined) return null;
       if (at >= chunkStart && at < chunkEnd && playback?.seek?.(at - chunkStart))
@@ -468,7 +481,11 @@ export function createReadAloudController(
         playback.setSpeed(speed);
         return Promise.resolve();
       }
-      const speech = readAloudSpeech(current.markdown, current.settings.skipCodeBlocks);
+      const speech = readAloudSpeech(
+        current.markdown,
+        current.settings.skipCodeBlocks,
+        current.speakMath,
+      );
       const from = speech.sources.slice(spokenAt).find((source) => source >= 0);
       return from === undefined
         ? null

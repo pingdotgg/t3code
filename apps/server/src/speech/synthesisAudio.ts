@@ -28,12 +28,59 @@ export function mp3Kbps(sampleRate: number) {
   return sampleRate > 32000 ? 64 : 48;
 }
 /**
- * Splits off a short opening sentence (read-aloud text has one per line), so its audio arrives
- * before the model reaches the rest. Self-contained so the synthesis worker can inline it.
+ * The lines of read-aloud text, one sentence or block each, spoken one at a time as Kokoro's
+ * reference pipeline splits them, so the first arrives before the model reaches the rest.
+ * Self-contained so the synthesis worker can inline it.
  */
-export function leadingSentence(text: string) {
-  const end = text.indexOf("\n");
-  return end < 0 || end > 160 ? [text] : [text.slice(0, end), text.slice(end + 1)];
+export function speechLines(text: string) {
+  return text.split(/\n+/).filter((line) => line.trim());
+}
+
+/**
+ * Halves `text` at its last sentence end before the middle, else clause, else comma, for a model
+ * that refused it as too long: the waterfall Kokoro's reference pipeline uses to stay under 510
+ * phonemes. Undefined when there is no such break. Self-contained so the worker can inline it.
+ */
+export function splitAtPunctuation(text: string) {
+  const middle = Math.floor(text.length / 2);
+  for (const marks of [/[!.?…]\s/g, /[:;]\s/g, /[,—]\s/g, /\s/g]) {
+    const breaks = [...text.matchAll(marks)].map((match) => match.index + match[0].length);
+    const at = breaks.filter((index) => index <= middle).at(-1) ?? breaks[0];
+    if (at !== undefined && at > 0 && at < text.length) return [text.slice(0, at), text.slice(at)];
+  }
+  return undefined;
+}
+
+// Supertonic's reference text preprocessing (supertone-inc/supertonic `py/helper.py`): its
+// indexer has no entry for emoji and some symbols, and rejects the whole text over one.
+const SUPERTONIC_EMOJI =
+  /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{FE0F}\u{200D}]/gu;
+const SUPERTONIC_REPLACEMENTS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/[–‑—]/g, "-"],
+  [/_/g, " "],
+  [/[“”]/g, '"'],
+  [/[‘’´`]/g, "'"],
+  [/[[\]|/#→←]/g, " "],
+  [/[♥☆♡©\\]/g, ""],
+  [/@/g, " at "],
+  [/\be\.g\.,/g, "for example,"],
+  [/\bi\.e\.,/g, "that is,"],
+];
+
+/** Text Supertonic can speak, cleaned the way its reference implementation cleans it. */
+export function supertonicText(text: string) {
+  let cleaned = text.normalize("NFKD").replace(SUPERTONIC_EMOJI, "");
+  for (const [pattern, replacement] of SUPERTONIC_REPLACEMENTS)
+    cleaned = cleaned.replace(pattern, replacement);
+  return cleaned
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/\s+([,.!?;:'])/g, "$1")
+        .replace(/[ \t]+/g, " ")
+        .trim(),
+    )
+    .join("\n");
 }
 const MP3_SAMPLE_RATES = [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000];
 // About half a second at 44.1 kHz, which encodes in about 15 ms.

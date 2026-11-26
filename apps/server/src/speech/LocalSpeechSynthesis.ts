@@ -32,6 +32,7 @@ import * as ServerConfig from "../config.ts";
 import * as SpeechModelStore from "./SpeechModelStore.ts";
 import type { SpeechSynthesisPart } from "./CloudSpeech.ts";
 import { loadLocalSynthesisModel, type LocalSynthesisModel } from "./localSynthesisWorker.ts";
+import { supertonicText } from "./synthesisAudio.ts";
 
 /** A preset the model names itself, or one it reads from its own file. */
 type LocalVoice = { readonly id: string; readonly file?: SpeechModelStore.ModelFile };
@@ -46,6 +47,8 @@ type LocalModel = {
   readonly voices: readonly LocalVoice[];
   /** eSpeak-ng data the model phonemizes with, installed and removed with it. */
   readonly espeakData?: SpeechModelStore.ModelFile;
+  /** Cleanup the model's reference implementation applies before it reads text. */
+  readonly speakable?: (text: string) => string;
 };
 
 const AUDIO_CPP_GGUF = "audio-cpp/audio.cpp-gguf";
@@ -138,6 +141,7 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
     },
     appliesSpeed: true,
     voices: ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"].map((id) => ({ id })),
+    speakable: supertonicText,
   },
   {
     id: "pocket-tts-english",
@@ -706,7 +710,7 @@ const make = Effect.gen(function* () {
     const spoken = model
       .stream(
         {
-          text: request.text,
+          text: definition.speakable?.(request.text) ?? request.text,
           ...(language ? { language } : {}),
           options: {
             ...(voicePath ? { voice_embedding_file: voicePath } : { voice_id: voice.id }),
