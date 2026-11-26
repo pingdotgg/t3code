@@ -15381,7 +15381,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("streams a background Bash command's output until its task notification", () =>
+  it.effect.each([
+    { end: "its task notification", notified: true },
+    { end: "Claude exiting", notified: false },
+  ])("streams a background Bash command's output until $end", ({ notified }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -15467,19 +15470,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       // The tool result settled the row and the turn ended, yet the tail keeps reading the task's file.
       yield* fileSystem.writeFileString(outputFile, "installing\ndone\n");
-      yield* harness.offerAndWait(
-        claudeSdkFrame({
-          type: "system",
-          subtype: "task_notification",
-          task_id: taskId,
-          tool_use_id: toolUseId,
-          status: "completed",
-          output_file: outputFile,
-          summary: "pnpm install finished",
-          uuid: "00000000-0000-4000-8000-000000000b05",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-      );
+      if (notified) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            status: "completed",
+            output_file: outputFile,
+            summary: "pnpm install finished",
+            uuid: "00000000-0000-4000-8000-000000000b05",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      } else {
+        // An exited process never sends the notification, so the hold must still release.
+        yield* Queue.shutdown(harness.sdkMessages);
+      }
       yield* harness.until(() =>
         harness.events.some(
           (event) => event.type === "command_output.background" && !event.running,
