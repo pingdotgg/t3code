@@ -92,7 +92,7 @@ function ReviewHeader(
       subtitle={presentation.subtitle}
       onBack={props.onReturnToThread}
       hideBottomBorder
-      backInSplitView={{ accessibilityLabel: gt("Back to chat"), icon: "chevron.left" }}
+      backInSplitView={{ accessibilityLabel: gt("Back to chat") }}
       actions={
         props.showChangedFilesToggle
           ? [

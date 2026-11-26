@@ -119,7 +119,6 @@ function TerminalHeader(props: {
       onBack={props.onBack}
       backInSplitView={{
         accessibilityLabel: gt("Back to chat"),
-        icon: "chevron.left",
       }}
       actions={
         Platform.OS === "android" && props.isEnvironmentReady

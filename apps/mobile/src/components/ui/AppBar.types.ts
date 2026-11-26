@@ -120,7 +120,6 @@ export interface AppBarProps {
   readonly sheet?: boolean;
   readonly backInSplitView?: {
     readonly accessibilityLabel: string;
-    readonly icon: string;
     readonly separateBackground?: boolean;
     readonly onPress?: () => void;
   };

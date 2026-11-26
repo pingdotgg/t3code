@@ -56,7 +56,6 @@ export function ThreadHeader(props: {
         props.onReturnToThread
           ? {
               accessibilityLabel: gt("Return to chat"),
-              icon: "chevron.left",
               onPress: props.onReturnToThread,
             }
           : undefined

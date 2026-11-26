@@ -47,7 +47,7 @@ function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] 
 
 export function AppBar(props: AppBarProps) {
   const gt = useGT();
-  const isRtl = useInterfaceDirection() === "rtl";
+  const backIcon = useInterfaceDirection() === "rtl" ? "chevron.right" : "chevron.left";
   const m = useMessages();
   const locale = useLocale();
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
@@ -67,7 +67,7 @@ export function AppBar(props: AppBarProps) {
   const splitBackPress = props.backInSplitView?.onPress ?? props.onBack;
   const splitBack =
     layout.usesSplitView && props.backInSplitView && splitBackPress
-      ? { ...props.backInSplitView, onPress: splitBackPress }
+      ? { ...props.backInSplitView, icon: backIcon, onPress: splitBackPress }
       : null;
   const navigation = use(NavigationContext);
   const route = use(NavigationRouteContext);
@@ -231,7 +231,7 @@ export function AppBar(props: AppBarProps) {
           {rootBack ? (
             <ScreenHeaderButton
               accessibilityLabel={gt("Back")}
-              icon={isRtl ? "chevron.right" : "chevron.left"}
+              icon={backIcon}
               onPress={rootBack}
               separateBackground
             />
