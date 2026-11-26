@@ -1,4 +1,5 @@
 {
+  "035aab5e99159bd8": "{count, plural, one {… No se muestra {hidden} carácter del medio.} other {… No se muestran {hidden} caracteres del medio.}} El texto termina con:",
   "4bcfa3b976a421cf": "Chat lateral",
   "23be753133ae6950": "Hilo",
   "0001ae5846061bb6": "Hilo en {machine}",
@@ -4601,7 +4602,7 @@
   "55b562c00e37321b": "No se pudo forzar la detención del agente",
   "ede15a83eedec569": "Turno detenido; el agente aún se está cerrando",
   "f360accf1ccac178": "Turno detenido; el proceso del agente siguió ejecutándose",
-  "967f83de030790dd": "{count, plural, =0 {Se comparte con otros hilos en curso. Detenlos para liberarlo.} one {Se comparte con {count} hilo en curso. Detenlo para liberarlo.} other {Se comparte con {count} hilos en curso. Detenlos para liberarlo.}}",
+  "72e41eb83e88cefa": "{count, plural, =0 {Se comparte con otros hilos en curso. Detenlos para liberarlo.} one {Se comparte con {count} hilo en curso. Detenlo para liberarlo.} other {Se comparte con {count} hilos en curso. Detenlos para liberarlo.}}",
   "5536ab75119ee3f9": "No se pudo actualizar el hilo",
   "04c7bba52daa6f53": "No se pudo actualizar el objetivo",
   "f5f145b33e2a9380": "Deteniendo...",

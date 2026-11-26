@@ -1,4 +1,5 @@
 {
+  "035aab5e99159bd8": "{count, plural, one {… {hidden} tecken i mitten visas inte.} other {… {hidden} tecken i mitten visas inte.}} Texten slutar med:",
   "4bcfa3b976a421cf": "Sidochatt",
   "23be753133ae6950": "Tråd",
   "0001ae5846061bb6": "Tråd på {machine}",
@@ -4608,7 +4609,7 @@
   "55b562c00e37321b": "Kunde inte tvångsstoppa agenten",
   "ede15a83eedec569": "Omgången stoppades; agenten håller fortfarande på att stängas av",
   "f360accf1ccac178": "Omgången stoppades; agentprocessen fortsatte att köras",
-  "967f83de030790dd": "{count, plural, =0 {Den delas med andra arbetande trådar. Stoppa dem för att frigöra den.} one {Den delas med {count} arbetande tråd. Stoppa den för att frigöra den.} other {Den delas med {count} arbetande trådar. Stoppa dem för att frigöra den.}}",
+  "72e41eb83e88cefa": "{count, plural, =0 {Den delas med andra arbetande trådar. Stoppa dem för att frigöra den.} one {Den delas med {count} arbetande tråd. Stoppa den för att frigöra den.} other {Den delas med {count} arbetande trådar. Stoppa dem för att frigöra den.}}",
   "5536ab75119ee3f9": "Kunde inte uppdatera tråden",
   "04c7bba52daa6f53": "Det gick inte att uppdatera målet",
   "f5f145b33e2a9380": "Stoppar...",

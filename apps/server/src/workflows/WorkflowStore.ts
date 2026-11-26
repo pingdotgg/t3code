@@ -421,6 +421,7 @@ export class WorkflowStore extends Context.Service<
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
     /** Forgets every trigger but these, so one that comes back starts over. */
+    readonly triggerIds: Effect.Effect<ReadonlyArray<string>>;
     readonly triggersKeep: (triggerIds: ReadonlyArray<string>) => Effect.Effect<void>;
     /** The hook's token: the one kept for it, or `fresh` from now on. */
     readonly hookToken: (hookId: string, fresh: string) => Effect.Effect<string>;
@@ -1489,6 +1490,11 @@ export const make = Effect.gen(function* () {
         ON CONFLICT (trigger_id) DO UPDATE SET next_at = excluded.next_at
       `.pipe(Effect.orDie);
     }),
+    triggerIds: sql<{ trigger_id: string }>`SELECT trigger_id FROM workflow_triggers`.pipe(
+      Effect.map((rows) => rows.map((row) => row.trigger_id)),
+      Effect.orDie,
+      Effect.withSpan("WorkflowStore.triggerIds"),
+    ),
     triggersKeep: Effect.fn("WorkflowStore.triggersKeep")(function* (triggerIds) {
       const kept = yield* sql<{ trigger_id: string }>`SELECT trigger_id FROM workflow_triggers`;
       for (const { trigger_id } of kept) {
