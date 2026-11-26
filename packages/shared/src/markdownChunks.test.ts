@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { LARGE_MARKDOWN_CHUNK_MAX_CHARS, splitMarkdown } from "./markdownChunks.ts";
+import { toHtml } from "hast-util-to-html";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { unified } from "unified";
+
+import {
+  LARGE_MARKDOWN_CHUNK_MAX_CHARS,
+  splitMarkdown,
+  withMarkdownDefinitions,
+} from "./markdownChunks.ts";
+import { taskListMarkerOffset } from "./markdownTaskEdits.ts";
 
 const splitLargeMarkdown = (text: string, targetChars?: number) =>
   splitMarkdown(text, targetChars).chunks;
@@ -51,6 +62,37 @@ describe("splitMarkdown", () => {
   it("keeps a fence open until a matching closer", () => {
     const text = ["````", "```", "", "# inside", "````", "", "after"].join("\n");
     expect(starts(text)).toEqual(["````", "after"]);
+  });
+
+  it("treats nonbreaking spaces as content rather than fence suffixes or blank lines", () => {
+    const fence = ["```md", "x".repeat(4100), "```\u00a0", "# literal", "```"].join("\n");
+    expect(splitLargeMarkdown(fence)).toHaveLength(1);
+
+    const prose = ["*" + "x".repeat(4100), "\u00a0", "more*"].join("\n");
+    expect(splitLargeMarkdown(prose)).toHaveLength(1);
+
+    const htmlBlock = ["<div>", "x".repeat(4100), "\u00a0", "# literal", "</div>"].join("\n");
+    expect(splitLargeMarkdown(htmlBlock)).toHaveLength(1);
+  });
+
+  it("still closes fences and recognizes blank lines with ASCII spaces, tabs, and CRLF", () => {
+    const fence = ["```md", "x".repeat(4100), "``` \t", "# heading"].join("\r\n");
+    expect(splitLargeMarkdown(fence).map((chunk) => chunk.text.split("\r\n")[0])).toEqual([
+      "```md",
+      "# heading",
+    ]);
+
+    const prose = ["a".repeat(4100), " \t", "next paragraph"].join("\r\n");
+    expect(splitLargeMarkdown(prose).map((chunk) => chunk.text.split("\r\n")[0])).toEqual([
+      "a".repeat(4100),
+      "next paragraph",
+    ]);
+
+    const htmlBlock = ["<div>", "x".repeat(4100), " \t", "# heading"].join("\r\n");
+    expect(splitLargeMarkdown(htmlBlock).map((chunk) => chunk.text.split("\r\n")[0])).toEqual([
+      "<div>",
+      "# heading",
+    ]);
   });
 
   it("keeps HTML blocks and display math open across blank lines", () => {
@@ -147,6 +189,16 @@ describe("splitMarkdown", () => {
     expect(starts(text)).toEqual(["---", "# Heading"]);
   });
 
+  it("cuts after a leading horizontal rule with no frontmatter closer", () => {
+    const md =
+      "---\n\n" +
+      Array.from({ length: 300 }, (_, i) => `## Part ${i}\n${"a".repeat(450)}`).join("\n\n");
+    const { chunks } = splitMarkdown(md);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => chunk.text.length <= LARGE_MARKDOWN_CHUNK_MAX_CHARS)).toBe(true);
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(md);
+  });
+
   it.each([
     ["one space", " # References"],
     ["two spaces", "  ### References"],
@@ -161,7 +213,7 @@ describe("splitMarkdown", () => {
     expect(result.chunks.map((chunk) => chunk.text)).toEqual([intro, appendix]);
   });
 
-  it("collects link definitions outside code so every piece can resolve them", () => {
+  it.each(["", " "])("collects link definitions outside code with fence indent %j", (indent) => {
     const text = [
       "[![badge][b]][site]",
       "",
@@ -187,9 +239,9 @@ describe("splitMarkdown", () => {
       "===",
       "[p]: /paragraph-text",
       "",
-      "```sh",
+      `${indent}\`\`\`sh`,
       "npm install",
-      "```",
+      `${indent}\`\`\``,
       "[fence]: /after-fence",
       "~~~",
       "~~~",
@@ -223,5 +275,59 @@ describe("splitMarkdown", () => {
     expect(splitMarkdown(frontmatter.join("\n")).definitions).toBe("[fm]: /after-frontmatter");
     const unclosed = ["---", ...Array<string>(1000).fill("text"), "[u]: /paragraph-text"];
     expect(splitMarkdown(unclosed.join("\n")).definitions).toBe("");
+    expect(splitMarkdown("---\n[rule]: /after-leading-rule\n\n# A").definitions).toBe(
+      "[rule]: /after-leading-rule",
+    );
+    const unbalanced = [
+      "[x]: /docs/example)",
+      "[after]: /continues-paragraph",
+      "",
+      "[open]: /docs/example(",
+      "",
+      "[bs]: /docs/example\\\\)",
+      "",
+      "[balanced]: /docs/example(a(b))",
+      "[escaped]: /docs/example\\)",
+      "[angle]: </docs/example)>",
+    ];
+    expect(splitMarkdown(unbalanced.join("\n")).definitions).toBe(
+      "[balanced]: /docs/example(a(b))\n[escaped]: /docs/example\\)\n[angle]: </docs/example)>",
+    );
+  });
+});
+
+describe("withMarkdownDefinitions", () => {
+  const html = (text: string) => {
+    const processor = unified().use(remarkParse).use(remarkRehype);
+    return toHtml(processor.runSync(processor.parse(text)));
+  };
+
+  it("keeps the first document definition ahead of later chunk definitions", () => {
+    const text = "[id]: /first\n\n" + "x".repeat(4100) + "\n\n# Next\n[id]: /later\n\n[id]";
+    const { chunks, definitions } = splitMarkdown(text);
+    expect(html(text)).toContain('href="/first"');
+    expect(chunks).toHaveLength(2);
+    expect(html(withMarkdownDefinitions(chunks[1]!.text, definitions))).toContain('href="/first"');
+    expect(chunks.map((chunk) => chunk.text).join("\n")).toBe(text);
+  });
+
+  it("keeps frontmatter hidden and task offsets shifted by exactly the prefix", () => {
+    const text = "\uFEFF---\r\ntitle: hidden\r\n---\r\n\r\n[ref]: /x\r\n\r\n- [ ] task";
+    const { definitions } = splitMarkdown(text);
+    const rendered = withMarkdownDefinitions(text, definitions);
+    expect(html(rendered)).not.toContain("hidden");
+    const list = unified()
+      .use(remarkParse)
+      .use(remarkGfm)
+      .parse(rendered)
+      .children.find((node) => node.type === "list");
+    const marker = taskListMarkerOffset(rendered, list!.position!.start.offset!);
+    expect(marker! - (definitions.length + 2)).toBe(text.indexOf("[ ]"));
+  });
+
+  it("keeps shared definitions out of a trailing unclosed code fence", () => {
+    const text = "[ref]: /dst\n\n```text\nshown";
+    const { definitions } = splitMarkdown(text);
+    expect(html(withMarkdownDefinitions(text, definitions))).toBe(html(text));
   });
 });

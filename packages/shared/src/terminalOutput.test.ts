@@ -313,6 +313,29 @@ describe("terminalOutputResumeText with a saved cursor or trimmed output", () =>
     expect(viewer.text).toBe("界e\u0301Xef");
   });
 
+  it("restores a cursor saved on a row erased before the resync", () => {
+    for (const [prefix, next, expected] of [
+      ["\n\u001b7\u001b[A\u001b[J", "A\nB\u001b8Z", "A\nZ"],
+      [
+        "hello\n\n  \u001b7\u001b[2A\u001b[6G\u001b[J\u001b[2G",
+        "X\n\n1234\u001b8Z",
+        "hXllo\n\n12Z4",
+      ],
+      ["\u0301\n\u001b7\u001b[A\u001b[2G\u001b[J", "\nB\u001b8Z", "\u0301\nZ"],
+      [
+        `Build started\n${"working\n".repeat(63)}\u001b7\u001b[63A\u001b[J`,
+        `A${"\n".repeat(63)}B\u001b8Z`,
+        `Build started\nA${"\n".repeat(63)}Z`,
+      ],
+    ] as const) {
+      const source = feed([prefix]);
+      const viewer = feed([terminalOutputResumeText(source)]);
+      expect(viewer.text).toBe(source.text);
+      expect(appendTerminalOutput(viewer, next).text).toBe(appendTerminalOutput(source, next).text);
+      expect(appendTerminalOutput(viewer, next).text).toBe(expected);
+    }
+  });
+
   it("stays on the right line when early output was trimmed away", () => {
     const lines = Array.from({ length: 40 }, (_, index) => `line ${index}`).join("\n");
     const source = feed([lines, "\u001b[1A\rLINE"], 120);
