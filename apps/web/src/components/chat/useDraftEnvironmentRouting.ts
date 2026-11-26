@@ -33,13 +33,19 @@ import {
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { type EnvironmentPresentation, useEnvironmentProviders } from "../../state/environments";
 import { currentClientMetadata } from "../../connection/platform";
-import { useProjects } from "../../state/entities";
+import { readProject, useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { DraftSessionState } from "../../composerDraftStore";
 import { loadBalancingSendWarning } from "./composerSend.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { retargetDraftWorkspace } from "../../lib/retargetDraftWorkspace";
+import {
+  resolveRetargetedDraftWorkspace,
+  retargetDraftWorkspace,
+} from "../../lib/retargetDraftWorkspace";
+import { trackPendingWorkspaceDefault } from "../../lib/draftWorkspaceDefaults";
+import { vcsEnvironment } from "../../state/vcs";
+import { resolveDefaultWorktreeBaseBranch } from "../BranchToolbar.logic";
 import { seedDraftModelSelection } from "../../lib/seedDraftModelSelection";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
@@ -78,15 +84,18 @@ function carryFanoutSelections(
   );
 }
 
-function automaticDraftContext(draft: DraftSessionState, projectRef: ScopedProjectRef) {
-  const projectChanged =
-    draft.environmentId !== projectRef.environmentId || draft.projectId !== projectRef.projectId;
+function automaticDraftContext(projectRef: ScopedProjectRef) {
   return {
     projectRef,
     environmentSelection: "auto" as const,
     loadBalancedEnvironmentId: projectRef.environmentId,
-    ...(projectChanged ? retargetDraftWorkspace(draft, projectRef) : {}),
   };
+}
+
+function changesProject(draft: DraftSessionState, projectRef: ScopedProjectRef) {
+  return (
+    draft.environmentId !== projectRef.environmentId || draft.projectId !== projectRef.projectId
+  );
 }
 
 /**
@@ -124,6 +133,7 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     (store) => store.setLogicalProjectDraftThreadId,
   );
   const allProjects = useProjects();
+  const readRefs = useAtomCommand(vcsEnvironment.readRefs, { reportFailure: false });
   const { openScratchProject } = useScratchProject();
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
   const loadBalancingCandidates = automaticEnvironment
@@ -164,6 +174,26 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     loadBalancingSettings.loadBalancingWeights,
   );
   const readRouting = useStableCallback(() => ({ input, loadBalancingCandidates }));
+  const readWorktreeBase = async (projectRef: ScopedProjectRef, branch: string | null) => {
+    const cwd = readProject(projectRef)?.workspaceRoot;
+    if (!cwd) return null;
+    const { environmentId } = projectRef;
+    const call = { signal: AbortSignal.timeout(5_000) };
+    if (branch) {
+      let cursor: number | undefined;
+      do {
+        const matching = await readRefs(
+          { environmentId, input: { cwd, query: branch.slice(0, 256), cursor } },
+          call,
+        );
+        if (matching._tag !== "Success") break;
+        if (matching.value.refs.some((ref) => ref.name === branch)) return branch;
+        cursor = matching.value.nextCursor ?? undefined;
+      } while (cursor !== undefined && !call.signal.aborted);
+    }
+    const result = await readRefs({ environmentId, input: { cwd, limit: 2 } }, call);
+    return result._tag === "Success" ? resolveDefaultWorktreeBaseBranch(result.value.refs) : null;
+  };
   const refreshBeforeSend = () => {
     if (
       !automaticEnvironment ||
@@ -176,22 +206,25 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     const originalDraft = getDraftSession(draftId);
     if (!originalDraft) return null;
     const composerDraft = useComposerDraftStore.getState().getComposerDraft(draftId);
-    return loadBalancing.refreshSelection(loadBalancingCandidates).then((environmentId) => {
+    const readCurrentRouting = () => {
       const current = readRouting();
-      if (
-        current.input.draftId !== draftId ||
-        !current.input.automaticEnvironment ||
-        current.input.composerHasAttachments ||
-        current.input.activeProjectKey !== activeProjectKey ||
-        current.input.selectedProvider !== selectedProvider ||
-        current.input.activeProviderInstanceId !== activeProviderInstanceId ||
-        current.input.loadBalancingSettings.loadBalancingWeights !==
-          loadBalancingSettings.loadBalancingWeights ||
-        current.loadBalancingCandidates.join("\n") !== loadBalancingCandidates.join("\n") ||
-        getDraftSession(draftId) !== originalDraft ||
-        useComposerDraftStore.getState().getComposerDraft(draftId) !== composerDraft
-      )
-        return false;
+      return current.input.draftId === draftId &&
+        current.input.automaticEnvironment &&
+        !current.input.composerHasAttachments &&
+        current.input.activeProjectKey === activeProjectKey &&
+        current.input.selectedProvider === selectedProvider &&
+        current.input.activeProviderInstanceId === activeProviderInstanceId &&
+        current.input.loadBalancingSettings.loadBalancingWeights ===
+          loadBalancingSettings.loadBalancingWeights &&
+        current.loadBalancingCandidates.join("\n") === loadBalancingCandidates.join("\n") &&
+        getDraftSession(draftId) === originalDraft &&
+        useComposerDraftStore.getState().getComposerDraft(draftId) === composerDraft
+        ? current
+        : null;
+    };
+    return loadBalancing.refreshSelection(loadBalancingCandidates).then(async (environmentId) => {
+      const current = readCurrentRouting();
+      if (!current) return false;
       const target = current.input.logicalProjectEnvironments.find(
         (candidate) => candidate.environmentId === environmentId,
       );
@@ -207,12 +240,29 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
         return false;
       }
       const projectRef = scopeProjectRef(target.environmentId, target.projectId);
+      const moved = changesProject(originalDraft, projectRef);
+      const defaults = moved ? resolveRetargetedDraftWorkspace(originalDraft, projectRef) : null;
+      const workspace = defaults?.load ? await defaults.load() : defaults?.workspace;
+      const isWorktree = (workspace?.envMode ?? originalDraft.envMode) === "worktree";
+      const branch =
+        isWorktree && (moved || originalDraft.branch === null)
+          ? await readWorktreeBase(projectRef, originalDraft.branch)
+          : originalDraft.branch;
+      if (
+        !readCurrentRouting()?.input.logicalProjectEnvironments.some(
+          (candidate) =>
+            candidate.environmentId === environmentId && candidate.projectId === target.projectId,
+        )
+      )
+        return false;
+
       carryFanoutSelections(originalDraft, target.environmentId);
       // The send must read the target project's composer and provider context after retargeting.
       flushSync(() =>
         setDraftThreadContext(draftId, {
-          ...automaticDraftContext(originalDraft, projectRef),
-          branch: originalDraft.branch,
+          ...automaticDraftContext(projectRef),
+          ...workspace,
+          branch,
         }),
       );
       return true;
@@ -227,11 +277,18 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     if (!target?.projectId) return;
     const draft = getDraftSession(draftId);
     if (!draft) return;
+    const projectRef = scopeProjectRef(target.environmentId, target.projectId);
+    const defaults = changesProject(draft, projectRef)
+      ? resolveRetargetedDraftWorkspace(draft, projectRef)
+      : null;
     carryFanoutSelections(draft, target.environmentId);
-    setDraftThreadContext(
-      draftId,
-      automaticDraftContext(draft, scopeProjectRef(target.environmentId, target.projectId)),
-    );
+    setDraftThreadContext(draftId, {
+      ...automaticDraftContext(projectRef),
+      ...defaults?.workspace,
+    });
+    if (defaults?.load) {
+      trackPendingWorkspaceDefault(draftId, projectRef, defaults.workspace, defaults.load());
+    }
   }, [
     needsLoadBalancing,
     loadBalancing.pending,

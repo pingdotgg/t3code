@@ -268,11 +268,8 @@ vi.mock("../uiStateStore", () => ({
 }));
 vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
 
-import {
-  readPendingWorkspaceDefault,
-  resolveDefaultProjectRef,
-  useNewThreadHandler,
-} from "./useHandleNewThread";
+import { readPendingWorkspaceDefault } from "../lib/draftWorkspaceDefaults";
+import { resolveDefaultProjectRef, useNewThreadHandler } from "./useHandleNewThread";
 
 describe.each([
   ["new", null],

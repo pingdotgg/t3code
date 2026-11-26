@@ -1,4 +1,8 @@
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ScopedProjectRef,
+  type T3ProjectFile,
+} from "@t3tools/contracts";
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 import type { DraftSessionState } from "../composerDraftStore";
@@ -8,7 +12,7 @@ import { readEnvironment } from "../state/environments";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { environmentSummaries } from "../state/presentation";
 import { resolveNewDraftStartFromOrigin } from "./chatThreadActions";
-import { peekT3ProjectFile } from "./t3ProjectFileDefaults";
+import { peekT3ProjectFile, readT3ProjectFile } from "./t3ProjectFileDefaults";
 
 function newThreadWorkspace(projectRef: ScopedProjectRef) {
   const project = readProject(projectRef);
@@ -22,36 +26,49 @@ function newThreadWorkspace(projectRef: ScopedProjectRef) {
       .get(environmentSummaries.connectedEnvironmentIdsAtom)
       .includes(projectRef.environmentId);
   const projectFile = consultProjectFile
-    ? (peekT3ProjectFile(projectRef.environmentId, project.workspaceRoot) ?? null)
+    ? peekT3ProjectFile(projectRef.environmentId, project.workspaceRoot)
     : null;
-  const projectSettings = resolveProjectSettings(
-    settings,
-    projectRef.projectId,
-    project,
-    projectFile,
-  );
-  const envMode = resolveNewThreadEnvMode({
-    projectSettings,
-    workspaceRoot: project?.workspaceRoot ?? null,
-    newProjectsRoot: serverConfig?.newProjectsRoot,
-    projectHasThreads:
-      readThreadShells().some(
-        (thread) =>
-          thread.environmentId === projectRef.environmentId &&
-          thread.projectId === projectRef.projectId,
-      ) ||
-      readUnloadedThreadCount(
-        [{ environmentId: projectRef.environmentId, id: projectRef.projectId }],
-        [],
-      ) > 0,
-  });
-  return {
-    envMode,
-    startFromOrigin: resolveNewDraftStartFromOrigin({
+  const resolve = (file: T3ProjectFile | null) => {
+    const projectSettings = resolveProjectSettings(settings, projectRef.projectId, project, file);
+    const envMode = resolveNewThreadEnvMode({
+      projectSettings,
+      workspaceRoot: project?.workspaceRoot ?? null,
+      newProjectsRoot: serverConfig?.newProjectsRoot,
+      projectHasThreads:
+        readThreadShells().some(
+          (thread) =>
+            thread.environmentId === projectRef.environmentId &&
+            thread.projectId === projectRef.projectId,
+        ) ||
+        readUnloadedThreadCount(
+          [{ environmentId: projectRef.environmentId, id: projectRef.projectId }],
+          [],
+        ) > 0,
+    });
+    return {
       envMode,
-      newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
-    }),
+      startFromOrigin: resolveNewDraftStartFromOrigin({
+        envMode,
+        newWorktreesStartFromOrigin: projectSettings.settings.newWorktreesStartFromOrigin,
+      }),
+    };
   };
+  return {
+    workspace: resolve(projectFile ?? null),
+    load:
+      projectFile === undefined && project !== null
+        ? () => readT3ProjectFile(projectRef.environmentId, project.workspaceRoot).then(resolve)
+        : null,
+  };
+}
+
+export function resolveRetargetedDraftWorkspace(
+  draft: Pick<DraftSessionState, "workspaceExplicit" | "worktreePath">,
+  projectRef: ScopedProjectRef,
+) {
+  return draft.workspaceExplicit || draft.worktreePath !== null
+    ? null
+    : newThreadWorkspace(projectRef);
 }
 
 /**
@@ -62,7 +79,5 @@ export function retargetDraftWorkspace(
   draft: Pick<DraftSessionState, "workspaceExplicit" | "worktreePath">,
   projectRef: ScopedProjectRef,
 ): { envMode?: DraftSessionState["envMode"]; startFromOrigin?: boolean } {
-  return draft.workspaceExplicit || draft.worktreePath !== null
-    ? {}
-    : newThreadWorkspace(projectRef);
+  return resolveRetargetedDraftWorkspace(draft, projectRef)?.workspace ?? {};
 }
