@@ -32,27 +32,32 @@ export function useThreadGitRepositories(input: {
   readonly repositories: ReadonlyArray<ThreadGitRepository>;
   /** The worktree thread's task folder, once read; null otherwise. */
   readonly taskFolder: { readonly projectIsWorktree: boolean } | null;
-  /** True until the first read of the folders this thread reaches comes back. */
-  readonly loading: boolean;
+  /**
+   * Whether the folders this thread reaches have been read, or failed to be: a repository not
+   * listed by then is out of reach. True when nothing is read, as for a project that tracks none.
+   */
+  readonly settled: boolean;
 } {
   const { threadRef, worktreePath, enabled } = input;
   const structure = useQuietThreadProjection(input.isServerThread ? threadRef : null);
-  const taskFolderQuery = useEnvironmentQuery(
+  const taskFolderAtom =
     enabled && threadRef !== null && worktreePath !== null
       ? filesystemEnvironment.taskFolder({
           environmentId: threadRef.environmentId,
           input: { worktreePath },
         })
-      : null,
-  );
-  const foldersQuery = useEnvironmentQuery(
+      : null;
+  const foldersAtom =
     enabled && threadRef !== null && input.projectId !== null && worktreePath === null
       ? filesystemEnvironment.listFolders({
           environmentId: threadRef.environmentId,
           input: { projectId: input.projectId },
         })
-      : null,
-  );
+      : null;
+  const taskFolderQuery = useEnvironmentQuery(taskFolderAtom);
+  const foldersQuery = useEnvironmentQuery(foldersAtom);
+  const read =
+    taskFolderAtom !== null ? taskFolderQuery : foldersAtom !== null ? foldersQuery : null;
   const taskFolder = taskFolderQuery.data?.taskFolder ?? null;
   return {
     repositories: threadGitRepositories({
@@ -63,8 +68,6 @@ export function useThreadGitRepositories(input: {
       threadCwd: input.threadCwd,
     }),
     taskFolder,
-    loading:
-      (taskFolderQuery.isPending && taskFolderQuery.data === null) ||
-      (foldersQuery.isPending && foldersQuery.data === null),
+    settled: read === null || read.isSuccess || read.error !== null,
   };
 }

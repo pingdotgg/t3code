@@ -47,6 +47,7 @@ const state = vi.hoisted(() => ({
   taskFolder: null as { projectIsWorktree: boolean } | null,
   gitRepositoriesLoading: false,
   diffPreviewCwds: [] as string[],
+  branchCommitsCwds: [] as string[],
   toolCallItem: null as unknown,
   config: null as unknown as Atom.Atom<null>,
   status: null as unknown as ResultAtom<VcsStatusResult>,
@@ -66,7 +67,10 @@ vi.mock("~/state/review", () => ({
       state.diffPreviewCwds.push(input.cwd);
       return state.previews.get(input.baseRef ?? null)!;
     },
-    branchCommits: () => state.commits,
+    branchCommits: ({ input }: { input: { cwd: string } }) => {
+      state.branchCommitsCwds.push(input.cwd);
+      return state.commits;
+    },
     diffFilePatch: () => state.patch,
     diffFileContents: {},
   },
@@ -93,7 +97,7 @@ vi.mock("~/hooks/useThreadGitRepositories", () => ({
   useThreadGitRepositories: () => ({
     repositories: state.gitRepositories,
     taskFolder: state.taskFolder,
-    loading: state.gitRepositoriesLoading,
+    settled: !state.gitRepositoriesLoading,
   }),
 }));
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
@@ -173,6 +177,7 @@ function setup(failedBaseRef: string | null) {
   state.taskFolder = null;
   state.gitRepositoriesLoading = false;
   state.diffPreviewCwds = [];
+  state.branchCommitsCwds = [];
   state.toolCallItem = null;
   state.checkpoints = [];
   state.checkpointDiff = null;
@@ -561,14 +566,41 @@ it("waits for a chosen repository before reading its diff while the panel is hid
     </RegistryContext.Provider>
   );
   await using screen = await render(panel());
-  // The web repository's base ref is never compared in the thread's own folder.
+  // Nothing of the web repository is read in the thread's own folder: no diff, no commits.
   expect(state.diffPreviewCwds).not.toContain(cwd);
+  expect(state.branchCommitsCwds).not.toContain(cwd);
 
   state.gitRepositoriesLoading = false;
   state.gitRepositories = [{ repositoryPath: "/project/web", name: "web", cwd: "/project/web" }];
   await screen.rerender(panel());
   await vi.waitFor(() => expect(state.diffPreviewCwds).toContain("/project/web"));
   expect(state.diffPreviewCwds).not.toContain(cwd);
+});
+
+it("goes back to the thread's folder once the folders are read without the chosen repository", async () => {
+  using context = setup("origin/orphan");
+  state.project = { ...state.project, trackedFolders: [{ path: "web" }] };
+  chooseThreadGitRepository(context.threadRef, "/project/web");
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "origin/orphan");
+  // The folders were read (or failed to be) and the web repository is not among them.
+  state.gitRepositories = [];
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <div style={{ height: 600, width: 600, display: "flex", flexDirection: "column" }}>
+        <DiffPanel
+          mode="embedded"
+          composerDraftTarget={context.threadRef}
+          workspaceMutationId={null}
+          visible
+        />
+      </div>
+    </RegistryContext.Provider>,
+  );
+  // The thread's folder is compared on its own terms: the web repository's base ref, which
+  // fails there, is set aside rather than sent.
+  await vi.waitFor(() => expect(state.diffPreviewCwds).toContain(cwd));
+  await expect.element(screen.getByText("No net changes in this selection.")).toBeVisible();
+  await expect.element(screen.getByText(errorMessage, { exact: true })).not.toBeInTheDocument();
 });
 
 // Paths as git's numstat reports them; the parsed patch keeps their edge whitespace.

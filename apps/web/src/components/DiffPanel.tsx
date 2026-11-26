@@ -309,7 +309,7 @@ export default function DiffPanel({
   const {
     repositories: gitRepositories,
     taskFolder,
-    loading: gitRepositoriesLoading,
+    settled: gitRepositoriesSettled,
   } = useThreadGitRepositories({
     threadRef: routeThreadRef,
     isServerThread: true,
@@ -325,12 +325,28 @@ export default function DiffPanel({
   // A task folder's plain project directory can sit inside someone else's repository.
   const threadFolderIsRepo =
     (gitStatusQuery.data?.isRepo ?? true) && taskFolder?.projectIsWorktree !== false;
+  const chosenRepositoryListed =
+    chosenGitRepositoryPath !== null &&
+    gitRepositories.some((repository) => repository.repositoryPath === chosenGitRepositoryPath);
+  // A chosen repository still missing once the folders are read (or failed to be) is out of
+  // reach: the panel goes back to the thread's folder and sets aside the commit and base ref
+  // chosen in it, which mean nothing there. The next choice replaces them.
+  const chosenRepositoryUnreachable =
+    chosenGitRepositoryPath !== null &&
+    !chosenRepositoryListed &&
+    gitRepositoriesSettled &&
+    activeThread != null &&
+    activeProject != null;
   const gitRepository = resolveThreadGitRepository({
     repositories: gitRepositories,
-    chosenPath: chosenGitRepositoryPath,
+    chosenPath: chosenRepositoryUnreachable ? null : chosenGitRepositoryPath,
     threadFolderIsRepo,
   });
-  const gitCwd = gitRepository?.cwd ?? activeCwd;
+  // Until then, nothing is read: the thread's folder is another repository, where the chosen
+  // one's commit, base ref, commits and refs mean nothing.
+  const awaitingChosenRepository =
+    chosenGitRepositoryPath !== null && !chosenRepositoryListed && !chosenRepositoryUnreachable;
+  const gitCwd = awaitingChosenRepository ? undefined : (gitRepository?.cwd ?? activeCwd);
   const isGitRepo = threadFolderIsRepo || gitRepository !== null;
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
   const orderedTurnDiffSummaries = turnDiffSummaries.toSorted((left, right) => {
@@ -352,10 +368,14 @@ export default function DiffPanel({
     storedDiffSelection.kind !== "turn" &&
     storedDiffSelection.kind !== "tool-call"
       ? { kind: "turn", turnId: latestTurn.runId, filePath: null, revealRequestId: 0 }
-      : storedDiffSelection;
-  const rememberedBaseRef = useDiffPanelStore((state) =>
+      : chosenRepositoryUnreachable &&
+          (storedDiffSelection.kind === "branch" || storedDiffSelection.kind === "commit")
+        ? { kind: "branch", baseRef: null }
+        : storedDiffSelection;
+  const storedBaseRef = useDiffPanelStore((state) =>
     selectThreadBranchBaseRef(state, routeThreadRef),
   );
+  const rememberedBaseRef = chosenRepositoryUnreachable ? null : storedBaseRef;
   const toolCallSelection = diffSelection.kind === "tool-call" ? diffSelection : null;
   // Turn and git diffs name files from the repository root; a tool call's diff names them as
   // its provider recorded them, absolute or relative to the workspace.
@@ -432,14 +452,8 @@ export default function DiffPanel({
     },
     { enabled: (isGitRepo || hasRepositoryChanges) && selectedTurn !== undefined },
   );
-  // The chosen repository's commit or base ref means nothing in the thread's folder, so its diff
-  // waits until the repository is found again, as after a reload.
-  const awaitingChosenRepository =
-    chosenGitRepositoryPath !== null &&
-    gitRepository?.repositoryPath !== chosenGitRepositoryPath &&
-    gitRepositoriesLoading;
   const branchDiffPreviewInput =
-    canReadFiles && isGitSelection && activeThread && gitCwd && !awaitingChosenRepository
+    canReadFiles && isGitSelection && activeThread && gitCwd
       ? {
           cwd: gitCwd,
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
@@ -926,12 +940,18 @@ export default function DiffPanel({
     if (!routeThreadRef) return;
     useDiffPanelStore.getState().selectTurn(routeThreadRef, runId);
   };
+  // Acting in the thread's folder settles an out-of-reach choice, so its refs stay set aside.
+  const settleUnreachableRepository = (ref: ScopedThreadRef) => {
+    if (chosenRepositoryUnreachable) chooseThreadGitRepository(ref, null);
+  };
   const selectGitScope = (scope: "branch" | "unstaged") => {
     if (!routeThreadRef) return;
+    settleUnreachableRepository(routeThreadRef);
     useDiffPanelStore.getState().selectGitScope(routeThreadRef, scope);
   };
   const selectBranchBaseRef = (baseRef: string | null) => {
     if (!routeThreadRef) return;
+    settleUnreachableRepository(routeThreadRef);
     useDiffPanelStore.getState().selectBranchBaseRef(routeThreadRef, baseRef);
   };
   const selectGitRepository = (value: string) => {
@@ -965,6 +985,7 @@ export default function DiffPanel({
       selectGitScope("branch");
     } else if (value.startsWith("commit:")) {
       if (routeThreadRef) {
+        settleUnreachableRepository(routeThreadRef);
         useDiffPanelStore.getState().selectCommit(routeThreadRef, value.slice("commit:".length));
       }
     } else if (value === "latest") {
