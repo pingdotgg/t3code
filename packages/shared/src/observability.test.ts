@@ -160,17 +160,14 @@ describe("observability", () => {
         delegate: Tracer.make({
           span: (options) => {
             const span = new Tracer.NativeSpan(options);
+            span._spanId = "1".repeat(14) + (options.name === "sample" ? "00" : "01");
             delegates.push(span);
             return span;
           },
         }),
       });
       for (const name of ["fast", "routine", "sample", "slow", "failed", "logged", "other"]) {
-        const parent = Tracer.externalSpan({
-          traceId: "1".repeat(32),
-          spanId: "1".repeat(14) + (name === "sample" ? "00" : "01"),
-        });
-        const span = yield* Effect.makeSpan(name, { parent }).pipe(
+        const span = yield* Effect.makeSpan(name).pipe(
           Effect.provideService(Tracer.Tracer, tracer),
         );
         if (name === "routine") span.attribute("t3.trace.routine", true);

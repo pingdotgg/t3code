@@ -7,6 +7,7 @@ import type * as Exit from "effect/Exit";
 import * as ExitRuntime from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as References from "effect/References";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
 import * as Schema from "effect/Schema";
@@ -586,6 +587,13 @@ const ROUTINE_ATTRIBUTE = "t3.trace.routine";
 /** Marks high-volume bookkeeping spans the local trace file may sample. SQLite spans count without it. */
 export const routineSpan = { [ROUTINE_ATTRIBUTE]: true } as const;
 
+/** Runs real work that a routine context (such as the workflow engine) calls without the routine marker. */
+export const withoutRoutineSpans = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.updateService(effect, References.TracerSpanAnnotations, (annotations) => {
+    const { [ROUTINE_ATTRIBUTE]: _, ...rest } = annotations;
+    return rest;
+  });
+
 const SLOW_ROUTINE_SPAN_NANOS = 10_000_000n;
 
 class LocalFileSpan implements Tracer.Span {
@@ -647,7 +655,7 @@ class LocalFileSpan implements Tracer.Span {
     }
   }
 
-  // Background fibers share the boot trace, so keep routine siblings of ~1/256 parents instead of traces.
+  // Keyed per span: background fibers share the boot trace, and recurring ticks reuse one parent span.
   private isDroppableRoutine(endTime: bigint, exit: Exit.Exit<unknown, unknown>): boolean {
     return (
       (this.attributes.get("db.system.name") === "sqlite" ||
@@ -655,9 +663,7 @@ class LocalFileSpan implements Tracer.Span {
       ExitRuntime.isSuccess(exit) &&
       this.events.length === 0 &&
       endTime - this.status.startTime < SLOW_ROUTINE_SPAN_NANOS &&
-      !Option.match(this.parent, { onNone: () => this.spanId, onSome: (p) => p.spanId }).endsWith(
-        "00",
-      )
+      !this.spanId.endsWith("00")
     );
   }
 

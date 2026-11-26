@@ -149,10 +149,14 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const digest = yield* Digest.Digest;
   const context = yield* Effect.context<WorkflowEngine.WorkflowEngine>();
   // The engine keeps 64-bit ids, which this SQLite client only reads when asked for BigInts.
+  // Callers keep their own span annotations, so a user's start or cancel is not marked routine.
   const withEngine = <A, E>(effect: Effect.Effect<A, E, WorkflowEngine.WorkflowEngine>) =>
-    effect.pipe(
-      Effect.provideContext(context),
-      Effect.provideService(SqlClient.SafeIntegers, true),
+    Effect.flatMap(References.TracerSpanAnnotations, (annotations) =>
+      effect.pipe(
+        Effect.provideService(References.TracerSpanAnnotations, annotations),
+        Effect.provideContext(context),
+        Effect.provideService(SqlClient.SafeIntegers, true),
+      ),
     );
   const byTag = new Map(registered.map(([, engine]) => [engine._tag, engine] as const));
   const definitionByTag = new Map(
@@ -584,44 +588,44 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }),
   );
   const hookStarts = new Map<string, ReadonlyArray<number>>();
-  const deliver: Workflows["Service"]["deliver"] = Effect.fn("Workflows.deliver", {
-    attributes: routineSpan,
-  })(function* (delivery) {
-    const hook = hooks.find((candidate) => candidate.hookId === delivery.hookId);
-    // A wrong token reads the same as an unknown hook, so the URL does not say which exist.
-    const known =
-      hook !== undefined &&
-      (yield* constantTimeEquals(delivery.token, hook.token).pipe(
-        Effect.provideService(Digest.Digest, digest),
-        Effect.orElseSucceed(() => false),
-      ));
-    if (!known) return Option.none();
-    const authored = yield* Effect.try({
-      try: () => hook.trigger.key?.(delivery.request),
-      catch: (error) =>
-        new WorkflowInputError({
-          problem: `The key of hook ${hook.name} could not be read from the request: ${text(error)}`,
-        }),
-    });
-    // A sender's own delivery id is kept on its retry, so the retry is the same run.
-    const sent = DELIVERY_HEADERS.find((header) => delivery.request.headers[header]);
-    const key =
-      authored ??
-      (sent === undefined ? undefined : `${sent}:${delivery.request.headers[sent]}`) ??
-      delivery.deliveryId ??
-      (yield* random.uuidV4());
-    const idempotencyKey = `hook:${hook.hookId}:${key}`;
-    // A retry of a run that exists starts nothing, so it takes none of the minute.
-    if ((yield* store.runByKey(hook.workflow, idempotencyKey)) === undefined) {
-      const now = DateTime.toEpochMillis(yield* DateTime.now);
-      const recent = (hookStarts.get(hook.hookId) ?? []).filter((at) => now - at < 60_000);
-      if (recent.length >= HOOK_RUNS_PER_MINUTE) {
-        return yield* new WorkflowHookBusyError({ hook: hook.name });
+  const deliver: Workflows["Service"]["deliver"] = Effect.fn("Workflows.deliver")(
+    function* (delivery) {
+      const hook = hooks.find((candidate) => candidate.hookId === delivery.hookId);
+      // A wrong token reads the same as an unknown hook, so the URL does not say which exist.
+      const known =
+        hook !== undefined &&
+        (yield* constantTimeEquals(delivery.token, hook.token).pipe(
+          Effect.provideService(Digest.Digest, digest),
+          Effect.orElseSucceed(() => false),
+        ));
+      if (!known) return Option.none();
+      const authored = yield* Effect.try({
+        try: () => hook.trigger.key?.(delivery.request),
+        catch: (error) =>
+          new WorkflowInputError({
+            problem: `The key of hook ${hook.name} could not be read from the request: ${text(error)}`,
+          }),
+      });
+      // A sender's own delivery id is kept on its retry, so the retry is the same run.
+      const sent = DELIVERY_HEADERS.find((header) => delivery.request.headers[header]);
+      const key =
+        authored ??
+        (sent === undefined ? undefined : `${sent}:${delivery.request.headers[sent]}`) ??
+        delivery.deliveryId ??
+        (yield* random.uuidV4());
+      const idempotencyKey = `hook:${hook.hookId}:${key}`;
+      // A retry of a run that exists starts nothing, so it takes none of the minute.
+      if ((yield* store.runByKey(hook.workflow, idempotencyKey)) === undefined) {
+        const now = DateTime.toEpochMillis(yield* DateTime.now);
+        const recent = (hookStarts.get(hook.hookId) ?? []).filter((at) => now - at < 60_000);
+        if (recent.length >= HOOK_RUNS_PER_MINUTE) {
+          return yield* new WorkflowHookBusyError({ hook: hook.name });
+        }
+        hookStarts.set(hook.hookId, [...recent, now]);
       }
-      hookStarts.set(hook.hookId, [...recent, now]);
-    }
-    return Option.some(yield* start(hook.workflow, delivery.request, { idempotencyKey }));
-  });
+      return Option.some(yield* start(hook.workflow, delivery.request, { idempotencyKey }));
+    },
+  );
 
   // A place given to a queued step wakes its wait. A place given back to a resumed run, once it
   // has all it gave up, resumes it, apart from whatever handed the place out.
