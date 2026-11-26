@@ -25,6 +25,7 @@ const MAX_PARSED_BYTES = 16_384;
 const MAX_METADATA_BYTES = 8_192;
 const MAX_ID_LENGTH = 256;
 const MAX_THREADS = 100;
+const MAX_PULL_REQUEST_ITEMS = 100;
 const MAX_CONTENT_BLOCKS = 32;
 const MAX_ENVELOPE_DEPTH = 4;
 const MAX_ENVELOPE_NODES = 128;
@@ -56,6 +57,10 @@ interface CompactToolOutput {
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
   linkedCount?: number;
   unlinkedCount?: number;
+  created?: boolean;
+  state?: "open" | "closed" | "merged";
+  guides?: Array<{ outcome: "started" | "running" | "failed" }>;
+  checks?: Array<{ rerun: boolean }>;
   sentMessage?: string;
 }
 
@@ -146,6 +151,43 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       const count = data[key];
       if (typeof count === "number" && Number.isSafeInteger(count)) output[key] = count;
     }
+    if (typeof data.created === "boolean") output.created = data.created;
+    if (data.state === "open" || data.state === "closed" || data.state === "merged") {
+      output.state = data.state;
+    }
+    if (Array.isArray(data.guides)) {
+      let complete = data.guides.length <= MAX_PULL_REQUEST_ITEMS;
+      const guides: NonNullable<CompactToolOutput["guides"]> = [];
+      if (complete) {
+        for (const entry of data.guides) {
+          if (
+            !Predicate.isObject(entry) ||
+            (entry.outcome !== "started" &&
+              entry.outcome !== "running" &&
+              entry.outcome !== "failed")
+          ) {
+            complete = false;
+            break;
+          }
+          guides.push({ outcome: entry.outcome });
+        }
+      }
+      if (complete) output.guides = guides;
+    }
+    if (Array.isArray(data.checks)) {
+      let complete = data.checks.length <= MAX_PULL_REQUEST_ITEMS;
+      const checks: NonNullable<CompactToolOutput["checks"]> = [];
+      if (complete) {
+        for (const entry of data.checks) {
+          if (!Predicate.isObject(entry) || typeof entry.rerun !== "boolean") {
+            complete = false;
+            break;
+          }
+          checks.push({ rerun: entry.rerun });
+        }
+      }
+      if (complete) output.checks = checks;
+    }
     if (
       typeof data.sentMessage === "string" &&
       data.sentMessage.trim() !== "" &&
@@ -196,6 +238,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     delete output.threads;
     delete output.threadId;
     delete output.status;
+    delete output.guides;
+    delete output.checks;
   }
   const app = output[MCP_APP_OUTPUT_KEY];
   if (app?.csp !== undefined && oversized()) {
