@@ -23,7 +23,7 @@ export interface TurnItemPositionStoreV2Shape {
     readonly runId: RunId | null;
     readonly runOrdinal?: number;
     // `run_start` takes the run's unused first slot, ahead of its items, and appends once it is taken.
-    readonly placement?: "append" | "run_start";
+    readonly placement?: "append" | "run_start" | "before_run";
     // Keep an existing position even when it lies outside the run's range.
     readonly keepExisting?: boolean;
   }) => Effect.Effect<number, TurnItemPositionStoreError>;
@@ -69,7 +69,9 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
                 WHERE thread_id = ${threadId} AND run_id = ${runId}
                 LIMIT 1
               `;
-          const runOrdinal = suppliedRunOrdinal ?? runRows[0]?.ordinal ?? null;
+          const ownerOrdinal = suppliedRunOrdinal ?? runRows[0]?.ordinal ?? null;
+          const runOrdinal =
+            ownerOrdinal !== null && placement === "before_run" ? ownerOrdinal - 1 : ownerOrdinal;
           const lowerBound = runOrdinal === null ? 0 : runOrdinal * 1_000_000;
           const upperBound = runOrdinal === null ? 999_999 : lowerBound + 999_999;
           const current = existing[0]?.ordinal;
@@ -145,6 +147,7 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
           threadId: item.threadId,
           turnItemId: item.id,
           runId: item.runId,
+          ...(item.timelinePlacement === undefined ? {} : { placement: item.timelinePlacement }),
           // Queued steers keep their submission order until their run starts (see Orchestrator).
           keepExisting: item.status === "pending",
           ...(runOrdinal === undefined ? {} : { runOrdinal }),

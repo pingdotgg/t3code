@@ -143,6 +143,22 @@ const instructionsWritten: ReadonlyArray<ProviderReplayEntry> = [
   reply("session.instructions.entry.put", null),
 ];
 
+const noForeignHistory = (sessionID = SESSION): ReadonlyArray<ProviderReplayEntry> => [
+  out("message.list", { sessionID, order: "desc", limit: "50" }),
+  reply("message.list", { data: [], cursor: {} }),
+];
+
+const foreignHistory: ReadonlyArray<ProviderReplayEntry> = [
+  out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+  reply("message.list", {
+    data: [
+      { id: "msg_from_gui", type: "user", time: { created: 2 }, text: "From the GUI" },
+      { id: "msg_user_FIRST", type: "user", time: { created: 1 }, text: "First" },
+    ],
+    cursor: {},
+  }),
+];
+
 const answeredPrompt = (text: string): ReadonlyArray<ProviderReplayEntry> => [
   out("session.prompt", { sessionID: SESSION, text: "<any>" }),
   reply("session.prompt", {
@@ -319,6 +335,7 @@ describe("OpenCode 2 through the orchestrator", () => {
             reply("session.switchModel", null),
 
             ...instructionsWritten,
+            ...(via === "message" ? foreignHistory : noForeignHistory()),
             ...answeredPrompt("SECOND"),
           ],
           commands: [
@@ -346,6 +363,19 @@ describe("OpenCode 2 through the orchestrator", () => {
         );
 
         assert.lengthOf(projection.providerThreads, 1);
+        if (via === "message") {
+          assert.deepEqual(
+            projection.turnItems
+              .filter((item) => item.type === "user_message")
+              .toSorted((left, right) => left.ordinal - right.ordinal)
+              .map((item) => [item.text, item.createdBy, item.creationSource]),
+            [
+              ["Reply with exactly: first", "user", "web"],
+              ["From the GUI", "user", "provider"],
+              ["Reply with exactly: second", "user", "web"],
+            ],
+          );
+        }
       }),
   );
 
@@ -375,12 +405,14 @@ describe("OpenCode 2 through the orchestrator", () => {
           reply("agent.list", agentList(cwd)),
           out("session.update", { sessionID: SESSION, permissions: autoEditRules(name) }),
           reply("session.update", null),
+          ...noForeignHistory(),
           ...answeredPrompt("SECOND"),
 
           out("session.get", { sessionID: SESSION }),
           reply("session.get", sessionInfo(cwd, autoEditRules(name), name)),
           out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
           reply("session.update", null),
+          ...noForeignHistory(),
           ...answeredPrompt("THIRD"),
         ],
         commands: [
@@ -421,6 +453,7 @@ describe("OpenCode 2 through the orchestrator", () => {
           reply("session.update", null),
           out("session.switchAgent", { sessionID: SESSION, agent: "build" }),
           reply("session.switchAgent", null),
+          ...noForeignHistory(),
           ...answeredPrompt("BUILT"),
         ],
         commands: [
@@ -577,6 +610,7 @@ describe("OpenCode 2 through the orchestrator", () => {
                 event("session.execution.succeeded", { sessionID: SESSION }),
                 FIRST_TURN_END,
               ),
+              ...noForeignHistory(),
               ...transcript.entries.slice(-4),
             ],
           },
@@ -789,6 +823,7 @@ describe("OpenCode 2 through the orchestrator", () => {
               ],
               cursor: {},
             }),
+            ...noForeignHistory(parent),
             out("session.prompt", { sessionID: parent, id: "<any>", text: "<any>" }),
             reply("session.prompt", {
               data: {

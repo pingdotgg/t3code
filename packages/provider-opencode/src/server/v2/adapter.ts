@@ -265,6 +265,7 @@ interface ActiveTurn {
   readonly models: Set<string>;
   lastStep: Tokens | undefined;
   before: string | null | undefined;
+  commandPrompt: string | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
   todoPlanId: PlanId | undefined;
@@ -392,7 +393,6 @@ interface ThreadState {
   >;
   readonly stoppedChildren: Set<string>;
   readonly strandedSteers: Set<string>;
-  /** Prompts other clients queued while no T3 turn ran, shown once delivered; `leads` the next wake if no report preceded it. */
   readonly externalPrompts: Map<string, { readonly text: string; leads: boolean }>;
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
@@ -1224,9 +1224,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       update: (current: string) => string,
       completed = "text" in data,
       phase?: "final_answer",
+      historicalAt?: DateTime.Utc,
     ) {
       const nativeId = `${data.assistantMessageID}:${kind}:${data.ordinal}`;
-      const updatedAt = yield* DateTime.now;
+      const updatedAt = historicalAt ?? (yield* DateTime.now);
       const entry = turn.texts.get(nativeId) ?? {
         block: data,
         kind,
@@ -1237,7 +1238,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (completed) turn.texts.delete(nativeId);
       else turn.texts.set(nativeId, entry);
       if (entry.text.length === 0) return;
-      if (completed && kind === "text") {
+      if (completed && kind === "text" && historicalAt === undefined) {
         turn.answer = entry.text;
         turn.closingText = entry;
       }
@@ -1282,6 +1283,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           messageId,
           text: entry.text,
           streaming: !completed,
+          ...(historicalAt === undefined ? {} : { timelinePlacement: "before_run" as const }),
           ...(phase === undefined ? {} : { phase }),
         },
       });
@@ -1315,14 +1317,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       });
     });
 
-    // T3's own prompts are sent while their turn is active, so only other clients reach here.
     const emitExternalPrompt = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
       inboxId: string,
       text: string,
+      historicalAt?: DateTime.Utc,
     ) {
-      const now = yield* DateTime.now;
+      if (turn.ordinals.has(inboxId)) return;
+      const now = historicalAt ?? (yield* DateTime.now);
       const base = {
         ...itemBase(state, turn, inboxId, "completed", now, now, now),
         nodeId: turn.input.rootNodeId,
@@ -1362,6 +1365,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           inputIntent: "turn_start",
           text,
           attachments: [],
+          ...(historicalAt === undefined ? {} : { timelinePlacement: "before_run" as const }),
         },
       });
     });
@@ -1737,6 +1741,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       models: new Set(),
       lastStep: undefined,
       before: undefined,
+      commandPrompt: undefined,
       compaction: undefined,
       compactions: 0,
       todoPlanId: undefined,
@@ -3589,6 +3594,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         const external = state.externalPrompts.get(event.data.inboxID);
         state.externalPrompts.delete(event.data.inboxID);
         const turn = state.active;
+        if (
+          event.type === "session.inbox.delivered" &&
+          turn !== undefined &&
+          state.subagent === undefined &&
+          (isOwnPrompt(event.data.inboxID) ||
+            external !== undefined ||
+            turn.commandPrompt === event.data.inboxID)
+        ) {
+          state.providerThread = {
+            ...state.providerThread,
+            nativeConversationHeadRef: ref(event.data.inboxID, "weak"),
+          };
+        }
         if (turn !== undefined && turn.steers.delete(event.data.inboxID)) {
           turn.settledInbox.add(event.data.inboxID);
           if (event.type === "session.inbox.cancelled") yield* endIfSettled(state, turn);
@@ -3607,19 +3625,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         return;
       }
-      // No T3 turn existed while a wake held these, so its user items came from another client.
-      if (
-        event.type === "session.inbox.enqueued" &&
-        event.data.item.type === "user" &&
-        (state.active === undefined || (held && state.subagent === undefined))
-      ) {
+      if (event.type === "session.inbox.enqueued" && event.data.item.type === "user") {
         const text = event.data.item.payload.text;
-        if (state.subagent !== undefined) state.subagent.prompt ??= text;
-        // T3's own prompts can be admitted after a failed submit ended their turn.
-        else if (!isOwnPrompt(event.data.inboxID)) {
+        const turn = state.active;
+        if (state.subagent !== undefined) {
+          if (turn === undefined) state.subagent.prompt ??= text;
+        } else if (!isOwnPrompt(event.data.inboxID)) {
+          if (
+            !held &&
+            turn !== undefined &&
+            turn.before !== undefined &&
+            turn.commandPrompt === undefined
+          ) {
+            turn.commandPrompt = event.data.inboxID;
+            return;
+          }
           state.externalPrompts.set(event.data.inboxID, {
             text,
-            leads: !held && state.reports.size === 0,
+            leads: turn === undefined && !held && state.reports.size === 0,
           });
         }
         return;
@@ -4868,6 +4891,66 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         .pipe(Effect.asVoid);
     });
 
+    const recoverExternalHistory = Effect.fn("OpenCode2Adapter.recoverExternalHistory")(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+    ) {
+      if (busy.has(state.sessionId)) return;
+      const head = state.providerThread.nativeConversationHeadRef?.nativeId;
+      const isBoundary = (message: SessionMessage.Info) =>
+        message.id === head || (message.type === "user" && isOwnPrompt(message.id));
+      const history = yield* OpenCode2Client.paginate(
+        { sessionID: Session.ID.make(state.sessionId), order: "desc" as const, limit: 50 },
+        client.message.list,
+      ).pipe(Stream.takeUntil(isBoundary), Stream.runCollect, Effect.timeout(INVENTORY_TIMEOUT));
+      const boundary = history.at(-1);
+      if (boundary === undefined || !isBoundary(boundary)) return;
+      yield* lock.withPermit(
+        Effect.gen(function* () {
+          if (
+            state.active !== turn ||
+            turn.interrupted ||
+            busy.has(state.sessionId) ||
+            state.providerThread.nativeConversationHeadRef?.nativeId !== head
+          )
+            return;
+          let foreignExchange = false;
+          for (const message of history.slice(0, -1).reverse()) {
+            if (message.type === "user") {
+              foreignExchange = true;
+              state.externalPrompts.delete(message.id);
+              yield* emitExternalPrompt(
+                state,
+                turn,
+                message.id,
+                message.text,
+                message.time.created,
+              );
+              state.providerThread = {
+                ...state.providerThread,
+                nativeConversationHeadRef: ref(message.id, "weak"),
+              };
+            } else if (message.type === "assistant" && foreignExchange) {
+              let ordinal = 0;
+              for (const part of message.content) {
+                if (part.type !== "text") continue;
+                yield* emitText(
+                  state,
+                  turn,
+                  { assistantMessageID: message.id, ordinal: ordinal++ },
+                  "text",
+                  () => part.text,
+                  true,
+                  undefined,
+                  message.time.created,
+                );
+              }
+            }
+          }
+        }),
+      );
+    });
+
     const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
       instanceId,
       driver,
@@ -5126,6 +5209,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
           if (started === undefined) return;
           const { state, sessionId, turn } = started;
+          if (
+            turnInput.nativeThreadHasTurns === true ||
+            state.providerThread.nativeConversationHeadRef !== null
+          ) {
+            yield* recoverExternalHistory(state, turn).pipe(Effect.ignore({ log: true }));
+          }
           yield* submit(sessionId, turnInput, state, turn).pipe(
             // Forget externally deleted sessions so the next turn recreates them with handoff.
             Effect.catchTags({

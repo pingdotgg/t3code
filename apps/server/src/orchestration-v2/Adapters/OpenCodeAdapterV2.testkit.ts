@@ -158,7 +158,9 @@ export class OpenCodeReplayController {
           expectedFrame?.type === "session.prompt") &&
         actualFrame?.type === expectedFrame.type
       ) {
-        const recordedId = frameRecord(expectedFrame.input)?.[idKey];
+        const recordedId =
+          frameRecord(expectedFrame.input)?.[idKey] ??
+          (expectedFrame.type === "session.prompt" ? this.promptResponseId() : undefined);
         const actualId = frameRecord(actualFrame.input)?.[idKey];
         if (
           typeof recordedId === "string" &&
@@ -192,6 +194,17 @@ export class OpenCodeReplayController {
     } catch (cause) {
       this.fail(cause);
       throw cause;
+    }
+  }
+
+  private promptResponseId(): unknown {
+    for (let index = this.cursor + 1; index < this.transcript.entries.length; index++) {
+      const entry = this.transcript.entries[index];
+      if (entry?.type !== "emit_inbound") return;
+      const frame = frameRecord(entry.frame);
+      if (frame?.type === "sdk.response" && frame.operation === "session.prompt") {
+        return frameRecord(frameRecord(frame.data)?.data)?.id;
+      }
     }
   }
 

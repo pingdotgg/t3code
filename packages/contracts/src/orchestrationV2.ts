@@ -1787,6 +1787,7 @@ export type OrchestrationV2ModelSwitch = typeof OrchestrationV2ModelSwitch.Type;
 const AssistantMessagePhase = Schema.Literals(["commentary", "partial_answer", "final_answer"]);
 
 const OrchestrationV2TurnItemBaseFields = {
+  timelinePlacement: Schema.optional(Schema.Literal("before_run")),
   /** Wire-only cursor for collapsed work; persisted items keep their complete history. */
   deferredWork: Schema.optionalKey(
     Schema.Struct({
