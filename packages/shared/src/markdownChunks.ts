@@ -169,15 +169,13 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
-      if (closes === null) {
-        const prefix = LIST_FENCE_PREFIX.exec(line);
-        if (prefix !== null) {
-          const markerEnd = prefix[1]!.length;
-          const indent = markdownColumn(prefix[2]!, markerEnd);
-          if (indent - markerEnd <= 4) {
-            closes = blockCloser(line.slice(prefix[0].length));
-            if (closes !== null) listFenceIndent = indent;
-          }
+      const prefix = LIST_FENCE_PREFIX.exec(line);
+      if (prefix !== null) {
+        const markerEnd = prefix[1]!.length;
+        const indent = markdownColumn(prefix[2]!, markerEnd);
+        if (indent - markerEnd <= 4) {
+          closes = blockCloser(line.slice(prefix[0].length));
+          if (closes !== null) listFenceIndent = indent;
         }
       }
       // An indented fence opener without a list marker may sit in a list item.
