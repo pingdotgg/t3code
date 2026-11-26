@@ -3,7 +3,7 @@ import type * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Socket from "effect/socket/Socket";
 
-import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient, TeamsClientCapability } from "@t3tools/client-runtime/rpc";
 import * as RelayTracing from "@t3tools/shared/relayTracing";
 import * as PrimaryEnvironmentHttpClient from "../environments/primary/httpClient";
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
@@ -22,6 +22,7 @@ function configuredRelayUrl(): string {
 }
 
 const layerHttpClient = layerRemoteHttpClient((input, init) => globalThis.fetch(input, init));
+const layerTeamsClient = Layer.succeed(TeamsClientCapability, true);
 const layerRelayTracing = RelayTracing.layer(
   resolveRelayTracingConfig(),
   {
@@ -36,6 +37,7 @@ const layerRelayTracing = RelayTracing.layer(
 
 type RuntimeLayerSource =
   | typeof layerHttpClient
+  | typeof layerTeamsClient
   | typeof Dpop.layer
   | typeof Socket.layerWebSocketConstructorGlobal
   | typeof layerRelayTracing
@@ -65,6 +67,7 @@ export function __setPrimaryHttpRunnerForTests(runner?: PrimaryHttpEffectRunner)
 
 const layerRuntime = Layer.mergeAll(
   layerHttpClient,
+  layerTeamsClient,
   Dpop.layer,
   Socket.layerWebSocketConstructorGlobal,
   ClientTracer.layer,

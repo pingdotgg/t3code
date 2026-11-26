@@ -1,6 +1,8 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
 import {
+  TEAM_CLIENT_CAPABILITY_QUERY_PARAM,
+  TEAM_CLIENT_CAPABILITY_VALUE,
   type ServerConfig,
   type ServerConfigStreamEvent,
   WsSubscribeServerConfigRpc,
@@ -73,6 +75,7 @@ export interface RpcSessionOptions {
   readonly providerCatalogsOnDemand?: boolean;
   readonly providerCatalogDigests?: boolean;
   readonly providerStatusDeltas?: boolean;
+  readonly teamsClient?: boolean;
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -250,6 +253,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     };
     const socketUrl = new URL(connection.socketUrl);
     socketUrl.searchParams.set(SOCKET_FRAME_PARTS_QUERY_PARAM, "1");
+    if (options.teamsClient === true) {
+      socketUrl.searchParams.set(TEAM_CLIENT_CAPABILITY_QUERY_PARAM, TEAM_CLIENT_CAPABILITY_VALUE);
+    }
     const layerSocket = Layer.effect(
       Socket.Socket,
       Effect.map(Effect.service(Socket.Socket), joinSocketFrameParts),

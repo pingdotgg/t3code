@@ -34,6 +34,7 @@ import {
   canModifyTeamMember,
   canToggleTeamThreadLock,
   effectiveTeamThreadNoteHash,
+  effectiveUpstreamClientThreadVisibility,
   EnvironmentAuthorizationError,
   EnvironmentId,
   formatAcceptedTeamNoteForPrompt,
@@ -68,6 +69,8 @@ import {
   type TeamConsumeAcceptedNotesInput,
   type TeamConsumeAcceptedNotesResult,
   type TeamCreateInviteInput,
+  type TeamCreateMobilePairingLinkInput,
+  type TeamCreateMobilePairingLinkResult,
   type TeamCreateThreadNoteInput,
   type TeamCreateViewInput,
   type TeamDeletePrepromptInput,
@@ -92,6 +95,7 @@ import {
   type TeamIssueLocalSyncTokenResult,
   type TeamListThreadNotesInput,
   type TeamMember,
+  type TeamMobilePairingLinkSummary,
   type TeamPreprompt,
   type TeamProjectAssignment,
   type TeamProvider,
@@ -105,6 +109,8 @@ import {
   type TeamResolveThreadNoteInput,
   type TeamRevokeInviteInput,
   type TeamRevokeInviteResult,
+  type TeamRevokeMobilePairingLinkInput,
+  type TeamRevokeMobilePairingLinkResult,
   type TeamRole,
   type TeamSetThreadLockedInput,
   type TeamSetThreadViewInput,
@@ -123,6 +129,7 @@ import {
   type TeamUpdateEnvironmentInput,
   type TeamUpdateMemberRoleInput,
   type TeamUpdateMemberStatusInput,
+  type TeamUpdateMyMobileVisibilityInput,
   type TeamUpdateMyPseudoInput,
   type TeamUpdateViewInput,
   type TeamUpsertPrepromptInput,
@@ -137,6 +144,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -148,6 +156,8 @@ import {
   PENDING_ATTACHMENT_THREAD_SEGMENT,
   parseThreadSegmentFromAttachmentId,
 } from "../attachmentStore.ts";
+import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as PairingGrantStore from "../auth/PairingGrantStore.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -174,6 +184,15 @@ import {
 import * as TeamProviderManager from "./TeamProviderManager.ts";
 import * as TeamRepository from "./TeamRepository.ts";
 import { validateTeamPrepromptPayload, validateTeamSkillPayload } from "./TeamSkillValidation.ts";
+import {
+  formatUpstreamCompatLocalEnvironmentBlockedMessage,
+  formatUpstreamCompatLockedThreadBlockedMessage,
+  formatUpstreamCompatReadOnlyViewBlockedMessage,
+  formatUpstreamCompatRemoteEnvironmentBlockedMessage,
+  formatUpstreamCompatThreadTitle as formatUpstreamCompatThreadTitlePure,
+  stripTitlePrefixOnCompatCommand,
+  type TeamThreadTitlePrefixContext,
+} from "./upstreamMobileCompat.ts";
 
 const DEFAULT_INVITE_EXPIRY_HOURS = 24 * 7;
 const MAX_INVITE_EXPIRY_HOURS = 24 * 90;
@@ -237,6 +256,9 @@ export type TeamAccessChangeEvent =
   | { readonly type: "workspace" }
   | { readonly type: "view"; readonly viewId: TeamViewId }
   | { readonly type: "member"; readonly memberId: TeamMemberId }
+  | { readonly type: "memberVisibility"; readonly memberId: TeamMemberId }
+  | { readonly type: "memberFollow"; readonly memberId: TeamMemberId; readonly threadId: ThreadId }
+  | { readonly type: "memberPseudo"; readonly memberId: TeamMemberId }
   | { readonly type: "threadView"; readonly threadId: ThreadId }
   | { readonly type: "environment"; readonly environmentId: EnvironmentId };
 
@@ -421,6 +443,7 @@ export class TeamService extends Context.Service<
     readonly assertAndNormalizeDispatchCommand: (
       sessionId: AuthSessionId,
       command: OrchestrationV2Command,
+      options?: { readonly upstreamCompat?: boolean },
     ) => Effect.Effect<OrchestrationV2Command, EnvironmentAuthorizationError>;
     readonly assertCanInterruptThread: (
       sessionId: AuthSessionId,
@@ -690,10 +713,12 @@ export class TeamService extends Context.Service<
     readonly assertActorCanExecuteOnThreadEnvironment: (
       actor: TeamActor,
       threadId: ThreadId,
+      options?: { readonly upstreamCompat?: boolean },
     ) => Effect.Effect<void, EnvironmentAuthorizationError>;
     readonly assertCanExecuteOnThreadEnvironment: (
       sessionId: AuthSessionId,
       threadId: ThreadId,
+      options?: { readonly upstreamCompat?: boolean },
     ) => Effect.Effect<void, EnvironmentAuthorizationError>;
     readonly syncLocalThread: (input: {
       readonly sessionId: AuthSessionId;
@@ -790,6 +815,56 @@ export class TeamService extends Context.Service<
       sessionId: AuthSessionId,
     ) => Effect.Effect<void, EnvironmentAuthorizationError>;
     readonly assertLocalBindingHostAllowed: () => Effect.Effect<void, TeamOperationError>;
+    readonly updateMyMobileVisibility: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamUpdateMyMobileVisibilityInput;
+    }) => Effect.Effect<TeamMember, TeamOperationError>;
+    readonly assertCanCreateStandardPairingLink: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+    }) => Effect.Effect<void, TeamOperationError>;
+    readonly bindPairingLinkToSessionMember: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly pairingLinkId: string;
+    }) => Effect.Effect<{ readonly bound: boolean }, TeamOperationError>;
+    readonly createMobilePairingLink: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly callerScopes: ReadonlyArray<AuthEnvironmentScope>;
+      readonly payload: TeamCreateMobilePairingLinkInput;
+      readonly serverAuth?: EnvironmentAuth.EnvironmentAuth["Service"];
+    }) => Effect.Effect<TeamCreateMobilePairingLinkResult, TeamOperationError>;
+    readonly listMyMobilePairingLinks: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly serverAuth?: EnvironmentAuth.EnvironmentAuth["Service"];
+    }) => Effect.Effect<ReadonlyArray<TeamMobilePairingLinkSummary>, TeamOperationError>;
+    readonly revokeMyMobilePairingLink: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamRevokeMobilePairingLinkInput;
+      readonly serverAuth?: EnvironmentAuth.EnvironmentAuth["Service"];
+    }) => Effect.Effect<TeamRevokeMobilePairingLinkResult, TeamOperationError>;
+    readonly markPairingLinkRevoked: (pairingLinkId: string) => Effect.Effect<void>;
+    readonly getThreadTitlePrefixContextMap: (
+      threadIds: ReadonlyArray<ThreadId>,
+    ) => Effect.Effect<ReadonlyMap<ThreadId, TeamThreadTitlePrefixContext>>;
+    readonly formatUpstreamCompatThreadTitle: (
+      threadId: ThreadId,
+      rawTitle: string,
+    ) => Effect.Effect<string>;
+    readonly filterVisibleShellThreadIds: (
+      sessionId: AuthSessionId,
+      threadIds: ReadonlyArray<ThreadId>,
+      options?: { readonly upstreamCompat?: boolean },
+    ) => Effect.Effect<ReadonlySet<ThreadId>>;
+    readonly canShowThreadInShell: (
+      sessionId: AuthSessionId,
+      threadId: ThreadId,
+      options?: { readonly upstreamCompat?: boolean },
+    ) => Effect.Effect<boolean>;
+    readonly shouldRefreshShellForAccessChange: (
+      sessionId: AuthSessionId,
+      change: TeamAccessChangeEvent,
+      options?: { readonly upstreamCompat?: boolean },
+    ) => Effect.Effect<boolean>;
   }
 >()("t3/team/TeamService") {}
 
@@ -802,6 +877,8 @@ const make = Effect.gen(function* () {
     TeamAssetsRepository.TeamAssetsRepository,
   );
   const secretStoreOption = yield* Effect.serviceOption(ServerSecretStore.ServerSecretStore);
+  const environmentAuthOption = yield* Effect.serviceOption(EnvironmentAuth.EnvironmentAuth);
+  const pairingGrantStoreOption = yield* Effect.serviceOption(PairingGrantStore.PairingGrantStore);
   const providerManagerOption = yield* Effect.serviceOption(
     TeamProviderManager.TeamProviderManager,
   );
@@ -817,6 +894,10 @@ const make = Effect.gen(function* () {
   const withRemotePairingPermit = remotePairingGate.withPermits(1);
   const withRemoteRevocationBarrier = remotePairingGate.withPermits(MAX_REMOTE_PAIRING_PERMITS);
   const remoteEnvLifecycleLock = yield* Semaphore.make(1);
+  // Serializes member role/status/pairing-link revocations against pairing redemption so
+  // beforeIssueSession -> sessions.issue -> afterIssueSession is atomic with suspension/demotion.
+  const membershipMutationGate = yield* Semaphore.make(1);
+  const withMembershipMutationGate = membershipMutationGate.withPermits(1);
   const NOTE_RESERVATION_TTL_MS = 60_000;
   const activeNoteReservations = new Map<
     TeamThreadNoteId,
@@ -836,6 +917,79 @@ const make = Effect.gen(function* () {
       }
     }
   };
+
+  const revokePairingLinksForMember = Effect.fn("TeamService.revokePairingLinksForMember")(
+    function* (memberId: TeamMemberId) {
+      const revokedAt = DateTime.formatIso(yield* DateTime.now);
+      const pairingLinkIds = yield* repository
+        .listPairingLinkIdsForMember(memberId)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+      // Tombstone metadata first so an in-flight redemption still sees revoked_at != null and fails closed.
+      yield* repository
+        .markAllPairingLinkMetaRevokedForMember({ memberId, revokedAt })
+        .pipe(Effect.ignore);
+      for (const pairingLinkId of pairingLinkIds) {
+        if (Option.isSome(pairingGrantStoreOption)) {
+          yield* pairingGrantStoreOption.value.revoke(pairingLinkId).pipe(Effect.ignore);
+        } else if (Option.isSome(environmentAuthOption)) {
+          yield* environmentAuthOption.value.revokePairingLink(pairingLinkId).pipe(Effect.ignore);
+        }
+      }
+    },
+  );
+
+  const getThreadTitlePrefixContextMap = Effect.fn("TeamService.getThreadTitlePrefixContextMap")(
+    function* (
+      threadIds: ReadonlyArray<ThreadId>,
+    ): Effect.fn.Return<ReadonlyMap<ThreadId, TeamThreadTitlePrefixContext>> {
+      const result = new Map<ThreadId, TeamThreadTitlePrefixContext>();
+      if (threadIds.length === 0) return result;
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+      if (Option.isNone(workspaceOption)) return result;
+      const team = workspaceOption.value;
+      const uniqueIds = [...new Set(threadIds)];
+      // Single-thread fast path avoids full-table scans on live WS events and push notifications.
+      if (uniqueIds.length === 1) {
+        const threadId = uniqueIds[0]!;
+        const attributionOption = yield* repository
+          .getThreadAttribution(threadId)
+          .pipe(Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()));
+        if (Option.isSome(attributionOption)) {
+          result.set(threadId, {
+            ownerKind: "member",
+            creatorPseudo: attributionOption.value.creatorPseudo,
+            teamDisplayName: team.name,
+          });
+        }
+        return result;
+      }
+      const attributions = yield* repository
+        .listThreadAttributions(team.id)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadAttribution>));
+      const attributionByThreadId = new Map<ThreadId, TeamThreadAttribution>(
+        attributions.map((entry) => [entry.threadId, entry] as const),
+      );
+      for (const threadId of uniqueIds) {
+        const attribution = attributionByThreadId.get(threadId);
+        if (!attribution) continue;
+        result.set(threadId, {
+          ownerKind: "member",
+          creatorPseudo: attribution.creatorPseudo,
+          teamDisplayName: team.name,
+        });
+      }
+      return result;
+    },
+  );
+
+  const formatUpstreamCompatThreadTitle = Effect.fn("TeamService.formatUpstreamCompatThreadTitle")(
+    function* (threadId: ThreadId, rawTitle: string) {
+      const prefixByThreadId = yield* getThreadTitlePrefixContextMap([threadId]);
+      return formatUpstreamCompatThreadTitlePure(rawTitle, prefixByThreadId.get(threadId));
+    },
+  );
 
   const remoteSubjectForMember = (teamId: TeamId, memberId: TeamMemberId): string =>
     `${PeerClientPairing.TEAM_MEMBER_REMOTE_SUBJECT_PREFIX}${teamId}:${memberId}:`;
@@ -1475,7 +1629,7 @@ const make = Effect.gen(function* () {
 
   const reconcileMemberSessionScopes = Effect.fn("TeamService.reconcileMemberSessionScopes")(
     function* (memberId: TeamMemberId, nextRole: TeamRole) {
-      const nextScopes = scopesForTeamRole(nextRole);
+      const nextRoleScopes = scopesForTeamRole(nextRole);
       const sessionIds = yield* repository.listSessionIdsForMember(memberId).pipe(
         Effect.tapError((cause) =>
           Effect.logWarning("TeamService.reconcileMemberSessionScopes list failed", {
@@ -1487,8 +1641,27 @@ const make = Effect.gen(function* () {
       );
       yield* Effect.forEach(
         sessionIds,
-        (memberSessionId) =>
-          sessionStore.updateScopes(memberSessionId, nextScopes).pipe(
+        Effect.fnUntraced(function* (memberSessionId) {
+          const ceilingExit = yield* Effect.exit(
+            repository.getSessionScopeCeiling(memberSessionId),
+          );
+          if (Exit.isFailure(ceilingExit)) {
+            yield* Effect.logWarning(
+              "TeamService.reconcileMemberSessionScopes ceiling lookup failed; revoking session to fail closed",
+              { memberId, memberSessionId, cause: ceilingExit.cause },
+            );
+            yield* sessionStore.revoke(memberSessionId).pipe(Effect.ignore);
+            return;
+          }
+          const ceilingOption = ceilingExit.value;
+          const targetScopes = Option.isSome(ceilingOption)
+            ? nextRoleScopes.filter((scope) => ceilingOption.value.includes(scope))
+            : nextRoleScopes;
+          if (targetScopes.length === 0) {
+            yield* sessionStore.revoke(memberSessionId).pipe(Effect.ignore);
+            return;
+          }
+          yield* sessionStore.updateScopes(memberSessionId, targetScopes).pipe(
             Effect.tapError((cause) =>
               Effect.logWarning("TeamService.reconcileMemberSessionScopes update failed", {
                 memberId,
@@ -1497,7 +1670,8 @@ const make = Effect.gen(function* () {
               }),
             ),
             Effect.ignore,
-          ),
+          );
+        }),
         { discard: true },
       );
     },
@@ -1575,45 +1749,53 @@ const make = Effect.gen(function* () {
       });
     }
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    const updated = yield* repository
-      .updateMemberRole({
-        teamId: team.id,
-        actorMemberId: actor.id,
-        memberId: target.id,
-        role: input.payload.role,
-        updatedAt,
-      })
-      .pipe(
-        Effect.catchTags({
-          TeamLastOwnerProtectedError: (error) =>
-            Effect.fail(
-              new TeamOperationError({
-                code: "last_owner",
-                message: error.message,
-              }),
-            ),
-          TeamMemberForbiddenError: (error) =>
-            Effect.fail(
-              new TeamOperationError({
-                code: "forbidden",
-                message: error.message,
-              }),
-            ),
-          TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
-        }),
-      );
-    if (Option.isNone(updated)) {
-      return yield* new TeamOperationError({
-        code: "not_found",
-        message: "Team member could not be found.",
-      });
-    }
-    const { previousRole, member: updatedMember } = updated.value;
+    const { previousRole, member: updatedMember } = yield* withMembershipMutationGate(
+      Effect.gen(function* () {
+        const updated = yield* repository
+          .updateMemberRole({
+            teamId: team.id,
+            actorMemberId: actor.id,
+            memberId: target.id,
+            role: input.payload.role,
+            updatedAt,
+          })
+          .pipe(
+            Effect.catchTags({
+              TeamLastOwnerProtectedError: (error) =>
+                Effect.fail(
+                  new TeamOperationError({
+                    code: "last_owner",
+                    message: error.message,
+                  }),
+                ),
+              TeamMemberForbiddenError: (error) =>
+                Effect.fail(
+                  new TeamOperationError({
+                    code: "forbidden",
+                    message: error.message,
+                  }),
+                ),
+              TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+            }),
+          );
+        if (Option.isNone(updated)) {
+          return yield* new TeamOperationError({
+            code: "not_found",
+            message: "Team member could not be found.",
+          });
+        }
+        const prevIsAdminTier =
+          updated.value.previousRole === "owner" || updated.value.previousRole === "admin";
+        const nextIsAdminTier =
+          updated.value.member.role === "owner" || updated.value.member.role === "admin";
+        if (prevIsAdminTier !== nextIsAdminTier) {
+          yield* reconcileMemberSessionScopes(updated.value.member.id, updated.value.member.role);
+        }
+        return updated.value;
+      }),
+    );
     const prevIsAdminTier = previousRole === "owner" || previousRole === "admin";
     const nextIsAdminTier = updatedMember.role === "owner" || updatedMember.role === "admin";
-    if (prevIsAdminTier !== nextIsAdminTier) {
-      yield* reconcileMemberSessionScopes(updatedMember.id, updatedMember.role);
-    }
     if (input.peerClientPairing) {
       const envs = yield* repository
         .listEnvironments(team.id)
@@ -1695,44 +1877,52 @@ const make = Effect.gen(function* () {
       });
     }
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    const updated = yield* repository
-      .updateMemberStatus({
-        teamId: team.id,
-        actorMemberId: actor.id,
-        memberId: target.id,
-        status: input.payload.status,
-        updatedAt,
-      })
-      .pipe(
-        Effect.catchTags({
-          TeamLastOwnerProtectedError: (error) =>
-            Effect.fail(
-              new TeamOperationError({
-                code: "last_owner",
-                message: error.message,
-              }),
-            ),
-          TeamMemberForbiddenError: (error) =>
-            Effect.fail(
-              new TeamOperationError({
-                code: "forbidden",
-                message: error.message,
-              }),
-            ),
-          TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
-        }),
-      );
-    if (Option.isNone(updated)) {
-      return yield* new TeamOperationError({
-        code: "not_found",
-        message: "Team member could not be found.",
-      });
-    }
-    if (updated.value.status !== "active") {
-      yield* revokeSessionsForMember(updated.value.id);
+    const updatedMember = yield* withMembershipMutationGate(
+      Effect.gen(function* () {
+        const updated = yield* repository
+          .updateMemberStatus({
+            teamId: team.id,
+            actorMemberId: actor.id,
+            memberId: target.id,
+            status: input.payload.status,
+            updatedAt,
+          })
+          .pipe(
+            Effect.catchTags({
+              TeamLastOwnerProtectedError: (error) =>
+                Effect.fail(
+                  new TeamOperationError({
+                    code: "last_owner",
+                    message: error.message,
+                  }),
+                ),
+              TeamMemberForbiddenError: (error) =>
+                Effect.fail(
+                  new TeamOperationError({
+                    code: "forbidden",
+                    message: error.message,
+                  }),
+                ),
+              TeamRepositoryError: (error) => Effect.fail(toInternalError(error)),
+            }),
+          );
+        if (Option.isNone(updated)) {
+          return yield* new TeamOperationError({
+            code: "not_found",
+            message: "Team member could not be found.",
+          });
+        }
+        if (updated.value.status !== "active") {
+          yield* revokeSessionsForMember(updated.value.id);
+          yield* revokePairingLinksForMember(updated.value.id);
+        }
+        return updated.value;
+      }),
+    );
+    if (updatedMember.status !== "active") {
       if (Option.isSome(assetsRepositoryOption)) {
         yield* assetsRepositoryOption.value
-          .revokeLocalSyncTokensForMember(updated.value.id, updatedAt)
+          .revokeLocalSyncTokensForMember(updatedMember.id, updatedAt)
           .pipe(Effect.ignore);
       }
       if (input.peerClientPairing) {
@@ -1751,14 +1941,14 @@ const make = Effect.gen(function* () {
             teamId: team.id,
             peerClientPairing: input.peerClientPairing,
             environmentIds: targetEnvIds,
-            subjectPrefixes: [remoteSubjectForMember(team.id, updated.value.id)],
+            subjectPrefixes: [remoteSubjectForMember(team.id, updatedMember.id)],
           }),
         );
       }
     }
-    yield* publish({ version: 1, type: "memberUpserted", payload: updated.value });
-    yield* publishAccessChange({ type: "member", memberId: updated.value.id });
-    return updated.value;
+    yield* publish({ version: 1, type: "memberUpserted", payload: updatedMember });
+    yield* publishAccessChange({ type: "member", memberId: updatedMember.id });
+    return updatedMember;
   });
 
   const createView = Effect.fn("TeamService.createView")(function* (input: {
@@ -2107,6 +2297,7 @@ const make = Effect.gen(function* () {
     }
 
     yield* publish({ version: 1, type: "memberUpserted", payload: updated.value });
+    yield* publishAccessChange({ type: "memberPseudo", memberId: updated.value.id });
     return updated.value;
   });
 
@@ -2778,6 +2969,7 @@ const make = Effect.gen(function* () {
   const assertActorCanPostInThread = Effect.fn("TeamService.assertActorCanPostInThread")(function* (
     actor: TeamActor,
     threadId: ThreadId,
+    options?: { readonly upstreamCompat?: boolean },
   ) {
     const ctx = yield* resolveThreadAccessContextForActor(actor, threadId).pipe(
       Effect.tapError((cause) =>
@@ -2810,11 +3002,17 @@ const make = Effect.gen(function* () {
     });
     if (reason === "ok") return;
     if (reason === "locked") {
-      return yield* teamPostAuthError("This thread is locked. Only owners and admins can post.");
+      return yield* teamPostAuthError(
+        options?.upstreamCompat === true
+          ? formatUpstreamCompatLockedThreadBlockedMessage()
+          : "This thread is locked. Only owners and admins can post.",
+      );
     }
     if (reason === "view_read_only") {
       return yield* teamPostAuthError(
-        "You have read-only access to this view and cannot post in colleagues' threads.",
+        options?.upstreamCompat === true
+          ? formatUpstreamCompatReadOnlyViewBlockedMessage()
+          : "You have read-only access to this view and cannot post in colleagues' threads.",
       );
     }
     return yield* teamPostAuthError();
@@ -3307,11 +3505,20 @@ const make = Effect.gen(function* () {
   )(function* (
     sessionId: AuthSessionId,
     command: OrchestrationV2Command,
+    options?: { readonly upstreamCompat?: boolean },
   ): Effect.fn.Return<OrchestrationV2Command, EnvironmentAuthorizationError> {
     if (!(yield* isTeamConfigured())) {
       return command;
     }
     const actor = sessionActor(sessionId);
+    const upstreamCompat = options?.upstreamCompat === true;
+    const compatOptions = upstreamCompat ? { upstreamCompat: true as const } : undefined;
+    const normalizeCompatTitle = (cmd: OrchestrationV2Command) =>
+      stripTitlePrefixOnCompatCommand(
+        { isTeamConfigured, getThreadTitlePrefixContextMap },
+        cmd,
+        upstreamCompat,
+      );
     switch (command.type) {
       case "thread.create": {
         const localEnv = yield* resolveLocalEnvironmentIdentity();
@@ -3401,16 +3608,20 @@ const make = Effect.gen(function* () {
           actor,
           ...(inheritedViewId !== undefined ? { viewId: inheritedViewId } : {}),
         });
-        return command;
+        return yield* normalizeCompatTitle(command);
       }
       case "thread.merge_back":
         yield* assertActorCanReadThread(actor, command.sourceThreadId);
-        yield* assertActorCanPostInThread(actor, command.targetThreadId);
-        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.targetThreadId);
+        yield* assertActorCanPostInThread(actor, command.targetThreadId, compatOptions);
+        yield* assertActorCanExecuteOnThreadEnvironment(
+          actor,
+          command.targetThreadId,
+          compatOptions,
+        );
         return command;
       case "message.dispatch": {
-        yield* assertActorCanPostInThread(actor, command.threadId);
-        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
+        yield* assertActorCanPostInThread(actor, command.threadId, compatOptions);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId, compatOptions);
         const effectiveCommand = command;
         if (
           effectiveCommand.dispatchMode.type === "steer_active" ||
@@ -3434,28 +3645,28 @@ const make = Effect.gen(function* () {
       }
       case "queued-message.promote-to-steer":
       case "queued-run.start":
-        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId, compatOptions);
         yield* assertActorCanPromoteQueuedRun(actor, command.threadId);
         return command;
       case "run.interrupt":
       case "subagent.stop":
-        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId, compatOptions);
         yield* assertActorCanInterruptThread(actor, command.threadId, command.runId);
         return command;
       case "thread.stop":
-        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId, compatOptions);
         yield* assertActorCanInterruptThread(actor, command.threadId);
         return command;
       case "runtime-request.respond":
       case "thread.user-input.dismiss":
-        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId, compatOptions);
         yield* assertActorCanInterruptThread(actor, command.threadId);
         return command;
       case "queued-run.edit":
       case "queued-run.cancel":
       case "queued-run.reorder":
-        yield* assertActorCanPostInThread(actor, command.threadId);
-        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
+        yield* assertActorCanPostInThread(actor, command.threadId, compatOptions);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId, compatOptions);
         yield* assertActorCanManageQueuedRun(actor, command.threadId, command.runId);
         return command;
       case "delegated_task.request":
@@ -3463,15 +3674,19 @@ const make = Effect.gen(function* () {
       case "delegated_task.completion-delivery.acknowledge":
       case "delegated_task.completion-delivery.dispose":
       case "thread.created.record":
-        yield* assertActorCanPostInThread(actor, command.parentThreadId);
-        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.parentThreadId);
+        yield* assertActorCanPostInThread(actor, command.parentThreadId, compatOptions);
+        yield* assertActorCanExecuteOnThreadEnvironment(
+          actor,
+          command.parentThreadId,
+          compatOptions,
+        );
         return command;
       case "thread.metadata.update":
-        yield* assertActorCanPostInThread(actor, command.threadId);
+        yield* assertActorCanPostInThread(actor, command.threadId, compatOptions);
         if (command.continuation !== undefined) {
-          yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
+          yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId, compatOptions);
         }
-        return command;
+        return yield* normalizeCompatTitle(command);
       case "thread.archive":
       case "thread.unarchive":
       case "thread.unsettle":
@@ -3491,14 +3706,14 @@ const make = Effect.gen(function* () {
       case "thread.title.regeneration.complete":
       case "thread.guest-share.close":
       case "thread.guest-message.dismiss":
-        yield* assertActorCanPostInThread(actor, command.threadId);
+        yield* assertActorCanPostInThread(actor, command.threadId, compatOptions);
         return command;
       default:
         // Fail closed for all remaining execution-capable commands (including thread.settle /
         // thread.auto-settle which close terminals and execute project settle scripts,
         // prepared-run.retry, queue.resume, checkpoint.rollback, provider.switch, etc.).
-        yield* assertActorCanPostInThread(actor, command.threadId);
-        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId);
+        yield* assertActorCanPostInThread(actor, command.threadId, compatOptions);
+        yield* assertActorCanExecuteOnThreadEnvironment(actor, command.threadId, compatOptions);
         return command;
     }
   });
@@ -3604,6 +3819,11 @@ const make = Effect.gen(function* () {
           isFollowing: true,
         },
       });
+      yield* publishAccessChange({
+        type: "memberFollow",
+        memberId: actor.id,
+        threadId: input.payload.threadId,
+      });
     }
     return { threadId: input.payload.threadId, isFollowing: true } satisfies TeamThreadFollowResult;
   });
@@ -3644,6 +3864,11 @@ const make = Effect.gen(function* () {
           memberId: actor.id,
           isFollowing: false,
         },
+      });
+      yield* publishAccessChange({
+        type: "memberFollow",
+        memberId: actor.id,
+        threadId: input.payload.threadId,
       });
     }
     return {
@@ -5298,7 +5523,11 @@ const make = Effect.gen(function* () {
 
   const assertActorCanExecuteOnThreadEnvironment = Effect.fn(
     "TeamService.assertActorCanExecuteOnThreadEnvironment",
-  )(function* (actor: TeamActor, threadId: ThreadId) {
+  )(function* (
+    actor: TeamActor,
+    threadId: ThreadId,
+    options?: { readonly upstreamCompat?: boolean },
+  ) {
     const failClosed =
       <A, E, R>(label: string) =>
       (effect: Effect.Effect<A, E, R>) =>
@@ -5340,7 +5569,9 @@ const make = Effect.gen(function* () {
       const label =
         attribution.executionEnvironmentLabel ?? `${attribution.creatorPseudo}'s local environment`;
       return yield* teamPostAuthError(
-        `Cannot execute turns on "${label}". Local-environment threads run exclusively on their owner's machine; fork the thread or leave a note instead.`,
+        options?.upstreamCompat === true
+          ? formatUpstreamCompatLocalEnvironmentBlockedMessage(label)
+          : `Cannot execute turns on "${label}". Local-environment threads run exclusively on their owner's machine; fork the thread or leave a note instead.`,
       );
     }
     yield* ensureDefaultEnvironmentForTeam(team).pipe(
@@ -5356,13 +5587,18 @@ const make = Effect.gen(function* () {
     });
     if (!access.canExecute) {
       return yield* teamPostAuthError(
-        `You do not have permission to execute turns on environment "${access.environmentLabel}". Fork the thread or leave a note instead.`,
+        options?.upstreamCompat === true
+          ? formatUpstreamCompatRemoteEnvironmentBlockedMessage(access.environmentLabel)
+          : `You do not have permission to execute turns on environment "${access.environmentLabel}". Fork the thread or leave a note instead.`,
       );
     }
   });
 
-  const assertCanExecuteOnThreadEnvironment = (sessionId: AuthSessionId, threadId: ThreadId) =>
-    assertActorCanExecuteOnThreadEnvironment(sessionActor(sessionId), threadId);
+  const assertCanExecuteOnThreadEnvironment = (
+    sessionId: AuthSessionId,
+    threadId: ThreadId,
+    options?: { readonly upstreamCompat?: boolean },
+  ) => assertActorCanExecuteOnThreadEnvironment(sessionActor(sessionId), threadId, options);
 
   const syncLocalThread = Effect.fn("TeamService.syncLocalThread")(function* (input: {
     readonly sessionId: AuthSessionId;
@@ -6798,6 +7034,594 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const updateMyMobileVisibility = Effect.fn("TeamService.updateMyMobileVisibility")(
+    function* (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamUpdateMyMobileVisibilityInput;
+    }) {
+      const team = yield* requireWorkspace();
+      const actor = yield* requireActiveMember(input.sessionId);
+      if (actor.teamId !== team.id) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "This session does not belong to the active team.",
+        });
+      }
+      const updatedAt = DateTime.formatIso(yield* DateTime.now);
+      const updated = yield* repository
+        .setMemberMobileVisibility({
+          memberId: actor.id,
+          teamId: team.id,
+          visibility: input.payload.upstreamClientThreadVisibility,
+          updatedAt,
+        })
+        .pipe(logAndMapInternalError("updateMyMobileVisibility"));
+      if (Option.isNone(updated)) {
+        return yield* new TeamOperationError({
+          code: "not_found",
+          message: "Team member could not be found.",
+        });
+      }
+      yield* publish({ version: 1, type: "memberUpserted", payload: updated.value });
+      yield* publishAccessChange({ type: "memberVisibility", memberId: actor.id });
+      return updated.value;
+    },
+  );
+
+  const assertCanCreateStandardPairingLink = Effect.fn(
+    "TeamService.assertCanCreateStandardPairingLink",
+  )(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+  }) {
+    const workspaceOption = yield* repository
+      .getWorkspace()
+      .pipe(logAndMapInternalError("assertCanCreateStandardPairingLink.getWorkspace"));
+    if (Option.isNone(workspaceOption)) return;
+    const bindingOption = yield* repository
+      .getSessionBinding(input.sessionId)
+      .pipe(logAndMapInternalError("assertCanCreateStandardPairingLink.getSessionBinding"));
+    if (Option.isNone(bindingOption)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only active team members can create standard pairing links on a team server.",
+      });
+    }
+    const memberOption = yield* repository
+      .getMemberById(bindingOption.value.memberId)
+      .pipe(logAndMapInternalError("assertCanCreateStandardPairingLink.getMemberById"));
+    if (
+      Option.isNone(memberOption) ||
+      memberOption.value.teamId !== workspaceOption.value.id ||
+      memberOption.value.status !== "active"
+    ) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Your team membership is no longer active.",
+      });
+    }
+    const roleAllowedScopes = new Set(scopesForTeamRole(memberOption.value.role));
+    for (const scope of input.scopes) {
+      if (!roleAllowedScopes.has(scope)) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "Cannot create a pairing link with broader scopes than your team role.",
+        });
+      }
+    }
+  });
+
+  const bindPairingLinkToSessionMember = Effect.fn("TeamService.bindPairingLinkToSessionMember")(
+    function* (input: { readonly sessionId: AuthSessionId; readonly pairingLinkId: string }) {
+      return yield* withMembershipMutationGate(
+        Effect.gen(function* () {
+          const workspaceOption = yield* repository
+            .getWorkspace()
+            .pipe(logAndMapInternalError("bindPairingLinkToSessionMember.getWorkspace"));
+          if (Option.isNone(workspaceOption)) {
+            return { bound: false };
+          }
+          const bindingOption = yield* repository
+            .getSessionBinding(input.sessionId)
+            .pipe(logAndMapInternalError("bindPairingLinkToSessionMember.getSessionBinding"));
+          if (Option.isNone(bindingOption)) {
+            return yield* new TeamOperationError({
+              code: "forbidden",
+              message:
+                "Only active team members can create standard pairing links on a team server.",
+            });
+          }
+          const memberOption = yield* repository
+            .getMemberById(bindingOption.value.memberId)
+            .pipe(logAndMapInternalError("bindPairingLinkToSessionMember.getMemberById"));
+          if (
+            Option.isNone(memberOption) ||
+            memberOption.value.teamId !== workspaceOption.value.id ||
+            memberOption.value.status !== "active"
+          ) {
+            return yield* new TeamOperationError({
+              code: "forbidden",
+              message: "Your team membership is no longer active.",
+            });
+          }
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          yield* repository
+            .bindPairingLinkMeta({
+              pairingLinkId: input.pairingLinkId,
+              teamId: workspaceOption.value.id,
+              memberId: memberOption.value.id,
+              createdAt,
+            })
+            .pipe(logAndMapInternalError("bindPairingLinkToSessionMember.bind"));
+          return { bound: true };
+        }),
+      );
+    },
+  );
+
+  const createMobilePairingLink = Effect.fn("TeamService.createMobilePairingLink")(
+    function* (input: {
+      readonly sessionId: AuthSessionId;
+      readonly callerScopes: ReadonlyArray<AuthEnvironmentScope>;
+      readonly payload: TeamCreateMobilePairingLinkInput;
+      readonly serverAuth?: EnvironmentAuth.EnvironmentAuth["Service"];
+    }) {
+      const team = yield* requireWorkspace();
+      const actor = yield* requireActiveMember(input.sessionId);
+      if (actor.teamId !== team.id) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "This session does not belong to the active team.",
+        });
+      }
+      const auth = input.serverAuth ?? Option.getOrUndefined(environmentAuthOption);
+      if (!auth) {
+        return yield* new TeamOperationError({
+          code: "internal",
+          message: "Pairing link service is unavailable on this server.",
+        });
+      }
+      const roleScopes = scopesForTeamRole(actor.role);
+      const callerScopeSet = new Set(input.callerScopes);
+      const maxAllowedScopes = roleScopes.filter((scope) => callerScopeSet.has(scope));
+      if (maxAllowedScopes.length === 0) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message:
+            "Your current session has no delegatable scopes to create a mobile pairing link.",
+        });
+      }
+      const maxAllowedSet = new Set(maxAllowedScopes);
+      let requestedScopes: ReadonlyArray<AuthEnvironmentScope>;
+      if (input.payload.scopes !== undefined) {
+        const deduped = [...new Set(input.payload.scopes)];
+        if (deduped.length === 0) {
+          return yield* new TeamOperationError({
+            code: "invalid_input",
+            message: "At least one scope is required for a pairing link.",
+          });
+        }
+        for (const scope of deduped) {
+          if (!maxAllowedSet.has(scope)) {
+            return yield* new TeamOperationError({
+              code: "forbidden",
+              message:
+                "Cannot create a pairing link with broader scopes than your own team member session.",
+            });
+          }
+        }
+        requestedScopes = deduped;
+      } else {
+        requestedScopes = maxAllowedScopes;
+      }
+      const label = input.payload.label?.trim() || `${actor.pseudo} (mobile)`;
+      const issued = yield* auth
+        .createPairingLink({
+          scopes: requestedScopes,
+          subject: "one-time-token",
+          label,
+        })
+        .pipe(
+          Effect.catch(
+            Effect.fnUntraced(function* (error) {
+              if (error._tag === "ManagedPolicyRefusedError") {
+                return yield* new TeamOperationError({
+                  code: "forbidden",
+                  message: error.message,
+                });
+              }
+              yield* Effect.logWarning("TeamService.createMobilePairingLink failed", {
+                cause: error,
+              });
+              return yield* toInternalError(error);
+            }),
+          ),
+        );
+      const createdAt = DateTime.formatIso(yield* DateTime.now);
+      yield* withMembershipMutationGate(
+        Effect.gen(function* () {
+          const freshMember = yield* repository
+            .getMemberById(actor.id)
+            .pipe(logAndMapInternalError("createMobilePairingLink.recheckMember"));
+          if (
+            Option.isNone(freshMember) ||
+            freshMember.value.teamId !== team.id ||
+            freshMember.value.status !== "active"
+          ) {
+            return yield* new TeamOperationError({
+              code: "forbidden",
+              message: "Your team membership is no longer active.",
+            });
+          }
+          yield* repository
+            .bindPairingLinkMeta({
+              pairingLinkId: issued.id,
+              teamId: team.id,
+              memberId: actor.id,
+              createdAt,
+            })
+            .pipe(logAndMapInternalError("createMobilePairingLink.bindMeta"));
+        }),
+      ).pipe(Effect.onError(() => auth.revokePairingLink(issued.id).pipe(Effect.ignore)));
+      return {
+        id: issued.id,
+        credential: issued.credential,
+        ...(issued.label !== undefined ? { label: issued.label } : {}),
+        scopes: [...issued.scopes],
+        expiresAt: DateTime.formatIso(issued.expiresAt),
+      } satisfies TeamCreateMobilePairingLinkResult;
+    },
+  );
+
+  const listMyMobilePairingLinks = Effect.fn("TeamService.listMyMobilePairingLinks")(
+    function* (input: {
+      readonly sessionId: AuthSessionId;
+      readonly serverAuth?: EnvironmentAuth.EnvironmentAuth["Service"];
+    }) {
+      const team = yield* requireWorkspace();
+      const actor = yield* requireActiveMember(input.sessionId);
+      if (actor.teamId !== team.id) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "This session does not belong to the active team.",
+        });
+      }
+      const auth = input.serverAuth ?? Option.getOrUndefined(environmentAuthOption);
+      if (!auth) {
+        return [] as ReadonlyArray<TeamMobilePairingLinkSummary>;
+      }
+      const ownedIds = new Set(
+        yield* repository
+          .listPairingLinkIdsForMember(actor.id)
+          .pipe(logAndMapInternalError("listMyMobilePairingLinks.listIds")),
+      );
+      if (ownedIds.size === 0) return [] as ReadonlyArray<TeamMobilePairingLinkSummary>;
+      const activeLinks = yield* auth
+        .listPairingLinks()
+        .pipe(logAndMapInternalError("listMyMobilePairingLinks.listActive"));
+      return activeLinks
+        .filter((link) => ownedIds.has(link.id))
+        .map((link): TeamMobilePairingLinkSummary => ({
+          id: link.id,
+          label: link.label ?? null,
+          scopes: [...link.scopes],
+          createdAt: DateTime.formatIso(link.createdAt),
+          expiresAt: DateTime.formatIso(link.expiresAt),
+        }));
+    },
+  );
+
+  const revokeMyMobilePairingLink = Effect.fn("TeamService.revokeMyMobilePairingLink")(
+    function* (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamRevokeMobilePairingLinkInput;
+      readonly serverAuth?: EnvironmentAuth.EnvironmentAuth["Service"];
+    }) {
+      const team = yield* requireWorkspace();
+      const actor = yield* requireActiveMember(input.sessionId);
+      if (actor.teamId !== team.id) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "This session does not belong to the active team.",
+        });
+      }
+      const auth = input.serverAuth ?? Option.getOrUndefined(environmentAuthOption);
+      return yield* withMembershipMutationGate(
+        Effect.gen(function* () {
+          const metaOption = yield* repository
+            .getPairingLinkMeta(input.payload.id)
+            .pipe(logAndMapInternalError("revokeMyMobilePairingLink.getMeta"));
+          if (
+            Option.isNone(metaOption) ||
+            metaOption.value.teamId !== team.id ||
+            metaOption.value.memberId !== actor.id
+          ) {
+            return yield* new TeamOperationError({
+              code: "forbidden",
+              message: "You can only revoke your own mobile pairing links.",
+            });
+          }
+          const revokedAt = DateTime.formatIso(yield* DateTime.now);
+          yield* repository
+            .markPairingLinkMetaRevoked({
+              pairingLinkId: input.payload.id,
+              revokedAt,
+            })
+            .pipe(logAndMapInternalError("revokeMyMobilePairingLink.tombstone"));
+          const revoked = auth
+            ? yield* auth
+                .revokePairingLink(input.payload.id)
+                .pipe(logAndMapInternalError("revokeMyMobilePairingLink.revoke"))
+            : false;
+          return { revoked } satisfies TeamRevokeMobilePairingLinkResult;
+        }),
+      );
+    },
+  );
+
+  const markPairingLinkRevoked = Effect.fn("TeamService.markPairingLinkRevoked")(function* (
+    pairingLinkId: string,
+  ) {
+    yield* withMembershipMutationGate(
+      Effect.gen(function* () {
+        const revokedAt = DateTime.formatIso(yield* DateTime.now);
+        yield* repository
+          .markPairingLinkMetaRevoked({ pairingLinkId, revokedAt })
+          .pipe(Effect.ignore);
+      }),
+    );
+  });
+
+  const filterVisibleShellThreadIds = Effect.fn("TeamService.filterVisibleShellThreadIds")(
+    function* (
+      sessionId: AuthSessionId,
+      threadIds: ReadonlyArray<ThreadId>,
+      options?: { readonly upstreamCompat?: boolean },
+    ): Effect.fn.Return<ReadonlySet<ThreadId>> {
+      const readableIds = yield* filterReadableThreadIds(sessionId, threadIds);
+      if (!options?.upstreamCompat || readableIds.size === 0) {
+        return readableIds;
+      }
+      const workspaceOption = yield* repository
+        .getWorkspace()
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+      if (Option.isNone(workspaceOption)) {
+        return readableIds;
+      }
+      const team = workspaceOption.value;
+      const memberOption = yield* repository
+        .getMemberForSession(sessionId)
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+      if (
+        Option.isNone(memberOption) ||
+        memberOption.value.teamId !== team.id ||
+        memberOption.value.status !== "active"
+      ) {
+        return new Set<ThreadId>();
+      }
+      const member = memberOption.value;
+      const visibility = effectiveUpstreamClientThreadVisibility(member);
+      if (visibility === "all_accessible") {
+        return readableIds;
+      }
+      if (readableIds.size === 1) {
+        const [onlyThreadId] = readableIds;
+        if (onlyThreadId === undefined) return new Set<ThreadId>();
+        const attributionOption = yield* repository
+          .getThreadAttribution(onlyThreadId)
+          .pipe(Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()));
+        if (Option.isNone(attributionOption)) {
+          return readableIds;
+        }
+        if (attributionOption.value.creatorMemberId === member.id) {
+          return readableIds;
+        }
+        const followed = yield* repository
+          .isFollowingThread({ threadId: onlyThreadId, memberId: member.id })
+          .pipe(Effect.orElseSucceed(() => false));
+        return followed ? readableIds : new Set<ThreadId>();
+      }
+      const [attributions, followedIds] = yield* Effect.all([
+        repository
+          .listThreadAttributions(team.id)
+          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<TeamThreadAttribution>)),
+        repository
+          .listFollowedThreadIds(member.id)
+          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<ThreadId>)),
+      ]);
+      const attributionByThreadId = new Map<ThreadId, TeamThreadAttribution>(
+        attributions.map((entry) => [entry.threadId, entry] as const),
+      );
+      const followedSet = new Set<ThreadId>(followedIds);
+      const visible = new Set<ThreadId>();
+      for (const threadId of readableIds) {
+        const attribution = attributionByThreadId.get(threadId);
+        if (!attribution) {
+          // Legacy pre-team unattributed thread that passed readability check stays visible.
+          visible.add(threadId);
+          continue;
+        }
+        if (attribution.creatorMemberId === member.id || followedSet.has(threadId)) {
+          visible.add(threadId);
+        }
+      }
+      return visible;
+    },
+  );
+
+  const canShowThreadInShell = Effect.fn("TeamService.canShowThreadInShell")(function* (
+    sessionId: AuthSessionId,
+    threadId: ThreadId,
+    options?: { readonly upstreamCompat?: boolean },
+  ) {
+    // Single-thread O(1) path avoids full-table scans on live shell stream events.
+    const readable = yield* canReadThread(sessionId, threadId);
+    if (!readable) return false;
+    if (!options?.upstreamCompat) return true;
+    const workspaceOption = yield* repository
+      .getWorkspace()
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+    if (Option.isNone(workspaceOption)) return true;
+    const team = workspaceOption.value;
+    const memberOption = yield* repository
+      .getMemberForSession(sessionId)
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+    if (
+      Option.isNone(memberOption) ||
+      memberOption.value.teamId !== team.id ||
+      memberOption.value.status !== "active"
+    ) {
+      return false;
+    }
+    const member = memberOption.value;
+    const visibility = effectiveUpstreamClientThreadVisibility(member);
+    if (visibility === "all_accessible") return true;
+    const attributionOption = yield* repository
+      .getThreadAttribution(threadId)
+      .pipe(Effect.orElseSucceed(() => Option.none<TeamThreadAttribution>()));
+    if (Option.isNone(attributionOption)) return true;
+    if (attributionOption.value.creatorMemberId === member.id) return true;
+    return yield* repository
+      .isFollowingThread({ threadId, memberId: member.id })
+      .pipe(Effect.orElseSucceed(() => false));
+  });
+
+  const shouldRefreshShellForAccessChange = Effect.fn(
+    "TeamService.shouldRefreshShellForAccessChange",
+  )(function* (
+    sessionId: AuthSessionId,
+    change: TeamAccessChangeEvent,
+    options?: { readonly upstreamCompat?: boolean },
+  ) {
+    const upstreamCompat = options?.upstreamCompat === true;
+    if (change.type === "memberVisibility" || change.type === "memberFollow") {
+      if (!upstreamCompat) return false;
+      const memberIdOption = yield* resolveMemberIdForSession(sessionId);
+      return Option.isSome(memberIdOption) && memberIdOption.value === change.memberId;
+    }
+    if (change.type === "memberPseudo") {
+      return upstreamCompat;
+    }
+    return true;
+  });
+
+  // Register member-bound pairing redemption hook on EnvironmentAuth so standard pairing links
+  // minted by active team members fail closed if suspended/removed and auto-bind team_session_meta.
+  if (
+    Option.isSome(environmentAuthOption) &&
+    typeof environmentAuthOption.value.registerPairingRedemptionHook === "function"
+  ) {
+    const unregisterPairingHook = yield* environmentAuthOption.value.registerPairingRedemptionHook({
+      wrapPairingRedemption: withMembershipMutationGate,
+      beforeIssueSession: Effect.fn("TeamService.pairingHook.beforeIssueSession")(function* ({
+        pairingLinkId,
+        grantedScopes,
+      }) {
+        const metaOption = yield* repository
+          .getPairingLinkMeta(pairingLinkId)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new EnvironmentAuth.ServerAuthBootstrapCredentialValidationError({ cause }),
+            ),
+          );
+        if (Option.isNone(metaOption)) {
+          return null;
+        }
+        const meta = metaOption.value;
+        if (meta.revokedAt !== null) {
+          return yield* new EnvironmentAuth.ServerAuthInvalidCredentialError({
+            diagnostic: "This pairing link has been revoked.",
+          });
+        }
+        const [workspaceOption, memberOption] = yield* Effect.all([
+          repository.getWorkspace(),
+          repository.getMemberById(meta.memberId),
+        ]).pipe(
+          Effect.mapError(
+            (cause) => new EnvironmentAuth.ServerAuthBootstrapCredentialValidationError({ cause }),
+          ),
+        );
+        if (
+          Option.isNone(workspaceOption) ||
+          workspaceOption.value.id !== meta.teamId ||
+          Option.isNone(memberOption) ||
+          memberOption.value.teamId !== meta.teamId ||
+          memberOption.value.status !== "active"
+        ) {
+          return yield* new EnvironmentAuth.ServerAuthInvalidCredentialError({
+            diagnostic: "The team member who created this pairing link is no longer active.",
+          });
+        }
+        const roleScopes = new Set(scopesForTeamRole(memberOption.value.role));
+        const effectiveScopes = grantedScopes.filter((scope) => roleScopes.has(scope));
+        return {
+          teamId: meta.teamId,
+          memberId: meta.memberId,
+          effectiveScopes,
+        };
+      }),
+      afterIssueSession: Effect.fn("TeamService.pairingHook.afterIssueSession")(function* ({
+        pairingLinkId,
+        sessionId,
+        teamId,
+        memberId,
+        grantedScopes,
+      }) {
+        const boundAt = DateTime.formatIso(yield* DateTime.now);
+        const [metaOption, workspaceOption, memberOption] = yield* Effect.all([
+          repository.getPairingLinkMeta(pairingLinkId),
+          repository.getWorkspace(),
+          repository.getMemberById(TeamMemberId.make(memberId)),
+        ]).pipe(
+          Effect.mapError(
+            (cause) => new EnvironmentAuth.ServerAuthAuthenticatedSessionIssueError({ cause }),
+          ),
+        );
+        if (
+          Option.isNone(metaOption) ||
+          metaOption.value.revokedAt !== null ||
+          Option.isNone(workspaceOption) ||
+          workspaceOption.value.id !== teamId ||
+          Option.isNone(memberOption) ||
+          memberOption.value.teamId !== teamId ||
+          memberOption.value.status !== "active"
+        ) {
+          return yield* new EnvironmentAuth.ServerAuthInvalidCredentialError({
+            diagnostic: "The pairing link or originating team member is no longer active.",
+          });
+        }
+        yield* repository
+          .bindSession({
+            sessionId,
+            teamId: TeamId.make(teamId),
+            memberId: TeamMemberId.make(memberId),
+            boundAt,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) => new EnvironmentAuth.ServerAuthAuthenticatedSessionIssueError({ cause }),
+            ),
+          );
+        yield* repository
+          .setSessionScopeCeiling({
+            sessionId,
+            maxScopes: grantedScopes,
+            createdAt: boundAt,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) => new EnvironmentAuth.ServerAuthAuthenticatedSessionIssueError({ cause }),
+            ),
+          );
+        yield* repository
+          .markPairingLinkMetaRevoked({ pairingLinkId, revokedAt: boundAt })
+          .pipe(Effect.ignore);
+      }),
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(unregisterPairingHook));
+  }
+
   return TeamService.of({
     isTeamConfigured,
     getState,
@@ -6914,6 +7738,18 @@ const make = Effect.gen(function* () {
     issueLocalSyncToken,
     assertCanManageServerProviders,
     assertLocalBindingHostAllowed,
+    updateMyMobileVisibility,
+    assertCanCreateStandardPairingLink,
+    bindPairingLinkToSessionMember,
+    createMobilePairingLink,
+    listMyMobilePairingLinks,
+    revokeMyMobilePairingLink,
+    markPairingLinkRevoked,
+    getThreadTitlePrefixContextMap,
+    formatUpstreamCompatThreadTitle,
+    filterVisibleShellThreadIds,
+    canShowThreadInShell,
+    shouldRefreshShellForAccessChange,
   });
 });
 

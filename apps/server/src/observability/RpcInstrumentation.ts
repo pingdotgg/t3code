@@ -318,6 +318,10 @@ const RPC_AGGREGATES = {
   [TEAM_WS_METHODS.teamSyncLocalBinding]: "team",
   [TEAM_WS_METHODS.teamRemoveLocalBinding]: "team",
   [TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated]: "team",
+  [TEAM_WS_METHODS.teamUpdateMyMobileVisibility]: "team",
+  [TEAM_WS_METHODS.teamCreateMobilePairingLink]: "team",
+  [TEAM_WS_METHODS.teamListMyMobilePairingLinks]: "team",
+  [TEAM_WS_METHODS.teamRevokeMyMobilePairingLink]: "team",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

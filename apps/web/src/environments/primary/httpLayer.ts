@@ -1,4 +1,4 @@
-import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient, TeamsClientCapability } from "@t3tools/client-runtime/rpc";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
@@ -39,7 +39,10 @@ function withPrimaryBearerToken(client: HttpClient.HttpClient): HttpClient.HttpC
 export function layerForCurrentOrigin() {
   return Layer.unwrap(
     Effect.sync(() => {
-      const layerBase = layerRemoteHttpClient(globalThis.fetch);
+      const layerBase = Layer.merge(
+        layerRemoteHttpClient(globalThis.fetch),
+        Layer.succeed(TeamsClientCapability, true),
+      );
       if (isSameOriginBrowserPrimary()) {
         return Layer.merge(
           layerBase,
@@ -52,8 +55,9 @@ export function layerForCurrentOrigin() {
         Effect.map(HttpClient.HttpClient, withPrimaryBearerToken),
       ).pipe(Layer.provide(layerBase));
 
-      return Layer.merge(
+      return Layer.mergeAll(
         layerBearerClient,
+        Layer.succeed(TeamsClientCapability, true),
         Layer.succeed(FetchHttpClient.RequestInit, { credentials: "omit" }),
       );
     }),

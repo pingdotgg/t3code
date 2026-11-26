@@ -14,6 +14,8 @@ import {
   TeamConsumeAcceptedNotesInput,
   TeamConsumeAcceptedNotesResult,
   TeamCreateInviteInput,
+  TeamCreateMobilePairingLinkInput,
+  TeamCreateMobilePairingLinkResult,
   TeamCreateThreadNoteInput,
   TeamCreateViewInput,
   TeamDeletePrepromptInput,
@@ -35,6 +37,7 @@ import {
   TeamInviteCreatedResult,
   TeamIssueLocalSyncTokenResult,
   TeamListFollowedThreadsResult,
+  TeamListMyMobilePairingLinksResult,
   TeamListProviderUsageResult,
   TeamListThreadAttributionsResult,
   TeamListThreadNotesInput,
@@ -55,6 +58,8 @@ import {
   TeamResolveThreadNoteInput,
   TeamRevokeInviteInput,
   TeamRevokeInviteResult,
+  TeamRevokeMobilePairingLinkInput,
+  TeamRevokeMobilePairingLinkResult,
   TeamSetThreadLockedInput,
   TeamSetThreadViewInput,
   TeamSkill,
@@ -73,6 +78,7 @@ import {
   TeamUpdateEnvironmentInput,
   TeamUpdateMemberRoleInput,
   TeamUpdateMemberStatusInput,
+  TeamUpdateMyMobileVisibilityInput,
   TeamUpdateMyPseudoInput,
   TeamUpdateViewInput,
   TeamUpsertPrepromptInput,
@@ -124,11 +130,18 @@ export const TEAM_WS_METHODS = {
   teamSyncLocalBinding: "team.syncLocalBinding",
   teamRemoveLocalBinding: "team.removeLocalBinding",
   teamNotifyLocalAssetsUpdated: "team.notifyLocalAssetsUpdated",
+  teamUpdateMyMobileVisibility: "team.updateMyMobileVisibility",
+  teamCreateMobilePairingLink: "team.createMobilePairingLink",
+  teamListMyMobilePairingLinks: "team.listMyMobilePairingLinks",
+  teamRevokeMyMobilePairingLink: "team.revokeMyMobilePairingLink",
 } as const;
 
 export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamInitialize]: AuthAccessWriteScope,
   [TEAM_WS_METHODS.teamUpdateMyPseudo]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamUpdateMyMobileVisibility]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamCreateMobilePairingLink]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamRevokeMyMobilePairingLink]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamUpdateMemberRole]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamUpdateMemberStatus]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamCreateInvite]: AuthOrchestrationOperateScope,
@@ -172,6 +185,7 @@ export const TEAM_RPC_REQUIRED_SCOPES = {
   [TEAM_WS_METHODS.teamListThreadAttributions]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamListFollowedThreads]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamListThreadNotes]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamListMyMobilePairingLinks]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamListProviderUsage]: AuthAccessWriteScope,
 } as const;
 
@@ -430,6 +444,30 @@ const WsTeamNotifyLocalAssetsUpdatedRpc = Rpc.make(TEAM_WS_METHODS.teamNotifyLoc
   error: TeamRpcError,
 });
 
+const WsTeamUpdateMyMobileVisibilityRpc = Rpc.make(TEAM_WS_METHODS.teamUpdateMyMobileVisibility, {
+  payload: TeamUpdateMyMobileVisibilityInput,
+  success: TeamMember,
+  error: TeamRpcError,
+});
+
+const WsTeamCreateMobilePairingLinkRpc = Rpc.make(TEAM_WS_METHODS.teamCreateMobilePairingLink, {
+  payload: TeamCreateMobilePairingLinkInput,
+  success: TeamCreateMobilePairingLinkResult,
+  error: TeamRpcError,
+});
+
+const WsTeamListMyMobilePairingLinksRpc = Rpc.make(TEAM_WS_METHODS.teamListMyMobilePairingLinks, {
+  payload: Schema.Struct({}),
+  success: TeamListMyMobilePairingLinksResult,
+  error: TeamRpcError,
+});
+
+const WsTeamRevokeMyMobilePairingLinkRpc = Rpc.make(TEAM_WS_METHODS.teamRevokeMyMobilePairingLink, {
+  payload: TeamRevokeMobilePairingLinkInput,
+  success: TeamRevokeMobilePairingLinkResult,
+  error: TeamRpcError,
+});
+
 export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamGetStateRpc,
   WsTeamSubscribeStateRpc,
@@ -473,4 +511,8 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamSyncLocalBindingRpc,
   WsTeamRemoveLocalBindingRpc,
   WsTeamNotifyLocalAssetsUpdatedRpc,
+  WsTeamUpdateMyMobileVisibilityRpc,
+  WsTeamCreateMobilePairingLinkRpc,
+  WsTeamListMyMobilePairingLinksRpc,
+  WsTeamRevokeMyMobilePairingLinkRpc,
 );

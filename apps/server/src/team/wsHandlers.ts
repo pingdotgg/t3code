@@ -3,6 +3,7 @@ import {
   TEAM_WS_METHODS,
   ThreadId,
   type AssetResource,
+  type AuthEnvironmentScope,
   type AuthSessionId,
   type DeviceServiceState,
   type EnvironmentAuthorizationError,
@@ -11,6 +12,8 @@ import {
   type OrchestrationV2SearchThreadsResult,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
+  type OrchestrationV2ThreadLinkMetadata,
+  type OrchestrationV2ThreadStreamItem,
   type PreviewEvent,
   type ProjectId,
   type TeamViewId,
@@ -20,6 +23,7 @@ import { derive as deriveOrchestrationId } from "@t3tools/provider-core/server/I
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
+import type * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import type * as EventSink from "../orchestration-v2/EventSink.ts";
 import type * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ThreadLaunchResult } from "../orchestration-v2/ThreadLaunchService.ts";
@@ -28,8 +32,18 @@ import type * as PeerLinks from "../peer/PeerLinks.ts";
 import type * as ProjectService from "../project/ProjectService.ts";
 import type * as TeamProviderManager from "./TeamProviderManager.ts";
 import * as TeamService from "./TeamService.ts";
+import {
+  adaptSearchThreadsResultForUpstreamCompat,
+  adaptShellSnapshotForUpstreamCompat,
+  adaptShellStreamItemForUpstreamCompat,
+  adaptThreadLinkMetadataForUpstreamCompat,
+  adaptThreadStreamItemForUpstreamCompat,
+  adaptThreadTitlesForUpstreamCompat,
+} from "./upstreamMobileCompat.ts";
 
 export interface TeamWsHandlerDeps {
+  readonly callerScopes?: ReadonlyArray<AuthEnvironmentScope>;
+  readonly serverAuth?: EnvironmentAuth.EnvironmentAuth["Service"];
   readonly peerLinks?: PeerLinks.PeerLinks["Service"];
   readonly peerClientPairing?: PeerClientPairing.PeerClientPairing["Service"];
   readonly projectService?: ProjectService.ProjectService["Service"];
@@ -256,6 +270,33 @@ export function makeTeamWsRpcHandlers(
             : Effect.succeed({ syncedRevision: NonNegativeInt.make(0) }),
         ),
       ),
+    [TEAM_WS_METHODS.teamUpdateMyMobileVisibility]: (
+      payload: Parameters<typeof teamService.updateMyMobileVisibility>[0]["payload"],
+    ) => teamService.updateMyMobileVisibility({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamCreateMobilePairingLink]: (
+      payload: Parameters<typeof teamService.createMobilePairingLink>[0]["payload"],
+    ) =>
+      teamService.createMobilePairingLink({
+        sessionId,
+        callerScopes: deps?.callerScopes ?? [],
+        payload,
+        ...(deps?.serverAuth !== undefined ? { serverAuth: deps.serverAuth } : {}),
+      }),
+    [TEAM_WS_METHODS.teamListMyMobilePairingLinks]: () =>
+      teamService
+        .listMyMobilePairingLinks({
+          sessionId,
+          ...(deps?.serverAuth !== undefined ? { serverAuth: deps.serverAuth } : {}),
+        })
+        .pipe(Effect.map((pairingLinks) => ({ pairingLinks }))),
+    [TEAM_WS_METHODS.teamRevokeMyMobilePairingLink]: (
+      payload: Parameters<typeof teamService.revokeMyMobilePairingLink>[0]["payload"],
+    ) =>
+      teamService.revokeMyMobilePairingLink({
+        sessionId,
+        payload,
+        ...(deps?.serverAuth !== undefined ? { serverAuth: deps.serverAuth } : {}),
+      }),
   };
 }
 
@@ -369,7 +410,11 @@ export const filterShellSnapshotForSession = Effect.fn("TeamWsHandlers.filterShe
     teamService: TeamService.TeamService["Service"],
     sessionId: AuthSessionId,
     snapshot: OrchestrationV2ShellSnapshot,
+    options?: { readonly upstreamCompat?: boolean },
   ) {
+    if (options?.upstreamCompat === true) {
+      return yield* adaptShellSnapshotForUpstreamCompat(teamService, sessionId, snapshot, true);
+    }
     if (!(yield* teamService.isTeamConfigured())) {
       return snapshot;
     }
@@ -391,7 +436,11 @@ const filterShellStreamItemForSession = Effect.fn("TeamWsHandlers.filterShellStr
     teamService: TeamService.TeamService["Service"],
     sessionId: AuthSessionId,
     item: OrchestrationV2ShellStreamItem,
+    options?: { readonly upstreamCompat?: boolean },
   ): Effect.fn.Return<OrchestrationV2ShellStreamItem | null> {
+    if (options?.upstreamCompat === true) {
+      return yield* adaptShellStreamItemForUpstreamCompat(teamService, sessionId, item, true);
+    }
     if (item.kind === "snapshot") {
       if (item.snapshot.threads.length === 0 && item.snapshot.archivedThreads.length === 0) {
         return item;
@@ -417,6 +466,7 @@ export const filterSearchThreadsResultForSession = Effect.fn(
   teamService: TeamService.TeamService["Service"],
   sessionId: AuthSessionId,
   result: OrchestrationV2SearchThreadsResult,
+  options?: { readonly upstreamCompat?: boolean },
 ) {
   if (!(yield* teamService.isTeamConfigured())) {
     return result;
@@ -426,14 +476,56 @@ export const filterSearchThreadsResultForSession = Effect.fn(
     ...(result.threads ?? []).map((thread) => thread.id),
   ];
   const readableIds = yield* teamService.filterReadableThreadIds(sessionId, allIds);
-  return {
+  const filtered: OrchestrationV2SearchThreadsResult = {
     ...result,
     matches: result.matches.filter((match) => readableIds.has(match.threadId)),
     ...(result.threads === undefined
       ? {}
       : { threads: result.threads.filter((thread) => readableIds.has(thread.id)) }),
   };
+  return options?.upstreamCompat === true
+    ? yield* adaptSearchThreadsResultForUpstreamCompat(teamService, filtered, true)
+    : filtered;
 });
+
+export const filterThreadTitlesForSession = Effect.fn("TeamWsHandlers.filterThreadTitles")(
+  function* (
+    teamService: TeamService.TeamService["Service"],
+    sessionId: AuthSessionId,
+    titles: Readonly<Record<ThreadId, string>>,
+    options?: { readonly upstreamCompat?: boolean },
+  ): Effect.fn.Return<Record<ThreadId, string>> {
+    const filtered = yield* filterThreadRecordByReadableIds(teamService, sessionId, titles);
+    return options?.upstreamCompat === true
+      ? yield* adaptThreadTitlesForUpstreamCompat(teamService, filtered, true)
+      : filtered;
+  },
+);
+
+export const filterThreadLinkMetadataForSession = Effect.fn(
+  "TeamWsHandlers.filterThreadLinkMetadata",
+)(function* (
+  teamService: TeamService.TeamService["Service"],
+  sessionId: AuthSessionId,
+  metadata: Readonly<Record<ThreadId, OrchestrationV2ThreadLinkMetadata>>,
+  options?: { readonly upstreamCompat?: boolean },
+): Effect.fn.Return<Record<ThreadId, OrchestrationV2ThreadLinkMetadata>> {
+  const filtered = yield* filterThreadRecordByReadableIds(teamService, sessionId, metadata);
+  return options?.upstreamCompat === true
+    ? yield* adaptThreadLinkMetadataForUpstreamCompat(teamService, filtered, true)
+    : filtered;
+});
+
+export const adaptThreadStreamForSession = <E, R>(
+  teamService: TeamService.TeamService["Service"],
+  stream: Stream.Stream<OrchestrationV2ThreadStreamItem, E, R>,
+  options?: { readonly upstreamCompat?: boolean },
+): Stream.Stream<OrchestrationV2ThreadStreamItem, E, R> =>
+  options?.upstreamCompat === true
+    ? stream.pipe(
+        Stream.mapEffect((item) => adaptThreadStreamItemForUpstreamCompat(teamService, item, true)),
+      )
+    : stream;
 
 export const filterThreadRecordByReadableIds = Effect.fn(
   "TeamWsHandlers.filterThreadRecordByReadableIds",
@@ -610,7 +702,12 @@ export const guardThreadScopedStreamForSession = <A, E, R>(
       const revocationStream: Stream.Stream<never, EnvironmentAuthorizationError> =
         accessChanges.pipe(
           Stream.mapEffect((change) => {
-            if (change.type === "threadView" && change.threadId !== threadId) {
+            if (
+              change.type === "memberVisibility" ||
+              change.type === "memberFollow" ||
+              change.type === "memberPseudo" ||
+              (change.type === "threadView" && change.threadId !== threadId)
+            ) {
               return Effect.void;
             }
             return teamService.assertCanReadThread(sessionId, threadId);
@@ -630,14 +727,22 @@ export const withTeamShellAccessUpdates = <E, R>(
   sessionId: AuthSessionId,
   loadFilteredSnapshot: () => Effect.Effect<OrchestrationV2ShellSnapshot, E, R>,
   stream: Stream.Stream<OrchestrationV2ShellStreamItem, E, R>,
+  options?: { readonly upstreamCompat?: boolean },
 ): Stream.Stream<OrchestrationV2ShellStreamItem, E, R> => {
   const filteredStream = stream.pipe(
-    Stream.mapEffect((item) => filterShellStreamItemForSession(teamService, sessionId, item)),
+    Stream.mapEffect((item) =>
+      filterShellStreamItemForSession(teamService, sessionId, item, options),
+    ),
     Stream.filter((item): item is OrchestrationV2ShellStreamItem => item !== null),
   );
   const accessSnapshots: Stream.Stream<OrchestrationV2ShellStreamItem, E, R> = teamService
     .subscribeAccessChanges()
     .pipe(
+      Stream.filterEffect((change) =>
+        typeof teamService.shouldRefreshShellForAccessChange === "function"
+          ? teamService.shouldRefreshShellForAccessChange(sessionId, change, options)
+          : Effect.succeed(true),
+      ),
       Stream.mapEffect(() =>
         loadFilteredSnapshot().pipe(
           Effect.map((snapshot): OrchestrationV2ShellStreamItem => ({

@@ -3,6 +3,8 @@ import { msg } from "gt-i18n";
 import {
   EnvironmentHttpApi,
   EnvironmentHttpCommonError,
+  TEAM_CLIENT_CAPABILITY_HEADER,
+  TEAM_CLIENT_CAPABILITY_VALUE,
   type EnvironmentAuthInvalidError,
   type EnvironmentConnectApprovalPendingError,
   type EnvironmentInternalError,
@@ -12,13 +14,23 @@ import {
   type EnvironmentScopeRequiredError,
 } from "@t3tools/contracts";
 import * as HttpObservability from "@t3tools/shared/httpObservability";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
+
+/**
+ * When true, environment HTTP requests advertise `X-T3-Teams-Client: 1` so the Team Server keeps
+ * native team-aware responses instead of activating upstream mobile compatibility mode.
+ */
+export const TeamsClientCapability = Context.Reference<boolean>(
+  "@t3tools/client-runtime/rpc/http/TeamsClientCapability",
+  { defaultValue: () => false },
+);
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
@@ -113,24 +125,37 @@ const remoteApiBaseUrl = (httpBaseUrl: string): string => {
   return url.toString();
 };
 
-export const makeEnvironmentHttpApiClient = (httpBaseUrl: string) =>
-  HttpApiClient.make(EnvironmentHttpApi, {
-    baseUrl: remoteApiBaseUrl(httpBaseUrl),
-  });
+const withTeamsClientHeader = (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+  client.pipe(
+    HttpClient.mapRequest(
+      HttpClientRequest.setHeader(TEAM_CLIENT_CAPABILITY_HEADER, TEAM_CLIENT_CAPABILITY_VALUE),
+    ),
+  );
 
-export const makeEnvironmentHttpApiGroupClient = <
-  Group extends keyof typeof EnvironmentHttpApi.groups,
->(
+export const makeEnvironmentHttpApiClient = Effect.fn("makeEnvironmentHttpApiClient")(function* (
   httpBaseUrl: string,
-  group: Group,
-) =>
-  Effect.flatMap(HttpClient.HttpClient, (httpClient) =>
-    HttpApiClient.group(EnvironmentHttpApi, {
-      httpClient,
+) {
+  const teamsClient = yield* TeamsClientCapability;
+  return yield* HttpApiClient.make(EnvironmentHttpApi, {
+    baseUrl: remoteApiBaseUrl(httpBaseUrl),
+    ...(teamsClient ? { transformClient: withTeamsClientHeader } : {}),
+  });
+});
+
+export const makeEnvironmentHttpApiGroupClient = Effect.fn("makeEnvironmentHttpApiGroupClient")(
+  function* <Group extends keyof typeof EnvironmentHttpApi.groups>(
+    httpBaseUrl: string,
+    group: Group,
+  ) {
+    const httpClient = yield* HttpClient.HttpClient;
+    const teamsClient = yield* TeamsClientCapability;
+    return yield* HttpApiClient.group(EnvironmentHttpApi, {
+      httpClient: teamsClient ? withTeamsClientHeader(httpClient) : httpClient,
       group,
       baseUrl: remoteApiBaseUrl(httpBaseUrl),
-    }),
-  );
+    });
+  },
+);
 
 export const makeEnvironmentHttpApiUrlBuilder = (httpBaseUrl: string) =>
   HttpApiClient.urlBuilder(EnvironmentHttpApi, {

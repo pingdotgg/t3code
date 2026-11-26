@@ -112,6 +112,33 @@ export const clientSessionLabel = (client: AuthClientMetadata | undefined): stri
   ([client?.browser, client?.os].filter((part) => part !== undefined).join(" on ") ||
     "T3 Code client");
 
+export interface PairingRedemptionBinding {
+  readonly teamId: string;
+  readonly memberId: string;
+  readonly effectiveScopes: ReadonlyArray<AuthEnvironmentScope>;
+}
+
+export interface PairingRedemptionHook {
+  /** Optional barrier wrapping beforeIssueSession -> sessions.issue -> afterIssueSession atomically. */
+  readonly wrapPairingRedemption?: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
+  readonly beforeIssueSession: (input: {
+    readonly pairingLinkId: string;
+    readonly grantedScopes: ReadonlyArray<AuthEnvironmentScope>;
+  }) => Effect.Effect<
+    PairingRedemptionBinding | null,
+    ServerAuthInvalidCredentialError | ServerAuthScopeNotGrantedError | ServerAuthInternalError
+  >;
+  readonly afterIssueSession: (input: {
+    readonly pairingLinkId: string;
+    readonly sessionId: AuthSessionId;
+    readonly teamId: string;
+    readonly memberId: string;
+    readonly grantedScopes: ReadonlyArray<AuthEnvironmentScope>;
+  }) => Effect.Effect<void, ServerAuthInvalidCredentialError | ServerAuthInternalError>;
+}
+
 export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
@@ -598,6 +625,9 @@ export class EnvironmentAuth extends Context.Service<
       readonly excludeSubjects?: ReadonlyArray<string>;
     }) => Effect.Effect<ReadonlyArray<AuthPairingLink>, ServerAuthInternalError>;
     readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthInternalError>;
+    readonly registerPairingRedemptionHook: (
+      hook: PairingRedemptionHook,
+    ) => Effect.Effect<() => void>;
     readonly issueSession: (input?: {
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
@@ -969,6 +999,93 @@ export const make = Effect.gen(function* () {
   // Counts "revoke all others" runs. An exchange or sign-in approval that began before a run
   // issues its session here, under the lock the run holds, so it cannot leave a session behind.
   const otherSessionRevocations = yield* Ref.make(0);
+  const pairingRedemptionHooks = new Set<PairingRedemptionHook>();
+  const registerPairingRedemptionHook: EnvironmentAuth["Service"]["registerPairingRedemptionHook"] =
+    (hook) =>
+      Effect.sync(() => {
+        pairingRedemptionHooks.add(hook);
+        return () => {
+          pairingRedemptionHooks.delete(hook);
+        };
+      });
+
+  const withPairingRedemptionHooks = <A, E, R>(
+    pairingLinkId: string | undefined,
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<A, E, R> => {
+    if (pairingLinkId === undefined || pairingRedemptionHooks.size === 0) {
+      return effect;
+    }
+    let wrapped = effect;
+    for (const hook of pairingRedemptionHooks) {
+      if (hook.wrapPairingRedemption) {
+        wrapped = hook.wrapPairingRedemption(wrapped);
+      }
+    }
+    return wrapped;
+  };
+
+  const runBeforePairingIssue = Effect.fn("EnvironmentAuth.runBeforePairingIssue")(function* (
+    pairingLinkId: string | undefined,
+    grantedScopes: ReadonlyArray<AuthEnvironmentScope>,
+  ) {
+    if (pairingLinkId === undefined || pairingRedemptionHooks.size === 0) {
+      return {
+        effectiveScopes: grantedScopes,
+        bindings: [] as Array<{
+          readonly hook: PairingRedemptionHook;
+          readonly teamId: string;
+          readonly memberId: string;
+        }>,
+      };
+    }
+    let effectiveScopes = grantedScopes;
+    const bindings: Array<{
+      readonly hook: PairingRedemptionHook;
+      readonly teamId: string;
+      readonly memberId: string;
+    }> = [];
+    for (const hook of pairingRedemptionHooks) {
+      const binding = yield* hook.beforeIssueSession({
+        pairingLinkId,
+        grantedScopes: effectiveScopes,
+      });
+      if (binding !== null) {
+        effectiveScopes = binding.effectiveScopes;
+        if (effectiveScopes.length === 0) {
+          return yield* new ServerAuthScopeNotGrantedError({});
+        }
+        bindings.push({ hook, teamId: binding.teamId, memberId: binding.memberId });
+      }
+    }
+    return { effectiveScopes, bindings };
+  });
+
+  const runAfterPairingIssue = Effect.fn("EnvironmentAuth.runAfterPairingIssue")(function* (
+    pairingLinkId: string | undefined,
+    sessionId: AuthSessionId,
+    grantedScopes: ReadonlyArray<AuthEnvironmentScope>,
+    bindings: ReadonlyArray<{
+      readonly hook: PairingRedemptionHook;
+      readonly teamId: string;
+      readonly memberId: string;
+    }>,
+  ) {
+    if (pairingLinkId === undefined || bindings.length === 0) return;
+    yield* Effect.forEach(
+      bindings,
+      (binding) =>
+        binding.hook.afterIssueSession({
+          pairingLinkId,
+          sessionId,
+          teamId: binding.teamId,
+          memberId: binding.memberId,
+          grantedScopes,
+        }),
+      { discard: true },
+    ).pipe(Effect.onError(() => sessions.revoke(sessionId).pipe(Effect.ignore)));
+  });
+
   const issueUnlessOthersRevokedSince = <A, E>(since: number, issue: Effect.Effect<A, E>) =>
     Ref.get(otherSessionRevocations).pipe(
       Effect.flatMap((count): Effect.Effect<A, E | ServerAuthInvalidCredentialError> =>
@@ -1021,22 +1138,51 @@ export const make = Effect.gen(function* () {
     const grant = yield* bootstrapCredentials
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
+    // Lock order invariant: connectTrustLock (via issueUnlessOthersRevokedSince) is ALWAYS outer,
+    // pairing redemption hooks (membershipMutationGate) ALWAYS inner, matching DPoP exchanges.
     const session = yield* issueUnlessOthersRevokedSince(
       revocationsAtStart,
-      sessions
-        .issue({
-          method: "browser-session-cookie",
-          subject: grant.subject,
-          scopes: grant.scopes,
-          ...(previousSession?.method === "browser-session-cookie"
-            ? { replaceSessionId: previousSession.sessionId }
-            : {}),
-          client: {
-            ...requestMetadata,
-            ...(grant.label ? { label: grant.label } : {}),
-          },
-        })
-        .pipe(Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause }))),
+      withPairingRedemptionHooks(
+        grant.pairingLinkId,
+        Effect.gen(function* () {
+          const preparedPairing = yield* runBeforePairingIssue(
+            grant.pairingLinkId,
+            grant.scopes,
+          ).pipe(
+            Effect.catchTags({
+              ServerAuthScopeNotGrantedError: () =>
+                Effect.fail(
+                  new ServerAuthInvalidCredentialError({
+                    diagnostic: "Pairing link scopes are no longer permitted for the member.",
+                  }),
+                ),
+            }),
+          );
+          const issued = yield* sessions
+            .issue({
+              method: "browser-session-cookie",
+              subject: grant.subject,
+              scopes: preparedPairing.effectiveScopes,
+              ...(previousSession?.method === "browser-session-cookie"
+                ? { replaceSessionId: previousSession.sessionId }
+                : {}),
+              client: {
+                ...requestMetadata,
+                ...(grant.label ? { label: grant.label } : {}),
+              },
+            })
+            .pipe(
+              Effect.mapError((cause) => new ServerAuthAuthenticatedSessionIssueError({ cause })),
+            );
+          yield* runAfterPairingIssue(
+            grant.pairingLinkId,
+            issued.sessionId,
+            grant.scopes,
+            preparedPairing.bindings,
+          );
+          return issued;
+        }),
+      ),
     );
     return {
       response: {
@@ -1051,7 +1197,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label"
+    "pairingLinkId" | "scopes" | "subject" | "label"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -1172,39 +1318,58 @@ export const make = Effect.gen(function* () {
               if (grantedScopes.length === 0) {
                 return yield* new ServerAuthScopeNotGrantedError({});
               }
-              // Only plain pairing links renew. T3 Connect, CLI, desktop and peer sessions keep
-              // their own lifetimes, so unlinking Connect or rotating a credential still cuts off.
-              const renewable =
-                input?.proofKeyThumbprint !== undefined &&
-                grant.method === "one-time-token" &&
-                grant.subject === PAIRING_LINK_SUBJECT;
-              const issue = sessions
-                .issue({
-                  method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
-                  subject: grant.subject,
-                  scopes: grantedScopes,
-                  ...(input?.proofKeyThumbprint
-                    ? {
-                        proofKeyThumbprint: input.proofKeyThumbprint,
-                        ttl: renewable ? RENEWABLE_ACCESS_TOKEN_TTL : Duration.hours(1),
-                      }
-                    : {}),
-                  ...(renewable ? { renewalWindow: RENEWABLE_SESSION_WINDOW } : {}),
-                  replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
-                  client: {
-                    ...requestMetadata,
-                    ...(grant.label ? { label: grant.label } : {}),
-                  },
-                })
-                .pipe(
-                  Effect.mapError(
-                    (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
-                  ),
-                );
-              // A proof-key exchange holds the lock from before it spends its credential.
+              const issueWithHooks = withPairingRedemptionHooks(
+                grant.pairingLinkId,
+                Effect.gen(function* () {
+                  const preparedPairing = yield* runBeforePairingIssue(
+                    grant.pairingLinkId,
+                    grantedScopes,
+                  );
+                  // Only plain pairing links renew. T3 Connect, CLI, desktop and peer sessions keep
+                  // their own lifetimes, so unlinking Connect or rotating a credential still cuts off.
+                  const renewable =
+                    input?.proofKeyThumbprint !== undefined &&
+                    grant.method === "one-time-token" &&
+                    grant.subject === PAIRING_LINK_SUBJECT;
+                  const issuedSession = yield* sessions
+                    .issue({
+                      method: input?.proofKeyThumbprint
+                        ? "dpop-access-token"
+                        : "bearer-access-token",
+                      subject: grant.subject,
+                      scopes: preparedPairing.effectiveScopes,
+                      ...(input?.proofKeyThumbprint
+                        ? {
+                            proofKeyThumbprint: input.proofKeyThumbprint,
+                            ttl: renewable ? RENEWABLE_ACCESS_TOKEN_TTL : Duration.hours(1),
+                          }
+                        : {}),
+                      ...(renewable ? { renewalWindow: RENEWABLE_SESSION_WINDOW } : {}),
+                      replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
+                      client: {
+                        ...requestMetadata,
+                        ...(grant.label ? { label: grant.label } : {}),
+                      },
+                    })
+                    .pipe(
+                      Effect.mapError(
+                        (cause) => new ServerAuthAuthenticatedAccessTokenIssueError({ cause }),
+                      ),
+                    );
+                  yield* runAfterPairingIssue(
+                    grant.pairingLinkId,
+                    issuedSession.sessionId,
+                    grantedScopes,
+                    preparedPairing.bindings,
+                  );
+                  return issuedSession;
+                }),
+              );
+              // A proof-key exchange already holds connectTrustLock on the outside; bearer exchanges
+              // acquire connectTrustLock here BEFORE entering pairing hooks so lock order is identical.
               return yield* input?.proofKeyThumbprint
-                ? issue
-                : issueUnlessOthersRevokedSince(revocationsAtStart, issue);
+                ? issueWithHooks
+                : issueUnlessOthersRevokedSince(revocationsAtStart, issueWithHooks);
             }),
           ),
           Effect.flatMap(toAccessTokenResult),
@@ -1820,6 +1985,7 @@ export const make = Effect.gen(function* () {
     issueStartupPairingCredential,
     listPairingLinks,
     revokePairingLink,
+    registerPairingRedemptionHook,
     issueSession,
     listSessions,
     revokeSession,

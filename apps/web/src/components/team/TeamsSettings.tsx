@@ -50,6 +50,7 @@ import { formatTeamRoleLabel } from "./TeamJoinForm";
 import { openTeamJoinDialog } from "./teamJoinDialogState";
 import { TeamEnvironmentsSettingsSection } from "./TeamEnvironmentsSettingsSection";
 import { TeamMembersSettingsSection } from "./TeamMembersSettingsSection";
+import { TeamMobileCompatSection } from "./TeamMobileCompatSection";
 import { TeamProvidersSettingsSection } from "./TeamProvidersSettingsSection";
 import { TeamSkillsAndPrepromptsSettingsSection } from "./TeamSkillsAndPrepromptsSettingsSection";
 import { TeamViewsSettingsSection } from "./TeamViewsSettingsSection";
@@ -573,6 +574,14 @@ export function TeamsSettings() {
               }
             />
           </SettingsSection>
+
+          {selectedEnvironmentId !== null ? (
+            <TeamMobileCompatSection
+              environmentId={selectedEnvironmentId}
+              serverBaseUrl={serverBaseUrl}
+              currentMember={currentMember}
+            />
+          ) : null}
 
           {currentMember && canManageTeamInvites(currentMember.role) ? (
             <SettingsSection

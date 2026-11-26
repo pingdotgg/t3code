@@ -1,5 +1,6 @@
 import {
   ALL_TEAM_ROLES,
+  DEFAULT_UPSTREAM_CLIENT_THREAD_VISIBILITY,
   canChangeTeamMemberRole,
   canManageTeamMembers,
   canModifyTeamMember,
@@ -12,6 +13,7 @@ import {
   TeamThreadNoteId,
   TeamViewId,
   ThreadId,
+  type AuthEnvironmentScope,
   type AuthSessionId,
   type TeamAcceptedNoteRef,
   type TeamAccessRule,
@@ -27,6 +29,7 @@ import {
   type TeamThreadNote,
   type TeamThreadNoteStatus,
   type TeamTurnAttribution,
+  type TeamUpstreamClientThreadVisibility,
   type TeamView,
   type TeamWorkspace,
 } from "@t3tools/contracts";
@@ -38,6 +41,17 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { toSafeThreadAttachmentSegment } from "../attachmentStore.ts";
 import { runTeamMigrations } from "./migrations.ts";
+import {
+  getTeamPairingMeta,
+  getTeamSessionScopeCeiling,
+  listTeamPairingLinkIdsForMember,
+  markAllTeamPairingMetaRevokedForMember,
+  markTeamPairingMetaRevoked,
+  setMemberUpstreamMobileVisibility,
+  upsertTeamPairingMeta,
+  upsertTeamSessionScopeCeiling,
+  type TeamPairingMetaRecord,
+} from "./upstreamMobileCompat.ts";
 
 export class TeamRepositoryError extends Schema.TaggedError<TeamRepositoryError>()(
   "TeamRepositoryError",
@@ -175,6 +189,7 @@ interface MemberRow {
   readonly pseudo: string;
   readonly role: TeamRole;
   readonly status: TeamMemberStatus;
+  readonly upstream_client_thread_visibility?: TeamUpstreamClientThreadVisibility | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -294,6 +309,8 @@ const mapMemberRow = (row: MemberRow): TeamMember => ({
   pseudo: row.pseudo as TeamPseudo,
   role: row.role,
   status: row.status,
+  upstreamClientThreadVisibility:
+    row.upstream_client_thread_visibility ?? DEFAULT_UPSTREAM_CLIENT_THREAD_VISIBILITY,
   createdAt: row.created_at,
   updatedAt: row.updated_at,
 });
@@ -846,6 +863,37 @@ export class TeamRepository extends Context.Service<
     readonly deletePendingRemoteRevocation: (
       id: string,
     ) => Effect.Effect<void, TeamRepositoryError>;
+    readonly bindPairingLinkMeta: (
+      input: Omit<TeamPairingMetaRecord, "revokedAt">,
+    ) => Effect.Effect<void, TeamRepositoryError>;
+    readonly getPairingLinkMeta: (
+      pairingLinkId: string,
+    ) => Effect.Effect<Option.Option<TeamPairingMetaRecord>, TeamRepositoryError>;
+    readonly listPairingLinkIdsForMember: (
+      memberId: TeamMemberId,
+    ) => Effect.Effect<ReadonlyArray<string>, TeamRepositoryError>;
+    readonly markPairingLinkMetaRevoked: (input: {
+      readonly pairingLinkId: string;
+      readonly revokedAt: string;
+    }) => Effect.Effect<void, TeamRepositoryError>;
+    readonly markAllPairingLinkMetaRevokedForMember: (input: {
+      readonly memberId: TeamMemberId;
+      readonly revokedAt: string;
+    }) => Effect.Effect<void, TeamRepositoryError>;
+    readonly setSessionScopeCeiling: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly maxScopes: ReadonlyArray<AuthEnvironmentScope>;
+      readonly createdAt: string;
+    }) => Effect.Effect<void, TeamRepositoryError>;
+    readonly getSessionScopeCeiling: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<Option.Option<ReadonlyArray<AuthEnvironmentScope>>, TeamRepositoryError>;
+    readonly setMemberMobileVisibility: (input: {
+      readonly memberId: TeamMemberId;
+      readonly teamId: TeamId;
+      readonly visibility: TeamUpstreamClientThreadVisibility;
+      readonly updatedAt: string;
+    }) => Effect.Effect<Option.Option<TeamMember>, TeamRepositoryError>;
   }
 >()("t3/team/TeamRepository") {}
 
@@ -955,10 +1003,19 @@ const make = Effect.gen(function* () {
       const rows = yield* runSql(
         "listMembers",
         sql<MemberRow>`
-          SELECT id, team_id, pseudo, role, status, created_at, updated_at
-          FROM team_members
-          WHERE team_id = ${teamId}
-          ORDER BY created_at ASC
+          SELECT
+            m.id,
+            m.team_id,
+            m.pseudo,
+            m.role,
+            m.status,
+            p.upstream_client_thread_visibility,
+            m.created_at,
+            m.updated_at
+          FROM team_members m
+          LEFT JOIN team_member_preferences p ON p.member_id = m.id
+          WHERE m.team_id = ${teamId}
+          ORDER BY m.created_at ASC
         `,
       );
       return rows.map(mapMemberRow);
@@ -968,9 +1025,18 @@ const make = Effect.gen(function* () {
       const rows = yield* runSql(
         "getMemberById",
         sql<MemberRow>`
-          SELECT id, team_id, pseudo, role, status, created_at, updated_at
-          FROM team_members
-          WHERE id = ${memberId}
+          SELECT
+            m.id,
+            m.team_id,
+            m.pseudo,
+            m.role,
+            m.status,
+            p.upstream_client_thread_visibility,
+            m.created_at,
+            m.updated_at
+          FROM team_members m
+          LEFT JOIN team_member_preferences p ON p.member_id = m.id
+          WHERE m.id = ${memberId}
           LIMIT 1
         `,
       );
@@ -981,9 +1047,18 @@ const make = Effect.gen(function* () {
       const rows = yield* runSql(
         "getMemberForSession",
         sql<MemberRow>`
-          SELECT m.id, m.team_id, m.pseudo, m.role, m.status, m.created_at, m.updated_at
+          SELECT
+            m.id,
+            m.team_id,
+            m.pseudo,
+            m.role,
+            m.status,
+            p.upstream_client_thread_visibility,
+            m.created_at,
+            m.updated_at
           FROM team_session_meta s
           INNER JOIN team_members m ON m.id = s.member_id
+          LEFT JOIN team_member_preferences p ON p.member_id = m.id
           WHERE s.session_id = ${sessionId}
           LIMIT 1
         `,
@@ -1023,17 +1098,38 @@ const make = Effect.gen(function* () {
     }),
 
     updateMemberPseudo: Effect.fn("TeamRepository.updateMemberPseudo")(function* (input) {
-      const rows = yield* sql<MemberRow>`
+      const updated = yield* sql<{ readonly id: string }>`
         UPDATE team_members
         SET pseudo = ${input.pseudo}, updated_at = ${input.updatedAt}
         WHERE id = ${input.memberId} AND team_id = ${input.teamId} AND status != 'removed'
-        RETURNING id, team_id, pseudo, role, status, created_at, updated_at
+        RETURNING id
       `.pipe(
         Effect.mapError((cause) =>
           isUniqueConstraintError(cause)
             ? new TeamPseudoAlreadyTakenError({ pseudo: input.pseudo })
             : new TeamRepositoryError({ operation: "updateMemberPseudo", cause }),
         ),
+      );
+      if (!updated[0]) {
+        return Option.none<TeamMember>();
+      }
+      const rows = yield* runSql(
+        "updateMemberPseudo.load",
+        sql<MemberRow>`
+          SELECT
+            m.id,
+            m.team_id,
+            m.pseudo,
+            m.role,
+            m.status,
+            p.upstream_client_thread_visibility,
+            m.created_at,
+            m.updated_at
+          FROM team_members m
+          LEFT JOIN team_member_preferences p ON p.member_id = m.id
+          WHERE m.id = ${input.memberId} AND m.team_id = ${input.teamId}
+          LIMIT 1
+        `,
       );
       return rows[0] ? Option.some(mapMemberRow(rows[0])) : Option.none();
     }),
@@ -1092,11 +1188,32 @@ const make = Effect.gen(function* () {
                 return yield* new TeamLastOwnerProtectedError({});
               }
             }
-            const updatedRows = yield* sql<MemberRow>`
+            const updatedIds = yield* sql<{ readonly id: string }>`
               UPDATE team_members
               SET role = ${input.role}, updated_at = ${input.updatedAt}
               WHERE id = ${input.memberId} AND team_id = ${input.teamId} AND status != 'removed'
-              RETURNING id, team_id, pseudo, role, status, created_at, updated_at
+              RETURNING id
+            `;
+            if (!updatedIds[0]) {
+              return Option.none<{
+                readonly previousRole: TeamRole;
+                readonly member: TeamMember;
+              }>();
+            }
+            const updatedRows = yield* sql<MemberRow>`
+              SELECT
+                m.id,
+                m.team_id,
+                m.pseudo,
+                m.role,
+                m.status,
+                p.upstream_client_thread_visibility,
+                m.created_at,
+                m.updated_at
+              FROM team_members m
+              LEFT JOIN team_member_preferences p ON p.member_id = m.id
+              WHERE m.id = ${input.memberId} AND m.team_id = ${input.teamId}
+              LIMIT 1
             `;
             return updatedRows[0]
               ? Option.some({
@@ -1165,11 +1282,29 @@ const make = Effect.gen(function* () {
                 return yield* new TeamLastOwnerProtectedError({});
               }
             }
-            const updatedRows = yield* sql<MemberRow>`
+            const updatedIds = yield* sql<{ readonly id: string }>`
               UPDATE team_members
               SET status = ${input.status}, updated_at = ${input.updatedAt}
               WHERE id = ${input.memberId} AND team_id = ${input.teamId}
-              RETURNING id, team_id, pseudo, role, status, created_at, updated_at
+              RETURNING id
+            `;
+            if (!updatedIds[0]) {
+              return Option.none<TeamMember>();
+            }
+            const updatedRows = yield* sql<MemberRow>`
+              SELECT
+                m.id,
+                m.team_id,
+                m.pseudo,
+                m.role,
+                m.status,
+                p.upstream_client_thread_visibility,
+                m.created_at,
+                m.updated_at
+              FROM team_members m
+              LEFT JOIN team_member_preferences p ON p.member_id = m.id
+              WHERE m.id = ${input.memberId} AND m.team_id = ${input.teamId}
+              LIMIT 1
             `;
             return updatedRows[0] ? Option.some(mapMemberRow(updatedRows[0])) : Option.none();
           }),
@@ -2996,6 +3131,76 @@ const make = Effect.gen(function* () {
             WHERE id = ${id}
           `,
         );
+      },
+    ),
+
+    bindPairingLinkMeta: Effect.fn("TeamRepository.bindPairingLinkMeta")(function* (input) {
+      yield* runSql("bindPairingLinkMeta", upsertTeamPairingMeta(sql, input));
+    }),
+
+    getPairingLinkMeta: Effect.fn("TeamRepository.getPairingLinkMeta")(function* (pairingLinkId) {
+      return yield* runSql("getPairingLinkMeta", getTeamPairingMeta(sql, pairingLinkId));
+    }),
+
+    listPairingLinkIdsForMember: Effect.fn("TeamRepository.listPairingLinkIdsForMember")(
+      function* (memberId) {
+        return yield* runSql(
+          "listPairingLinkIdsForMember",
+          listTeamPairingLinkIdsForMember(sql, memberId),
+        );
+      },
+    ),
+
+    markPairingLinkMetaRevoked: Effect.fn("TeamRepository.markPairingLinkMetaRevoked")(
+      function* (input) {
+        yield* runSql(
+          "markPairingLinkMetaRevoked",
+          markTeamPairingMetaRevoked(sql, input.pairingLinkId, input.revokedAt),
+        );
+      },
+    ),
+
+    markAllPairingLinkMetaRevokedForMember: Effect.fn(
+      "TeamRepository.markAllPairingLinkMetaRevokedForMember",
+    )(function* (input) {
+      yield* runSql(
+        "markAllPairingLinkMetaRevokedForMember",
+        markAllTeamPairingMetaRevokedForMember(sql, input.memberId, input.revokedAt),
+      );
+    }),
+
+    setSessionScopeCeiling: Effect.fn("TeamRepository.setSessionScopeCeiling")(function* (input) {
+      yield* runSql("setSessionScopeCeiling", upsertTeamSessionScopeCeiling(sql, input));
+    }),
+
+    getSessionScopeCeiling: Effect.fn("TeamRepository.getSessionScopeCeiling")(
+      function* (sessionId) {
+        return yield* runSql("getSessionScopeCeiling", getTeamSessionScopeCeiling(sql, sessionId));
+      },
+    ),
+
+    setMemberMobileVisibility: Effect.fn("TeamRepository.setMemberMobileVisibility")(
+      function* (input) {
+        yield* runSql("setMemberMobileVisibility", setMemberUpstreamMobileVisibility(sql, input));
+        const rows = yield* runSql(
+          "setMemberMobileVisibility.load",
+          sql<MemberRow>`
+          SELECT
+            m.id,
+            m.team_id,
+            m.pseudo,
+            m.role,
+            m.status,
+            p.upstream_client_thread_visibility,
+            m.created_at,
+            m.updated_at
+          FROM team_members m
+          LEFT JOIN team_member_preferences p ON p.member_id = m.id
+          WHERE m.id = ${input.memberId} AND m.team_id = ${input.teamId}
+          LIMIT 1
+        `,
+        );
+        return rows[0] ? Option.some(mapMemberRow(rows[0])) : Option.none();
       },
     ),
   });
