@@ -149,9 +149,10 @@ export const make = Effect.gen(function* () {
       threadId === null ? { unsettledOnly: !(backfill || pendingBackfill.size > 0) } : { threadId },
     );
 
-  // The tracked repositories a thread changed each have their own branch, so an open pull
-  // request there is linked like one the thread opened. Only a thread's own events ask: the
-  // sweep would query the host for every repository of every thread each minute.
+  // A worktree thread's tracked repositories are its own checkouts, so an open pull request on
+  // its branch there is linked like one it opened. A shared checkout may have been changed by
+  // another session, so it never counts. Only a thread's own events ask: the sweep would query
+  // the host for every repository of every thread each minute.
   const linkRepositoryPullRequests = Effect.fn(
     "ThreadPullRequestServiceV2.linkRepositoryPullRequests",
   )(function* (
@@ -163,7 +164,7 @@ export const make = Effect.gen(function* () {
     refresh: boolean,
   ) {
     const tracked = project.trackedFolders ?? [];
-    if (tracked.length === 0 || thread.archivedAt !== null) return;
+    if (tracked.length === 0 || thread.archivedAt !== null || thread.worktreePath === null) return;
     const { checkpointScopes } = yield* orchestrator.getCheckpointContext(thread.id);
     const cwds = new Set(
       checkpointScopes.flatMap((scope) =>
@@ -179,9 +180,8 @@ export const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const local = yield* git.localStatus({ cwd });
           if (!local.isRepo || local.refName === null || local.isDefaultRef) return;
-          // A worktree thread's repositories are on its branch. A scope recorded before the
-          // thread moved still names the shared checkout, whose branch is someone else's.
-          if (thread.worktreePath !== null && local.refName !== thread.branch) return;
+          // A scope recorded before the thread moved still names the shared checkout.
+          if (local.refName !== thread.branch) return;
           const detected = yield* git.branchPullRequest(
             { cwd, branch: local.refName },
             { refresh, confirmTerminal: false },
