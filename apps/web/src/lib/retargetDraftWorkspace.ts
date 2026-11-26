@@ -55,26 +55,14 @@ function newThreadWorkspace(projectRef: ScopedProjectRef) {
 }
 
 /**
- * The workspace for a draft moving to another project or machine. One the draft only
- * inherited from its old project's defaults becomes the default a new thread there starts
- * with; one the user changed carries over.
+ * The workspace for a draft moving to another project or machine: the default a new thread
+ * there starts with, unless the user chose one, which carries over.
  */
 export function retargetDraftWorkspace(
-  draft: Pick<
-    DraftSessionState,
-    "environmentId" | "projectId" | "envMode" | "startFromOrigin" | "worktreePath"
-  >,
+  draft: Pick<DraftSessionState, "workspaceExplicit" | "worktreePath">,
   projectRef: ScopedProjectRef,
 ): { envMode?: DraftSessionState["envMode"]; startFromOrigin?: boolean } {
-  const inherited = newThreadWorkspace({
-    environmentId: draft.environmentId,
-    projectId: draft.projectId,
-  });
-  if (
-    draft.worktreePath !== null ||
-    draft.envMode !== inherited.envMode ||
-    draft.startFromOrigin !== inherited.startFromOrigin
-  )
-    return {};
-  return newThreadWorkspace(projectRef);
+  return draft.workspaceExplicit || draft.worktreePath !== null
+    ? {}
+    : newThreadWorkspace(projectRef);
 }

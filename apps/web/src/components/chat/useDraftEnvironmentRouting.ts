@@ -202,7 +202,6 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
           environmentSelection: "auto",
           loadBalancedEnvironmentId: target.environmentId,
           branch: originalDraft?.branch ?? null,
-          ...(originalDraft ? retargetDraftWorkspace(originalDraft, projectRef) : {}),
         }),
       );
       return true;
@@ -217,12 +216,10 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     if (!target?.projectId) return;
     const draft = getDraftSession(draftId);
     if (draft) carryFanoutSelections(draft, target.environmentId);
-    const projectRef = scopeProjectRef(target.environmentId, target.projectId);
     setDraftThreadContext(draftId, {
-      projectRef,
+      projectRef: scopeProjectRef(target.environmentId, target.projectId),
       environmentSelection: "auto",
       loadBalancedEnvironmentId: target.environmentId,
-      ...(draft ? retargetDraftWorkspace(draft, projectRef) : {}),
     });
   }, [
     needsLoadBalancing,

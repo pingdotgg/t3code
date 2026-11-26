@@ -376,7 +376,17 @@ it("takes the destination's default workspace when the draft switches machine by
 
 it("keeps a workspace the user picked when the draft switches machine by hand", async () => {
   const { b, draftId, input, store } = fanoutSetup();
-  store.setDraftThreadContext(draftId, { envMode: "worktree", startFromOrigin: false });
+  resources.projects = resources.projects.map((project) =>
+    project.environmentId === b
+      ? { ...project, defaultThreadEnvMode: "worktree" as const }
+      : project,
+  );
+  // Picked by hand, even though it is also the source's default.
+  store.setDraftThreadContext(draftId, {
+    envMode: "local",
+    startFromOrigin: false,
+    workspaceExplicit: true,
+  });
   await using screen = await render(
     <Harness
       input={{ ...input, automaticEnvironment: false, draftThread: store.getDraftSession(draftId) }}
@@ -384,5 +394,5 @@ it("keeps a workspace the user picked when the draft switches machine by hand", 
   );
   await screen.getByRole("button", { name: `Switch to ${b}` }).click();
   await expect.element(screen.getByText(b)).toBeInTheDocument();
-  expect(store.getDraftSession(draftId)?.envMode).toBe("worktree");
+  expect(store.getDraftSession(draftId)?.envMode).toBe("local");
 });
