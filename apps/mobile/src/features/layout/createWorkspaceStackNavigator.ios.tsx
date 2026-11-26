@@ -20,15 +20,7 @@ import {
   type NativeStackNavigatorProps,
   type NativeStackTypeBag,
 } from "@react-navigation/native-stack";
-import {
-  Fragment,
-  use,
-  useEffect,
-  useRef,
-  useState,
-  type ComponentProps,
-  type ReactNode,
-} from "react";
+import { Fragment, use, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { withKnownPullRequestSummary } from "../../state/use-thread-pr";
 import {
   currentWorkspaceSelections,
@@ -36,22 +28,23 @@ import {
 } from "./workspace/workspace-selection-store";
 import { workspaceTabColumns, workspaceTabPage } from "./workspace/workspace-tab-navigation";
 import { Platform, StyleSheet, View } from "react-native";
-import { Split, type SplitHostCommands } from "react-native-screens";
+import { Split, Stack, type SplitHostCommands } from "react-native-screens";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { NATIVE_INSPECTOR_MIN_MAIN_WIDTH, nativeSidebarColumnWidth } from "../../lib/layout";
+import { INSPECTOR_MIN_MAIN_WIDTH, nativeSidebarColumnWidth } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { WorkspaceTabsProvider, useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
 import { WorkspaceNativeTabs } from "./workspace/WorkspaceNativeTabs.ios";
 import { WorkspaceTabDock } from "./workspace/WorkspaceTabDock";
+import { NAVIGATION_TAB_ORDER } from "./workspace/navigation-tab-order";
 import { workspaceUsesColumns } from "./workspace/workspace-tabs-state";
 import { useWorkspaceCompose } from "./workspace/useWorkspaceCompose";
-import { NAVIGATION_TAB_ORDER } from "./workspace/navigation-tab-order";
 import { selectedIssueKeyOf } from "../issues/issueParams";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { setNativelyPoppingWorkspaceRoute } from "./workspace/workspace-detail-selection";
+import { useCollapsedSplitColumn } from "./useCollapsedSplitColumn";
 import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 
 import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "./AdaptiveWorkspaceLayout";
@@ -73,12 +66,10 @@ import { PaneContext } from "../../components/ui/Pane";
 import { useWorkspaceSidebarHeaderItem } from "./useWorkspaceSidebarHeaderItem";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
 import {
-  collapsedSplitTransition,
   nativeWorkspacePopAction,
   projectWorkspaceStack,
   partitionStackPresentations,
   reconcileStackScreens,
-  type CollapsedSplitColumn,
   isPresentedRoute,
 } from "../../native/workspace-stack-projection";
 import {
@@ -149,13 +140,12 @@ function ColumnScreen(props: {
     : null;
   const key = descriptor.route.key;
   return (
-    <Split.Screen
+    <Stack.Screen
       screenKey={props.screenKey ?? key}
       activityMode={props.attached === false ? "detached" : "attached"}
       animatesPush={props.animatesPush}
-      onDismiss={(event) => {
-        props.onDismiss(key, event.nativeEvent.isNativeDismiss);
-      }}
+      onDismiss={() => props.onDismiss(key, false)}
+      onNativeDismiss={() => props.onDismiss(key, true)}
       onWillAppear={() => {
         props.onAppearance("willAppear", key);
         props.navigation.emit({ type: "transitionStart", target: key, data: { closing: false } });
@@ -200,7 +190,7 @@ function ColumnScreen(props: {
           </NavigationRouteContext>
         </NavigationContext>
       </PaneContext>
-    </Split.Screen>
+    </Stack.Screen>
   );
 }
 
@@ -291,11 +281,16 @@ function WorkspaceColumns(
   const hideInspector = () => {
     if (inspector.visible) toggleAuxiliaryPane();
   };
-  const hostRef = useRef<SplitHostCommands>(null);
   const activeDetailKey = props.detail.at(-1)?.key;
   const compactColumn = activeDetailKey ? "secondary" : "primary";
-  const collapsed = useRef(!layout.usesSplitView);
-  const collapsedColumn = useRef<CollapsedSplitColumn>({ visible: compactColumn, leaving: null });
+  const hostRef = useRef<SplitHostCommands>(null);
+  const { followAppearance, onCollapse, onExpand } = useCollapsedSplitColumn({
+    hostRef,
+    usesSplitView: layout.usesSplitView,
+    compactColumn,
+    primaryKey: props.primary.key,
+    navigation: props.navigation,
+  });
   const threadParams = props.detail.findLast((route) => route.name === "Thread")?.params;
   const pullRequestParams = props.detail.findLast(isPullRequestRoute)?.params;
   const selectedPullRequestKey =
@@ -334,28 +329,6 @@ function WorkspaceColumns(
       if (action) props.navigation.dispatch(action);
     }
   };
-  const followCollapsedSplit = (
-    type: "willAppear" | "didAppear" | "willDisappear" | "didDisappear",
-    key: string,
-  ) => {
-    if (!collapsed.current || layout.usesSplitView) return;
-    const transition = collapsedSplitTransition(
-      collapsedColumn.current,
-      { type, key },
-      props.navigation.getState(),
-      props.primary.key,
-    );
-    collapsedColumn.current = transition.column;
-    setNativelyPoppingWorkspaceRoute(transition.column.leaving);
-    if (transition.pop) props.navigation.dispatch(transition.pop);
-  };
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the native split host which column to show while collapsed
-  useEffect(() => {
-    if (layout.usesSplitView || collapsedColumn.current.visible === compactColumn) return;
-    collapsedColumn.current = { ...collapsedColumn.current, visible: compactColumn };
-    hostRef.current?.show(compactColumn);
-  }, [compactColumn, layout.usesSplitView]);
 
   const primary = props.descriptors[props.primary.key];
   if (!primary) return null;
@@ -373,14 +346,9 @@ function WorkspaceColumns(
       }
       primaryBackgroundStyle={deviceType === "pad" ? "none" : "default"}
       topColumnForCollapsing={compactColumn}
-      onCollapse={() => {
-        collapsed.current = true;
-        collapsedColumn.current = { visible: compactColumn, leaving: null };
-        setNativelyPoppingWorkspaceRoute(null);
-      }}
+      onCollapse={onCollapse}
       onExpand={() => {
-        collapsed.current = false;
-        setNativelyPoppingWorkspaceRoute(null);
+        onExpand();
         // Native callbacks can outlive the render that created them, so decide from the live
         // router state. An expanded split has columns, so its tab gets a page beside the list.
         const live = props.navigation.getState();
@@ -418,7 +386,7 @@ function WorkspaceColumns(
         maximumPrimaryColumnWidth:
           layout.variant === "medium" ? primaryColumnWidth : Math.max(380, primaryColumnWidth),
         preferredPrimaryColumnWidthOrFraction: primaryColumnWidth,
-        minimumSecondaryColumnWidth: NATIVE_INSPECTOR_MIN_MAIN_WIDTH,
+        minimumSecondaryColumnWidth: INSPECTOR_MIN_MAIN_WIDTH,
         // UIKit can retain its automatic width despite a new preference; constrain both edges.
         minimumInspectorColumnWidth: inspectorWidth,
         maximumInspectorColumnWidth: inspectorWidth,
@@ -426,7 +394,7 @@ function WorkspaceColumns(
       }}
     >
       <Split.Column>
-        <Split.Stack>
+        <Stack.Host>
           <ColumnScreen
             descriptor={primary}
             primary
@@ -435,14 +403,14 @@ function WorkspaceColumns(
             selectedPullRequestKey={selectedPullRequestKey}
             selectedIssueKey={selectedIssueKey}
             onDismiss={handleNativeDismiss}
-            onAppearance={followCollapsedSplit}
+            onAppearance={followAppearance}
             navigation={props.navigation}
           />
-        </Split.Stack>
+        </Stack.Host>
       </Split.Column>
       <Split.Column>
-        <Split.Stack>
-          <Split.Screen
+        <Stack.Host>
+          <Stack.Screen
             screenKey="workspace-empty"
             activityMode={layout.usesSplitView && !activeDetailKey ? "attached" : "detached"}
           >
@@ -458,7 +426,7 @@ function WorkspaceColumns(
                 }
               />
             </ColumnContent>
-          </Split.Screen>
+          </Stack.Screen>
           {screens.routes.map((route) => {
             const descriptor = props.descriptors[route.key] ?? screens.descriptors[route.key];
             const inSettingsSlot = settingsDetailIn(props.detail)?.key === route.key;
@@ -471,13 +439,13 @@ function WorkspaceColumns(
                 attached={props.detail.some((current) => current.key === route.key)}
                 animatesPush={!shownPages.keys.has(route.key)}
                 onDismiss={handleNativeDismiss}
-                onAppearance={followCollapsedSplit}
+                onAppearance={followAppearance}
                 onCompose={isPullRequestRoute(route) ? undefined : detailCompose}
                 navigation={props.navigation}
               />
             ) : null;
           })}
-        </Split.Stack>
+        </Stack.Host>
       </Split.Column>
       <InspectorColumnScreens
         content={inspector.content}

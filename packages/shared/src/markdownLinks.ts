@@ -201,7 +201,7 @@ function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
 
 export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const trimmed = codeText.trim();
-  if (trimmed.length === 0 || trimmed.includes("`")) return null;
+  if (trimmed.length === 0 || trimmed.includes("`") || /[<>]/.test(trimmed)) return null;
   if (INLINE_CODE_WHITESPACE_PATTERN.test(trimmed) && !isSpacedAbsoluteFilePath(trimmed)) {
     return null;
   }
@@ -455,7 +455,9 @@ function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
     if (start >= runStart && start <= runEnd) return runEnd;
     delimiter.lastIndex = start;
     runStart = start;
-    runEnd = delimiter.exec(markdown)?.index ?? markdown.length;
+    let match = delimiter.exec(markdown);
+    while (match?.[0].length === 2 && match[0][0] === "\\") match = delimiter.exec(markdown);
+    runEnd = match?.index ?? markdown.length;
     return runEnd;
   };
 }
@@ -463,8 +465,9 @@ function markdownRunEndFinder(markdown: string, delimiter: RegExp) {
 function markdownLinkTailScanner(markdown: string) {
   // A blank line ends the paragraph, so no part of a link's tail runs past one.
   const whitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
-  const doubleQuoteEnd = markdownRunEndFinder(markdown, /"|\n[ \t\r]*\n/g);
-  const singleQuoteEnd = markdownRunEndFinder(markdown, /'|\n[ \t\r]*\n/g);
+  // Escape pairs (`\"`, `\\`) match so the finder can skip them.
+  const doubleQuoteEnd = markdownRunEndFinder(markdown, /\\[\\"]|"|\n[ \t\r]*\n/g);
+  const singleQuoteEnd = markdownRunEndFinder(markdown, /\\[\\']|'|\n[ \t\r]*\n/g);
   const titleWhitespaceEnd = markdownRunEndFinder(markdown, /\S|\n[ \t\r]*\n/g);
   return (start: number) => {
     const end = whitespaceEnd(start);
@@ -519,41 +522,36 @@ function markdownLinkDestinationScanner(markdown: string) {
       }
     }
     const hrefEnd = bareMarkdownLinkDestinationEnd(markdown, hrefStart);
-    if (hrefEnd === null || hrefEnd === hrefStart) return null;
+    if (hrefEnd === null) return null;
     const end = bareTail(hrefEnd);
     return end === null ? null : { hrefStart, hrefEnd, end };
   };
 }
 
-// The composer escapes brackets in labels (`[\[id\].tsx](...)`), and `\]` does not close one.
-function unescapedLabelEnd(markdown: string, start: number): number {
-  let end = markdown.indexOf("]", start);
-  while (end !== -1) {
-    let backslashes = 0;
-    while (end - backslashes > start && markdown[end - backslashes - 1] === "\\") backslashes += 1;
-    if (backslashes % 2 === 0) return end;
-    end = markdown.indexOf("]", end + 1);
-  }
-  return -1;
-}
-
+// Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
+// (`[\[id\].tsx](...)`), so `\[` and `\]` never count. A blank line ends the paragraph and its labels.
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
-  let cursor = 0;
-  while (cursor < markdown.length) {
-    const labelStart = markdown.indexOf("[", cursor);
-    if (labelStart === -1) break;
-    const labelEnd = unescapedLabelEnd(markdown, labelStart + 1);
-    if (labelEnd === -1) break;
-
-    // Skip a failed label once; nested openings share its closing bracket.
-    cursor = labelEnd + 1;
-    const destination = scanDestination(cursor);
-    if (!destination) continue;
-    cursor = destination.end;
-    const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
-    if (href) hrefs.push(href);
+  const bracket = /[[\]\\]|\n[ \t\r]*\n/g;
+  let openBrackets = 0;
+  for (let match = bracket.exec(markdown); match; match = bracket.exec(markdown)) {
+    if (match[0] === "\\") {
+      bracket.lastIndex = match.index + 2;
+    } else if (match[0].startsWith("\n")) {
+      openBrackets = 0;
+    } else if (match[0] === "[") {
+      openBrackets += 1;
+    } else if (openBrackets > 0) {
+      openBrackets -= 1;
+      const destination = scanDestination(match.index + 1);
+      if (!destination) continue;
+      // A link cannot contain a link, so the brackets still open around it become text.
+      openBrackets = 0;
+      bracket.lastIndex = destination.end;
+      const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
+      if (href) hrefs.push(href);
+    }
   }
   return hrefs;
 }
