@@ -628,6 +628,41 @@ function* notebook(source: string): Generator<string, void> {
     const plain = NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
     return stream ? terminalOutputCollapseRedraws(plain) : plain;
   }
+  const hasOutputText = (value: string) => value.replaceAll("\0", "").trim() !== "";
+  function* cellOutputParts(outputs: readonly unknown[]): Generator<string, void> {
+    for (const output of outputs) {
+      if (!output || typeof output !== "object") continue;
+      if ("text" in output)
+        yield outputText(output.text, "output_type" in output && output.output_type === "stream");
+      else if (
+        "data" in output &&
+        output.data &&
+        typeof output.data === "object" &&
+        ("text/plain" in output.data || "text/markdown" in output.data)
+      ) {
+        const plain = outputText(
+          "text/plain" in output.data ? output.data["text/plain"] : undefined,
+        );
+        yield "text/markdown" in output.data && !hasOutputText(plain)
+          ? outputText(output.data["text/markdown"])
+          : plain;
+      } else if ("output_type" in output && output.output_type === "error") {
+        const name = [...lines("ename" in output ? output.ename : undefined)].join("");
+        const value = [...lines("evalue" in output ? output.evalue : undefined)].join("");
+        if (hasOutputText(NodeUtil.stripVTControlCharacters(name + value))) {
+          yield name;
+          if ("evalue" in output) yield ": " + value;
+        }
+        yield "\n";
+        if ("traceback" in output)
+          for (const line of lines(output.traceback)) {
+            yield NodeUtil.stripVTControlCharacters(line);
+            yield "\n";
+          }
+      }
+      yield "\n";
+    }
+  }
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
     if (!cell || typeof cell !== "object") continue;
@@ -635,38 +670,19 @@ function* notebook(source: string): Generator<string, void> {
     const kind = NOTEBOOK_CELL_TYPES.find((type) => type === cellType) ?? "markdown";
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
-    if ("outputs" in cell && Array.isArray(cell.outputs) && cell.outputs.length > 0) {
-      yield "\nOutput:\n";
-      for (const output of cell.outputs) {
-        if (!output || typeof output !== "object") continue;
-        if ("text" in output)
-          yield outputText(output.text, "output_type" in output && output.output_type === "stream");
-        else if (
-          "data" in output &&
-          output.data &&
-          typeof output.data === "object" &&
-          ("text/plain" in output.data || "text/markdown" in output.data)
-        ) {
-          const plain = outputText(
-            "text/plain" in output.data ? output.data["text/plain"] : undefined,
-          );
-          yield "text/markdown" in output.data && !plain.replaceAll("\0", "").trim()
-            ? outputText(output.data["text/markdown"])
-            : plain;
-        } else if ("output_type" in output && output.output_type === "error") {
-          if ("ename" in output) yield* lines(output.ename);
-          if ("evalue" in output) {
-            yield ": ";
-            yield* lines(output.evalue);
+    if ("outputs" in cell && Array.isArray(cell.outputs)) {
+      let pending: string | undefined = "";
+      for (const part of cellOutputParts(cell.outputs)) {
+        if (pending !== undefined) {
+          if (!hasOutputText(part)) {
+            pending += part;
+            continue;
           }
-          yield "\n";
-          if ("traceback" in output)
-            for (const line of lines(output.traceback)) {
-              yield NodeUtil.stripVTControlCharacters(line);
-              yield "\n";
-            }
+          yield "\nOutput:\n";
+          yield pending;
+          pending = undefined;
         }
-        yield "\n";
+        yield part;
       }
     }
     yield "\n\n";
