@@ -205,14 +205,14 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       const itemIsEmpty = BLANK_LINE.test(itemContent);
       const markerKind = marker?.at(-1);
       const continuesList = dedented && listContentIndent !== Infinity && markerKind === listMarker;
-      const opensItem =
+      const opensItem: boolean =
         item !== null &&
         (!paragraphOpen ||
           continuesList ||
           (!itemIsEmpty && (!/^\d/.test(marker!) || /^1[.)]$/.test(marker!))));
       let fenceLine = content;
       let startsIndentedCode = false;
-      if (opensItem) {
+      if (item && opensItem) {
         const markerEnd = indent + item[1]!.length;
         const paddedColumn = indentationColumn(item[2]!, markerEnd);
         emptyListItem = dedented && itemIsEmpty;
