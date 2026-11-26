@@ -61,8 +61,10 @@ function resolveFinalAssistantTextForTurn(
 }
 
 // Elements whose children run together; every other element is separated by a space.
+// A tight list item holds its text bare, without the paragraph a loose one wraps it in.
 const INLINE_PARENTS = new Set([
   "p",
+  "li",
   "h1",
   "h2",
   "h3",
