@@ -241,6 +241,15 @@ describe("wordsHast", () => {
   });
 
   it("renders insight blocks as remarkAssistantInsights did", () => {
+    for (const ending of ["\n", "\r\n", "\r"]) {
+      expect(
+        wordsHtml(["★ Insight ─────", "Cache is warm.", "─────", "After."].join(ending), {
+          insights: true,
+        }),
+      ).toBe(
+        '<blockquote data-alert="insight" dir="ltr">\n<p>Cache is warm.</p>\n</blockquote>\n<p dir="ltr">After.</p>',
+      );
+    }
     const markdown =
       "Intro\n\n`★ Insight ─────────────────────────────────────`\n- one\n- two\n`─────────────────────────────────────────────────`\n\nAfter\n\n```\n★ Insight ─────\n```";
     expect(wordsHtml(markdown, { insights: true })).toBe(
