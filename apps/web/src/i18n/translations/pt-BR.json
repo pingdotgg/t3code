@@ -10059,6 +10059,7 @@
   "7f11b5e6dfa0bc56": "Personalizado",
   "aea25315995268e1": "Herda",
   "c8d6af8aaa94a464": "Padrão",
+  "652e3aad21933d17": "{summary} · {count, plural, one {{count} substituição de projeto} other {{count} substituições de projeto}}",
   "0a39976ec0fb3e49": "{overrideSummary}. Mostrar de onde vem este valor",
   "99af2d06aa2b6d12": "Redefinir",
   "7e9fca5fb426044a": "Redefinir tudo",
