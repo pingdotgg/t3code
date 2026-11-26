@@ -71,6 +71,32 @@ describe("searchSettings", () => {
     }
   });
 
+  it("ranks a setting by its displayed title in the active language", () => {
+    const items: ReadonlyArray<SettingsSearchItem> = [
+      { id: "dictation", title: "Dictation", to: "/settings/general", searchTerms: ["language"] },
+      {
+        id: "speech-language",
+        title: "Speech language",
+        to: "/settings/general",
+        searchTerms: ["dictation"],
+      },
+      { id: "language", title: "Language", to: "/settings/general" },
+    ];
+    const translations: Record<string, Record<string, string>> = {
+      de: { "Speech language": "Diktiersprache", language: "Sprache", Language: "Sprache" },
+      ja: { "Speech language": "音声入力の言語", language: "言語", Language: "言語" },
+    };
+    const ids = (query: string, locale: string) =>
+      searchSettings(query, items, (message) => translations[locale]?.[message] ?? message).map(
+        (item) => item.id,
+      );
+
+    expect(ids("Sprache", "de")).toEqual(["language", "speech-language", "dictation"]);
+    expect(ids("言語", "ja")).toEqual(["language", "speech-language", "dictation"]);
+    expect(ids("Language", "de")).toEqual(["language", "speech-language", "dictation"]);
+    expect(ids("Language", "en")).toEqual(["language", "speech-language", "dictation"]);
+  });
+
   it("shows the Secrets page in nav and search only when an environment enables secret providers", () => {
     const availability = {
       hasCloudPublicConfig: false,
