@@ -38,6 +38,8 @@ const BLANK_LINE = /^[ \t]*\r?$/;
 const closesAtBlankLine = (next: string) => BLANK_LINE.test(next);
 const flowParser = unified().use(remarkParse).use(remarkGfm).freeze();
 const HTML_FLOW_MAX_CHARS = 8 * 1024;
+// Parsing is far slower than the line scan, so a whole document shares one budget.
+const HTML_PARSE_BUDGET_CHARS = 16 * 1024;
 
 // A <details> or <table> wraps the Markdown between its tags, across the blank lines that end
 // each HTML block, so a cut waits until the ones an HTML block opened are closed.
@@ -164,6 +166,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let flowStart = 0;
   let parsedThrough = 0;
   let htmlStarts: Set<number> | undefined;
+  let parseBudget = HTML_PARSE_BUDGET_CHARS;
   const resetFlow = (start: number) => {
     flowStart = start;
     parsedThrough = start;
@@ -199,10 +202,11 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         if (htmlStarts === undefined && index > flowStart) {
           let end = flowStart;
           let flowChars = 0;
+          const maxChars = Math.min(HTML_FLOW_MAX_CHARS, parseBudget);
           for (; end < sourceLines.length; end++) {
             const next = sourceLines[end]!;
             flowChars += next.length + 1;
-            if (flowChars > HTML_FLOW_MAX_CHARS || BLANK_LINE.test(next)) break;
+            if (flowChars > maxChars || BLANK_LINE.test(next)) break;
             // Include the boundary line, which can end a lazy container continuation.
             if (
               ATX_HEADING.test(next) ||
@@ -216,7 +220,9 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           parsedThrough = end;
           htmlStarts = new Set();
           if (index < end) {
-            const flow = flowParser.parse(sourceLines.slice(flowStart, end).join("\n"));
+            const flowText = sourceLines.slice(flowStart, end).join("\n");
+            parseBudget -= flowText.length;
+            const flow = flowParser.parse(flowText);
             for (const node of flow.children) {
               if (node.type === "html" && node.position) {
                 htmlStarts.add(flowStart + node.position.start.line - 1);
