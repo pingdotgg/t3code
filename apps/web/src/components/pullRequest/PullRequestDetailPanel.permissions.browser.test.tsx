@@ -131,10 +131,11 @@ const detail: PullRequestDetailView = {
 
 const environmentId = EnvironmentId.make("environment");
 const draftId = DraftId.make("conflicts-draft");
-const panel = (attach = false, reference = detail) => (
+const panel = (attach = false, reference = detail, revealUrl?: string) => (
   <PullRequestDetailPanel
     environmentId={environmentId}
     reference={reference}
+    {...(revealUrl === undefined ? {} : { revealUrl })}
     context="page"
     shortcutsEnabled={false}
     getShortcutContext={() => ({
@@ -258,6 +259,42 @@ it("reads the first diff page once the pointer rests on the Code tab", async () 
     environmentId,
     input: { projectId: detail.projectId, repository: detail.repository, number: detail.number },
   });
+});
+
+it("keeps the commit the Code tab was left on when the panel remounts", async () => {
+  setup();
+  shown.detail = {
+    ...detail,
+    number: 7,
+    url: "https://github.com/owner/repo/pull/7",
+    commits: ["First commit", "Second commit"].map((messageHeadline, index) => ({
+      oid: "ab"[index]!.repeat(40),
+      messageHeadline,
+      committedDate: "2026-09-01T00:00:00Z",
+    })),
+  };
+  const reference = { ...detail, number: 7 };
+  await using screen = await render(panel(false, reference));
+  await screen.getByRole("button", { name: "Code", exact: true }).click();
+  await screen.getByRole("button", { name: "Diff scope: All commits" }).click();
+  // The menu opens in a portal, outside the rendered container.
+  await page.getByRole("menuitemradio", { name: /First commit/ }).click();
+  const scope = screen.getByRole("button", { name: "Diff scope: First commit" });
+  await expect.element(scope).toBeVisible();
+
+  // Switching right-panel tabs remounts the whole panel.
+  await screen.rerender(<div />);
+  await screen.rerender(panel(false, reference));
+  await screen.getByRole("button", { name: "Code", exact: true }).click();
+  await expect.element(scope).toBeVisible();
+
+  // A comment on another commit opens the Timeline; it is not a link into the Code tab.
+  command.mockResolvedValue({ _tag: "Success", value: undefined });
+  const comment = `${shown.detail.url}/commits/${"b".repeat(40)}#discussion_r123`;
+  await screen.rerender(<div />);
+  await screen.rerender(panel(false, reference, comment));
+  await screen.getByRole("button", { name: "Code", exact: true }).click();
+  await expect.element(scope).toBeVisible();
 });
 
 it("keeps a screen reader's place when scrolling the description condenses the header", async () => {

@@ -354,6 +354,10 @@ function linkedTab(anchor: PullRequestAnchor | null): PullRequestDetailTab | nul
 // The Summary restores its scroll on remount; a header left expanded would condense over the
 // restored position and its scroll compensation would move the view.
 const summaryCondensedByScopeKey = new Map<string, boolean>();
+// The Code tab restores its scroll on remount too, per commit.
+const codeCondensedByScopeKey = new Map<string, boolean>();
+// Session-only: the commit each pull request's Code tab was left on.
+const codeCommitByScopeKey = new Map<string, string>();
 
 export function PullRequestDetailPanel({
   environmentId,
@@ -426,6 +430,7 @@ export function PullRequestDetailPanel({
     reference.number,
   );
   const pullRequestKey = pullRequestRefKey(reference);
+  const tabScopeKey = `${environmentId}:${pullRequestKey}`;
   const matchingListEntry =
     listEntry?.projectId === reference.projectId &&
     listEntry.repository.toLowerCase() === reference.repository.toLowerCase() &&
@@ -487,13 +492,29 @@ export function PullRequestDetailPanel({
   };
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
-    readonly pullRequestKey: string;
+    readonly scopeKey: string;
     readonly oid: string | null;
-  }>(() => ({ pullRequestKey, oid: pullRequestLinkCommit(revealUrl) }));
+  }>(() => ({
+    scopeKey: tabScopeKey,
+    // Only a link into the Code tab picks the commit; any other leaves the saved one.
+    oid:
+      linkedTab(revealAnchor) === "code"
+        ? pullRequestLinkCommit(revealUrl)
+        : (codeCommitByScopeKey.get(tabScopeKey) ?? null),
+  }));
+  const chosenCodeCommitOid =
+    codeCommitScope.scopeKey === tabScopeKey
+      ? codeCommitScope.oid
+      : (codeCommitByScopeKey.get(tabScopeKey) ?? null);
+  // A commit a force-push removed reads as "All commits", for the header's key as for the diff.
   const selectedCodeCommitOid =
-    codeCommitScope.pullRequestKey === pullRequestKey ? codeCommitScope.oid : null;
+    detail?.commits.some((entry) => entry.oid === chosenCodeCommitOid) === false
+      ? null
+      : chosenCodeCommitOid;
   const selectCodeCommit = (oid: string | null) => {
-    setCodeCommitScope({ pullRequestKey, oid });
+    if (oid === null) codeCommitByScopeKey.delete(tabScopeKey);
+    else codeCommitByScopeKey.set(tabScopeKey, oid);
+    setCodeCommitScope({ scopeKey: tabScopeKey, oid });
   };
   const openCommit = (oid: string) => {
     selectCodeCommit(oid);
@@ -536,7 +557,6 @@ export function PullRequestDetailPanel({
     followLink();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each clicked link is a navigation request
   }, [revealUrl]);
-  const tabScopeKey = `${environmentId}:${pullRequestKey}`;
   const [tabMountState, setTabMountState] = useState(() => ({
     key: tabScopeKey,
     tabs: new Set<PullRequestDetailTab>([tab]),
@@ -553,13 +573,32 @@ export function PullRequestDetailPanel({
   const [codeIntentKey, setCodeIntentKey] = useState<string | null>(null);
   useEnvironmentQuery(
     codeIntentKey === pullRequestKey && !mountedTabs.has("code")
-      ? pullRequestEnvironment.diff({ environmentId, input: { ...reference } })
+      ? pullRequestEnvironment.diff({
+          environmentId,
+          input: {
+            ...reference,
+            ...(selectedCodeCommitOid === null ? {} : { commit: selectedCodeCommitOid }),
+          },
+        })
       : null,
   );
+  const codeScopeKey = `${tabScopeKey}:${selectedCodeCommitOid ?? ""}`;
   // Each tab restores the condensed state its own scrolling left behind.
   const [condensedByTab, setCondensedByTab] = useState<
     Partial<Record<PullRequestDetailTab, boolean>>
-  >(() => ({ summary: summaryCondensedByScopeKey.get(tabScopeKey) ?? false }));
+  >(() => ({
+    summary: summaryCondensedByScopeKey.get(tabScopeKey) ?? false,
+    code: codeCondensedByScopeKey.get(codeScopeKey) ?? false,
+  }));
+  // Picking a commit gives the Code tab a fresh viewer at that commit's own position.
+  const [condensedCodeScopeKey, setCondensedCodeScopeKey] = useState(codeScopeKey);
+  if (condensedCodeScopeKey !== codeScopeKey) {
+    setCondensedCodeScopeKey(codeScopeKey);
+    setCondensedByTab({
+      ...condensedByTab,
+      code: codeCondensedByScopeKey.get(codeScopeKey) ?? false,
+    });
+  }
   const condensed = condensedByTab[tab] ?? false;
   const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLElement | null>>>({});
   // Fresh ref callbacks would detach and reattach every scroller on each render.
@@ -2112,6 +2151,8 @@ export function PullRequestDetailPanel({
             compensationRef.current = { tab, scroller, target: top - chromeDelta };
             next = true;
           }
+          // Saved on every scroll: picking a commit changes the scope under an unchanged header.
+          if (tab === "code") codeCondensedByScopeKey.set(codeScopeKey, next);
           if (next === previous) return;
           if (tab === "summary") summaryCondensedByScopeKey.set(tabScopeKey, next);
           setCondensedByTab({ ...condensedByTab, [tab]: next });

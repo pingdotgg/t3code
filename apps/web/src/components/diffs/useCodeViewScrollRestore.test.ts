@@ -21,9 +21,10 @@ function mount(
   view: ReturnType<typeof viewer>,
   settled = true,
   loadMore: (() => void) | null = null,
+  loaded = 0,
 ) {
   const restore = createCodeViewScrollRestore();
-  restore.update(scopeKey, settled, loadMore);
+  restore.update(scopeKey, settled, loadMore, loaded);
   restore.attach(view);
   return restore;
 }
@@ -65,7 +66,87 @@ describe("createCodeViewScrollRestore", () => {
     expect(shrunk.scrolls).toEqual([]);
     settling.update("thread-c", true, null);
     settling.flush();
-    expect(shrunk.scrolls).toEqual([{ type: "position", position: 1500 }]);
+    // Past the end, Pierre clamps the target to the bottom without subtracting the header.
+    expect(shrunk.scrolls).toEqual([{ type: "position", position: 1532 }]);
+
+    // The viewer's own end can lie past the files (a footer), so the last 32px is left to it.
+    const nearEnd = viewer(2000);
+    mount("thread-near-end", nearEnd).onScroll(1476, nearEnd.instance);
+    const nearEndAgain = viewer(2000);
+    mount("thread-near-end", nearEndAgain);
+    expect(nearEndAgain.scrolls).toEqual([{ type: "position", position: 1508 }]);
+  });
+
+  it("waits for as many batches as were shown when the position was saved", () => {
+    const first = viewer(10_000);
+    mount("pull-request-a", first, true, null, 2).onScroll(300, first.instance);
+
+    // The first batch alone is tall enough, but the second sorts files above it.
+    const again = viewer(10_000);
+    let batches = 0;
+    const loadMore = () => {
+      batches += 1;
+    };
+    const restore = mount("pull-request-a", again, false, loadMore, 1);
+    expect(again.scrolls).toEqual([]);
+    expect(batches).toBe(1);
+    restore.update("pull-request-a", false, loadMore, 2);
+    restore.flush();
+    expect(again.scrolls).toEqual([{ type: "position", position: 332 }]);
+  });
+
+  it("holds a position, even one saved meanwhile, until the caller's layout is ready", () => {
+    const first = viewer(10_000);
+    const early = createCodeViewScrollRestore();
+    early.update("pull-request-b", true, null, 1, false);
+    early.attach(first);
+    early.onScroll(400, first.instance);
+
+    const again = viewer(10_000);
+    const restore = createCodeViewScrollRestore();
+    restore.update("pull-request-b", true, null, 1, false);
+    restore.attach(again);
+    restore.flush();
+    expect(again.scrolls).toEqual([]);
+    restore.update("pull-request-b", true, null, 1, true);
+    restore.flush();
+    expect(again.scrolls).toEqual([{ type: "position", position: 432 }]);
+  });
+
+  it("lets a reader who scrolls while more files load keep their own position", () => {
+    const first = viewer(10_000);
+    mount("thread-e", first).onScroll(4000, first.instance);
+
+    const loading = viewer(700);
+    const restore = mount("thread-e", loading, false, () => {});
+    // Unreached until a scroll replaces it: a click that cut the restore short scrolls nothing.
+    expect(restore.cancel()).toBe(true);
+    expect(restore.cancel()).toBe(true);
+    expect(createCodeViewScrollRestore().cancel()).toBe(true);
+    restore.onScroll(150, loading.instance);
+    expect(restore.cancel()).toBe(false);
+    loading.instance.scrollHeight = 10_000;
+    restore.update("thread-e", true, null);
+    restore.flush();
+    expect(loading.scrolls).toEqual([]);
+
+    const again = viewer(10_000);
+    mount("thread-e", again);
+    expect(again.scrolls).toEqual([{ type: "position", position: 182 }]);
+  });
+
+  it("moves a viewer kept across a scope change to that scope's position, not the old one", () => {
+    const commitA = viewer(10_000);
+    mount("commit-a", commitA).onScroll(3000, commitA.instance);
+    const commitB = viewer(10_000);
+    mount("commit-b", commitB).onScroll(800, commitB.instance);
+
+    const kept = viewer(700);
+    const restore = mount("commit-a", kept, false, () => {});
+    restore.update("commit-b", true, null);
+    kept.instance.scrollHeight = 10_000;
+    restore.flush();
+    expect(kept.scrolls).toEqual([{ type: "position", position: 832 }]);
   });
 
   it("forgets a position that a reveal or collapsing every file replaced", () => {

@@ -5,6 +5,7 @@ import {
   withFileDiffFold,
   withPullRequestDiffFold,
   type FileDiffFoldChoices,
+  type PullRequestDiffFolds,
 } from "@t3tools/client-runtime/pull-request-diff-fold";
 import {
   parsePullRequestAnchor,
@@ -19,7 +20,7 @@ import type {
   FileDiffMetadata,
   SelectedLineRange,
 } from "@pierre/diffs";
-import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
+import type { CodeViewAnnotationArgs, CodeViewDiffItem, CodeViewHandle } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -71,6 +72,7 @@ import { observeIntersection } from "~/lib/observeIntersection";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import {
   pullRequestFindingKey,
@@ -118,6 +120,7 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { FileExplorerPane } from "../files/FileExplorerPane";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
+import { useCodeViewScrollRestore } from "../diffs/useCodeViewScrollRestore";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
@@ -192,6 +195,16 @@ const NO_PATHS: ReadonlyArray<string> = [];
 type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 
 const COMMIT_PAGE_SIZE = 10;
+
+// Session-only, like the thread diff's folds: switching right-panel tabs remounts this tab.
+const foldsByScopeKey = new Map<string, PullRequestDiffFolds>();
+interface ViewOverrides {
+  readonly wordWrap?: boolean;
+  readonly ignoreWhitespace?: boolean;
+}
+const NO_VIEW_OVERRIDES: ViewOverrides = {};
+// The toggles the reader used, per pull request: a saved position belongs to the layout they give.
+const viewOverridesByPullRequestKey = new Map<string, ViewOverrides>();
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 
@@ -492,23 +505,9 @@ function PullRequestCodeTab({
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
   }));
-  const [folds, setFolds] = useState(EMPTY_PULL_REQUEST_DIFF_FOLDS);
-  const foldGroup = (path: string) => {
-    const group = isTestChangedFile(path) ? folds.test : folds.source;
-    return group.override === null && settings.diffFilesCollapsed
-      ? { ...group, override: "folded" as const }
-      : group;
-  };
-  const setFoldChoices = (
-    path: string,
-    update: (choices: FileDiffFoldChoices) => FileDiffFoldChoices,
-  ) => setFolds((current) => withPullRequestDiffFold(current, isTestChangedFile(path), update));
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const diffLayout = settings.diffLayout;
-  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
-  const wordWrap = wordWrapOverride ?? settings.wordWrap;
-  const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     PULL_REQUEST_FILE_TREE_STORAGE_KEY,
     false,
@@ -530,6 +529,19 @@ function PullRequestCodeTab({
   }>({ key: "", cursor: null, slices: NO_SLICES });
 
   const referenceKey = pullRequestReviewKey(reference);
+  // The pull request's own URL names its host from the start; the reference can gain one later.
+  const viewOverridesKey = JSON.stringify([environmentId, reference.projectId, detail.url]);
+  const [changedViewOverrides, setChangedViewOverrides] = useState<{
+    readonly key: string;
+    readonly overrides: ViewOverrides;
+  } | null>(null);
+  const viewOverrides =
+    changedViewOverrides?.key === viewOverridesKey
+      ? changedViewOverrides.overrides
+      : (viewOverridesByPullRequestKey.get(viewOverridesKey) ?? NO_VIEW_OVERRIDES);
+  const wordWrap = viewOverrides.wordWrap ?? settings.wordWrap;
+  const [initialIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
+  const ignoreWhitespace = viewOverrides.ignoreWhitespace ?? initialIgnoreWhitespace;
   // A commit opened from the timeline or left selected across a force-push may no longer be
   // part of the pull request; read it as "All commits" instead of requesting its diff.
   const commit =
@@ -537,15 +549,35 @@ function PullRequestCodeTab({
       ? selectedCommitOid
       : null;
   const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
+  const [folds, setFolds] = useState(
+    () => foldsByScopeKey.get(scopeKey) ?? EMPTY_PULL_REQUEST_DIFF_FOLDS,
+  );
+  const foldGroup = (path: string) => {
+    const group = isTestChangedFile(path) ? folds.test : folds.source;
+    return group.override === null && settings.diffFilesCollapsed
+      ? { ...group, override: "folded" as const }
+      : group;
+  };
+  const setFoldChoices = (
+    path: string,
+    update: (choices: FileDiffFoldChoices) => FileDiffFoldChoices,
+  ) => setFolds((current) => withPullRequestDiffFold(current, isTestChangedFile(path), update));
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- saves folds to the session map so a remount restores them
+  useEffect(() => {
+    if (folds !== EMPTY_PULL_REQUEST_DIFF_FOLDS) foldsByScopeKey.set(scopeKey, folds);
+  }, [scopeKey, folds]);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   const [stateScopeKey, setStateScopeKey] = useState(scopeKey);
+  // Counts scope changes: coming back to a scope is a new visit, with a viewer nobody has scrolled.
+  const [scopeVisit, setScopeVisit] = useState(0);
   if (stateScopeKey !== scopeKey) {
     setStateScopeKey(scopeKey);
     setLastViewedFileKey(null);
     setDraft(null);
     setSelectedLines(null);
-    setFolds(EMPTY_PULL_REQUEST_DIFF_FOLDS);
+    setFolds(foldsByScopeKey.get(scopeKey) ?? EMPTY_PULL_REQUEST_DIFF_FOLDS);
+    setScopeVisit(scopeVisit + 1);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
@@ -1047,6 +1079,36 @@ function PullRequestCodeTab({
     if (nextCursor === null) return;
     setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
   };
+  const codeViewScroll = useCodeViewScrollRestore(
+    `pull-request:${scopeKey}`,
+    loadedSlices.length > 0 && nextCursor === null,
+    canLoadNextSlice ? loadNextSlice : null,
+    // Review order moves files as pages arrive, so the offset waits for the pages it was saved on.
+    loadedSlices.length,
+    // Viewed marks fold files when they arrive, which moves everything below them.
+    filesViewed.settled,
+  );
+  // The viewer moves scrollTop itself while it measures restored rows; saving those moves would
+  // drift the offset further on every remount, so only a reader's own scroll is saved.
+  const scrolledByReader = useRef<number | null>(null);
+  const followReader = () => {
+    scrolledByReader.current = scopeVisit;
+    codeViewScroll.cancel();
+    codeViewReveal.cancel();
+  };
+  // A reveal, a bulk fold or a wrap or whitespace toggle moves the viewer for the reader. An
+  // offset its restore had not reached is dropped, so it cannot land afterwards; one the reader
+  // left stays until a scroll.
+  const repositionForReader = () => {
+    if (codeViewScroll.cancel()) codeViewScroll.discard();
+    scrolledByReader.current = scopeVisit;
+  };
+  const attachCodeView = useStableCallback(
+    (handle: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
+      codeViewScroll.attach(handle);
+      codeViewReveal.attach(handle);
+    },
+  );
   const sentinelRef = (node: HTMLDivElement | null) => {
     if (node === null || !canLoadNextSlice) return;
     return observeIntersection(
@@ -1095,6 +1157,7 @@ function PullRequestCodeTab({
   const revealFile = (path: string, range?: SelectedLineRange) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
+    repositionForReader();
     // Record the unfold even when already open, so a Viewed mark that loads later cannot fold it.
     setFoldChoices(path, (current) =>
       withFileDiffFold(current, buildFileDiffFoldKey(item.fileDiff), false),
@@ -1104,6 +1167,7 @@ function PullRequestCodeTab({
   };
 
   const toggleAllFiles = () => {
+    repositionForReader();
     const shownTestKeys = annotatedFiles.flatMap((file) =>
       isTestChangedFile(file.path) ? [file.foldKey] : [],
     );
@@ -1262,6 +1326,7 @@ function PullRequestCodeTab({
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
     onPostRender: (fileContainer: HTMLElement, instance: object) => {
+      codeViewScroll.flush();
       codeViewReveal.flush();
       // Containers are reused across files, so the flag is set or cleared on every render.
       fileContainer.toggleAttribute(
@@ -1459,8 +1524,15 @@ function PullRequestCodeTab({
           count: hiddenTestFileCount,
         })
       : null;
+  const changeViewOverride = (override: ViewOverrides) => {
+    // The layout changes under the reader, so a position saved in the old one no longer applies.
+    repositionForReader();
+    const next = { ...viewOverrides, ...override };
+    viewOverridesByPullRequestKey.set(viewOverridesKey, next);
+    setChangedViewOverrides({ key: viewOverridesKey, overrides: next });
+  };
   const changeIgnoreWhitespace = (next: boolean) => {
-    setIgnoreWhitespace(next);
+    changeViewOverride({ ignoreWhitespace: next });
     setDraft(null);
     setSelectedLines(null);
   };
@@ -1685,7 +1757,7 @@ function PullRequestCodeTab({
             </DropdownMenuCheckboxItem>
             <DropdownMenuCheckboxItem
               checked={wordWrap}
-              onCheckedChange={(checked) => setWordWrapOverride(checked)}
+              onCheckedChange={(checked) => changeViewOverride({ wordWrap: checked })}
             >
               <T>Wrap lines</T>
             </DropdownMenuCheckboxItem>
@@ -1752,9 +1824,7 @@ function PullRequestCodeTab({
                 variant="ghost"
                 size="sm"
                 pressed={wordWrap}
-                onPressedChange={(pressed) => {
-                  setWordWrapOverride(Boolean(pressed));
-                }}
+                onPressedChange={(pressed) => changeViewOverride({ wordWrap: Boolean(pressed) })}
               />
             }
             label={wordWrap ? gt("Disable line wrapping") : gt("Enable line wrapping")}
@@ -2026,10 +2096,10 @@ function PullRequestCodeTab({
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className="relative min-h-0 min-w-0 flex-1"
-          onWheelCapture={codeViewReveal.cancel}
-          onTouchStartCapture={codeViewReveal.cancel}
-          onPointerDownCapture={codeViewReveal.cancel}
-          onKeyDownCapture={codeViewReveal.cancel}
+          onWheelCapture={followReader}
+          onTouchStartCapture={followReader}
+          onPointerDownCapture={followReader}
+          onKeyDownCapture={followReader}
           // Headers live in shadow DOM; composedPath crosses that boundary.
           onClickCapture={(event) => {
             const composedPath = event.nativeEvent.composedPath?.() ?? [];
@@ -2054,13 +2124,20 @@ function PullRequestCodeTab({
           {/* The viewer must own its scroll element to position virtual rows within it. */}
           <FileViewedToggleContext value={fileViewedToggle}>
             <StyledDiffCodeView<ReviewAnnotationGroup>
+              // A kept viewer would restore against the outgoing diff's height.
+              key={scopeKey}
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={(node) => {
                 // Pierre sets tabIndex -1 on this root and forwards no data attributes.
                 node?.setAttribute("data-workspace-focus-default", "");
                 scrollerRef(node);
               }}
-              viewerRef={codeViewReveal.attach}
+              viewerRef={attachCodeView}
+              onScroll={(scrollTop, viewer) => {
+                if (scrolledByReader.current === scopeVisit) {
+                  codeViewScroll.onScroll(scrollTop, viewer);
+                }
+              }}
               items={items}
               selectedLines={selectedLines}
               onSelectedLinesChange={setSelectedLines}

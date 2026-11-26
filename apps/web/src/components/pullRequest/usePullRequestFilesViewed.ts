@@ -14,6 +14,8 @@ import {
 
 export interface PullRequestFilesViewedView {
   readonly enabled: boolean;
+  /** False until the marks have an answer or an error; a file can fold when they arrive. */
+  readonly settled: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setViewed: (path: string, viewed: boolean, revision?: string) => void;
@@ -47,6 +49,7 @@ export function usePullRequestFilesViewed(options: {
 
   return {
     enabled,
+    settled: !enabled || query.data !== null || query.error !== null,
     isViewed: (path: string) => isFileViewed(path, states, overlay),
     isStale: (path: string) => !overlay.has(path) && isStaleViewedState(states?.get(path)),
     setViewed: scope.setViewed,
