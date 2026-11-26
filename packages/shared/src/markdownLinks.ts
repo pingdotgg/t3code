@@ -379,10 +379,10 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const hashIndex = trimmed.lastIndexOf("#");
   if (hashIndex >= 0) {
     const path = trimmed.slice(0, hashIndex);
-    const hash = trimmed.slice(hashIndex);
-    if (splitFilePathPosition(path).path === path) {
-      const anchored = splitFilePathPosition(path, hash);
-      if (anchored.line !== undefined && matchesLabelPosition(anchored)) return true;
+    const anchored = splitFilePathPosition(path, trimmed.slice(hashIndex));
+    // A `:line` suffix before the hash wins in splitFilePathPosition; only a position from the anchor counts here.
+    if (anchored.line !== undefined && anchored.path === path && matchesLabelPosition(anchored)) {
+      return true;
     }
   }
   return matchesLabelPosition(splitFilePathPosition(trimmed));

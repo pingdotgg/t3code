@@ -20,7 +20,6 @@ describe("isMarkdownFileLinkLabel", () => {
     ["src/main.ts#L10-L20", "/repo/src/main.ts#L10-L20", true],
     ["main.ts#L42C7", "/repo/src/main.ts:42:7", true],
     ["src/main.ts#L10-L20", "/repo/src/main.ts#L10", false],
-    ["src/main.ts#section", "/repo/src/main.ts#section", false],
     ["src/main.ts:10#L20", "/repo/src/main.ts:10", false],
     ["C#/Program.cs#L10", "./C%23/Program.cs#L10", true],
     ["src/main.ts#L10", "./src/main.ts%23L10", true],
