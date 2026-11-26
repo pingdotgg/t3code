@@ -17,6 +17,12 @@ describe("isMarkdownFileLinkLabel", () => {
     ["example.ts:99", "/repo/src/example.ts:12", false],
     ["example.ts:12-20", "/repo/src/example.ts:12-20", true],
     ["example.ts:12-20", "/repo/src/example.ts:12", false],
+    ["src/main.ts#L10-L20", "/repo/src/main.ts#L10-L20", true],
+    ["main.ts#L42C7", "/repo/src/main.ts:42:7", true],
+    ["src/main.ts#L10-L20", "/repo/src/main.ts#L10", false],
+    ["src/main.ts:10#L20", "/repo/src/main.ts:10", false],
+    ["C#/Program.cs#L10", "./C%23/Program.cs#L10", true],
+    ["src/main.ts#L10", "./src/main.ts%23L10", true],
   ])("classifies %s for %s", (label, href, expected) => {
     expect(isMarkdownFileLinkLabel(label, href)).toBe(expected);
   });
@@ -192,6 +198,11 @@ describe("extractMarkdownLinkHrefs", () => {
     ["[".repeat(32_000), []],
     ["[a](<foo)bar> invalid [b](ok)", ["<foo", "ok"]],
     ["[[[nested](src/main.ts) [unfinished", ["src/main.ts"]],
+    [
+      "[![a](a.png)](src/index.ts) [![b](b.png)](lib/index.ts)",
+      ["a.png", "src/index.ts", "b.png", "lib/index.ts"],
+    ],
+    [String.raw`[\![a](a.png)](src/index.ts) [label!](ok)`, ["a.png", "ok"]],
     ["See [the [docs] guide](docs/guide.md) and [[1]](src/a.ts)", ["docs/guide.md", "src/a.ts"]],
     ["[a [b](x) [c \\[d](y) [e\\]](z)", ["x", "y", "z"]],
     ["[a [b]\n\nc](src/a.ts) [outer [inner]()](src/b.ts)", []],
@@ -202,10 +213,31 @@ describe("extractMarkdownLinkHrefs", () => {
 
   it.each([
     [
+      String.raw`[one](<./a/doc\> final.ts>) [two](<./b/doc\> final.ts>)`,
+      [String.raw`./a/doc\> final.ts`, String.raw`./b/doc\> final.ts`],
+    ],
+    [
+      String.raw`[one](<./a/doc\\> "title") [two](<./b/doc\\> (title))`,
+      [String.raw`./a/doc\\`, String.raw`./b/doc\\`],
+    ],
+    [
+      String.raw`[bad](<./x/dir\> text) [one](<./a/doc\\\> final.ts> "title") [two](<./b/doc\< final.ts>)`,
+      [String.raw`./a/doc\\\> final.ts`, String.raw`./b/doc\< final.ts`],
+    ],
+    [
       "[a](/x/app/(a)/page.tsx) [b](/x/app/(b)/page.tsx)",
       ["/x/app/(a)/page.tsx", "/x/app/(b)/page.tsx"],
     ],
     ['[a](/tmp/a(1).txt "title") after', ["/tmp/a(1).txt"]],
+    ["[a.ts](a/a.ts (first)) [a.ts](b/a.ts (second))", ["a/a.ts", "b/a.ts"]],
+    [
+      String.raw`[a](<a/a.ts> (escaped \(first\) and \\)) [b](b/a.ts (second))`,
+      ["a/a.ts", "b/a.ts"],
+    ],
+    [
+      "[a](a.ts (nested (title))) [b](b.ts (missing close) [c](c.ts (blank\n\nline)) [d](ok)",
+      ["ok"],
+    ],
     [`[a](a.ts "it's a title") [b](b.ts 'a "quoted" title') [c](ok)`, ["a.ts", "b.ts", "ok"]],
     [`[a.ts](src/a.ts "say \\"hello\\"") [a.ts](lib/a.ts)`, ["src/a.ts", "lib/a.ts"]],
     [`[a](a.ts 'it\\'s') [b](b.ts "ends in \\\\") [c](ok)`, ["a.ts", "b.ts", "ok"]],

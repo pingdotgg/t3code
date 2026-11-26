@@ -134,7 +134,7 @@ function IssueLabelPicker({
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const applied = new Set(detail.labels.map((label) => label.name));
-  const needle = query.toLowerCase();
+  const needle = query.trim().toLowerCase();
   const candidates = (candidatesQuery.data?.labels ?? []).filter(
     (label) =>
       needle.length === 0 ||
@@ -644,9 +644,13 @@ export function IssueDetailPanel({
               aria-label={gt("Refresh issue")}
               disabled={detailQuery.isPending}
               onClick={() =>
-                void pager.refresh(registry, () =>
-                  executeAtomQuery(registry, detailAtom, { refresh: true, reportFailure: false }),
-                )
+                void pager.refresh(registry, () => {
+                  issueEnvironment.oweDetailRefresh(registry, detailAtom);
+                  return executeAtomQuery(registry, detailAtom, {
+                    refresh: true,
+                    reportFailure: false,
+                  });
+                })
               }
             >
               <RefreshIcon size="sm" refreshing={detailQuery.isPending} />

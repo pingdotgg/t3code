@@ -17,6 +17,7 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { parseUrl } from "@t3tools/shared/url";
 
 export interface WorkflowQuestionChoice {
   readonly value: string;
@@ -48,7 +49,7 @@ const text = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
 
 const isWebUrl = (url: string) => {
-  const protocol = URL.parse(url)?.protocol;
+  const protocol = parseUrl(url)?.protocol;
   return protocol === "https:" || protocol === "http:";
 };
 
@@ -930,8 +931,8 @@ export function workflowReferenceLabel(reference: WorkflowRunSubject): string {
   const issue = workflowReferenceIssue(reference);
   if (issue !== null) return /^\d+$/.test(issue.key) ? `#${issue.key}` : issue.key;
   if (reference.title !== "") return reference.title;
-  if (reference.url !== null && URL.canParse(reference.url)) return new URL(reference.url).host;
-  return reference.kind;
+  const url = reference.url === null ? null : parseUrl(reference.url);
+  return url?.host ?? reference.kind;
 }
 
 /** The references a step touched, in the order the run first touched them. */
@@ -951,16 +952,33 @@ export function workflowStepTime(ms: number): string {
 }
 
 /**
- * The first sentence of a reply, as one line of plain text: a heading, list mark, inline code,
- * emphasis or link reads as its words. Code keeps its text, and an underscore inside a word, as in
- * snake_case, is not emphasis.
+ * The first prose sentence of a reply, as one line of plain text: headings, tables, and fenced
+ * code blocks are skipped, and list marks, inline code, emphasis, or links read as their words.
+ * Code keeps its text, and an underscore inside a word, as in snake_case, is not emphasis.
  */
 export function workflowOneLine(text: string): string {
+  let fence: string | null = null;
   const line =
     text
       .split("\n")
       .map((candidate) => candidate.trim())
-      .find((candidate) => candidate !== "" && !/^(#|```|\|)/.test(candidate))
+      .find((candidate) => {
+        const marker = /^(`{3,}|~{3,})/.exec(candidate)?.[1];
+        if (fence !== null) {
+          if (candidate === marker && marker.startsWith(fence)) {
+            fence = null;
+          }
+          return false;
+        }
+        if (
+          marker !== undefined &&
+          !(marker[0] === "`" && candidate.slice(marker.length).includes("`"))
+        ) {
+          fence = marker;
+          return false;
+        }
+        return candidate !== "" && !/^(#|\|)/.test(candidate);
+      })
       ?.replace(/^([-*>]|\d+\.)\s+/, "") ?? "";
   const code: string[] = [];
   const plain = line
