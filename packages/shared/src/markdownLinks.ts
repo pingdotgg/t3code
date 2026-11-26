@@ -201,7 +201,7 @@ function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
 
 export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const trimmed = codeText.trim();
-  if (trimmed.length === 0 || trimmed.includes("`")) return null;
+  if (trimmed.length === 0 || trimmed.includes("`") || /[<>]/.test(trimmed)) return null;
   if (INLINE_CODE_WHITESPACE_PATTERN.test(trimmed) && !isSpacedAbsoluteFilePath(trimmed)) {
     return null;
   }

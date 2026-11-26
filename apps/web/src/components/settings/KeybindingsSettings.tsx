@@ -18,6 +18,7 @@ import {
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
+  useDeferredValue,
   useReducer,
   useRef,
   useState,
@@ -50,6 +51,7 @@ import { serverEnvironment } from "../../state/server";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useClientSettings } from "../../hooks/useSettings";
 import { Badge } from "../ui/badge";
+import { Skeleton } from "../ui/skeleton";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -1463,6 +1465,21 @@ function KeybindingsGroups(props: KeybindingsGroupsProps) {
   ));
 }
 
+function KeybindingsGroupsSkeleton() {
+  return (
+    <>
+      <div aria-hidden className="space-y-2.5">
+        <Skeleton shape="pill" className="h-3 w-24" />
+        <Skeleton shape="card" className="h-96" />
+      </div>
+      <div aria-hidden className="space-y-2.5">
+        <Skeleton shape="pill" className="h-3 w-24" />
+        <Skeleton shape="card" className="h-72" />
+      </div>
+    </>
+  );
+}
+
 function BrowserKeybindingNotice() {
   const gt = useGT();
   const message = gt(
@@ -1548,6 +1565,9 @@ export function KeybindingsSettingsPanel() {
   const { commandOptions, allRows } = useKeybindingCatalog();
   const rows = filterKeybindingRows(allRows, query, m);
   const groups = groupKeybindingRows(rows);
+  // Building every row takes a long frame, so the page opens at once and the list fills in
+  // without blocking input. A search the user types renders the same way.
+  const shownGroups = useDeferredValue(groups, null);
   const anchorIds = keybindingAnchorIds(rows);
 
   const openKeybindingsFile = () => {
@@ -1744,9 +1764,11 @@ export function KeybindingsSettingsPanel() {
           </SettingsGroup>
         ) : null}
 
-        {groups.length > 0 ? (
+        {shownGroups === null ? (
+          <KeybindingsGroupsSkeleton />
+        ) : shownGroups.length > 0 ? (
           <KeybindingsGroups
-            groups={groups}
+            groups={shownGroups}
             anchorIds={anchorIds}
             savingCommand={savingCommand}
             {...rowActions}
