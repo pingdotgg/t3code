@@ -27,6 +27,15 @@ T3 Code runs the coding agents on your machine and gives them one fast interface
 
 It works with Claude Code, Codex, Cursor, OpenCode, Grok Build, Antigravity, Kiro, Pi, Muse Code, fx, and any [ACP](./docs/user/providers-acp.md) agent. If an agent is set up on your computer, T3 Code can control it.
 
+## Fork 修改
+
+本仓库基于上游 T3 Code，并持续同步上游改动。以下是相对上游的用户可见修改：
+
+- **项目动作回写所属线程**：在项目动作中运行 `t3 thread send "$T3CODE_THREAD_ID" "..."`，即可把脚本结果送回当前线程；忙碌的线程会把消息排到下一轮，开发服务器环境下同样可用。
+- **项目筛选快捷键**：在 Web 和桌面端按 `mod+alt+p` 打开侧栏的项目筛选并聚焦搜索；侧栏折叠时会先展开，没有项目时不会打开空筛选。可在 **Settings → Keybindings** 的 **Project Filter: Toggle** 中修改按键。
+- **项目动作菜单适配可用高度**：动作较多时菜单会在可用空间内滚动，导入项不会被挤出；操作文案跟随界面语言。
+- **macOS Apple Silicon 一键安装 Nightly**：项目动作新增 **Build + Install Nightly (macOS arm64)**，在本机准备依赖、构建并安装 Nightly，只替换 `T3 Code (Nightly).app`，不影响稳定版。Nightly 正在运行时会先确认退出，安装完成后自动重新打开；重复触发会串行执行，默认不会降级，失败时会保留原版本。
+
 ## What you get
 
 - **Your subscriptions.** T3 Code does not resell tokens. It drives the agents you are already signed in to.
