@@ -4,7 +4,7 @@ const CHUNK_TARGET_CHARS = 4 * 1024;
 export const LARGE_MARKDOWN_CHUNK_MAX_CHARS = 128 * 1024;
 // A backtick fence's info string cannot contain a backtick, so "```a``` is inline" is a code span.
 const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,})/;
-const ATX_HEADING = /^#{1,6}(?:[ \t]|\r?$)/;
+const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|\r?$)/;
 // A thematic break, or a "---" setext underline; no paragraph stays open after either. A lone
 // "===" is paragraph text unless it underlines one, so it is left out.
 const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?$/;
@@ -137,7 +137,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
       const cutPoint =
         chars >= targetChars &&
-        (ATX_HEADING.test(line) ||
+        ((line.startsWith("#") && ATX_HEADING.test(line)) ||
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
