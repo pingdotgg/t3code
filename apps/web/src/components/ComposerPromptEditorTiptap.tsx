@@ -546,7 +546,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       return;
     }
     // Cite ends the text with a space after the chip; typing before it glues the words to the citation.
-    // Mid-text, keep the existing separator on the far side of any inserted word.
+    // Mid-text, skipping the space would glue them to the next word instead.
     const end = pos + current.nodeSize;
     const { doc } = editor.state;
     const trailingSpace =
