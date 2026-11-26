@@ -186,6 +186,7 @@ import * as McpServerOAuth from "./mcpHub/McpServerOAuth.ts";
 import * as McpServerRegistry from "./mcpHub/McpServerRegistry.ts";
 import * as McpUpstreamClients from "./mcpHub/McpUpstreamClients.ts";
 import * as SkillSources from "./skills/SkillSources.ts";
+import * as ClaudeArtifacts from "./claudeArtifacts/ClaudeArtifacts.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ProjectEnrichment from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
@@ -831,6 +832,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(McpServerRegistry.McpServerRegistry)({}),
   Layer.mock(McpUpstreamClients.McpUpstreamClients)({}),
   Layer.mock(SkillSources.SkillSources)({}),
+  Layer.mock(ClaudeArtifacts.ClaudeArtifacts)({}),
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(SecretCheck.SecretCheck)({}),

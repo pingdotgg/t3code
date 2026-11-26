@@ -66,6 +66,7 @@ import {
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { makeClaudeMaintenanceResolution } from "./ClaudeMaintenance.ts";
+import { listClaudeArtifactPages } from "./ClaudeArtifacts.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -438,6 +439,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
         ),
+      listArtifactPages: listClaudeArtifactPages({
+        config: effectiveConfig,
+        environment: processEnv,
+        cwd: stateDir,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      ),
       orchestrationAdapter,
       textGeneration,
       consumeResetCredit,

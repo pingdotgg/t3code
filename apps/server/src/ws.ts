@@ -233,6 +233,7 @@ import * as ChatCommandRunner from "./terminal/ChatCommandRunner.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as McpServerTools from "./mcpServers/McpServerTools.ts";
 import * as SkillLibrary from "./skills/SkillLibrary.ts";
+import * as ClaudeArtifacts from "./claudeArtifacts/ClaudeArtifacts.ts";
 import * as SkillSources from "./skills/SkillSources.ts";
 import { readWorkflowScript } from "./orchestration-v2/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -758,6 +759,8 @@ export const FORK_RPC_METHODS = [
   WS_METHODS.docsCloudListImports,
   WS_METHODS.docsCloudImport,
   WS_METHODS.docsCloudSendTo,
+  WS_METHODS.claudeArtifactsList,
+  WS_METHODS.claudeArtifactsRefresh,
   WS_METHODS.skillsTrashList,
   WS_METHODS.skillsTrashRestore,
   WS_METHODS.skillsTrashDelete,
@@ -1514,6 +1517,18 @@ const layerMcpServersRpc = (
       mcpServerOAuth.signOut(input),
     ),
   );
+
+const layerClaudeArtifactsRpc = Layer.unwrap(
+  Effect.gen(function* () {
+    const artifacts = yield* ClaudeArtifacts.ClaudeArtifacts;
+    return Layer.mergeAll(
+      ServerWsRpcGroup.toLayerHandler(WS_METHODS.claudeArtifactsList, () => artifacts.snapshot),
+      ServerWsRpcGroup.toLayerHandler(WS_METHODS.claudeArtifactsRefresh, (input) =>
+        artifacts.refresh(input),
+      ),
+    );
+  }),
+);
 
 const layerSkillTrashRpc = Layer.unwrap(
   Effect.gen(function* () {
@@ -3981,6 +3996,7 @@ export const layer = Layer.unwrap(
                 ),
                 Layer.merge(layerDocsRpc),
                 Layer.merge(layerSkillTrashRpc),
+                Layer.merge(layerClaudeArtifactsRpc),
                 Layer.merge(layerSkillSourcesRpc),
                 Layer.merge(layerReleaseMirrorRpc),
                 Layer.merge(Layer.mergeAll(layerEnvFileRpc, layerChatCommandRpc)),

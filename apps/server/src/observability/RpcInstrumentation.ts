@@ -40,6 +40,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.serverGetConfig]: "server",
   [WS_METHODS.serverGetNpmRelease]: "server",
   [WS_METHODS.serverRefreshProviders]: "server",
+  [WS_METHODS.claudeArtifactsList]: "provider",
+  [WS_METHODS.claudeArtifactsRefresh]: "provider",
   [WS_METHODS.skillsInspect]: "skills",
   [WS_METHODS.skillsPreview]: "skills",
   [WS_METHODS.skillsInstall]: "skills",

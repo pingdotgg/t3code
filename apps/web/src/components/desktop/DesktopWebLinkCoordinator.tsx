@@ -22,8 +22,7 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { connectPairing } from "../../connection/onboarding";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { useComposerDraftStore } from "../../composerDraftStore";
-import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
-import { useScratchProject } from "../../hooks/useScratchProject";
+import { useStartBrowserThread } from "../../hooks/useStartBrowserThread";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useOpenChangeRequestLink } from "../../lib/openPullRequestLink";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
@@ -87,8 +86,7 @@ export function DesktopWebLinkCoordinator() {
   const primaryEnvironment = usePrimaryEnvironment();
   const openPullRequestsInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const openChangeRequest = useOpenChangeRequestLink();
-  const { scratchEnvironmentId, openScratchProject } = useScratchProject();
-  const openThread = useNewThreadHandler();
+  const startBrowserThread = useStartBrowserThread();
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
@@ -151,23 +149,8 @@ export function DesktopWebLinkCoordinator() {
     });
   };
 
-  const startThread = async (url: string): Promise<ScopedThreadRef | null> => {
-    const environmentId = scratchEnvironmentId(primaryEnvironment?.environmentId ?? null);
-    if (environmentId === null) {
-      reportFailure(url);
-      return null;
-    }
-    const project = await openScratchProject(environmentId, gt("Could not open the link"));
-    if (!project) return null;
-    const opened = await openThread(scopeProjectRef(project.environmentId, project.id));
-    if (!opened) {
-      reportFailure(url);
-      return null;
-    }
-    const threadRef = scopeThreadRef(project.environmentId, opened.threadId);
-    useRightPanelStore.getState().requestMaximize(threadRef);
-    return threadRef;
-  };
+  const startThread = (url: string) =>
+    startBrowserThread(gt("Could not open the link"), () => reportFailure(url));
 
   const openInBrowser = useEffectEvent(async (url: string) => {
     const routeParams = router.state.matches.at(-1)?.params ?? {};

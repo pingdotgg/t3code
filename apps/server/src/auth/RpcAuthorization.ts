@@ -72,6 +72,9 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.serverGetConfig]: AuthOrchestrationReadScope,
   [WS_METHODS.serverGetNpmRelease]: AuthOrchestrationReadScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
+  // Fork: the cached list is a read; a refresh runs a paid Claude session per account.
+  [WS_METHODS.claudeArtifactsList]: AuthOrchestrationReadScope,
+  [WS_METHODS.claudeArtifactsRefresh]: AuthOrchestrationOperateScope,
   [WS_METHODS.serverUpdateProvider]: AuthProvidersManageScope,
   [WS_METHODS.providerAuthStart]: AuthProvidersManageScope,
   [WS_METHODS.providerConsumeResetCredit]: AuthProvidersManageScope,

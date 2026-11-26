@@ -61,6 +61,8 @@ export interface ProviderInstance {
   readonly consumeResetCredit?: (
     creditId: string | undefined,
   ) => Effect.Effect<ProviderConsumeResetCreditOutcome, ProviderDriverError>;
+  /** The account's claude.ai Artifacts list, as the Artifact tool returned each page's text. */
+  readonly listArtifactPages?: Effect.Effect<ProviderArtifactListResult>;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;
@@ -88,6 +90,10 @@ export interface ProviderInstance {
     }) => Effect.Effect<void, AcpRegistryOperationError>;
   };
 }
+
+export type ProviderArtifactListResult =
+  | { readonly _tag: "pages"; readonly pages: ReadonlyArray<string> }
+  | { readonly _tag: "signedOut" | "failed"; readonly message: string };
 
 export interface ProviderContinuationIdentity {
   readonly driverKind: ProviderDriverKind;

@@ -82,4 +82,5 @@ export * from "./clientRpcPermissions.ts";
 export * from "./docs.ts";
 export * from "./mcpServers.ts";
 export * from "./skillTrash.ts";
+export * from "./claudeArtifacts.ts";
 export * from "./skillLibrarySources.ts";

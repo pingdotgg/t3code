@@ -1,5 +1,10 @@
 import { SkillTrashEntryInput, SkillTrashError, SkillTrashListResult } from "./skillTrash.ts";
 import {
+  ClaudeArtifactsError,
+  ClaudeArtifactsRefreshInput,
+  ClaudeArtifactsSnapshot,
+} from "./claudeArtifacts.ts";
+import {
   SkillLibraryListInput,
   SkillLibraryListResult,
   SkillSourceRemoveInput,
@@ -692,6 +697,8 @@ export const WS_METHODS = {
   docsCloudListImports: "docsCloud.listImports",
   docsCloudImport: "docsCloud.import",
   docsCloudSendTo: "docsCloud.sendTo",
+  claudeArtifactsList: "claudeArtifacts.list",
+  claudeArtifactsRefresh: "claudeArtifacts.refresh",
   skillsTrashList: "skillsTrash.list",
   skillsTrashRestore: "skillsTrash.restore",
   skillsTrashDelete: "skillsTrash.delete",
@@ -2423,6 +2430,17 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsClaudeArtifactsListRpc = Rpc.make(WS_METHODS.claudeArtifactsList, {
+  payload: Schema.Struct({}),
+  success: ClaudeArtifactsSnapshot,
+  error: EnvironmentAuthorizationError,
+});
+const WsClaudeArtifactsRefreshRpc = Rpc.make(WS_METHODS.claudeArtifactsRefresh, {
+  payload: ClaudeArtifactsRefreshInput,
+  success: ClaudeArtifactsSnapshot,
+  error: Schema.Union([ClaudeArtifactsError, EnvironmentAuthorizationError]),
+});
+
 const WsSkillsTrashListRpc = Rpc.make(WS_METHODS.skillsTrashList, {
   payload: Schema.Struct({}),
   success: SkillTrashListResult,
@@ -2658,6 +2676,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsDocsCloudListImportsRpc,
   WsDocsCloudImportRpc,
   WsDocsCloudSendToRpc,
+  WsClaudeArtifactsListRpc,
+  WsClaudeArtifactsRefreshRpc,
   WsSkillsTrashListRpc,
   WsSkillsTrashRestoreRpc,
   WsSkillsTrashDeleteRpc,

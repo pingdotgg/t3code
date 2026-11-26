@@ -63,6 +63,7 @@ import {
   ArrowLeftIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
+  ShapesIcon,
   CheckIcon,
   ChevronRightIcon,
   CornerLeftUpIcon,
@@ -1555,7 +1556,7 @@ function OpenCommandPaletteDialog(props: {
       kind: "action",
       value: "action:open-docs",
       searchTerms: ["docs", "documents", "notes", "write", "comment", "markdown", "cloud"],
-      title: "Open Docs",
+      title: gt("Open Docs"),
       icon: <NotebookPenIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().open(scopeThreadRef(thread.environmentId, thread.id), "docs");
@@ -1762,6 +1763,17 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push({
     kind: "action",
+    value: "action:artifacts",
+    searchTerms: ["artifacts", "claude.ai", "claude", "published", "shared", "pages"],
+    title: gt("Open artifacts"),
+    icon: <ShapesIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      await navigate({ to: "/artifacts" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
     value: "action:usage",
     searchTerms: ["usage", "use", "tokens", "cost", "spend", "limits", "stats", "analytics"],
     title: gt("Open usage"),
@@ -1792,7 +1804,7 @@ function OpenCommandPaletteDialog(props: {
     kind: "action",
     value: "action:add-mcp-server",
     searchTerms: ["add mcp server", "mcp", "model context protocol", "connector", "tools"],
-    title: "Add MCP server",
+    title: gt("Add MCP server"),
     icon: <PlugIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/settings/mcp-servers", search: { add: true } });
