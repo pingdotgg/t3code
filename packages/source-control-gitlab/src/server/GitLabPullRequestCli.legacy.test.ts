@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
-import { VcsProcessExitError } from "@t3tools/contracts";
+import { VcsProcessExitError, VcsProcessTimeoutError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as RateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
@@ -185,7 +185,7 @@ layer("legacy GitLab diff requests through GitLabCli", (it) => {
 });
 
 layer("linked MR batches through GitLabCli", (it) => {
-  it.effect("keeps the GraphQL page bounded and follows the cursor", () =>
+  it.effect("keeps the GraphQL page bounded, follows the cursor and rechecks stale MRs", () =>
     Effect.gen(function* () {
       const numbers = Array.from({ length: 41 }, (_, index) => index + 1);
       const nodes = numbers.map((number) => ({
@@ -196,6 +196,7 @@ layer("linked MR batches through GitLabCli", (it) => {
         targetBranch: "main",
         state: "OPENED",
         updatedAt: "2026-08-28T12:00:00Z",
+        mergeStatusEnum: number === 41 ? "UNCHECKED" : "CAN_BE_MERGED",
       }));
       run.mockImplementationOnce(
         apiReply({
@@ -221,17 +222,21 @@ layer("linked MR batches through GitLabCli", (it) => {
           },
         }),
       );
+      run.mockImplementationOnce(apiReply([]));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
       expect([...(yield* cli.getLinkedSummaries({ ...batchInput, numbers })).keys()]).toEqual(
         numbers,
       );
-      expect(run).toHaveBeenCalledTimes(2);
+      expect(run).toHaveBeenCalledTimes(3);
       expect(run.mock.calls[0]?.[0].stdin).toContain('"first":40,"after":null');
       expect(run.mock.calls[1]?.[0].stdin).toContain('"first":40,"after":"opaque"');
+      expect(run.mock.calls[2]?.[0].args[1]).toContain(
+        "merge_requests?iids[]=41&scope=all&state=all&with_merge_status_recheck=true",
+      );
     }).pipe(Effect.provide(RateLimit.layer)),
   );
 
-  it.effect("reduces a truncated REST page and enriches only the IIDs it can read", () =>
+  it.effect("reduces a truncated REST page and keeps rows whose enrichment fails", () =>
     Effect.gen(function* () {
       run.mockImplementationOnce(apiReply({ errors: [{ message: "Unknown closedAt" }] }));
       run.mockImplementationOnce(apiReply(null, { truncated: true }));
@@ -270,21 +275,15 @@ layer("linked MR batches through GitLabCli", (it) => {
           },
         }),
       );
-      run.mockImplementationOnce(
-        apiReply({
-          data: {
-            project: {
-              mergeRequests: {
-                nodes: [
-                  {
-                    iid: "7",
-                    diffStatsSummary: { additions: 5, deletions: 2, fileCount: 1 },
-                  },
-                ],
-              },
-            },
-          },
-        }),
+      run.mockReturnValueOnce(
+        Effect.fail(
+          new VcsProcessTimeoutError({
+            operation: "GitLabCli.execute",
+            command: "glab",
+            cwd: input.cwd,
+            timeoutMs: 1,
+          }),
+        ),
       );
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
       const summaries = yield* cli.getLinkedSummaries(batchInput);
@@ -293,10 +292,8 @@ layer("linked MR batches through GitLabCli", (it) => {
         headBranch: "fork-branch",
         reviewDecision: "approved",
         checksState: "passing",
-        additions: 5,
-        deletions: 2,
-        changedFiles: 1,
       });
+      expect(summaries.get(7)).not.toHaveProperty("additions");
       expect(run.mock.calls[2]?.[0].args[1]).toContain("per_page=1&page=1");
       expect(run.mock.calls[3]?.[0].stdin).toContain('"iids":["7"]');
       expect(run.mock.calls[4]?.[0].stdin).toContain('"iids":["7"]');

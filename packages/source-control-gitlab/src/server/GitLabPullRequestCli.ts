@@ -2352,6 +2352,36 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
+    // GitLab only recalculates a stale merge status when a read asks for it; GraphQL never does.
+    const restListPath = (numbers: Iterable<number>, pageSize: number, page: number) =>
+      `projects/${projectPath(input.repository)}/merge_requests?${query([
+        ...Array.from(numbers, (number) => ["iids[]", String(number)] as const),
+        ["scope", "all"],
+        ["state", "all"],
+        ["with_merge_status_recheck", "true"],
+        ["per_page", String(pageSize)],
+        ["page", String(page)],
+      ])}`;
+    const requestRecheck = Effect.fnUntraced(function* () {
+      const unchecked = [...summaries.values()].flatMap((item) =>
+        item.state === "open" && item.mergeability === "unknown" ? [item.number] : [],
+      );
+      if (unchecked.length === 0) return summaries;
+      yield* gitlab
+        .executeApiPage({
+          cwd: input.cwd,
+          host: input.host,
+          path: restListPath(unchecked, unchecked.length, 1),
+        })
+        .pipe(
+          // Best effort: the summaries are already read, and the limiter keeps any cooldown.
+          Effect.catchTags({
+            GitLabCliCommandError: () => Effect.void,
+            GitLabCliRateLimitError: () => Effect.void,
+          }),
+        );
+      return summaries;
+    });
     const seenCursors = new Set<string>();
     const iids = [...wanted].map(String);
     let after: string | null = null;
@@ -2365,7 +2395,7 @@ export const make = Effect.gen(function* () {
       if (Result.isFailure(decoded) || decoded.success === null) break;
       const { items, hasNextPage, endCursor } = decoded.success;
       add(items);
-      if (!hasNextPage || summaries.size === wanted.size) return summaries;
+      if (!hasNextPage || summaries.size === wanted.size) return yield* requestRecheck();
       if (endCursor === null || seenCursors.has(endCursor)) {
         return yield* readError(new Error("GitLab GraphQL pagination did not advance."));
       }
@@ -2387,13 +2417,7 @@ export const make = Effect.gen(function* () {
       const response = yield* gitlab.executeApiPage({
         cwd: input.cwd,
         host: input.host,
-        path: `projects/${projectPath(input.repository)}/merge_requests?${query([
-          ...Array.from(wanted, (number) => ["iids[]", String(number)] as const),
-          ["scope", "all"],
-          ["state", "all"],
-          ["per_page", String(pageSize)],
-          ["page", String(page)],
-        ])}`,
+        path: restListPath(wanted, pageSize, page),
       });
       if (response.status !== 200)
         return yield* readError(new Error("GitLab REST list read failed."));
@@ -2429,16 +2453,21 @@ export const make = Effect.gen(function* () {
     for (let offset = 0; offset < found.length; offset += LINKED_SUMMARY_GRAPHQL_PAGE_SIZE) {
       const numbers = found.slice(offset, offset + LINKED_SUMMARY_GRAPHQL_PAGE_SIZE);
       const slice = numbers.map(String);
-      const statePage = yield* readGraphql(LINKED_LIST_STATES_GRAPHQL_QUERY, slice);
-      const statPage = yield* readGraphql(LINKED_STATS_GRAPHQL_QUERY, slice);
-      const states =
-        statePage.status === 200 && !statePage.bodyTruncated
-          ? Result.getOrUndefined(decodeListStatesJson(statePage.body))
-          : undefined;
-      const stats =
-        statPage.status === 200 && !statPage.bodyTruncated
-          ? Result.getOrUndefined(decodeMergeRequestStatsJson(statPage.body))
-          : undefined;
+      // Enrichment is optional: a failed read keeps the REST row, but rate limits still surface.
+      const enrich = <A>(
+        graphqlQuery: string,
+        decode: (body: string) => Result.Result<A, unknown>,
+      ) =>
+        readGraphql(graphqlQuery, slice).pipe(
+          Effect.map((page) =>
+            page.status === 200 && !page.bodyTruncated
+              ? Result.getOrUndefined(decode(page.body))
+              : undefined,
+          ),
+          Effect.catchTags({ GitLabCliCommandError: () => Effect.undefined }),
+        );
+      const states = yield* enrich(LINKED_LIST_STATES_GRAPHQL_QUERY, decodeListStatesJson);
+      const stats = yield* enrich(LINKED_STATS_GRAPHQL_QUERY, decodeMergeRequestStatsJson);
       for (const number of numbers) {
         summaries.set(number, {
           ...summaries.get(number)!,
