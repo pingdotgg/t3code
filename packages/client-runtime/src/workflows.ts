@@ -17,6 +17,7 @@ import {
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { parseUrl } from "@t3tools/shared/url";
 
 export interface WorkflowQuestionChoice {
   readonly value: string;
@@ -48,7 +49,7 @@ const text = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
 
 const isWebUrl = (url: string) => {
-  const protocol = URL.parse(url)?.protocol;
+  const protocol = parseUrl(url)?.protocol;
   return protocol === "https:" || protocol === "http:";
 };
 
@@ -930,8 +931,8 @@ export function workflowReferenceLabel(reference: WorkflowRunSubject): string {
   const issue = workflowReferenceIssue(reference);
   if (issue !== null) return /^\d+$/.test(issue.key) ? `#${issue.key}` : issue.key;
   if (reference.title !== "") return reference.title;
-  if (reference.url !== null && URL.canParse(reference.url)) return new URL(reference.url).host;
-  return reference.kind;
+  const url = reference.url === null ? null : parseUrl(reference.url);
+  return url?.host ?? reference.kind;
 }
 
 /** The references a step touched, in the order the run first touched them. */
