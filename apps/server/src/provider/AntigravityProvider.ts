@@ -170,7 +170,9 @@ function nativeCommands(
   });
 }
 
-function isMissingInstallation(error: EffectAcpErrors.AcpError | ProviderSetupError): boolean {
+function isMissingInstallation(
+  error: EffectAcpErrors.AcpError | ProviderSetupError | AntigravityProbeIncompatibility,
+): boolean {
   if (error._tag === "AcpSpawnError") {
     return (
       isCommandMissingCause(error.cause) ||
@@ -318,10 +320,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     const failure = Result.isFailure(result) ? result.failure : undefined;
     const incompatible = failure?._tag === "AntigravityProbeIncompatibility" ? failure : undefined;
     const version = incompatible?.version ?? initialized?.agentInfo?.version;
-    const missingInstallation =
-      failure !== undefined &&
-      failure._tag !== "AntigravityProbeIncompatibility" &&
-      isMissingInstallation(failure);
+    const missingInstallation = failure !== undefined && isMissingInstallation(failure);
     const detail = failure?._tag === "ProviderSetupError" ? failure.detail : incompatible?.detail;
     const errorMessage =
       initialized !== undefined
