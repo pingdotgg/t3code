@@ -12,7 +12,7 @@ const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|\r?$)/;
 const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?$/;
 // A column-0 paragraph, quote or table after a blank line closes any open list, quote or table.
 const BLOCK_START = /^[\p{L}\p{N}`[!|>]/u;
-const ORDERED_ITEM = /^\d{1,9}[.)](?:[ \t]|\r?$)/;
+const LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/;
 // CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
 const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<(?:script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
@@ -145,6 +145,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterDefinition = false;
   let afterHeading = false;
   let openedFence = false;
+  let possibleList = false;
   let definitionChars = 0;
   let openWrappers = 0;
   let heldCut = 0;
@@ -168,12 +169,22 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       const cutPoint =
         chars >= targetChars &&
         ((line.startsWith("#") && ATX_HEADING.test(line)) ||
-          (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
+          (afterBlankLine && BLOCK_START.test(line) && !LIST_ITEM.test(line)));
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
       closes = blockCloser(line);
-      // Two or more spaces may put a fence in a list item, which this does not track.
-      openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
+      const fence = FENCE_OPEN.test(line);
+      const shallowIndent = /^ ?[^ \t\r]/.test(line);
+      // Keep list context across blank lines and lazy paragraph continuations. A shallow
+      // block boundary ends it because list content needs at least two columns of indentation.
+      if (shallowIndent && (fence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line))) {
+        possibleList = false;
+      } else if (LIST_ITEM.test(line)) {
+        possibleList = true;
+      } else if (afterBlankLine && shallowIndent) {
+        possibleList = false;
+      }
+      openedFence = fence && (shallowIndent || !possibleList);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       const definition: boolean =

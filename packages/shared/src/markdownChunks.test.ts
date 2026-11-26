@@ -235,7 +235,8 @@ describe("splitMarkdown", () => {
     expect(result.chunks.map((chunk) => chunk.text)).toEqual([intro, appendix]);
   });
 
-  it.each(["", " "])("collects link definitions outside code with fence indent %j", (indent) => {
+  const fenceIndents = ["", " ", "  ", "   "];
+  it.each(fenceIndents)("collects link definitions outside code with fence indent %j", (indent) => {
     const text = [
       "[![badge][b]][site]",
       "",
@@ -265,8 +266,8 @@ describe("splitMarkdown", () => {
       "npm install",
       `${indent}\`\`\``,
       "[fence]: /after-fence",
-      "~~~",
-      "~~~",
+      `${indent}~~~`,
+      `${indent}~~~`,
       "Text after a fence",
       "[q]: /continues-the-paragraph",
       "",
