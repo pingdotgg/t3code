@@ -9,6 +9,7 @@ import { FormField, FormSection } from "../../../components/ui/FormSection";
 import { ListChoiceRow } from "../../../components/ui/ListChoiceRow";
 import { ListSection } from "../../../components/ui/ListSection";
 import { useEnvironmentQuery } from "../../../state/query";
+import { usePaginatedBranches } from "../../../state/queries";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
@@ -43,8 +44,21 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
 
   const currentBranch = gitStatus.data?.refName ?? selectedThread?.branch ?? null;
   const currentWorktreePath = selectedThreadCwd;
-  const availableBranches = gitState.selectedThreadBranches;
-  const branchesLoading = gitState.selectedThreadBranchesLoading;
+  const branchPages = usePaginatedBranches({
+    environmentId: selectedThread?.environmentId ?? null,
+    cwd: selectedThreadCwd,
+    query: null,
+    refKind: "local",
+  });
+  // The saved first page shows until the live pages answer, including offline.
+  // Servers older than refKind return remote refs too.
+  const availableBranches =
+    branchPages.data === null
+      ? gitState.selectedThreadBranches
+      : branchPages.refs.filter((branch) => !branch.isRemote);
+  // Live ref pages stay waiting for changes, so only an unanswered first page is loading.
+  const branchesLoading =
+    branchPages.data === null && branchPages.isPending && availableBranches.length === 0;
   const busy = gitState.gitOperationLabel !== null;
 
   const [newBranchName, setNewBranchName] = useState("");
@@ -171,6 +185,14 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
           );
         })}
       </ListSection>
+      {branchPages.data?.nextCursor != null ? (
+        <SheetActionButton
+          icon="arrow.down.circle"
+          label={gt("Load more")}
+          disabled={branchPages.isFetchingNextPage}
+          onPress={branchPages.loadNext}
+        />
+      ) : null}
     </FitSheet>
   );
 }
