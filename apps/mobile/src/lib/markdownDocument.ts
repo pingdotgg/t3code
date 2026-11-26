@@ -656,7 +656,12 @@ function firstLeafOffset(node: MarkdownNode): number | undefined {
  */
 export function markdownWithTextDirection(markdown: string): string {
   // The parser decodes numeric character references, which can spell right-to-left letters.
-  if (!hasRightToLeftLetter(markdown) && !markdown.includes("&#")) return markdown;
+  if (
+    !hasRightToLeftLetter(markdown) &&
+    !(markdown.includes("&#") && hasRightToLeftLetter(decodeHtmlEntities(markdown)))
+  ) {
+    return markdown;
+  }
   const edits: MarkdownEdit[] = [];
   for (const block of parser.parse(markdown).children) {
     if (block.type === "code" || block.type === "html") continue;
