@@ -40,7 +40,7 @@ export function ScrollComposeButton(props: {
     <View
       pointerEvents="box-none"
       className={props.className}
-      style={[props.style, { left: 20, height: fabSize }]}
+      style={[props.style, { start: 20, height: fabSize }]}
     >
       <View
         pointerEvents="none"

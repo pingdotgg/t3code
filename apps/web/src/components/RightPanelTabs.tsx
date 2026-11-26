@@ -1,3 +1,4 @@
+import { useDirection } from "@base-ui/react/direction-provider";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { contextMenuSourceOf } from "../contextMenuSource";
 import { m, type MessageResolver } from "../i18n/messages";
@@ -942,11 +943,13 @@ function SortableTabList(props: {
   onMove: RightPanelTabsProps["onMoveSurfaces"];
   children: ReactNode;
 }) {
+  const direction = useDirection();
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const surfaceIds = props.surfaces.map((surface) => surface.id);
+  const sortableIds = direction === "rtl" ? surfaceIds.toReversed() : surfaceIds;
   const { onMove, selectedIds } = props;
   const strategy = tabSortingStrategy(
-    surfaceIds.findIndex((id) => id === selectedIds[0]),
+    sortableIds.findIndex((id) => selectedIds.includes(id)),
     selectedIds.length,
   );
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
@@ -966,7 +969,7 @@ function SortableTabList(props: {
       }}
       onDragEnd={handleDragEnd}
     >
-      <SortableContext items={surfaceIds} strategy={strategy}>
+      <SortableContext items={sortableIds} strategy={strategy}>
         {props.children}
       </SortableContext>
     </DndContext>
@@ -1609,9 +1612,11 @@ export function RightPanelTabs({ ref, ...props }: RightPanelTabsProps) {
       <div
         className={cn(
           "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 ps-2",
-          props.mode === "inline" && !props.layoutControls ? "pe-28" : "pe-3",
+          props.mode === "inline" && !props.layoutControls
+            ? "pe-28 rtl:pe-(--workspace-panel-controls-end)"
+            : "pe-3",
           ownsDesktopTitleBar && "drag-region",
-          ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
+          ownsDesktopTitleBar && "ltr:wco:pr-(--workspace-native-controls-inset)",
           props.mode === "inline" && props.maximized && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         )}
         data-right-panel-tabbar

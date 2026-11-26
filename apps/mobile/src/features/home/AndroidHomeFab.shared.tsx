@@ -16,7 +16,7 @@ export function AndroidHomeFabLayout(props: {
  */
 export function androidHomeFabPosition(safeAreaBottom: number, sidebar: boolean | undefined) {
   return {
-    right: 16,
+    end: 16,
     bottom: sidebar ? Math.max(safeAreaBottom, 12) + 6 : safeAreaBottom + 16,
   };
 }

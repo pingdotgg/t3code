@@ -255,7 +255,7 @@ export const ChatHeader = memo(function ChatHeader({
       ref={breadcrumbContainerRef}
       className={cn(
         "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
-        rightPanelOpen ? "pe-10" : "pe-24",
+        rightPanelOpen ? "pe-10" : "pe-24 rtl:pe-(--workspace-header-controls-end)",
       )}
       onContextMenu={handleHeaderContextMenu}
     >

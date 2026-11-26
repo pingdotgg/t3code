@@ -255,6 +255,8 @@ function SidebarProvider({
                 : "var(--workspace-controls-left)",
             "--workspace-titlebar-content-start":
               "calc(var(--workspace-controls-start) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap))",
+            "--workspace-header-controls-end": "calc(var(--workspace-controls-left) + 5.25rem)",
+            "--workspace-panel-controls-end": "calc(var(--workspace-controls-left) + 6.25rem)",
             ...style,
           } as React.CSSProperties
         }
@@ -769,7 +771,7 @@ function SidebarRail({
   );
   if (canResize && resolvedResizable.collapseOnResize) return rail;
 
-  return <SharedTooltipTrigger render={rail} label={railTitle} side="right" />;
+  return <SharedTooltipTrigger render={rail} label={railTitle} side="inline-end" />;
 }
 
 function SidebarInput({ className, ...props }: Omit<InputProps, "unstyled" | "variant">) {
@@ -963,7 +965,7 @@ function SidebarMenuButton({
       <TooltipPopup
         align="center"
         hidden={state !== "collapsed" || isMobile}
-        side="right"
+        side="inline-end"
         {...tooltip}
       />
     </Tooltip>
