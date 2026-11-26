@@ -1,7 +1,7 @@
 name: Upstream Fixes
 
 # This fork is its own app; upstream is a source of fixes, not a branch we
-# follow. Once a day this picks upstream's non-breaking `fix` and `perf` commits
+# follow. Every six hours this picks upstream's non-breaking `fix` and `perf` commits
 # that apply cleanly, puts them on the `upstream-fixes` branch, and opens or
 # updates one pull request with what was picked and what did not apply. Nothing
 # reaches main until that pull request is reviewed and its CI passes.
@@ -9,13 +9,14 @@ name: Upstream Fixes
 # in .github/upstream-fixes/skip.
 on:
   schedule:
-    - cron: "17 6 * * *"
+    # Upstream lands a few hundred commits a day, so a daily run is too coarse.
+    - cron: "17 */6 * * *"
   workflow_dispatch:
     inputs:
       max:
         description: Most fixes to pick in one run
         required: false
-        default: "200"
+        default: "400"
 
 permissions:
   contents: write
@@ -53,7 +54,7 @@ jobs:
       - name: Pick fixes
         id: pick
         env:
-          MAX: ${{ inputs.max || '200' }}
+          MAX: ${{ inputs.max || '400' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
