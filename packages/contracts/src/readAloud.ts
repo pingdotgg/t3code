@@ -148,6 +148,7 @@ export const SpeechSynthesisCatalog = Schema.Struct({
       voiceNames: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
       /** The languages a model speaks, as ISO 639-1 codes, when its provider says. */
       languages: Schema.optionalKey(Schema.Array(Schema.String)),
+      recommended: Schema.optionalKey(Schema.Boolean),
       /** Present for models that run on the environment and must be downloaded first. */
       install: Schema.optionalKey(SpeechSynthesisModelInstall),
       /** Overrides the catalog's `speedAppliedByProvider` for this model. */

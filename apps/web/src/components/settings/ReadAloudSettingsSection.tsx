@@ -311,7 +311,6 @@ function LocalSpeechModelBrowser({
   prepared,
   models,
   selectedModel,
-  defaultModel,
   refreshing,
   onSelect,
   onChanged,
@@ -319,7 +318,6 @@ function LocalSpeechModelBrowser({
   prepared: PreparedConnection;
   models: ReadonlyArray<LocalModelEntry>;
   selectedModel: string;
-  defaultModel: string;
   refreshing: boolean;
   onSelect: (id: string) => void;
   onChanged: () => void;
@@ -353,7 +351,8 @@ function LocalSpeechModelBrowser({
     .toSorted((left, right) =>
       sort === "size"
         ? (left.install?.size ?? 0) - (right.install?.size ?? 0)
-        : order(left) - order(right),
+        : order(left) - order(right) ||
+          Number(right.recommended === true) - Number(left.recommended === true),
     );
   const selected = models.find((entry) => entry.id === selectedModel);
   const rendered = selected && !shown.includes(selected) ? [selected, ...shown] : shown;
@@ -399,7 +398,7 @@ function LocalSpeechModelBrowser({
             prepared={prepared}
             model={entry}
             selected={entry.id === selectedModel}
-            recommended={entry.id === defaultModel}
+            recommended={entry.recommended === true}
             refreshing={refreshing}
             onSelect={() => onSelect(entry.id)}
             onDownloaded={() => {
@@ -744,7 +743,6 @@ export function ReadAloudSettingsSection() {
               prepared={prepared}
               models={localModels}
               selectedModel={model}
-              defaultModel={catalog.defaultModel}
               refreshing={catalogState.version !== catalogVersion}
               onSelect={(id) => change({ model: id, voice: "" })}
               onChanged={refreshCatalog}

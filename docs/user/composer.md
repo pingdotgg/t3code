@@ -137,10 +137,13 @@ your environment isn't reachable over HTTPS or on this computer, OpenRouter show
 back into T3 Code instead.
 
 **Local model** reads replies on your selected environment, so the text never leaves it.
-Download a model once from the same settings page. Kokoro (about 220 MB) is the default, with
-natural English voices plus Spanish, French, Hindi, Italian, and Portuguese. Supertonic 3
-(330–360 MB) speaks 31 languages and is fastest with a GPU. Pocket TTS (about 200 MB) speaks
-English and stays fast on machines without one. Like dictation models, they reuse a copy already in the Hugging Face
+Download a model once from the same settings page, where you can search and filter models by
+language. Kokoro (about 220 MB) is the default, with natural English voices plus Spanish, French,
+Hindi, Italian, and Portuguese. Qwen3-TTS 1.7B (about 2.8 GB) sounds the most natural and reads
+numbers and units best in ten languages, but needs a GPU and about 7 GB of memory. Supertonic 3
+(330–360 MB) speaks 31 languages and is fastest with a GPU. Pocket TTS (about 200 MB per
+language) has separate models for English, French, German, Italian, Portuguese, and Spanish and
+stays fast without a GPU. M5-TTS (about 950 MB) has one voice made for Chinese. Like dictation models, they reuse a copy already in the Hugging Face
 cache, and on web or desktop you can paste the path of a copy elsewhere and choose **Use
 existing**. Local models use the GPU through Metal on Apple silicon Macs and Vulkan on Windows
 and Linux, and run on macOS, Windows, and Linux with glibc 2.28 or newer.

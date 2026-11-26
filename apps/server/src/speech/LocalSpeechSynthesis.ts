@@ -35,12 +35,18 @@ import { loadLocalSynthesisModel, type LocalSynthesisModel } from "./localSynthe
 import { supertonicText } from "./synthesisAudio.ts";
 
 /** A preset the model names itself, or one it reads from its own file. */
-type LocalVoice = { readonly id: string; readonly file?: SpeechModelStore.ModelFile };
+type LocalVoice = {
+  readonly id: string;
+  /** For ids that read poorly, such as `Uncle_Fu`. */
+  readonly name?: string;
+  readonly file?: SpeechModelStore.ModelFile;
+};
 
 type LocalModel = {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  readonly recommended?: boolean;
   readonly file: SpeechModelStore.ModelFile;
   /** Whether the model honors the speed option; clients speed up playback for the rest. */
   readonly appliesSpeed: boolean;
@@ -55,17 +61,38 @@ type LocalModel = {
 
 const AUDIO_CPP_GGUF = "audio-cpp/audio.cpp-gguf";
 const GGUF_REVISION = "7a103b33f04120535bdfe97b5f65b79d3c90d708";
-// Named per model, since every Pocket TTS language ships voice files with the same names.
-const pocketVoice = (name: string, size: number, sha256: string): LocalVoice => ({
-  id: name[0]!.toUpperCase() + name.slice(1),
+// Each Pocket TTS language ships its own weights and voice files, under the same voice names.
+const pocketModel = (
+  language: string,
+  code: string,
+  name: string,
+  size: number,
+  sha256: string,
+  voices: ReadonlyArray<readonly [voice: string, size: number, sha256: string]>,
+): LocalModel => ({
+  id: `pocket-tts-${language}`,
+  name,
+  description: "Small, and fast without a GPU.",
   file: {
     id: AUDIO_CPP_GGUF,
     revision: GGUF_REVISION,
-    filename: `pocket-tts-english-${name}.safetensors`,
-    url: `https://huggingface.co/${AUDIO_CPP_GGUF}/resolve/${GGUF_REVISION}/PocketTTS-GGUF/english/embeddings/${name}.safetensors`,
+    filename: `PocketTTS-GGUF/${language}/pocket-tts-${language}-q8_0.gguf`,
     size,
     sha256,
   },
+  appliesSpeed: false,
+  languages: [code],
+  voices: voices.map(([voice, voiceSize, voiceSha256]) => ({
+    id: voice[0]!.toUpperCase() + voice.slice(1),
+    file: {
+      id: AUDIO_CPP_GGUF,
+      revision: GGUF_REVISION,
+      filename: `pocket-tts-${language}-${voice}.safetensors`,
+      url: `https://huggingface.co/${AUDIO_CPP_GGUF}/resolve/${GGUF_REVISION}/PocketTTS-GGUF/${language}/embeddings/${voice}.safetensors`,
+      size: voiceSize,
+      sha256: voiceSha256,
+    },
+  })),
 });
 
 // Japanese and Chinese Kokoro voices need the multilingual package's dictionaries.
@@ -115,6 +142,7 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
     id: "kokoro-82m",
     name: "Kokoro",
     description: "Natural voices, most of them English.",
+    recommended: true,
     file: {
       id: AUDIO_CPP_GGUF,
       revision: GGUF_REVISION,
@@ -130,6 +158,34 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
       revision: AUDIO_CPP_VERSION,
       ...AUDIO_CPP_ESPEAK_DATA,
     },
+  },
+  {
+    id: "qwen3-tts-1.7b",
+    name: "Qwen3-TTS 1.7B",
+    description:
+      "The most natural voices, and the most accurate. Needs a GPU and about 7 GB of memory.",
+    recommended: true,
+    file: {
+      id: AUDIO_CPP_GGUF,
+      revision: GGUF_REVISION,
+      filename: "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf",
+      size: 2_817_055_200,
+      sha256: "c8ac3f94b6e73f137c0e7ecc9270bc8faec7a476ff799b87e48844d1d0987ac3",
+    },
+    appliesSpeed: false,
+    // The model's own speakers, English first; each reads every language.
+    voices: [
+      { id: "Ryan" },
+      { id: "Aiden" },
+      { id: "Vivian" },
+      { id: "Serena" },
+      { id: "Uncle_Fu", name: "Uncle Fu" },
+      { id: "Dylan" },
+      { id: "Eric" },
+      { id: "Ono_Anna", name: "Ono Anna" },
+      { id: "Sohee" },
+    ],
+    languages: ["en", "zh", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"],
   },
   {
     id: "supertonic-3",
@@ -180,61 +236,122 @@ const LOCAL_SYNTHESIS_MODELS: readonly LocalModel[] = [
     ],
     speakable: supertonicText,
   },
+  pocketModel(
+    "english",
+    "en",
+    "Pocket TTS English",
+    127_867_968,
+    "3f71cf6a51f93c2f2e554e98970a3f49fb9a98d0c64bed5a815e65be3d2ff588",
+    [
+      ["alba", 6_194_424, "69c32db63ca56843d994f81f343f62e0bf2d73f7e4c9bc73e44bb1110b1d8845"],
+      ["anna", 7_816_440, "5ea82f78db006c9fd34e32ddd5aae82674b5b32646097977436458d00af80dfa"],
+      ["eve", 6_538_488, "ea9c2faf862a6c9d2cb61910fdf02842ae56940382cc8c1000fdb1b43269692b"],
+      ["jane", 7_374_072, "37386227ca8ec5bf1b8e516c13d132ce5ff5437a304fe90129a1c62f41d9a008"],
+      ["charles", 6_194_424, "299edc20182eeccfbf94e308626f259da4fbf339daa8d5905218f2b1774639b8"],
+      ["george", 6_243_576, "0c1c6c57c55a98d81254b33728150c7776f40647fe95258d1a6c1a02780b5d02"],
+      ["michael", 7_275_768, "8937f724ac4719b9aa51ea0ba1f18f9de0af7a663ad6263558266c1a53c9722d"],
+      ["paul", 6_980_856, "ed7a019168f94dfe77009f1b0de59387abc6fbb0db954d38ce722ecb77da61aa"],
+    ],
+  ),
+  pocketModel(
+    "french",
+    "fr",
+    "Pocket TTS Français",
+    128_117_408,
+    "ae7e6d536c20245d216a7ec9404124cf67f913380bf41a6380c55d6ca9dbaef5",
+    [
+      ["alba", 6_244_152, "4c80b1438668290542068bbc9515abd2c267f4cc86764c6633fcde395d1b2681"],
+      ["anna", 7_620_408, "7a7fae31e4b0e16102cb2514f96189cdb57c8403f5f7aba2b37aa942e2d03488"],
+      ["eve", 6_145_848, "b642a43b786fb60571656814cc66f9c24f8a457ea9f727903ea97d647d5ceedb"],
+      ["jane", 7_325_496, "1482685d8a1a22a7294df650f61293bab353445710e26a60ae057cbf4ad85221"],
+      ["charles", 6_195_000, "956942f32745023f512ca99a45514648c8bbf4a4edc5bb5fdcb7c1a5dd5fbf97"],
+      ["george", 5_900_088, "b7513caf686418ec303dfd87dc6ddbcc020df9bf5964cb4afcd0b72b602afa6f"],
+      ["michael", 7_128_888, "7dc7c44c71e514fcec8203a310676c410b3a68280dd52f6d60c424d51a8b638a"],
+      ["paul", 6_833_976, "85d2f623d5de93dbc33b56f7cbdb90bfaf100c1a7a0958848326223bc7cda5ed"],
+    ],
+  ),
+  pocketModel(
+    "german",
+    "de",
+    "Pocket TTS Deutsch",
+    127_868_448,
+    "d99a966c42026dbe119863ad8a8c96ddd3c8d2e800dfe2ab75a0caa579293268",
+    [
+      ["alba", 6_194_424, "b5a1933388634f63f0f709d3139f64d3c78281160d4a3bf6ea3bd1abc3ba94b6"],
+      ["anna", 7_816_440, "6aa8e46421e4a8a602976918ed407fde55e7603b313acbe2e4432905b8bee7bc"],
+      ["eve", 6_538_488, "223f60a58a28236b27ca361e01f182fb919e72f0e3dceffb3bf18f006a0d0097"],
+      ["jane", 7_374_072, "4572c0d06ce058ecb4f54d5059dcb872b3084d0cef95958faaf73bd4e1ccaf28"],
+      ["charles", 6_194_424, "c8bbc4a0e46cd0f16df2aaed7dfe811a0ca2d93799837ca4200851db906530b4"],
+      ["george", 6_243_576, "bb0ecc9d5524fe64102f44c190be74d2dbee33bcf51f44dbb16e9b6b046496e1"],
+      ["michael", 7_275_768, "6a491e111f277fab05bc05696691d621fd0847ae3b3be9271beb64453970d0f2"],
+      ["paul", 6_980_856, "3f74b464af87e9f8ee59895d806d6a2a05b5e7c345491d03177a92bc66a0eede"],
+    ],
+  ),
+  pocketModel(
+    "italian",
+    "it",
+    "Pocket TTS Italiano",
+    127_868_704,
+    "aa25eb6c0d73fa90a26c07ed5453f44c321ff483b33e96e5c3693b6f76ef9149",
+    [
+      ["alba", 6_194_424, "7d2bd2e5df41e5ede229857bcc2b56d41856725465260c330ba847e8a945442c"],
+      ["anna", 7_816_440, "2d1bb064780b6b3c4a77a336c51335fde6dd07b506ccf329d2d0872ad6327c5f"],
+      ["eve", 6_538_488, "6bd49ded51178b6a388bfad57360d4f3b795f89fa7155923efbd968405f01c9f"],
+      ["jane", 7_374_072, "56bcf13e73c2143ab431e59be4d4b67ef0cb086ce63626f290a5edcbd1c3fa7f"],
+      ["charles", 6_194_424, "1e4b6dafd17e0bb4489590f821f7083b598bd0dbe6d93bcabc8b72bb383881d5"],
+      ["george", 6_243_576, "c54fd34b252255f61f007fda923d8cb33b3f960b4806335ace0a74c2227a878d"],
+      ["michael", 7_275_768, "3a52c4eb205affd8da5b8d8d2e384328b258f6652f2ad170311bb28f5cdab714"],
+      ["paul", 6_980_856, "c0a1913b9bf224d61d15562c3f1ff778e6ecfb77432c998ce785b3c04a19d9a0"],
+    ],
+  ),
+  pocketModel(
+    "portuguese",
+    "pt",
+    "Pocket TTS Português",
+    127_869_632,
+    "e6e76fde1770586b11fab5a7d4fa07006d911098718991e242ca6006bd0513cd",
+    [
+      ["alba", 6_194_424, "855b277ffa0e1f1600acacdb72f4e8609af7db7bbb5236dd904d1472c27541d2"],
+      ["anna", 7_816_440, "70ef78480c1d90f502826c10b0512effa34262453e22a76d5992d5fa1e8182bb"],
+      ["eve", 6_538_488, "c3d3526bdf0d4f82a3e6cc8bca62148a20c69bbe6596fb72920478688f378488"],
+      ["jane", 7_374_072, "de8f3516290a8f554785366cd2ce5dac1ad6abf694b6d37a41553b092eeb508e"],
+      ["charles", 6_194_424, "e643bddfba4c1c302f0589c09a18ac553af9fa2c7e82109e12a1a89225dd06bb"],
+      ["george", 6_243_576, "f727f2820a343dc8cb0f867478e8feae9ecc8da41d6a84e6e051f1c192d20bb4"],
+      ["michael", 7_275_768, "d9348313f6e9d7badd420cffac11a59dc5767eeeccc7a679f8cfaaffecce7f2c"],
+      ["paul", 6_980_856, "ce48b67d732704f38985b38f5d5dea54175fa5bca795379cad0cffd55e534668"],
+    ],
+  ),
+  pocketModel(
+    "spanish",
+    "es",
+    "Pocket TTS Español",
+    127_869_504,
+    "d2645064c191d0b9b8daf6d24d2b8a310d89f694c9b3523c1258bc9455adcaff",
+    [
+      ["alba", 6_194_424, "694be334ed6dda508b125e22a6ae480036d1c99923cccd92a643a348867f3235"],
+      ["anna", 7_816_440, "fe964cdad79e8c2c0d2ca30bc9dc8479c6f38b45b77512975a6e272109367337"],
+      ["eve", 6_538_488, "3fdb6a2ddd06f339b015ec90aea2ea004c260fe463c9526e020249b307096a41"],
+      ["jane", 7_374_072, "1bf9bfe3172412c44d0c7227e49eeb40b060f6833e2f6f365f0bbcde757afd09"],
+      ["charles", 6_194_424, "d620942926b0a30dcf002212221c89bb4f3b8b9b9bd2cc7d034c5e1c792a675f"],
+      ["george", 6_243_576, "da140d63300c46c31b49ec26402a0b4efed5d773da8310cf4ccca115853cdc87"],
+      ["michael", 7_275_768, "ca3dfdaff6a2bf70ef9b2ab69bc66dce6d16fb06d4d7473be92610d3e43e9e15"],
+      ["paul", 6_980_856, "fcd677f0459352f7cdf62d7a1424a663bd49fc8921fb2b8e346ef9b45c92dd04"],
+    ],
+  ),
   {
-    id: "pocket-tts-english",
-    name: "Pocket TTS",
-    description: "Small, and fast without a GPU.",
+    id: "m5-tts-50m",
+    name: "M5-TTS",
+    description: "One voice, made for Chinese. Smaller than Qwen3-TTS.",
     file: {
       id: AUDIO_CPP_GGUF,
       revision: GGUF_REVISION,
-      filename: "PocketTTS-GGUF/english/pocket-tts-english-q8_0.gguf",
-      size: 127_867_968,
-      sha256: "3f71cf6a51f93c2f2e554e98970a3f49fb9a98d0c64bed5a815e65be3d2ff588",
+      filename: "M5-TTS-GGUF/m5-tts-50m-customvoice-q8_0.gguf",
+      size: 938_645_536,
+      sha256: "e73662b226ffcb3493e6d627fcdc6b53ee43d965e48e5490f99b7dd6c1fd82aa",
     },
     appliesSpeed: false,
-    languages: ["en"],
-    voices: [
-      pocketVoice(
-        "alba",
-        6_194_424,
-        "69c32db63ca56843d994f81f343f62e0bf2d73f7e4c9bc73e44bb1110b1d8845",
-      ),
-      pocketVoice(
-        "anna",
-        7_816_440,
-        "5ea82f78db006c9fd34e32ddd5aae82674b5b32646097977436458d00af80dfa",
-      ),
-      pocketVoice(
-        "eve",
-        6_538_488,
-        "ea9c2faf862a6c9d2cb61910fdf02842ae56940382cc8c1000fdb1b43269692b",
-      ),
-      pocketVoice(
-        "jane",
-        7_374_072,
-        "37386227ca8ec5bf1b8e516c13d132ce5ff5437a304fe90129a1c62f41d9a008",
-      ),
-      pocketVoice(
-        "charles",
-        6_194_424,
-        "299edc20182eeccfbf94e308626f259da4fbf339daa8d5905218f2b1774639b8",
-      ),
-      pocketVoice(
-        "george",
-        6_243_576,
-        "0c1c6c57c55a98d81254b33728150c7776f40647fe95258d1a6c1a02780b5d02",
-      ),
-      pocketVoice(
-        "michael",
-        7_275_768,
-        "8937f724ac4719b9aa51ea0ba1f18f9de0af7a663ad6263558266c1a53c9722d",
-      ),
-      pocketVoice(
-        "paul",
-        6_980_856,
-        "ed7a019168f94dfe77009f1b0de59387abc6fbb0db954d38ce722ecb77da61aa",
-      ),
-    ],
+    voices: [{ id: "1" }],
+    languages: ["zh", "en", "de", "fr", "ja", "ko"],
   },
 ];
 
@@ -456,7 +573,13 @@ const make = Effect.gen(function* () {
           name: model.name,
           description: model.description,
           voices: model.voices.map((voice) => voice.id),
+          ...(model.voices.some((voice) => voice.name) && {
+            voiceNames: Object.fromEntries(
+              model.voices.flatMap((voice) => (voice.name ? [[voice.id, voice.name]] : [])),
+            ),
+          }),
           languages: model.languages,
+          ...(model.recommended && { recommended: true }),
           install,
           ...(model.appliesSpeed ? {} : { speedAppliedByProvider: false }),
         };

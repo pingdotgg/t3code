@@ -505,11 +505,7 @@ export function ReadAloudSection() {
                   )
                 }
                 describe={(model) =>
-                  model.install
-                    ? model.id === catalog.defaultModel
-                      ? gt("Recommended")
-                      : undefined
-                    : model.id
+                  model.install ? (model.recommended ? gt("Recommended") : undefined) : model.id
                 }
               />
             ) : voiceChoices.length === 0 ? (

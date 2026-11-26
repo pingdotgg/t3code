@@ -69,11 +69,13 @@ it.effect("counts only the files an install still needs in its download size", (
       Effect.gen(function* () {
         const runtime = audioCppRuntime("darwin", "arm64")!.size;
         const { models } = yield* service.catalog;
-        expect(models.map((model) => [model.id, model.install])).toEqual([
-          ["kokoro-82m", { state: "downloadable", size: runtime + AUDIO_CPP_ESPEAK_DATA.size }],
-          ["supertonic-3", { state: "downloadable", size: runtime }],
-          ["pocket-tts-english", { state: "downloadable", size: runtime + 6_194_424 }],
-        ]);
+        expect(Object.fromEntries(models.map((model) => [model.id, model.install]))).toMatchObject({
+          "kokoro-82m": { state: "downloadable", size: runtime + AUDIO_CPP_ESPEAK_DATA.size },
+          "supertonic-3": { state: "downloadable", size: runtime },
+          "pocket-tts-english": { state: "downloadable", size: runtime + 6_194_424 },
+          // Each language has its own voice files.
+          "pocket-tts-french": { state: "downloadable", size: runtime + 6_244_152 },
+        });
       }),
     { runtime: false },
   ),
