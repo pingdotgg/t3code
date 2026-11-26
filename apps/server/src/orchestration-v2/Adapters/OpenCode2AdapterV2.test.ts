@@ -293,7 +293,6 @@ const supervisedRules = [
   ...buildPaths,
   ...mcpRules,
 ];
-// Plan asks for everything it did not explicitly allow, so nothing but the plan agent's own paths writes.
 const planRules = (paths: ReadonlyArray<unknown>) => [
   out("session.update", {
     sessionID: SESSION,

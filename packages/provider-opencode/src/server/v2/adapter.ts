@@ -457,40 +457,31 @@ const sessionRules = (
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
   mcpServerName: string | null,
-): ReadonlyArray<Rule> => {
-  // Plan mode has to stay read-only whatever the runtime mode allows. With `* allow` at the top of
-  // the list nothing else can deny a write: the `edit` deny below never matches `bash`, and its path
-  // rules re-allowed writes under the workspace. So Plan asks for everything and leaves only the
-  // exact paths the plan agent may write.
-  const readonly = policy.interactionMode === "plan";
-  return [
-    ...(policy.runtimeMode === "full-access" && !readonly
-      ? [rule("*", "allow")]
-      : [
-          rule("shell", "ask"),
-          // A Plan turn may still write the plan itself, so its `edit` stays as the runtime mode chose.
-          rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
-          rule("external_directory", "ask"),
-          // The thread's other folders count as workspace; `edit` still decides whether writes ask.
-          // A glob character in the path would allow sibling folders, so such a root keeps asking.
-          // Plan leaves them out: they would allow writes under a root the runtime mode never checked.
-          ...(readonly
-            ? []
-            : (policy.workspace?.extraRoots ?? [])
-                .filter((root) => !/[*?]/.test(root))
-                .map((root): Rule => ({
-                  action: "external_directory",
-                  resource: `${root.replace(/\/$/, "")}/*`,
-                  effect: "allow",
-                }))),
-        ]),
-    ...grants,
-    // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
-    ...(readonly ? [rule("edit", "deny")] : []),
-    ...paths,
-    ...mcpRules(mcpServerName),
-  ];
-};
+): ReadonlyArray<Rule> => [
+  // Plan keeps asking in Full access: under `* allow` a shell command could write, and the `edit`
+  // deny below never matches `shell`.
+  ...(policy.runtimeMode === "full-access" && policy.interactionMode !== "plan"
+    ? [rule("*", "allow")]
+    : [
+        rule("shell", "ask"),
+        rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
+        rule("external_directory", "ask"),
+        // The thread's other folders count as workspace; `edit` still decides whether writes ask.
+        // A glob character in the path would allow sibling folders, so such a root keeps asking.
+        ...(policy.workspace?.extraRoots ?? [])
+          .filter((root) => !/[*?]/.test(root))
+          .map((root): Rule => ({
+            action: "external_directory",
+            resource: `${root.replace(/\/$/, "")}/*`,
+            effect: "allow",
+          })),
+      ]),
+  ...grants,
+  // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
+  ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
+  ...paths,
+  ...mcpRules(mcpServerName),
+];
 
 const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<Rule>) =>
   left?.length === right.length &&
