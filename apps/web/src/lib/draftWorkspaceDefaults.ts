@@ -14,15 +14,24 @@ interface PendingWorkspaceDefault {
 
 const pendingDefaults = new Map<DraftId, PendingWorkspaceDefault>();
 
+function isInProject(
+  draft: DraftSessionState | null,
+  projectRef: ScopedProjectRef,
+): draft is DraftSessionState {
+  return (
+    draft !== null &&
+    draft.promotedTo == null &&
+    draft.environmentId === projectRef.environmentId &&
+    draft.projectId === projectRef.projectId
+  );
+}
+
 function acceptsWorkspaceDefault(
   draft: DraftSessionState | null,
   pending: PendingWorkspaceDefault,
 ): draft is DraftSessionState {
   return (
-    draft !== null &&
-    draft.promotedTo == null &&
-    draft.environmentId === pending.projectRef.environmentId &&
-    draft.projectId === pending.projectRef.projectId &&
+    isInProject(draft, pending.projectRef) &&
     draft.envMode === pending.workspace.envMode &&
     !draft.workspaceExplicit &&
     draft.worktreePath === null &&
@@ -40,16 +49,8 @@ export function trackPendingDraftCheckout<T>(
   apply: (result: T) => void,
 ): Promise<T> {
   const { getDraftSession } = useComposerDraftStore.getState();
-  const isInProject = () => {
-    const draft = getDraftSession(draftId);
-    return (
-      draft !== null &&
-      draft.promotedTo == null &&
-      draft.environmentId === projectRef.environmentId &&
-      draft.projectId === projectRef.projectId
-    );
-  };
-  if (!isInProject()) return checkout;
+  const staysInProject = () => isInProject(getDraftSession(draftId), projectRef);
+  if (!staysInProject()) return checkout;
 
   const clear = () => {
     unsubscribe();
@@ -57,7 +58,7 @@ export function trackPendingDraftCheckout<T>(
   };
   // Moving away invalidates the checkout even if the draft moves back before it finishes.
   const unsubscribe = useComposerDraftStore.subscribe(() => {
-    if (!isInProject()) clear();
+    if (!staysInProject()) clear();
   });
   const pointed = checkout.then((result) => {
     if (pendingCheckouts.get(draftId) === settled) apply(result);
