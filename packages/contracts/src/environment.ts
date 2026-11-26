@@ -120,6 +120,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadAutoSettlementScope: Schema.optionalKey(Schema.Boolean),
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   projectSettingsOverrides: Schema.optionalKey(Schema.Boolean),
+  /** Honors `projectThreadFolders`; older servers silently drop the patch. */
+  projectThreadFolders: Schema.optionalKey(Schema.Boolean),
   /** Hide the switch when absent; older servers silently drop per-project provider patches. */
   projectProviderInstanceOverrides: Schema.optionalKey(Schema.Boolean),
   threadSnooze: Schema.optionalKey(Schema.Boolean),

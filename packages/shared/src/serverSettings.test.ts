@@ -7,6 +7,7 @@ import {
   SecretProviderKind,
   ServerSettings,
   ServerSettingsPatch,
+  ThreadId,
   UsageLimitSourceId,
   type ServerProvider,
 } from "@t3tools/contracts";
@@ -700,6 +701,31 @@ describe("serverSettings helpers", () => {
 
     const removed = applyServerSettingsPatch(added, { secretProviders: { [personal]: null } });
     expect(Object.keys(removed.secretProviders)).toEqual([work]);
+  });
+
+  it("replaces and removes a project's thread folders without touching other projects", () => {
+    const web = ProjectId.make("project-web");
+    const api = ProjectId.make("project-api");
+    const folder = (id: string, threadIds: string[]) => ({
+      id,
+      name: id,
+      threadIds: threadIds.map((threadId) => ThreadId.make(threadId)),
+    });
+    const current = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectThreadFolders: {
+        [web]: [folder("auth", ["t1", "t2"]), folder("ui", [])],
+        [api]: [folder("db", ["t3"])],
+      },
+    });
+    const replaced = applyServerSettingsPatch(current, {
+      projectThreadFolders: { [web]: [folder("auth", ["t2"])] },
+    });
+    expect(replaced.projectThreadFolders).toEqual({
+      [web]: [folder("auth", ["t2"])],
+      [api]: [folder("db", ["t3"])],
+    });
+    const removed = applyServerSettingsPatch(replaced, { projectThreadFolders: { [web]: null } });
+    expect(removed.projectThreadFolders).toEqual({ [api]: [folder("db", ["t3"])] });
   });
 
   it("replaces and removes individual usage prices without clobbering other models", () => {

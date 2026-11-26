@@ -19,6 +19,8 @@ export type ThreadActionMenuId =
   | "auto-settle:disabled"
   | "snooze"
   | `snooze:${string}`
+  | "move-to-folder"
+  | `folder:${string}`
   | "unsnooze"
   | "rename"
   | "regenerate-title"
@@ -123,10 +125,20 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Boring-sidebar folders of the thread's project folder, where its server keeps them. */
+  readonly threadFolders?: {
+    readonly folders: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+    readonly currentFolderId: string | null;
+  };
 }
+
+export const THREAD_FOLDER_NEW_ACTION = "folder:new" as const;
+export const THREAD_FOLDER_NONE_ACTION = "folder:none" as const;
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
+  // Folders live in settings, which the caller checks for settings-write instead.
+  if (action === "move-to-folder" || action.startsWith("folder:")) return false;
   return ![
     "find",
     "new-thread-on-branch",
@@ -222,6 +234,39 @@ export function buildThreadActionMenuItems(
     { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: resolve(msg("Share with guest")), icon: "user-plus" }]
+      : []),
+    ...(state.threadFolders
+      ? [
+          {
+            id: "move-to-folder" as const,
+            label: resolve(msg("Move to folder")),
+            icon: "folder",
+            children: [
+              ...state.threadFolders.folders.map((folder) => ({
+                id: `folder:${folder.id}` as const,
+                label: folder.name,
+                checked: folder.id === state.threadFolders?.currentFolderId,
+              })),
+              ...(state.threadFolders.currentFolderId === null
+                ? []
+                : [
+                    {
+                      id: THREAD_FOLDER_NONE_ACTION,
+                      label: resolve(msg("Remove from folder")),
+                      separatorBefore: true,
+                    },
+                  ]),
+              {
+                id: THREAD_FOLDER_NEW_ACTION,
+                label: resolve(msg("New folder…")),
+                icon: "folder-plus",
+                separatorBefore:
+                  state.threadFolders.folders.length > 0 &&
+                  state.threadFolders.currentFolderId === null,
+              },
+            ],
+          },
+        ]
       : []),
     ...(state.projectFilter
       ? [

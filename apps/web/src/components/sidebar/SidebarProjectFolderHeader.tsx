@@ -18,6 +18,7 @@ import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { threadFolderDropAttributes } from "./SidebarThreadFolderHeader";
 import type { ProjectFolderDropEdge } from "./useProjectFolderOrder";
 
 const FOLDER_DOT_CLASS_NAME = {
@@ -63,6 +64,8 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   ) => void;
   dragging: boolean;
   dropEdge: ProjectFolderDropEdge | null;
+  /** A thread dragged here leaves its folder for the project folder itself. */
+  threadDropTarget: boolean;
   onDragStart: (group: SidebarProjectSnapshot, event: DragEvent) => void;
   onDragOver: (group: SidebarProjectSnapshot, event: DragEvent) => void;
   onDragLeave: (group: SidebarProjectSnapshot, event: DragEvent) => void;
@@ -113,6 +116,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
       <button
         type="button"
         data-sidebar-row={rowId}
+        {...threadFolderDropAttributes(group.projectKey, null)}
         aria-expanded={!collapsed}
         onClick={() => props.onToggle(group)}
         onContextMenu={(event) => {
@@ -124,7 +128,10 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
             doneThreads,
           );
         }}
-        className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        className={cn(
+          "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+          props.threadDropTarget && "bg-primary/5 ring-1 ring-inset ring-primary/40",
+        )}
       >
         <ProjectFavicon project={group} className="size-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-sidebar-foreground/90">

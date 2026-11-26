@@ -586,6 +586,10 @@ type SidebarThreadRowProps = {
   // "folder-multiline" adds the card's branch and PR line under it;
   // "running" is a one-line Running shelf row that keeps its project icon.
   variant: "card" | "slim" | "folder" | "folder-multiline" | "running";
+  /** A folder row inside a folder of its project folder. */
+  nested?: boolean | undefined;
+  /** Dims the row a boring-sidebar drag started from, as a dragged project folder dims. */
+  dragSource?: boolean | undefined;
   navigationParent?: string | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
@@ -1346,6 +1350,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           "list-none [content-visibility:auto] [contain-intrinsic-size:auto_--spacing(9)]",
           metaLine !== null && multiline && "[contain-intrinsic-size:auto_--spacing(13.5)]",
           sortable?.isDragging && "relative z-20",
+          props.dragSource && "opacity-50",
         )}
       >
         <Tooltip disabled={isRenaming || sortable?.isDragging}>
@@ -1367,7 +1372,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     ? "flex flex-col justify-center px-2.5 py-1.5"
                     : "flex h-9 items-center gap-2.5 px-2.5",
                   // Lines titles up with the folder name, past its chevron and icon.
-                  inFolder && "ps-9",
+                  inFolder && (props.nested ? "ps-15.5" : "ps-9"),
                 )}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}

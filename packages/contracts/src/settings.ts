@@ -80,6 +80,14 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+/** A folder inside a project's boring-sidebar folder; a thread sits in at most one. */
+export const ProjectThreadFolder = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  threadIds: Schema.Array(ThreadId),
+});
+export type ProjectThreadFolder = typeof ProjectThreadFolder.Type;
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -1451,6 +1459,9 @@ export const ServerSettings = Schema.Struct({
     ProjectId,
     keepUnknownOverrideKeys(ProjectSettingsOverrides),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  projectThreadFolders: Schema.Record(ProjectId, Schema.Array(ProjectThreadFolder)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   /** Fold once so restarts cannot undo later UI resets. */
   projectSettingsFolded: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 
@@ -1897,6 +1908,10 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   fallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  /** Replaces each project's folders; null removes them. */
+  projectThreadFolders: Schema.optionalKey(
+    Schema.Record(ProjectId, Schema.NullOr(Schema.Array(ProjectThreadFolder))),
+  ),
   /** Replaces each project's override set; null removes it. Omitted providerInstances retains its stored value. */
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(
