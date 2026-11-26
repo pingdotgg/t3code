@@ -4520,6 +4520,40 @@ function claudeFileChangeText(output: ClaudeNativeToolOutput): string {
   return patch.hunks.length === 0 ? "" : formatPatch(patch, FILE_HEADERS_ONLY);
 }
 
+// The approval card is shown before the tool result, so the diff has to come from the tool input.
+function claudeFileChangeApprovalPrompt(
+  toolName: string,
+  input: ClaudeNativeToolInput,
+): string | undefined {
+  const path =
+    firstStringInputField(input, ["file_path", "notebook_path", "path", "filename", "fileName"]) ??
+    "file";
+  const diffText = (
+    oldFileName: string,
+    newFileName: string,
+    oldContent: string,
+    newContent: string,
+  ) => {
+    const patch = structuredPatch(oldFileName, newFileName, oldContent, newContent);
+    return patch.hunks.length === 0 ? undefined : formatPatch(patch, FILE_HEADERS_ONLY);
+  };
+  switch (classifyClaudeNativeTool(toolName).normalizedName) {
+    case "edit": {
+      const oldString = inputRecordValue(input, "old_string");
+      const newString = inputRecordValue(input, "new_string");
+      return typeof oldString === "string" && typeof newString === "string"
+        ? diffText(path, path, oldString, newString)
+        : undefined;
+    }
+    case "write": {
+      const content = inputRecordValue(input, "content");
+      return typeof content === "string" ? diffText("/dev/null", path, "", content) : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
 function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
   const value = claudeNativeToolOutputValue(output);
   if (typeof value === "object" && value !== null) {
@@ -13497,10 +13531,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
-          // The user approves the command itself; Claude's title and description only summarize it.
+          const fileChangePrompt =
+            requestKind === "file-change"
+              ? claudeFileChangeApprovalPrompt(toolName, nativeToolInput)
+              : undefined;
+          // The user approves the change itself; Claude's title and description only summarize it.
           const command = inputRecordValue(nativeToolInput, "command");
           const prompt =
             (typeof command === "string" && command.trim() !== "" ? command : undefined) ??
+            fileChangePrompt ??
             callbackOptions.title ??
             callbackOptions.description ??
             callbackOptions.decisionReason ??
