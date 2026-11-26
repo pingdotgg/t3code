@@ -50,6 +50,7 @@ import Animated, {
 import { AsyncResult } from "effect/reactivity";
 
 import {
+  constrainAuxiliaryPaneWidth,
   deriveFileInspectorPaneLayout,
   alignListPaneToHinge,
   deriveLayout,
@@ -390,20 +391,13 @@ function AdaptiveWorkspaceLayoutContent(
         layout,
         viewportWidth: width,
         preferredWidth: fileInspectorPreferredWidth ?? undefined,
-        reservedLeadingWidth:
-          shouldRenderPrimarySidebar && showPrimarySidebar && !sidebarFloats
-            ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
-            : 0,
       }),
-    [
-      fileInspectorPreferredWidth,
-      layout,
-      showPrimarySidebar,
-      shouldRenderPrimarySidebar,
-      sidebarFloats,
-      width,
-    ],
+    [fileInspectorPreferredWidth, layout, width],
   );
+  const setInspectorWidth = (preferredWidth: number) =>
+    setFileInspectorPreferredWidth(
+      constrainAuxiliaryPaneWidth({ preferredWidth, viewportWidth: width }),
+    );
   const [workspaceInspector, setWorkspaceInspector] = useState<{
     readonly content: InspectorContent;
     readonly active: boolean;
@@ -964,7 +958,7 @@ function AdaptiveWorkspaceLayoutContent(
     revealPrimarySidebar,
     setPrimarySidebarVisible,
     openWorkspaceTab,
-    setAuxiliaryPaneWidth: setFileInspectorPreferredWidth,
+    setAuxiliaryPaneWidth: setInspectorWidth,
     setNativeInspectorWidth: (width: number) =>
       setNativeInspectorWidthFraction(inspectorWidthFor(width / viewportWidth) / viewportWidth),
   });
@@ -1160,7 +1154,7 @@ function AdaptiveWorkspaceLayoutContent(
           active={workspaceInspector?.active ?? false}
           panes={panes}
           content={workspaceInspector?.content}
-          setAuxiliaryPaneWidth={setFileInspectorPreferredWidth}
+          setAuxiliaryPaneWidth={setInspectorWidth}
           onClose={() => setFileInspectorPreferredVisible(false)}
           onClosed={handleWorkspaceInspectorClosed}
         />

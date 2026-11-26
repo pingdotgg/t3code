@@ -54,8 +54,6 @@ export function deriveThreadWorkLogSizing(input: {
 }
 
 const AUXILIARY_PANE_MIN_WIDTH = 260;
-const AUXILIARY_PANE_MAX_WIDTH = 480;
-const AUXILIARY_PANE_DEFAULT_MAX_WIDTH = 320;
 const FILE_INSPECTOR_MIN_VIEWPORT_WIDTH = 820;
 const FILE_INSPECTOR_MIN_MAIN_WIDTH = 560;
 // UIKit's inspector column keeps its own width, so the sidebar steps aside only when the page
@@ -240,7 +238,6 @@ export function deriveWorkspacePaneLayout(input: {
     layout: input.layout,
     viewportWidth,
     preferredWidth: input.auxiliaryPanePreferredWidth,
-    reservedLeadingWidth: preferredPrimarySidebarWidth,
   });
   const auxiliaryPaneVisible = fileInspector.supported && input.auxiliaryPanePreferredVisible;
   const inspectorWidth = input.nativeWorkspace
@@ -294,13 +291,8 @@ export function deriveFileInspectorPaneLayout(input: {
   readonly layout: Layout;
   readonly viewportWidth: number;
   readonly preferredWidth?: number;
-  readonly reservedLeadingWidth?: number;
 }): FileInspectorPaneLayout {
   const viewportWidth = Math.max(0, input.viewportWidth);
-  const reservedLeadingWidth = Number.isFinite(input.reservedLeadingWidth)
-    ? Math.max(0, input.reservedLeadingWidth ?? 0)
-    : 0;
-  const availableContentWidth = Math.max(0, viewportWidth - reservedLeadingWidth);
   const supported =
     input.layout.usesSplitView && viewportWidth >= FILE_INSPECTOR_MIN_VIEWPORT_WIDTH;
 
@@ -308,32 +300,28 @@ export function deriveFileInspectorPaneLayout(input: {
     supported,
     width: supported
       ? constrainAuxiliaryPaneWidth({
-          preferredWidth:
-            input.preferredWidth ??
-            clamp(
-              Math.round(availableContentWidth * 0.28),
-              AUXILIARY_PANE_MIN_WIDTH,
-              AUXILIARY_PANE_DEFAULT_MAX_WIDTH,
-            ),
-          availableWidth: availableContentWidth,
+          preferredWidth: input.preferredWidth ?? viewportWidth * 0.4,
+          viewportWidth,
         })
       : null,
   };
 }
 
+/**
+ * Sized against the whole workspace, like the iOS inspector: the sidebar steps aside when the
+ * page would get too narrow, so the sidebar never caps how wide the inspector can grow.
+ */
 export function constrainAuxiliaryPaneWidth(input: {
   readonly preferredWidth: number;
-  readonly availableWidth: number;
+  readonly viewportWidth: number;
 }): number {
   const safePreferredWidth = Number.isFinite(input.preferredWidth)
     ? input.preferredWidth
     : AUXILIARY_PANE_MIN_WIDTH;
-  const availableWidth = Number.isFinite(input.availableWidth)
-    ? Math.max(0, input.availableWidth)
-    : 0;
+  const viewportWidth = Number.isFinite(input.viewportWidth) ? Math.max(0, input.viewportWidth) : 0;
   const maxWidth = Math.max(
     AUXILIARY_PANE_MIN_WIDTH,
-    Math.min(AUXILIARY_PANE_MAX_WIDTH, availableWidth - FILE_INSPECTOR_MIN_MAIN_WIDTH),
+    Math.min(viewportWidth * 0.6, viewportWidth - FILE_INSPECTOR_MIN_MAIN_WIDTH),
   );
   return clamp(Math.round(safePreferredWidth), AUXILIARY_PANE_MIN_WIDTH, maxWidth);
 }
