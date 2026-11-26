@@ -20,6 +20,17 @@ const FOCUSED_DOCUMENT = `(() => {
   }
 })()`;
 
+/** The cross-site frame element holding the document's focus, past same-site frames; null if none does. */
+const FOCUSED_CROSS_SITE_FRAME = `(() => {
+  let doc = document;
+  for (;;) {
+    const active = doc.activeElement;
+    if (active?.tagName !== "IFRAME" && active?.tagName !== "FRAME") return null;
+    if (!active.contentDocument) return active;
+    doc = active.contentDocument;
+  }
+})()`;
+
 /** Electron runs editing commands only for CDP keys; exclude clipboard commands to preserve the user's clipboard. */
 const EDITING_COMMANDS = new Set(["selectAll", "undo", "redo"]);
 
@@ -152,7 +163,7 @@ interface FrameRoute {
 export type PointerRoute = (params: Record<string, unknown>) => Promise<FrameRoute | null>;
 
 const FRAME_GONE_MESSAGE =
-  "The frame under the pointer went away before it took this input. Check the page before retrying.";
+  "The frame this input was for went away before it took this input. Check the page before retrying.";
 
 const MAX_FRAME_DEPTH = 8;
 const ROUTE_DEADLINE = "1 second";
@@ -181,6 +192,70 @@ export const routeMouseToFrame =
     if (!routed || ![...frameSessions.values()].includes(routed.sessionId)) return null;
     return { ...routed, onDetach };
   };
+
+/** Finds the cross-site frame that holds an unfocused guest's focus, if it has a session; null when none does. */
+export type KeyRoute = (params: Record<string, unknown>) => Promise<FrameRoute | null>;
+
+/**
+ * Direct input cannot reach a cross-site frame, and the page's CDP keys follow window focus
+ * into the app. The focused frame's own session delivers keys to that frame.
+ */
+export const routeKeysToFrame =
+  (
+    debuggee: Electron.Debugger,
+    frameSessions: ReadonlyMap<string, string>,
+    onDetach: FrameDetachWatch,
+  ): KeyRoute =>
+  async (params) => {
+    if (frameSessions.size === 0) return null;
+    const sessionId = await Effect.runPromise(
+      Effect.promise(() => locateFocusedFrame(debuggee, frameSessions)).pipe(
+        Effect.timeoutOption(ROUTE_DEADLINE),
+        Effect.map(Option.getOrNull),
+      ),
+    );
+    if (!sessionId || ![...frameSessions.values()].includes(sessionId)) return null;
+    // The frame's session runs CDP editing commands itself; clipboard ones stay dropped.
+    const commands = Array.isArray(params["commands"])
+      ? params["commands"].filter((command) => EDITING_COMMANDS.has(command))
+      : undefined;
+    return {
+      params: commands === undefined ? params : { ...params, commands },
+      sessionId,
+      onDetach,
+    };
+  };
+
+const locateFocusedFrame = async (
+  debuggee: Electron.Debugger,
+  frameSessions: ReadonlyMap<string, string>,
+) => {
+  let sessionId: string | undefined;
+  for (let depth = 0; depth < MAX_FRAME_DEPTH; depth++) {
+    try {
+      const { result } = (await debuggee.sendCommand(
+        "Runtime.evaluate",
+        { expression: FOCUSED_CROSS_SITE_FRAME },
+        sessionId,
+      )) as { readonly result: { readonly objectId?: string } };
+      if (result.objectId === undefined) return sessionId ?? null;
+      const { node } = (await debuggee.sendCommand(
+        "DOM.describeNode",
+        { objectId: result.objectId },
+        sessionId,
+      )) as { readonly node: { readonly frameId?: string } };
+      void debuggee
+        .sendCommand("Runtime.releaseObject", { objectId: result.objectId }, sessionId)
+        .catch(() => {});
+      const frameSession = node.frameId === undefined ? undefined : frameSessions.get(node.frameId);
+      if (frameSession === undefined) return null;
+      sessionId = frameSession;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
 
 /** Chromium can drop the reply to input on a frame that detaches before acknowledging it. */
 const sendToFrame = (debuggee: Electron.Debugger, method: string, route: FrameRoute) =>
@@ -296,6 +371,7 @@ export const sendPageCommand = async (
   sessionId?: string,
   routeMouse?: PointerRoute,
   beforeDispatch?: () => void,
+  routeKeys?: KeyRoute,
 ): Promise<unknown> => {
   if (method === "Input.dispatchMouseEvent") {
     return sendPointerCommand(
@@ -334,7 +410,10 @@ export const sendPageCommand = async (
     return debuggee.sendCommand(method, params);
   }
   if ((await evaluate(debuggee, `${FOCUSED_DOCUMENT} !== null`)) !== true) {
-    throw new Error(CROSS_SITE_FOCUS_MESSAGE);
+    const routed = routeKeys ? await routeKeys(params) : null;
+    if (!routed) throw new Error(CROSS_SITE_FOCUS_MESSAGE);
+    beforeDispatch?.();
+    return sendToFrame(debuggee, method, routed);
   }
   beforeDispatch?.();
   switch (method) {

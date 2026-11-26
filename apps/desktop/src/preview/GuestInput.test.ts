@@ -2,7 +2,12 @@ import * as NodeVM from "node:vm";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { routeMouseToFrame, sendPageCommand, toKeyboardInputEvents } from "./GuestInput.ts";
+import {
+  routeKeysToFrame,
+  routeMouseToFrame,
+  sendPageCommand,
+  toKeyboardInputEvents,
+} from "./GuestInput.ts";
 
 const makeGuest = ({
   focused,
@@ -404,6 +409,98 @@ describe("preview guest input", () => {
       expect([...guest.input, ...bare.input].map(({ sessionId }) => sessionId)).toEqual(
         Array(7).fill(undefined),
       );
+    });
+  });
+
+  describe("keys for a cross-site frame holding an unfocused guest's focus", () => {
+    // The page's focus is in a cross-site frame, whose focus may be in another cross-site frame.
+    const makeFocusedFrameGuest = ({
+      nested = false,
+      frameSessions = new Map([
+        ["CROSS", "session-cross"],
+        ["NESTED", "session-nested"],
+      ]),
+    }: {
+      readonly nested?: boolean;
+      readonly frameSessions?: ReadonlyMap<string, string>;
+    } = {}) => {
+      const owners: Record<string, string | undefined> = {
+        page: "CROSS",
+        "session-cross": nested ? "NESTED" : undefined,
+      };
+      const input: Array<{ method: string; sessionId: string | undefined; params: unknown }> = [];
+      const sendCommand = vi.fn(
+        async (method: string, params: Record<string, unknown>, sessionId?: string) => {
+          const expression = typeof params["expression"] === "string" ? params["expression"] : "";
+          if (expression.endsWith("!== null")) return { result: { value: false } };
+          if (method === "Runtime.evaluate") {
+            const owner = owners[sessionId ?? "page"];
+            return { result: owner === undefined ? { subtype: "null" } : { objectId: owner } };
+          }
+          if (method === "DOM.describeNode") return { node: { frameId: params["objectId"] } };
+          if (method.startsWith("Input.")) input.push({ method, sessionId, params });
+          return {};
+        },
+      );
+      const webContents = { focusedFrame: null, insertText: vi.fn(), sendInputEvent: vi.fn() };
+      const debuggee = { sendCommand } as unknown as Electron.Debugger;
+      const send = (method: string, params: Record<string, unknown>) =>
+        sendPageCommand(
+          webContents as unknown as Electron.WebContents,
+          debuggee,
+          method,
+          params,
+          undefined,
+          undefined,
+          undefined,
+          routeKeysToFrame(debuggee, frameSessions, () => () => {}),
+        );
+      return { send, input, webContents };
+    };
+
+    // regression: agent typing into a payment form's cross-site card field was refused
+    it("types on the focused frame's own session", async () => {
+      const guest = makeFocusedFrameGuest();
+      await guest.send("Input.insertText", { text: "4242" });
+      await guest.send("Input.dispatchKeyEvent", { type: "keyDown", key: "a", text: "a" });
+      expect(guest.input).toEqual([
+        { method: "Input.insertText", sessionId: "session-cross", params: { text: "4242" } },
+        {
+          method: "Input.dispatchKeyEvent",
+          sessionId: "session-cross",
+          params: { type: "keyDown", key: "a", text: "a" },
+        },
+      ]);
+      expect(guest.webContents.insertText).not.toHaveBeenCalled();
+      expect(guest.webContents.sendInputEvent).not.toHaveBeenCalled();
+    });
+
+    it("follows focus into a cross-site frame inside another", async () => {
+      const guest = makeFocusedFrameGuest({ nested: true });
+      await guest.send("Input.insertText", { text: "x" });
+      expect(guest.input.map(({ sessionId }) => sessionId)).toEqual(["session-nested"]);
+    });
+
+    it("keeps editing commands and drops clipboard ones", async () => {
+      const guest = makeFocusedFrameGuest();
+      await guest.send("Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key: "a",
+        commands: ["selectAll", "paste"],
+      });
+      expect(guest.input[0]?.params).toEqual({
+        type: "keyDown",
+        key: "a",
+        commands: ["selectAll"],
+      });
+    });
+
+    it("refuses when the focused frame has no session", async () => {
+      const guest = makeFocusedFrameGuest({ frameSessions: new Map([["OTHER", "session-other"]]) });
+      await expect(guest.send("Input.insertText", { text: "secret" })).rejects.toThrow(
+        /cross-site frame/,
+      );
+      expect(guest.input).toEqual([]);
     });
   });
 
