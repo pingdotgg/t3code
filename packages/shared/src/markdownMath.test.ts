@@ -87,6 +87,7 @@ describe("chat math parsing", () => {
     expect(markdownMathRanges("```math\rx^2")).toEqual([]);
     expect(markdownMathRanges("````math\rx^2\r```")).toEqual([]);
     expect(markdownMathRanges("```math\rx^2\r~~~")).toEqual([]);
+    expect(markdownMathRanges("```math\r@foo\r    ```")).toEqual([]);
     expect(markdownMathRanges("```math\nx^2\n```")[0]?.tex).toBe("x^2");
     expect(markdownMathRanges("```math\rx^2\r```")).toMatchObject([
       { start: 0, end: 15, tex: "x^2", display: true },
