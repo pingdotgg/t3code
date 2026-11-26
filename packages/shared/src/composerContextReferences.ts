@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 
 import { expandAssistantCitationsForProvider } from "./assistantCitations.ts";
-import { replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
+import { fencedCodeRanges, replaceThreadLinks, threadLinkCandidates } from "./threadLinks.ts";
 
 const CONTEXT_PROTOCOL = "t3-context:";
 const COMPOSER_CONTEXT_HREF_PREFIX = `${CONTEXT_PROTOCOL}//v1/`;
@@ -160,7 +160,13 @@ export function collectComposerContextReferences(
 ): ComposerContextReferenceOccurrence[] {
   const occurrences: ComposerContextReferenceOccurrence[] = [];
   if (!text.includes("](t3-context:")) return occurrences;
+  const fences = fencedCodeRanges(text);
+  let fenceIndex = 0;
   for (const match of text.matchAll(CONTEXT_LINK)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    while (fenceIndex < fences.length && fences[fenceIndex]!.end <= start) fenceIndex += 1;
+    if (fences[fenceIndex] !== undefined && end > fences[fenceIndex]!.start) continue;
     const parsed = parseComposerContextHref(match[3]!);
     if (!parsed) continue;
     occurrences.push({
@@ -168,8 +174,8 @@ export function collectComposerContextReferences(
       label: sanitizeComposerContextLabel(match[2]!, parsed.kind),
       image: match[1] === "!",
       source: match[0],
-      start: match.index,
-      end: match.index + match[0].length,
+      start,
+      end,
     });
   }
   return occurrences;

@@ -88,6 +88,28 @@ describe("labels and reference links", () => {
     });
   });
 
+  it("ignores context links inside fenced code blocks while collecting links outside them", () => {
+    const example = "[example](t3-context://v1/file/demo)";
+    const live = "[live](t3-context://v1/file/live)";
+    for (const eol of ["\n", "\r\n", "\r"]) {
+      for (const fenced of [
+        ["```md", example, "```"],
+        ["~~~md", example, "~~~"],
+        ["````md", "```", example, "```", "````"],
+        ["> > ```md", `>> ${example}`, ">> ```"],
+        ["- ```md", `  ${example}`, "  ```"],
+      ]) {
+        const block = fenced.join(eol);
+        expect(collectComposerContextReferences(block), JSON.stringify(block)).toEqual([]);
+        const withControl = `${block}${eol}${live}`;
+        const occurrences = collectComposerContextReferences(withControl);
+        expect(occurrences.map((o) => [o.contextId, o.source])).toEqual([["live", live]]);
+        expect(withControl.slice(occurrences[0]!.start, occurrences[0]!.end)).toBe(live);
+      }
+    }
+    expect(collectComposerContextReferences(`\`\`\`md\n${example}`)).toEqual([]);
+  });
+
   it("recognizes a prompt made only of image references", () => {
     const image = "![a.png](t3-context://v1/image/ctx_1)";
     const file = "[notes.md](t3-context://v1/file/ctx_3)";
@@ -444,6 +466,16 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="terminal" id="ctx_t" unavailable="true"/>');
     expect(projected).not.toContain("another payload");
     expect(projected).not.toContain("boom");
+  });
+
+  it("keeps fenced context link examples literal while projecting prose references", () => {
+    const link = "[example](t3-context://v1/file/demo)";
+    const fenced = `\`\`\`md\n${link}\n\`\`\``;
+    expect(projectComposerContextForProvider({ text: fenced, records: [] })).toBe(fenced);
+    const withControl = `${fenced}\n${link}`;
+    expect(projectComposerContextForProvider({ text: withControl, records: [] })).toBe(
+      `${fenced}\n[File: example; ref=demo]\n\n<t3_context version="1">\n<context kind="file" id="demo" unavailable="true"/>\n</t3_context>`,
+    );
   });
 });
 
