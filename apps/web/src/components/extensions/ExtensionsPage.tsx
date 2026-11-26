@@ -14,6 +14,7 @@ import { formatEnvironmentQueryError } from "../../state/query";
 import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
 import { ExtensionsWorkspace } from "./ExtensionsWorkspace";
 import { useExtensionsActions } from "./useExtensionsActions";
+import { useExtensionsFixWithAi } from "./useExtensionsFixWithAi";
 
 function ExtensionsBody({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const m = useMessages();
@@ -25,6 +26,7 @@ function ExtensionsBody({ environmentId }: { readonly environmentId: Environment
   const refreshCheck = useAtomRefresh(extensionsHealthCheckAtom(environmentId));
   const canEdit = useAtomValue(extensionsMutate.permissionAtom(environmentId));
   const { pending, run } = useExtensionsActions(environmentId, list?.subscriptions ?? []);
+  const fixWithAi = useExtensionsFixWithAi(environmentId);
   return (
     <ExtensionsWorkspace
       list={list}
@@ -40,6 +42,7 @@ function ExtensionsBody({ environmentId }: { readonly environmentId: Environment
         refreshFast();
         refreshCheck();
       }}
+      fixWithAi={(problem, subscription) => void fixWithAi(problem, subscription)}
       close={<AppRouteModalClose />}
     />
   );

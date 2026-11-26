@@ -6,7 +6,8 @@ import { Button } from "../ui/button";
 import { ExtensionActions } from "./ExtensionActions";
 import { useExtensions } from "./extensionsContext";
 import { ExtensionsMatrix, MatrixLegend } from "./ExtensionsMatrix";
-import { entryMatchesSearch, supportingSubscriptions } from "./extensionsModel";
+import { BrokenLinksRow } from "./ExtensionsBrokenLinks";
+import { brokenSkillLinks, entryMatchesSearch, supportingSubscriptions } from "./extensionsModel";
 import {
   EntryTitle,
   HealthStatus,
@@ -23,6 +24,9 @@ export function ExtensionsLibraryView() {
     (entry) => entry.kind === "skill" && entryMatchesSearch(entry, search),
   );
   const library = skills.filter((entry) => entry.inLibrary);
+  const broken = list.subscriptions.filter(
+    (subscription) => brokenSkillLinks(subscription).length > 0,
+  );
   const local = skills.flatMap((entry) =>
     columns.flatMap((subscription) => {
       const presence = entry.presence.get(subscription.instanceId);
@@ -97,18 +101,18 @@ export function ExtensionsLibraryView() {
       <section className="flex flex-col gap-2">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 className="flex items-baseline gap-2 text-sm font-semibold">
-            <T>Only in one subscription</T>
+            <T>Own copies, not linked to the library</T>
             <span className="text-xs font-normal text-muted-foreground tabular-nums">
               {local.length}
             </span>
           </h2>
           <span className="text-xs text-muted-foreground">
-            <T>Move a skill into the library to share it</T>
+            <T>Each is a folder only that subscription reads</T>
           </span>
         </div>
         {local.length === 0 ? (
           <p className="rounded-lg border px-3 py-4 text-center text-sm text-muted-foreground">
-            <T>Nothing local. Every skill lives in the shared library.</T>
+            <T>None. Every skill here is a link to the library.</T>
           </p>
         ) : (
           <SectionCard>
@@ -123,7 +127,7 @@ export function ExtensionsLibraryView() {
                   onClick={() => openDetail(entry.key)}
                 >
                   <KindIcon entry={entry} />
-                  <EntryTitle entry={entry}>
+                  <EntryTitle entry={entry} presence={presence}>
                     <SubscriptionIcon subscription={subscription} size="compact" />
                     <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
                       {presence.location}
@@ -137,6 +141,27 @@ export function ExtensionsLibraryView() {
           </SectionCard>
         )}
       </section>
+      {broken.length > 0 ? (
+        <section className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className="text-sm font-semibold">
+              <T>Broken links</T>
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              <T>Links to skills that are gone. Removing them deletes nothing else.</T>
+            </span>
+          </div>
+          <SectionCard>
+            {broken.map((subscription) => (
+              <BrokenLinksRow
+                key={subscription.instanceId}
+                subscription={subscription}
+                lead={<SubscriptionIcon subscription={subscription} size="compact" />}
+              />
+            ))}
+          </SectionCard>
+        </section>
+      ) : null}
       <MatrixLegend linking />
     </div>
   );

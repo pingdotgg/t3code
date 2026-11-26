@@ -34,12 +34,13 @@ import {
   buildExtensionEntries,
   pendingKey,
   subscriptionHealthSummary,
+  workingSkillCount,
 } from "./extensionsModel";
 import { SubscriptionIcon } from "./extensionsParts";
 import { ExtensionsSubscriptionView } from "./ExtensionsSubscriptionView";
 
 const NAV_ITEM_CLASS =
-  "flex shrink-0 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-start text-sm outline-none hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-[current=page]:bg-accent md:w-full";
+  "relative flex shrink-0 cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-start text-sm outline-none hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-[current=page]:bg-foreground/10 md:w-full";
 
 function NavItem({
   current,
@@ -57,6 +58,12 @@ function NavItem({
       className={NAV_ITEM_CLASS}
       onClick={onClick}
     >
+      {current ? (
+        <span
+          aria-hidden
+          className="absolute inset-y-1.5 start-0 w-0.5 rounded-full bg-primary max-md:inset-x-2 max-md:top-auto max-md:bottom-0 max-md:h-0.5 max-md:w-auto"
+        />
+      ) : null}
       {children}
     </button>
   );
@@ -89,13 +96,13 @@ function SubscriptionNavItem({
           count: subscription.plugins.length,
         })
       : null,
-    subscription.capabilities.skills
+    subscription.capabilities.skills || workingSkillCount(subscription) > 0
       ? gt("{count, plural, one {{count} skill} other {{count} skills}}", {
-          count: subscription.skills.length,
+          count: workingSkillCount(subscription),
         })
       : null,
   ].filter(Boolean);
-  const clear = summary.failing + summary.needsAuth + summary.issues === 0;
+  const clear = summary.failing + summary.warnings === 0;
   return (
     <NavItem
       current={current}
@@ -123,15 +130,15 @@ function SubscriptionNavItem({
                 {summary.failing}
               </span>
             ) : null}
-            {summary.needsAuth + summary.issues > 0 ? (
+            {summary.warnings > 0 ? (
               <span
                 className="flex items-center gap-1 text-warning-foreground"
                 aria-label={gt("{count} need attention", {
-                  count: summary.needsAuth + summary.issues,
+                  count: summary.warnings,
                 })}
               >
                 <span aria-hidden className="size-1.5 rounded-full bg-warning" />
-                {summary.needsAuth + summary.issues}
+                {summary.warnings}
               </span>
             ) : null}
           </span>
@@ -226,6 +233,7 @@ export function ExtensionsWorkspace({
   pending,
   run,
   recheck,
+  fixWithAi,
   close,
 }: {
   /** Null until the first list arrives. */
@@ -237,6 +245,7 @@ export function ExtensionsWorkspace({
   readonly pending: ReadonlySet<string>;
   readonly run: ExtensionsContextValue["run"];
   readonly recheck: () => void;
+  readonly fixWithAi: ExtensionsContextValue["fixWithAi"];
   readonly close: ReactNode;
 }) {
   const gt = useGT();
@@ -356,6 +365,7 @@ export function ExtensionsWorkspace({
     isPending: (instanceId, key) => pending.has(pendingKey(instanceId, key)),
     run,
     recheck,
+    fixWithAi,
     openView: (next) => {
       setView(next);
       setDetailKey(null);

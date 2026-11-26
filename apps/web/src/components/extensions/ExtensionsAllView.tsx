@@ -104,7 +104,7 @@ function BulkBar({
     onClear();
   };
   return (
-    <div className="sticky bottom-3 z-10 mx-auto flex max-w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-popover px-3 py-2 text-sm shadow-lg">
+    <div className="sticky bottom-3 z-40 mx-auto flex max-w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-popover px-3 py-2 text-sm shadow-lg">
       <span className="font-medium">{gt("{count} selected", { count: selected.length })}</span>
       {targets.length === 0 ? (
         <span className="text-muted-foreground">

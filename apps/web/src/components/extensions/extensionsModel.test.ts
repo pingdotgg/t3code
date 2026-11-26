@@ -1,5 +1,6 @@
 import {
   type ExtensionMcpServer,
+  type ExtensionSkill,
   type ExtensionsListResult,
   type ExtensionsSubscription,
   ProviderDriverKind,
@@ -10,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { parseMcpJson, splitCommandLine } from "./extensionsMcpJson";
 import {
   attentionCount,
+  brokenSkillLinks,
   buildExtensionEntries,
   copyMutation,
   entryDiffers,
@@ -19,7 +21,10 @@ import {
   listNeedsAttention,
   mergeExtensionLists,
   mutationPendingKeys,
+  mutationSubjectName,
   subscriptionAttention,
+  subscriptionHealthSummary,
+  workingSkillCount,
 } from "./extensionsModel";
 
 const work = ProviderInstanceId.make("claude-work");
@@ -105,6 +110,8 @@ describe("buildExtensionEntries", () => {
               description: null,
               source: "library",
               path: "~/.agents/skills/animate",
+              brokenLink: false,
+              libraryCopy: "none",
               health: "unknown",
               detail: null,
             },
@@ -113,6 +120,8 @@ describe("buildExtensionEntries", () => {
               description: null,
               source: "local",
               path: "~/.claude-work/skills/swift",
+              brokenLink: false,
+              libraryCopy: "none",
               health: "unknown",
               detail: null,
             },
@@ -125,6 +134,8 @@ describe("buildExtensionEntries", () => {
               description: null,
               source: "local",
               path: "~/.codex/skills/swift",
+              brokenLink: false,
+              libraryCopy: "none",
               health: "unknown",
               detail: null,
             },
@@ -222,6 +233,74 @@ describe("gaps and copying", () => {
         list([subscription(work, { issues: [{ kind: "mcp", message: "claude not found" }] })]),
       ),
     ).toBe(true);
+  });
+});
+
+describe("broken skill links", () => {
+  const dead = (name: string): ExtensionSkill => ({
+    name,
+    description: null,
+    source: "library",
+    path: `~/.gemini/skills/${name}`,
+    brokenLink: true,
+    libraryCopy: "none",
+    health: "failing",
+    detail: "The link points to a skill that no longer exists",
+  });
+  const result = list(
+    [
+      subscription(codex, {
+        capabilities: {
+          mcp: true,
+          mcpSignIn: false,
+          mcpSetEnabled: false,
+          plugins: false,
+          skills: false,
+        },
+        skills: [
+          dead("expo-router"),
+          dead("react-hooks"),
+          {
+            name: "swift",
+            description: null,
+            source: "local",
+            path: "~/.gemini/skills/swift",
+            brokenLink: false,
+            libraryCopy: "different",
+            health: "unknown",
+            detail: null,
+          },
+        ],
+      }),
+    ],
+    { library: { path: "~/.agents/skills", skills: [{ name: "swift", description: null }] } },
+  );
+
+  it("are not skills, in the library or anywhere else", () => {
+    const entries = buildExtensionEntries(result);
+    expect(entries.map((entry) => entry.key)).toEqual(["skill:swift"]);
+    expect(entries[0]!.presence.get(codex)!.libraryCopy).toBe("different");
+    expect(workingSkillCount(result.subscriptions[0]!)).toBe(1);
+  });
+
+  it("count as one warning however many there are", () => {
+    expect(brokenSkillLinks(result.subscriptions[0]!).map((skill) => skill.name)).toEqual([
+      "expo-router",
+      "react-hooks",
+    ]);
+    expect(subscriptionHealthSummary(result.subscriptions[0]!)).toEqual({
+      failing: 0,
+      warnings: 1,
+    });
+    expect(attentionCount(result)).toBe(1);
+    expect(listNeedsAttention(result)).toBe(true);
+  });
+
+  it("keep their own pending key", () => {
+    expect(mutationPendingKeys({ _tag: "SkillRemoveBrokenLinks", instanceId: codex })).toEqual([
+      `${codex}|skill-broken-links`,
+    ]);
+    expect(mutationSubjectName({ _tag: "SkillRemoveBrokenLinks", instanceId: codex })).toBeNull();
   });
 });
 

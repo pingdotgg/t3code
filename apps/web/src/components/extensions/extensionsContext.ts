@@ -8,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { createContext, use } from "react";
 
+import type { ExtensionFixProblem } from "./extensionsFixPrompt";
 import type { ExtensionEntry } from "./extensionsModel";
 
 export type ExtensionsView =
@@ -36,6 +37,8 @@ export interface ExtensionsContextValue {
   readonly openView: (view: ExtensionsView) => void;
   readonly openDetail: (entryKey: string) => void;
   readonly openAdd: (preset?: ExtensionsAddPreset) => void;
+  /** Starts a new thread that asks an agent to fix the problem, on that subscription. */
+  readonly fixWithAi: (problem: ExtensionFixProblem, subscription: ExtensionsSubscription) => void;
 }
 
 export const ExtensionsContext = createContext<ExtensionsContextValue | null>(null);

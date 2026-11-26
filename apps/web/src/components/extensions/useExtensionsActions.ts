@@ -3,25 +3,54 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { RegistryContext } from "@effect/atom-react";
 import type { EnvironmentId, ExtensionsMutation, ExtensionsSubscription } from "@t3tools/contracts";
+import type { AtomRegistry } from "effect/reactivity";
 import { useGT } from "gt-react";
-import { useState } from "react";
+import { useContext, useState } from "react";
 
-import { extensionsMutate } from "../../state/extensions";
+import { extensionsFastListAtom, extensionsMutate } from "../../state/extensions";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { mutationPendingKeys, mutationSubjectName } from "./extensionsModel";
+
+const REFRESH_START_MS = 500;
+const REFRESH_LIMIT_MS = 30_000;
+
+/** Resolves once the list refetch a mutation started has landed. */
+function listRefreshed(registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) {
+  const atom = extensionsFastListAtom(environmentId);
+  return new Promise<void>((resolve) => {
+    let started = registry.get(atom).waiting;
+    const finish = () => {
+      clearTimeout(startTimer);
+      clearTimeout(limitTimer);
+      unsubscribe();
+      resolve();
+    };
+    const unsubscribe = registry.subscribe(atom, (result) => {
+      if (result.waiting) started = true;
+      else if (started) finish();
+    });
+    // No refetch began (nobody is reading the list), so there is nothing to wait for.
+    const startTimer = setTimeout(() => {
+      if (!started) finish();
+    }, REFRESH_START_MS);
+    const limitTimer = setTimeout(finish, REFRESH_LIMIT_MS);
+  });
+}
 
 export function useExtensionsActions(
   environmentId: EnvironmentId | null,
   subscriptions: readonly ExtensionsSubscription[],
 ) {
   const gt = useGT();
+  const registry = useContext(RegistryContext);
   const mutate = useAtomCommand(extensionsMutate);
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
 
   const doneTitle = (mutation: ExtensionsMutation) => {
-    const name = mutationSubjectName(mutation);
+    const name = mutationSubjectName(mutation) ?? "";
     switch (mutation._tag) {
       case "McpAdd":
         return gt("Added {name}", { name });
@@ -46,6 +75,10 @@ export function useExtensionsActions(
         return gt("Unlinked {name}", { name });
       case "SkillMoveToLibrary":
         return gt("Moved {name} to the skill library", { name });
+      case "SkillUseLibraryCopy":
+        return gt("{name} now uses the library copy", { name });
+      case "SkillRemoveBrokenLinks":
+        return gt("Removed the broken skill links");
     }
   };
 
@@ -56,7 +89,7 @@ export function useExtensionsActions(
     const failures: string[] = [];
     let attempted = 0;
     for (const mutation of mutations) {
-      const name = mutationSubjectName(mutation);
+      const name = mutationSubjectName(mutation) ?? gt("Broken skill links");
       const result = await mutate({ environmentId, input: mutation });
       if (result._tag === "Success") {
         attempted += result.value.outcomes.length;
@@ -84,6 +117,8 @@ export function useExtensionsActions(
         );
       }
     }
+    // The rows stay busy until the list shows the change, not just until the server answers.
+    if (failures.length < attempted) await listRefreshed(registry, environmentId);
     setPending((current) => {
       const next = new Set(current);
       for (const key of keys) next.delete(key);

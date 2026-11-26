@@ -4,7 +4,8 @@ import { ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
 
 import { Button } from "../ui/button";
 import { useExtensions } from "./extensionsContext";
-import { subscriptionAttention } from "./extensionsModel";
+import { BrokenLinksRow } from "./ExtensionsBrokenLinks";
+import { brokenSkillLinks, subscriptionAttention } from "./extensionsModel";
 import { AllClear, SectionCard, SubscriptionIcon, useKindLabels } from "./extensionsParts";
 import { AttentionRow } from "./ExtensionsSubscriptionView";
 
@@ -17,7 +18,12 @@ export function ExtensionsAttentionView() {
       subscription,
       items: subscriptionAttention(entries, subscription.instanceId),
     }))
-    .filter((group) => group.items.length > 0 || group.subscription.issues.length > 0);
+    .filter(
+      (group) =>
+        group.items.length > 0 ||
+        group.subscription.issues.length > 0 ||
+        brokenSkillLinks(group.subscription).length > 0,
+    );
 
   return (
     <div className="flex flex-col gap-5">
@@ -70,6 +76,7 @@ export function ExtensionsAttentionView() {
                   </span>
                 </p>
               ))}
+              <BrokenLinksRow subscription={subscription} />
               {items.map((item) => (
                 <AttentionRow key={item.entry.key} item={item} />
               ))}

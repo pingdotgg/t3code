@@ -3,6 +3,7 @@ import type {
   ExtensionHealth,
   ExtensionKind,
   ExtensionMcpTransport,
+  ExtensionSkillLibraryCopy,
   ExtensionSkillSource,
   ExtensionsListResult,
   ExtensionsMutation,
@@ -24,6 +25,8 @@ export interface ExtensionPresence {
   readonly secretNames: readonly string[];
   readonly managedElsewhere: boolean;
   readonly skillSource: ExtensionSkillSource | null;
+  /** For a subscription's own skill: whether the library has that name too, and the same files. */
+  readonly libraryCopy: ExtensionSkillLibraryCopy;
   /** What tells two setups of the same name apart: the target, the version or the copy. */
   readonly signature: string;
   /** The target, version or path, as shown beside the subscription. */
@@ -220,6 +223,7 @@ export function buildExtensionEntries(list: ExtensionsListResult): readonly Exte
         secretNames: server.secretNames,
         managedElsewhere: server.managedElsewhere,
         skillSource: null,
+        libraryCopy: "none",
         signature: `${server.transport} ${server.target}`,
         location: server.target,
       });
@@ -236,14 +240,16 @@ export function buildExtensionEntries(list: ExtensionsListResult): readonly Exte
         secretNames: [],
         managedElsewhere: false,
         skillSource: null,
+        libraryCopy: "none",
         signature: plugin.version ?? "",
         location: plugin.version ?? "",
       });
     }
     for (const skill of subscription.skills) {
+      // A dead link is not a skill; it is listed with its subscription's broken links instead.
+      if (skill.brokenLink) continue;
       const entry = draft("skill", skill.name, skill.name);
       entry.description ??= skill.description;
-      if (skill.source === "library") entry.inLibrary = true;
       entry.presence.set(subscription.instanceId, {
         health: skill.health,
         detail: skill.detail,
@@ -251,6 +257,7 @@ export function buildExtensionEntries(list: ExtensionsListResult): readonly Exte
         secretNames: [],
         managedElsewhere: false,
         skillSource: skill.source,
+        libraryCopy: skill.source === "local" ? skill.libraryCopy : "none",
         // Every local copy is its own; library links all point at one.
         signature: skill.source === "library" ? "library" : `local ${subscription.instanceId}`,
         location: skill.path,
@@ -362,10 +369,22 @@ export function subscriptionAttention(
     .sort((left, right) => compareHealth(left.health, right.health));
 }
 
+/** Skill links whose target is gone. However many there are, they are one thing to clean up. */
+export function brokenSkillLinks(subscription: ExtensionsSubscription) {
+  return subscription.skills.filter((skill) => skill.brokenLink);
+}
+
+/** The subscription's skills that are really there. */
+export function workingSkillCount(subscription: ExtensionsSubscription) {
+  return subscription.skills.length - brokenSkillLinks(subscription).length;
+}
+
+export const BROKEN_LINKS_PENDING_KEY = "skill-broken-links";
+
 export interface ExtensionHealthSummary {
   readonly failing: number;
-  readonly needsAuth: number;
-  readonly issues: number;
+  /** Sign-ins, unreadable parts, and the broken links counted once. */
+  readonly warnings: number;
 }
 
 export function subscriptionHealthSummary(
@@ -374,20 +393,25 @@ export function subscriptionHealthSummary(
   const healths = [
     ...subscription.mcpServers.map((server) => (server.enabled ? server.health : "disabled")),
     ...subscription.plugins.map((plugin) => (plugin.enabled ? plugin.health : "disabled")),
-    ...subscription.skills.map((skill) => skill.health),
+    ...subscription.skills.filter((skill) => !skill.brokenLink).map((skill) => skill.health),
   ];
   return {
     failing: healths.filter((health) => health === "failing").length,
-    needsAuth: healths.filter((health) => health === "needsAuth").length,
-    issues: subscription.issues.length,
+    warnings:
+      healths.filter((health) => health === "needsAuth").length +
+      subscription.issues.length +
+      (brokenSkillLinks(subscription).length > 0 ? 1 : 0),
   };
 }
 
-/** How many extensions are failing or need a sign-in, over every subscription. */
+/**
+ * How many things want attention over every subscription: each failing or signed-out extension,
+ * and each subscription's broken links as one.
+ */
 export function attentionCount(list: ExtensionsListResult) {
   return list.subscriptions.reduce((total, subscription) => {
     const summary = subscriptionHealthSummary(subscription);
-    return total + summary.failing + summary.needsAuth;
+    return total + summary.failing + summary.warnings - subscription.issues.length;
   }, 0);
 }
 
@@ -429,10 +453,15 @@ export function mutationPendingKeys(mutation: ExtensionsMutation): readonly stri
       return mutation.instanceIds.map((id) => pendingKey(id, entryKey("skill", mutation.name)));
     case "SkillUnlink":
     case "SkillMoveToLibrary":
+    case "SkillUseLibraryCopy":
       return [pendingKey(mutation.instanceId, entryKey("skill", mutation.name))];
+    case "SkillRemoveBrokenLinks":
+      return [pendingKey(mutation.instanceId, BROKEN_LINKS_PENDING_KEY)];
   }
 }
 
-export function mutationSubjectName(mutation: ExtensionsMutation) {
-  return "pluginId" in mutation ? mutation.pluginId.split("@")[0]! : mutation.name;
+/** The extension a mutation is about, or null when it is about a whole subscription. */
+export function mutationSubjectName(mutation: ExtensionsMutation): string | null {
+  if ("pluginId" in mutation) return mutation.pluginId.split("@")[0]!;
+  return "name" in mutation ? mutation.name : null;
 }

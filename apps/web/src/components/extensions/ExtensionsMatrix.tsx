@@ -1,7 +1,7 @@
 // Fork: Kaluwa's Extensions page. Extensions down, subscriptions across.
 import type { ExtensionsSubscription } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
-import { PlusIcon } from "lucide-react";
+import { CopyIcon, PlusIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 
 import { cn } from "../../lib/utils";
@@ -69,6 +69,7 @@ function MatrixCell({
   if (presence !== undefined) {
     const unlink = presentClick === "unlink" && presence.skillSource === "library";
     const status = healthLabel(entry, presence);
+    const ownCopy = entry.inLibrary && presence.skillSource === "local";
     return (
       <Tooltip>
         <TooltipTrigger
@@ -92,12 +93,20 @@ function MatrixCell({
             />
           }
         >
-          <HealthGlyph health={shownHealth(entry.kind, presence)} />
+          {ownCopy ? (
+            <CopyIcon aria-hidden className="size-3.5 text-warning-foreground" />
+          ) : (
+            <HealthGlyph health={shownHealth(entry.kind, presence)} />
+          )}
         </TooltipTrigger>
         <TooltipPopup>
-          {unlink
-            ? gt("{subscription}: {status}. Click to unlink it", { subscription: name, status })
-            : gt("{subscription}: {status}", { subscription: name, status })}
+          {ownCopy
+            ? gt("{subscription} has its own copy, not the library's. Click for details", {
+                subscription: name,
+              })
+            : unlink
+              ? gt("{subscription}: {status}. Click to unlink it", { subscription: name, status })
+              : gt("{subscription}: {status}", { subscription: name, status })}
         </TooltipPopup>
       </Tooltip>
     );
@@ -262,6 +271,12 @@ export function MatrixLegend({ linking = false }: { readonly linking?: boolean }
         <HealthGlyph health="ok" />
         {linking ? <T>Linked</T> : <T>Working</T>}
       </span>
+      {linking ? (
+        <span className="flex items-center gap-1.5">
+          <CopyIcon aria-hidden className="size-3.5 text-warning-foreground" />
+          <T>Own copy, not the library's</T>
+        </span>
+      ) : null}
       {linking ? null : (
         <>
           <span className="flex items-center gap-1.5">

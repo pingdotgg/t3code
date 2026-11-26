@@ -17,6 +17,7 @@ import { cn } from "../../lib/utils";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { MiddleTruncate } from "../ui/middle-truncate";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { subscriptionNeedsBadge, useExtensions } from "./extensionsContext";
@@ -199,21 +200,55 @@ export function EntryTags({
           <T>Library</T>
         </Badge>
       ) : null}
-      {entryDiffers(entry) ? (
+      {presence?.libraryCopy === "different" ? (
         <Tooltip>
           <TooltipTrigger render={<Badge variant="warning" size="sm" />}>
-            <T>Differs</T>
+            <T>Differs from library</T>
+          </TooltipTrigger>
+          <TooltipPopup>
+            {gt(
+              "The library has a skill with this name, but its files are not the same as this copy's.",
+            )}
+          </TooltipPopup>
+        </Tooltip>
+      ) : presence?.libraryCopy === "same" ? (
+        <Tooltip>
+          <TooltipTrigger render={<Badge variant="secondary" size="sm" />}>
+            <T>Same as library</T>
+          </TooltipTrigger>
+          <TooltipPopup>
+            {gt("An own copy with the same files as the library's. It can become a link.")}
+          </TooltipPopup>
+        </Tooltip>
+      ) : entryDiffers(entry) ? (
+        <Tooltip>
+          <TooltipTrigger render={<Badge variant="warning" size="sm" />}>
+            {entry.kind === "skill" ? <T>Separate copies</T> : <T>Differs</T>}
           </TooltipTrigger>
           <TooltipPopup>
             {entry.kind === "mcp"
               ? gt("Same name, but a different command or URL between subscriptions.")
               : entry.kind === "plugin"
                 ? gt("Subscriptions have different versions of this plugin.")
-                : gt("Subscriptions have separate copies of this skill.")}
+                : gt(
+                    "Some subscriptions keep their own copy of this skill, so an edit in one doesn't reach the others.",
+                  )}
           </TooltipPopup>
         </Tooltip>
       ) : null}
     </>
+  );
+}
+
+/** A config home; a long one gives way in the middle and shows whole on hover. */
+export function ConfigHomePath({ path }: { readonly path: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex max-w-72 min-w-0 font-mono" />}>
+        <MiddleTruncate value={path} tail={14} showTitle={false} />
+      </TooltipTrigger>
+      <TooltipPopup variant="code">{path}</TooltipPopup>
+    </Tooltip>
   );
 }
 

@@ -7,9 +7,11 @@ import { cn } from "../../lib/utils";
 import { providerClients } from "../settings/providerDriverMeta";
 import { Button } from "../ui/button";
 import { ExtensionActions, ExtensionAddHereButton } from "./ExtensionActions";
+import { BrokenLinksRow } from "./ExtensionsBrokenLinks";
 import { useExtensions } from "./extensionsContext";
 import {
   EXTENSION_KINDS,
+  brokenSkillLinks,
   type ExtensionAttentionItem,
   type ExtensionEntry,
   compareHealth,
@@ -22,6 +24,7 @@ import {
 } from "./extensionsModel";
 import {
   AllClear,
+  ConfigHomePath,
   EntryTitle,
   HealthGlyph,
   HealthStatus,
@@ -126,7 +129,11 @@ function KindSection({
   const { entries, search, openAdd, list } = useExtensions();
   const label = kinds.plural(kind);
 
-  if (!supportsKind(subscription, kind)) {
+  const readOnly = !supportsKind(subscription, kind);
+  const hasAny = entries.some(
+    (entry) => entry.kind === kind && entry.presence.has(subscription.instanceId),
+  );
+  if (readOnly && !hasAny) {
     return (
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold">{label}</h2>
@@ -150,9 +157,14 @@ function KindSection({
         presenceHealth(right.presence.get(subscription.instanceId)!),
       ),
     );
-  const others = ofKind.filter(
-    (entry) => !entry.presence.has(subscription.instanceId) && entryCanCopy(entry),
-  );
+  const isManaged = (entry: ExtensionEntry) =>
+    entry.presence.get(subscription.instanceId)?.managedElsewhere === true &&
+    !needsAttention(presenceHealth(entry.presence.get(subscription.instanceId)!));
+  const own = mine.filter((entry) => !isManaged(entry));
+  const managed = mine.filter(isManaged);
+  const others = readOnly
+    ? []
+    : ofKind.filter((entry) => !entry.presence.has(subscription.instanceId) && entryCanCopy(entry));
   const issues = subscription.issues.filter((issue) => issue.kind === kind);
   const otherSubscriptions = list.subscriptions.filter(
     (other) =>
@@ -169,17 +181,19 @@ function KindSection({
             {mine.length}
           </span>
         </h2>
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-          {subscription.configHome}
+        <span className="flex min-w-0 flex-1 text-xs text-muted-foreground">
+          {readOnly ? <T>Read only</T> : <ConfigHomePath path={subscription.configHome} />}
         </span>
-        <Button
-          size="xs"
-          variant="outline"
-          onClick={() => openAdd({ kind, instanceId: subscription.instanceId })}
-        >
-          <PlusIcon />
-          <T>Add</T>
-        </Button>
+        {readOnly ? null : (
+          <Button
+            size="xs"
+            variant="outline"
+            onClick={() => openAdd({ kind, instanceId: subscription.instanceId })}
+          >
+            <PlusIcon />
+            <T>Add</T>
+          </Button>
+        )}
       </div>
       {issues.map((issue) => (
         <p
@@ -190,13 +204,13 @@ function KindSection({
           <span className="wrap-anywhere">{issue.message}</span>
         </p>
       ))}
-      {mine.length > 0 ? (
+      {own.length > 0 ? (
         <SectionCard>
-          {mine.map((entry) => (
+          {own.map((entry) => (
             <ItemRow key={entry.key} entry={entry} subscription={subscription} />
           ))}
         </SectionCard>
-      ) : (
+      ) : managed.length > 0 ? null : (
         <p className="rounded-lg border px-3 py-4 text-center text-sm text-muted-foreground">
           {search.trim() !== ""
             ? gt("Nothing matches your search.")
@@ -205,6 +219,30 @@ function KindSection({
               : gt("None yet.")}
         </p>
       )}
+      {managed.length > 0 ? (
+        <details
+          className="group/managed rounded-lg border"
+          open={search.trim() !== "" || undefined}
+        >
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+            <ChevronRightIcon
+              aria-hidden
+              className="size-3.5 shrink-0 transition-transform group-open/managed:rotate-90"
+            />
+            <span className="min-w-0 flex-1">
+              {gt(
+                "{count, plural, one {{count} connector from your claude.ai account} other {{count} connectors from your claude.ai account}}",
+                { count: managed.length },
+              )}
+            </span>
+          </summary>
+          <div className="divide-y border-t">
+            {managed.map((entry) => (
+              <ItemRow key={entry.key} entry={entry} subscription={subscription} />
+            ))}
+          </div>
+        </details>
+      ) : null}
       {others.length > 0 ? (
         <details className="group/more rounded-lg border">
           <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
@@ -276,6 +314,7 @@ export function ExtensionsSubscriptionView({
   const gt = useGT();
   const { entries, openAdd } = useExtensions();
   const attention = subscriptionAttention(entries, subscription.instanceId);
+  const attentionTotal = attention.length + (brokenSkillLinks(subscription).length > 0 ? 1 : 0);
   const driverLabel = providerClients.get(subscription.driver)?.label ?? subscription.driver;
 
   return (
@@ -287,7 +326,7 @@ export function ExtensionsSubscriptionView({
             <h1 className="truncate text-lg font-semibold">{subscription.displayName}</h1>
             <span className="flex min-w-0 flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
               <span>{driverLabel}</span>
-              <span className="truncate font-mono">{subscription.configHome}</span>
+              <ConfigHomePath path={subscription.configHome} />
             </span>
           </span>
         </span>
@@ -297,15 +336,16 @@ export function ExtensionsSubscriptionView({
         </Button>
       </header>
 
-      {attention.length > 0 ? (
+      {attentionTotal > 0 ? (
         <div className="divide-y divide-warning/20 overflow-hidden rounded-lg border border-warning/32 bg-warning-surface">
           <p className="flex items-center gap-2 px-3 py-2 text-sm font-medium">
             <TriangleAlertIcon aria-hidden className="size-4 shrink-0 text-warning-foreground" />
             {gt(
               "{count, plural, one {{count} thing needs attention on this subscription} other {{count} things need attention on this subscription}}",
-              { count: attention.length },
+              { count: attentionTotal },
             )}
           </p>
+          <BrokenLinksRow subscription={subscription} />
           {attention.map((item) => (
             <AttentionRow key={item.entry.key} item={item} />
           ))}
