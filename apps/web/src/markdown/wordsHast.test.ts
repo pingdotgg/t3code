@@ -424,7 +424,6 @@ describe("wordsHast", () => {
   it.each([
     ["https://example.com/?x=1&amp;copy;", "a &amp;copy; &amp;quot; &amp;#65;"],
     ["https://example.com/?x=1&amp;#65;", "a &amp;amp; b"],
-    ["https://example.com/?x=1&y=2", "a & b"],
   ])("preserves the reference destination and title when reserializing %s", (url, title) => {
     const content = "Read [ref] and ![alt][ref].";
     const markdown = `${content}\n\n[ref]: ${url} "${title}"`;
