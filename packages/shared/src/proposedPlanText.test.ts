@@ -15,24 +15,15 @@ it("takes the plan title from headings outside code", () => {
 });
 
 it("skips empty plan headings without reading into the next line", () => {
-  const markdown = "#   \r\n###\t\r\n## Real Title\r\n\r\n## Summary\r\n\r\nBody text";
-  expect(proposedPlanTitle(markdown)).toBe("Real Title");
-  expect(stripDisplayedPlanMarkdown(markdown)).toBe("Body text");
-});
-
-it("skips a heading with only closing hashes before the plan title", () => {
-  const markdown = "## ###\n\n## Release checklist\n\n## Summary\n\nUpdate the notes.";
-  expect(proposedPlanTitle(markdown)).toBe("Release checklist");
-  expect(stripDisplayedPlanMarkdown(markdown)).toBe("Update the notes.");
-});
-
-it.each([
-  ["## # #", "#"],
-  ["## ###\t###", "###"],
-])("keeps the title before the closing hashes in %j", (heading, title) => {
-  const markdown = heading + "\n\n## Summary\n\nUpdate the notes.";
-  expect(proposedPlanTitle(markdown)).toBe(title);
-  expect(stripDisplayedPlanMarkdown(markdown)).toBe("Update the notes.");
+  for (const [heading, title] of [
+    ["#   \r\n###\t\r\n## ###\r\n## Real Title", "Real Title"],
+    ["## # #", "#"],
+    ["## ###\t###", "###"],
+  ]) {
+    const markdown = `${heading}\r\n\r\n## Summary\r\n\r\nBody text`;
+    expect(proposedPlanTitle(markdown)).toBe(title);
+    expect(stripDisplayedPlanMarkdown(markdown)).toBe("Body text");
+  }
 });
 
 it("strips the displayed plan title and summary after leading blank lines", () => {
