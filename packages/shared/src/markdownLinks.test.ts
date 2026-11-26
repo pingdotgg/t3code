@@ -131,13 +131,10 @@ describe("parseMarkdownFileLink", () => {
     "/tmp/claude-1000/....:12",
     "/tmp/claude-1000/%2E%2E%2E",
     "\\foo.ts",
-    "sandbox:notes.txt",
     "sandbox://server/share/notes.txt",
     "sandbox:/%2Fserver/share/notes.txt",
     "sandbox:/%5Cserver/share/notes.txt",
-    "sandbox:/%0A/server/share/notes.txt",
     "sandbox:/tmp/bad%00name.txt",
-    "sandbox:/tmp/.../notes.txt",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
   });

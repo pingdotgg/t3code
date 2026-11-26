@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 import { runPromise, test, WEB } from "./t3.ts";
 
 const LABEL = "Open the generated checklist";
+const FILE = "generated-checklist.txt";
 const CONTENT = "Example checklist content";
 
 test(
@@ -18,12 +19,11 @@ test(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const file = path.join(path.dirname(project), "generated-checklist.txt");
+        const file = path.join(path.dirname(project), FILE);
         yield* fs.writeFileString(file, CONTENT);
         return `sandbox:${(yield* path.toFileUrl(file)).pathname}`;
       }),
     );
-    // User messages use the same file-link renderer as replies.
     const thread = await t3.thread({
       project,
       title: "Review generated checklist",
@@ -33,7 +33,7 @@ test(
     await screen.getByRole("button", /^Agent See/).tap();
 
     try {
-      const link = screen.getByRole("link", LABEL);
+      const link = screen.getByRole("link", FILE);
       await expect(link).toBeVisible();
       await link.tap();
       await expect
