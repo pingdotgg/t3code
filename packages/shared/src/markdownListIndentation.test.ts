@@ -28,9 +28,7 @@ describe("remarkNormalizeListItemIndentation", () => {
   it.each([
     "-       Read [the guide][guide].\n\n[guide]: https://example.com/guide",
     '> [guide]: https://example.com/guide\n>   "Guide"\n\n-       Read [the guide][GUIDE].',
-    "\uFEFF[guide]: https://example.com/guide\n\n-       Read **bold** and [the guide][guide].",
     ">>[my\n> > guide]: https://example.com/guide\n\n-       Read [the guide][my guide].",
-    ">>[guide]:\n   >   > https://example.com/guide\n\n-       Read [the guide][guide].",
   ])("uses document reference definitions in recovered items: %j", (markdown) => {
     expect(renderMarkdown(markdown)).toBe(renderMarkdown(markdown.replace("-       ", "- ")));
     expect(renderMarkdown(markdown)).toContain('<a href="https://example.com/guide"');

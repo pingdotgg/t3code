@@ -151,6 +151,8 @@ function attachListItemIndentationNormalizer(this: MarkdownParser) {
       return;
     }
     const markdown = file.value;
+    // micromark only parses `[text][label]` as a reference when the label is defined; the href
+    // still comes from the document's own definition when mdast becomes hast.
     let definitions = "";
     const collect = (node: MarkdownAstNode) => {
       if (node.type === "definition" && typeof node.identifier === "string") {
