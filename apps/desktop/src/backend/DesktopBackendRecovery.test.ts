@@ -11,9 +11,10 @@ import * as NodeProcess from "node:process";
 
 import { assert, describe, expect, it } from "@effect/vitest";
 
-import { make } from "./DesktopBackendRecovery.ts";
+import { macHelperExecutable } from "../macHelperExecutable.ts";
+import { make, settledBackend } from "./DesktopBackendRecovery.ts";
 import { linuxProcessIdentity } from "./LinuxProcessIdentity.ts";
-import { loadMacProcessAuditToken } from "./MacProcessAuditToken.ts";
+import { loadMacProcessAuditToken, type MacProcessAuditToken } from "./MacProcessAuditToken.ts";
 
 const loadNative = () =>
   NodeProcess.platform === "darwin"
@@ -33,7 +34,7 @@ const launcherCode = `
   import { spawn } from "node:child_process";
   import { once } from "node:events";
   import { unlink } from "node:fs/promises";
-  const [moduleUrl, appDataDirectory, stateDir, childCode] = process.argv.slice(1);
+  const [moduleUrl, appDataDirectory, stateDir, childCode, backendExecPath] = process.argv.slice(1);
   const { make } = await import(moduleUrl);
   const recovery = make({
     appDataDirectory,
@@ -42,7 +43,7 @@ const launcherCode = `
     onRecovery: () => {},
     onError: (operation, error) => { throw new Error(operation, { cause: error }); },
   });
-  const backend = spawn(process.execPath, ["--input-type=module", "-e", childCode], {
+  const backend = spawn(backendExecPath, ["--input-type=module", "-e", childCode], {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
     detached: true,
   });
@@ -61,12 +62,26 @@ async function spawnTrackedBackend(
   appDataDirectory: string,
   stateDir: string,
   cleanup: AsyncDisposableStack,
-  options: { readonly execPath?: string; readonly env?: NodeJS.ProcessEnv } = {},
+  options: {
+    readonly execPath?: string;
+    readonly backendExecPath?: string;
+    readonly env?: NodeJS.ProcessEnv;
+  } = {},
 ) {
   const moduleUrl = new URL("./DesktopBackendRecovery.ts", import.meta.url).href;
+  const execPath = options.execPath ?? NodeProcess.execPath;
   const launcher = NodeChildProcess.spawn(
-    options.execPath ?? NodeProcess.execPath,
-    ["--input-type=module", "-e", launcherCode, moduleUrl, appDataDirectory, stateDir, childCode],
+    execPath,
+    [
+      "--input-type=module",
+      "-e",
+      launcherCode,
+      moduleUrl,
+      appDataDirectory,
+      stateDir,
+      childCode,
+      options.backendExecPath ?? execPath,
+    ],
     { stdio: ["ignore", "ignore", "inherit", "ipc"], env: options.env ?? NodeProcess.env },
   );
   const exited = NodeEvents.EventEmitter.once(launcher, "exit");
@@ -88,6 +103,14 @@ async function spawnTrackedBackend(
   assert.isDefined(token);
   cleanup.defer(() => native.signal(token, "SIGKILL"));
   return { ...backend, token, stopLauncher };
+}
+
+// A hard link keeps the executable path distinct where a symlink would resolve to Node itself.
+async function linkExecutable(path: string) {
+  await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
+  await NodeFSP.link(NodeProcess.execPath, path).catch(() =>
+    NodeFSP.copyFile(NodeProcess.execPath, path),
+  );
 }
 
 async function checkPortIsFree(port: number) {
@@ -226,9 +249,7 @@ describe.runIf(NodeProcess.platform === "darwin" || NodeProcess.platform === "li
         const previousMount = NodePath.join(appDataDirectory, "mount-previous");
         await NodeFSP.mkdir(previousMount);
         const previousExecutable = NodePath.join(previousMount, "node");
-        await NodeFSP.link(NodeProcess.execPath, previousExecutable).catch(() =>
-          NodeFSP.copyFile(NodeProcess.execPath, previousExecutable),
-        );
+        await linkExecutable(previousExecutable);
         const orphan = await spawnTrackedBackend(appDataDirectory, stateDir, cleanup, {
           execPath: previousExecutable,
           env: { ...NodeProcess.env, APPIMAGE: appImage },
@@ -257,5 +278,73 @@ describe.runIf(NodeProcess.platform === "darwin" || NodeProcess.platform === "li
         assert.isUndefined(native.read(orphan.pid));
       },
     );
+
+    it("records a backend running as the app's Helper, but not another executable", async () => {
+      await using cleanup = new AsyncDisposableStack();
+      const appDataDirectory = await NodeFSP.realpath(
+        await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-helper-recovery-")),
+      );
+      cleanup.defer(() => NodeFSP.rm(appDataDirectory, { recursive: true, force: true }));
+      const stateDir = NodePath.join(appDataDirectory, "home");
+      const main = NodePath.join(appDataDirectory, "T3 Code.app", "Contents", "MacOS", "T3 Code");
+      await linkExecutable(main);
+      await linkExecutable(macHelperExecutable(main));
+
+      const helper = await spawnTrackedBackend(appDataDirectory, stateDir, cleanup, {
+        execPath: main,
+        backendExecPath: macHelperExecutable(main),
+      });
+      const native = await loadNative();
+      assert.equal(native.executable(helper.pid), macHelperExecutable(main));
+      await expect(
+        spawnTrackedBackend(appDataDirectory, stateDir, cleanup, {
+          execPath: main,
+          backendExecPath: NodeProcess.execPath,
+        }),
+      ).rejects.toThrow("Fixture launcher exited before its backend was ready");
+    });
   },
 );
+
+describe("settledBackend", () => {
+  const launcherPid = 7;
+  const backendPid = 42;
+  const main = "/Applications/T3 Code.app/Contents/MacOS/T3 Code";
+  const helper = macHelperExecutable(main);
+
+  // A backend that runs each image in turn, one per look at its executable. Each exec gives it a
+  // new token, as it does a macOS audit token.
+  const execingBackend = (images: ReadonlyArray<string>): MacProcessAuditToken => {
+    let image = 0;
+    const token = () => `${String(image).padStart(2, "0")}${"0".repeat(62)}`;
+    return {
+      read: (pid) => (pid === backendPid ? token() : undefined),
+      executable: (pid) => {
+        if (pid !== backendPid) return undefined;
+        const current = images[image];
+        image = Math.min(image + 1, images.length - 1);
+        return current;
+      },
+      parent: (pid) => (pid === backendPid ? launcherPid : undefined),
+      signal: () => {},
+    };
+  };
+
+  it.each([
+    { name: "a backend already running as the Helper", images: [helper], expected: 0 },
+    { name: "the token after the exec into the Helper", images: [main, helper], expected: 1 },
+    { name: "the main executable when the app has no Helper", images: [main], expected: 0 },
+    { name: "no other executable", images: ["/usr/local/bin/node"], expected: undefined },
+  ])("accepts $name", async ({ images, expected }) => {
+    const identity = await settledBackend(execingBackend(images), {
+      backendPid,
+      launcherPid,
+      executable: main,
+      helper: images.includes(helper) ? helper : undefined,
+    });
+    assert.equal(
+      identity,
+      expected === undefined ? undefined : `${String(expected).padStart(2, "0")}${"0".repeat(62)}`,
+    );
+  });
+});

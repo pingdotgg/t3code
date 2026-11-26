@@ -8,6 +8,7 @@ import * as NodeProcess from "node:process";
 import * as NodeTimersPromises from "node:timers/promises";
 import * as NodeUtil from "node:util";
 
+import { macHelperExecutable } from "../macHelperExecutable.ts";
 import {
   auditTokenPid,
   isProcessAuditToken,
@@ -30,6 +31,9 @@ const bootIdPattern = /^[0-9a-f-]{36}$/i;
 const terminateGraceMs = 5_000;
 const killGraceMs = 1_000;
 const pollIntervalMs = 250;
+// The macOS disclaim preload re-executes the backend in place as the Helper during startup, which
+// gives it a new audit token. A backend still on the main executable after this ran without it.
+const execGraceMs = 2_000;
 
 interface RecoveryRecord {
   readonly version: 1;
@@ -173,6 +177,36 @@ async function readBootId(): Promise<string> {
   return bootId;
 }
 
+/** The backend's token once it runs its final executable; undefined unless this launcher spawned it. */
+export async function settledBackend(
+  native: MacProcessAuditToken,
+  input: {
+    readonly backendPid: number;
+    readonly launcherPid: number;
+    readonly executable: string;
+    /** Only when the app bundle has one, since the preload can only exec into an existing Helper. */
+    readonly helper: string | undefined;
+  },
+): Promise<string | undefined> {
+  const { backendPid, executable, helper } = input;
+  const deadline = performance.now() + execGraceMs;
+  if (helper !== undefined) {
+    while (native.executable(backendPid) === executable && performance.now() < deadline) {
+      await NodeTimersPromises.setTimeout(pollIntervalMs);
+    }
+  }
+  const backend = native.read(backendPid);
+  const running = native.executable(backendPid);
+  // A token and executable alone do not prove this desktop actually spawned this process.
+  return backend !== undefined &&
+    native.parent(backendPid) === input.launcherPid &&
+    running !== undefined &&
+    (running === executable || running === helper) &&
+    native.read(backendPid) === backend
+    ? backend
+    : undefined;
+}
+
 const loadProcessIdentity = (): Promise<MacProcessAuditToken> =>
   isDarwin ? loadMacProcessAuditToken() : Promise.resolve(linuxProcessIdentity);
 
@@ -221,21 +255,23 @@ export function make(input: {
     /** Returns the record path, which the launcher removes after observing the backend exit. */
     async track(backendPid: number): Promise<string | undefined> {
       try {
-        const [native, bootId, { prefix, executable }] = await Promise.all([
+        const [native, bootId, { prefix, executable }, helper] = await Promise.all([
           loadProcessIdentity(),
           readBootId(),
           scope(),
+          NodeFSP.realpath(macHelperExecutable(NodeProcess.execPath)).catch(() => undefined),
         ]);
         const launcher = native.read(input.launcherPid);
-        const backend = native.read(backendPid);
-        // A token and executable alone do not prove this desktop actually spawned this process.
-        if (
-          launcher === undefined ||
-          backend === undefined ||
-          native.parent(backendPid) !== input.launcherPid ||
-          native.executable(backendPid) !== executable ||
-          native.read(backendPid) !== backend
-        ) {
+        const backend =
+          launcher === undefined
+            ? undefined
+            : await settledBackend(native, {
+                backendPid,
+                launcherPid: input.launcherPid,
+                executable,
+                helper,
+              });
+        if (launcher === undefined || backend === undefined) {
           throw new Error("Could not verify desktop ownership of the backend");
         }
         await NodeFSP.mkdir(directory, { mode: 0o700 }).catch((error) => {

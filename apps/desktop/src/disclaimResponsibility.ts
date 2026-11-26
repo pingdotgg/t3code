@@ -2,17 +2,15 @@
 import * as NodePath from "node:path";
 import type * as Ffi from "ffi-rs";
 
+import { macHelperExecutable } from "./macHelperExecutable.ts";
+
 // macOS files everything a process starts under its "responsible" app. The backend loads this
 // with --require and re-executes in place as the app's Dock-less Helper, disclaiming the desktop
 // app, so what agents launch is filed under the Helper. Any failure leaves the backend as it was.
-const executable = NodePath.basename(process.execPath);
-if (!executable.endsWith(" Helper")) {
+// Backend recovery records the backend after this exec; see DesktopBackendRecovery.
+if (!NodePath.basename(process.execPath).endsWith(" Helper")) {
   try {
-    const helper = NodePath.join(
-      process.execPath,
-      "../../Frameworks",
-      `${executable} Helper.app/Contents/MacOS/${executable} Helper`,
-    );
+    const helper = macHelperExecutable(process.execPath);
     const { DataType, load, open, unwrapPointer } = require("ffi-rs") as typeof Ffi;
     const { External, I32, I64 } = DataType;
     open({ library: "libSystem", path: "/usr/lib/libSystem.B.dylib" });
