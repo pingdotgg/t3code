@@ -17,6 +17,7 @@ import { useLayoutBehaviorStore } from "./layoutBehavior";
 import { focusAdjacentLayoutTab } from "./layoutActions";
 import {
   commitLayoutDrop,
+  isLayoutDragActive,
   isLayoutDropUseful,
   type LayoutDragSource,
   type LayoutDragSurface,
@@ -1031,4 +1032,56 @@ it("hides a thread's companion splits when switching tabs in the same pane and r
   expect(
     useLayoutStore.getState().hiddenCompanionsByThreadKey[scopedThreadKey(threadRef)],
   ).toBeUndefined();
+});
+
+it("does not switch tabs when releasing the pointer after Escape cancels a tab drag", async () => {
+  using tabs = setup();
+  await using _screen = await renderHost();
+  const pane = useLayoutStore.getState().layout.workspaces[0]!.columns[1]!.panes[0]!;
+  const first = pane.tabs.find((tab) => tab.id !== tabs.second.id)!;
+  useLayoutStore.getState().focusTab(first.id);
+  await vi.waitFor(() =>
+    expect(secondPaneStrip().querySelector<HTMLElement>("[data-joined]")?.dataset.layoutPaneTab).toBe(
+      first.id,
+    ),
+  );
+
+  const strip = secondPaneStrip();
+  const inactiveTab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${tabs.second.id}"]`)!;
+  const rect = inactiveTab.getBoundingClientRect();
+  inactiveTab.dispatchEvent(
+    new PointerEvent("pointerdown", {
+      bubbles: true,
+      button: 0,
+      pointerId: 1,
+      clientX: rect.left + 8,
+      clientY: rect.top + 8,
+    }),
+  );
+  window.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      pointerId: 1,
+      clientX: rect.left + 32,
+      clientY: rect.top + 8,
+    }),
+  );
+  expect(isLayoutDragActive()).toBe(true);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  expect(isLayoutDragActive()).toBe(false);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  window.dispatchEvent(
+    new PointerEvent("pointerup", {
+      bubbles: true,
+      pointerId: 1,
+      clientX: rect.left + 8,
+      clientY: rect.top + 8,
+    }),
+  );
+  inactiveTab.click();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  expect(focusedTabId()).toBe(first.id);
 });
