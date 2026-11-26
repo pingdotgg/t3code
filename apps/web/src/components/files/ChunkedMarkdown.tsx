@@ -12,6 +12,7 @@ import {
   LARGE_MARKDOWN_CHUNK_MAX_CHARS,
   type MarkdownChunk,
   type MarkdownFootnotes,
+  type MarkdownFootnotesSection,
   prepareMarkdownChunk,
 } from "@t3tools/shared/markdownChunks";
 
@@ -37,7 +38,7 @@ type ChunkItem =
   | {
       readonly kind: "footnotes";
       readonly index: number;
-      readonly text: string;
+      readonly section: MarkdownFootnotesSection;
     };
 
 function findScopedFragmentTarget(
@@ -80,7 +81,7 @@ export function ChunkedMarkdown(props: {
   const footnotesSection = buildMarkdownFootnotesSection(props.definitions, props.footnotes);
   const footnotesItemIndex = footnotesSection !== null ? items.length : null;
   if (footnotesSection !== null) {
-    items.push({ kind: "footnotes", index: items.length, text: footnotesSection });
+    items.push({ kind: "footnotes", index: items.length, section: footnotesSection });
   }
   const containerRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<LegendListRef | null>(null);
@@ -213,13 +214,22 @@ export function ChunkedMarkdown(props: {
             return (
               <div className="pb-5">
                 <FileMarkdownPreview
-                  text={item.text}
+                  text={item.section.text}
                   cwd={props.cwd}
                   relativePath={props.relativePath}
                   threadRef={props.threadRef}
                   workspaceMutationId={props.workspaceMutationId}
                   className="mx-auto max-w-4xl px-6"
                   extensions={CHUNK_FOOTNOTES_ONLY}
+                  onTaskListChange={
+                    onTaskListChange &&
+                    ((input) => {
+                      const markerOffset = item.section.fileOffset(input.markerOffset);
+                      if (markerOffset !== null) {
+                        onTaskListChange({ markerOffset, checked: input.checked });
+                      }
+                    })
+                  }
                 />
               </div>
             );

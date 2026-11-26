@@ -946,7 +946,10 @@ describe("rendered Markdown footnotes across chunks", () => {
       ...paragraphs.slice(35).flatMap((p) => [p, ""]),
       "[^1]: The footnote text.",
       "[^second]: The second footnote.",
+      "",
+      "    - [ ] Footnote task",
     ].join("\n");
+    const onTaskListChange = vi.fn();
 
     const split = splitMarkdown(markdown);
     expect(split.chunks.length).toBeGreaterThan(1);
@@ -960,6 +963,7 @@ describe("rendered Markdown footnotes across chunks", () => {
           relativePath="footnotes.md"
           threadRef={threadRef}
           workspaceMutationId={null}
+          onTaskListChange={onTaskListChange}
         />,
       ),
     );
@@ -981,6 +985,17 @@ describe("rendered Markdown footnotes across chunks", () => {
       expect(sections.length).toBe(1);
       expect(sections[0]!.textContent).toContain("The footnote text.");
       expect(sections[0]!.textContent).toContain("The second footnote.");
+    });
+
+    // A task in a footnote edits its line in the file, not in the section's own text.
+    await act(async () =>
+      screen.container
+        .querySelector<HTMLInputElement>('section[data-footnotes] input[type="checkbox"]')!
+        .click(),
+    );
+    expect(onTaskListChange).toHaveBeenCalledExactlyOnceWith({
+      markerOffset: markdown.indexOf("[ ] Footnote task"),
+      checked: true,
     });
 
     // Clicking the backref returns to the first reference (fnref-1) at the top of chunk 0.

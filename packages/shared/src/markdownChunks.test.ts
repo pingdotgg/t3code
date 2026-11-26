@@ -433,7 +433,7 @@ describe("chunked Markdown footnotes", () => {
     expect(preparedSecond.footnotesMode).toBe("omit-seeded");
     expect(preparedSecond.text).toContain("[^1]\n\n");
 
-    const section = buildMarkdownFootnotesSection(definitions, footnotes);
+    const section = buildMarkdownFootnotesSection(definitions, footnotes)?.text;
     expect(section).toContain("[^1] [^note] [^1]");
     expect(section).toContain("Second paragraph of footnote 1.");
     expect(section).not.toContain("Duplicate ignored.");
@@ -481,13 +481,22 @@ describe("chunked Markdown footnotes", () => {
     expect(chunkStart + marker! - prepared.offsetShift).toBe(text.indexOf("[ ]"));
   });
 
-  it("counts references followed by ':' or '(' and skips inline math", () => {
+  it("counts references followed by ':' or '(', skips inline math, and stays linear", () => {
     const filler = Array.from(
       { length: 40 },
       (_, i) => `Paragraph ${i}. ${"word ".repeat(25)}`,
     ).join("\n\n");
     const text = [
       "As noted[^a]: see this. Quote.[^b](emphasis added) and [^c](https://example.com). Math $x[^a]y$.",
+      "",
+      // Unclosed marks rescanned from each opener took seconds; nested quotes took minutes.
+      `${"> ".repeat(40)}x[^b]: t`,
+      "",
+      `[^c] ${"](( ".repeat(20000)}`,
+      "",
+      `[^a] ${"$x ".repeat(20000)}`,
+      "",
+      `[^c] ${"<!-- ](<".repeat(20000)}`,
       "",
       filler,
       "",
@@ -498,7 +507,7 @@ describe("chunked Markdown footnotes", () => {
 
     const { chunks, footnotes } = splitMarkdown(text);
     expect(chunks.length).toBeGreaterThan(1);
-    expect(footnotes?.chunkRefs.flat()).toEqual(["a", "b", "c"]);
+    expect(footnotes?.chunkRefs.flat()).toEqual(["a", "b", "c", "b", "c", "a", "c"]);
   });
 
   it("falls back when footnote definitions exceed the shared cap", () => {

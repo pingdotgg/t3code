@@ -146,12 +146,50 @@ function interruptsFootnoteDefinition(line: string): boolean {
   );
 }
 
-const FOOTNOTE_CONTAINER_PREFIX = /^(?:[ \t]*>[ \t]?)* {0,3}$/;
+const FOOTNOTE_INDENT_AFTER_QUOTE = /^[ \t]? {0,3}$/;
+
+/** End of a link destination's `)` from `start`, or -1 for titles and nested parentheses. */
+function linkDestinationEnd(text: string, start: number): number {
+  // Every scan stops at the next `(` or `<`, so the scans of one paragraph do not overlap.
+  let j = start;
+  if (text[j] === "<") {
+    for (j++; j < text.length && text[j] !== ">"; j++) {
+      if (text[j] === "<" || text[j] === "\n") return -1;
+      if (text[j] === "\\") j++;
+    }
+    return text[j + 1] === ")" ? j + 1 : -1;
+  }
+  for (; j < text.length; j++) {
+    const c = text[j]!;
+    if (c === ")") return j;
+    if (c === "(" || c === "<" || /\s/.test(c)) return -1;
+    if (c === "\\") j++;
+  }
+  return -1;
+}
 
 /** Finds matching footnote references in body prose, skipping escapes, code spans, inline math, HTML comments, and link destinations. */
 function extractFootnoteRefs(text: string, definedKeys: ReadonlySet<string>): string[] {
   if (!text.includes("[^")) return [];
   const refs: string[] = [];
+  // Scans that found no close mark where later ones would fail too, so no text is rescanned.
+  let mathUnclosedUntil = -1;
+  let commentUnclosed = false;
+  // The current line's leading `>` markers and indentation, tracked forward.
+  let scanned = 0;
+  let prefixEnd = 0;
+  let quoteEnd = 0;
+  const isAtLineStart = (i: number) => {
+    for (; scanned < i; scanned++) {
+      const c = text[scanned];
+      if (c === "\n") prefixEnd = quoteEnd = scanned + 1;
+      else if (prefixEnd === scanned && (c === " " || c === "\t" || c === ">")) {
+        prefixEnd++;
+        if (c === ">") quoteEnd = prefixEnd;
+      }
+    }
+    return prefixEnd === i && FOOTNOTE_INDENT_AFTER_QUOTE.test(text.slice(quoteEnd, i));
+  };
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (ch === "\\") {
@@ -180,7 +218,7 @@ function extractFootnoteRefs(text: string, definedKeys: ReadonlySet<string>): st
       else i += ticks - 1;
       continue;
     }
-    if (ch === "$" && text[i + 1] !== "$") {
+    if (ch === "$" && text[i + 1] !== "$" && i >= mathUnclosedUntil) {
       const next = text[i + 1];
       if (next !== undefined && next !== " " && next !== "\t" && next !== "\n") {
         let j = i + 1;
@@ -205,33 +243,21 @@ function extractFootnoteRefs(text: string, definedKeys: ReadonlySet<string>): st
           i = closed;
           continue;
         }
+        mathUnclosedUntil = j;
       }
     }
-    if (ch === "<" && text.startsWith("<!--", i)) {
+    if (ch === "<" && !commentUnclosed && text.startsWith("<!--", i)) {
       const close = text.indexOf("-->", i + 4);
       if (close !== -1) {
         i = close + 2;
         continue;
       }
+      commentUnclosed = true;
     }
     if (ch === "]" && text[i + 1] === "(") {
-      let j = i + 2;
-      if (text[j] === "<") {
-        const endAngle = text.indexOf(">", j + 1);
-        if (endAngle !== -1) j = endAngle + 1;
-      }
-      let depth = 1;
-      while (j < text.length && depth > 0) {
-        if (text[j] === "\\") {
-          j += 2;
-          continue;
-        }
-        if (text[j] === "(") depth++;
-        else if (text[j] === ")") depth--;
-        j++;
-      }
-      if (depth === 0) {
-        i = j - 1;
+      const end = linkDestinationEnd(text, i + 2);
+      if (end !== -1) {
+        i = end;
         continue;
       }
     }
@@ -243,9 +269,7 @@ function extractFootnoteRefs(text: string, definedKeys: ReadonlySet<string>): st
         j++;
       }
       if (j > i + 2 && text[j] === "]") {
-        const isDefAtLineStart =
-          text[j + 1] === ":" &&
-          FOOTNOTE_CONTAINER_PREFIX.test(text.slice(text.lastIndexOf("\n", i - 1) + 1, i));
+        const isDefAtLineStart = text[j + 1] === ":" && isAtLineStart(i);
         if (!isDefAtLineStart) {
           const label = text.slice(i + 2, j);
           if (definedKeys.has(label.toLowerCase())) {
@@ -264,6 +288,8 @@ export interface MarkdownFootnotes {
   readonly stubs: string;
   /** Real footnote definitions in document order for the trailing footnotes section. */
   readonly definitions: string;
+  /** Where each of `definitions` sits in the file, so edits made in the section reach the file. */
+  readonly definitionSpans: readonly (readonly [offset: number, length: number])[];
   /** Referenced footnote labels in document order for each chunk (empty when a chunk has none). */
   readonly chunkRefs: readonly (readonly string[])[];
 }
@@ -289,6 +315,9 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   const seenFootnoteKeys = new Set<string>();
   const capturedFootnoteLabels: string[] = [];
   const footnoteDefs: string[] = [];
+  const footnoteDefSpans: (readonly [offset: number, length: number])[] = [];
+  let lineOffset = 0;
+  let activeFootnoteOffset = 0;
   let lines: string[] = [];
   let chunkStartLine = 0;
   let first = true;
@@ -315,6 +344,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         capturedFootnoteKeys.add(activeFootnoteLabel.toLowerCase());
         capturedFootnoteLabels.push(activeFootnoteLabel);
         footnoteDefs.push(block);
+        footnoteDefSpans.push([activeFootnoteOffset, block.length]);
         footnoteChars += block.length + 2;
       } else {
         footnoteCapExceeded = true;
@@ -393,6 +423,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
             seenFootnoteKeys.add(key);
             activeFootnoteLabel = label;
             activeFootnoteLines = [line];
+            activeFootnoteOffset = lineOffset;
           } else {
             activeFootnoteLabel = null;
             activeFootnoteLines = null;
@@ -432,6 +463,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     first = false;
     lines.push(line);
     chars += line.length + 1;
+    lineOffset += line.length + 1;
     // A piece too large to render goes back to the last cut a wrapper held.
     if (heldCut > 0 && chars - 1 > LARGE_MARKDOWN_CHUNK_MAX_CHARS) {
       const cutLine = chunkStartLine + heldCut;
@@ -478,6 +510,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       footnotes = {
         stubs: capturedFootnoteLabels.map((label) => `[^${label}]: .`).join("\n"),
         definitions: footnoteDefs.join("\n\n"),
+        definitionSpans: footnoteDefSpans,
         chunkRefs,
       };
     }
@@ -551,11 +584,17 @@ export function prepareMarkdownChunk(
   };
 }
 
+export interface MarkdownFootnotesSection {
+  readonly text: string;
+  /** Maps an offset in `text` to the file, or null outside the footnote definitions. */
+  readonly fileOffset: (offset: number) => number | null;
+}
+
 /** Builds the Markdown source for the single trailing footnotes section of a split document. */
 export function buildMarkdownFootnotesSection(
   definitions: string,
   footnotes?: MarkdownFootnotes,
-): string | null {
+): MarkdownFootnotesSection | null {
   if (!footnotes || !footnotes.definitions) return null;
   const allRefs = footnotes.chunkRefs.flat();
   if (allRefs.length === 0) return null;
@@ -563,7 +602,20 @@ export function buildMarkdownFootnotesSection(
   if (definitions) parts.push(definitions);
   parts.push(allRefs.map((label) => `[^${label}]`).join(" "));
   parts.push(footnotes.definitions);
-  return parts.join("\n\n");
+  const text = parts.join("\n\n");
+  const { definitionSpans } = footnotes;
+  return {
+    text,
+    fileOffset: (offset) => {
+      let start = text.length - footnotes.definitions.length;
+      for (const [fileStart, length] of definitionSpans) {
+        if (offset < start) return null;
+        if (offset < start + length) return fileStart + offset - start;
+        start += length + 2;
+      }
+      return null;
+    },
+  };
 }
 
 /** Maps a footnote backref (`fnref-<fnNumber>` / `fnref-<fnNumber>-<occurrence>`) to its chunk. */
