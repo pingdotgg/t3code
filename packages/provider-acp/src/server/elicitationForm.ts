@@ -203,10 +203,9 @@ export function parseElicitationForm(
     fields.set(id, parsed.field);
     parsedFields.push({ id, property, options: parsed.options });
   }
-  // An optional `<id>__other` (OMP) or `<id>_other` (Antigravity and other ACP CLIs) text field
-  // is the free-text answer to optional single choice `<id>`: ask them as one question and send
-  // custom text to the companion. Multi-select keeps both fields, since it can answer with options
-  // and text.
+  // An optional `<id>__other` or `<id>_other` text field is the free-text answer to optional
+  // single choice `<id>`: ask them as one question and send custom text to the companion.
+  // Multi-select keeps both fields, since it can answer with options and text.
   const companions = new Map<string, string>();
   for (const [id, field] of fields) {
     if (field.kind !== "choice" || required.has(id)) continue;
