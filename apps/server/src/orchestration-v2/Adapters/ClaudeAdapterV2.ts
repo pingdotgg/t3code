@@ -5982,15 +5982,16 @@ export function claudeSdkUserInputAnswers(
 }
 
 // Claude Code tells the model which preview was picked with a "selected preview:" line built from these.
+// Previews belong to single-select questions, so only an answer with exactly one pick carries one.
 export function claudeSdkUserInputAnnotations(
   questions: ReadonlyArray<OrchestrationV2UserInputQuestion>,
-  answers: NonNullable<AskUserQuestionInput["answers"]>,
+  answers: ProviderUserInputAnswers,
 ): NonNullable<AskUserQuestionInput["annotations"]> {
   return Object.fromEntries(
     questions.flatMap((question) => {
-      const preview = question.options.find(
-        (option) => option.label === answers[question.id],
-      )?.preview;
+      const answer = answers[question.id];
+      const picked = Array.isArray(answer) && answer.length === 1 ? answer[0] : answer;
+      const preview = question.options.find((option) => option.label === picked)?.preview;
       return preview === undefined ? [] : [[question.id, { preview }]];
     }),
   );
@@ -13435,7 +13436,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             if (!(yield* Deferred.isDone(answers))) yield* cancelWithdrawnRequest(artifacts);
             const sdkAnswers = claudeSdkUserInputAnswers(resolvedAnswers);
-            const annotations = claudeSdkUserInputAnnotations(questions, sdkAnswers);
+            const annotations = claudeSdkUserInputAnnotations(questions, resolvedAnswers);
             return callbackOptions.signal.aborted
               ? ({
                   behavior: "deny",

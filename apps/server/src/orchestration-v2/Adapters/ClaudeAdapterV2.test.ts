@@ -608,12 +608,36 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       ClaudeAdapterV2.claudeSdkUserInputAnnotations(questions, { "Which approach?": "Simple" }),
       { "Which approach?": { preview } },
     );
-    for (const answer of ["Safe", "Something else entirely"]) {
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeSdkUserInputAnnotations(questions, { "Which approach?": ["Simple"] }),
+      { "Which approach?": { preview } },
+    );
+    for (const answer of ["Safe", "Something else entirely", ["Simple", "Safe"]]) {
       assert.deepEqual(
         ClaudeAdapterV2.claudeSdkUserInputAnnotations(questions, { "Which approach?": answer }),
         {},
       );
     }
+    const accessQuestions = ClaudeAdapterV2.claudeUserInputQuestions({
+      questions: [
+        {
+          header: "Access",
+          question: "Which access?",
+          options: [
+            { label: "Read", description: "Read only" },
+            { label: "Write", description: "Write only" },
+            { label: "Read, Write", description: "Both", preview },
+          ],
+          multiSelect: true,
+        },
+      ],
+    });
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeSdkUserInputAnnotations(accessQuestions, {
+        "Which access?": ["Read", "Write"],
+      }),
+      {},
+    );
     assert.isTrue(
       ClaudeAdapterV2.ClaudeProviderCapabilitiesV2.planning.supportsStructuredQuestions,
     );
