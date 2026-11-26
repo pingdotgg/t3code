@@ -44,18 +44,37 @@ export function threadRouteIsHydrating(input: {
 }
 
 /**
- * Replacing the route with a draft can't be undone, so a thread that may still arrive keeps its
- * route: a reconnecting environment often delivers it moments later, and Reconnect starts a
- * fresh connecting attempt.
+ * Replacing the route with a draft can't be undone, so only a thread this route already showed and
+ * the environment then deleted gives up its route. A linked thread that never arrived keeps waiting.
  */
 export function threadRouteOpensDraft(input: {
+  readonly detailStatus: EnvironmentThreadStatus;
+  readonly threadWasShown: boolean;
+}): boolean {
+  return input.detailStatus === "deleted" && input.threadWasShown;
+}
+
+/** Until its environment connects, a thread that hasn't arrived may still exist. */
+export function threadRouteConnectionWait(input: {
+  readonly environmentActive: boolean;
   readonly connectionState: EnvironmentConnectionPhase;
   readonly detailStatus: EnvironmentThreadStatus;
-}): boolean {
-  if (input.detailStatus === "deleted") {
-    return true;
+}): "connecting" | "unreachable" | null {
+  if (!input.environmentActive || input.detailStatus === "deleted") {
+    return null;
   }
-  return input.connectionState !== "reconnecting" && input.connectionState !== "connecting";
+  switch (input.connectionState) {
+    case "available":
+    case "connecting":
+      return "connecting";
+    case "offline":
+    case "reconnecting":
+    case "error":
+      return "unreachable";
+    case "connected":
+    case "unsupported":
+      return null;
+  }
 }
 
 /**

@@ -98,10 +98,7 @@ import { useThreadComposerState } from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import { threadEnvironment } from "../../state/threads";
-import {
-  EMPTY_ENVIRONMENT_THREAD_STATE,
-  threadErrorText,
-} from "@t3tools/client-runtime/state/threads";
+import { threadErrorText } from "@t3tools/client-runtime/state/threads";
 import { useProjects } from "../../state/entities";
 import {
   projectThreadContentPresentation,
@@ -118,6 +115,7 @@ import { InspectorSheetContext } from "../layout/workspace-inspector-sheet";
 import type { InspectorContent } from "../layout/inspector-panes";
 import {
   threadDetailErrorIsCurrent,
+  threadRouteConnectionWait,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
@@ -141,6 +139,7 @@ function firstRouteParam(value: string | string[] | undefined): string | null {
 }
 
 const RECONNECT_ERROR_DELAY_MS = 5_000;
+const UNREACHABLE_WAIT_SETTLE_MS = 1_000;
 
 // The inspector pane's bar belongs to ThreadInspectorHeader; the fallback must not draw its own.
 const InspectorHeaderShownContext = createContext(false);
@@ -186,6 +185,8 @@ interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
 }
 
 function ThreadUnavailableScreen(props: {
+  readonly title?: string;
+  readonly detail?: string;
   readonly actionLabel: string;
   readonly onAction: () => void;
 }) {
@@ -203,8 +204,10 @@ function ThreadUnavailableScreen(props: {
         className="bg-screen flex-1 android:bg-transparent"
       >
         <EmptyState
-          title={gt("Thread unavailable")}
-          detail={gt("This thread is not available in the current mobile snapshot.")}
+          title={props.title ?? gt("Thread unavailable")}
+          detail={
+            props.detail ?? gt("This thread is not available in the current mobile snapshot.")
+          }
           actionLabel={props.actionLabel}
           onAction={props.onAction}
         />
@@ -257,12 +260,15 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   const gt = useGT();
   useAndroidWorkspaceBack();
   const connectionsReady = useConnectionsReady();
-  const { connectionState } = useRemoteConnectionStatus();
+  const { connectedEnvironments, connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();
   const params = props.route.params ?? {};
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const threadIdRaw = firstRouteParam(params.threadId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
+  const routeEnvironment = connectedEnvironments.find(
+    (environment) => environment.environmentId === environmentId,
+  );
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const routeEnvironmentShellState = useEnvironmentShellReadiness(environmentId);
   const { onReconnectEnvironment } = useRemoteConnections();
@@ -286,6 +292,59 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   if (routeConnectionState !== "connected" && errorBeforeConnected !== detailError) {
     setErrorBeforeConnected(detailError);
   }
+  const routeThreadShown = selectedThread !== null && selectedThreadKey === routeThreadKey;
+  const [shownThreadKey, setShownThreadKey] = useState<string | null>(null);
+  if (routeThreadShown && shownThreadKey !== routeThreadKey) {
+    setShownThreadKey(routeThreadKey);
+  }
+  const [unreachableThreadKey, setUnreachableThreadKey] = useState<string | null>(null);
+  const attemptWait = routeThreadShown
+    ? null
+    : threadRouteConnectionWait({
+        environmentActive: routeEnvironmentRuntime !== null && routeEnvironment?.isEnabled === true,
+        connectionState: routeConnectionState,
+        detailStatus: selectedThreadDetailState.status,
+      });
+  // A failed attempt holds for a moment before it replaces the loading screen, so a cached thread's
+  // local read or a quick reconnect never flashes the waiting screen.
+  const attemptFailed =
+    useDelayedStatus(
+      `unreachable:${routeThreadKey ?? ""}`,
+      attemptWait === "unreachable" ? "unreachable" : null,
+      UNREACHABLE_WAIT_SETTLE_MS,
+    ) !== null;
+  // Once an attempt has failed, the wait stays unreachable: each new attempt would otherwise flip it back to loading.
+  const connectionWait =
+    attemptWait === "unreachable"
+      ? attemptFailed
+        ? "unreachable"
+        : "connecting"
+      : attemptWait === "connecting" && unreachableThreadKey === routeThreadKey
+        ? "unreachable"
+        : attemptWait;
+  if (
+    unreachableThreadKey !== null &&
+    (unreachableThreadKey !== routeThreadKey || routeThreadShown)
+  ) {
+    setUnreachableThreadKey(null);
+  } else if (connectionWait === "unreachable" && unreachableThreadKey !== routeThreadKey) {
+    setUnreachableThreadKey(routeThreadKey);
+  }
+  const retriedThreadKey = useRef<string | null>(null);
+  const retryKey = connectionWait === "unreachable" ? routeThreadKey : null;
+  const retryConnection = useEffectEvent((threadKey: string) => {
+    if (environmentId === null || retriedThreadKey.current === threadKey) return;
+    retriedThreadKey.current = threadKey;
+    onReconnectEnvironment(environmentId);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a linked thread whose environment is down retries the connection once instead of waiting out its backoff
+  useEffect(() => {
+    if (retryKey === null) {
+      retriedThreadKey.current = null;
+      return;
+    }
+    retryConnection(retryKey);
+  }, [retryKey]);
   const withInspectorHeader = (content: ReactNode) =>
     props.inspectorPresentation ? (
       <InspectorHeaderShownContext value>
@@ -303,7 +362,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
   }
 
-  if (selectedThread !== null && selectedThreadKey === routeThreadKey) {
+  if (routeThreadShown) {
     // ThreadRouteContent draws its own inspector header so it can show the sync status.
     return (
       <InspectorHeaderShownContext value={props.inspectorPresentation !== undefined}>
@@ -315,9 +374,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   const stillHydrating = threadRouteIsHydrating({
     isLoadingConnections: !connectionsReady,
     environmentRegistered: routeEnvironmentRuntime !== null,
-    localCacheRead:
-      routeEnvironmentShellState.cacheRead &&
-      selectedThreadDetailState !== EMPTY_ENVIRONMENT_THREAD_STATE,
+    localCacheRead: routeEnvironmentShellState.cacheRead,
     connectionState: routeConnectionState,
     shellStatus: routeEnvironmentShellState.status,
     shellHasError: routeEnvironmentShellState.hasError,
@@ -329,16 +386,30 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
     }),
   });
 
-  if (stillHydrating) {
+  // A connecting attempt counts as hydrating, but a wait that already failed must keep showing its Retry.
+  if ((stillHydrating && connectionWait !== "unreachable") || connectionWait === "connecting") {
     return withInspectorHeader(<OpeningThreadLoadingScreen />);
+  }
+
+  if (connectionWait === "unreachable") {
+    return withInspectorHeader(
+      <ThreadUnavailableScreen
+        title={gt("Waiting to connect")}
+        detail={gt("Can't reach {environment} yet. The thread opens once it connects.", {
+          environment: routeEnvironment?.environmentLabel ?? environmentId,
+        })}
+        actionLabel={gt("Retry")}
+        onAction={() => onReconnectEnvironment(environmentId)}
+      />,
+    );
   }
 
   if (
     routeName === "Thread" &&
     !props.inspectorPresentation &&
     threadRouteOpensDraft({
-      connectionState: routeConnectionState,
       detailStatus: selectedThreadDetailState.status,
+      threadWasShown: shownThreadKey === routeThreadKey,
     })
   ) {
     return <UnavailableThreadDraftRedirect environmentId={environmentId} />;

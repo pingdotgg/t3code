@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   threadDetailErrorIsCurrent,
+  threadRouteConnectionWait,
   threadRouteIsHydrating,
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
@@ -96,28 +97,43 @@ describe("threadRouteIsHydrating", () => {
 });
 
 describe("threadRouteOpensDraft", () => {
-  it("keeps the route while a reconnecting environment may still deliver the thread", () => {
-    expect(threadRouteOpensDraft({ connectionState: "reconnecting", detailStatus: "empty" })).toBe(
-      false,
+  it("never replaces a linked thread the route has not shown", () => {
+    expect(threadRouteOpensDraft({ detailStatus: "deleted", threadWasShown: false })).toBe(false);
+    expect(threadRouteOpensDraft({ detailStatus: "empty", threadWasShown: false })).toBe(false);
+  });
+
+  it("opens a draft once a thread the route showed is deleted", () => {
+    expect(threadRouteOpensDraft({ detailStatus: "deleted", threadWasShown: true })).toBe(true);
+    expect(threadRouteOpensDraft({ detailStatus: "empty", threadWasShown: true })).toBe(false);
+  });
+});
+
+describe("threadRouteConnectionWait", () => {
+  const waiting = {
+    environmentActive: true,
+    connectionState: "offline" as const,
+    detailStatus: "empty" as const,
+  };
+
+  it("waits for an unreachable environment instead of calling the thread missing", () => {
+    expect(threadRouteConnectionWait(waiting)).toBe("unreachable");
+    expect(threadRouteConnectionWait({ ...waiting, connectionState: "error" })).toBe("unreachable");
+    expect(threadRouteConnectionWait({ ...waiting, connectionState: "reconnecting" })).toBe(
+      "unreachable",
     );
   });
 
-  it("keeps the route while Reconnect retries a thread that failed to sync", () => {
-    const failedDetail = {
-      ...settled,
-      connectionState: "connecting" as const,
-      detailStatus: "empty" as const,
-      detailHasError: true,
-    };
-    expect(threadRouteIsHydrating(failedDetail)).toBe(false);
-    expect(threadRouteOpensDraft(failedDetail)).toBe(false);
+  it("keeps opening while the environment connects", () => {
+    expect(threadRouteConnectionWait({ ...waiting, connectionState: "connecting" })).toBe(
+      "connecting",
+    );
   });
 
-  it("opens a draft once the thread can't arrive", () => {
-    expect(
-      threadRouteOpensDraft({ connectionState: "reconnecting", detailStatus: "deleted" }),
-    ).toBe(true);
-    expect(threadRouteOpensDraft({ connectionState: "offline", detailStatus: "empty" })).toBe(true);
+  it("stops waiting once the environment can answer for the thread", () => {
+    expect(threadRouteConnectionWait({ ...waiting, connectionState: "connected" })).toBe(null);
+    expect(threadRouteConnectionWait({ ...waiting, connectionState: "unsupported" })).toBe(null);
+    expect(threadRouteConnectionWait({ ...waiting, detailStatus: "deleted" })).toBe(null);
+    expect(threadRouteConnectionWait({ ...waiting, environmentActive: false })).toBe(null);
   });
 });
 
