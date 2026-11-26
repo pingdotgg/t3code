@@ -266,6 +266,52 @@ it.effect("keeps complete review metadata visible while a refresh is held", () =
   }),
 );
 
+it.effect("shows an Issues preview while the complete listing is still pending", () =>
+  Effect.gen(function* () {
+    const observed = yield* Deferred.make<void>();
+    const releaseComplete = yield* Deferred.make<void>();
+    const preview: IssueListResult = {
+      viewers: {},
+      trackers: [],
+      entries: [],
+      errors: [],
+      nextCursors: {},
+    };
+    const complete = { ...preview, nextCursors: { "linear.app/ENG": "next" } };
+    const rpcSession = {
+      initialConfig: Effect.succeed({
+        environment: { capabilities: { progressiveIssueList: true } },
+      }),
+      client: {
+        [WS_METHODS.issuesListProgress]: () =>
+          Stream.concat(
+            Stream.make({ _tag: "preview", list: preview }),
+            Stream.fromEffect(
+              Deferred.await(releaseComplete).pipe(Effect.as({ _tag: "complete", list: complete })),
+            ),
+          ),
+      },
+    } as unknown as RpcSession.RpcSession;
+    const { runtime } = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession });
+    const atom = createIssueEnvironmentAtoms(runtime).list({
+      environmentId: QUERY_ENVIRONMENT.environmentId,
+      input: { state: "open" },
+    });
+    const registry = yield* mountEnvironmentQuery(atom);
+    const unsubscribe = registry.subscribe(atom, (result) => {
+      if (AsyncResult.isSuccess(result) && result.waiting) {
+        Deferred.doneUnsafe(observed, Exit.void);
+      }
+    });
+    yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+
+    yield* Deferred.await(observed);
+    expect(AsyncResult.getOrElse(registry.get(atom), () => null)).toEqual(preview);
+    yield* Deferred.succeed(releaseComplete, undefined);
+    expect(yield* readEnvironmentQuery(registry, atom)).toEqual(complete);
+  }),
+);
+
 it.effect("does not re-read a file patch read while its preview was revalidating", () =>
   Effect.gen(function* () {
     let now = 0;
@@ -363,6 +409,7 @@ it.effect("keeps manual Issues refresh intent through an overlapping write", () 
       nextCursors: {},
     };
     const rpcSession = {
+      initialConfig: Effect.succeed({ environment: { capabilities: {} } }),
       client: {
         [WS_METHODS.issuesList]: (input: IssueListInput) =>
           Queue.offer(requests, input).pipe(

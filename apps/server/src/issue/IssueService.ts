@@ -2,9 +2,12 @@
 // References outside the project's own repositories (upstream and fork) may be read on the host,
 // but every write must pass through requireWritable.
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import {
   IssueOperationError,
   IssueTrackerKind,
@@ -164,6 +167,12 @@ export class IssueService extends Context.Service<
   IssueService,
   {
     readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueError>;
+    readonly listProgress: (
+      input: IssueListInput,
+    ) => Stream.Stream<
+      { readonly _tag: "preview" | "complete"; readonly list: IssueListResult },
+      IssueError
+    >;
     readonly detail: (input: IssueRef) => Effect.Effect<IssueDetail, IssueError>;
     readonly linkMetadata: (input: IssueRef) => Effect.Effect<TrackerIssueLink, IssueError>;
     readonly comments: (
@@ -355,7 +364,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const list: IssueService["Service"]["list"] = Effect.fn("IssueService.list")(function* (input) {
+  const list = Effect.fn("IssueService.list")(function* (
+    input: IssueListInput,
+    emitPreview?: (list: IssueListResult) => Effect.Effect<void>,
+  ) {
     // Trackers name every host so a client narrowed to one can switch to another; only the
     // narrowed host's scopes are read.
     const { supported, unimplemented } = yield* listProjects({
@@ -373,6 +385,13 @@ const make = Effect.gen(function* () {
       if (!scopes.has(key)) scopes.set(key, project);
     }
     const continuing = input.cursors;
+    const preview =
+      emitPreview !== undefined &&
+      continuing === undefined &&
+      input.refresh !== true &&
+      scopes.size > 1
+        ? { emit: emitPreview, first: yield* Deferred.make<IssueListResult>() }
+        : undefined;
     const viewers = new Map<string, string>();
     const trackers = new Map<string, IssueTrackerSummary>();
     const entries: IssueListEntry[] = [];
@@ -429,7 +448,7 @@ const make = Effect.gen(function* () {
       else usable.add(project.host);
     };
 
-    yield* Effect.forEach(
+    const readScopes = Effect.forEach(
       scopes.values(),
       (project) =>
         Effect.gen(function* () {
@@ -490,9 +509,40 @@ const make = Effect.gen(function* () {
             });
           }
           if (page.success.nextCursor !== null) nextCursors[key] = page.success.nextCursor;
+          if (
+            preview !== undefined &&
+            entries.length > 0 &&
+            entries.length === page.success.items.length
+          ) {
+            const tracker = trackers.get(project.host);
+            if (tracker !== undefined) {
+              yield* Deferred.succeed(preview.first, {
+                viewers: {},
+                trackers: [tracker],
+                entries: entries
+                  .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+                  .slice(0, 8),
+                errors: [],
+                nextCursors: {},
+              });
+            }
+          }
         }),
       { concurrency: SCOPE_CONCURRENCY, discard: true },
     );
+    if (preview === undefined) {
+      yield* readScopes;
+    } else {
+      yield* Effect.scoped(
+        Effect.forkScoped(
+          Deferred.await(preview.first).pipe(
+            // Give nearby scopes time to finish before spending an extra client update.
+            Effect.tap(() => Effect.sleep(40)),
+            Effect.flatMap(preview.emit),
+          ),
+        ).pipe(Effect.andThen(readScopes)),
+      );
+    }
 
     for (const [host, accounts] of hostAccounts) {
       const details = [...accounts].map((account) => unusable.get(account));
@@ -891,6 +941,15 @@ const make = Effect.gen(function* () {
 
   return IssueService.of({
     list,
+    listProgress: (input) =>
+      Stream.callback((queue) =>
+        list(input, (list) =>
+          Queue.offer(queue, { _tag: "preview", list }).pipe(Effect.asVoid),
+        ).pipe(
+          Effect.flatMap((list) => Queue.offer(queue, { _tag: "complete", list })),
+          Effect.andThen(Queue.end(queue)),
+        ),
+      ),
     detail: traced("detail", detail),
     linkMetadata: traced("linkMetadata", linkMetadata),
     comments: traced("comments", comments),

@@ -72,7 +72,10 @@ test(
         WebSocket.prototype.send = function (data) {
           const request: { _tag: string; id: string; tag: string } | null =
             typeof data === "string" ? JSON.parse(data) : null;
-          if (request?._tag !== "Request" || request.tag !== "issues.list")
+          if (
+            request?._tag !== "Request" ||
+            (request.tag !== "issues.list" && request.tag !== "issues.listProgress")
+          )
             return send.call(this, data);
           const remote = new URL(this.url).host === remoteHost;
           const reply = (exit: unknown) =>
@@ -81,7 +84,21 @@ test(
                 data: JSON.stringify({ _tag: "Exit", requestId: request.id, exit }),
               }),
             );
-          const success = (title: string) => reply({ _tag: "Success", value: list(title, remote) });
+          const success = (title: string) => {
+            const result = list(title, remote);
+            if (request.tag === "issues.listProgress") {
+              this.dispatchEvent(
+                new MessageEvent("message", {
+                  data: JSON.stringify({
+                    _tag: "Chunk",
+                    requestId: request.id,
+                    values: [{ _tag: "complete", list: result }],
+                  }),
+                }),
+              );
+              reply({ _tag: "Success" });
+            } else reply({ _tag: "Success", value: result });
+          };
 
           if (!refreshing) {
             queueMicrotask(() =>
