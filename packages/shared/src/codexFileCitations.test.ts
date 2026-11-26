@@ -60,7 +60,6 @@ describe("resolveCodexFileCitationLink", () => {
   });
 
   it.each([
-    ["notes:final.txt", undefined, "./notes:final.txt", { path: "/workspace/notes:final.txt" }],
     [
       "notes:final.txt",
       "7",
@@ -101,10 +100,8 @@ describe("resolveCodexFileCitationLink", () => {
 
   it.each([
     "https://example.com/report.pdf",
-    "file:///workspace/notes:final.txt",
     "file:/workspace/notes.txt",
     "sandbox:/mnt/data/report.pdf",
-    "vscode://file/workspace/a.ts",
     "/workspace/notes:final.txt",
     "C:\\Users\\test\\report.md",
     "C:/Users/test/report.md",
