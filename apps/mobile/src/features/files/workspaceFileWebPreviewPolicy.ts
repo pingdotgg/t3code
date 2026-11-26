@@ -14,12 +14,6 @@ const withoutFragment = (url: string) => url.split("#", 1)[0];
 
 const isHttpProtocol = (protocol: string) => protocol === "http:" || protocol === "https:";
 
-export function workspaceWebPreviewOriginWhitelist(initialUri: string): string[] {
-  return initialUri.startsWith("file://")
-    ? ["http://*", "https://*", "file://*"]
-    : ["http://*", "https://*"];
-}
-
 const parseUrl = (raw: string): URL | null => {
   try {
     return new URL(raw);

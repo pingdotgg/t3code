@@ -15,13 +15,7 @@ import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { isPdfPreviewUri } from "../../lib/pdfPreview";
 import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
 import { useContentTopInset } from "../../components/ui/useBarInset";
-import {
-  decideWorkspaceWebPreviewNavigation,
-  shouldStartWorkspaceWebPreviewLoad,
-  workspaceWebPreviewOriginWhitelist,
-} from "./workspaceFileWebPreviewPolicy";
-
-export { shouldStartWorkspaceWebPreviewLoad, workspaceWebPreviewOriginWhitelist };
+import { decideWorkspaceWebPreviewNavigation } from "./workspaceFileWebPreviewPolicy";
 
 export function WorkspaceFileWebPreview(props: { readonly uri: string | null }) {
   const gt = useGT();
@@ -71,7 +65,9 @@ function DocumentWebPreview(props: { readonly uri: string }) {
           // react-native-webview defaults to "never", which starts the page under the header.
           contentInsetAdjustmentBehavior="automatic"
           decelerationRate={webViewDecelerationRate}
-          originWhitelist={workspaceWebPreviewOriginWhitelist(props.uri)}
+          // Every scheme must reach onShouldStartLoadWithRequest: react-native-webview hands
+          // URLs outside the whitelist straight to the OS, bypassing the navigation policy.
+          originWhitelist={["*"]}
           allowsBackForwardNavigationGestures
           allowsFullscreenVideo
           allowsInlineMediaPlayback

@@ -3,32 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   decideWorkspaceWebPreviewNavigation,
   shouldStartWorkspaceWebPreviewLoad,
-  workspaceWebPreviewOriginWhitelist,
 } from "./workspaceFileWebPreviewPolicy";
 
 const INITIAL_HTTPS_URI = "https://greendale.test/api/assets/token-1/report.html";
 const INITIAL_FILE_URI = "file:///cache/greendale/report.html";
-
-describe("workspaceWebPreviewOriginWhitelist", () => {
-  it("limits network previews to http and https origins", () => {
-    expect(workspaceWebPreviewOriginWhitelist(INITIAL_HTTPS_URI)).toEqual([
-      "http://*",
-      "https://*",
-    ]);
-    expect(workspaceWebPreviewOriginWhitelist("http://192.168.1.10:3773/index.html")).toEqual([
-      "http://*",
-      "https://*",
-    ]);
-  });
-
-  it("includes file:// only when previewing a local file URI", () => {
-    expect(workspaceWebPreviewOriginWhitelist(INITIAL_FILE_URI)).toEqual([
-      "http://*",
-      "https://*",
-      "file://*",
-    ]);
-  });
-});
 
 describe("shouldStartWorkspaceWebPreviewLoad", () => {
   it("allows the initial document and same-document fragment navigations", () => {
