@@ -227,9 +227,11 @@ export function bindAudioCpp(koffi: typeof Koffi, libraryPath: string): AudioCpp
                   "audio read",
                 );
                 const length = Number(frames[0]) * channels[0];
-                // The view borrows event memory, so copy it before the event is freed.
-                const copy = new Float32Array(length);
-                if (length) copy.set(new Float32Array(koffi.view(samples[0], length * 4)));
+                // decode copies the samples before the event is freed; a koffi.view ArrayBuffer
+                // over native memory aborts the process under Electron.
+                const copy: Float32Array = length
+                  ? koffi.decode(samples[0], koffi.array("float", length, "Typed"))
+                  : new Float32Array(0);
                 return { samples: copy, sampleRate: sampleRate[0], channels: channels[0] };
               } finally {
                 native.eventFree(event[0]);
