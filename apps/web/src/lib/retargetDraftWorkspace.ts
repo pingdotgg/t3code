@@ -6,11 +6,9 @@ import {
 import { resolveNewThreadEnvMode, resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 import type { DraftSessionState } from "../composerDraftStore";
-import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProject, readThreadShells } from "../state/entities";
 import { readEnvironment } from "../state/environments";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
-import { environmentSummaries } from "../state/presentation";
 import { resolveNewDraftStartFromOrigin } from "./chatThreadActions";
 import { peekT3ProjectFile, readT3ProjectFile } from "./t3ProjectFileDefaults";
 
@@ -27,13 +25,11 @@ async function newThreadWorkspace(projectRef: ScopedProjectRef) {
   if (
     workspaceRoot &&
     resolveProjectSettings(settings, projectRef.projectId, project).settings
-      .defaultThreadEnvMode === null &&
-    appAtomRegistry
-      .get(environmentSummaries.connectedEnvironmentIdsAtom)
-      .includes(projectRef.environmentId)
+      .defaultThreadEnvMode === null
   ) {
     const cached = peekT3ProjectFile(projectRef.environmentId, workspaceRoot);
     if (cached === undefined) {
+      // A paired project can appear before its connection summary reports connected.
       const loaded = await readT3ProjectFile(projectRef.environmentId, workspaceRoot);
       ({ project, serverConfig, settings } = readWorkspaceContext(projectRef));
       if (project?.workspaceRoot === workspaceRoot) projectFile = loaded;

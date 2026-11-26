@@ -17,14 +17,12 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import { appAtomRegistry, AppAtomRegistryProvider } from "../../rpc/atomRegistry";
-import { environmentSummaries } from "../../state/presentation";
 import { draftFanoutSelectionsAtom } from "./chatViewSend";
 
 const resources = vi.hoisted(() => ({
@@ -57,20 +55,9 @@ vi.mock("../../lib/t3ProjectFileDefaults", () => ({
   peekT3ProjectFile: () => undefined,
   readT3ProjectFile: resources.readProjectFile,
 }));
-vi.mock(import("../../state/presentation"), async (original) => {
-  const actual = await original();
-  return {
-    ...actual,
-    environmentSummaries: {
-      ...actual.environmentSummaries,
-      connectedEnvironmentIdsAtom: Atom.make<readonly EnvironmentId[]>([]),
-    },
-  };
-});
-
 function setup() {
   resources.refreshSelection.mockReset();
-  resources.readProjectFile.mockReset();
+  resources.readProjectFile.mockReset().mockResolvedValue(null);
   resources.projects = [];
   resources.pickedEnvironmentId = null;
   const a = EnvironmentId.make("machine-a");
@@ -433,12 +420,6 @@ it.each(["deleted", "moved"] as const)(
     await using screen = await render(
       <Harness input={{ ...input, automaticEnvironment: false }} />,
     );
-    const connectedIds = environmentSummaries.connectedEnvironmentIdsAtom;
-    if (!Atom.isWritable<readonly EnvironmentId[], readonly EnvironmentId[]>(connectedIds)) {
-      throw new Error("Expected writable test connection state");
-    }
-    using _connected = { [Symbol.dispose]: appAtomRegistry.mount(connectedIds) };
-    await act(async () => appAtomRegistry.set(connectedIds, [b]));
     await screen.getByRole("button", { name: `Switch to ${b}` }).click();
     const send = screen.getByRole("button", { name: "Send", exact: true });
     await expect.element(send).toBeDisabled();
