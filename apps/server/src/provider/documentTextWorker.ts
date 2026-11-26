@@ -334,6 +334,7 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       yield* text(child);
       yield LINE_START;
     } else if (["p", "h"].includes(child.name) || /^h[1-6]$/.test(child.name)) {
+      yield THEMATIC_BREAK;
       const style =
         all(child, "pStyle", ["pPrChange", "txbxContent"]).next().value?.attrs.val ?? "";
       const level =
