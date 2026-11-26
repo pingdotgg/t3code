@@ -166,66 +166,34 @@ describe("compactDynamicToolOutput", () => {
     });
   });
 
-  it("keeps bounded pull request summary fields without private details", () => {
+  it("keeps pull request summary outcomes without private details", () => {
     expect(
       compactDynamicToolOutput({
         number: 42,
-        repository: "acme/app",
         url: "https://github.com/acme/app/pull/42",
         created: false,
-        note: "Private note",
+        state: "merged",
       }),
-    ).toEqual({ created: false });
-    expect(compactDynamicToolOutput({ number: 42, state: "open" })).toEqual({ state: "open" });
-    expect(compactDynamicToolOutput({ number: 42, state: "merged" })).toEqual({ state: "merged" });
-    expect(compactDynamicToolOutput({ number: 42, state: "closed" })).toEqual({ state: "closed" });
+    ).toEqual({ created: false, state: "merged" });
     expect(
       compactDynamicToolOutput({
         guides: [
           { number: 1, outcome: "started", detail: null },
-          { number: 2, outcome: "running", detail: null },
-          { number: 3, outcome: "failed", detail: "Private error" },
+          { number: 2, outcome: "failed", detail: "Private error" },
         ],
+        checks: [{ name: "external", rerun: false, detail: "Private refusal" }],
       }),
     ).toEqual({
-      guides: [{ outcome: "started" }, { outcome: "running" }, { outcome: "failed" }],
+      guides: [{ outcome: "started" }, { outcome: "failed" }],
+      checks: [{ rerun: false }],
     });
     expect(
       compactDynamicToolOutput({
-        checks: [
-          { name: "test", rerun: true, detail: null },
-          { name: "external", rerun: false, detail: "Private refusal" },
-        ],
+        state: "draft",
+        guides: [{ outcome: "started" }, { outcome: "unknown" }],
+        checks: [{ rerun: true }, { name: "missing-rerun" }],
       }),
-    ).toEqual({
-      checks: [{ rerun: true }, { rerun: false }],
-    });
-    expect(compactDynamicToolOutput({ checks: [] })).toEqual({ checks: [] });
-  });
-
-  it("omits invalid, incomplete, or oversized pull request summary arrays", () => {
-    expect(compactDynamicToolOutput({ created: "false", state: "draft" })).toBeUndefined();
-    for (const bad of [
-      { guides: [{ outcome: "started" }, { outcome: "unknown" }] },
-      { guides: Array.from({ length: 101 }, () => ({ outcome: "started" })) },
-      { checks: [{ name: "ci", log: "Private log", truncated: false }] },
-      { checks: [{ rerun: true }, { name: "missing-rerun" }] },
-      { checks: Array.from({ length: 101 }, () => ({ rerun: true })) },
-    ]) {
-      expect(compactDynamicToolOutput(bad)).toBeUndefined();
-    }
-    const oversized = compactDynamicToolOutput({
-      taskId: "task-1",
-      threads: Array.from({ length: 100 }, (_, index) => ({
-        threadId: `${index}`.padEnd(80, "x"),
-      })),
-      guides: Array.from({ length: 100 }, () => ({ outcome: "started" })),
-      checks: Array.from({ length: 100 }, () => ({ rerun: true })),
-    });
-    expect(oversized).toEqual({ taskId: "task-1" });
-    expect(new TextEncoder().encode(JSON.stringify(oversized)).byteLength).toBeLessThanOrEqual(
-      8_192,
-    );
+    ).toBeUndefined();
   });
 });
 

@@ -132,6 +132,21 @@ function boundedId(value: unknown): string | undefined {
   return Array.from(value).join("");
 }
 
+// All or nothing: a partial list would make the summary report wrong counts.
+function readEntries<T>(
+  value: unknown,
+  read: (entry: { readonly [key: string]: unknown }) => T | undefined,
+): T[] | undefined {
+  if (!Array.isArray(value) || value.length > MAX_PULL_REQUEST_ITEMS) return undefined;
+  const entries: T[] = [];
+  for (const entry of value) {
+    const compact = Predicate.isObject(entry) ? read(entry) : undefined;
+    if (compact === undefined) return undefined;
+    entries.push(compact);
+  }
+  return entries;
+}
+
 export function compactDynamicToolOutput(value: unknown): CompactToolOutput | undefined {
   const budget: ResultReadBudget = {
     remainingBytes: MAX_PARSED_BYTES,
@@ -155,39 +170,16 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     if (data.state === "open" || data.state === "closed" || data.state === "merged") {
       output.state = data.state;
     }
-    if (Array.isArray(data.guides)) {
-      let complete = data.guides.length <= MAX_PULL_REQUEST_ITEMS;
-      const guides: NonNullable<CompactToolOutput["guides"]> = [];
-      if (complete) {
-        for (const entry of data.guides) {
-          if (
-            !Predicate.isObject(entry) ||
-            (entry.outcome !== "started" &&
-              entry.outcome !== "running" &&
-              entry.outcome !== "failed")
-          ) {
-            complete = false;
-            break;
-          }
-          guides.push({ outcome: entry.outcome });
-        }
-      }
-      if (complete) output.guides = guides;
-    }
-    if (Array.isArray(data.checks)) {
-      let complete = data.checks.length <= MAX_PULL_REQUEST_ITEMS;
-      const checks: NonNullable<CompactToolOutput["checks"]> = [];
-      if (complete) {
-        for (const entry of data.checks) {
-          if (!Predicate.isObject(entry) || typeof entry.rerun !== "boolean") {
-            complete = false;
-            break;
-          }
-          checks.push({ rerun: entry.rerun });
-        }
-      }
-      if (complete) output.checks = checks;
-    }
+    const guides = readEntries(data.guides, (entry) =>
+      entry.outcome === "started" || entry.outcome === "running" || entry.outcome === "failed"
+        ? ({ outcome: entry.outcome } as const)
+        : undefined,
+    );
+    if (guides !== undefined) output.guides = guides;
+    const checks = readEntries(data.checks, (entry) =>
+      typeof entry.rerun === "boolean" ? { rerun: entry.rerun } : undefined,
+    );
+    if (checks !== undefined) output.checks = checks;
     if (
       typeof data.sentMessage === "string" &&
       data.sentMessage.trim() !== "" &&
