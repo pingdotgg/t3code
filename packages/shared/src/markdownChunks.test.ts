@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { LARGE_MARKDOWN_CHUNK_MAX_CHARS, splitMarkdown } from "./markdownChunks.ts";
+import {
+  LARGE_MARKDOWN_CHUNK_MAX_CHARS,
+  splitMarkdown,
+  withMarkdownDefinitions,
+} from "./markdownChunks.ts";
 
 const splitLargeMarkdown = (text: string, targetChars?: number) =>
   splitMarkdown(text, targetChars).chunks;
@@ -205,5 +209,23 @@ describe("splitMarkdown", () => {
     expect(splitMarkdown(text).definitions).toBe(
       "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break\n[fence]: /after-fence\n[comment]: /after-a-closed-comment",
     );
+    for (const close of ["---", "..."]) {
+      const frontmatter = [
+        "---",
+        "title: x",
+        close,
+        "[fm]: /after-frontmatter",
+        "",
+        "# A",
+        "[fm][]",
+      ];
+      const { chunks, definitions } = splitMarkdown(frontmatter.join("\n"), 1);
+      expect(definitions).toBe("[fm]: /after-frontmatter");
+      expect(withMarkdownDefinitions(chunks.at(-1)!.text, definitions)).toBe(
+        "# A\n[fm][]\n\n[fm]: /after-frontmatter",
+      );
+    }
+    const unclosed = ["---", ...Array<string>(1000).fill("text"), "[u]: /paragraph-text"];
+    expect(splitMarkdown(unclosed.join("\n")).definitions).toBe("");
   });
 });
