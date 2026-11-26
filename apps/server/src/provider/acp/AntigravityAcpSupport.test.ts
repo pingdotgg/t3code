@@ -15,8 +15,8 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
-  antigravityClientInfo,
   antigravityPermissionDisposition,
+  antigravityServesT3Code,
   antigravitySessionMeta,
   antigravitySessionMode,
   buildAntigravityPrompt,
@@ -58,35 +58,36 @@ function makeModelRuntime(
   };
 }
 
-describe("Antigravity release gates", () => {
+describe("antigravityServesT3Code", () => {
+  // The model manifest accepts the same `v` and `agy_acp_server_` prefixes.
   it.each([
-    { version: "1.5.0", ownName: false, advertisedAppend: false },
-    { version: "1.5.1", ownName: true, advertisedAppend: false },
-    { version: "1.5.7", ownName: true, advertisedAppend: true },
-    { version: undefined, ownName: false, advertisedAppend: false },
-    { version: "unknown", ownName: false, advertisedAppend: false },
-  ])(
-    "$version: advertised system append $advertisedAppend, own client name $ownName",
-    ({ version, ownName, advertisedAppend }) => {
-      const initialize = {
-        protocolVersion: 1,
-        ...(advertisedAppend
-          ? { agentCapabilities: { _meta: { antigravity: { systemPrompt: { append: true } } } } }
-          : {}),
-        ...(version === undefined
-          ? {}
-          : { agentInfo: { name: "Antigravity ACP Server", version } }),
-      };
-      // Helpers send no append.
-      expect(antigravitySessionMeta(initialize)).toBeUndefined();
-      expect(antigravitySessionMeta(initialize, "<pull_request_linking/>")).toEqual(
-        advertisedAppend
-          ? { antigravity: { systemPrompt: { append: "<pull_request_linking/>" } } }
-          : undefined,
-      );
-      expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
-    },
-  );
+    ["1.5.0", false],
+    ["v1.5.0", false],
+    ["agy_acp_server_1.5.0", false],
+    ["1.5.1", true],
+    ["agy_acp_server_1.5.12", true],
+    ["custom", true],
+  ] as const)("%s → %s", (version, serves) => {
+    expect(antigravityServesT3Code(version)).toBe(serves);
+  });
+});
+
+describe("Antigravity system prompt append", () => {
+  it.each([false, true])("advertised append %s", (advertisedAppend) => {
+    const initialize = {
+      protocolVersion: 1,
+      ...(advertisedAppend
+        ? { agentCapabilities: { _meta: { antigravity: { systemPrompt: { append: true } } } } }
+        : {}),
+    };
+    // Helpers send no append.
+    expect(antigravitySessionMeta(initialize)).toBeUndefined();
+    expect(antigravitySessionMeta(initialize, "<pull_request_linking/>")).toEqual(
+      advertisedAppend
+        ? { antigravity: { systemPrompt: { append: "<pull_request_linking/>" } } }
+        : undefined,
+    );
+  });
 });
 
 describe("Antigravity Auto", () => {
