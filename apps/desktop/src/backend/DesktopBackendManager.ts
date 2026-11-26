@@ -92,6 +92,11 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
+  /**
+   * Set when the backend's preload says `backendSettled` on its control channel, then waits on this
+   * input fd. The desktop records the backend first, so it is recorded before it can take the home.
+   */
+  readonly settledAckFd?: number;
   /** Set for a backend without a control channel; each evaluation yields a fresh probe. */
   readonly readinessProbe?: Effect.Effect<BackendReadinessProbe>;
   readonly runningDistro?: string;
@@ -208,11 +213,7 @@ export const BackendProcessError = Schema.Union([
 ]);
 export type BackendProcessError = typeof BackendProcessError.Type;
 
-/** `ready` is true once the backend reports ready, or false when it exits first. */
-type TrackBackendProcess = (
-  pid: number,
-  ready: Effect.Effect<boolean>,
-) => Effect.Effect<Effect.Effect<void>>;
+type TrackBackendProcess = (pid: number) => Effect.Effect<Effect.Effect<void>>;
 
 interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly desktopTelemetryStream: Stream.Stream<Uint8Array>;
@@ -479,7 +480,15 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   );
   const onOutput = options.onOutput ?? (() => Effect.void);
   const bootstrapStream = Stream.encodeText(Stream.make(`${bootstrapJson}\n`));
+  const settled = yield* Deferred.make<boolean>();
+  const acknowledged = yield* Deferred.make<void>();
   const additionalFds: Record<`fd${number}`, ChildProcess.AdditionalFdConfig> = {};
+  if (options.settledAckFd !== undefined) {
+    additionalFds[`fd${options.settledAckFd}`] = {
+      type: "input",
+      stream: Stream.fromEffect(Deferred.await(acknowledged).pipe(Effect.as(new Uint8Array([1])))),
+    };
+  }
   if (options.bootstrapDelivery === "fd3") {
     additionalFds.fd3 = {
       type: "input",
@@ -535,10 +544,20 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
   );
   // The child has a deadline for reading fd 3. Keep recovery bookkeeping off its startup path.
-  const reported = yield* Deferred.make<boolean>();
-  const tracking = options.trackProcess
-    ? yield* options.trackProcess(handle.pid, Deferred.await(reported)).pipe(Effect.forkScoped)
-    : undefined;
+  // A backend that settles first is recorded in its final process while it waits for the ack.
+  const track = options.trackProcess?.(handle.pid);
+  const tracking =
+    options.settledAckFd === undefined
+      ? track === undefined
+        ? undefined
+        : yield* track.pipe(Effect.forkScoped)
+      : yield* Deferred.await(settled).pipe(
+          Effect.flatMap((isSettled) =>
+            isSettled && track !== undefined ? track : Effect.succeed(Effect.void),
+          ),
+          Effect.ensuring(Deferred.succeed(acknowledged, undefined)),
+          Effect.forkScoped,
+        );
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
   const serverReady = yield* Deferred.make<void>();
 
@@ -555,7 +574,9 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
           Effect.flatMap((message) =>
             message.type === "serverReady"
               ? Deferred.succeed(serverReady, undefined)
-              : handleControl(message),
+              : message.type === "backendSettled"
+                ? Deferred.succeed(settled, true)
+                : handleControl(message),
           ),
           Effect.catchCause((cause) =>
             logBackendProcessWarning("ignored invalid desktop telemetry control message", {
@@ -662,7 +683,6 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   // Cold WSL boots across /mnt/c can exceed one probe budget; retry while the backend is alive.
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
     awaitReady.pipe(
-      Effect.andThen(Deferred.succeed(reported, true)),
       Effect.flatMap(() => options.onReady?.(handle.pid) ?? Effect.void),
       Effect.as(true),
       Effect.catchTags({
@@ -705,7 +725,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.exit,
   );
   yield* options.onExitObserved?.() ?? Effect.void;
-  yield* Deferred.succeed(reported, false);
+  yield* Deferred.succeed(settled, false);
   // A cancelled run may leave a survivor. Only forget after observing a real exit.
   if (tracking && Exit.isSuccess(exit)) {
     const forgetProcess = yield* Fiber.join(tracking);

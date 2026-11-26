@@ -3,12 +3,16 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import type * as Ffi from "ffi-rs";
 
-import { keepOpenAcrossExec, macHelperExecutable } from "./macHelperExec.ts";
+import {
+  BACKEND_SETTLED_ACK_FD,
+  BACKEND_SETTLED_LINE,
+  keepOpenAcrossExec,
+  macHelperExecutable,
+} from "./macHelperExec.ts";
 
 // macOS files everything a process starts under its "responsible" app. The backend loads this
 // with --require and re-executes in place as the app's Dock-less Helper, disclaiming the desktop
 // app, so what agents launch is filed under the Helper. Any failure leaves the backend as it was.
-// Backend recovery records the backend only after it reports ready; see DesktopBackendPool.
 if (!NodePath.basename(process.execPath).endsWith(" Helper")) {
   try {
     const helper = macHelperExecutable(process.execPath);
@@ -34,8 +38,8 @@ if (!NodePath.basename(process.execPath).endsWith(" Helper")) {
     const [argv] = unwrapPointer([call(External, "_NSGetArgv", [], [])]);
     const [environment] = unwrapPointer([call(External, "_NSGetEnviron", [], [])]);
     // Node marks inherited descriptors close-on-exec at startup. Stdio and the desktop app's
-    // pipes (descriptors 0-7, see DesktopBackendConfiguration) must stay open across the exec.
-    const inherited = [0, 1, 2, 3, 4, 5, 6, 7].filter((fd) => {
+    // pipes (descriptors 0-8, see DesktopBackendConfiguration) must stay open across the exec.
+    const inherited = [0, 1, 2, 3, 4, 5, 6, 7, 8].filter((fd) => {
       try {
         NodeFS.fstatSync(fd);
         return true;
@@ -64,4 +68,18 @@ if (!NodePath.basename(process.execPath).endsWith(" Helper")) {
   } catch (cause) {
     console.warn(`macOS will file processes the backend starts under T3 Code: ${String(cause)}`);
   }
+}
+
+// Now in its final process. Backend recovery identifies the backend by its audit token, which
+// the exec changed, so the desktop records it here, before the server can take the T3 home. The
+// desktop acks on its own descriptor once done: one byte, or end of file if it went away.
+try {
+  NodeFS.writeSync(5, BACKEND_SETTLED_LINE);
+  NodeFS.readSync(BACKEND_SETTLED_ACK_FD, Buffer.alloc(1));
+} catch (cause) {
+  console.warn(`The desktop app may not recover this backend if it freezes: ${String(cause)}`);
+} finally {
+  try {
+    NodeFS.closeSync(BACKEND_SETTLED_ACK_FD);
+  } catch {}
 }

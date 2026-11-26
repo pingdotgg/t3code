@@ -255,20 +255,12 @@ export const layer = Layer.effect(
       ...(recovery === undefined
         ? {}
         : {
-            trackProcess: (pid, ready) => {
-              const track = Effect.promise(() => recovery.track(pid)).pipe(
+            trackProcess: (pid) =>
+              Effect.promise(() => recovery.track(pid)).pipe(
                 Effect.map((forget) =>
                   forget === undefined ? Effect.void : Effect.promise(forget),
                 ),
-              );
-              // The macOS preload re-executes the backend as the Helper, which changes its audit
-              // token. Readiness comes from the server module, so the exec is behind it.
-              return environment.platform === "darwin"
-                ? ready.pipe(
-                    Effect.flatMap((isReady) => (isReady ? track : Effect.succeed(Effect.void))),
-                  )
-                : track;
-            },
+              ),
           }),
       // Absorb window errors so readiness can reset restartAttempt.
       onReady: (httpBaseUrl, pid) =>

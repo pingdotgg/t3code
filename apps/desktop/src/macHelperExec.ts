@@ -1,6 +1,11 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Shared with the --require preload, which runs before Effect.
 import * as NodePath from "node:path";
 
+/** The preload says this on the backend's control channel (fd 5) from its final process. */
+export const BACKEND_SETTLED_LINE = '{"version":1,"type":"backendSettled"}\n';
+/** The preload then blocks reading this fd until the desktop has recorded the backend. */
+export const BACKEND_SETTLED_ACK_FD = 8;
+
 // sys/filio.h on Darwin.
 const FIOCLEX = 0x20006601;
 const FIONCLEX = 0x20006602;
