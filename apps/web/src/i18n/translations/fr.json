@@ -9839,6 +9839,8 @@
   "0462d816f2982a92": "Cette action est irréversible.",
   "41284a027261e081": "Impossible de mettre à jour la tâche planifiée",
   "0a1ab3194d17d5de": "En pause",
+  "24c6746f7fd572de": "{title}, position {position} sur {count}.",
+  "95f441c73cd33df6": "Réorganisation annulée.",
   "d300150e8908267c": "Utilisez les flèches haut et bas pour déplacer cette tâche.",
   "854186eb538620c4": "À l’écoute",
   "4be6feb63e301484": "Activer {title}",

@@ -9839,6 +9839,8 @@
   "0462d816f2982a92": "Isso não pode ser desfeito.",
   "41284a027261e081": "Não foi possível atualizar a tarefa agendada",
   "0a1ab3194d17d5de": "Pausada",
+  "24c6746f7fd572de": "{title}, posição {position} de {count}.",
+  "95f441c73cd33df6": "Reordenação cancelada.",
   "d300150e8908267c": "Use as setas para cima e para baixo para mover esta tarefa.",
   "854186eb538620c4": "Aguardando",
   "4be6feb63e301484": "Ativar {title}",

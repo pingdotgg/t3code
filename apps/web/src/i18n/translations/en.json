@@ -9849,6 +9849,8 @@
   "0462d816f2982a92": "This cannot be undone.",
   "41284a027261e081": "Could not update scheduled task",
   "0a1ab3194d17d5de": "Paused",
+  "24c6746f7fd572de": "{title}, position {position} of {count}.",
+  "95f441c73cd33df6": "Reorder canceled.",
   "d300150e8908267c": "Use the Up and Down arrow keys to move this task.",
   "854186eb538620c4": "Listening",
   "4be6feb63e301484": "Enable {title}",

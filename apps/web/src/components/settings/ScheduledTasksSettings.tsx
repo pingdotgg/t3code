@@ -805,6 +805,7 @@ function ScheduledTaskRows({
   readonly onEdit: (environmentId: EnvironmentId, task: ScheduledTask) => void;
 }) {
   const gt = useGT();
+  const [keyboardAnnouncement, setKeyboardAnnouncement] = useState("");
   const [savedOrder, setSavedOrder] = useLocalStorage(
     `t3code:scheduled-task-order:${environmentId}`,
     [],
@@ -813,6 +814,12 @@ function ScheduledTaskRows({
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
   const visibleIds = new Set(visibleTasks.map((task) => task.id));
   const tasks = orderScheduledTasks(visibleTasks, savedOrder);
+  const announcePosition = (title: string, index: number) =>
+    gt("{title}, position {position} of {count}.", {
+      title,
+      position: index + 1,
+      count: tasks.length,
+    });
   const move = (from: ScheduledTaskId, to: ScheduledTaskId) => {
     setSavedOrder(
       (current) =>
@@ -831,6 +838,20 @@ function ScheduledTaskRows({
       modifiers={[restrictToVerticalAxis, restrictToParentElement]}
       onDragEnd={onDragEnd}
       accessibility={{
+        announcements: {
+          onDragStart: ({ active }) => {
+            const index = tasks.findIndex((task) => task.id === active.id);
+            const task = tasks[index];
+            return task ? announcePosition(task.title, index) : undefined;
+          },
+          onDragOver: ({ active, over }) => {
+            const task = tasks.find((task) => task.id === active.id);
+            const index = tasks.findIndex((task) => task.id === over?.id);
+            return task && index >= 0 ? announcePosition(task.title, index) : undefined;
+          },
+          onDragEnd: ({ over }) => (over ? undefined : gt("Reorder canceled.")),
+          onDragCancel: () => gt("Reorder canceled."),
+        },
         screenReaderInstructions: {
           draggable: gt("Use the Up and Down arrow keys to move this task."),
         },
@@ -847,13 +868,18 @@ function ScheduledTaskRows({
               reorderable={tasks.length > 1}
               onStep={(step) => {
                 const target = tasks[index + step];
-                if (target) move(task.id, target.id);
+                if (!target) return;
+                move(task.id, target.id);
+                setKeyboardAnnouncement(announcePosition(task.title, index + step));
               }}
               onEdit={() => onEdit(environmentId, task)}
             />
           ))}
         </div>
       </SortableContext>
+      <div role="status" aria-atomic="true" className="sr-only">
+        {keyboardAnnouncement}
+      </div>
     </DndContext>
   );
 }
