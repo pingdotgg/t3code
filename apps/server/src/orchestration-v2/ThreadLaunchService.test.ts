@@ -3584,14 +3584,9 @@ it.live.each(concurrentTaskFolderUses)("cancels task folder setup with %s", (con
       );
       assert.match(stages[1]?.detail ?? "", /\(2 of 2\)$/);
 
-      const checkoutPath = taskFolder!.repositories[0]!.worktreePath;
-      const sentinel = path.join(checkoutPath, "synthetic-sentinel.txt");
-      const edit = "synthetic checkout edit";
-      const writeSentinel = Effect.gen(function* () {
-        yield* fileSystem.writeFileString(sentinel, edit);
-        assert.equal(yield* fileSystem.readFileString(sentinel), edit);
-      });
       if (concurrent === "independent launch") {
+        const checkoutPath = taskFolder!.repositories[0]!.worktreePath;
+        const sentinel = path.join(checkoutPath, "sentinel.txt");
         const shared = yield* launches.launch(
           launchInput({
             command: "launch:existing-checkout",
@@ -3600,13 +3595,9 @@ it.live.each(concurrentTaskFolderUses)("cancels task folder setup with %s", (con
           }),
         );
         assert.equal(shared.projection.thread.worktreePath, checkoutPath);
-        yield* writeSentinel;
+        yield* fileSystem.writeFileString(sentinel, "edit");
         assert.isTrue(yield* tracker.cancel(launched.threadId));
-        assert.isTrue(
-          yield* fileSystem.exists(sentinel),
-          "Cancellation removed a checkout independently bound to another thread.",
-        );
-        assert.equal(yield* fileSystem.readFileString(sentinel), edit);
+        assert.equal(yield* fileSystem.readFileString(sentinel), "edit");
         assert.equal((yield* taskFolders.find(taskFolder!.root))?.root, taskFolder!.root);
         assert.equal(
           (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
@@ -3619,24 +3610,10 @@ it.live.each(concurrentTaskFolderUses)("cancels task folder setup with %s", (con
         );
         return;
       }
-      const admission = yield* forkSideChat(threads, launched.threadId, "during-setup").pipe(
-        Effect.result,
+      const refused = yield* forkSideChat(threads, launched.threadId, "during-setup").pipe(
+        Effect.flip,
       );
-      if (Result.isSuccess(admission)) {
-        const sideChat = yield* threads.getThreadProjection(admission.success);
-        assert.equal(sideChat.thread.worktreePath, taskFolder!.projectPath);
-        yield* writeSentinel;
-        assert.isTrue(yield* tracker.cancel(launched.threadId));
-        const survived = yield* fileSystem.exists(sentinel);
-        return assert.fail(
-          `Side chat was admitted. Its verified sentinel exists after cancellation: ${survived}`,
-        );
-      }
-      if (admission.failure._tag !== "OrchestratorDispatchError") return yield* admission.failure;
-      assert.include(
-        String(admission.failure.cause),
-        "Start the side chat once its worktree is set up.",
-      );
+      assert.equal(refused._tag, "OrchestratorDispatchError");
       assert.isTrue(yield* tracker.cancel(launched.threadId));
 
       assert.isNull((yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath);

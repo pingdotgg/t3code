@@ -17692,5 +17692,6 @@ export const layer: Layer.Layer<
   | TaskFolderStore.TaskFolderStore
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(
+  // Layers memoize by reference, so this is the tracker ThreadLaunchService holds workspaces in.
   Layer.provide(Layer.merge(ThreadCommandExecutor.layer, WorktreeSetupTracker.layer)),
 );
