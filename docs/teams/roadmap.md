@@ -4,17 +4,18 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 ## Progress Overview
 
-| Milestone       | Scope                                                                    | Status          |
-| --------------- | ------------------------------------------------------------------------ | --------------- |
-| **Milestone 1** | Team Foundation, Member Identity & Pseudo Attribution                    | Merged (PR #1)  |
-| **Milestone 2** | Notifications & Thread Following                                         | Merged (PR #2)  |
-| **Milestone 3** | RBAC, Views, Posting Rules & Thread Locking                              | Merged (PR #3)  |
-| **Milestone 4** | Agent Privilege Containment, Mid-Turn Queueing & Turn Interrupt Controls | Merged (PR #4)  |
-| **Milestone 5** | Team Projects, Remote Environments, Local Sync & Thread Notes            | Merged (PR #5)  |
-| **Milestone 6** | Zero-Config Team Providers, Team Skills & Pre-Prompts                    | **In Progress** |
-| **Milestone 7** | Per-Turn GitHub Identity Forwarding                                      | Planned         |
-| **Milestone 8** | Team Scheduled Tasks (`(team, env)` Scoping & Team Automation Ownership) | Planned         |
-| **Milestone 9** | Upstream Mobile Compatibility, Translations & Hardening                  | Planned         |
+| Milestone        | Scope                                                                    | Status           |
+| ---------------- | ------------------------------------------------------------------------ | ---------------- |
+| **Milestone 1**  | Team Foundation, Member Identity & Pseudo Attribution                    | Merged (PR #1)   |
+| **Milestone 2**  | Notifications & Thread Following                                         | Merged (PR #2)   |
+| **Milestone 3**  | RBAC, Views, Posting Rules & Thread Locking                              | Merged (PR #3)   |
+| **Milestone 4**  | Agent Privilege Containment, Mid-Turn Queueing & Turn Interrupt Controls | Merged (PR #4)   |
+| **Milestone 5**  | Team Projects, Remote Environments, Local Sync & Thread Notes            | Merged (PR #5)   |
+| **Milestone 6**  | Zero-Config Team Providers, Team Skills & Pre-Prompts                    | Merged (PR #6)   |
+| **Milestone 7**  | Per-Turn GitHub Identity Forwarding                                      | Merged (PR #7)   |
+| **Milestone 8**  | Team Scheduled Tasks (`(team, env)` Scoping & Team Automation Ownership) | **Next (Final)** |
+| **Milestone 9a** | Server-Side Upstream Mobile Compatibility Layer (No Mobile Fork)         | Merged (PR #8)   |
+| **Milestone 9b** | Optional Linux `bwrap` Worktree Sandboxing & `/proc` `hidepid=2` Runbook | Merged (PR #9)   |
 
 ---
 
@@ -168,7 +169,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 ---
 
-## Milestone 6 — Zero-Config Team Providers, Team Skills & Pre-Prompts
+## Milestone 6 — Zero-Config Team Providers, Team Skills & Pre-Prompts _(Merged — PR #6)_
 
 **Goal:** Let `owner`/`admin` configure team model providers once on the Team Server and `owner`/`admin`/`modo` curate team skills and pre-prompts so teammates get zero-config, strictly isolated team execution on both local and remote environments—never touching personal subscriptions or personal configs.
 
@@ -205,7 +206,7 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 ---
 
-## Milestone 7 — Per-Turn GitHub Identity Forwarding
+## Milestone 7 — Per-Turn GitHub Identity Forwarding _(Merged — PR #7)_
 
 **Goal:** Eliminate shared bot accounts (`msl-agent`) and manual commit co-signing on shared environments safely, building directly on Milestone 4's author-switch session recycle and queue/interrupt controls.
 
@@ -232,59 +233,67 @@ This roadmap breaks the [Teams Architecture & Technical Specification](./archite
 
 ---
 
-## Milestone 8 — Team Scheduled Tasks (`(team, env)` Scoping & Team Automation Ownership)
+## Milestone 8 — Team Scheduled Tasks (`(team, env)` Scoping, Team Automation Ownership & Final Integration)
 
-**Goal:** Scope scheduled tasks by `(team, environment)` with clear team RBAC, dedicated team-owned thread attribution, safe MCP privilege defaults, and optional team-level GitHub credentials—while keeping personal scheduled tasks 100% upstream-identical.
+**Goal:** Deliver `(team, environment)` scheduled tasks with full team RBAC, mandatory-default team `displayName`, team-owned threads (`ownerKind: "team"`), safe `team-automation` MCP & GitHub isolation, and complete cross-feature integration across M1–M9b (including upstream mobile compatibility, team providers, session recycle, and full E2E verification) while keeping personal scheduled tasks 100% upstream-identical.
 
 ### Scope
 
 - **Team `displayName` (`team_workspaces.display_name`):**
-  - Support a short `displayName` (distinct from full `name`, e.g., `acme` for `Acme Engineering`, editable later by `owner`/`admin`) at team creation time (`team.initialize` + Settings UI); if `displayName` is not provided, copy `name` automatically, with a backfill migration copying `name` for existing teams.
+  - Add `display_name` to `team_workspaces` via `apps/server/src/team/migrations.ts` (backfilling existing teams by copying `name`).
+  - Expose `displayName` on `TeamWorkspace` and `TeamInitializeInput` (when omitted or blank at creation time, the server automatically copies `name` into `displayName`), plus an `owner`/`admin`-only RPC & **Settings → Teams** control to edit `displayName` later.
 - **`(team, env)` scheduled-task scoping & hidden virtual `"personal"` team (`team_scheduled_task_meta`):**
-  - Scope scheduled tasks internally by `(teamScope, environmentId)` where non-team environments map to a virtual `"personal"` team scope in code that is **completely hidden in the UI**.
-  - Store team task metadata (`team_id`, `environment_id`, `view_id`, `locked`, `mcp_access_level`, `created_by_member_id`, `updated_by_member_id`) in sidecar `team_scheduled_task_meta` without altering upstream `scheduled_tasks`.
-  - Group/filter team scheduled tasks by Team + Environment in **Settings → Scheduled Tasks** and `ThreadAutomationsPanel` (hiding the virtual `"personal"` concept for non-team environments).
-- **Team Scheduled Task RBAC:**
-  - `owner`, `admin`, and **`modo`** can create, edit, enable/disable, delete, and manually trigger (`Run now`) `minimal` team scheduled tasks on environments and Views they can access.
-  - **`regular`** members with access to the task's environment and target View see the tasks in **read-only** mode.
-  - Only **`owner`/`admin`** can configure `locked` tasks or `mcpAccessLevel = "elevated"`, and `modo` cannot modify or delete existing `elevated`/`locked` tasks (preventing privilege escalation via prompt/webhook edits).
-- **Team-owned thread attribution (`ownerKind: "team"`), sidebar & posting rules:**
-  - Threads created by team scheduled tasks are attributed to the **team itself** (`ownerKind = "team"`, `creatorMemberId = null`) and render everywhere as **`<team.displayName>: <title>`**.
-  - Hidden by default in the sidebar like colleagues' threads (visible via "All team threads" toggle or `Follow`; zero default notifications until followed).
-  - Posting in unlocked team-owned threads is allowed for `owner`, `admin`, and **`modo`** (provided they can read its View), plus `regular` when `view.postRule` permits; `locked` team-owned threads allow `owner`/`admin` only.
-  - Mid-turn messages from `modo` (or other members) during an active automation run queue in dashed style (`QueuedRunsControl.tsx`) with **no `Send now` for `modo`** (and no `Send now` on automation runs); `owner`/`admin` retain explicit **`Interrupt`**.
-- **MCP & GitHub isolation for automation runs:**
-  - Execute scheduled-task runs under synthetic MCP principal **`team-automation`** with configurable `mcpAccessLevel: "minimal" | "elevated"` (`"minimal"` default: `regular`-equivalent narrowed to task's `projectId`, `environmentId`, and `viewId`; `"elevated"` opt-in by `owner`/`admin` only).
-  - Wire Milestone 7's optional dedicated Team Automation GitHub account into scheduled-task runs: use the team automation credential when configured, or run cleanly with **no GitHub credentials** when unconfigured (never using a human member's PAT); recycle warm session automatically when a human member posts a follow-up turn.
+  - Scope scheduled tasks internally by `(teamScope, environmentId)` where non-team environments resolve to a virtual `"personal"` team scope in code that is **completely hidden in the UI** (personal scheduled tasks remain 100% upstream-identical).
+  - Store team task metadata (`task_id PRIMARY KEY`, `team_id`, `environment_id`, `view_id`, `locked`, `mcp_access_level`, `created_by_member_id`, `updated_by_member_id`, `created_at`, `updated_at`) in sidecar `team_scheduled_task_meta` without altering upstream `scheduled_tasks`.
+  - Group/filter team scheduled tasks by Team + Environment in **Settings → Scheduled Tasks** (`ScheduledTasksSettings.tsx`) and `ThreadAutomationsPanel.tsx` (hiding the virtual `"personal"` concept for non-team environments).
+  - Keep Milestone 6's team-project provider invariant enforced on scheduled task creation/updates and runs (team projects use `team:<teamId>:*` providers only, never falling back to personal subscriptions).
+- **Team Scheduled Task RBAC (replacing M3's temporary admin-only gate):**
+  - **Read (`list`, `subscribe`, webhook delivery list):** Any active member with access to both the task's `environmentId` (`team_environments.accessRule`) and target `viewId` (`canReadTeamView`) can view team scheduled tasks (`regular` members in **read-only** mode, with webhook secrets/tokens masked/redacted for `regular`).
+  - **Create / edit / enable-disable / delete / `Run now`:** Allowed for **`owner`, `admin`, and `modo`** on environments and Views they can access — strictly for **`mcpAccessLevel: "minimal"`** and **`locked: false`** tasks.
+  - **Anti-escalation boundary (`owner`/`admin` only):** Only **`owner`/`admin`** may create or edit tasks with `locked: true` or `mcpAccessLevel: "elevated"`, and **`modo` cannot edit, delete, toggle, or modify prompts/webhooks on existing `elevated` or `locked` tasks**.
+  - Apply the same RBAC consistently across WS RPCs, MCP scheduled-task tools, `ScheduledTasksSettings.tsx`, and `ThreadAutomationsPanel.tsx`.
+- **Team-owned thread attribution (`ownerKind: "team"`), sidebar, notifications, posting & mobile compat:**
+  - Extend `team_thread_meta` (`owner_kind: "member" | "team"`, nullable `creator_member_id` for `owner_kind = "team"`), `team_turn_meta` (`author_kind: "member" | "team_automation"`, nullable `author_member_id`), and `packages/contracts/src/team/schemas.ts` (`TeamThreadAttribution`, `TeamTurnAttribution`).
+  - Threads created by team scheduled tasks stamp `ownerKind = "team"`, `creatorMemberId = null`, `viewId = taskMeta.viewId`, `locked = taskMeta.locked`, `executionEnvironmentId = taskMeta.environmentId`, and render everywhere as **`<team.displayName>: <title>`** (web/desktop sidebar, header, hover card, command palette, and Milestone 9a's `upstreamMobileCompat.ts` — including `<team.displayName>: ` prefix stripping on mobile rename and hiding unfollowed `ownerKind = "team"` threads in `owned_and_followed` mobile mode).
+  - **Sidebar & notifications:** Hidden by default in the sidebar like colleagues' threads (revealed via "All team threads" toggle or `Follow`), producing **zero** notifications by default until explicitly followed (or when a member's own follow-up turn finishes).
+  - **Posting, `Send now`, and `Interrupt`:**
+    - If `locked === true`: only `owner` and `admin` may post.
+    - If `locked === false`: **`owner`, `admin`, and `modo`** may always post in a team-owned scheduled-task thread (provided they can read its View), plus `regular` when `view.postRule` permits.
+    - Mid-turn messages from `modo` (or other members) during an active automation run queue in dashed style (`QueuedRunsControl.tsx`) with **no `Send now` for `modo`** (and no `Send now` on automation runs).
+    - **`Interrupt`:** `owner` and `admin` retain explicit **`Interrupt`** on active automation runs (immediately revoking any active automation GitHub lease); human follow-up turn authors can stop their own turn; `modo` and `regular` cannot interrupt automation runs or colleagues' turns.
+- **MCP (`team-automation`), GitHub (M7) & warm session recycle (M4) wiring:**
+  - Execute team scheduled-task runs under synthetic MCP principal **`team-automation`** (`taskId`, `teamId`, `projectId`, `environmentId`, `viewId`, `mcpAccessLevel: "minimal" | "elevated"`), never inheriting the configuring member's personal `memberId` or role.
+  - **`"minimal"` (default):** Equivalent to `regular`, further narrowed strictly to the task's `projectId`, `environmentId`, and target `viewId` — cannot read `admin`-only Views, manage team settings/members/views/schedules, or launch threads outside its scope; propagated immutably (narrowing only) to subagents, `delegate_task`, and MCP-created child threads.
+  - **`"elevated"` (opt-in, `owner`/`admin` only):** Grants admin-level MCP capabilities explicitly for trusted internal automation tasks.
+  - Wire scheduled-task runs (both on the Team Server and on attached remote team environments, across `new_thread`, `reuse_thread`, and `fresh_session` modes) to Milestone 7's `authorKind: "team_automation"` GitHub broker path: uses the optional dedicated Team Automation GitHub account when configured, or executes cleanly with **zero GitHub credentials** when unconfigured (never borrowing a member's PAT).
+  - Ensure `team_automation` ↔ human `memberId` author transitions on the same thread trigger Milestone 4's warm provider session recycle (rotating both the MCP token and the per-turn GitHub broker cleanly).
+- **Final Translations & Full Multi-Member E2E Verification:**
+  - Translate all new `team.*` keys across all 10 web locales (`vp run i18n:check`), keeping `apps/mobile/` completely untouched.
+  - Add `scripts/scenarios/team/team-scheduled-tasks.e2e.ts` and verify the complete multi-member suite (`vp run scenarios:team`, all 9 scenarios covering M1–M9b).
 
 ### Definition of Done
 
-- Creating a team sets `displayName` (copying `name` when omitted); a scheduled task on that team creates a thread prefixed `<displayName>: <title>` with `ownerKind = "team"` (no human `creatorMemberId`), hidden by default in the sidebar until colleagues/team toggle or `Follow`.
-- Personal environments without a team show standard upstream Scheduled Tasks UI with zero mention of the virtual `"personal"` team.
-- A `modo` can create/edit/`Run now` a `minimal` team scheduled task and post in its unlocked threads (without `Send now`), cannot create/edit an `elevated` or `locked` task, and a `regular` member sees team tasks read-only.
-- A team scheduled task runs cleanly without a GitHub account configured (returning zero GitHub credentials to git/`gh`), and uses the dedicated team automation account when configured by `owner`/`admin`.
+- Creating a team sets `displayName` (copying `name` automatically when omitted) and allows `owner`/`admin` to update it; a team scheduled task creates a thread prefixed `<displayName>: <title>` with `ownerKind = "team"` (no human `creatorMemberId`), hidden by default in the sidebar and in `owned_and_followed` upstream mobile mode until toggled or followed, with zero default notifications.
+- Personal environments without a team display standard upstream Scheduled Tasks UI with zero mention of the virtual `"personal"` team.
+- A `modo` can create/edit/`Run now` a `minimal` unlocked team scheduled task and post in its unlocked threads (queued dashed mid-turn with no `Send now` and no `Interrupt`), cannot create/edit/delete an `elevated` or `locked` task, and a `regular` member sees team tasks read-only (without webhook secrets).
+- A `minimal` `team-automation` agent (and its delegates/subagents) cannot read `admin`-only Views or escalate privileges, while an `owner`/`admin`-configured `elevated` task works as expected.
+- A team scheduled task runs cleanly without a GitHub account configured (returning zero GitHub credentials to `git`/`gh`), uses the dedicated team automation GitHub account when configured by `owner`/`admin`, and recycles the warm session cleanly whenever a human posts a follow-up turn.
+- Full verification (`vp fmt`, `vp run i18n:check`, `vp run check:changed`, and all `vp run scenarios:team` scenarios) passes with zero changes to `apps/mobile/`.
 
 ---
 
-## Milestone 9 — Upstream Mobile Compatibility, Translations & Hardening
+## Milestone 9 — Upstream Mobile Compatibility, Sandboxing & Hardening _(Merged — PR #8 & PR #9)_
 
-**Goal:** Make the unmodified official upstream mobile app work seamlessly against our forked Desktop and Team Server (zero changes to `apps/mobile`), finish translations, lock down host-level multi-tenant edges, and complete security verification.
+**Goal:** Make the unmodified official upstream mobile app work seamlessly against our forked Desktop and Team Server (zero changes to `apps/mobile`) and provide opt-in host-level worktree sandboxing for shared Linux runners.
 
 ### Scope
 
-- **Server-Side Upstream Mobile Compatibility Layer (`apps/server/src/team/`, zero changes in `apps/mobile`):**
-  - **Member-bound standard pairing (`team_pairing_meta`):** When an authenticated team member creates a standard pairing QR/code (`Settings → Teams → Connect mobile` or `authCreatePairingLink`), bind `memberId = caller.memberId` to the pairing link so the official upstream iOS/Android app inherits the member's identity, role, Views, Follows, filtered push notifications, and GitHub identity automatically on redeem.
-  - **Non-team-aware client detection:** Forked web/desktop clients send an explicit marker (`X-T3-Teams-Client: 1` / WS handshake flag); sessions connecting without it automatically receive server-side upstream compatibility adaptations.
-  - **On-the-fly title prefixing & rename hygiene:** Dynamically prefix `thread.title` with `${creatorPseudo}: ${title}` (or `${team.displayName}: ${title}` for team-owned scheduled-task threads) in `subscribeShell`, `subscribeThread`, `getThreadProjection`, `searchThreads`, `getThreadTitles`, and push notifications without altering the database; strip matching leading prefixes on rename requests from non-team-aware clients to prevent double-prefixing.
-  - **Per-member mobile visibility preference:** Add a Desktop/Web setting in **Settings → Teams** (**"Visible threads on upstream mobile"**: `My threads + followed` by default vs. `All accessible team threads`), enforced server-side in `subscribeShell` for non-team-aware mobile sessions.
-  - **Clear server-side error messages:** Return clear, actionable errors when a non-team-aware mobile client attempts an operation disallowed on a locked thread, read-only View, or colleague's local environment (guiding the user to Desktop/Web for Notes or Forking).
-- **Translations (`i18n`):**
-  - Ensure 100% of `team.*` UI strings across web and desktop are generated and verified via `vp run i18n:generate` and `vp run i18n:check`.
-- **Host Sandboxing, Testing & Security Audit:**
-  - Optional Linux per-turn **`bwrap` (bubblewrap)** worktree sandboxing on shared `t3runner` hosts (bind-mounting only the thread's worktree + `/tmp` + turn broker socket) + `/proc` `hidepid=2` hardening runbook.
-  - Full multi-member E2E scenario suite (`vp run scenarios:team`) covering Milestones 1–9 end-to-end (including simulated non-team-aware mobile sessions).
-  - Security audit of WebSocket subscription filtering, member-bound & `team-automation` MCP containment, `t3hub`/`t3runner` OS boundary, Team Provider token-lease isolation, Thread Notes anti-prompt-injection / TOCTOU guarantees, asset access, and GitHub credential lease revocation.
+- **Milestone 9a — Server-Side Upstream Mobile Compatibility Layer _(Merged — PR #8)_:**
+  - Member-bound standard pairing QR/codes (`team_pairing_meta`), non-team-aware client detection (`X-T3-Teams-Client`), on-the-fly title prefixing (`<creatorPseudo>: <title>` / `<teamDisplayName>: <title>`) + rename prefix-stripping, per-member mobile visibility preference (`owned_and_followed` default vs. `all_accessible`), clear server-side errors, and `upstream-mobile-compatibility.e2e.ts` with zero modifications in `apps/mobile/`.
+- **Milestone 9b — Optional Linux `bwrap` Worktree Sandboxing & `/proc` `hidepid=2` Hardening _(Merged — PR #9)_:**
+  - Opt-in fail-closed `--team-bwrap-sandbox` / `T3CODE_TEAM_BWRAP_SANDBOX=1` (`apps/server/src/team/bwrapSandbox.ts`) isolating per-worktree, provider-profile, and per-turn broker/MCP socket binds (including M7's `TeamGitHubBroker` sockets/helpers), `capabilities.teamBwrapSandbox`, and the full Linux hardening runbook in [hub-runner-deployment.md](./hub-runner-deployment.md).
 
-### Definition of Done
-
-- Pairing an unmodified upstream mobile client (simulated without the fork marker) via a standard QR/pairing code created by Bob binds its session to Bob's `memberId`, displays team threads prefixed with `alice: <title>` / `acme: <title>`, strips prefixes cleanly on rename, hides colleagues' unfollowed threads by default (and reveals them when Bob flips his Desktop/Web mobile visibility preference), and enforces all RBAC/View/Lock/push-notification rules server-side with zero modifications to `apps/mobile`.
+> **Optional future follow-ups (post-roadmap):**
+>
+> - Milestone 7 Phase 7b: GitHub OAuth / GitHub App user-to-server token flow (M7 shipped fine-grained PATs with an extensible `authMethod` schema).
+> - Release packaging dry-run (`teams-release.yml`) for cutting the first tagged Teams release (`v0.1.12-teams.1`).
