@@ -32,13 +32,15 @@ function encodeMarkdownLinkDestination(path: string): string {
 }
 
 const DRIVE_OR_ROOTED_PATH_PATTERN = /^(?:[a-z]:[\\/]|[\\/])/i;
+const URI_SCHEME_PREFIX_PATTERN = /^[a-z][a-z\d+.-]*:/i;
 
-// A relative destination the parser rejects (`C%23/Program.cs`) gets `./`, as codexFileCitations does.
+// Relative paths need `./` when the parser rejects them or reads their prefix as a URI scheme.
 function needsDotSlashPrefix(path: string): boolean {
   return (
     path.length > 0 &&
-    !parseMarkdownFileLink(encodeMarkdownLinkDestination(path)) &&
-    !DRIVE_OR_ROOTED_PATH_PATTERN.test(path)
+    !DRIVE_OR_ROOTED_PATH_PATTERN.test(path) &&
+    (URI_SCHEME_PREFIX_PATTERN.test(path) ||
+      !parseMarkdownFileLink(encodeMarkdownLinkDestination(path)))
   );
 }
 

@@ -223,11 +223,21 @@ describe("collectComposerInlineTokens", () => {
     "docs/why?.md",
     "icon@2x.png",
     "reports:final.md",
+    "file:notes.md",
   ])("reads a link to the punctuated file %s as that file's path", (path) => {
     const link = serializeComposerFileLink(path);
     expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
       { type: "mention", value: path, source: link },
     ]);
+  });
+
+  it("keeps bare external schemes out of file chips even with matching labels", () => {
+    for (const link of [
+      "[docs](https://example.com/docs)",
+      "[reports:final.md](reports:final.md)",
+    ]) {
+      expect(collectComposerInlineTokens(`${link} `)).toEqual([]);
+    }
   });
 
   // regression: #41223 a `./` the author wrote keeps its meaning, even where the parser rejects the rest

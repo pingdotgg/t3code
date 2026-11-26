@@ -158,12 +158,10 @@ describe("detectComposerTrigger", () => {
 });
 
 describe("serializeComposerFileLink", () => {
-  it("disambiguates top-level filenames containing a colon", () => {
-    const link = serializeComposerFileLink("reports:final.md");
-    expect(link).toBe("[reports:final.md](./reports:final.md)");
-    expect(resolveMarkdownFileLinkTarget("./reports:final.md", "/workspace")).toBe(
-      "/workspace/reports:final.md",
-    );
+  it.each(["reports:final.md", "file:notes.md"])("disambiguates the colon filename %s", (path) => {
+    const link = serializeComposerFileLink(path);
+    expect(link).toBe(`[${path}](./${path})`);
+    expect(resolveMarkdownFileLinkTarget(`./${path}`, "/workspace")).toBe(`/workspace/${path}`);
   });
 
   it("encodes markdown-sensitive destination characters", () => {
