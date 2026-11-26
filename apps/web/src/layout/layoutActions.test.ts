@@ -15,8 +15,13 @@ vi.mock(import("../state/entities"), async (original) => ({
 }));
 
 import { useClosedViewStore } from "../closedViewStore";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { planNextReopen, reopenClosedView } from "../reopenClosedView";
-import { closeLayoutTabByUser, closeOtherLayoutTabsByUser } from "./layoutActions";
+import {
+  closeLayoutTabByUser,
+  closeOtherLayoutTabsByUser,
+  createLayoutNewTabContent,
+} from "./layoutActions";
 import {
   createLayoutState,
   findLayoutTab,
@@ -155,6 +160,31 @@ describe("runInNewLayoutTab", () => {
     } finally {
       vi.useRealTimers();
       useLayoutStore.getState().clearNewTabRequest();
+    }
+  });
+});
+
+describe("createLayoutNewTabContent", () => {
+  it("keeps draft context when opening a new tab from a draft's surface tab", () => {
+    const draftId = DraftId.make("draft-1");
+    const draftThreadRef = scopeThreadRef(environmentId, ThreadId.make("draft-thread"));
+    const surface: LayoutTabContent = {
+      kind: "surface",
+      threadRef: draftThreadRef,
+      surfaceId: "files",
+    };
+    const spy = vi
+      .spyOn(useComposerDraftStore.getState(), "getDraftIdByRef")
+      .mockReturnValue(draftId);
+    try {
+      using layout = setup([surface]);
+      const surfaceTab = layout.tabOf(surface)!;
+      expect(createLayoutNewTabContent(surfaceTab.id).context).toEqual({
+        kind: "draft",
+        draftId,
+      });
+    } finally {
+      spy.mockRestore();
     }
   });
 });

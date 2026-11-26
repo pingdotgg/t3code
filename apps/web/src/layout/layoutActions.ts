@@ -95,6 +95,11 @@ export function openLayoutNewTab(placement: LayoutOpenPlacement = "active-pane")
   });
 }
 
+function surfaceThreadTarget(threadRef: ScopedThreadRef): ThreadRouteTarget {
+  const draftId = useComposerDraftStore.getState().getDraftIdByRef(threadRef);
+  return draftId !== null ? { kind: "draft", draftId } : { kind: "server", threadRef };
+}
+
 /** The launcher a new tab opened from `tabId`, or from the focused tab, shows. */
 export function createLayoutNewTabContent(tabId: string | null = null): LayoutLauncherContent {
   const layout = useLayoutStore.getState().layout;
@@ -108,7 +113,7 @@ export function createLayoutNewTabContent(tabId: string | null = null): LayoutLa
       : from?.kind === "launcher"
         ? from.context
         : from?.kind === "surface"
-          ? { kind: "server", threadRef: from.threadRef }
+          ? surfaceThreadTarget(from.threadRef)
           : null;
   return createLayoutLauncherContent(context);
 }
