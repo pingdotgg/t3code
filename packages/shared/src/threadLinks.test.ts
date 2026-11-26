@@ -249,7 +249,13 @@ describe("thread links", () => {
         ["", "", ""],
         ["", "   ", ""],
         ["> ", "> ", "> "],
-        ["- ", "  ", "  "],
+        ...[1, 2, 3, 4].map((padding) => [
+          `-${" ".repeat(padding)}`,
+          " ".repeat(padding + 1),
+          " ".repeat(padding + 1),
+        ]),
+        ["-\t", "    ", "    "],
+        ["1.\t", "    ", "    "],
       ].flatMap(([open, comment, after]) => [
         `${open}Note \`\n${comment}<!-- comment -->\n${after}${link} \``,
         `${open}Note \`\n${comment}<!-- \` -->\n${after}${link} \``,
@@ -292,6 +298,16 @@ describe("thread links", () => {
     for (const source of [
       "<!-- ` -->\n`<t3-thread://v2/local/t1>`",
       "```html\n<!--\n```\n`<t3-thread://v2/local/t1>`",
+      "-\tNote `\n        <!-- comment -->\n    <t3-thread://v2/local/t1> `",
+      "-     Note `\n      <!-- comment -->\n      <t3-thread://v2/local/t1> `",
+      "-     - Note `\n      <!-- comment -->\n      <t3-thread://v2/local/t1> `",
+      "1.     Note `\n       <!-- comment -->\n       <t3-thread://v2/local/t1> `",
+      "> -     Note `\n>       <!-- comment -->\n>       <t3-thread://v2/local/t1> `",
+      ...["script", "pre", "style", "textarea"].map(
+        (tag) => `<${tag}>\n<!--\n</${tag}>\n\n\`<t3-thread://v2/local/t1>\``,
+      ),
+      "> <script>\n> <!--\n> </script>\n\n`<t3-thread://v2/local/t1>`",
+      '- <SCRIPT type="text/javascript">\n  <!--\n  </SCRIPT>\n\n`<t3-thread://v2/local/t1>`',
     ]) {
       expect(threadLinkRefs(source, local)).toEqual([]);
       expect(relabelThreadLinks(source, local, () => "New")).toBe(source);

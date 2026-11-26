@@ -44,6 +44,9 @@ const SETEXT_UNDERLINE = /^(?:-+|=+)[ \t]*\r?$/;
 const FENCE_OPENER = /^(`{3,}(?=[^`\r\n]*\r?$)|~{3,})/;
 const BACKTICK_FENCE_CLOSER = /^`+[ \t]*\r?$/;
 const TILDE_FENCE_CLOSER = /^~+[ \t]*\r?$/;
+const RAW_HTML_OPENER = /^<(?:script|pre|style|textarea)(?=[\s>]|$)/i;
+const RAW_HTML_CLOSER = /<\/(?:script|pre|style|textarea)>/i;
+const HTML_COMMENT_CLOSER = /-->/;
 // Earlier alternatives claim text so later ones cannot match inside it: an escaped character opens
 // nothing, code is literal, and a link to anywhere else keeps a thread URL in its label or href.
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
@@ -63,7 +66,7 @@ const THREAD_LINK_OUTSIDE_CODE = new RegExp(
 );
 
 type ContainerBlock =
-  | { kind: "comment"; depth: number; indents: ReadonlyArray<number> }
+  | { kind: "html"; closer: RegExp; depth: number; indents: ReadonlyArray<number> }
   | {
       kind: "fence";
       char: "`" | "~";
@@ -72,23 +75,33 @@ type ContainerBlock =
       indents: ReadonlyArray<number>;
     };
 
-function blockContinuation(line: string, block: ContainerBlock): string | null {
+function columnWidth(text: string, start = 0): number {
+  let column = start;
+  for (const char of text) column += char === "\t" ? 4 - (column % 4) : 1;
+  return column - start;
+}
+
+function blockContinuation(line: string, block: ContainerBlock) {
   let offset = 0;
+  let column = 0;
   for (let d = 0; d < block.depth; d++) {
     QUOTE_CONTINUATION.lastIndex = offset;
     const match = QUOTE_CONTINUATION.exec(line);
     if (match === null) return null;
-    const indent = match[1]!.replace(/\t/g, "    ").length;
+    const indent = columnWidth(match[1]!, column);
     const required = block.indents[d] ?? 0;
     if (indent < required || indent - required > 3) return null;
     offset = QUOTE_CONTINUATION.lastIndex;
-    if (line[offset] === " " || line[offset] === "\t") offset++;
+    column += indent + 1;
+    if (line[offset] === " " || line[offset] === "\t") {
+      column += columnWidth(line[offset]!, column);
+      offset++;
+    }
   }
   const rest = line.slice(offset);
   const text = rest.trimStart();
-  if (text === "") return rest;
-  const indent = rest.slice(0, rest.length - text.length).replace(/\t/g, "    ").length;
-  return indent >= (block.indents[block.depth] ?? 0) ? rest : null;
+  const indent = columnWidth(rest.slice(0, rest.length - text.length), column);
+  return text === "" || indent >= (block.indents[block.depth] ?? 0) ? { rest, indent } : null;
 }
 
 function codeSpanLines(markdown: string) {
@@ -96,7 +109,7 @@ function codeSpanLines(markdown: string) {
     start: number;
     depth: number;
     breaksSpan: boolean;
-    inHtmlComment: boolean;
+    inHtmlBlock: boolean;
   }> = [];
   const listIndents: number[] = [];
   let paragraphDepth: number | undefined;
@@ -105,25 +118,23 @@ function codeSpanLines(markdown: string) {
   for (const rawLine of markdown.split(/(?<=\n)|(?<=\r)(?!\n)/u)) {
     const line = rawLine.replace(/[\r\n]+$/u, "");
     if (block !== undefined) {
-      const rest = blockContinuation(line, block);
-      if (rest !== null) {
+      const continuation = blockContinuation(line, block);
+      if (continuation !== null) {
+        const { rest, indent } = continuation;
         lines.push({
           start,
           depth: block.depth,
           breaksSpan: true,
-          inHtmlComment: block.kind === "comment",
+          inHtmlBlock: block.kind === "html",
         });
-        if (block.kind === "comment") {
-          if (rest.includes("-->")) block = undefined;
+        if (block.kind === "html") {
+          if (block.closer.test(rest)) block = undefined;
         } else {
           const restText = rest.trimStart();
-          const restIndent = rest
-            .slice(0, rest.length - restText.length)
-            .replace(/\t/g, "    ").length;
           const required = block.indents[block.depth] ?? 0;
           const closer = block.char === "`" ? BACKTICK_FENCE_CLOSER : TILDE_FENCE_CLOSER;
           if (
-            restIndent - required <= 3 &&
+            indent - required <= 3 &&
             closer.test(restText) &&
             restText.startsWith(block.char.repeat(block.length))
           ) {
@@ -137,6 +148,7 @@ function codeSpanLines(markdown: string) {
       block = undefined;
     }
     let offset = 0;
+    let column = 0;
     let depth = 0;
     let hasList = false;
     let listOffset = 0;
@@ -145,7 +157,7 @@ function codeSpanLines(markdown: string) {
       LINE_PREFIX.lastIndex = offset;
       const prefix = LINE_PREFIX.exec(line);
       if (prefix === null) break;
-      const indent = prefix[1]!.replace(/\t/g, "    ").length;
+      const indent = columnWidth(prefix[1]!, column);
       if (
         listOffset === 0 &&
         paragraphDepth === undefined &&
@@ -158,30 +170,41 @@ function codeSpanLines(markdown: string) {
       const continuedIndent = indent >= containerIndent ? containerIndent : 0;
       if (prefix[2] === undefined || indent - continuedIndent > 3) break;
       offset = LINE_PREFIX.lastIndex;
+      const width = columnWidth(prefix[0], column);
+      column += width;
       if (prefix[2] === ">") {
         depth++;
         listOffset = 0;
         listTailSpace = 0;
-        if (line[offset] === " " || line[offset] === "\t") offset++;
+        if (line[offset] === " " || line[offset] === "\t") {
+          column += columnWidth(line[offset]!, column);
+          offset++;
+        }
       } else {
-        listOffset += indent + prefix[2]!.replace(/\t/g, "    ").length;
+        listTailSpace = width - indent - prefix[2]!.trimEnd().length;
+        listOffset += listTailSpace > 4 ? width - listTailSpace + 1 : width;
         listIndents[depth] = listOffset;
-        listTailSpace = prefix[2]!.replace(/^\S+/, "").replace(/\t/g, "    ").length;
         hasList = true;
+        if (listTailSpace > 4) break;
       }
     }
     const content = line.slice(offset);
     const text = content.trimStart();
-    const indent = content.slice(0, content.length - text.length).replace(/\t/g, "    ").length;
+    const indent = columnWidth(content.slice(0, content.length - text.length), column);
     const containerIndent = hasList ? 0 : (listIndents[depth] ?? 0);
     const lazy = indent < containerIndent || depth < (paragraphDepth ?? 0);
     const nonCodeIndent =
       listTailSpace > 0 ? listTailSpace <= 4 : (lazy ? indent : indent - containerIndent) <= 3;
     const startsHtmlComment = nonCodeIndent && text.startsWith("<!--");
-    const fenceMatch = nonCodeIndent && !startsHtmlComment ? FENCE_OPENER.exec(text) : null;
+    const htmlCloser = startsHtmlComment
+      ? HTML_COMMENT_CLOSER
+      : nonCodeIndent && RAW_HTML_OPENER.test(text)
+        ? RAW_HTML_CLOSER
+        : null;
+    const fenceMatch = nonCodeIndent && htmlCloser === null ? FENCE_OPENER.exec(text) : null;
     // Block boundaries end a paragraph unless indented as code; a lazy line is never an underline.
     const breaksSpan =
-      startsHtmlComment ||
+      htmlCloser !== null ||
       (!hasList &&
         (lazy ? indent : indent - containerIndent) <= 3 &&
         (THEMATIC_BREAK.test(text) ||
@@ -191,13 +214,13 @@ function codeSpanLines(markdown: string) {
       fenceMatch !== null ||
       /^(?:[ \t\r]*$|[ \t]*#{1,6}(?:[ \t]|$)|[ \t]*`{3,}[^`]*$|[ \t]*~{3,})/.test(content);
     const effectiveDepth = endsParagraph || hasList ? depth : Math.max(depth, paragraphDepth ?? 0);
-    lines.push({ start, depth: effectiveDepth, breaksSpan, inHtmlComment: startsHtmlComment });
-    if ((startsHtmlComment && !text.includes("-->")) || fenceMatch !== null) {
+    lines.push({ start, depth: effectiveDepth, breaksSpan, inHtmlBlock: htmlCloser !== null });
+    if ((htmlCloser !== null && !htmlCloser.test(text)) || fenceMatch !== null) {
       const ownIndent = indent < containerIndent ? 0 : (listIndents[depth] ?? 0);
       if (indent < containerIndent) listIndents.length = depth;
       const indents = [...Array.from({ length: depth }, (_, d) => listIndents[d] ?? 0), ownIndent];
-      if (startsHtmlComment) {
-        block = { kind: "comment", depth, indents };
+      if (htmlCloser !== null) {
+        block = { kind: "html", closer: htmlCloser, depth, indents };
       } else {
         const run = fenceMatch![1]!;
         block = { kind: "fence", char: run[0] as "`" | "~", length: run.length, depth, indents };
@@ -217,7 +240,7 @@ function findCodeSpanEnd(
   lineIndex: number,
 ): number {
   const openLine = lines[lineIndex]!;
-  if (openLine.inHtmlComment) return -1;
+  if (openLine.inHtmlBlock) return -1;
   const openDepth = openLine.depth;
   for (let i = openIndex + tickCount; i < markdown.length; i++) {
     if (markdown[i] === "`") {
@@ -409,7 +432,7 @@ export function replaceThreadLinks(
       lines ??= codeSpanLines(markdown);
       while (lineIndex + 1 < lines.length && lines[lineIndex + 1]!.start <= match.index)
         lineIndex++;
-      if (lines[lineIndex]!.inHtmlComment) {
+      if (lines[lineIndex]!.inHtmlBlock) {
         pattern.lastIndex = lines[lineIndex + 1]?.start ?? markdown.length;
         continue;
       }
