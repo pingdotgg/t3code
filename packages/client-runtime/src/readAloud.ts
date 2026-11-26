@@ -9,6 +9,7 @@ import {
 import {
   readAloudBlockFrom,
   readAloudPosition,
+  readAloudSentenceStart,
   readAloudSpeech,
   splitReadAloudSpans,
   spokenWordAt,
@@ -209,10 +210,12 @@ function spokenWordStart(speech: ReadAloudSpeech, from: number) {
 }
 
 export function createReadAloudController(
+  /** `from` is the offset in `text` where the audio should start, after a spoken lead-in. */
   prepare: (
     text: string,
     settings: ReadAloudSettings,
     signal: AbortSignal,
+    from?: number,
   ) => Promise<SpeechPlayback>,
   resolve: MFunctionType = mFallback,
   /** Words for the reply's formulas when replies render them, so they are not read as TeX. */
@@ -238,8 +241,10 @@ export function createReadAloudController(
   };
   let paused = false;
   let starting = false;
-  // The spoken range of the chunk `playback` speaks, and the word it is on, for seeking.
+  // The spoken range of the chunk `playback` speaks, and the word it is on, for seeking. Its
+  // audio begins at `chunkFrom`, after any lead-in that was spoken only for context.
   let chunkStart = 0;
+  let chunkFrom = 0;
   let chunkEnd = 0;
   let spokenAt = 0;
   const levelListeners = new Set<(level: number) => void>();
@@ -335,26 +340,34 @@ export function createReadAloudController(
     stop();
     if (settings.provider === "off") return;
     reading = { id, markdown, settings, words };
+    // Environments make speech picked up mid-sentence from the sentence's start, for context.
+    // Platform engines cannot start partway into their audio, so they start at the word.
+    const leadIn =
+      fromWord && settings.provider !== "system"
+        ? readAloudSentenceStart(speech.text, offset)
+        : offset;
     // Platform speech engines cap utterance length; environments stream a whole reply.
     const chunks = splitReadAloudSpans(
-      speech.text.slice(offset),
+      speech.text.slice(leadIn),
       settings.provider === "system" ? undefined : SPEECH_SYNTHESIS_MAX_TEXT,
-    ).map((chunk) => ({ ...chunk, start: offset + chunk.start }));
+    ).map((chunk) => ({ ...chunk, start: leadIn + chunk.start }));
     if (!chunks.length) return;
     const owner = new AbortController();
     active = owner;
     try {
       for (const chunk of chunks) {
         publish({ id, status: paused ? "paused" : "loading" });
-        const next = await prepare(chunk.text, settings, owner.signal);
+        const from = Math.max(0, Math.min(offset, chunk.start + chunk.text.length) - chunk.start);
+        const next = await prepare(chunk.text, settings, owner.signal, from > 0 ? from : undefined);
         if (active !== owner) {
           dispose(next);
           return;
         }
         playback = next;
         chunkStart = chunk.start;
+        chunkFrom = chunk.start + from;
         chunkEnd = chunk.start + chunk.text.length;
-        spokenAt = chunk.start;
+        spokenAt = chunkFrom;
         if (next.words)
           unfollow = next.words((word) => {
             if (word) spokenAt = chunk.start + word.start;
@@ -478,7 +491,7 @@ export function createReadAloudController(
       );
       const at = spokenWordStart(speech, from);
       if (at === undefined) return null;
-      if (at >= chunkStart && at < chunkEnd && playback?.seek?.(at - chunkStart))
+      if (at >= chunkFrom && at < chunkEnd && playback?.seek?.(at - chunkStart))
         return Promise.resolve();
       return start(id, reading.markdown, reading.settings, from, true);
     },

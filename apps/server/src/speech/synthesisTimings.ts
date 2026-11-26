@@ -24,6 +24,31 @@ function frameAt(bytes: Uint8Array, at: number) {
 }
 
 /**
+ * The frame of an MP3 stream that plays at `seconds`: its byte offset and when it starts, or
+ * undefined until `bytes` reach it. Audio cut there decodes from a frame boundary.
+ */
+export function mp3FrameAt(bytes: Uint8Array, seconds: number) {
+  // An ID3v2 tag holds metadata, not audio; its size is four 7-bit bytes.
+  let at =
+    bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33 && bytes.length >= 10
+      ? 10 + ((bytes[6]! << 21) | (bytes[7]! << 14) | (bytes[8]! << 7) | bytes[9]!)
+      : 0;
+  let elapsed = 0;
+  while (at + 4 <= bytes.length) {
+    const frame = frameAt(bytes, at);
+    if (!frame) {
+      at++;
+      continue;
+    }
+    if (at + frame.length > bytes.length) return undefined;
+    if (elapsed + frame.seconds > seconds) return { offset: at, seconds: elapsed };
+    elapsed += frame.seconds;
+    at += frame.length;
+  }
+  return undefined;
+}
+
+/**
  * Counts the playing time of an MP3 stream from its frame headers as chunks arrive. Word timings
  * of later synthesis pieces start where the earlier pieces' audio ends.
  */

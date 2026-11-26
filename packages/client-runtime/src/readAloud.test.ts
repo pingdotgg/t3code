@@ -340,12 +340,14 @@ it("starts at the block a user picks, keeps its markdown offsets, and ignores a 
 it("seeks to a picked word in the audio when its time is known, else reads from that word", async () => {
   const markdown = "First paragraph here.\n\nSecond **bold** one.";
   const texts: string[] = [];
+  const froms: Array<number | undefined> = [];
   const seeks: number[] = [];
   const speeds: number[] = [];
   let seekable = true;
   const prepared: Array<ReturnType<typeof deferred<void>>> = [];
-  const controller = createReadAloudController(async (text) => {
+  const controller = createReadAloudController(async (text, _settings, _signal, from) => {
     texts.push(text);
+    froms.push(from);
     const finished = deferred<void>();
     prepared.push(finished);
     return {
@@ -370,10 +372,20 @@ it("seeks to a picked word in the audio when its time is known, else reads from 
   expect(seeks).toEqual(["First paragraph here.\nSecond ".length]);
   expect(texts).toHaveLength(1);
 
-  // A word whose time has not arrived is read from instead, from the word itself, not its block.
+  // A word whose time has not arrived is read again: from its sentence's start for context, with
+  // the audio starting at the word itself.
   seekable = false;
   void controller.seek("1", markdown.indexOf("one"));
-  await vi.waitFor(() => expect(texts).toEqual([texts[0], "one."]));
+  await vi.waitFor(() => expect(texts).toEqual([texts[0], "Second bold one."]));
+  expect(froms).toEqual([undefined, "Second bold ".length]);
+
+  // The lead-in is not in that audio, so a word in it is read again rather than sought.
+  seekable = true;
+  seeks.length = 0;
+  void controller.seek("1", markdown.indexOf("Second"));
+  await vi.waitFor(() => expect(texts).toHaveLength(3));
+  expect(seeks).toEqual([]);
+  expect(froms[2]).toBeUndefined();
 
   // Speed changes go to the player, and later readings keep them.
   await controller.setSpeed(1.25);

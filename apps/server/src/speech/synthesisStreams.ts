@@ -25,7 +25,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechAligner from "./SpeechAligner.ts";
-import { mp3Duration } from "./synthesisTimings.ts";
+import { mp3Duration, mp3FrameAt } from "./synthesisTimings.ts";
 
 // A started stream nobody opens is abandoned.
 const UNREAD_GRACE: Duration.Input = "30 seconds";
@@ -35,6 +35,20 @@ const RECONNECT_GRACE: Duration.Input = "5 seconds";
 const FINISHED_RETENTION: Duration.Input = "2 minutes";
 // A timings read answers by then even when nothing changed, so a lost client is not held.
 const TIMINGS_WAIT: Duration.Input = "10 seconds";
+// Audio that starts at a word keeps this much before its timed start, so its onset is not clipped.
+const WORD_ONSET_SECONDS = 0.05;
+
+const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
+
+function joined(chunks: ReadonlyArray<Uint8Array>) {
+  const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.byteLength, 0));
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return bytes;
+}
 
 type Job = {
   readonly chunks: Uint8Array[];
@@ -108,7 +122,7 @@ const make = Effect.gen(function* () {
       everRead: false,
       idle: 0,
     };
-    const addWords = (words: ReadonlyArray<SpeechSynthesisWord>) =>
+    const publishWords = (words: ReadonlyArray<SpeechSynthesisWord>) =>
       words.length
         ? Effect.sync(() => job.words.push(...words)).pipe(
             Effect.andThen(
@@ -119,6 +133,77 @@ const make = Effect.gen(function* () {
             ),
           )
         : Effect.void;
+    const publishChunk = (chunk: Uint8Array) =>
+      Effect.sync(() => {
+        job.chunks.push(chunk);
+        job.duration.push(chunk);
+      }).pipe(
+        Effect.andThen(
+          SubscriptionRef.update(job.progress, (progress) => ({
+            ...progress,
+            count: job.chunks.length,
+          })),
+        ),
+        Effect.andThen(Deferred.succeed(first, undefined)),
+      );
+    // Speech that starts at a word is made from its sentence's start for context. Its audio is
+    // held until that word is timed, then released from the frame it starts in, with the
+    // earlier words dropped and later ones shifted to the released audio's clock.
+    const from =
+      request.from !== undefined && request.from < request.text.length ? request.from : 0;
+    const lead =
+      from > 0
+        ? {
+            held: [] as Uint8Array[],
+            words: [] as SpeechSynthesisWord[],
+            cut: -1,
+            // The whole synthesis, lead-in included, which its PCM and timings are measured on.
+            total: mp3Duration(),
+          }
+        : undefined;
+    const shifted = (words: ReadonlyArray<SpeechSynthesisWord>, cut: number) =>
+      words
+        .filter((word) => word.end > from)
+        .map((word) => ({
+          ...word,
+          startSeconds: round(Math.max(0, word.startSeconds - cut)),
+          endSeconds: round(Math.max(0, word.endSeconds - cut)),
+        }));
+    // `force` releases what is held once no more timings can come, from the start if need be.
+    const release = (force: boolean) =>
+      Effect.suspend(() => {
+        if (!lead || lead.cut >= 0) return Effect.void;
+        const target = lead.words.find((word) => word.end > from)?.startSeconds;
+        if (target === undefined && !force) return Effect.void;
+        const bytes = joined(lead.held);
+        const frame =
+          (target === undefined
+            ? undefined
+            : mp3FrameAt(bytes, Math.max(0, target - WORD_ONSET_SECONDS))) ??
+          (force ? { offset: 0, seconds: 0 } : undefined);
+        if (!frame) return Effect.void;
+        lead.cut = frame.seconds;
+        const words = shifted(lead.words, frame.seconds);
+        lead.held = [];
+        lead.words = [];
+        const audio = bytes.subarray(frame.offset);
+        return (audio.length ? publishChunk(audio) : Effect.void).pipe(
+          Effect.andThen(publishWords(words)),
+        );
+      });
+    const addWords = (words: ReadonlyArray<SpeechSynthesisWord>) => {
+      if (!lead) return publishWords(words);
+      if (lead.cut >= 0) return publishWords(shifted(words, lead.cut));
+      lead.words.push(...words);
+      return release(false);
+    };
+    const addChunk = (chunk: Uint8Array) => {
+      if (!lead) return publishChunk(chunk);
+      lead.total.push(chunk);
+      if (lead.cut >= 0) return publishChunk(chunk);
+      lead.held.push(chunk);
+      return release(false);
+    };
     // Audio that comes without word timings is timed from its PCM, off the audio's own path.
     const pcm = yield* Queue.unbounded<
       { readonly pcm: Int16Array; readonly rate: number; readonly startSeconds: number },
@@ -130,19 +215,25 @@ const make = Effect.gen(function* () {
       yield* Stream.fromQueue(pcm).pipe(
         Stream.runForEach((part) =>
           Effect.gen(function* () {
-            if (!("session" in opened))
+            if (!("session" in opened)) {
               opened.session = yield* aligner.session(
                 request.text,
                 request.language,
                 request.alignment ?? "english",
               );
+              // Without a timing model the word is never timed; play from the lead-in instead.
+              if (!opened.session) yield* release(true);
+            }
             if (opened.session)
               yield* addWords(yield* opened.session.push(part.pcm, part.rate, part.startSeconds));
           }),
         ),
       );
       if (opened.session && !job.failed)
-        yield* addWords(yield* opened.session.finish(job.duration.seconds));
+        yield* addWords(
+          yield* opened.session.finish(lead ? lead.total.seconds : job.duration.seconds),
+        );
+      yield* release(true);
     }).pipe(
       Effect.ensuring(
         SubscriptionRef.update(job.progress, (progress) => ({ ...progress, timed: true })),
@@ -153,34 +244,36 @@ const make = Effect.gen(function* () {
       Stream.runForEach((part) => {
         if ("pcm" in part) return Queue.offer(pcm, part);
         if (!(part instanceof Uint8Array)) return addWords(part.words);
-        job.chunks.push(part);
-        job.duration.push(part);
-        return SubscriptionRef.update(job.progress, (progress) => ({
-          ...progress,
-          count: job.chunks.length,
-        })).pipe(Effect.andThen(Deferred.succeed(first, undefined)));
+        return addChunk(part);
       }),
       Effect.onExit((exit) => {
         job.failed = Exit.isFailure(exit);
         Queue.endUnsafe(pcm);
-        return SubscriptionRef.update(job.progress, (progress) => ({
-          ...progress,
-          count: job.chunks.length,
-          done: true,
-        })).pipe(
+        const alignment = job.alignment;
+        // Held audio is released by the alignment once it has timed the last of it.
+        return (lead && alignment ? Fiber.await(alignment) : Effect.void).pipe(
+          Effect.andThen(release(true)),
           Effect.andThen(
-            Exit.isFailure(exit)
-              ? Deferred.failCause(first, exit.cause)
-              : job.chunks.length
-                ? Effect.void
-                : Effect.logWarning("Speech synthesis produced no audio.", { provider }).pipe(
-                    Effect.andThen(
-                      Deferred.fail(
-                        first,
-                        new SpeechSynthesisError({ provider, reason: "unavailable" }),
+            SubscriptionRef.update(job.progress, (progress) => ({
+              ...progress,
+              count: job.chunks.length,
+              done: true,
+            })).pipe(
+              Effect.andThen(
+                Exit.isFailure(exit)
+                  ? Deferred.failCause(first, exit.cause)
+                  : job.chunks.length
+                    ? Effect.void
+                    : Effect.logWarning("Speech synthesis produced no audio.", { provider }).pipe(
+                        Effect.andThen(
+                          Deferred.fail(
+                            first,
+                            new SpeechSynthesisError({ provider, reason: "unavailable" }),
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
+              ),
+            ),
           ),
         );
       }),

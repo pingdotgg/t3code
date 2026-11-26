@@ -332,6 +332,20 @@ export function splitReadAloudSpans(text: string, limit = 3500) {
   return spans;
 }
 
+// Longer lead-ins delay the word picked by more speech than they are worth.
+const MAX_LEAD_IN = 400;
+
+/**
+ * Where to start speech that should be heard from offset `at`: the start of its sentence, so the
+ * voice reads the word in context, unless that sentence runs too long before it.
+ */
+export function readAloudSentenceStart(text: string, at: number) {
+  const ends = [...text.slice(0, at).matchAll(/[.!?。！？]\s+|\n/gu)];
+  const end = ends.at(-1);
+  const start = end ? end.index + end[0].length : 0;
+  return at - start > MAX_LEAD_IN ? at : start;
+}
+
 export function splitReadAloudText(text: string, limit = 3500) {
   return splitReadAloudSpans(text, limit).map((span) => span.text);
 }

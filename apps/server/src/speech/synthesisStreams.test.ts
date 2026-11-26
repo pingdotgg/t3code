@@ -134,6 +134,78 @@ it.effect("times PCM-only audio with the aligner and ends timings once it has fi
   }),
 );
 
+it.effect("starts audio picked up mid-sentence at its word, keeping the lead-in for context", () =>
+  Effect.gen(function* () {
+    const source = yield* Queue.unbounded<
+      CloudSpeech.SpeechSynthesisPart,
+      SpeechSynthesisError | Cause.Done
+    >();
+    // MPEG-1 Layer III frames at 64 kbps and 44.1 kHz, each marked with its index.
+    const frameSeconds = 1152 / 44100;
+    const frame = (marker: number) =>
+      Uint8Array.from({ length: 208 }, (_, index) =>
+        index === 0 ? 0xff : index === 1 ? 0xfb : index === 2 ? 0x50 : index === 3 ? marker : 0,
+      );
+    const frames = [0, 1, 2, 3].map(frame);
+    yield* Effect.gen(function* () {
+      const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+      // "Read this reply." picked up at "this".
+      yield* Queue.offerAll(source, [
+        { words: [{ start: 0, end: 4, startSeconds: 0, endSeconds: 0.05 }] },
+        ...frames,
+        {
+          words: [
+            { start: 5, end: 9, startSeconds: 0.1, endSeconds: 0.12 },
+            { start: 10, end: 16, startSeconds: 0.12, endSeconds: 0.2 },
+          ],
+        },
+      ]);
+      const token = yield* streams.start("elevenlabs", { ...request, from: 5 });
+      yield* Queue.end(source);
+      // The frame holding the word's onset is the second, so audio starts there.
+      expect(yield* audio(yield* streams.read(token))).toEqual(
+        frames.slice(1).flatMap((bytes) => [...bytes]),
+      );
+      const cut = frameSeconds;
+      const round = (seconds: number) => Math.round(seconds * 1000) / 1000;
+      expect(yield* streams.timings(token, 0)).toEqual({
+        words: [
+          { start: 5, end: 9, startSeconds: round(0.1 - cut), endSeconds: round(0.12 - cut) },
+          { start: 10, end: 16, startSeconds: round(0.12 - cut), endSeconds: round(0.2 - cut) },
+        ],
+        done: true,
+        durationSeconds: 3 * frameSeconds,
+      });
+    }).pipe(Effect.provide(withSource(Stream.fromQueue(source))));
+  }),
+);
+
+it.effect("plays the lead-in at once when no model can time the word picked", () =>
+  Effect.gen(function* () {
+    const source = yield* Queue.unbounded<
+      CloudSpeech.SpeechSynthesisPart,
+      SpeechSynthesisError | Cause.Done
+    >();
+    const frame = Uint8Array.from({ length: 208 }, (_, index) =>
+      index === 0 ? 0xff : index === 1 ? 0xfb : index === 2 ? 0x50 : 0,
+    );
+    yield* Effect.gen(function* () {
+      const streams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
+      yield* Queue.offerAll(source, [
+        { pcm: new Int16Array(4), rate: 24_000, startSeconds: 0 },
+        frame,
+      ]);
+      // Starts while synthesis is still running, rather than holding audio until it ends.
+      const token = yield* streams.start("xai", { ...request, from: 5 });
+      yield* Queue.offer(source, frame);
+      yield* Queue.end(source);
+      expect(yield* audio(yield* streams.read(token))).toEqual([...frame, ...frame]);
+    }).pipe(
+      Effect.provide(withSource(Stream.fromQueue(source), { session: () => Effect.undefined })),
+    );
+  }),
+);
+
 it.effect.each([
   [
     "a provider error",

@@ -6,6 +6,7 @@ import {
   readAloudBlockFrom,
   readAloudSpeech,
   readAloudText,
+  readAloudSentenceStart,
   splitReadAloudSpans,
   splitReadAloudText,
   spokenWordAt,
@@ -239,4 +240,13 @@ it("splits long replies without losing content or cutting surrogate pairs", () =
   const padded = `  ${text}\n`;
   for (const span of splitReadAloudSpans(padded, 20))
     expect(padded.slice(span.start, span.start + span.text.length)).toBe(span.text);
+});
+
+it("picks speech up from the start of a word's sentence, unless that runs too long", () => {
+  const text = "Done.\nReads the manifest first. Streams a terminal result.";
+  expect(readAloudSentenceStart(text, text.indexOf("terminal"))).toBe(text.indexOf("Streams"));
+  expect(readAloudSentenceStart(text, text.indexOf("manifest"))).toBe(text.indexOf("Reads"));
+  expect(readAloudSentenceStart(text, 2)).toBe(0);
+  const long = `${"word ".repeat(100)}end`;
+  expect(readAloudSentenceStart(long, long.indexOf("end"))).toBe(long.indexOf("end"));
 });

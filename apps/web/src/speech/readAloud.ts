@@ -85,7 +85,7 @@ export const warmReadAloud = createReadAloudWarmup(async (environmentId, model) 
 });
 
 export const readAloudController = createReadAloudController(
-  async (text, settings, signal) => {
+  async (text, settings, signal, from) => {
     if (settings.provider === "system")
       return systemPlayback(text, settings.voice, settings.speed, settings.language);
     if (settings.provider === "off") throw new Error("Enable read aloud in Settings → Voice.");
@@ -113,6 +113,7 @@ export const readAloudController = createReadAloudController(
         speed: settings.speed,
         language: settings.language,
         alignment,
+        ...(from === undefined ? {} : { from }),
       }),
       { signal },
     );

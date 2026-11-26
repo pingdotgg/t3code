@@ -79,6 +79,11 @@ export const SpeechSynthesisRequest = Schema.Struct({
   speed: Schema.Number.check(Schema.isBetween({ minimum: 0.7, maximum: 1.5 })),
   language: Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(16)),
   alignment: Schema.optionalKey(SpeechWordAlignment),
+  /**
+   * UTF-16 offset of the word the audio starts at. The text before it is still synthesized, so a
+   * voice picking up mid-sentence reads in context; its audio and timings are dropped.
+   */
+  from: Schema.optionalKey(NonNegativeInt),
 });
 export const SpeechSynthesisCatalogQuery = Schema.Struct({
   /** Fetches that timing model in the background when the provider reports no word timings. */
