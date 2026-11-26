@@ -33,7 +33,6 @@ const HTML_STANDALONE_TAG =
   /^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ \t\r"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>|<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>)[ \t]*\r?$/;
 const BLANK_LINE = /^[ \t]*\r?$/;
 const closesAtBlankLine = (next: string) => BLANK_LINE.test(next);
-const CLOSES_ON_OPENING_LINE = Symbol();
 
 function listContentColumn(line: string, markerEnd: number, padding: string): number {
   // CommonMark gives empty items and items starting with indented code one column of padding.
@@ -73,10 +72,8 @@ function openedWrappers(line: string): number {
   return opened;
 }
 
-/** Returns how the block that `line` opens ends, or null for none. */
-function blockCloser(
-  line: string,
-): ((line: string) => boolean) | typeof CLOSES_ON_OPENING_LINE | null {
+/** Returns how to recognize the end of a block that `line` opens, or null for none. */
+function blockCloser(line: string): ((line: string) => boolean) | null {
   const fence = FENCE_OPEN.exec(line)?.[1];
   if (fence) {
     return (next) => {
@@ -94,9 +91,7 @@ function blockCloser(
   for (const [open, close] of SPANNING_BLOCKS) {
     const opener = open.exec(line)?.[0];
     if (opener === undefined) continue;
-    return close.test(line.slice(opener.length))
-      ? CLOSES_ON_OPENING_LINE
-      : (next) => close.test(next);
+    return close.test(line.slice(opener.length)) ? null : (next) => close.test(next);
   }
   // Other HTML blocks (CommonMark types 6 and 7) run until a blank line.
   return HTML_BLOCK_TAG.test(line) || HTML_STANDALONE_TAG.test(line) ? closesAtBlankLine : null;
@@ -190,8 +185,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           (afterBlankLine && BLOCK_START.test(line) && !LIST_ITEM.test(line)));
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
-      const blockEnd = blockCloser(line);
-      closes = blockEnd === CLOSES_ON_OPENING_LINE ? null : blockEnd;
+      closes = blockCloser(line);
       const fence = FENCE_OPEN.test(line);
       const indent = /^ */.exec(line)![0].length;
       const dedented = indent < listContentIndent && line[indent] !== "\t";
@@ -208,7 +202,9 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
             ATX_HEADING.test(line) ||
             thematicBreak ||
             BLOCK_QUOTE.test(line) ||
-            (blockEnd !== null && (blockEnd !== closesAtBlankLine || HTML_BLOCK_TAG.test(line))))
+            fence ||
+            SPANNING_BLOCKS.some(([open]) => open.test(line)) ||
+            HTML_BLOCK_TAG.test(line))
         ) {
           // Dedented prose can still be a lazy continuation until a block boundary.
           listContentIndent = Infinity;
