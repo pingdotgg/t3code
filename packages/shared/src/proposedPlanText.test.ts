@@ -15,21 +15,11 @@ it("takes the plan title from headings outside code", () => {
   expect(proposedPlanTitle("\t# Back up database\n\n## Real Plan Title")).toBe("Real Plan Title");
 });
 
-it("takes the plan title after an HTML comment containing a code fence", () => {
-  const markdown = "<!--\n```ts\n-->\n# Release plan";
-  expect(proposedPlanTitle(markdown)).toBe("Release plan");
-});
-
-it("ignores headings in HTML comment blocks", () => {
-  for (const comment of [
-    "<!--\n# Hidden title\n-->",
-    "   <!-- # Hidden title -->",
-    "<!--\n# Hidden title",
-  ]) {
-    expect(proposedPlanTitle(`${comment}\n# Release plan`)).toBe(
-      comment.includes("-->") ? "Release plan" : null,
-    );
+it("takes the plan title from headings outside HTML comments", () => {
+  for (const comment of ["<!--\n```ts\n-->", "<!--\n# Hidden title\n-->", "   <!-- # Hidden -->"]) {
+    expect(proposedPlanTitle(`${comment}\n# Release plan`)).toBe("Release plan");
   }
+  expect(proposedPlanTitle("<!--\n# Hidden title\n# Release plan")).toBeNull();
 });
 
 it("skips empty plan headings without reading into the next line", () => {
