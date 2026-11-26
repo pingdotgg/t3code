@@ -45,11 +45,13 @@ function localizedFormatters(locale: string | undefined, timeZone: string | unde
   const caption = new Intl.DateTimeFormat(locale, { month: "long", year: "numeric", timeZone });
   const monthDropdown = new Intl.DateTimeFormat(locale, { month: "short", timeZone });
   const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone });
-  return {
+  const formatters = {
     formatCaption: (month: Date) => caption.format(month),
     formatMonthDropdown: (month: Date) => monthDropdown.format(month),
-    formatWeekdayName: (day: Date) => weekday.format(day),
   };
+  // Intl has no two-letter weekday, so English keeps DayPicker's own "Mo".
+  if (weekday.resolvedOptions().locale.startsWith("en")) return formatters;
+  return { ...formatters, formatWeekdayName: (day: Date) => weekday.format(day) };
 }
 
 export function Calendar({
