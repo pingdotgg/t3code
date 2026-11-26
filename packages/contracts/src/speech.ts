@@ -31,6 +31,39 @@ export const CloudSpeechKeys = Schema.Struct({
 });
 export type CloudSpeechKeys = typeof CloudSpeechKeys.Type;
 
+/**
+ * Starts signing in with OpenRouter, which creates a key for this environment. With a callback
+ * URL, OpenRouter returns there; without one, it shows a code to paste instead.
+ */
+export const OpenRouterSignInRequest = Schema.Struct({
+  callbackUrl: Schema.NullOr(Schema.String.check(Schema.isMaxLength(2048))),
+});
+export const OpenRouterSignIn = Schema.Struct({
+  authorizationUrl: Schema.String,
+  state: Schema.String,
+});
+export type OpenRouterSignIn = typeof OpenRouterSignIn.Type;
+export const OpenRouterSignInCode = Schema.Struct({
+  state: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(128)),
+  code: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+});
+export class OpenRouterSignInError extends Schema.TaggedError<OpenRouterSignInError>()(
+  "OpenRouterSignInError",
+  { reason: Schema.Literals(["expired", "rejected", "unavailable"]) },
+  { httpApiStatus: 422 },
+) {
+  override get message() {
+    switch (this.reason) {
+      case "expired":
+        return "This OpenRouter sign-in expired. Sign in again.";
+      case "rejected":
+        return "OpenRouter didn’t accept this sign-in. Sign in again.";
+      case "unavailable":
+        return "Couldn’t reach OpenRouter. Try again.";
+    }
+  }
+}
+
 /** An exact `author/model` slug. Router shortcuts such as `:nitro` or `openrouter/auto` are not models. */
 export const CloudSpeechModelId = Schema.String.check(
   Schema.isMinLength(3),

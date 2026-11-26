@@ -237,7 +237,10 @@ choose **Read from here**.
 
 System voices run on your device. Grok TTS, OpenRouter, and ElevenLabs send the reply text
 through your selected environment and use API billing. They share the API keys saved for dictation. Choose a model and
-voice, then use the preview to try it.
+voice, then use the preview to try it. For OpenRouter, you can choose **Sign in with OpenRouter**
+instead of pasting a key: OpenRouter creates a key for your environment after you approve it. If
+your environment isn't reachable over HTTPS or on this computer, OpenRouter shows a code to paste
+back into T3 Code instead.
 
 **Local model** reads replies on your selected environment, so the text never leaves it.
 Download a model once from the same settings page. Kokoro (about 220 MB) is the default, with

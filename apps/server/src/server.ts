@@ -59,6 +59,7 @@ import * as SpeechAligner from "./speech/SpeechAligner.ts";
 import * as SpeechService from "./speech/SpeechService.ts";
 import * as CloudSpeech from "./speech/CloudSpeech.ts";
 import { speechHttpApiLayer } from "./speech/http.ts";
+import * as OpenRouterSignIn from "./speech/OpenRouterSignIn.ts";
 import { speechStreamRouteLayer } from "./speech/stream.ts";
 import * as SpeechSynthesisStreams from "./speech/synthesisStreams.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
@@ -972,6 +973,7 @@ const layerMakeRoutes = Layer.mergeAll(
       SpeechAligner.layer,
     ).pipe(Layer.provide(SpeechModelStore.layer)),
   ),
+  Layer.provide(OpenRouterSignIn.layer),
   Layer.provide(CloudSpeech.layer.pipe(Layer.provide(SecretResolver.layer))),
   Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),

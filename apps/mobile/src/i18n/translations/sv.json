@@ -5746,5 +5746,12 @@
   "8a0a725cd4a505ce": "Uppspelningshastighet",
   "dc28e2793b510896": "Förbereder tal",
   "e5ad64bb69db1045": "Pausa uppläsningen",
-  "53dac468c9738c4e": "Gå till aktuell plats"
+  "53dac468c9738c4e": "Gå till aktuell plats",
+  "34065b700e23a8ae": "Det gick inte att börja logga in med OpenRouter. Försök igen.",
+  "1b978e981c03ece2": "OpenRouter godtog inte den här koden. Logga in igen.",
+  "449e39e08a0879ce": "Kod från OpenRouter",
+  "1ca2facc399b6d4c": "Slutför",
+  "2cf284a7b130b411": "Logga in igen",
+  "20a054556a7395b2": "Logga in med OpenRouter",
+  "98f5e5fa1c6b0c62": "Slutför inloggningen hos OpenRouter och kom sedan tillbaka hit."
 }

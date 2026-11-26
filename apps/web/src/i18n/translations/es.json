@@ -13078,5 +13078,12 @@
       }
     },
     ", que paga con su clave de API. La clave se comparte con el dictado."
-  ]
+  ],
+  "34065b700e23a8ae": "No se pudo iniciar sesión con OpenRouter. Inténtalo de nuevo.",
+  "1b978e981c03ece2": "OpenRouter no aceptó este código. Vuelve a iniciar sesión.",
+  "449e39e08a0879ce": "Código de OpenRouter",
+  "1ca2facc399b6d4c": "Finalizar",
+  "2cf284a7b130b411": "Volver a iniciar sesión",
+  "20a054556a7395b2": "Iniciar sesión con OpenRouter",
+  "98f5e5fa1c6b0c62": "Termina de iniciar sesión en OpenRouter y luego vuelve aquí."
 }

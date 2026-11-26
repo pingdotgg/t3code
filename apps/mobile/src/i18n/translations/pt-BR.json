@@ -5740,5 +5740,12 @@
   "8a0a725cd4a505ce": "Velocidade de reprodução",
   "dc28e2793b510896": "Preparando a fala",
   "e5ad64bb69db1045": "Pausar leitura",
-  "53dac468c9738c4e": "Ir para o trecho atual"
+  "53dac468c9738c4e": "Ir para o trecho atual",
+  "34065b700e23a8ae": "Não foi possível iniciar o login com o OpenRouter. Tente novamente.",
+  "1b978e981c03ece2": "O OpenRouter não aceitou este código. Entre novamente.",
+  "449e39e08a0879ce": "Código do OpenRouter",
+  "1ca2facc399b6d4c": "Concluir",
+  "2cf284a7b130b411": "Entrar novamente",
+  "20a054556a7395b2": "Entrar com o OpenRouter",
+  "98f5e5fa1c6b0c62": "Conclua o login no OpenRouter e depois volte aqui."
 }

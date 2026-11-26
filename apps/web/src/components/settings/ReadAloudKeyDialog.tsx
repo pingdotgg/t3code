@@ -36,6 +36,7 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { useCloudRead } from "./CloudVoiceConfiguration";
+import { OpenRouterSignIn } from "./OpenRouterSignIn";
 import { SecretInput } from "./SecretInput";
 import { SecretSourceSelect } from "./SecretSourceInput";
 
@@ -160,71 +161,84 @@ export function ReadAloudKeyDialog({
                 <T>Checking for an API key…</T>
               </p>
             ) : editingKey ? (
-              <form
-                id={formId}
-                className="grid gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (credential !== undefined) void saveKey(credential, !active);
-                }}
-              >
-                <Label htmlFor="read-aloud-cloud-key">
-                  <T>API key</T>
-                </Label>
-                <div className="flex min-w-0 items-start gap-2">
-                  {sources.length > 0 && (
-                    <SecretSourceSelect
-                      value={sourceId}
-                      sources={sources}
-                      label={gt("{company} API key", { company })}
-                      disabled={busy}
-                      onValueChange={(next) => {
-                        setSourceId(next);
-                        setDraft("");
-                        setError("");
-                      }}
-                    />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    {sourceId !== null ? (
-                      <Input
-                        key={sourceId}
-                        id="read-aloud-cloud-key"
-                        aria-label={gt("{company} API key reference", { company })}
-                        autoFocus
-                        placeholder={source?.referencePlaceholder}
-                        value={draft}
+              <div className="grid gap-4">
+                {provider === "openrouter" && !saved && (
+                  <OpenRouterSignIn
+                    prepared={prepared}
+                    disabled={busy}
+                    onSignedIn={() => {
+                      refresh();
+                      onEnable();
+                      close();
+                    }}
+                  />
+                )}
+                <form
+                  id={formId}
+                  className="grid gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (credential !== undefined) void saveKey(credential, !active);
+                  }}
+                >
+                  <Label htmlFor="read-aloud-cloud-key">
+                    <T>API key</T>
+                  </Label>
+                  <div className="flex min-w-0 items-start gap-2">
+                    {sources.length > 0 && (
+                      <SecretSourceSelect
+                        value={sourceId}
+                        sources={sources}
+                        label={gt("{company} API key", { company })}
                         disabled={busy}
-                        autoComplete="off"
-                        spellCheck={false}
-                        onChange={(event) => setDraft(event.target.value)}
-                      />
-                    ) : (
-                      <SecretInput
-                        id="read-aloud-cloud-key"
-                        aria-label={gt("{company} API key", { company })}
-                        autoFocus
-                        placeholder={gt("Enter API key")}
-                        value={draft}
-                        configured={saved}
-                        disabled={busy}
-                        maxLength={4096}
-                        onChange={(event) => setDraft(event.target.value)}
+                        onValueChange={(next) => {
+                          setSourceId(next);
+                          setDraft("");
+                          setError("");
+                        }}
                       />
                     )}
+                    <div className="min-w-0 flex-1">
+                      {sourceId !== null ? (
+                        <Input
+                          key={sourceId}
+                          id="read-aloud-cloud-key"
+                          aria-label={gt("{company} API key reference", { company })}
+                          autoFocus
+                          placeholder={source?.referencePlaceholder}
+                          value={draft}
+                          disabled={busy}
+                          autoComplete="off"
+                          spellCheck={false}
+                          onChange={(event) => setDraft(event.target.value)}
+                        />
+                      ) : (
+                        <SecretInput
+                          id="read-aloud-cloud-key"
+                          aria-label={gt("{company} API key", { company })}
+                          autoFocus
+                          placeholder={gt("Enter API key")}
+                          value={draft}
+                          configured={saved}
+                          disabled={busy}
+                          maxLength={4096}
+                          onChange={(event) => setDraft(event.target.value)}
+                        />
+                      )}
+                    </div>
                   </div>
-                </div>
-                {draft.trim() && !credential ? (
-                  <p className="text-sm text-muted-foreground">
-                    {source?.invalidReferenceMessage ??
-                      gt("Enter an API key, not a URL or secret reference.")}
-                  </p>
-                ) : active ? (
-                  <p className="text-sm text-muted-foreground">
-                    {gt("Updating the key keeps read aloud on.")}
-                  </p>
-                ) : null}
-              </form>
+                  {draft.trim() && !credential ? (
+                    <p className="text-sm text-muted-foreground">
+                      {source?.invalidReferenceMessage ??
+                        gt("Enter an API key, not a URL or secret reference.")}
+                    </p>
+                  ) : active ? (
+                    <p className="text-sm text-muted-foreground">
+                      {gt("Updating the key keeps read aloud on.")}
+                    </p>
+                  ) : null}
+                </form>
+              </div>
             ) : !saved ? (
               <p>
                 <T>

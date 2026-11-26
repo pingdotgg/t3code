@@ -5748,5 +5748,12 @@
   "8a0a725cd4a505ce": "Playback speed",
   "dc28e2793b510896": "Preparing speech",
   "e5ad64bb69db1045": "Pause reading",
-  "53dac468c9738c4e": "Jump to current"
+  "53dac468c9738c4e": "Jump to current",
+  "34065b700e23a8ae": "Couldn’t start signing in with OpenRouter. Try again.",
+  "1b978e981c03ece2": "OpenRouter didn’t accept this code. Sign in again.",
+  "449e39e08a0879ce": "Code from OpenRouter",
+  "1ca2facc399b6d4c": "Finish",
+  "2cf284a7b130b411": "Sign in again",
+  "20a054556a7395b2": "Sign in with OpenRouter",
+  "98f5e5fa1c6b0c62": "Finish signing in on OpenRouter, then come back here."
 }

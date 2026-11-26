@@ -13083,5 +13083,12 @@
       "v": "v"
     },
     " gesendet und über dessen API-Schlüssel abgerechnet. Der Schlüssel wird mit dem Diktat geteilt."
-  ]
+  ],
+  "34065b700e23a8ae": "Die Anmeldung bei OpenRouter konnte nicht gestartet werden. Versuche es erneut.",
+  "1b978e981c03ece2": "OpenRouter hat diesen Code nicht akzeptiert. Melde dich erneut an.",
+  "449e39e08a0879ce": "Code von OpenRouter",
+  "1ca2facc399b6d4c": "Abschließen",
+  "2cf284a7b130b411": "Erneut anmelden",
+  "20a054556a7395b2": "Mit OpenRouter anmelden",
+  "98f5e5fa1c6b0c62": "Schließe die Anmeldung bei OpenRouter ab und komm dann hierher zurück."
 }

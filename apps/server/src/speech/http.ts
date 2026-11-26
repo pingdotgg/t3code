@@ -21,6 +21,7 @@ import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import {
@@ -31,6 +32,8 @@ import {
 } from "../auth/http.ts";
 import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
+import * as OpenRouterSignIn from "./OpenRouterSignIn.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as LocalSpeechSynthesis from "./LocalSpeechSynthesis.ts";
 import * as SpeechAligner from "./SpeechAligner.ts";
 import * as SpeechService from "./SpeechService.ts";
@@ -95,12 +98,46 @@ const withoutCatalogHostPaths = Effect.fnUntraced(function* (catalog: SpeechSynt
   };
 });
 
+const OPENROUTER_CALLBACK_PATH = "/api/voice/cloud/openrouter/callback";
+
+/** OpenRouter returns only to https, or to this machine over http. */
+function isOpenRouterCallback(value: string) {
+  try {
+    const url = new URL(value);
+    return (
+      url.pathname === OPENROUTER_CALLBACK_PATH &&
+      !url.username &&
+      !url.password &&
+      (url.protocol === "https:" || (url.protocol === "http:" && url.hostname === "localhost"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+const SIGN_IN_PAGE_HEADERS = {
+  "cache-control": "no-store",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "content-security-policy":
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+};
+
+const escapeHtml = (text: string) =>
+  text.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
+
+function signInPage(title: string, detail: string) {
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>T3 Code</title><style>body{font-family:system-ui;display:grid;place-items:center;min-height:90vh;margin:0}main{max-width:360px;padding:32px}h1{font-size:24px}p{line-height:1.6;opacity:.7}</style></head><body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(detail)}</p></main></body></html>`;
+}
+
 export const speechHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "voice",
   Effect.fnUntraced(function* (handlers) {
     const speech = yield* SpeechService.SpeechService;
     const cloud = yield* CloudSpeech.CloudSpeech;
+    const openRouter = yield* OpenRouterSignIn.OpenRouterSignIn;
+    const environment = yield* ServerEnvironment.ServerEnvironment;
     const local = yield* LocalSpeechSynthesis.LocalSpeechSynthesis;
     const synthesisStreams = yield* SpeechSynthesisStreams.SpeechSynthesisStreams;
     const aligner = yield* SpeechAligner.SpeechAligner;
@@ -248,6 +285,55 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* cloud
             .setKey(args.params.provider, args.payload.key)
             .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+        }),
+      )
+      .handle(
+        "startOpenRouterSignIn",
+        Effect.fn("environment.voice.startOpenRouterSignIn")(function* (args) {
+          // Signing in saves a key, so it needs what saving one does.
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          for (const scope of requiredScopesForServerSettingsPatch({
+            cloudSpeechCredentials: { openrouter: "key" },
+          }))
+            yield* requireEnvironmentScope(scope);
+          const { callbackUrl } = args.payload;
+          if (callbackUrl !== null && !isOpenRouterCallback(callbackUrl))
+            return yield* failEnvironmentInvalidRequest("invalid_command");
+          const { label } = yield* environment.getDescriptor;
+          return yield* openRouter.start({ callbackUrl, label: `T3 Code (${label})` });
+        }),
+      )
+      .handle(
+        "finishOpenRouterSignIn",
+        Effect.fn("environment.voice.finishOpenRouterSignIn")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          yield* openRouter.finish(args.payload.state, args.payload.code);
+        }),
+      )
+      .handleRaw(
+        "openRouterCallback",
+        Effect.fn("environment.voice.openRouterCallback")(function* ({ request }) {
+          const url = new URL(request.url, "http://localhost");
+          const state = url.searchParams.get("state");
+          const code = url.searchParams.get("code");
+          const outcome =
+            state && code ? yield* openRouter.finish(state, code).pipe(Effect.result) : undefined;
+          const signedIn = outcome?._tag === "Success";
+          return HttpServerResponse.text(
+            signInPage(
+              signedIn ? "Signed in to OpenRouter" : "OpenRouter sign-in didn’t finish",
+              signedIn
+                ? "Return to T3 Code. You can close this tab."
+                : outcome?._tag === "Failure"
+                  ? outcome.failure.message
+                  : "OpenRouter didn’t send a sign-in. Return to T3 Code and sign in again.",
+            ),
+            {
+              status: signedIn ? 200 : 400,
+              contentType: "text/html; charset=utf-8",
+              headers: SIGN_IN_PAGE_HEADERS,
+            },
+          );
         }),
       )
       .handle(

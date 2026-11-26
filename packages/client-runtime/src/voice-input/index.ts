@@ -19,6 +19,8 @@ export {
   getCloudSpeechModels,
   requireCloudSpeechKey,
   setCloudSpeechKey,
+  startOpenRouterSignIn,
+  finishOpenRouterSignIn,
   transcribeCloudPcm,
   getEnvironmentSpeechStatus,
   getEnvironmentSpeechStreamUrl,

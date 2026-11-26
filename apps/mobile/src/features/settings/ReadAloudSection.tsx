@@ -33,6 +33,7 @@ import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { Sheet } from "../../components/ui/Sheet";
 import { Button } from "../../components/ui/Button";
+import { OpenRouterSignIn } from "./OpenRouterSignIn";
 import { runSpeech } from "../voice-input/voiceDestination";
 import { readAloudController } from "../read-aloud/playback";
 
@@ -331,6 +332,12 @@ export function ReadAloudSection() {
           footer={gt("Leave this empty to keep using the key already saved for dictation.")}
         >
           <View className="gap-3 p-4">
+            {catalog.apiKeyProvider === "openrouter" && (
+              <OpenRouterSignIn
+                prepared={prepared}
+                onSignedIn={() => setCatalogVersion((value) => value + 1)}
+              />
+            )}
             <TextInput
               accessibilityLabel={gt("Read-aloud API key")}
               secureTextEntry

@@ -72,6 +72,10 @@ import {
   CloudSpeechModelId,
   CloudSpeechModels,
   CloudSpeechProvider,
+  OpenRouterSignIn,
+  OpenRouterSignInCode,
+  OpenRouterSignInError,
+  OpenRouterSignInRequest,
   EnvironmentSpeechAccelerationRequest,
   EnvironmentSpeechModelLinkRequest,
   EnvironmentSpeechModelRequest,
@@ -954,6 +958,24 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
+  .add(
+    HttpApiEndpoint.post("startOpenRouterSignIn", "/api/voice/cloud/openrouter/sign-in", {
+      headers: OptionalBearerHeaders,
+      payload: OpenRouterSignInRequest,
+      success: OpenRouterSignIn,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("finishOpenRouterSignIn", "/api/voice/cloud/openrouter/sign-in/code", {
+      headers: OptionalBearerHeaders,
+      payload: OpenRouterSignInCode,
+      success: HttpApiSchema.NoContent,
+      error: [...EnvironmentScopedOperationErrors, OpenRouterSignInError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  // OpenRouter's redirect carries no credential; the one-time state of a started sign-in is the proof.
+  .add(HttpApiEndpoint.get("openRouterCallback", "/api/voice/cloud/openrouter/callback"))
   .add(
     // Public catalog; carries no credential and no audio.
     HttpApiEndpoint.get("cloudModels", "/api/voice/cloud/openrouter/models", {

@@ -65,6 +65,7 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { OpenRouterSignIn } from "./OpenRouterSignIn";
 import { SecretInput } from "./SecretInput";
 import { SecretSourceSelect } from "./SecretSourceInput";
 
@@ -264,6 +265,10 @@ export function CloudVoiceConfiguration({
 
   const keyField = (
     <>
+      {routed && !saved && connected && (
+        // Signing in only saves the key; the model is still chosen below.
+        <OpenRouterSignIn prepared={prepared} disabled={busy} onSignedIn={refresh} />
+      )}
       <Label htmlFor="voice-cloud-key">
         {routed && saved ? gt("Replace API key") : gt("API key")}
       </Label>

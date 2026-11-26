@@ -136,6 +136,41 @@ export const setCloudSpeechKey = (
       }),
   });
 
+/**
+ * Starts signing in with OpenRouter on the environment, which creates and saves its key. OpenRouter
+ * returns to the environment when it can reach it (https, or this machine); otherwise it shows a
+ * code to finish with `finishOpenRouterSignIn`, and `pasteCode` is set.
+ */
+export const startOpenRouterSignIn = (prepared: PreparedConnection) => {
+  let callbackUrl: string | null = null;
+  return request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => {
+      const callback = new URL(urls.openRouterCallback());
+      callbackUrl =
+        callback.protocol === "https:" || callback.hostname === "localhost"
+          ? callback.toString()
+          : null;
+      return urls.startOpenRouterSignIn();
+    },
+    run: ({ client, headers }) =>
+      client.startOpenRouterSignIn({ headers, payload: { callbackUrl } }),
+  }).pipe(Effect.map((signIn) => ({ ...signIn, pasteCode: callbackUrl === null })));
+};
+
+/** Finishes an OpenRouter sign-in with the code OpenRouter showed. */
+export const finishOpenRouterSignIn = (prepared: PreparedConnection, state: string, code: string) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.finishOpenRouterSignIn(),
+    run: ({ client, headers }) =>
+      client.finishOpenRouterSignIn({ headers, payload: { state, code } }),
+  });
+
 export const transcribeCloudPcm = (
   prepared: PreparedConnection,
   provider: CloudSpeechProvider,

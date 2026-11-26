@@ -2,6 +2,7 @@ import { T, useGT, useMessages } from "gt-react-native";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { cloudSpeechDisclosure } from "@t3tools/shared/speechCopy";
 import { setCloudSpeechKey } from "@t3tools/client-runtime/voice-input";
+import { OpenRouterSignIn } from "./OpenRouterSignIn";
 import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import {
   configuredSecretSources,
@@ -431,6 +432,10 @@ function CloudChoices({ environment, active, onClose }: Props & { onClose: () =>
         {canManage ? (
           <ListSection title={gt("API key")} footer={keyFooter}>
             <View className="gap-3 px-4 py-3">
+              {routed && !key && connection && (
+                // Signing in only saves the key; the model is still chosen above.
+                <OpenRouterSignIn prepared={connection} onSignedIn={reload} />
+              )}
               {sources.length > 0 && (
                 <View className="flex-row flex-wrap gap-2">
                   <Chip
