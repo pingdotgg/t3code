@@ -4,7 +4,10 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 const isForm = Schema.is(
-  Schema.Struct({ properties: Schema.Record(Schema.String, Schema.Unknown) }),
+  Schema.Struct({
+    properties: Schema.Record(Schema.String, Schema.Unknown),
+    required: Schema.optional(Schema.Array(Schema.String)),
+  }),
 );
 const choice = Schema.Struct({
   const: Schema.String,
@@ -59,6 +62,7 @@ export const extractOpenCodeElicitationForm: NonNullable<
 > = (request) => {
   if (request.mode !== "form" || !isForm(request.requestedSchema)) return undefined;
   const { properties } = request.requestedSchema;
+  const required = new Set(request.requestedSchema.required);
   const questions: Array<OrchestrationV2UserInputQuestion> = [];
   const withCompanion = new Set<string>();
   let choices = 0;
@@ -95,6 +99,7 @@ export const extractOpenCodeElicitationForm: NonNullable<
       question: field.description?.trim() || field.title,
       options,
       allowCustomAnswer: hasCompanion || options.length === 0,
+      ...(required.has(id) ? {} : { required: false }),
     });
   }
   // Recognize only question forms with a choice; leave every other schema to the ACP fallback.
@@ -105,6 +110,7 @@ export const extractOpenCodeElicitationForm: NonNullable<
       const content: Record<string, string> = {};
       for (const question of questions) {
         const answer = Object.hasOwn(answers, question.id) ? answers[question.id] : undefined;
+        if (answer === undefined && question.required === false) continue;
         if (!Predicate.isString(answer)) return { action: "cancel" };
         const companionId = `${question.id}${companionSuffix}`;
         const exact = findChoice(question.options, answer);
@@ -112,7 +118,10 @@ export const extractOpenCodeElicitationForm: NonNullable<
           content[question.id] = answer;
           continue;
         }
-        if (answer.trim().length === 0) return { action: "cancel" };
+        if (answer.trim().length === 0) {
+          if (question.required === false) continue;
+          return { action: "cancel" };
+        }
         const split = splitAttachments(answer);
         const attached =
           split === undefined ? undefined : findChoice(question.options, split.prefix);

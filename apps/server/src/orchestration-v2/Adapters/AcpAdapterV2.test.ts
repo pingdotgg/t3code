@@ -2315,6 +2315,7 @@ describe("AcpAdapterV2", () => {
         minLength: 1,
       },
     },
+    required: ["q0"],
   };
   const openCodeQuestions = [
     {
@@ -2338,6 +2339,7 @@ describe("AcpAdapterV2", () => {
         answers: { q0: "Please wait" },
         content: { q0__other: "Please wait" },
       },
+      { scenario: "OMP skipped question", answers: {}, content: {} },
     ].map((fixture) => ({
       ...fixture,
       settings: OMP_SETTINGS,
@@ -2366,6 +2368,7 @@ describe("AcpAdapterV2", () => {
             { label: "Approve", value: "Approve", description: "Commit the verified fix." },
             { label: "Hold", value: "Hold", description: "Hold" },
           ],
+          required: false,
         },
       ],
       result: { action: "accept", content: fixture.content },
@@ -2455,6 +2458,14 @@ describe("AcpAdapterV2", () => {
       questions: openCodeQuestions,
       answers: { q0: "blue" },
       result: { action: "accept", content: { q0: "blue" } },
+    },
+    {
+      scenario: "OpenCode skips a question its schema does not require",
+      settings: OPENCODE_SETTINGS,
+      schema: { ...openCodeSchema, required: [] },
+      questions: openCodeQuestions.map((question) => ({ ...question, required: false })),
+      answers: {},
+      result: { action: "accept", content: {} },
     },
     {
       scenario: "Devin allowOther choice accepts a typed answer",
