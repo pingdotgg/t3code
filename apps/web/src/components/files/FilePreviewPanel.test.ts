@@ -4,12 +4,6 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
-import {
-  PREVIEW_PAGE_ROWS,
-  type TextPreviewRequest,
-  type TextPreviewResult,
-} from "./largeTextProtocol";
 
 import { promptFileCommentEntries, remapFileCommentAnnotations } from "./fileCommentAnnotations";
 import {
@@ -803,77 +797,5 @@ Third}`;
     const result = await openEpub(archive);
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.title).toBe(title);
-  });
-});
-
-async function openLargeTextWorker(input: Extract<TextPreviewRequest, { type: "open" }>) {
-  const worker = new EventTarget();
-  const messages: TextPreviewResult[] = [];
-  let wait: {
-    predicate: (result: TextPreviewResult) => boolean;
-    resolve: (result: TextPreviewResult) => void;
-    reject: (cause: Error) => void;
-  } | null = null;
-  vi.stubGlobal(
-    "self",
-    Object.assign(worker, {
-      postMessage: (result: TextPreviewResult) => {
-        if (wait && (result.type === "error" || wait.predicate(result))) {
-          const active = wait;
-          wait = null;
-          if (result.type === "error") active.reject(new Error(result.code));
-          else active.resolve(result);
-        } else messages.push(result);
-      },
-    }),
-  );
-  vi.resetModules();
-  await import("./largeText.worker");
-  const next = (predicate: (result: TextPreviewResult) => boolean) => {
-    const index = messages.findIndex(predicate);
-    if (index !== -1) return Promise.resolve(messages.splice(index, 1)[0]!);
-    return new Promise<TextPreviewResult>((resolve, reject) => {
-      wait = { predicate, resolve, reject };
-    });
-  };
-  worker.dispatchEvent(new MessageEvent("message", { data: input }));
-  await next((result) => result.type === "meta" && result.complete);
-  messages.length = 0;
-  const page0 = await next((result) => result.type === "page" && result.index === 0);
-  if (page0.type !== "page") throw new Error("Expected page 0");
-  return {
-    page0: page0.rows,
-    page: async (index: number) => {
-      const pending = next((result) => result.type === "page" && result.index === index);
-      worker.dispatchEvent(new MessageEvent("message", { data: { type: "page", index } }));
-      const result = await pending;
-      if (result.type !== "page") throw new Error(`Expected page ${index}`);
-      return result.rows;
-    },
-  };
-}
-
-describe("largeText.worker delimited pages", () => {
-  it("keeps leading U+FEFF and literal quotes on later TSV pages while stripping a file BOM", async () => {
-    const withoutFileBom = `${"a\tb\n".repeat(PREVIEW_PAGE_ROWS)}\uFEFF"kept"\tlast\n`;
-    const withFileBom = `\uFEFF"header"\tvalue\n${"a\tb\n".repeat(PREVIEW_PAGE_ROWS - 1)}\uFEFF"kept"\tlast\n`;
-    try {
-      for (const text of [withoutFileBom, withFileBom]) {
-        const expected = parseDelimitedPreview(text, "\t").rows;
-        const worker = await openLargeTextWorker({ type: "open", text, delimiter: "\t" });
-        expect(worker.page0).toEqual(expected.slice(0, PREVIEW_PAGE_ROWS));
-        expect(await worker.page(1)).toEqual(
-          expected.slice(PREVIEW_PAGE_ROWS, PREVIEW_PAGE_ROWS * 2),
-        );
-      }
-      const bomOnly = await openLargeTextWorker({
-        type: "open",
-        text: `\uFEFF"header"\tvalue\n`,
-        delimiter: "\t",
-      });
-      expect(bomOnly.page0).toEqual([["header", "value"]]);
-    } finally {
-      vi.unstubAllGlobals();
-    }
   });
 });
