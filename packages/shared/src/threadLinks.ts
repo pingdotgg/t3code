@@ -39,6 +39,7 @@ const SPAN_BREAK_LINE =
   /[ \t>]*(?:\r?$|#{1,6}(?:[ \t]|\r?$)|(?:[-*+]|\d{1,9}[.)])[ \t]|`{3,}[^`\r\n]*\r?$|~{3,})/my;
 const LINE_PREFIX = /([ \t]*)(>|(?:[-*+]|\d{1,9}[.)])[ \t]+)?/y;
 const QUOTE_CONTINUATION = /([ \t]*)>/y;
+const LEADING_SPACE = /^[ \t]*/;
 const THEMATIC_BREAK = /^(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?$/;
 const SETEXT_UNDERLINE = /^(?:-+|=+)[ \t]*\r?$/;
 const FENCE_OPENER = /^(`{3,}(?=[^`\r\n]*\r?$)|~{3,})/;
@@ -84,24 +85,32 @@ function columnWidth(text: string, start = 0): number {
 function blockContinuation(line: string, block: ContainerBlock) {
   let offset = 0;
   let column = 0;
+  let carriedIndent = 0;
   for (let d = 0; d < block.depth; d++) {
     QUOTE_CONTINUATION.lastIndex = offset;
     const match = QUOTE_CONTINUATION.exec(line);
     if (match === null) return null;
-    const indent = columnWidth(match[1]!, column);
+    const prefixIndent = columnWidth(match[1]!, column);
+    const indent = carriedIndent + prefixIndent;
     const required = block.indents[d] ?? 0;
     if (indent < required || indent - required > 3) return null;
     offset = QUOTE_CONTINUATION.lastIndex;
-    column += indent + 1;
+    column += prefixIndent + 1;
+    carriedIndent = 0;
     if (line[offset] === " " || line[offset] === "\t") {
-      column += columnWidth(line[offset]!, column);
+      const spaceWidth = columnWidth(line[offset]!, column);
+      column += spaceWidth;
+      carriedIndent = spaceWidth - 1;
       offset++;
     }
   }
   const rest = line.slice(offset);
-  const text = rest.trimStart();
-  const indent = columnWidth(rest.slice(0, rest.length - text.length), column);
-  return text === "" || indent >= (block.indents[block.depth] ?? 0) ? { rest, indent } : null;
+  const leading = LEADING_SPACE.exec(rest)![0];
+  const text = rest.slice(leading.length);
+  const indent = carriedIndent + columnWidth(leading, column);
+  return text === "" || text === "\r" || indent >= (block.indents[block.depth] ?? 0)
+    ? { rest, text, indent }
+    : null;
 }
 
 function codeSpanLines(markdown: string) {
@@ -120,7 +129,7 @@ function codeSpanLines(markdown: string) {
     if (block !== undefined) {
       const continuation = blockContinuation(line, block);
       if (continuation !== null) {
-        const { rest, indent } = continuation;
+        const { rest, text, indent } = continuation;
         lines.push({
           start,
           depth: block.depth,
@@ -130,13 +139,12 @@ function codeSpanLines(markdown: string) {
         if (block.kind === "html") {
           if (block.closer.test(rest)) block = undefined;
         } else {
-          const restText = rest.trimStart();
           const required = block.indents[block.depth] ?? 0;
           const closer = block.char === "`" ? BACKTICK_FENCE_CLOSER : TILDE_FENCE_CLOSER;
           if (
             indent - required <= 3 &&
-            closer.test(restText) &&
-            restText.startsWith(block.char.repeat(block.length))
+            closer.test(text) &&
+            text.startsWith(block.char.repeat(block.length))
           ) {
             block = undefined;
           }
@@ -149,6 +157,7 @@ function codeSpanLines(markdown: string) {
     }
     let offset = 0;
     let column = 0;
+    let carriedIndent = 0;
     let depth = 0;
     let hasList = false;
     let listOffset = 0;
@@ -157,12 +166,13 @@ function codeSpanLines(markdown: string) {
       LINE_PREFIX.lastIndex = offset;
       const prefix = LINE_PREFIX.exec(line);
       if (prefix === null) break;
-      const indent = columnWidth(prefix[1]!, column);
+      const prefixIndent = columnWidth(prefix[1]!, column);
+      const indent = carriedIndent + prefixIndent;
       if (
         listOffset === 0 &&
         paragraphDepth === undefined &&
         indent < (listIndents[depth] ?? 0) &&
-        line.trim()
+        !/^[ \t]*\r?$/.test(line)
       ) {
         listIndents.length = depth;
       }
@@ -176,21 +186,27 @@ function codeSpanLines(markdown: string) {
         depth++;
         listOffset = 0;
         listTailSpace = 0;
+        carriedIndent = 0;
         if (line[offset] === " " || line[offset] === "\t") {
-          column += columnWidth(line[offset]!, column);
+          const spaceWidth = columnWidth(line[offset]!, column);
+          column += spaceWidth;
+          carriedIndent = spaceWidth - 1;
           offset++;
         }
       } else {
-        listTailSpace = width - indent - prefix[2]!.trimEnd().length;
-        listOffset += listTailSpace > 4 ? width - listTailSpace + 1 : width;
+        const markerWidth = carriedIndent + width;
+        listTailSpace = width - prefixIndent - prefix[2]!.trimEnd().length;
+        listOffset += listTailSpace > 4 ? markerWidth - listTailSpace + 1 : markerWidth;
         listIndents[depth] = listOffset;
         hasList = true;
+        carriedIndent = 0;
         if (listTailSpace > 4) break;
       }
     }
     const content = line.slice(offset);
-    const text = content.trimStart();
-    const indent = columnWidth(content.slice(0, content.length - text.length), column);
+    const leading = LEADING_SPACE.exec(content)![0];
+    const text = content.slice(leading.length);
+    const indent = carriedIndent + columnWidth(leading, column);
     const containerIndent = hasList ? 0 : (listIndents[depth] ?? 0);
     const lazy = indent < containerIndent || depth < (paragraphDepth ?? 0);
     const nonCodeIndent =
