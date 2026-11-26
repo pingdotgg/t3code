@@ -55,14 +55,17 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     const prefix = match[1] ?? "";
     const label = (match[2] ?? "").replace(/\\(.)/g, "$1");
     const encodedPath = match[3] ?? "";
+    if (encodedPath.startsWith("//")) {
+      continue;
+    }
     let path = encodedPath;
     try {
       path = decodeURIComponent(encodedPath);
     } catch {}
+    const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
     path = composerFileLinkPath(encodedPath, path);
     const separatorIndex = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
     const basename = separatorIndex >= 0 ? path.slice(separatorIndex + 1) : path;
-    const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
     if (!path || hasExternalScheme || label !== basename) {
       continue;
     }
@@ -81,7 +84,8 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
     const fullMatch = match[0];
     const prefix = match[1] ?? "";
     const quotedPath = match[2];
-    const path = quotedPath !== undefined ? quotedPath.replace(/\\(.)/g, "$1") : (match[3] ?? "");
+    const path =
+      quotedPath !== undefined ? quotedPath.replace(/\\(["\\])/g, "$1") : (match[3] ?? "");
     if (
       !path ||
       (quotedPath === undefined &&

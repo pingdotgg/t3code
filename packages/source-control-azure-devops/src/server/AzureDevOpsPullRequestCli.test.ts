@@ -274,9 +274,47 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         author: "ana@acme.dev",
       });
 
-      const args = argsOfCall(0);
-      assert.strictEqual(args[args.indexOf("--creator") + 1], "ana@acme.dev");
-      assert.strictEqual(args[args.indexOf("--reviewer") + 1], "bilal@acme.dev");
+      expect(argsOfCall(0)).toContain("--creator=ana@acme.dev");
+      expect(argsOfCall(0)).toContain("--reviewer=bilal@acme.dev");
+    }),
+  );
+
+  it.effect("sends a repository, viewer and author that look like `@path` as text", () =>
+    Effect.gen(function* () {
+      // az has one stdin; it reads each further value from a file that holds the text.
+      const filed = new Map<string, string>();
+      mockedExecute.mockImplementationOnce((input) =>
+        Effect.sync(() => {
+          for (const arg of input.args) {
+            const match = /^(--\w+)=@(.+)$/u.exec(arg);
+            if (match?.[1] === undefined || match[2] === undefined || match[2] === "-") continue;
+            filed.set(match[1], NodeFS.readFileSync(match[2], "utf8"));
+          }
+          return output(pullRequests(1, 1));
+        }),
+      );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+      yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "@web",
+        state: "open",
+        involvement: "reviewing",
+        viewer: "@bilal",
+        limit: 10,
+        author: "@ana",
+      });
+
+      expect(argsOfCall(0)).toContain("--repository=@-");
+      assert.strictEqual(mockedExecute.mock.calls[0]?.[0].stdin, "@web");
+      assert.deepStrictEqual(
+        [...filed],
+        [
+          ["--reviewer", "@bilal"],
+          ["--creator", "@ana"],
+        ],
+      );
+      expect(argsOfCall(0).filter((arg) => arg.startsWith("@"))).toEqual([]);
     }),
   );
 
@@ -1104,73 +1142,21 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("refuses a reviewer az would read as a flag or file, before running anything", () =>
+  it.effect("refuses a reviewer az would read as a flag, before running anything", () =>
     Effect.gen(function* () {
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
-      for (const reviewer of ["--query", "@/etc/passwd", " @/etc/passwd"]) {
-        const error = yield* Effect.flip(
-          cli.setPullRequestReviewers({
-            cwd: "/w",
-            number: 42,
-            reviewers: [reviewer],
-            requested: true,
-          }),
-        );
+      const error = yield* Effect.flip(
+        cli.setPullRequestReviewers({
+          cwd: "/w",
+          number: 42,
+          reviewers: ["--query"],
+          requested: true,
+        }),
+      );
 
-        assert.strictEqual(error._tag, "AzureDevOpsReviewerNameError");
-      }
+      assert.strictEqual(error._tag, "AzureDevOpsReviewerNameError");
       assert.strictEqual(mockedExecute.mock.calls.length, 0);
     }),
-  );
-
-  it.effect(
-    "refuses leading `@` or `-` author, repository, and viewer filters before spawning az",
-    () =>
-      Effect.gen(function* () {
-        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
-
-        for (const author of ["@/etc/passwd", "--help"]) {
-          const error = yield* Effect.flip(
-            cli.listPullRequests({
-              cwd: "/w",
-              repository: "web",
-              state: "open",
-              involvement: "all",
-              viewer: "bilal@acme.dev",
-              limit: 10,
-              author,
-            }),
-          );
-          assert.strictEqual(error._tag, "AzureDevOpsInvalidArgumentError");
-        }
-
-        for (const repository of ["@/etc/passwd", "-web"]) {
-          const error = yield* Effect.flip(
-            cli.listPullRequests({
-              cwd: "/w",
-              repository,
-              state: "open",
-              involvement: "all",
-              viewer: "bilal@acme.dev",
-              limit: 10,
-            }),
-          );
-          assert.strictEqual(error._tag, "AzureDevOpsInvalidArgumentError");
-        }
-
-        const viewerError = yield* Effect.flip(
-          cli.listPullRequests({
-            cwd: "/w",
-            repository: "web",
-            state: "open",
-            involvement: "authored",
-            viewer: "@/etc/passwd",
-            limit: 10,
-          }),
-        );
-        assert.strictEqual(viewerError._tag, "AzureDevOpsInvalidArgumentError");
-        assert.strictEqual(mockedExecute.mock.calls.length, 0);
-      }),
   );
 });
