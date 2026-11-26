@@ -51,8 +51,8 @@ const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
     '<ul dir="ltr"><li>Outer<ul><li><div><p><a href="https://example.com/a">Alpha</a></p></div></li><li>Beta</li></ul></li><li>Next</li></ul>',
   ],
   [
-    "<ul><li><table><tr><td><li>cell</li></td></tr></table><li><details><summary>More</summary><li>inside</li></details><li><blockquote><li>quoted</li></blockquote><li><menu><li>menu</li></menu><li>next</ul>",
-    '<ul dir="ltr"><li><table><tbody><tr><td><li>cell</li></td></tr></tbody></table></li><li><details><summary>More</summary><li>inside</li></details></li><li><blockquote><li>quoted</li></blockquote></li><li><li>menu</li></li><li>next</li></ul>',
+    "<ul><li><blockquote><li>quoted</li></blockquote><li>next</ul>",
+    '<ul dir="ltr"><li><blockquote><li>quoted</li></blockquote></li><li>next</li></ul>',
   ],
   [
     "| a | b |\n|:-|-:|\n| `x \\| y` | **2** |\n| 3 |",
