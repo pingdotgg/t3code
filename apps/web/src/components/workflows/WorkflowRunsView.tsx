@@ -210,13 +210,10 @@ export function WorkflowRunsView({
   const all = allWorkflowRunNodes(groups);
   const section = groups.workflows.find((candidate) => candidate.name === workflow) ?? null;
   // With a workflow picked, the list holds only its runs, so count only its skipped ones.
-  const skipped =
-    section === null
-      ? visible.skipped
-      : listedWorkflowRuns(
-          snapshot.runs.filter((run) => run.workflow === section.name),
-          false,
-        ).skipped;
+  const skipped = listedWorkflowRuns(
+    section === null ? snapshot.runs : snapshot.runs.filter((run) => run.workflow === section.name),
+    false,
+  ).skipped;
   // A run that another invoked is not in the list itself; the one it is part of stands for it.
   const listedFor = (node: WorkflowRunNode | null): string | null => {
     if (node === null) return null;
