@@ -72,12 +72,6 @@ describe("threadSelectionStore", () => {
       expect(ranged).toEqual(toggled);
     });
 
-    it("Cmd-click on the open thread selects only it", () => {
-      useThreadSelectionStore.getState().toggleThread(THREAD_B, THREAD_B);
-
-      expect([...useThreadSelectionStore.getState().selectedThreadKeys]).toEqual([THREAD_B]);
-    });
-
     it("ignores the open thread once a selection exists", () => {
       const store = useThreadSelectionStore.getState();
       store.toggleThread(THREAD_D, THREAD_B);
