@@ -2327,7 +2327,7 @@
     }
   ],
   "17d363d5ff1f038f": "{seconds, plural, other {残り約 {seconds} 秒}}",
-  "bc86d0e75a37411b": "{minutes, plural, other {残り約 {minutes} 分}}",
+  "5286056f1e375e8c": "{minutes, plural, other {残り約 {minutes} 分}}",
   "89555f39918ea6cc": "スレッドを検索",
   "889266d70ae46113": "スレッドのメッセージを検索しています…",
   "35727ced1d37da7f": "メッセージ内で「{query}」を検索しています。",
