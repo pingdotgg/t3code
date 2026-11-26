@@ -183,28 +183,21 @@ export function selectedPullRequestAuthor(
   );
 }
 
+/** The labels a filter names, as choices: a search that hides one keeps its color and count. */
 export function selectedPullRequestLabels(
   facets: ReadonlyArray<PullRequestLabelFacet>,
   hosted: ReadonlyArray<PullRequestLabel>,
   values: ReadonlyArray<string>,
 ): ReadonlyArray<PullRequestLabelFacet> {
-  const loaded = new Map(facets.map((facet) => [normalize(facet.name), facet]));
-  const hostByName = new Map(hosted.map((label) => [normalize(label.name), label]));
-  const seen = new Set<string>();
-  const selected: PullRequestLabelFacet[] = [];
-  for (const name of values) {
+  return values.map((name) => {
     const key = normalize(name);
-    if (key === null || seen.has(key)) continue;
-    seen.add(key);
-    const facet = loaded.get(key);
-    if (facet) {
-      selected.push(facet);
-      continue;
-    }
-    const hostLabel = hostByName.get(key);
-    selected.push(hostLabel ? { ...hostLabel, count: 0 } : { name, color: null, count: 0 });
-  }
-  return selected;
+    return (
+      facets.find((facet) => normalize(facet.name) === key) ?? {
+        ...(hosted.find((label) => normalize(label.name) === key) ?? { name, color: null }),
+        count: 0,
+      }
+    );
+  });
 }
 
 export function pullRequestLabelChoices(

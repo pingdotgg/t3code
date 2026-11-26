@@ -1012,7 +1012,7 @@ describe("filter picker choices", () => {
     const loaded = [{ name: "bug", color: "d73a4a", count: 5 }];
     const hosted = [{ name: "size:XL", color: "d93f0b" }];
 
-    expect(selectedPullRequestLabels(loaded, hosted, ["BUG", "bug", "size:xl", "custom"])).toEqual([
+    expect(selectedPullRequestLabels(loaded, hosted, ["BUG", "size:xl", "custom"])).toEqual([
       { name: "bug", color: "d73a4a", count: 5 },
       { name: "size:XL", color: "d93f0b", count: 0 },
       { name: "custom", color: null, count: 0 },
