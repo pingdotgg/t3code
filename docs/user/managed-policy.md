@@ -263,11 +263,11 @@ so restart T3 Code after that.
   `t3.json` declares, whether or not a user approved them. Such a project gets no new worktree
   threads; existing thread folders are restored as plain checkouts and removed without the
   project's `remove` command.
-- `claudeProjectHooks: false`: Claude threads do not run the
-  [hooks and helper commands](./providers-claude.md#project-hooks) a project folder's
-  `.claude/settings.json` and `.claude/settings.local.json` declare, whether or not a user
-  approved them and in every permission mode. The user's own Claude Code hooks and the rest of the project's Claude Code
-  settings still apply.
+- `claudeProjectHooks: false`: no project's
+  [Claude Code settings can be trusted](./providers-claude.md#project-trust). Claude threads leave
+  out the hooks, helper commands, MCP servers and environment variables a project folder names, in
+  every permission mode. The user's own Claude Code settings and the project's deny and ask rules,
+  memory files, commands, skills and agents still apply.
 - `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
   relay connection traces, and neither does a browser opened from the server. A policy cannot turn
   them on. The hosted web app at app.t3.codes and the mobile app still send their own relay traces.

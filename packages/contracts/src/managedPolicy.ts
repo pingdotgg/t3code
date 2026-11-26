@@ -85,7 +85,7 @@ export const ManagedPolicyLimits = Schema.Struct({
   previewTunnel: Schema.optionalKey(Schema.Boolean),
   /** `false` turns a project's `worktreeLayout` commands off: none runs, approved or not. */
   worktreeLayoutCommands: Schema.optionalKey(Schema.Boolean),
-  /** `false` turns the hooks in a project's Claude Code settings off: none runs, approved or not. */
+  /** `false` lets no project's Claude Code settings be trusted: what they run is left out in every mode. */
   claudeProjectHooks: Schema.optionalKey(Schema.Boolean),
   providers: Schema.optionalKey(ManagedProviderLimits),
   updates: Schema.optionalKey(ManagedUpdatesPolicy),
@@ -220,7 +220,7 @@ const CAPABILITY_LABELS = {
   browserCookieImport: "importing browser cookies",
   previewTunnel: "opening this machine's local servers on other devices",
   worktreeLayoutCommands: "project worktree layout commands",
-  claudeProjectHooks: "the hooks in a project's Claude Code settings",
+  claudeProjectHooks: "trusting a project's Claude Code settings",
 } as const;
 
 /** Why a capability is unavailable on an environment with `summary`, or undefined when allowed. */

@@ -124,7 +124,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ClaudeProjectHooks from "../../provider/ClaudeProjectHooks.ts";
+import * as ClaudeProjectTrust from "../../provider/ClaudeProjectTrust.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import { ClaudeOrchestratorReplayHarness } from "./ClaudeAdapterV2.testkit.ts";
 import { withInlineContext } from "../ContextHandoffDelivery.ts";
@@ -1784,47 +1784,54 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
 });
 
 describe("ClaudeAdapterV2 provider installation gate", () => {
-  it.effect("a session reads its folder's hooks only where the project hooks check allows", () =>
+  it.effect("a session opens on its folder unless the project trust check hands it another", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const random = yield* SecureRandom.SecureRandom;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const withoutHooks = {
+      const untrusted = {
         projectConfigRoot: "/state/claude-project-config/abc",
-        notice: "Hooks did not run.",
+        notice: "The project is not trusted.",
       };
-      // Approved hooks: the session reads the settings that were checked, and has nothing to say.
-      const approved = { projectConfigRoot: "/state/claude-project-config/def", notice: null };
       const opened = Effect.fnUntraced(function* (
         name: string,
         modes: Pick<
           ProviderAdapter.ProviderAdapterV2RuntimePolicy,
           "runtimeMode" | "interactionMode" | "maxRuntimeMode"
         >,
-        belowFullAccess: ClaudeProjectHooks.ClaudeSessionProjectConfig = withoutHooks,
+        belowFullAccess: ClaudeProjectTrust.ClaudeUntrustedSessionConfig | null = untrusted,
       ) {
-        const asked: Array<{ readonly cwd: string; readonly fullAccess: boolean }> = [];
+        const asked: Array<{
+          readonly cwd: string;
+          readonly session: string;
+          readonly fullAccess: boolean;
+        }> = [];
         let options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
           environment: {},
-          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-hooks-" }),
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-trust-" }),
           fileSystem,
           path,
           random,
           idAllocator,
-          projectHooks: {
+          projectTrust: {
             read: () => Effect.die("unused"),
+            forListing: () => Effect.die("unused"),
             forSession: (input) =>
               Effect.sync(() => {
-                asked.push({ cwd: input.cwd, fullAccess: input.fullAccess });
+                asked.push({
+                  cwd: input.cwd,
+                  session: input.session,
+                  fullAccess: input.fullAccess,
+                });
                 return input.fullAccess ? null : belowFullAccess;
               }),
           },
           queryRunner: {
-            allocateSessionId: Effect.succeed(`native-thread-claude-hooks-${name}`),
+            allocateSessionId: Effect.succeed(`native-thread-claude-trust-${name}`),
             open: (input) =>
               Effect.sync(() => {
                 options = input.options;
@@ -1854,15 +1861,15 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
             assertComplete: Effect.void,
           },
         });
-        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-hooks-cwd-" });
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-trust-cwd-" });
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           ...modes,
           cwd,
         });
-        const threadId = ThreadId.make(`thread-claude-hooks-${name}`);
+        const threadId = ThreadId.make(`thread-claude-trust-${name}`);
         const runtime = yield* adapter.openSession({
           threadId,
-          providerSessionId: ProviderSessionId.make(`provider-session-claude-hooks-${name}`),
+          providerSessionId: ProviderSessionId.make(`provider-session-claude-trust-${name}`),
           modelSelection: CLAUDE_TEST_MODEL_SELECTION,
           runtimePolicy,
         });
@@ -1876,7 +1883,7 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
             threadId,
             providerThread,
             now: yield* DateTime.now,
-            attemptId: RunAttemptId.make(`attempt-claude-hooks-${name}`),
+            attemptId: RunAttemptId.make(`attempt-claude-trust-${name}`),
             text: "Hello",
             attachments: [],
             runtimePolicy,
@@ -1888,7 +1895,11 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
           Stream.runCollect,
         );
         return {
-          asked: asked.map((input) => ({ ...input, cwd: input.cwd === cwd })),
+          asked: asked.map((input) => ({
+            cwd: input.cwd === cwd,
+            session: input.session === providerThread.id,
+            fullAccess: input.fullAccess,
+          })),
           projectConfigRoot: options?.projectConfigRoot,
           notices: Array.from(started).flatMap((event) =>
             event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
@@ -1898,14 +1909,14 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
         };
       });
       const kept = {
-        asked: [{ cwd: true, fullAccess: true }],
+        asked: [{ cwd: true, session: true, fullAccess: true }],
         projectConfigRoot: undefined,
         notices: [],
       };
       const leftOut = {
-        asked: [{ cwd: true, fullAccess: false }],
-        projectConfigRoot: withoutHooks.projectConfigRoot,
-        notices: [withoutHooks.notice],
+        asked: [{ cwd: true, session: true, fullAccess: false }],
+        projectConfigRoot: untrusted.projectConfigRoot,
+        notices: [untrusted.notice],
       };
 
       assert.deepStrictEqual(
@@ -1921,11 +1932,11 @@ describe("ClaudeAdapterV2 provider installation gate", () => {
       );
       assert.deepStrictEqual(
         yield* opened(
-          "approved",
+          "trusted",
           { runtimeMode: "approval-required", interactionMode: "default" },
-          approved,
+          null,
         ),
-        { ...leftOut, projectConfigRoot: approved.projectConfigRoot, notices: [] },
+        { ...leftOut, projectConfigRoot: undefined, notices: [] },
       );
       assert.deepStrictEqual(
         yield* opened("auto", { runtimeMode: "auto", interactionMode: "default" }),
@@ -2265,7 +2276,7 @@ describe("ClaudeAdapterV2 executable path", () => {
           IdAllocator.layer,
           McpProviderSessions.layer,
           ProviderInstallationGate.layer,
-          ClaudeProjectHooks.layerNoProjectHooks,
+          ClaudeProjectTrust.layerTrusted,
           NodeServices.layer,
           NodeCrypto.layer,
         ),

@@ -5706,13 +5706,13 @@
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "201490988858b511": "withdrawn by {by}",
   "46d614fa7b4bf1e5": "Workflow runs",
-  "da3df73fc1013ece": "{organization}'s policy does not allow the hooks in a project's Claude Code settings.",
-  "16ffbb313c0e77c3": "Could not approve the hooks.",
-  "0da05691542c27ea": "These commands come from the project's Claude Code settings. They run on this environment's machine with your permissions, outside any agent sandbox. Once approved they run in every Claude thread of this project, starting with the next session. You are asked again whenever they change.",
-  "77b22621cf31ece3": "Claude sessions here run without them until you approve.",
-  "2b86f2154dcbfd5e": "Hide hooks",
-  "cbcd82a55f033a2b": "Review hooks",
-  "dd9319f0f38defae": "Approve hooks",
-  "c9446339c490f889": "This project's Claude hooks are waiting for your approval",
-  "65509806829a3fbd": "This connection cannot approve hooks. Use a client that can use the terminal."
+  "c624901a460291d4": "{organization}'s policy does not allow trusting a project's Claude Code settings.",
+  "ce6146b3397a2d2a": "Could not trust the project.",
+  "9c7ec89670215fc6": "A trusted project runs everything its Claude Code settings name, in every Claude thread of the project: hooks, helper commands, MCP servers and environment variables. They run on this environment's machine with your permissions, outside any agent sandbox. You are asked once per project, not again when the settings change. This is what they hold now. Trust applies from the next session on.",
+  "35876f92d191fc8c": "Until you do, Claude sessions here run without the project's hooks, helper commands, MCP servers and environment variables.",
+  "cd9ffdf0f4057b75": "Hide what runs",
+  "f3f0532cb9dbf07a": "Show what runs",
+  "8a3a0d0af54b004f": "Trust project",
+  "250cfd2dfd5bd82d": "Trust this project's Claude Code settings?",
+  "74c018af28776721": "This connection cannot trust a project. Use a client that can use the terminal."
 }

@@ -133,8 +133,8 @@ const policies = (): ReadonlyArray<Policy> => [
   },
   {
     id: "ClaudeProjectHooks",
-    title: "Allow hooks from a project's Claude Code settings",
-    help: "Disabled stops Claude threads from running the hooks a project folder's .claude/settings.json and .claude/settings.local.json declare, whether or not a user approved them and in every permission mode. The user's own Claude Code hooks and the rest of the project's Claude Code settings still apply.",
+    title: "Allow trusting a project's Claude Code settings",
+    help: "Disabled stops Claude threads from running what a project folder's Claude Code configuration runs by itself: the hooks, helper commands and environment variables in .claude/settings.json and .claude/settings.local.json, and the servers in .mcp.json. No project can be trusted, and this applies in every permission mode. The user's own Claude Code settings, and the project's deny and ask rules, memory files, commands, skills and agents still apply.",
     toggle: "ClaudeProjectHooks",
   },
   {

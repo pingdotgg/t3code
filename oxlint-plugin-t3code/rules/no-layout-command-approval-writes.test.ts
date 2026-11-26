@@ -18,15 +18,15 @@ describe("t3code/no-layout-command-approval-writes", () => {
   );
 
   rule.valid(
-    "allows reading whether a project's Claude Code hooks are approved",
-    `import * as ClaudeProjectHooks from "../../provider/ClaudeProjectHooks.ts";
-     export const hooks = ClaudeProjectHooks.ClaudeProjectHooks;`,
+    "allows reading whether a project's Claude Code settings are trusted",
+    `import * as ClaudeProjectTrust from "../../provider/ClaudeProjectTrust.ts";
+     export const trust = ClaudeProjectTrust.ClaudeProjectTrust;`,
   );
 
   rule.invalid(
-    "reports an MCP toolkit importing the write side of Claude Code hook approvals",
-    `import * as ClaudeProjectHookApprovalWrites from "../../../provider/ClaudeProjectHookApprovalWrites.ts";
-     export const writes = ClaudeProjectHookApprovalWrites.ClaudeProjectHookApprovalWrites;`,
+    "reports an MCP toolkit importing the write side of Claude Code project trust",
+    `import * as ClaudeProjectTrustWrites from "../../../provider/ClaudeProjectTrustWrites.ts";
+     export const writes = ClaudeProjectTrustWrites.ClaudeProjectTrustWrites;`,
   );
 
   rule.invalid(

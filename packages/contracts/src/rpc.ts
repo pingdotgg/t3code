@@ -104,12 +104,12 @@ import {
   WorkspaceFoldersError,
   TaskFolder,
   TaskFolderError,
-  ClaudeProjectHooksError,
+  ClaudeProjectTrustError,
   WorkspaceAddTaskFolderRepositoryInput,
-  WorkspaceApproveClaudeProjectHooksInput,
   WorkspaceApproveLayoutCommandsInput,
-  WorkspaceClaudeProjectHooksInput,
-  WorkspaceClaudeProjectHooksResult,
+  WorkspaceClaudeProjectTrustInput,
+  WorkspaceClaudeProjectTrustResult,
+  WorkspaceSetClaudeProjectTrustInput,
   WorkspaceLayoutCommandsInput,
   WorkspaceLayoutCommandsResult,
   WorkspaceListFoldersInput,
@@ -513,8 +513,8 @@ export const WS_METHODS = {
   workspaceAddTaskFolderRepository: "workspace.addTaskFolderRepository",
   workspaceLayoutCommands: "workspace.layoutCommands",
   workspaceApproveLayoutCommands: "workspace.approveLayoutCommands",
-  workspaceClaudeProjectHooks: "workspace.claudeProjectHooks",
-  workspaceApproveClaudeProjectHooks: "workspace.approveClaudeProjectHooks",
+  workspaceClaudeProjectTrust: "workspace.claudeProjectTrust",
+  workspaceSetClaudeProjectTrust: "workspace.setClaudeProjectTrust",
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
@@ -1753,20 +1753,16 @@ const WsWorkspaceApproveLayoutCommandsRpc = Rpc.make(WS_METHODS.workspaceApprove
   error: Schema.Union([TaskFolderError, EnvironmentAuthorizationError]),
 });
 
-const WsWorkspaceClaudeProjectHooksRpc = Rpc.make(WS_METHODS.workspaceClaudeProjectHooks, {
-  payload: WorkspaceClaudeProjectHooksInput,
-  success: WorkspaceClaudeProjectHooksResult,
-  error: Schema.Union([ClaudeProjectHooksError, EnvironmentAuthorizationError]),
+const WsWorkspaceClaudeProjectTrustRpc = Rpc.make(WS_METHODS.workspaceClaudeProjectTrust, {
+  payload: WorkspaceClaudeProjectTrustInput,
+  success: WorkspaceClaudeProjectTrustResult,
+  error: Schema.Union([ClaudeProjectTrustError, EnvironmentAuthorizationError]),
 });
 
-const WsWorkspaceApproveClaudeProjectHooksRpc = Rpc.make(
-  WS_METHODS.workspaceApproveClaudeProjectHooks,
-  {
-    payload: WorkspaceApproveClaudeProjectHooksInput,
-    success: WorkspaceClaudeProjectHooksResult,
-    error: Schema.Union([ClaudeProjectHooksError, EnvironmentAuthorizationError]),
-  },
-);
+const WsWorkspaceSetClaudeProjectTrustRpc = Rpc.make(WS_METHODS.workspaceSetClaudeProjectTrust, {
+  payload: WorkspaceSetClaudeProjectTrustInput,
+  error: Schema.Union([ClaudeProjectTrustError, EnvironmentAuthorizationError]),
+});
 
 const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   payload: AgentSessionScanInput,
@@ -2676,8 +2672,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsWorkspaceAddTaskFolderRepositoryRpc,
   WsWorkspaceLayoutCommandsRpc,
   WsWorkspaceApproveLayoutCommandsRpc,
-  WsWorkspaceClaudeProjectHooksRpc,
-  WsWorkspaceApproveClaudeProjectHooksRpc,
+  WsWorkspaceClaudeProjectTrustRpc,
+  WsWorkspaceSetClaudeProjectTrustRpc,
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,

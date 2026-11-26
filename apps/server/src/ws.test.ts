@@ -164,8 +164,8 @@ import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
 import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalWrites.ts";
-import * as ClaudeProjectHooks from "./provider/ClaudeProjectHooks.ts";
-import * as ClaudeProjectHookApprovalWrites from "./provider/ClaudeProjectHookApprovalWrites.ts";
+import * as ClaudeProjectTrust from "./provider/ClaudeProjectTrust.ts";
+import * as ClaudeProjectTrustWrites from "./provider/ClaudeProjectTrustWrites.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
@@ -923,8 +923,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(WorkspaceFolders.WorkspaceFolders)({}),
   Layer.mock(TaskFolders.TaskFolders)({}),
   Layer.mock(LayoutCommandApprovalWrites.LayoutCommandApprovalWrites)({}),
-  Layer.mock(ClaudeProjectHooks.ClaudeProjectHooks)({}),
-  Layer.mock(ClaudeProjectHookApprovalWrites.ClaudeProjectHookApprovalWrites)({}),
+  Layer.mock(ClaudeProjectTrust.ClaudeProjectTrust)({}),
+  Layer.mock(ClaudeProjectTrustWrites.ClaudeProjectTrustWrites)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
   FeatureFlags.layerTest(),
@@ -2124,19 +2124,12 @@ it.effect(
 );
 
 it.effect(
-  "a project's Claude Code hooks are approved only from a session that may use the terminal",
+  "a project's Claude Code settings are trusted only from a session that may use the terminal",
   () =>
     Effect.gen(function* () {
       const browser = yield* ServerBrowser.ServerBrowser;
-      const projectId = ProjectId.make("project:hooks");
-      const shown = {
-        status: "needs-approval",
-        hooks: [],
-        hooksHash: "shown",
-        approvals: 0,
-      } as const;
+      const projectId = ProjectId.make("project:trust");
       const requested = Effect.fnUntraced(function* (scopes: ReadonlyArray<AuthEnvironmentScope>) {
-        const hooksHash = "shown";
         const recorded: unknown[] = [];
         const exits = yield* Queue.unbounded<string>();
         const services = Layer.mergeAll(
@@ -2144,13 +2137,9 @@ it.effect(
           Layer.mock(ProjectService.ProjectService)({
             getById: () => Effect.succeedSome({ workspaceRoot: "/project" } as Project),
           }),
-          Layer.mock(ClaudeProjectHooks.ClaudeProjectHooks)({}),
-          Layer.mock(ClaudeProjectHookApprovalWrites.ClaudeProjectHookApprovalWrites)({
-            set: (input) =>
-              Effect.sync(() => {
-                recorded.push(input);
-                return shown;
-              }),
+          Layer.mock(ClaudeProjectTrust.ClaudeProjectTrust)({}),
+          Layer.mock(ClaudeProjectTrustWrites.ClaudeProjectTrustWrites)({
+            set: (input) => Effect.sync(() => void recorded.push(input)),
           }),
           Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
           Layer.mock(ExternalLauncher.ExternalLauncher)({}),
@@ -2171,8 +2160,8 @@ it.effect(
           Effect.provide(
             layerWsRpc(
               {
-                sessionId: AuthSessionId.make("hooks-test"),
-                subject: "hooks-test",
+                sessionId: AuthSessionId.make("trust-test"),
+                subject: "trust-test",
                 method: "browser-session-cookie",
                 scopes: [...scopes],
               },
@@ -2185,9 +2174,9 @@ it.effect(
         );
         yield* server.write(0, {
           _tag: "Request",
-          id: RpcMessage.RequestId("approve"),
-          tag: WS_METHODS.workspaceApproveClaudeProjectHooks,
-          payload: { projectId, hooksHash },
+          id: RpcMessage.RequestId("trust"),
+          tag: WS_METHODS.workspaceSetClaudeProjectTrust,
+          payload: { projectId, trusted: true },
           headers: Headers.empty,
         });
         return { exit: yield* Queue.take(exits), recorded };
@@ -2206,7 +2195,7 @@ it.effect(
       );
       assert.deepEqual(yield* requested([AuthTerminalOperateScope]), {
         exit: "Success",
-        recorded: [{ projectId, cwd: "/project", hooksHash: "shown" }],
+        recorded: [{ projectId, trusted: true }],
       });
     }).pipe(
       Effect.provide(

@@ -79,10 +79,10 @@ Claude can still ask in **Full access** when its settings disable bypass permiss
 approval for an action. Dangerous-removal safety checks in bypass mode reject the command with
 the original warning. Claude can use a safe rewrite when the warning supplies one; otherwise it
 continues without the removal and tells you what it skipped.
-In a project whose Claude Code settings declare hooks or helper commands, a Claude thread below
-**Full access** runs them only after you have
-[approved them](./providers-claude.md#project-hooks) for the project. A thread in **Full access**
-runs them without asking.
+A Claude thread below **Full access** runs the hooks, helper commands, MCP servers and environment
+variables a project's Claude Code settings name only after you
+[trust the project](./providers-claude.md#project-trust). A thread in **Full access** runs them
+without asking.
 While a Claude approval is pending, type a text reply to decline that request and give feedback
 directly to the agent that asked, including a subagent. Other pending requests stay unanswered.
 

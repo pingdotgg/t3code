@@ -146,8 +146,8 @@ import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
 import * as LayoutCommandApprovals from "./workspace/LayoutCommandApprovals.ts";
 import * as LayoutCommandApprovalWrites from "./workspace/LayoutCommandApprovalWrites.ts";
-import * as ClaudeProjectHooks from "./provider/ClaudeProjectHooks.ts";
-import * as ClaudeProjectHookApprovalWrites from "./provider/ClaudeProjectHookApprovalWrites.ts";
+import * as ClaudeProjectTrust from "./provider/ClaudeProjectTrust.ts";
+import * as ClaudeProjectTrustWrites from "./provider/ClaudeProjectTrustWrites.ts";
 import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as TaskFolderStore from "./workspace/TaskFolderStore.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
@@ -794,7 +794,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
     Layer.mergeAll(
       layerTaskFolders,
       LayoutCommandApprovalWrites.layer,
-      ClaudeProjectHookApprovalWrites.layer,
+      ClaudeProjectTrustWrites.layer.pipe(Layer.provide(ManagedPolicy.layer)),
     ),
   ),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
@@ -816,11 +816,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ),
   // One gate for the server, below hydration so the Claude adapter sees it: layers memoize by
   // reference, so the runtime layer shares it.
-  // The project hooks check sits here for the same reason: the adapter asks it at each session open.
+  // The project trust check sits here for the same reason: the adapter asks it at each session open.
   Layer.provideMerge(
     Layer.merge(
       ProviderInstallationGate.layer,
-      ClaudeProjectHooks.layer.pipe(
+      ClaudeProjectTrust.layer.pipe(
         Layer.provide(Layer.merge(SqlitePersistence.layerConfig, ManagedPolicy.layer)),
       ),
     ),

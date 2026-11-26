@@ -54,7 +54,7 @@ import {
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { ProjectRepositoriesSettings } from "./ProjectRepositoriesSettings";
-import { ProjectClaudeHooksSettings } from "./ProjectClaudeHooksSettings";
+import { ProjectClaudeTrustSettings } from "./ProjectClaudeTrustSettings";
 import { ProjectWorktreeLayoutSettings } from "./ProjectWorktreeLayoutSettings";
 import {
   defaultProjectIcon,
@@ -696,7 +696,7 @@ function ProjectDetail({
         <ProjectActionsSettings />
         <ProjectRepositoriesSettings members={group.memberProjects} />
         <ProjectWorktreeLayoutSettings members={group.memberProjects} />
-        <ProjectClaudeHooksSettings members={group.memberProjects} />
+        <ProjectClaudeTrustSettings members={group.memberProjects} />
         {checkoutChoices}
         <SettingsSection title={gt("Danger")}>
           <SettingsRow

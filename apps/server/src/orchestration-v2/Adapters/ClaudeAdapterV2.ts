@@ -175,7 +175,7 @@ import {
   claudeProgramWasReplaced,
   resolveClaudeSdkExecutablePath,
 } from "../../provider/Drivers/ClaudeExecutable.ts";
-import * as ClaudeProjectHooks from "../../provider/ClaudeProjectHooks.ts";
+import * as ClaudeProjectTrust from "../../provider/ClaudeProjectTrust.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
   planClaudeSkillDispatch,
@@ -2556,7 +2556,7 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly appendSystemPromptFileText?: string;
-  /** Where Claude Code reads project settings from in place of `cwd`: see `ClaudeProjectHooks`. */
+  /** Where Claude Code reads project settings from in place of `cwd`: see `ClaudeProjectTrust`. */
   readonly projectConfigRoot?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
@@ -5605,8 +5605,8 @@ interface ClaudeLiveQueryContext {
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
-  // Set while this process runs without its folder's hooks and the thread has not been told.
-  projectHooksNotice: string | undefined;
+  // Set while this process runs an untrusted project and the thread has not been told.
+  projectTrustNotice: string | undefined;
   receivedInit: boolean;
   // Init listed a server still connecting or needing a sign-in; a result checks which it was.
   checkMcpSignIns: boolean;
@@ -6052,8 +6052,8 @@ export interface ClaudeAdapterV2Options {
     ) => Effect.Effect<void>;
   };
   readonly installationGate?: ProviderInstallationGate.ProviderInstallationGate["Service"];
-  /** Decides whether a session runs the hooks its folder's Claude Code settings declare. */
-  readonly projectHooks?: ClaudeProjectHooks.ClaudeProjectHooks["Service"];
+  /** Decides whether a session runs what its folder's Claude Code settings name. */
+  readonly projectTrust?: ClaudeProjectTrust.ClaudeProjectTrust["Service"];
 }
 
 export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
@@ -13947,15 +13947,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ],
             { concurrency: "unbounded" },
           );
-          // Asked for every process, so an approval or a mode change applies from the next one. The
-          // answer names the settings that were checked, so nothing read later takes their place.
+          // Asked for every process, so trust or a mode change applies from the next one.
           const projectConfig =
-            adapterOptions.projectHooks === undefined || turnInput.runtimePolicy.cwd === null
+            adapterOptions.projectTrust === undefined || turnInput.runtimePolicy.cwd === null
               ? null
-              : yield* adapterOptions.projectHooks
+              : yield* adapterOptions.projectTrust
                   .forSession({
                     projectId: turnInput.appThread.projectId,
                     cwd: turnInput.runtimePolicy.cwd,
+                    session: turnInput.providerThread.id,
                     fullAccess:
                       projectCommandsForAgent(
                         turnInput.appThread.linkOrigin,
@@ -13963,7 +13963,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                         turnInput.runtimePolicy.maxRuntimeMode,
                       ) === "permitted",
                   })
-                  .pipe(Effect.mapError((cause) => queryRunnerError(cause, "projectHooks")));
+                  .pipe(Effect.mapError((cause) => queryRunnerError(cause, "projectTrust")));
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           clearedNativeSessions.delete(nativeThreadId);
           if (existing !== null) {
@@ -14105,7 +14105,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             lastTurn: null,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
-            projectHooksNotice: projectConfig?.notice ?? undefined,
+            projectTrustNotice: projectConfig?.notice,
             receivedInit: false,
             checkMcpSignIns: false,
             capabilities: new Set(),
@@ -14538,13 +14538,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   },
                 });
               }
-              const projectHooksNotice = querySession.projectHooksNotice;
+              const projectTrustNotice = querySession.projectTrustNotice;
               if (
-                projectHooksNotice !== undefined &&
+                projectTrustNotice !== undefined &&
                 !isClaudeProviderContinuationTurn(turnInput)
               ) {
-                querySession.projectHooksNotice = undefined;
-                const nativeItemId = `project-hooks-not-run:${context.providerTurnId}`;
+                querySession.projectTrustNotice = undefined;
+                const nativeItemId = `project-not-trusted:${context.providerTurnId}`;
                 yield* emitProviderEvent({
                   type: "turn_item.updated",
                   driver: CLAUDE_PROVIDER,
@@ -14567,8 +14567,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     ordinal: yield* resolveItemOrdinal(context, nativeItemId),
                     type: "system_notice",
                     status: "completed",
-                    title: projectHooksNotice,
-                    message: projectHooksNotice,
+                    title: projectTrustNotice,
+                    message: projectTrustNotice,
                     startedAt,
                     completedAt: startedAt,
                     updatedAt: startedAt,
@@ -15893,7 +15893,7 @@ export type ClaudeAdapterV2DriverEnv =
   | McpProviderSessions.McpProviderSessions
   | Path.Path
   | ProviderInstallationGate.ProviderInstallationGate
-  | ClaudeProjectHooks.ClaudeProjectHooks
+  | ClaudeProjectTrust.ClaudeProjectTrust
   | ServerConfig.ServerConfig;
 
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
@@ -15912,7 +15912,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
-    const projectHooks = yield* ClaudeProjectHooks.ClaudeProjectHooks;
+    const projectTrust = yield* ClaudeProjectTrust.ClaudeProjectTrust;
     const baseEnvironment = yield* mergeClaudeProcessEnvironment(
       config,
       environment,
@@ -15937,7 +15937,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       queryRunner,
       continuationRequests,
       installationGate,
-      projectHooks,
+      projectTrust,
       ...hooks,
     });
   },

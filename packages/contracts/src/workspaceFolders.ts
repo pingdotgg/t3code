@@ -138,67 +138,54 @@ export const WorkspaceApproveLayoutCommandsInput = Schema.Struct({
 export type WorkspaceApproveLayoutCommandsInput = typeof WorkspaceApproveLayoutCommandsInput.Type;
 
 /**
- * One command a folder's Claude Code settings ask Claude Code to run by itself, as the file holds
- * it now: a hook, or a helper command such as `apiKeyHelper`.
+ * One thing a folder's Claude Code configuration makes Claude Code run or set by itself, as the
+ * file holds it now.
  */
-export const ClaudeProjectHook = Schema.Struct({
-  kind: Schema.Literals(["hook", "helper"]),
-  /** `project` is `.claude/settings.json`; `local` is `.claude/settings.local.json`. */
-  source: Schema.Literals(["project", "local"]),
-  /** The Claude Code event a hook runs on, such as `SessionStart`; a helper's settings key. */
+export const ClaudeProjectCommand = Schema.Struct({
+  /**
+   * - `hook`: a hook; `event` is the Claude Code event, such as `SessionStart`.
+   * - `helper`: a helper command such as `apiKeyHelper`; `event` is its settings key.
+   * - `mcp`: a server Claude Code starts; `event` is its name.
+   * - `env`: an environment variable for the session and its commands; `event` is its name.
+   */
+  kind: Schema.Literals(["hook", "helper", "mcp", "env"]),
+  /** `.claude/settings.json`, `.claude/settings.local.json`, or `.mcp.json`. */
+  source: Schema.Literals(["project", "local", "mcp"]),
   event: Schema.String,
-  /** The tools or sources the hook is limited to, when the file names any. */
+  /** The tools or sources a hook is limited to, when the file names any. */
   matcher: Schema.optional(Schema.String),
-  /** What runs: the command, or the URL or prompt of a hook that is not a command. */
+  /** What runs or is set: the command, URL, prompt, or value. */
   detail: Schema.String,
 });
-export type ClaudeProjectHook = typeof ClaudeProjectHook.Type;
+export type ClaudeProjectCommand = typeof ClaudeProjectCommand.Type;
 
-/**
- * - `none`: the folder declares no hooks or helper commands.
- * - `approved`: a person approved exactly these hooks for this project.
- * - `needs-approval`: nobody approved them as they are now.
- * - `off`: the administrator's policy turns project hooks off.
- */
-export const ClaudeProjectHooksStatus = Schema.Literals([
-  "none",
-  "approved",
-  "needs-approval",
-  "off",
-]);
-export type ClaudeProjectHooksStatus = typeof ClaudeProjectHooksStatus.Type;
-
-export const WorkspaceClaudeProjectHooksInput = Schema.Struct({
+export const WorkspaceClaudeProjectTrustInput = Schema.Struct({
   projectId: ProjectId,
   /** Reads the folder this thread works in. Without it, the project's own folder. */
   threadId: Schema.optional(ThreadId),
 });
-export type WorkspaceClaudeProjectHooksInput = typeof WorkspaceClaudeProjectHooksInput.Type;
+export type WorkspaceClaudeProjectTrustInput = typeof WorkspaceClaudeProjectTrustInput.Type;
 
-export const WorkspaceClaudeProjectHooksResult = Schema.Struct({
-  status: ClaudeProjectHooksStatus,
-  hooks: Schema.Array(ClaudeProjectHook),
-  /** Names the hooks shown, so an approval covers what the person saw and nothing newer. */
-  hooksHash: Schema.String,
+export const WorkspaceClaudeProjectTrustResult = Schema.Struct({
   /**
-   * How many sets of hooks are approved for the project. More than this folder accounts for when
-   * another checkout of the project, such as a worktree on another branch, had its own approved.
+   * - `trusted`: a person trusted the project, so its Claude sessions run on its folder as it is.
+   * - `untrusted`: nobody has; below Full access its sessions leave `commands` out.
+   * - `off`: the administrator's policy lets no project be trusted.
    */
-  approvals: Schema.Number,
+  status: Schema.Literals(["trusted", "untrusted", "off"]),
+  /** What the folder would run. Empty when there is nothing to trust it with. */
+  commands: Schema.Array(ClaudeProjectCommand),
 });
-export type WorkspaceClaudeProjectHooksResult = typeof WorkspaceClaudeProjectHooksResult.Type;
+export type WorkspaceClaudeProjectTrustResult = typeof WorkspaceClaudeProjectTrustResult.Type;
 
-export const WorkspaceApproveClaudeProjectHooksInput = Schema.Struct({
+export const WorkspaceSetClaudeProjectTrustInput = Schema.Struct({
   projectId: ProjectId,
-  threadId: Schema.optional(ThreadId),
-  /** `hooksHash` of the hooks the person was shown. Null withdraws every approval of the project. */
-  hooksHash: Schema.NullOr(Schema.String.check(Schema.isMaxLength(128))),
+  trusted: Schema.Boolean,
 });
-export type WorkspaceApproveClaudeProjectHooksInput =
-  typeof WorkspaceApproveClaudeProjectHooksInput.Type;
+export type WorkspaceSetClaudeProjectTrustInput = typeof WorkspaceSetClaudeProjectTrustInput.Type;
 
-export class ClaudeProjectHooksError extends Schema.TaggedError<ClaudeProjectHooksError>()(
-  "ClaudeProjectHooksError",
+export class ClaudeProjectTrustError extends Schema.TaggedError<ClaudeProjectTrustError>()(
+  "ClaudeProjectTrustError",
   {
     detail: Schema.String,
     cause: Schema.optional(Schema.Defect()),

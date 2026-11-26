@@ -39,6 +39,20 @@ it("drops strict MCP mode, and only that, next to an administrator's managed-mcp
   assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
 });
 
+it("reads project configuration from the folder it is handed in place of the workspace", () => {
+  const options = buildClaudeCapabilitiesProbeQueryOptions({
+    executablePath: "/usr/bin/claude",
+    abortController: new AbortController(),
+    environment: { HOME: "/home/user" },
+    cwd: "/workspace",
+    projectConfigRoot: "/state/claude-project-config/listing-1",
+    managedMcpConfig: false,
+    spawnVia: undefined,
+  });
+  assert.equal(options.cwd, "/workspace");
+  assert.equal(options.projectConfigRoot, "/state/claude-project-config/listing-1");
+});
+
 // A shell trampoline would not do: dash drops the exported function, and the launcher exits 127.
 it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
   "starts a Bash launcher that calls an exported function in the probe's workspace",
@@ -69,6 +83,7 @@ it.effect("reports a deleted worktree's scan as finished, not pending", () =>
       { skills: [], slashCommands: [] } as unknown as ServerProvider,
       "/nonexistent/t3-deleted-worktree",
       { HOME: "/nonexistent/t3-home" },
+      () => Effect.succeed(null),
     );
     assert.strictEqual(snapshot.slashCommandsPending, false);
   }).pipe(Effect.provide(NodeServices.layer)),

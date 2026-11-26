@@ -173,12 +173,9 @@ function managedCapabilityDeniedMessage(
       );
     case "claudeProjectHooks":
       return resolve(
-        msg(
-          "{organization}'s policy does not allow the hooks in a project's Claude Code settings.",
-          {
-            organization,
-          },
-        ),
+        msg("{organization}'s policy does not allow trusting a project's Claude Code settings.", {
+          organization,
+        }),
       );
   }
 }

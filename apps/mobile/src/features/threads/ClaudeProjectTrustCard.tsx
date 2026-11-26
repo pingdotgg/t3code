@@ -3,7 +3,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   AuthTerminalOperateScope,
-  type ClaudeProjectHook,
+  type ClaudeProjectCommand,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -18,17 +18,18 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-const SOURCE_FILES: Record<ClaudeProjectHook["source"], string> = {
+const SOURCE_FILES: Record<ClaudeProjectCommand["source"], string> = {
   project: ".claude/settings.json",
   local: ".claude/settings.local.json",
+  mcp: ".mcp.json",
 };
 
 /**
- * Shown in a Claude thread below Full access whose folder declares hooks nobody approved: says
- * they do not run, shows them in full, and approves them. `draft` reads the project's folder,
- * because the thread has none of its own yet.
+ * Shown in a Claude thread below Full access in a project nobody trusted, whose folder would run
+ * something: asks, shows what would run, and records the trust. `draft` reads the project's
+ * folder, because the thread has none of its own yet.
  */
-export function ClaudeProjectHooksCard({
+export function ClaudeProjectTrustCard({
   thread,
   environmentId,
   claude,
@@ -42,48 +43,53 @@ export function ClaudeProjectHooksCard({
 }) {
   const gt = useGT();
   const input = { projectId: thread.projectId, ...(draft ? {} : { threadId: thread.id }) };
-  // In Full access the hooks run without asking, so there is nothing to approve first.
+  // In Full access everything runs without asking, so there is nothing to answer first.
   const asks =
     claude && !(thread.runtimeMode === "full-access" && thread.interactionMode === "default");
   const query = useEnvironmentQuery(
-    asks ? filesystemEnvironment.claudeProjectHooks({ environmentId, input }) : null,
+    asks ? filesystemEnvironment.claudeProjectTrust({ environmentId, input }) : null,
   );
-  const canApprove = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const approve = useAtomCommand(filesystemEnvironment.approveClaudeProjectHooks);
+  const canTrust = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const setTrust = useAtomCommand(filesystemEnvironment.setClaudeProjectTrust);
   const [reviewing, setReviewing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const shown = query.data;
-  if (!asks || shown?.status !== "needs-approval") return null;
+  if (!asks || shown?.status !== "untrusted" || shown.commands.length === 0) return null;
 
-  async function approveShown(hooksHash: string) {
+  async function trust() {
     setSaving(true);
     setError(null);
-    const result = await approve({ environmentId, input: { ...input, hooksHash } });
+    const result = await setTrust({
+      environmentId,
+      input: { projectId: thread.projectId, trusted: true },
+    });
     setSaving(false);
     query.refresh();
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      setError(errorDisplayMessage(cause, m) ?? gt("Could not approve the hooks."));
+      setError(errorDisplayMessage(cause, m) ?? gt("Could not trust the project."));
     }
   }
 
   return (
     <View className="mx-3 mb-2 gap-1 rounded-xl border border-warning-foreground/25 bg-screen p-3">
       <Text className="text-sm font-t3-medium text-foreground">
-        <T>This project's Claude hooks are waiting for your approval</T>
+        <T>Trust this project's Claude Code settings?</T>
       </Text>
       <Text className="text-sm text-foreground-muted">
         {reviewing
           ? gt(
-              "These commands come from the project's Claude Code settings. They run on this environment's machine with your permissions, outside any agent sandbox. Once approved they run in every Claude thread of this project, starting with the next session. You are asked again whenever they change.",
+              "A trusted project runs everything its Claude Code settings name, in every Claude thread of the project: hooks, helper commands, MCP servers and environment variables. They run on this environment's machine with your permissions, outside any agent sandbox. You are asked once per project, not again when the settings change. This is what they hold now. Trust applies from the next session on.",
             )
-          : gt("Claude sessions here run without them until you approve.")}
+          : gt(
+              "Until you do, Claude sessions here run without the project's hooks, helper commands, MCP servers and environment variables.",
+            )}
       </Text>
       {reviewing ? (
         <ScrollView className="mt-1 max-h-56" nestedScrollEnabled>
-          {shown.hooks.map((hook, index) => (
-            // Hooks have no identity of their own and the list is replaced as a whole.
+          {shown.commands.map((hook, index) => (
+            // Entries have no identity of their own and the list is replaced as a whole.
             // oxlint-disable-next-line react/no-array-index-key
             <View key={index} className="mb-2 gap-1">
               <Text className="text-xs text-foreground-muted">
@@ -101,23 +107,23 @@ export function ClaudeProjectHooksCard({
           ))}
         </ScrollView>
       ) : null}
-      {reviewing && !canApprove ? (
+      {reviewing && !canTrust ? (
         <Text className="text-sm text-foreground-muted">
-          <T>This connection cannot approve hooks. Use a client that can use the terminal.</T>
+          <T>This connection cannot trust a project. Use a client that can use the terminal.</T>
         </Text>
       ) : null}
       {/* The margins cancel the 44pt touch height so the links sit 8pt under the text. */}
       <View className="-mb-3 -mt-2 flex-row flex-wrap gap-x-4">
         <CardAction
-          label={reviewing ? gt("Hide hooks") : gt("Review hooks")}
+          label={reviewing ? gt("Hide what runs") : gt("Show what runs")}
           disabled={false}
           onPress={() => setReviewing((current) => !current)}
         />
         {reviewing ? (
           <CardAction
-            label={gt("Approve hooks")}
-            disabled={!canApprove || saving || query.isPending}
-            onPress={() => void approveShown(shown.hooksHash)}
+            label={gt("Trust project")}
+            disabled={!canTrust || saving || query.isPending}
+            onPress={() => void trust()}
           />
         ) : null}
       </View>

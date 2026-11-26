@@ -111,55 +111,52 @@ still be started by you. Invoke those one per message: Claude directly runs only
 the last named skill and may try to start earlier ones through its Skill tool,
 which refuses skills reserved for manual invocation.
 
-## Project hooks
+## Project trust
 
-Claude Code runs the [hooks](https://code.claude.com/docs/en/hooks) a project folder declares in
-`.claude/settings.json` and `.claude/settings.local.json`: commands of the project's own that run
-when a session starts, when you send a prompt, and around tool calls. It also runs the helper
-commands those files name to fetch credentials or headers: `apiKeyHelper`, `proxyAuthHelper`,
-`awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, and `otelHeadersHelper`. All of them
-run on the environment's machine with your permissions, and no approval request is shown for them.
+A project folder's Claude Code configuration can make Claude Code run things by itself, with no
+approval request: [hooks](https://code.claude.com/docs/en/hooks) and helper commands
+(`apiKeyHelper`, `proxyAuthHelper`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`,
+`otelHeadersHelper`) in `.claude/settings.json` and `.claude/settings.local.json`, the servers in
+`.mcp.json`, and the environment variables under `env`. They run on the environment's machine
+with your permissions.
 
-T3 Code runs them only after you have approved them for the project. A Claude thread in a project
-with hooks or helper commands nobody approved shows a notice above the composer: **Review** lists
-every one in full, and **Approve hooks** records the approval. You can also review, approve, and
-revoke them under **Claude hooks** in the project's settings. Approving needs a client that can
-use the terminal (`terminal:operate`). Agents never approve hooks.
+T3 Code asks once per project whether you trust its Claude Code settings, the way Claude Code asks
+when you first open a folder. A Claude thread or draft in a project that names any of these shows
+the question above the composer: **Review** lists what the files hold now, and **Trust project**
+records your answer. You can answer later; sending messages does not wait for it. **Claude Code
+settings** in the project's settings shows the same list and can **Trust** or **Revoke**.
 
-An approval is kept on the environment, not in the repository, and covers one project and the
-hooks and helper commands exactly as the two files declare them. When they change, for example
-after a pull, they stop running until you approve them again. An approval covers the entries
-only: when a hook runs a script file, later changes to that file do not ask again. An approval
-takes effect when the next Claude session of a thread starts. Every set you approved stays
-approved, so a worktree on another branch keeps its own; **Claude hooks** in the project's
-settings counts the sets approved for other checkouts and **Revoke all** withdraws them.
+- Trust is kept on the environment, not in the repository, and covers the project: its folder and
+  every worktree thread of it. You are not asked again when the settings change, for example
+  after a pull.
+- A trusted project's sessions run on the project's folder exactly as Claude Code would.
+- Trust and revoking apply when the next Claude session of a thread starts.
+- Trusting needs a client that can use the terminal (`terminal:operate`). Agents never trust a
+  project.
+- A thread in **Full access** runs everything without asking, trusted or not.
 
-While they are not approved, a thread below **Full access** starts without them and says so in
-the conversation. Everything else in the folder still applies: its other Claude Code settings,
-including the permission rules that deny or ask, `CLAUDE.md` and rules files, commands, skills,
-agents, and `.mcp.json`. Your own hooks from your Claude Code user settings keep running.
+Until you trust it, a thread below **Full access** starts without the project's hooks, helper
+commands, MCP servers and environment variables, and says so in the conversation. It also leaves
+out the rest of the two settings files except their permission rules that deny or ask: allow
+rules, the default mode, model and plugin settings in them do not apply. `CLAUDE.md` and the
+other memory files, rules files, commands, skills and agents still apply, and so do your own
+Claude Code user settings and hooks.
 
-Below **Full access**, a session in a project that declares hooks or helper commands reads its
-settings from a folder T3 Code keeps for it, approved or not. The folder holds the two settings
-files as they were when the session started, so an approved session runs what you approved even
-when the files change while it runs. Claude Code runs hooks and `.mcp.json` servers in that
-folder and names it in `CLAUDE_PROJECT_DIR`. The project's files and folders are linked into it,
-so `./scripts/check.sh` and `"$CLAUDE_PROJECT_DIR"/scripts/check.sh` still find the project's
-script. Three things differ from the project folder there:
+Such a session reads its project configuration from a folder T3 Code writes for it, and Claude
+Code runs your own hooks in that folder and names it in `CLAUDE_PROJECT_DIR`. The project's files
+and folders are linked into it, so `./scripts/check.sh` and
+`"$CLAUDE_PROJECT_DIR"/scripts/check.sh` still find the project's script, with two differences:
 
-- It is not a Git repository. A hook or `.mcp.json` server that runs `git` in its working
-  directory or in `CLAUDE_PROJECT_DIR` fails; the hook's input still names the session's real
-  folder as `cwd`.
-- A file a hook creates at the top of that folder does not appear in the project. Files written
-  inside the project's folders do.
+- It is not a Git repository. A hook of yours that runs `git` in its working directory or in
+  `CLAUDE_PROJECT_DIR` fails there; the hook's input still names the session's real folder as
+  `cwd`.
 - Where the machine cannot create links, as on Windows without developer mode, the project's
-  files are not there, and `.claude` and `.mcp.json` are copies taken when the session started.
+  files are not there, and commands, skills and agents are copies taken when the session started.
 
-A thread in **Full access** runs the folder's hooks and helper commands without asking, approved
-or not, and reads the folder itself. Hooks that skills and agents declare in their own files, and
-hooks from plugins, are not part of this approval. Neither are the servers in `.mcp.json`.
+A project that names none of these has nothing to trust: it never asks, and its sessions run on
+the project's folder.
 
-An administrator can turn the folder's hooks off for a machine with
+An administrator can stop projects from being trusted on a machine with
 [`claudeProjectHooks`](./managed-policy.md#other-capabilities).
 
 ## Task lists
