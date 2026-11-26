@@ -17,9 +17,12 @@ import {
   RefreshCwIcon,
   TimerIcon,
   Trash2Icon,
+  WorkflowIcon,
 } from "lucide-react";
+import { useGT } from "gt-react";
 
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu";
+import { useThreadMapChosen, useThreadMapViewStore } from "../threadMapViewStore";
 import {
   ADDON_ICON_CLASS,
   ITEM_ICON_CLASS,
@@ -63,9 +66,13 @@ export function useCommandPaletteThreadActions(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
 }): Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> {
+  const gt = useGT();
   const { readMenu } = useThreadActionMenu({ ...input, canShareWithGuest: false });
+  const mapChosen = useThreadMapChosen(input.threadRef);
+  const setThreadMapShown = useThreadMapViewStore((state) => state.setThreadMapShown);
   const menu = readMenu();
-  if (!menu) return [];
+  const { threadRef } = input;
+  if (!menu || threadRef === null) return [];
 
   const toPaletteItem = (
     item: ContextMenuItem<ThreadActionMenuId>,
@@ -103,5 +110,15 @@ export function useCommandPaletteThreadActions(input: {
     };
   };
 
-  return menu.items.flatMap((item) => toPaletteItem(item) ?? []);
+  return [
+    ...menu.items.flatMap((item) => toPaletteItem(item) ?? []),
+    {
+      kind: "action",
+      value: "thread-action:map",
+      searchTerms: ["map", "conversation", "view"],
+      title: mapChosen ? gt("Show conversation") : gt("Show thread map"),
+      icon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
+      run: async () => setThreadMapShown(threadRef, !mapChosen),
+    },
+  ];
 }

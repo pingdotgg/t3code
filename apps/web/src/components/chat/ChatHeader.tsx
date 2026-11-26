@@ -12,7 +12,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, Var } from "gt-react";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, MessageSquareTextIcon, WorkflowIcon } from "lucide-react";
 import {
   memo,
   useEffect,
@@ -45,6 +45,7 @@ import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -59,6 +60,9 @@ interface ChatHeaderProps {
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
   onFindInThread?: ((threadRef: ScopedThreadRef) => void) | undefined;
+  /** Set where the thread can show its map in place of the conversation. */
+  threadView?: "conversation" | "map" | undefined;
+  onThreadViewChange?: ((view: "conversation" | "map") => void) | undefined;
 }
 
 function resolveRenameCommit(input: {
@@ -84,6 +88,8 @@ export const ChatHeader = memo(function ChatHeader({
   onNewThreadInProject,
   onOpenProjectSettings,
   onFindInThread,
+  threadView,
+  onThreadViewChange,
 }: ChatHeaderProps) {
   const gt = useGT();
   const activeProjectName = activeProject?.isScratch ? gt("No project") : activeProject?.title;
@@ -410,6 +416,24 @@ export const ChatHeader = memo(function ChatHeader({
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
+      {threadView === undefined || onThreadViewChange === undefined ? null : (
+        <ToggleGroup
+          aria-label={gt("Thread view")}
+          className="shrink-0"
+          value={[threadView]}
+          onValueChange={(value) => {
+            const next = value[0];
+            if (next === "conversation" || next === "map") onThreadViewChange(next);
+          }}
+        >
+          <Toggle aria-label={gt("Conversation")} value="conversation">
+            <MessageSquareTextIcon className="size-3.5" />
+          </Toggle>
+          <Toggle aria-label={gt("Thread map")} value="map">
+            <WorkflowIcon className="size-3.5" />
+          </Toggle>
+        </ToggleGroup>
+      )}
     </div>
   );
 });
