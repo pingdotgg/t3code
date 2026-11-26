@@ -29,7 +29,7 @@ const detail = vi.hoisted(() => ({
     create: false,
     edit: true,
     comment: false,
-    labels: false,
+    labels: true,
     assignees: false,
     reactions: false,
     templates: false,
@@ -41,7 +41,7 @@ const detail = vi.hoisted(() => ({
     setState: false,
     comment: false,
     edit: true,
-    labels: false,
+    labels: true,
     assignees: false,
   },
   states: [],
@@ -61,12 +61,23 @@ vi.mock(import("~/state/issues"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const actual = await original();
   const detailAtom = Atom.make(AsyncResult.success(detail));
+  const candidatesAtom = Atom.make(
+    AsyncResult.success({
+      labels: [
+        { name: "bug", color: "d73a4a", description: null },
+        { name: "docs", color: "0075ca", description: null },
+      ],
+      assignees: [],
+      truncated: false,
+    }),
+  );
   const allowed = Atom.make(true);
   return {
     ...actual,
     issueEnvironment: {
       ...actual.issueEnvironment,
       detail: (() => detailAtom) as never,
+      candidates: (() => candidatesAtom) as never,
       comment: { ...actual.issueEnvironment.comment, permissionAtom: () => allowed },
     },
   };
@@ -158,5 +169,17 @@ describe("IssueDetailPanel", () => {
 
     await userEvent.keyboard("{Escape}");
     expect(onCloseSheet).toHaveBeenCalledTimes(1);
+  });
+
+  it("finds a label when the search has surrounding spaces", async () => {
+    setComments([]);
+    await using screen = await render(
+      <IssueDetailPanel environmentId={"env-1" as never} reference={reference} />,
+    );
+    await screen.getByRole("combobox", { name: "Change labels" }).click();
+    await userEvent.fill(page.getByRole("combobox", { name: "Search labels" }), " bug ");
+
+    await expect.element(page.getByRole("option", { name: "bug" })).toBeInTheDocument();
+    await expect.element(page.getByRole("option", { name: "docs" })).not.toBeInTheDocument();
   });
 });
