@@ -12,6 +12,7 @@ import { resolveCodexFileCitationLink } from "@t3tools/shared/codexFileCitations
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
 import { expandGithubEmojiAliases } from "@t3tools/client-runtime/pull-request-markdown";
 import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
+import { expandIndentedCodeTabs } from "@t3tools/shared/markdownListIndentation";
 import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
@@ -503,11 +504,12 @@ function recoverIndentedCode(
   const start = code?.position?.start.offset;
   const itemStart = item.position?.start.offset;
   if (!isElement(code, "pre") || start === undefined || itemStart === undefined) return false;
-  const value = textOf(code);
+  let value = textOf(code);
   if (!/^[\t ]/.test(value)) return false;
   if (walk.source.slice(itemStart, start).includes("\n") || /[`~]/.test(walk.source[start]!)) {
     return false;
   }
+  value = expandIndentedCodeTabs(value, walk.source, itemStart);
   // The trimmed first line sets where the item's content starts.
   const indent = [.../^[\t ]*/.exec(value)![0]].reduce(
     (column, character) => (character === "\t" ? (Math.floor(column / 4) + 1) * 4 : column + 1),
