@@ -1754,27 +1754,26 @@ function CheckoutGitActionsControl({
                   {changesBaseLabel}
                 </SharedTooltipTrigger>
               ) : null}
-              <span
-                dir="ltr"
-                className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums"
-              >
-                <span
-                  className={
-                    changesTotals.insertions
-                      ? "text-diff-addition-foreground"
-                      : "text-muted-foreground"
-                  }
-                >
-                  +{formatDiffCount(changesTotals.insertions)}
-                </span>
-                <span
-                  className={
-                    changesTotals.deletions
-                      ? "text-diff-deletion-foreground"
-                      : "text-muted-foreground"
-                  }
-                >
-                  -{formatDiffCount(changesTotals.deletions)}
+              <span className="ms-auto shrink-0 ps-2">
+                <span dir="ltr" className="flex items-baseline gap-2 font-mono tabular-nums">
+                  <span
+                    className={
+                      changesTotals.insertions
+                        ? "text-diff-addition-foreground"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    +{formatDiffCount(changesTotals.insertions)}
+                  </span>
+                  <span
+                    className={
+                      changesTotals.deletions
+                        ? "text-diff-deletion-foreground"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    -{formatDiffCount(changesTotals.deletions)}
+                  </span>
                 </span>
               </span>
             </span>

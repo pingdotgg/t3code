@@ -356,6 +356,7 @@ function AdaptiveWorkspaceLayoutContent(
   const floatingTabs = floatingTabsMetrics(enabledTabs.length + 1, scale, fabSize);
   // The rail stays whether or not the sidebar shows; only the list pane comes and goes.
   const navigationRailWidth = shouldRenderNavigationRail ? ANDROID_WORKSPACE_RAIL_WIDTH : 0;
+  const isRTL = useInterfaceDirection() === "rtl";
   const [hinge, setHinge] = useState<VerticalHinge | null>(null);
   const [windowHinge, setWindowHinge] = useState<VerticalHinge | null>(null);
   const handleHingeChange = (next: VerticalHinge | null, nextWindow: VerticalHinge | null) => {
@@ -368,6 +369,7 @@ function AdaptiveWorkspaceLayoutContent(
       hinge,
       viewportWidth,
       leadingWidth: navigationRailWidth,
+      isRTL,
     });
     if (
       !floatingTabsEnabled ||
@@ -382,6 +384,7 @@ function AdaptiveWorkspaceLayoutContent(
   }, [
     baseLayout,
     hinge,
+    isRTL,
     navigationRailWidth,
     viewportWidth,
     floatingTabs.row,
@@ -878,7 +881,7 @@ function AdaptiveWorkspaceLayoutContent(
   }));
   // How far the strip has slid: 0 with the sidebar shown, its width toward the start edge with it
   // gone. Transforms are physical, so a right-to-left strip slides right.
-  const stripSlideSign = useInterfaceDirection() === "rtl" ? -1 : 1;
+  const stripSlideSign = isRTL ? -1 : 1;
   const stripOffset = useDerivedValue(() =>
     stripSidebar ? (renderedSidebarWidth.value - sidebarSlotWidth) * stripSlideSign : 0,
   );
