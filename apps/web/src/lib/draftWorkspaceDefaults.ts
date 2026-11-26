@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 
 import { type DraftId, type DraftSessionState, useComposerDraftStore } from "../composerDraftStore";
 
-export type DraftWorkspaceDefault = Pick<DraftSessionState, "envMode" | "startFromOrigin">;
+type DraftWorkspaceDefault = Pick<DraftSessionState, "envMode" | "startFromOrigin">;
 
 interface PendingWorkspaceDefault {
   readonly projectRef: ScopedProjectRef;
