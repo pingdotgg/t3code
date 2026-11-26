@@ -316,6 +316,28 @@ describe("splitMarkdown", () => {
       "[balanced]: /docs/example(a(b))\n[escaped]: /docs/example\\)\n[angle]: </docs/example)>",
     );
   });
+
+  it.each([
+    ["unescaped opening bracket", "[Release [candidate]: https://example.com/releases", false],
+    ["opening bracket after escaped backslash", "[a\\\\[b]: /url", false],
+    ["escaped opening bracket", "[a\\[b]: /url", true],
+    ["escaped closing bracket", "[a\\]b]: /url", true],
+    ["space-only label", "[ ]: /url", false],
+    ["tab-only label", "[\t]: /url", false],
+    ["nonbreaking space in a label", "[\u00a0]: /url", true],
+    ["label at the length limit", "[" + "a".repeat(999) + "]: /url", true],
+    ["label over the length limit", "[" + "a".repeat(1000) + "]: /url", false],
+    ["tab expands past the length limit", " [" + "a".repeat(998) + "\t]: /url", false],
+    [
+      "indentation keeps a tabbed label within the limit",
+      " [\t" + "a".repeat(997) + "]: /url",
+      true,
+    ],
+  ])("shares definitions with a valid label: %s", (_, line, valid) => {
+    const { definitions } = splitMarkdown(line);
+    const blocks = unified().use(remarkParse).parse(definitions).children;
+    expect(blocks.map((block) => block.type)).toEqual(valid ? ["definition"] : []);
+  });
 });
 
 describe("withMarkdownDefinitions", () => {

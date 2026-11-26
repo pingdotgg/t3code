@@ -100,14 +100,27 @@ const hasFrontmatterClose = (lines: readonly string[]) =>
 // A one-line link reference definition; footnotes are left alone so each piece does not grow
 // a footnote section.
 const LINK_DEFINITION =
-  /^ {0,3}\[(?!\^)(?:[^[\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|([^\s<]\S*))(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
+  /^ {0,3}\[(?!\^)((?:[^[\]\\]|\\.)+)\]:[ \t]*(?:<[^<>\n]*>|([^\s<]\S*))(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
+const MAX_LINK_LABEL_LENGTH = 999;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
 
 function isLinkDefinition(line: string): boolean {
   const match = LINK_DEFINITION.exec(line);
   if (!match) return false;
-  const bareDestination = match[1];
+  const [, label, bareDestination] = match;
+  if (!label || label.length > MAX_LINK_LABEL_LENGTH || !/[^ \t]/.test(label)) {
+    return false;
+  }
+  if (label.includes("\t")) {
+    const start = line.indexOf("[") + 1;
+    let column = start;
+    // The Markdown tokenizer counts tabs as spaces up to the next four-column stop.
+    for (let i = 0; i < label.length; i++) {
+      column += label[i] === "\t" ? 4 - (column % 4) : 1;
+    }
+    if (column - start > MAX_LINK_LABEL_LENGTH) return false;
+  }
   if (bareDestination === undefined) return true;
   let depth = 0;
   for (let i = 0; i < bareDestination.length; i++) {
@@ -180,7 +193,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         (first || afterBlankLine || afterDefinition || afterHeading) && isLinkDefinition(line);
       afterDefinition = definition;
       if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
-        definitions.push(line.trim());
+        // Keep the starting column of tabbed labels when prepending the definitions.
+        definitions.push(line.trimEnd());
         definitionChars += line.length + 1;
       }
     }
