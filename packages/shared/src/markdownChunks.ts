@@ -4,8 +4,6 @@ const CHUNK_TARGET_CHARS = 4 * 1024;
 export const LARGE_MARKDOWN_CHUNK_MAX_CHARS = 128 * 1024;
 // A backtick fence's info string cannot contain a backtick, so "```a``` is inline" is a code span.
 const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,})/;
-const LIST_ITEM_PREFIX = /^ {0,3}([-+*]|\d{1,9}[.)])(?:([ \t]+)(?=[^ \t\r])|[ \t]*\r?$)/;
-const SETEXT_EQUALS = /^ {0,3}=+[ \t]*\r?$/;
 const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|\r?$)/;
 // A thematic break, or a "---" setext underline; no paragraph stays open after either. A lone
 // "===" is paragraph text unless it underlines one, so it is left out.
@@ -52,47 +50,6 @@ function openedWrappers(line: string): number {
     opened += closing ? -1 : 1;
   }
   return opened;
-}
-
-function markdownColumn(text: string, column = 0): number {
-  for (const character of text) column += character === "\t" ? 4 - (column % 4) : 1;
-  return column;
-}
-
-function lineAtIndent(line: string, whitespace: string, relativeIndent: number): string {
-  return relativeIndent >= 0 && relativeIndent <= 3
-    ? " ".repeat(relativeIndent) + line.slice(whitespace.length)
-    : "";
-}
-
-function listItemStart(
-  line: string,
-  parentIndent: number,
-  paragraphOpen: boolean,
-  sibling?: string,
-) {
-  const prefix = LIST_ITEM_PREFIX.exec(line);
-  if (prefix === null || THEMATIC_BREAK.test(line)) return null;
-  const marker = prefix[1]!;
-  const delimiter = marker.at(-1)!;
-  const padding = prefix[2] ?? "";
-  // Only a nonempty bullet or a list starting at 1 can interrupt a paragraph.
-  if (
-    paragraphOpen &&
-    delimiter !== sibling &&
-    !(padding && (marker.length === 1 || Number(marker.slice(0, -1)) === 1))
-  )
-    return null;
-
-  const markerEnd = parentIndent + prefix[0].trimEnd().length;
-  const width = markdownColumn(padding, markerEnd) - markerEnd;
-  // Content padded past four columns is indented code, and the item indents by one.
-  const contentFollows = width >= 1 && width <= 4;
-  return {
-    indent: markerEnd + (contentFollows ? width : 1),
-    delimiter,
-    text: contentFollows ? line.slice(prefix[0].length) : "",
-  };
 }
 
 /** Returns how to recognize the end of a block that `line` opens, or null for none. */
@@ -153,9 +110,6 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let first = true;
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
-  const listItems: { indent: number; delimiter: string }[] = [];
-  let listBlockIndent = 0;
-  let paragraphOpen = false;
   let afterBlankLine = false;
   let afterDefinition = false;
   let afterHeading = false;
@@ -170,29 +124,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     heldCut = 0;
   };
   for (const line of text.split("\n")) {
-    const whitespace = listItems.length === 0 ? "" : /^[ \t]*/.exec(line)![0];
-    const indent = markdownColumn(whitespace);
-    const blank = line.trim() === "";
-    let blockLine = line;
-    if (listBlockIndent > 0) {
-      const relativeIndent = indent - listBlockIndent;
-      if (relativeIndent < 0 && !blank) {
-        // An outdent ends the block with its list item. Scan this line in the outer block.
-        closes = null;
-        listBlockIndent = 0;
-        afterHeading = true;
-      } else if (relativeIndent >= 0 && relativeIndent <= 3) {
-        blockLine = lineAtIndent(line, whitespace, relativeIndent);
-      }
-    }
-    let paragraphLine = "";
-    let setextHeading = false;
     if (closes !== null) {
-      if (closes(blockLine)) {
-        closes = null;
-        openedFence ||= listBlockIndent > 0;
-        listBlockIndent = 0;
-      }
+      if (closes(line)) closes = null;
     } else if (first && FRONTMATTER_OPEN.test(line)) {
       let seen = 0;
       closes = (next) => {
@@ -208,43 +141,9 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
-      let depth = listItems.length;
-      while (depth > 0 && indent < listItems[depth - 1]!.indent) depth--;
-      let parentIndent = listItems[depth - 1]?.indent ?? 0;
-      let content =
-        parentIndent === 0 ? line : lineAtIndent(line, whitespace, indent - parentIndent);
-      let item = listItemStart(
-        content,
-        parentIndent,
-        paragraphOpen && !afterHeading,
-        listItems[depth]?.delimiter,
-      );
-      const startsItem = item !== null;
-      while (item !== null) {
-        listItems.length = depth;
-        listItems.push({ indent: item.indent, delimiter: item.delimiter });
-        depth++;
-        parentIndent = item.indent;
-        content = item.text;
-        item = listItemStart(content, parentIndent, false);
-      }
-
-      closes = blockCloser(content);
-      if (closes !== null) listBlockIndent = parentIndent;
-      setextHeading =
-        !startsItem && depth === listItems.length && paragraphOpen && SETEXT_EQUALS.test(content);
-      const headingOrBreak = ATX_HEADING.test(content) || THEMATIC_BREAK.test(content);
-      // A paragraph can continue outside its item's indentation until a new block starts.
-      const lazy =
-        paragraphOpen &&
-        !afterHeading &&
-        closes === null &&
-        !headingOrBreak &&
-        !/^ {0,3}>/.test(content);
-      if (!blank && (startsItem || !lazy)) listItems.length = depth;
-
-      openedFence = parentIndent === 0 && /^[`~]/.test(content) && FENCE_OPEN.test(content);
-      paragraphLine = closes === null && !headingOrBreak && !setextHeading ? content : "";
+      closes = blockCloser(line);
+      // An indented fence may sit in a list item, which this does not track.
+      openedFence = /^[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       const definition: boolean =
@@ -268,15 +167,9 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       chars = rest.reduce((sum, kept) => sum + kept.length + 1, 0);
       openWrappers = 0;
     }
-    paragraphOpen =
-      !blank &&
-      paragraphLine.trim() !== "" &&
-      !afterDefinition &&
-      !/^(?: {4}| {0,3}[\t>])/.test(paragraphLine);
-    afterBlankLine = blank;
+    afterBlankLine = line.trim() === "";
     afterHeading =
-      closes === null &&
-      (openedFence || setextHeading || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
+      closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
   flush();
   return { chunks, definitions: definitions.join("\n") };
