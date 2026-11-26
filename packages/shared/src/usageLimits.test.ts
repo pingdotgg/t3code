@@ -14,6 +14,7 @@ import {
   displayLimitWindows,
   cursorUsageWindowDetails,
   collectProviderUsageLimits,
+  hasProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
@@ -1817,6 +1818,22 @@ describe("/usage-limits", () => {
     ]);
     expect(mixed[2]).toBe(unrelated);
     expect(mixed[3]).toBe(disabled);
+  });
+
+  it("does not offer the command to every provider while an HTTP quota source is down", () => {
+    const unrelated = provider({ driver: ProviderDriverKind.make("claudeAgent") });
+    const httpSource = {
+      id: UsageLimitSourceId.make("http-quota"),
+      kind: "http" as const,
+      label: "My quota server",
+      checkedAt: limits.checkedAt,
+      accounts: [],
+    };
+    const down = { ...httpSource, error: "Could not read the HTTP quota source." };
+    expect(withUsageLimitsCommands([unrelated], [httpSource])[0]).toBe(unrelated);
+    expect(withUsageLimitsCommands([unrelated], [down])[0]).toBe(unrelated);
+    expect(hasProviderUsageLimits(unrelated.driver, [unrelated], [down])).toBe(false);
+    expect(sameUsageLimitCommandCoverage([httpSource], [down])).toBe(true);
   });
 });
 

@@ -778,4 +778,24 @@ Third}`;
       expect(result.pages).toEqual([{ title: "First", html: "<p>Hello</p>" }]);
     },
   );
+
+  it.each([
+    ["a blank title", "<title> \n </title>", "<h1>Prologue</h1>", "Prologue"],
+    ["an empty first heading", "", "<h1></h1><h1>Prologue</h1>", "Prologue"],
+    ["only blank headings", "<title> </title>", "<h1></h1><p>Body</p>", undefined],
+  ])("titles EPUB chapters with %s", async (_label, head, body, title) => {
+    const archive = new JSZip()
+      .file(
+        "META-INF/container.xml",
+        '<container><rootfiles><rootfile full-path="book.opf"/></rootfiles></container>',
+      )
+      .file(
+        "book.opf",
+        '<package><manifest><item id="a" href="one.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+      )
+      .file("one.xhtml", `<html><head>${head}</head><body>${body}</body></html>`);
+    const result = await openEpub(archive);
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.title).toBe(title);
+  });
 });
