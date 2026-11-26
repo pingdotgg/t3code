@@ -206,6 +206,22 @@ describe("splitMarkdown", () => {
     ]);
   });
 
+  it("keeps the complete sample fence before a later oversized source chunk", () => {
+    const example = ["```md", "Sample Markdown", "", "# Sample heading", "```"].join("\n");
+    const preview = ["x".repeat(4200), "<span>", example, "More prose", "<span>"].join("\n");
+    const oversized = "# Appendix\n" + "[link](/example) ".repeat(11_000);
+    const { chunks } = splitMarkdown(preview + "\n" + oversized);
+    expect(chunks.map((chunk) => chunk.text)).toEqual([preview, oversized]);
+  });
+
+  it.each([
+    ["multiline math with backticks", ["$$", "```", "$$", " # Heading"]],
+    ["single-line display math", ["$$x$$"]],
+  ])("keeps standalone HTML intact after %s", (_, math) => {
+    const text = ["x".repeat(4200), "<span>", ...math, "<span>", "# literal"].join("\n");
+    expect(splitMarkdown(text).chunks.map((chunk) => chunk.text)).toEqual([text]);
+  });
+
   it("keeps leading frontmatter in the first piece", () => {
     const text = ["---", "title: x", "", "# not a heading", "---", "", "# Heading"].join("\n");
     expect(starts(text)).toEqual(["---", "# Heading"]);

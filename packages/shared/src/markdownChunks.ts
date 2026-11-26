@@ -37,6 +37,7 @@ const HTML_STANDALONE_TAG =
 const BLANK_LINE = /^[ \t]*\r?$/;
 const closesAtBlankLine = (next: string) => BLANK_LINE.test(next);
 const flowParser = unified().use(remarkParse).use(remarkGfm).freeze();
+const HTML_FLOW_MAX_CHARS = 8 * 1024;
 
 // A <details> or <table> wraps the Markdown between its tags, across the blank lines that end
 // each HTML block, so a cut waits until the ones an HTML block opened are closed.
@@ -64,8 +65,8 @@ function openedWrappers(line: string): number {
   return opened;
 }
 
-/** Returns how to recognize the end of a block that `line` opens, or null for none. */
-function blockCloser(line: string): ((line: string) => boolean) | null {
+/** Null means the block ends on this line. Undefined means no block opens. */
+function blockCloser(line: string): ((line: string) => boolean) | null | undefined {
   const fence = FENCE_OPEN.exec(line)?.[1];
   if (fence) {
     return (next) => {
@@ -85,7 +86,7 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
     if (opener === undefined) continue;
     return close.test(line.slice(opener.length)) ? null : (next) => close.test(next);
   }
-  return HTML_BLOCK_TAG.test(line) ? closesAtBlankLine : null;
+  return HTML_BLOCK_TAG.test(line) ? closesAtBlankLine : undefined;
 }
 
 export interface MarkdownChunk {
@@ -160,13 +161,16 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   };
   const sourceLines = text.split("\n");
   let flowStart = 0;
-  let parsedThrough = 0;
-  let htmlStarts = new Set<number>();
+  let htmlStarts: Set<number> | undefined;
+  const resetFlow = (start: number) => {
+    flowStart = start;
+    htmlStarts = undefined;
+  };
   for (const [index, line] of sourceLines.entries()) {
     if (closes !== null) {
       if (closes(line)) {
         closes = null;
-        flowStart = index + 1;
+        resetFlow(index + 1);
       }
     } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
       closes = (next) => {
@@ -181,28 +185,33 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
-      closes = blockCloser(line);
-      if (closes === null && HTML_STANDALONE_TAG.test(line)) {
-        // Type-7 HTML cannot interrupt prose. Consult the parser only for ambiguous runs,
-        // once per run of nonblank lines, to account for headings, tables and containers.
-        if (index >= parsedThrough && index > flowStart) {
-          parsedThrough = index + 1;
-          while (
-            parsedThrough < sourceLines.length &&
-            !BLANK_LINE.test(sourceLines[parsedThrough]!)
-          ) {
-            parsedThrough++;
+      const closer = blockCloser(line);
+      closes = closer ?? null;
+      if (closer === null || ATX_HEADING.test(line)) {
+        resetFlow(index + 1);
+      } else if (closer === undefined && HTML_STANDALONE_TAG.test(line)) {
+        // Type-7 HTML cannot interrupt prose. Parse a bounded run once, and treat tags
+        // beyond that budget as inline rather than parsing a potentially oversized block.
+        if (htmlStarts === undefined && index > flowStart) {
+          let end = flowStart;
+          let flowChars = 0;
+          for (; end < sourceLines.length; end++) {
+            const next = sourceLines[end]!;
+            flowChars += next.length + 1;
+            if (flowChars > HTML_FLOW_MAX_CHARS || BLANK_LINE.test(next) || ATX_HEADING.test(next))
+              break;
           }
-          const flow = flowParser.parse(sourceLines.slice(flowStart, parsedThrough).join("\n"));
-          htmlStarts = new Set(
-            flow.children.flatMap((node) =>
-              node.type === "html" && node.position
-                ? [flowStart + node.position.start.line - 1]
-                : [],
-            ),
-          );
+          htmlStarts = new Set();
+          if (index < end) {
+            const flow = flowParser.parse(sourceLines.slice(flowStart, end).join("\n"));
+            for (const node of flow.children) {
+              if (node.type === "html" && node.position) {
+                htmlStarts.add(flowStart + node.position.start.line - 1);
+              }
+            }
+          }
         }
-        if (index === flowStart || htmlStarts.has(index)) closes = closesAtBlankLine;
+        if (index === flowStart || htmlStarts?.has(index)) closes = closesAtBlankLine;
       }
       // Two or more spaces may put a fence in a list item, which this does not track.
       openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
@@ -230,7 +239,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       openWrappers = 0;
     }
     afterBlankLine = BLANK_LINE.test(line);
-    if (afterBlankLine) flowStart = index + 1;
+    if (afterBlankLine) resetFlow(index + 1);
     afterHeading =
       closes === null && (openedFence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
