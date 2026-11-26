@@ -10097,6 +10097,7 @@
   "7f11b5e6dfa0bc56": "カスタム",
   "aea25315995268e1": "継承",
   "c8d6af8aaa94a464": "デフォルト",
+  "652e3aad21933d17": "{summary} · {count, plural, other {{count} 件のプロジェクトの上書き}}",
   "0a39976ec0fb3e49": "{overrideSummary}。値の取得元を表示",
   "99af2d06aa2b6d12": "リセット",
   "7e9fca5fb426044a": "すべてリセット",

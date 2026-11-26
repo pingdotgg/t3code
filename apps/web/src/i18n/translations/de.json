@@ -10144,6 +10144,7 @@
   "7f11b5e6dfa0bc56": "Benutzerdefiniert",
   "aea25315995268e1": "Übernimmt",
   "c8d6af8aaa94a464": "Standard",
+  "652e3aad21933d17": "{summary} · {count, plural, one {{count} Projektüberschreibung} other {{count} Projektüberschreibungen}}",
   "0a39976ec0fb3e49": "{overrideSummary}. Herkunft dieses Werts anzeigen",
   "99af2d06aa2b6d12": "Zurücksetzen",
   "7e9fca5fb426044a": "Alle zurücksetzen",
