@@ -82,6 +82,22 @@ const operationOf = (
   if (method === "POST" && path === "/api/session") return { type: "session.create", input: body };
   if (method === "GET" && path === "/api/session/active") return { type: "session.active" };
   if (method === "GET" && path === "/api/command") return { type: "command.list", input: query };
+  if (method === "GET" && path === "/api/mcp") return { type: "mcp.list", input: query };
+  const integration =
+    /^\/api\/integration\/([^/]+)(?:\/connect\/oauth(?:\/([^/]+)(\/complete)?)?)?$/.exec(path);
+  if (integration !== null) {
+    const input = { integrationID: integration[1], ...query };
+    if (method === "POST" && integration[3] !== undefined)
+      return {
+        type: "integration.oauth.complete",
+        input: { ...input, attemptID: integration[2], ...(body as object) },
+      };
+    if (method === "POST")
+      return { type: "integration.oauth.connect", input: { ...input, ...(body as object) } };
+    if (integration[2] !== undefined)
+      return { type: "integration.oauth.status", input: { ...input, attemptID: integration[2] } };
+    return { type: "integration.get", input };
+  }
   const mcp = /^\/api\/experimental\/mcp\/([^/]+)$/.exec(path);
   if (mcp !== null && method === "PUT") {
     return { type: "mcp.add", input: { server: mcp[1], ...query, ...(body as object) } };
