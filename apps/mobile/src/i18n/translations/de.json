@@ -5404,7 +5404,7 @@
       "v": "v"
     }
   ],
-  "ffd7529d1f50e0a6": "{count, plural, one {{count} Stopp} other {{count} Stopps}}",
+  "e093a6c02ff2c19f": "{count, plural, one {{count} Stopp} other {{count} Stopps}}",
   "9830004326e7d8c0": "{count, plural, one {durch {count} Datei} other {durch {count} Dateien}}",
   "e6035bad35419efa": "Leitfaden-Optionen",
   "4d7635a2bf1f5816": "Leitfaden neu schreiben",
