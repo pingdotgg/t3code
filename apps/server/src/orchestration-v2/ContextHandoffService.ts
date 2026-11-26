@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
+  handoffByteCap,
   handoffCoverage,
   historicalMessage,
   renderHistory,
@@ -412,7 +413,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
             return message === null ? [] : [message];
           }),
           coverage,
-          budget: tokenCap,
+          budget: handoffByteCap(tokenCap),
         });
         return {
           id: handoffId,
@@ -482,7 +483,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
             return message === null ? [] : [message];
           }),
           coverage,
-          budget: tokenCap,
+          budget: handoffByteCap(tokenCap),
         });
         return {
           id: handoffId,
@@ -565,7 +566,7 @@ const makeContextHandoffService = Effect.fn("orchestrationV2.ContextHandoffServi
               ];
         }),
         coverage,
-        budget: tokenCap,
+        budget: handoffByteCap(tokenCap),
       });
       return {
         id: handoffId,
