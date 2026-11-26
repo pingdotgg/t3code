@@ -104,6 +104,49 @@ describe("injectHtmlRenderBootstrap", () => {
     );
     expect(injected).toContain('<meta name="viewport" content="width=device-width');
   });
+
+  it.each([
+    ["<!-- Generated report -->\n<!doctype html>", "\n<p>Q4</p>"],
+    [
+      "\uFEFF<!-- a -->\n<!---->\n<!----->\n<!-- outer <!-- inner -->\n<!DOCTYPE html>",
+      "\n<p>Q4</p>",
+    ],
+    ['<!-- legacy -->\n<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN">', "\n<p>Q4</p>"],
+  ])("places the head after an HTML doctype preceded by comments: %s", (prefix, body) => {
+    const injected = injectHtmlRenderBootstrap(prefix + body);
+    expect(injected.startsWith(`${prefix}<head><meta charset="utf-8">`)).toBe(true);
+    expect(injected.match(/<!doctype\b/gi)).toHaveLength(1);
+    expect(injected.endsWith(body)).toBe(true);
+  });
+
+  it.each([
+    "<!-- copy <!doctype html> here --><p>fragment</p>",
+    "<script>const x = 1;</script><!doctype html><p>body</p>",
+    "<!-- unclosed\n<!doctype html><p>body</p>",
+    "<!--><!doctype html><p>body</p>",
+    "<!---><!doctype html><p>body</p>",
+    "<!-- a --!> b --><!doctype html><p>body</p>",
+    "<!----!> b --><!doctype html><p>body</p>",
+    "<!-- a -->\uFEFF<!doctype html><p>body</p>",
+    "<!doctype><p>body</p>",
+    "<!doctypefoo><p>body</p>",
+    "<!doctype\u00A0html><p>body</p>",
+    "<!doctype svg><p>body</p>",
+    "<!doctype html ",
+  ])("prepends a doctype when no valid HTML doctype starts the page: %s", (fragment) => {
+    const injected = injectHtmlRenderBootstrap(fragment);
+    expect(injected.startsWith("<!doctype html><head>")).toBe(true);
+    expect(injected.endsWith(fragment)).toBe(true);
+  });
+
+  it("handles many leading comments before a doctype", () => {
+    const prefix = `${"<!---->".repeat(50_000)}<!doctype html>`;
+    const body = `<p>${"x".repeat(500_000)}</p>`;
+    const injected = injectHtmlRenderBootstrap(prefix + body);
+    expect(injected.startsWith(`${prefix}<head><meta charset="utf-8">`)).toBe(true);
+    expect(injected.match(/<!doctype\b/gi)).toHaveLength(1);
+    expect(injected.endsWith(body)).toBe(true);
+  });
 });
 
 describe("readHtmlRenderLinkRequest", () => {

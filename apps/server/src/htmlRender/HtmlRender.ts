@@ -8,6 +8,7 @@ import {
   HTML_RENDER_MAX_TITLE_LENGTH,
   HTML_RENDER_MEASURE_FONTS,
   HTML_RENDER_MEASURE_WIDTHS,
+  htmlDocumentStartOffset,
   htmlRenderTheme,
   htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
@@ -44,7 +45,8 @@ const MAX_IMAGE_BYTES = 10 * MIB;
 const MAX_PAGE_BYTES = 25 * MIB;
 const HTML_FILE_EXTENSION = /\.html?$/i;
 // Like the image check, judge the bytes: a renamed .env or key does not start like a page.
-const HTML_DOCUMENT_START = /^\s*<(?:!doctype\s+html|html)[\s>]/i;
+const HTML_DOCUMENT_START =
+  /<(?:!doctype[ \t\n\f\r]+html(?:[ \t\n\f\r][^>]*)?|html(?:[ \t\n\f\r](?:[^"'<>]|"[^"]*"|'[^']*')*)?)>/iy;
 const formatMib = (bytes: number) => `${(bytes / MIB).toFixed(1)} MiB`;
 
 export class HtmlRenderFileError extends Schema.TaggedError<HtmlRenderFileError>()(
@@ -494,6 +496,9 @@ const make = Effect.gen(function* () {
         });
       }),
     );
+    const start = htmlDocumentStartOffset(html);
+    if (start === -1) return yield* unreadable;
+    HTML_DOCUMENT_START.lastIndex = start;
     return HTML_DOCUMENT_START.test(html) ? html : yield* unreadable;
   });
 
