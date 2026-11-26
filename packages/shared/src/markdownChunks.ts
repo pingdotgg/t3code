@@ -156,7 +156,7 @@ function readLinkDefinition(lines: readonly string[], start: number) {
 
   const node = definitionParser.parse(text).children[0];
   const end = node?.position?.end;
-  if (node?.type === "definition" && end?.offset !== undefined && end.line > 1) {
+  if (node?.type === "definition" && end?.offset !== undefined) {
     return { text: text.slice(0, end.offset), end: start + end.line - 1 };
   }
 }
