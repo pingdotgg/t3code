@@ -211,6 +211,20 @@ describe("thread links", () => {
       ].join("\n"),
     );
 
+    const reindentedQuote = [
+      "> ```",
+      " > <t3-thread://v2/local/in-code>",
+      "> ```",
+      "After <t3-thread://v2/env-1/t1>",
+    ].join("\n");
+    expect(threadLinkRefs(reindentedQuote, local)).toEqual([ref("env-1", "t1")]);
+    expect(relabelThreadLinks(reindentedQuote, local, () => "My Thread")).toBe(
+      reindentedQuote.replace(
+        "After <t3-thread://v2/env-1/t1>",
+        "After [My Thread](t3-thread://v2/env-1/t1)",
+      ),
+    );
+
     const listMarkerFence = [
       "- ```bash",
       "  echo hi",
@@ -254,6 +268,22 @@ describe("thread links", () => {
     expect(relabelThreadLinks(inlineTripleSpan, local, () => "My Thread")).toBe(
       "```<t3-thread://v2/local/in-span>``` then [My Thread](t3-thread://v2/env-1/t1)",
     );
+
+    const multilineSpan = [
+      "Use ```example",
+      "<t3-thread://v2/local/in-span>",
+      "end``` then <t3-thread://v2/env-1/t1>",
+    ].join("\n");
+    expect(threadLinkRefs(multilineSpan, local)).toEqual([ref("env-1", "t1")]);
+    expect(relabelThreadLinks(multilineSpan, local, () => "My Thread")).toBe(
+      multilineSpan.replace(
+        "then <t3-thread://v2/env-1/t1>",
+        "then [My Thread](t3-thread://v2/env-1/t1)",
+      ),
+    );
+
+    const spanStopsAtBlankLine = "Stray ` tick\n\nSee <t3-thread://v2/env-1/t1> and `code`";
+    expect(threadLinkRefs(spanStopsAtBlankLine, local)).toEqual([ref("env-1", "t1")]);
 
     const longerFence = [
       "````md",
