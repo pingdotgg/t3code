@@ -3,8 +3,9 @@ name: Upstream Fixes
 # This fork is its own app; upstream is a source of fixes, not a branch we
 # follow. Every six hours this picks upstream's non-breaking `fix` and `perf` commits
 # that apply cleanly, puts them on the `upstream-fixes` branch, and opens or
-# updates one pull request with what was picked and what did not apply. Nothing
-# reaches main until that pull request is reviewed and its CI passes.
+# updates one pull request with what was picked and what did not apply.
+# upstream-fixes-land.yml merges that pull request once CI passes on it, and
+# narrows the batch when CI fails, so a broken fix never reaches main.
 # The rules live in .github/scripts/upstream-fixes.cjs; commits to never pick go
 # in .github/upstream-fixes/skip.
 on:
@@ -17,6 +18,10 @@ on:
         description: Most fixes to pick in one run
         required: false
         default: "400"
+      quarantine:
+        description: Upstream sha that failed CI on its own; skip it from now on
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -55,11 +60,13 @@ jobs:
         id: pick
         env:
           MAX: ${{ inputs.max || '400' }}
+          QUARANTINE: ${{ inputs.quarantine || '' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -C "$BRANCH"
-          node .github/scripts/upstream-fixes.cjs upstream/main --max "$MAX" --summary "$RUNNER_TEMP/summary.md"
+          node .github/scripts/upstream-fixes.cjs upstream/main --max "$MAX" \
+            --quarantine "$QUARANTINE" --summary "$RUNNER_TEMP/summary.md"
           cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
           if [ "$(git rev-list --count origin/main..HEAD)" -eq 0 ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
