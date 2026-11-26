@@ -37,10 +37,26 @@ describe("remarkGithubAlerts", () => {
     expect(html).toContain("Changes live transcript routing.");
   });
 
+  it("recognizes alerts terminated by CR-only and CRLF line endings", () => {
+    for (const ending of ["\r", "\r\n"]) {
+      expect(renderMarkdown(`> [!NOTE]${ending}> hi`)).toBe(
+        '<blockquote data-alert="note">\n<p>hi</p>\n</blockquote>',
+      );
+      expect(renderMarkdown(`> [!NOTE]${ending}> **Bold** body.`)).toBe(
+        '<blockquote data-alert="note">\n<p><strong>Bold</strong> body.</p>\n</blockquote>',
+      );
+    }
+  });
+
   it("leaves a quote alone when the marker shares its line with anything else", () => {
     const html = renderMarkdown("> [!NOTE] an ordinary quote");
 
     expect(html).not.toContain("data-alert");
     expect(html).toContain("[!NOTE] an ordinary quote");
+
+    const joined = renderMarkdown("> [!NOTE]**joined**");
+
+    expect(joined).not.toContain("data-alert");
+    expect(joined).toContain("[!NOTE]<strong>joined</strong>");
   });
 });
