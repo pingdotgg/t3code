@@ -1,4 +1,5 @@
 {
+  "035aab5e99159bd8": "{count, plural, one {… No se muestra {hidden} carácter del medio.} other {… No se muestran {hidden} caracteres del medio.}} El texto termina con:",
   "4bcfa3b976a421cf": "Chat lateral",
   "23be753133ae6950": "Hilo",
   "0001ae5846061bb6": "Hilo en {machine}",
@@ -20,6 +21,10 @@
   "2aa1c01bf8014725": "{organization} limita los hilos a Aceptar ediciones automáticamente.",
   "89563a8fff8bb751": "{organization} limita los hilos a Automático.",
   "5b7ff1208620c2c2": "{organization} limita los hilos a Acceso total.",
+  "069e0382ff2496f5": "La configuración de Claude de tu organización desactiva el modo automático.",
+  "8ccf7e0def66d339": "Tu configuración de Claude desactiva el modo automático.",
+  "04ac2410d2cc0666": "La configuración de Claude de este proyecto desactiva el modo automático.",
+  "7e27789f5d58960e": "La configuración de Claude desactiva el modo automático.",
   "9bf017edd3847eb1": "La política de {organization} no permite conectarse desde otros dispositivos.",
   "ef9533bcc048f17b": "La política de {organization} no permite T3 Connect.",
   "986b0873f913a840": "La política de {organization} no permite tareas de webhook.",
@@ -66,7 +71,7 @@
   "2f6e4f7cd364da73": "Resultado esperado",
   "9d11c93d4035de3e": "Lo que ocurrió",
   "c87d0595693704f9": "Alternativa utilizada",
-  "d7a4ea6ce5af44e0": "{speaker} · {count} caracteres",
+  "ed5c85bb4aecb472": "{count, plural, one {{speaker} · {count} carácter} other {{speaker} · {count} caracteres}}",
   "f5114fb9c40fd929": "Tú",
   "cd03eb1b84271c02": "Agente",
   "bfe1a60f3f9c60fb": "Turno {turn} · {what}",
@@ -686,6 +691,7 @@
   "56b4ff3993c93eca": "{host} envió una configuración del servidor incompatible.",
   "368c4d4f99c66bfb": "Actualiza el cliente y el servidor a versiones compatibles.",
   "e5fd422e445391fc": "Error al subir. Toca para reintentar.",
+  "13b14784f8707ddd": "0 bytes",
   "b2bc6bd92ea24e5c": "{size} MB",
   "88f84178edbb7f57": "{size} KB",
   "5a78fd0a1d8e9945": "{count} MB",
@@ -872,6 +878,10 @@
   "05b16c85cb1e18bd": "Sin repositorios",
   "04ea9e0e663983fd": "Todos los repositorios",
   "c07bd24ff49e85d9": "{count, plural, one {{count} repositorio} other {{count} repositorios}}",
+  "1b799ebfa94c2408": "Aprobación de hooks de push",
+  "81d703184fe5112e": "¿Ejecutar los hooks de push de este repositorio?",
+  "027b0d65c7a67af6": "Archivo de hook",
+  "ade585910165bb52": "Hook configurado",
   "e94aa66471dae6aa": "¿Por qué se me pregunta esto?",
   "228a325b5708e675": "El acceso completo omite las aprobaciones, pero una regla de preguntar en los ajustes del propio agente coincide con esta acción, así que sigue preguntando. Quita o restringe esa regla para dejar de ver estas solicitudes.",
   "3f9101f696c738a8": "El acceso completo omite las aprobaciones, pero el agente sigue deteniéndose en algunas comprobaciones de seguridad propias que ningún ajuste puede omitir, como una eliminación cuya ruta no puede verificar. T3 Code no puede desactivarlas, así que revisa la solicitud y apruébala si es lo que esperas.",
@@ -1297,7 +1307,7 @@
   "c13753167634f7aa": "Archivo leído",
   "5ce648cd03020fd9": "Leyó {path} y {count} más",
   "5d6c2898401c94e6": "Leyó {path}",
-  "612170d804b03320": "{count, plural, one {Se omitió {count} registro de uso mal formado o incoherente; el uso puede estar incompleto.} other {Se omitieron {count} registros de uso mal formados o incoherentes; el uso puede estar incompleto.}}",
+  "69150fe436b3a0c2": "{count, plural, one {Se omitió {count} registro de uso mal formado o incoherente; el uso puede estar incompleto.} other {Se omitieron {count} registros de uso mal formados o incoherentes; el uso puede estar incompleto.}}",
   "ee448ceb6820ce2f": "{environment} ejecuta una versión anterior del servidor y se excluye de los totales.",
   "732708950237004e": "Este cliente es más antiguo que el servidor de {environment}; su uso se excluye de los totales.",
   "9758c2ede06aa19b": "Hoy a las {hour}",
@@ -1916,6 +1926,7 @@
   "69c659d8b6e271cc": "La página pide un archivo.",
   "a6efeb99b479990a": "Elegir archivos",
   "59c87648d44b958c": "Elegir archivo",
+  "6f321f153b8711bb": "Elige una opción",
   "61a552a67e9e3eac": "Respuesta al cuadro de diálogo",
   "1d9bd868fafea18a": "Descartar",
   "1d0a7acef4a95536": "Aceptar",
@@ -2450,7 +2461,6 @@
   "a6eeff30440d26a2": "Issue {key}",
   "c0e2d952114e7d59": "de {author}",
   "2195cdd7774c1c23": "autor desconocido",
-  "093394ace72dbd79": "{count, plural, one {{count} comentario} other {{count} comentarios}}",
   "217e1e7b60469736": "Estado de la issue, {state}",
   "5fd6c9c736b80b62": "Estado de la issue",
   "a749275f1ad66618": "Autor desconocido",
@@ -3143,7 +3153,6 @@
   "2bc714a245998c04": "Neutral",
   "b28db58c44b25db3": "{passed} de {total}",
   "8e64d98f747bf650": "{count, plural, one {{count} comprobación con fallos} other {{count} comprobaciones con fallos}}",
-  "ff4514103a353d8e": "{count, plural, one {{count} requiere atención} other {{count} requieren atención}}",
   "078bb63ea2f3ee40": "Las comprobaciones requieren atención",
   "fd63b391898889f9": "{count, plural, one {{count} pendiente de acción} other {{count} pendientes de acción}}",
   "a39948e68089494f": "{count, plural, one {{count} pendiente} other {{count} pendientes}}",
@@ -4333,6 +4342,21 @@
     },
     " salió de su página y se detuvo"
   ],
+  "796b81c4875c4feb": [
+    "La app ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " necesita un servidor de ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    },
+    " más reciente en este entorno. Actualiza el servidor para usarla."
+  ],
   "5ef18e4d39b398bf": [
     "No se puede cargar la app ",
     {
@@ -4576,7 +4600,7 @@
   "55b562c00e37321b": "No se pudo forzar la detención del agente",
   "ede15a83eedec569": "Turno detenido; el agente aún se está cerrando",
   "f360accf1ccac178": "Turno detenido; el proceso del agente siguió ejecutándose",
-  "967f83de030790dd": "{count, plural, =0 {Se comparte con otros hilos en curso. Detenlos para liberarlo.} one {Se comparte con {count} hilo en curso. Detenlo para liberarlo.} other {Se comparte con {count} hilos en curso. Detenlos para liberarlo.}}",
+  "72e41eb83e88cefa": "{count, plural, =0 {Se comparte con otros hilos en curso. Detenlos para liberarlo.} one {Se comparte con {count} hilo en curso. Detenlo para liberarlo.} other {Se comparte con {count} hilos en curso. Detenlos para liberarlo.}}",
   "5536ab75119ee3f9": "No se pudo actualizar el hilo",
   "04c7bba52daa6f53": "No se pudo actualizar el objetivo",
   "f5f145b33e2a9380": "Deteniendo...",
@@ -4894,6 +4918,7 @@
   "306a6f95ad9d52f7": "Sin enviar",
   "11276ab6c58b7a25": "Abre el borrador en el cuadro de mensaje de la tarea nueva. Desliza a la izquierda para descartarlo.",
   "99950f3a28d425fa": "Se envía cuando el entorno se vuelve a conectar. Abre la tarea para editarla. Desliza a la izquierda para eliminarla.",
+  "d71048f4fb9cf44a": "Esperando sincronización",
   "0a260c7744afd0be": "Esperando",
   "ad78fae7d373cf21": "Trabajando",
   "be451f475c514b37": "Descartar notificación de reactivación",
@@ -5068,9 +5093,9 @@
   "811008ce95331531": "Segmento {index}, {account}, queda un {remaining}%",
   "bfb2d0ef476d295b": "Segmento {index}, {account}, queda un {remaining}%, queda un {timeLeft}% de la ventana",
   "e71c96e5114f7718": "Mostrar detalles de la cuenta",
-  "27cd137302298f71": "Segmento {index}, {account}, queda un {remaining}%, {resetsIn}, {credits, plural, one {{credits} crédito de restablecimiento acumulado} other {{credits} créditos de restablecimiento acumulados}}",
+  "e339cc2761dac83a": "Segmento {index}, {account}, queda un {remaining}%, {resetsIn}, {credits, plural, one {{credits} crédito de restablecimiento acumulado} other {{credits} créditos de restablecimiento acumulados}}",
   "288ade531cfcf90c": "Segmento {index}, {account}, queda un {remaining}%, {resetsIn}",
-  "f78edbddd70ee41d": "Segmento {index}, {account}, queda un {remaining}%, {credits, plural, one {{credits} crédito de restablecimiento acumulado} other {{credits} créditos de restablecimiento acumulados}}",
+  "d0d366d02d9fd98e": "Segmento {index}, {account}, queda un {remaining}%, {credits, plural, one {{credits} crédito de restablecimiento acumulado} other {{credits} créditos de restablecimiento acumulados}}",
   "d2d071e45a2d6b89": "Selecciona un entorno para ver los límites.",
   "f411a8cef140a5ea": "Ningún proveedor de los entornos seleccionados informa de límites de suscripción.",
   "b29a752dd8ee9aa7": "Cuenta",
@@ -5186,7 +5211,7 @@
   "0b363b02a7e17bcb": "Coste bruto de tokens",
   "ea4beda46b22b8b0": "Tokens procesados",
   "212d974007cacf3f": "* si se facturara a la tarifa completa de la API",
-  "82bc7f1cc5a039fc": "{count, plural, one {En {sessions} sesión} other {En {sessions} sesiones}}",
+  "45340a7dc1f89d51": "{count, plural, one {En {sessions} sesión} other {En {sessions} sesiones}}",
   "2a57181a9d128463": "{share} del coste · {tokens} tokens",
   "d8a6a99fbdda0d3e": "{share} de los tokens · {cost}",
   "19a3f4f2ba09e787": "Totales",
@@ -5323,6 +5348,9 @@
   "744127f8dfad7d22": "Conecta un entorno para ver sus ejecuciones de flujos de trabajo.",
   "b9aae2f7cdb1a379": "Aún no hay ejecuciones de flujos de trabajo",
   "ace8fc1c643cf9f6": "Un flujo de trabajo une agentes, código, programaciones y preguntas para ti en una sola ejecución que sobrevive a los reinicios. Escribe uno en tu ordenador, en Flujos de trabajo y luego Definiciones.",
+  "fc9c3a00cfc18b55": "Todos los tipos",
+  "e4d1316c85ed7066": "No hay preguntas de este tipo esperándote.",
+  "45a94c724845ec1d": "Otras",
   "86798f07ba2d7f4d": "Buscar issues",
   "484cd83bb303bab8": "Buscar pull requests",
   "75ed31fcea4f741a": "Filtrar issues",
@@ -5610,5 +5638,67 @@
   "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
   "99d51127f573296b": "Otra cuenta",
   "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
-  "892f08d21b8e48a9": "Fusionar {layers} en {base} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} cuando se cumplan sus requisitos. Puede ocurrir de inmediato."
+  "892f08d21b8e48a9": "Fusionar {layers} en {base} con {kind, select, squash {squash} merge {merge} rebase {rebase} fastForward {fast-forward} other {{method}}} cuando se cumplan sus requisitos. Puede ocurrir de inmediato.",
+  "89bf40eb2503b6c5": "Nuevo dispositivo conectado a {environment}",
+  "c94b5fe9ef372bc0": "{device} se conectó a través de {product}. Si no fuiste tú, quítalo en Ajustes → Acceso en T3 Code en ese ordenador.",
+  "bec67d0ed485f885": "{count, plural, one {{count} dispositivo se conectó} other {{count} dispositivos se conectaron}} a través de {product}. Si no fuiste tú, quítalos en Ajustes → Acceso en T3 Code en ese ordenador.",
+  "18c30aa94d0a807f": "Diagnóstico de conexión",
+  "eb287395a09cd288": "Enviar trazas de conexión",
+  "6787f93bbf6ce0b6": "Ayuda al equipo de T3 Code a solucionar problemas de conexión. Las trazas incluyen tiempos, tipos de error, un ID de esta sesión de la app y la versión de la app, nunca tus hilos, prompts ni código. Puedes cambiarlo en Ajustes > Acerca de T3 Code > Diagnóstico.",
+  "0b1e4aecbd38e0cf": "Cuando la app se conecta a un ordenador mediante {product}, envía al equipo de T3 Code cuánto tardó cada paso, el tipo de error, un ID de esta sesión de la app y la versión de la app. Las trazas nunca incluyen tus hilos, prompts ni código.",
+  "e0856d6a402ad821": "La política de {organization} no permite comandos de diseño de worktrees de proyectos.",
+  "7150557773b3818b": "En cola",
+  "efbeb3993ee2c3f5": "En cola para {pool}",
+  "0398ca6c1d24b92d": "en cola, el siguiente",
+  "0af6d5ffd5166214": "{count, plural, one {en cola, {count} delante} other {en cola, {count} delante}}",
+  "e114d37b32ab0dc7": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " necesita un motivo."
+  ],
+  "7e1fd2eb570a372b": "{who} respondió {choice}",
+  "a3c43735e1a81498": "Motivo de {title}",
+  "bfad234f016cfa3f": "El porqué, en una frase. Acompaña a la respuesta que elijas.",
+  "3759768c5d342c22": [
+    "respondida",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "8afa4fbe16f95bcf": [
+    "por ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    ",",
+    " ",
+    {
+      "i": 2,
+      "k": "_gt_value_2",
+      "v": "v"
+    }
+  ],
+  "0f93532dd76391fc": "Respondiste {choice}",
+  "235902a19e95833b": [
+    "por ti,",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
+  "1a1beecff68a6e61": "Verificar cuenta de Google",
+  "99451a5d2d40440f": "Retirada por {by}.",
+  "3ee30a50b70fffab": "Retirada por {by}: {reason}",
+  "201490988858b511": "retirada por {by}",
+  "46d614fa7b4bf1e5": "Ejecuciones de flujos de trabajo"
 }

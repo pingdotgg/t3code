@@ -140,6 +140,29 @@ describe("pull request body segmentation", () => {
     ]);
   });
 
+  it("does not close a fence opened at the margin on a tab-indented marker", () => {
+    const code = "```\n\t```\nhttps://example.com/sample.mp4\n```";
+    expect(split(`${code}\n\nhttps://example.com/demo.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: code, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+    ]);
+    const listCode = "- List\n\n\t```md\n  https://example.com/sample.mp4\n\t```";
+    expect(split(`${listCode}\n\nhttps://example.com/demo.mp4`)).toEqual([
+      { id: "markdown:0", kind: "markdown", text: listCode, sourceOffset: 0 },
+      {
+        id: "attachment:1",
+        kind: "attachment",
+        url: "https://example.com/demo.mp4",
+        media: "video",
+      },
+    ]);
+  });
+
   it("keeps a video tag that shares its line with prose as markdown", () => {
     const body = 'Before <video src="https://example.com/a.mp4"></video> after';
     expect(split(body)).toEqual([

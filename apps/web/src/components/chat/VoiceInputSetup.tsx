@@ -24,6 +24,7 @@ import {
 } from "../../speech/microphoneOrder";
 import { useEnvironment } from "../../state/environments";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { speechModelDownloadPercent } from "@t3tools/shared/speech";
 import { useEnvironmentScope } from "../../state/session";
 import { languageLabel } from "../settings/SpeechLanguageSelect";
 import { Button } from "../ui/button";
@@ -92,7 +93,9 @@ export function VoiceInputSetup(props: {
   const status = props.status?.supported ? props.status : null;
   const model = props.model;
   const progress =
-    model?.downloaded === undefined ? null : Math.round((model.downloaded / model.size) * 100);
+    model?.downloaded === undefined
+      ? null
+      : speechModelDownloadPercent(model.downloaded, model.size);
   const openSettings = (hash: string) => {
     props.onOpenChange(false);
     void navigate({ to: "/settings/voice", hash });

@@ -109,7 +109,7 @@ function clampCursor(text: string, cursor: number): number {
 }
 
 function isWhitespace(char: string): boolean {
-  return char === " " || char === "\n" || char === "\t" || char === "\r";
+  return /\s/.test(char);
 }
 
 function tokenStartForCursor(text: string, cursor: number): number {
