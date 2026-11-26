@@ -745,3 +745,41 @@ describe("rendered Markdown relative images", () => {
     );
   });
 });
+
+describe("rendered Markdown scroll position", () => {
+  it("restores each file's reading position after the preview remounts", async () => {
+    using _settings = setup();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    const contents = Array.from(
+      { length: 200 },
+      (_, index) => `## Section ${index}\n\nParagraph ${index}.\n`,
+    ).join("\n");
+    const scroller = () =>
+      document.querySelector<HTMLElement>(".scrollbar-gutter-both") ?? expect.unreachable();
+    const preview = (relativePath: string) => (
+      <div style={{ width: 500, height: 400, display: "flex", flexDirection: "column" }}>
+        {markdownPreview(false, contents, relativePath)}
+      </div>
+    );
+
+    {
+      await using screen = await render(preview("long.md"));
+      await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+      scroller().scrollTop = 3000;
+      await vi.waitFor(() => expect(scroller().scrollTop).toBe(3000));
+      scroller().dispatchEvent(new Event("scroll"));
+    }
+    {
+      await using screen = await render(preview("other.md"));
+      await expect.element(screen.getByText("Section 0", { exact: true })).toBeInTheDocument();
+      expect(scroller().scrollTop, "another file opens at the top").toBe(0);
+    }
+    {
+      await using _screen = await render(preview("long.md"));
+      await vi.waitFor(() => expect(Math.abs(scroller().scrollTop - 3000)).toBeLessThan(50));
+    }
+  });
+});
