@@ -1665,34 +1665,33 @@ function PullRequestCodeTab({
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {critProvider !== null && (commit === null || selectedCommit !== undefined) ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={gt("Open in Crit")}
-                  disabled={critDisabled}
-                  onClick={() =>
-                    void openInCrit({
-                      cwd: detail.workspaceRoot,
-                      scope: {
-                        kind: "pull-request",
-                        provider: critProvider,
-                        url: detail.url,
-                        number: detail.number,
-                        ...(selectedCommit ? { commit: selectedCommit.oid } : {}),
-                      },
-                    })
-                  }
-                />
-              }
-            >
-              <ExternalLinkIcon className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">{gt("Open in Crit")}</TooltipPopup>
-          </Tooltip>
+          <SharedTooltipTrigger
+            label={gt("Open in Crit")}
+            side="top"
+            render={
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label={gt("Open in Crit")}
+                disabled={critDisabled}
+                onClick={() =>
+                  void openInCrit({
+                    cwd: detail.workspaceRoot,
+                    scope: {
+                      kind: "pull-request",
+                      provider: critProvider,
+                      url: detail.url,
+                      number: detail.number,
+                      ...(selectedCommit ? { commit: selectedCommit.oid } : {}),
+                    },
+                  })
+                }
+              />
+            }
+          >
+            <ExternalLinkIcon className="size-3.5" />
+          </SharedTooltipTrigger>
         ) : null}
         <DropdownMenu>
           <SharedTooltipTrigger
