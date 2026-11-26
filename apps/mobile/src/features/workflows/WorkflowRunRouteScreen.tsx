@@ -16,7 +16,7 @@ import { StackActions, useNavigation, type StaticScreenProps } from "@react-navi
 import * as Schema from "effect/Schema";
 import { T, Var, useGT, useMessages } from "gt-react-native";
 import { useRef, useState } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RelativeTime } from "../../components/RelativeTime";
@@ -41,6 +41,7 @@ import {
   workflowRunFeedOf,
 } from "./WorkflowStepCard";
 import { WORKFLOW_TONE_CLASS, WorkflowChip } from "./WorkflowsScreen";
+import { useWorkflowSubjectOpener, workflowSubjectLine } from "./WorkflowSubject";
 import { WorkflowTimeline } from "./WorkflowTimeline";
 
 const isEnvironmentId = Schema.is(EnvironmentId);
@@ -181,6 +182,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   const gt = useGT();
   const m = useMessages();
   const sessionId = useEnvironmentSessionId(environmentId);
+  const subjectOpener = useWorkflowSubjectOpener(environmentId);
   const detail = useEnvironmentQuery(
     serverEnvironment.workflowRun({ environmentId, input: { runId: run.runId } }),
   );
@@ -235,6 +237,7 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
           ),
         ),
     );
+  const openSubject = run.subject === undefined ? null : subjectOpener(run.subject);
   const threadOpener = useWorkflowThreadOpener(environmentId, (thread) =>
     navigation.dispatch(StackActions.push("Thread", thread)),
   );
@@ -324,6 +327,24 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
             </T>
           </Text>
         </View>
+        {run.subject === undefined ? null : (
+          <Pressable
+            accessibilityRole="link"
+            disabled={openSubject === null}
+            onPress={openSubject ?? undefined}
+            className="flex-row items-center gap-1.5 self-start pt-1 active:opacity-60"
+          >
+            <Text
+              className={cn(
+                "text-sm",
+                openSubject === null ? "text-foreground-secondary" : "text-primary",
+              )}
+              numberOfLines={1}
+            >
+              {workflowSubjectLine(run.subject)}
+            </Text>
+          </Pressable>
+        )}
       </View>
       {feed === null ? (
         <>

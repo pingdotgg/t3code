@@ -22,7 +22,7 @@ export type WebhookRequest = typeof WebhookRequest.Type;
 
 export interface ScheduleTrigger {
   readonly kind: "schedule";
-  /** Stable across restarts: where this trigger's next time is kept. */
+  /** The same for every spelling of one schedule, and across restarts. */
   readonly id: string;
   readonly schedule:
     | { readonly type: "interval"; readonly everyMs: number }
@@ -62,6 +62,29 @@ export const every = (interval: Duration.Input): Trigger<Tick> => {
   return { kind: "schedule", id: `every:${everyMs}`, schedule: { type: "interval", everyMs } };
 };
 
+const dailyId = (time: { hour: number; minute: number }, weekdays: ReadonlyArray<number>) => {
+  const pad = (part: number) => String(part).padStart(2, "0");
+  // None and all seven are both every day, as the schedule reads them.
+  const days = weekdays.length === 0 || weekdays.length === 7 ? "all" : weekdays.join(",");
+  return `daily:${pad(time.hour)}:${pad(time.minute)}:${days}`;
+};
+
+const WEEKDAY = /^[0-6]$/;
+
+/**
+ * The id `daily` gives now for one it gave when ids followed the spelling (`daily:9:00:all`,
+ * `daily:09:00:3,1,1`), which saved next times and run keys may still carry. Any other id is
+ * returned as it is.
+ */
+export const currentScheduleId = (id: string): string => {
+  const written = /^daily:(.*):([^:]*)$/s.exec(id);
+  const time = written === null ? null : parseTimeOfDay(written[1]!);
+  if (written === null || time === null) return id;
+  const days = written[2] === "all" || written[2] === "" ? [] : written[2]!.split(",");
+  if (!days.every((day) => WEEKDAY.test(day))) return id;
+  return dailyId(time, [...new Set(days.map(Number))].toSorted());
+};
+
 /**
  * A run at a time of day (`"09:00"`) on the server's clock, on every day or on the given weekdays
  * (0 is Sunday). A time missed by more than ten minutes, for a server that was down, is skipped.
@@ -73,15 +96,20 @@ export const daily = (
   checkOptions(`daily("${timeOfDay}")`, options, ["weekdays"]);
   const weekdays = options?.weekdays;
   // Read once here: a time the schedule cannot read would otherwise never fire, without a word.
-  if (parseTimeOfDay(timeOfDay) === null) {
+  const time = parseTimeOfDay(timeOfDay);
+  if (time === null) {
     throw new Error(`daily("${timeOfDay}") needs a 24-hour time such as "09:00".`);
   }
-  if (weekdays?.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
-    throw new Error(`daily's weekdays are 0 (Sunday) to 6 (Saturday), not ${weekdays.join(", ")}.`);
+  const days = [...new Set(weekdays)].toSorted();
+  if (days.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
+    throw new Error(
+      `daily's weekdays are 0 (Sunday) to 6 (Saturday), not ${weekdays?.join(", ")}.`,
+    );
   }
   return {
     kind: "schedule",
-    id: `daily:${timeOfDay}:${weekdays?.toSorted().join(",") ?? "all"}`,
+    // From what the schedule reads, not how it was written: `"9:00"` and `"09:00"` are one time.
+    id: dailyId(time, days),
     schedule: { type: "fixed_time", timeOfDay, ...(weekdays === undefined ? {} : { weekdays }) },
   };
 };

@@ -1,7 +1,10 @@
+import JSZip from "jszip";
 import { expect, it, vi } from "vite-plus/test";
 
 import {
   ARCHIVE_ENTRY_MAX_BYTES,
+  compareArchiveRows,
+  formatArchiveModifiedDate,
   type BinaryWorkerRequest,
   type BinaryWorkerResult,
 } from "./binaryPreviewProtocol";
@@ -108,6 +111,61 @@ it.each([ARCHIVE_ENTRY_MAX_BYTES, ARCHIVE_ENTRY_MAX_BYTES + 1])(
     }
   },
 );
+
+it.each([
+  { timeZone: "Asia/Tokyo", tarEvening: "11/26/2026", tarNight: "11/25/2026" },
+  { timeZone: "America/Chicago", tarEvening: "11/25/2026", tarNight: "11/24/2026" },
+  { timeZone: "America/Nuuk", tarEvening: "11/25/2026", tarNight: "11/24/2026" },
+])(
+  "formats archived ZIP dates and local TAR instants in $timeZone",
+  async ({ timeZone, tarEvening, tarNight }) => {
+    const zip = new JSZip();
+    // JSZip writes the UTC parts of these dates as the entries' DOS wall-clock fields.
+    zip.file("evening.txt", "a", { date: new Date(Date.UTC(2026, 10, 25, 20, 0)) });
+    zip.file("night.txt", "b", { date: new Date(Date.UTC(2026, 10, 25, 1, 30)) });
+    zip.file("dst-midnight.txt", "c", { date: new Date(Date.UTC(2026, 2, 28, 23, 30)) });
+    const bytes = await zip.generateAsync({ type: "arraybuffer" });
+    const previous = process.env.TZ;
+    process.env.TZ = timeZone;
+    try {
+      const request = await startWorker();
+      const result = await request({ type: "open", kind: "archive", name: "times.zip", bytes });
+      if (result.type !== "archive") throw new Error("Expected archive");
+      expect(result.entries.map(({ modified }) => modified)).toEqual([
+        "2026-11-25T20:00:00.000",
+        "2026-11-25T01:30:00.000",
+        "2026-03-28T23:30:00.000",
+      ]);
+      expect(
+        result.entries.map(({ modified }) => formatArchiveModifiedDate(modified, "en-US")),
+      ).toEqual(["11/25/2026", "11/25/2026", "3/28/2026"]);
+      expect([
+        formatArchiveModifiedDate("2026-11-25T20:00:00.000Z", "en-US"),
+        formatArchiveModifiedDate("2026-11-25T01:30:00.000Z", "en-US"),
+        formatArchiveModifiedDate(null, "en-US"),
+      ]).toEqual([tarEvening, tarNight, "-"]);
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+      vi.unstubAllGlobals();
+    }
+  },
+);
+
+it("sorts archive folders first, then numbered names in natural order", () => {
+  const rows = ["page10.txt", "vol10", "page2.txt", "vol2", "page1.txt", "vol1"].map((path) => ({
+    path,
+    directory: path.startsWith("vol"),
+  }));
+  expect(rows.sort(compareArchiveRows).map(({ path }) => path)).toEqual([
+    "vol1",
+    "vol2",
+    "vol10",
+    "page1.txt",
+    "page2.txt",
+    "page10.txt",
+  ]);
+});
 
 it("formats singular and plural byte labels for SQLite BLOB cells", async () => {
   const { default: initSqlJs } = await import("sql.js");
