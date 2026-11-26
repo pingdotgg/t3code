@@ -4199,6 +4199,7 @@ export const make = Effect.gen(function* () {
     function* (input, options) {
       const progress = yield* createProgressEmitter(input, options);
       const currentPhase = yield* Ref.make<Option.Option<GitActionProgressPhase>>(Option.none());
+      const createdBranch = yield* Ref.make<string | undefined>(undefined);
 
       const runAction = Effect.fn("runStackedAction.runAction")(function* (): Effect.fn.Return<
         GitRunStackedActionResult,
@@ -4298,6 +4299,7 @@ export const make = Effect.gen(function* () {
             input.filePaths,
           );
           branchStep = result.branchStep;
+          yield* Ref.set(createdBranch, result.branchStep.name);
           commitMessageForStep = result.resolvedCommitMessage;
           preResolvedCommitSuggestion = result.resolvedCommitSuggestion;
         } else {
@@ -4398,13 +4400,16 @@ export const make = Effect.gen(function* () {
       return yield* runAction().pipe(
         Effect.ensuring(invalidateStatus(input.cwd)),
         Effect.tapError((error) =>
-          Effect.flatMap(Ref.get(currentPhase), (phase) =>
-            progress.emit({
+          Effect.gen(function* () {
+            const phase = yield* Ref.get(currentPhase);
+            const branch = yield* Ref.get(createdBranch);
+            yield* progress.emit({
               kind: "action_failed",
               phase: Option.getOrNull(phase),
               message: error.message,
-            }),
-          ),
+              ...(branch !== undefined ? { createdBranch: branch } : {}),
+            });
+          }),
         ),
       );
     },
