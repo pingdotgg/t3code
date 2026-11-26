@@ -1,12 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProjectId, type ProjectTrackedFolder } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
 import * as WorkspaceFolders from "./WorkspaceFolders.ts";
@@ -232,9 +235,17 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           return fileSystem.stat(target);
         },
       });
+      const runner = yield* ProcessRunner.make();
+      const countingRunner = ProcessRunner.ProcessRunner.of({
+        run: (input) => {
+          probed.push(input.args[1] ?? "");
+          return runner.run(input);
+        },
+      });
 
       const found = yield* WorkspaceFolders.discoverFolders(workspaceRoot).pipe(
         Effect.provideService(FileSystem.FileSystem, counting),
+        Effect.provideService(ProcessRunner.ProcessRunner, countingRunner),
       );
 
       assert.deepEqual(found, []);
@@ -478,3 +489,49 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
     }),
   );
 });
+
+// A listing that never returns stands in for a hung network mount or a macOS-protected folder.
+it.live("gives up on a folder it cannot list and does not list it again while it hangs", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* makeTempDir;
+    const stuck = path.join(workspaceRoot, "stuck");
+    for (const folder of ["api/.git", "stuck"]) {
+      yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
+    }
+    const listed: Array<string> = [];
+    const hanging = ProcessRunner.ProcessRunner.of({
+      run: (input) => {
+        const folder = input.args[1] ?? "";
+        listed.push(folder);
+        if (folder === stuck) return Effect.never;
+        return fileSystem.readDirectory(folder).pipe(
+          Effect.orDie,
+          Effect.map((names) => ({
+            stdout: names.map((name) => `${path.join(folder, name)}\0`).join(""),
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          })),
+        );
+      },
+    });
+    const discover = WorkspaceFolders.discoverFolders(workspaceRoot).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, hanging),
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.map((folders) => folders.map((folder) => folder.path)),
+    );
+
+    assert.deepEqual(yield* discover, [path.join(workspaceRoot, "api")]);
+    assert.deepEqual(yield* discover, [path.join(workspaceRoot, "api")]);
+    assert.deepEqual(
+      listed.filter((folder) => folder === stuck),
+      [stuck],
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

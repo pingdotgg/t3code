@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 
@@ -27,6 +28,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import type * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
@@ -316,6 +318,7 @@ const runProjectMutation = Effect.fn("runProjectMutation")(function* (
     | HttpClient.HttpClient
     | Path.Path
     | WorkspacePaths.WorkspacePaths
+    | ChildProcessSpawner.ChildProcessSpawner
   >,
 ) {
   const logLevel = yield* GlobalFlag.LogLevel;
@@ -453,7 +456,9 @@ const projectAddCommand = Command.make("add", {
 
         const title = yield* resolveProjectTitle(workspaceRoot, Option.getOrUndefined(flags.title));
         // Found here, not by a running server: this command runs on the server's machine.
-        const found = yield* discoverFolders(workspaceRoot);
+        const found = yield* discoverFolders(workspaceRoot).pipe(
+          Effect.provide(ProcessRunner.layer),
+        );
         if (named.length > PROJECT_TRACKED_FOLDERS_MAX) {
           return yield* new ProjectTooManyTrackedFoldersError({
             operation: "addProject",

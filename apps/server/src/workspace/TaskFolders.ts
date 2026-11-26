@@ -43,6 +43,7 @@ import * as ServerConfig from "../config.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -325,6 +326,7 @@ const make = Effect.gen(function* () {
   const git = yield* GitWorkflowService.GitWorkflowService;
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const store = yield* TaskFolderStore.TaskFolderStore;
+  const processRunner = yield* ProcessRunner.make();
   const processes = yield* VcsProcess.VcsProcess;
   const hostEnvironment = yield* HostProcess.Environment;
   const hostPlatform = yield* HostProcess.Platform;
@@ -356,6 +358,7 @@ const make = Effect.gen(function* () {
     projectFolders(project).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
     );
   // The repository that pins a submodule owns its checkout: Git, a hook or a setup script puts it
   // in that repository's worktree, so it never gets one of its own here.

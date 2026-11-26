@@ -205,8 +205,9 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+  const processRunner = yield* ProcessRunner.make();
   const isWorktreeContainer = yield* makeIsWorktreeContainer.pipe(
-    Effect.provide(ProcessRunner.layer),
+    Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
   );
   const scope = yield* Effect.scope;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
@@ -246,6 +247,7 @@ export const make = Effect.gen(function* () {
     const discovered = yield* discoverFolders(row.workspaceRoot).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
     );
     if (sameProjectFolders(mergeProjectFolders(discovered, row.trackedFolders), row.trackedFolders))
       return;
@@ -323,6 +325,7 @@ export const make = Effect.gen(function* () {
     projectFolders({ workspaceRoot, trackedFolders: added }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
     );
 
   const normalizeTrackedFolders = (

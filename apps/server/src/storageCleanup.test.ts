@@ -13,6 +13,7 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Stream from "effect/Stream";
 import { SCAN_CACHE_FILE_NAME } from "./usage/usageScanCache.ts";
 import { TestClock } from "effect/testing";
@@ -693,6 +694,7 @@ const runCleanupTest = <A, E>(
     | GitVcsDriver.GitVcsDriver
     | Path.Path
     | Scope.Scope
+    | ChildProcessSpawner.ChildProcessSpawner
   >,
 ) => effect.pipe(Effect.provide(cleanupTestLayer));
 

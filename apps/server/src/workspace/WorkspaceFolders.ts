@@ -16,8 +16,10 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { T3_PROJECT_FILE_NAME } from "@t3tools/contracts";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -25,6 +27,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
 
@@ -111,10 +114,79 @@ export const parseGitmodulesPaths = (text: string): ReadonlyArray<string> =>
     return normalized === "" ? [] : [normalized];
   });
 
+/**
+ * opendir() of a hung network mount or a macOS privacy-protected folder can wait forever and
+ * pins a libuv pool thread that interruption cannot free; four of them wedge every fs and dns
+ * call in the server. So folders are listed by a `find` child we can kill instead.
+ */
+const LIST_DIRECTORY_DEADLINE = "2 seconds";
+// A blocked folder is skipped until its child exits, which a hung mount may never let it do,
+// then for a while longer before it is listed again in case it was fixed.
+const BLOCKED_DIRECTORY_RETRY_MS = 5 * 60 * 1000;
+const MAX_BLOCKED_DIRECTORIES = 1024;
+const blockedDirectories = new Map<string, number>();
+
+class DirectoryListError extends Schema.TaggedError<DirectoryListError>()("DirectoryListError", {
+  path: Schema.String,
+}) {}
+
 // Built once per operation: the probes share the caller's file system and path services.
 const folderProbes = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const isWindows = yield* HostProcess.isWindows;
+
+  /** The names in `folder`, like `readDirectory`, without holding a libuv pool thread. */
+  const listDirectory = Effect.fnUntraced(function* (
+    folder: string,
+  ): Effect.fn.Return<ReadonlyArray<string>, DirectoryListError> {
+    const failed = new DirectoryListError({ path: folder });
+    // No privacy prompts here, and no `find` with these flags.
+    if (isWindows) {
+      return yield* fileSystem.readDirectory(folder).pipe(Effect.mapError(() => failed));
+    }
+    if ((blockedDirectories.get(folder) ?? 0) > (yield* Clock.currentTimeMillis)) {
+      return yield* failed;
+    }
+    blockedDirectories.delete(folder);
+    // Detached: a killed child stuck in the kernel never exits, and the deadline must not wait
+    // for it. The run enforces its own deadline, so it still ends if this caller goes away.
+    const run = yield* processRunner
+      .run({
+        command: "find",
+        args: ["-H", folder, "-mindepth", "1", "-maxdepth", "1", "-print0"],
+        timeout: LIST_DIRECTORY_DEADLINE,
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.forkDetach);
+    const result = yield* Fiber.join(run).pipe(
+      Effect.timeoutOption(LIST_DIRECTORY_DEADLINE),
+      Effect.mapError(() => failed),
+    );
+    if (Option.isNone(result) || result.value.timedOut) {
+      if (blockedDirectories.size >= MAX_BLOCKED_DIRECTORIES) {
+        blockedDirectories.delete(blockedDirectories.keys().next().value!);
+      }
+      blockedDirectories.set(folder, Number.POSITIVE_INFINITY);
+      yield* Effect.forkDetach(
+        Effect.gen(function* () {
+          yield* Fiber.await(run);
+          const exited = yield* Clock.currentTimeMillis;
+          if (blockedDirectories.has(folder)) {
+            blockedDirectories.set(folder, exited + BLOCKED_DIRECTORY_RETRY_MS);
+          }
+        }),
+      );
+      return yield* failed;
+    }
+    const names = result.value.stdout
+      .split("\0")
+      .flatMap((entry) => (entry ? [path.basename(entry)] : []));
+    // `find` exits non-zero for an entry it could not stat, too; only an empty failure is one.
+    if (result.value.code !== 0 && names.length === 0) return yield* failed;
+    return names;
+  });
 
   const exists = (target: string) =>
     fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
@@ -140,7 +212,7 @@ const folderProbes = Effect.gen(function* () {
     );
 
   const childFolders = (folder: string) =>
-    fileSystem.readDirectory(folder).pipe(
+    listDirectory(folder).pipe(
       Effect.orElseSucceed((): ReadonlyArray<string> => []),
       Effect.map((names) =>
         names
@@ -150,7 +222,7 @@ const folderProbes = Effect.gen(function* () {
       ),
     );
 
-  return { exists, realPath, classify, ownsHistory, childFolders };
+  return { exists, realPath, classify, ownsHistory, listDirectory, childFolders };
 });
 
 const readCodeWorkspaceFolders = Effect.fn("WorkspaceFolders.readCodeWorkspaceFolders")(function* (
@@ -185,21 +257,20 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
 ): Effect.fn.Return<
   WorkspaceScanFoldersResult,
   WorkspaceFoldersError,
-  FileSystem.FileSystem | Path.Path
+  FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { exists, realPath, classify, ownsHistory, childFolders } = yield* folderProbes;
+  const { exists, realPath, classify, ownsHistory, listDirectory, childFolders } =
+    yield* folderProbes;
   const root = path.resolve(
     expandHomePath(input.workspaceRoot.trim(), yield* HostProcess.HomeDirectory),
   );
-  const names = (yield* fileSystem
-    .readDirectory(root)
-    .pipe(
-      Effect.mapError(
-        () => new WorkspaceFoldersError({ operation: "scan", detail: `Could not read ${root}.` }),
-      ),
-    )).toSorted();
+  const names = (yield* listDirectory(root).pipe(
+    Effect.mapError(
+      () => new WorkspaceFoldersError({ operation: "scan", detail: `Could not read ${root}.` }),
+    ),
+  )).toSorted();
   const codeWorkspaceFile = names.find((name) => name.endsWith(CODE_WORKSPACE_EXTENSION)) ?? null;
   const listed =
     codeWorkspaceFile === null ? null : yield* readCodeWorkspaceFolders(root, codeWorkspaceFile);
@@ -279,7 +350,11 @@ const scanFolders = Effect.fn("WorkspaceFolders.scan")(function* (
  */
 export const discoverFolders = Effect.fn("WorkspaceFolders.discover")(function* (
   workspaceRoot: string,
-): Effect.fn.Return<ReadonlyArray<ProjectTrackedFolder>, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<
+  ReadonlyArray<ProjectTrackedFolder>,
+  never,
+  FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner
+> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const { realPath, ownsHistory } = yield* folderProbes;
@@ -341,7 +416,7 @@ export const projectFolders = Effect.fn("WorkspaceFolders.projectFolders")(funct
 }): Effect.fn.Return<
   ReadonlyArray<ProjectTrackedFolder>,
   never,
-  FileSystem.FileSystem | Path.Path
+  FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner
 > {
   return mergeProjectFolders(yield* discoverFolders(project.workspaceRoot), project.trackedFolders);
 });
@@ -366,8 +441,11 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const taskFolders = yield* TaskFolderStore.TaskFolderStore;
+  const processRunner = yield* ProcessRunner.make();
 
-  const { exists, realPath, classify } = yield* folderProbes;
+  const { exists, realPath, classify } = yield* folderProbes.pipe(
+    Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+  );
 
   const readProject = Effect.fn("WorkspaceFolders.readProject")(function* (projectId: ProjectId) {
     const row = yield* projects
@@ -395,6 +473,7 @@ const make = Effect.gen(function* () {
     projectFolders(project).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
     );
 
   // `identity` is `root` in the checkout the thread's was made from: it names the same submodule
@@ -545,6 +624,7 @@ const make = Effect.gen(function* () {
     scanFolders(input).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
     );
 
   return WorkspaceFolders.of({ forThread, submodules, list, scan });
