@@ -1,4 +1,5 @@
 import type { EnvironmentId, SecretReference, UnifiedSettings } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
 import { useId, useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -24,13 +25,16 @@ export function AddUsageLimitSourceDialog({
   environmentId,
   environmentLabel,
   sources,
+  kind = "cliproxy",
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
+  readonly kind?: "cliproxy" | "http";
   readonly sources: UnifiedSettings["usageLimitSources"];
 }) {
+  const gt = useGT();
   const formId = useId();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [label, setLabel] = useState("");
@@ -40,7 +44,16 @@ export function AddUsageLimitSourceDialog({
   const [keyValid, setKeyValid] = useState(true);
   const managementKey = typeof keyDraft === "string" ? keyDraft.trim() : keyDraft;
   const trimmedUrl = url.trim();
-  const canSave = keyValid && trimmedUrl.length > 0 && managementKey !== "";
+  const http = kind === "http";
+  const endpoint = URL.parse(trimmedUrl);
+  const canSave =
+    keyValid &&
+    (http
+      ? endpoint !== null &&
+        /^https?:$/.test(endpoint.protocol) &&
+        !endpoint.username &&
+        !endpoint.password
+      : trimmedUrl.length > 0 && managementKey !== "");
 
   const reset = () => {
     setLabel("");
@@ -51,11 +64,11 @@ export function AddUsageLimitSourceDialog({
 
   const save = () => {
     if (!canSave) return;
-    const id = sourceIdFromUrl(trimmedUrl, sources);
+    const id = sourceIdFromUrl(trimmedUrl, sources, kind);
     updateSettings({
       usageLimitSources: {
         [id]: {
-          kind: "cliproxy",
+          kind,
           ...(label.trim() ? { label: label.trim() } : {}),
           url: trimmedUrl,
           managementKey,
@@ -77,10 +90,20 @@ export function AddUsageLimitSourceDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add a CLIProxyAPI hub</DialogTitle>
+          <DialogTitle>
+            {http ? <T>Add an HTTP quota source</T> : <T>Add a CLIProxyAPI hub</T>}
+          </DialogTitle>
           <DialogDescription>
-            Show the quota of every account the hub pools, next to the providers on{" "}
-            {environmentLabel}. The key stays on that server.
+            {http ? (
+              <T>
+                Read quotas from an endpoint on <Var>{environmentLabel}</Var>.
+              </T>
+            ) : (
+              <T>
+                Show the quota of every account the hub pools, next to the providers on{" "}
+                <Var>{environmentLabel}</Var>. The key stays on that server.
+              </T>
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -93,7 +116,9 @@ export function AddUsageLimitSourceDialog({
             }}
           >
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-url">Hub URL</Label>
+              <Label htmlFor="usage-source-url">
+                {http ? <T>Endpoint URL</T> : <T>Hub URL</T>}
+              </Label>
               <Input
                 id="usage-source-url"
                 placeholder="https://hub.example.ts.net:8318"
@@ -103,10 +128,12 @@ export function AddUsageLimitSourceDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-key">Management key</Label>
+              <Label htmlFor="usage-source-key">
+                {http ? <T>Bearer token (optional)</T> : <T>Management key</T>}
+              </Label>
               <SecretSourceInput
                 id="usage-source-key"
-                aria-label="Management key"
+                aria-label={http ? gt("Bearer token (optional)") : gt("Management key")}
                 value={keyDraft}
                 sources={secretSources}
                 environmentId={environmentId}
@@ -116,10 +143,12 @@ export function AddUsageLimitSourceDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-label">Label (optional)</Label>
+              <Label htmlFor="usage-source-label">
+                <T>Label (optional)</T>
+              </Label>
               <Input
                 id="usage-source-label"
-                placeholder="Defaults to the hub's host name"
+                placeholder={gt("Defaults to the hub's host name")}
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
               />
@@ -134,10 +163,10 @@ export function AddUsageLimitSourceDialog({
               onOpenChange(false);
             }}
           >
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button type="submit" form={formId} disabled={!canSave}>
-            Add hub
+            {http ? <T>Add source</T> : <T>Add hub</T>}
           </Button>
         </DialogFooter>
       </DialogPopup>

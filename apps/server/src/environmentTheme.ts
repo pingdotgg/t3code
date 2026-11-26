@@ -14,10 +14,15 @@ import {
 } from "@t3tools/contracts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import { themeCssLoadsRemoteFiles } from "@t3tools/shared/themeCss";
-import { BUILT_IN_THEME_IDS, UNPUBLISHABLE_THEME_IDS } from "@t3tools/shared/themePalettes";
+import {
+  MOBILE_DEFAULT_THEME_ID,
+  MOBILE_THEME_IDS,
+  UNPUBLISHABLE_THEME_IDS,
+} from "@t3tools/shared/themePalettes";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -34,6 +39,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "./config.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import { watchDirectoryPath } from "./watchDirectoryReplacements.ts";
 
 const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
   Schema.fromJsonString(EnvironmentThemeFile),
@@ -51,7 +57,8 @@ const MAX_THEME_FILES = 32;
  * JSON encoding, at up to 6 bytes per character for a `\uXXXX` escape, plus the colors.
  */
 export const MAX_THEME_FILE_BYTES = 6 * THEME_CSS_MAX_LENGTH + 16 * 1024;
-const MAX_THEME_TOTAL_BYTES = 6 * MAX_THEME_FILE_BYTES;
+// Clients cache every published theme in localStorage, which holds about 5 MB per origin.
+const MAX_THEME_TOTAL_BYTES = 2 * 1024 * 1024;
 
 /** A theme's background is `<id>.<extension>` beside `<id>.json`; earlier extensions win. */
 const THEME_BACKGROUND_EXTENSIONS = ["webp", "png", "jpg", "jpeg"] as const;
@@ -146,7 +153,11 @@ const pathIsTaken = (filePath: string): boolean => {
 
 /** Validates and reads one handle; rejects symlinked files, allows symlinked directories.
  * Uses non-blocking opens against FIFOs; Windows lacks these flags and checks symlinks with lstat. */
-export const readThemeFileGuarded = (filePath: string, maxBytes: number): string | null => {
+export const readThemeFileGuarded = (
+  filePath: string,
+  maxBytes: number,
+  onMissing?: () => void,
+): string | null => {
   let fd: number;
   try {
     if (NodeFS.constants.O_NOFOLLOW === undefined && NodeFS.lstatSync(filePath).isSymbolicLink()) {
@@ -158,7 +169,8 @@ export const readThemeFileGuarded = (filePath: string, maxBytes: number): string
         (NodeFS.constants.O_NOFOLLOW ?? 0) |
         (NodeFS.constants.O_NONBLOCK ?? 0),
     );
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") onMissing?.();
     return null;
   }
   try {
@@ -209,11 +221,19 @@ export function findThemeBackground(
   return null;
 }
 
-export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
+export const readPublishedThemes = Effect.fn(function* (
+  themesDir: string,
+  /** Runs when the directory or a file it listed is gone, as when an ancestor moves mid-read. */
+  onPathMissing: Effect.Effect<void> = Effect.void,
+) {
   const fs = yield* FileSystem.FileSystem;
-  const entries = yield* fs
-    .readDirectory(themesDir)
-    .pipe(Effect.orElseSucceed((): Array<string> => []));
+  const entries = yield* Effect.catch(fs.readDirectory(themesDir), (error) =>
+    Effect.as(error.reason._tag === "NotFound" ? onPathMissing : Effect.void, []),
+  );
+  let listedFileMissing = false;
+  const markListedFileMissing = () => {
+    listedFileMissing = true;
+  };
 
   const themes: Array<EnvironmentTheme> = [];
   const entryNames = new Set(entries);
@@ -236,7 +256,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     }
 
     const filePath = `${themesDir}/${entry}`;
-    const raw = readThemeFileGuarded(filePath, MAX_THEME_FILE_BYTES);
+    const raw = readThemeFileGuarded(filePath, MAX_THEME_FILE_BYTES, markListedFileMissing);
     if (raw === null) {
       yield* Effect.logWarning("ignoring unusable environment theme file", {
         path: filePath,
@@ -272,6 +292,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
     const background = findThemeBackground(themesDir, id, entryNames);
     themes.push({ id, ...file, ...(background ? { background: background.revision } : {}) });
   }
+  if (listedFileMissing) yield* onPathMissing;
   return themes;
 });
 
@@ -282,6 +303,7 @@ const make = Effect.gen(function* () {
   // Sequence numbers let subscribers drop queued events older than their initial snapshot.
   const changes = yield* PubSub.sliding<PublishedThemes>(1);
   const published = yield* Ref.make<PublishedThemes>({ seq: 0, themes: [] });
+  const pathMissing = yield* Ref.make(false);
   // Serialize read/compare/publish so slow older reads cannot publish with newer sequence numbers.
   const refreshSemaphore = yield* Semaphore.make(1);
   const watcherScope = yield* Scope.make("sequential");
@@ -289,9 +311,10 @@ const make = Effect.gen(function* () {
 
   const refresh = refreshSemaphore.withPermits(1)(
     Effect.gen(function* () {
-      const themes = yield* readPublishedThemes(environmentThemesDir).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-      );
+      const themes = yield* readPublishedThemes(
+        environmentThemesDir,
+        Ref.set(pathMissing, true),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, fs));
       // Compare the whole value so new fields cannot silently miss republishes.
       const [changed, next] = yield* Ref.modify(
         published,
@@ -310,8 +333,32 @@ const make = Effect.gen(function* () {
     .makeDirectory(environmentThemesDir, { recursive: true })
     .pipe(Effect.ignoreCause({ log: true }));
 
-  // A save emits several events, and fs.watch can fire before content is flushed.
-  const watchEvents = fs.watch(environmentThemesDir).pipe(Stream.debounce(Duration.millis(100)));
+  const watchDirectory = (directory: string) =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const ready = yield* Deferred.make<void>();
+        const markReady = () => Deferred.doneUnsafe(ready, Exit.void);
+        const events = fs.watch(directory, { onReady: markReady }).pipe(
+          Stream.as(undefined),
+          Stream.catchIf(
+            (error) => error.reason._tag === "NotFound",
+            () => Stream.empty,
+          ),
+          Stream.ignoreCause({ log: true }),
+          Stream.ensuring(Effect.sync(markReady)),
+        );
+        return Stream.merge(events, Stream.fromEffect(Deferred.await(ready)));
+      }),
+    );
+
+  const watchEvents = watchDirectoryPath(
+    environmentThemesDir,
+    watchDirectory(environmentThemesDir),
+    Ref.getAndSet(pathMissing, false),
+  ).pipe(
+    // A save emits several events, and fs.watch can fire before content is flushed.
+    Stream.debounce(Duration.millis(100)),
+  );
 
   yield* refresh;
   yield* Stream.runForEach(watchEvents, () => refresh.pipe(Effect.ignoreCause({ log: true }))).pipe(
@@ -406,11 +453,13 @@ const make = Effect.gen(function* () {
     }
     // Timestamps make clients apply a set again when its value did not change. Theme and
     // appearance have one each, so setting one does not undo a later local choice of the other.
+    // The stock theme is an empty default with a set time, which clients adopt as stock.
+    const defaultTheme = themeId === MOBILE_DEFAULT_THEME_ID ? "" : themeId;
     const select = Effect.gen(function* () {
       const setAt = DateTime.formatIso(yield* DateTime.now);
       yield* settings
         .updateSettings({
-          ...(themeId === undefined ? {} : { defaultTheme: themeId, defaultThemeSetAt: setAt }),
+          ...(defaultTheme === undefined ? {} : { defaultTheme, defaultThemeSetAt: setAt }),
           ...(appearance === undefined
             ? {}
             : { defaultAppearance: appearance, defaultAppearanceSetAt: setAt }),
@@ -423,7 +472,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         if (themeId === undefined) return yield* select;
         if (theme === undefined) {
-          const known = [...BUILT_IN_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
+          const known = [...MOBILE_THEME_IDS, ...(yield* refresh).themes.map(({ id }) => id)];
           if (!known.includes(themeId)) {
             return yield* new EnvironmentThemeRefusedError({
               themeId,

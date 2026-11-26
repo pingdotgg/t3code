@@ -24,6 +24,7 @@ import {
   derivePendingThreadRequests,
   declinePendingApprovals,
   sendApprovalFeedback,
+  pushHooksApprovalRows,
   makeThreadRequestsResolvedAnnouncer,
   onThreadRequestsResolved,
   pruneResolvedUserInputDrafts,
@@ -130,6 +131,62 @@ describe("declining approvals before sending", () => {
     expect(
       await sendApprovalFeedback({ ...approval, supportsFeedback: true }, "Safer please.", respond),
     ).toBe(false);
+  });
+});
+
+describe("a push hooks approval", () => {
+  const pushHooks = {
+    branch: "feature/greeting",
+    files: [".husky/pre-push"],
+    commands: [{ name: "checks", command: "pnpm run checks" }],
+  };
+  const pending = (item: { readonly pushHooks: typeof pushHooks } | { readonly appName: string }) =>
+    derivePendingThreadRequests({
+      runtimeRequests: [{ ...projection.runtimeRequests[0]!, kind: "mcp-elicitation" }],
+      turnItems: [
+        {
+          id: TurnItemId.make("push-hooks-approval-item"),
+          threadId: v2Projection.thread.id,
+          runId: null,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 0,
+          status: "waiting",
+          title: null,
+          startedAt: v2Now,
+          completedAt: null,
+          updatedAt: v2Now,
+          type: "approval_request",
+          requestId,
+          requestKind: "mcp-elicitation",
+          prompt: "Push feature/greeting and run this repository's hook file .husky/pre-push?",
+          ...item,
+        },
+      ],
+    }).approvals[0]!;
+
+  it("carries what T3 Code names and no app, and another server's request its app", () => {
+    const own = pending({ pushHooks });
+    expect(own.pushHooks).toEqual(pushHooks);
+    expect(own).not.toHaveProperty("appName");
+    expect(own.detail).toBe(
+      "Push feature/greeting and run this repository's hook file .husky/pre-push?",
+    );
+
+    const other = pending({ appName: "deploys" });
+    expect(other.appName).toBe("deploys");
+    expect(other).not.toHaveProperty("pushHooks");
+  });
+
+  it("lists the branch, then each hook file and configured hook", () => {
+    expect(pushHooksApprovalRows(pushHooks)).toEqual([
+      { label: "Branch", code: "feature/greeting" },
+      { label: "Hook file", code: ".husky/pre-push" },
+      { label: "Configured hook", name: "checks", code: "pnpm run checks" },
+    ]);
   });
 });
 
