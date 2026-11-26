@@ -390,6 +390,7 @@ function sanitizeMath(node: Element): Element | null {
 interface Walk {
   /** Words' hast for more Markdown, rendered with the same options; `indent` as leadingWhitespace's. */
   readonly render: (markdown: string, indent: number) => Root;
+  readonly definitions: () => string;
   readonly source: string;
   readonly options: WordsHastOptions;
   readonly math: Map<string, Element>;
@@ -516,7 +517,7 @@ function recoverIndentedCode(
     0,
   );
   // The prefix keeps block syntax at the start, such as `#`, from opening a block.
-  const source = `${INLINE_PREFIX}${value.trim()}`;
+  const source = `${walk.definitions()}${INLINE_PREFIX}${value.trim()}`;
   const recovered = walk.render(source, indent);
   const paragraph = recovered.children.find((child) => child.type === "element");
   const first = isElement(paragraph, "p") ? paragraph.children[0] : undefined;
@@ -1189,7 +1190,10 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   const insights = options.insights ? insightSource(text, renderOptions) : null;
   const source = insights?.source ?? text;
   const tree = insights?.tree ?? parse(source, renderOptions);
+  let definitions: string | undefined;
   const walk: Walk = {
+    definitions: () =>
+      (definitions ??= `${markdownReferenceDefinitions(source).join("\n\n")}\n\n`.trimStart()),
     render: (markdown, indent) =>
       parse(markdown, {
         ...renderOptions,
