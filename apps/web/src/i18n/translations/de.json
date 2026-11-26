@@ -4611,6 +4611,7 @@
   "3e524e1c0141f4ad": "Nicht verknüpft",
   "42a02a4b27828027": "Nicht verfügbar",
   "cfc49f96ba92c25c": "Keine Nutzungsfenster gemeldet.",
+  "96ac6f028d358793": "Übrig",
   "31e3e8d137ca1b40": "{count} weitere anzeigen",
   "16fb3b76d0abbb2e": "Kontextfenster",
   "83bbceecef0f6872": "Kontext",
@@ -4619,17 +4620,24 @@
   "94478874c4070e6e": "Kontext: {used} / {max} Tokens, {percent} % genutzt",
   "6f77d87bfd5139f8": "Kontext: {used} / {max} Tokens genutzt",
   "4214d97447ddd9e9": "Kontext: {usedTokens} Tokens genutzt",
+  "be78e52efeb9149b": "{used} / {max}",
   "47233ef369410b52": "Kontext komprimieren",
   "5123f0f8e2c1b9fd": "Genutzt / max.",
   "2668b03bc0c8e404": "Genutzt",
-  "be78e52efeb9149b": "{used} / {max}",
-  "ee3ae58c8b38a425": "{left} % übrig",
-  "ebb26f93fb83a71b": "{label}: {left} % übrig",
-  "1b16346722b65812": "{timeLeft} % des Zeitfensters übrig",
   "21c657cae336b772": "Nächstes Zurücksetzen in {duration}",
   "c29a3a293c3f98c3": "Wird in {duration} zurückgesetzt",
+  "ebb26f93fb83a71b": "{label}: {left} % übrig",
   "78c1d280f021a28f": "Von {sources}",
+  "1b16346722b65812": "{timeLeft} % des Zeitfensters übrig",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "ec1e9343e1ba9349": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " Konten, gebündelt"
+  ],
   "d62967ed2aca3b27": [
     "Über ",
     {
@@ -12942,7 +12950,6 @@
   "7205c8b341454591": "Konto {initials}",
   "67ca0906f5c6c1ca": "Tarif",
   "69246abb2f659af2": "Über",
-  "96ac6f028d358793": "Übrig",
   "0d2c1db7fa27153e": "Zurücksetzung",
   "e164fc7ee32dd6a4": "Gleichmäßiges Tempo",
   "f017b7b86d1968e8": "{timeLeft} % sollten jetzt übrig sein",
@@ -12955,14 +12962,6 @@
   "fad55a528a32f80e": "jetzt",
   "a16b48709357a5a7": "Nutzung verwalten",
   "a00e74aaa421c524": "übrig",
-  "ec1e9343e1ba9349": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " Konten, gebündelt"
-  ],
   "3ea294de7a865364": "Keine Limits anzuzeigen",
   "8bd6f07136317c8f": "Kein Anbieter in den ausgewählten Umgebungen meldet Abo-Limits.",
   "87f5d0c61b335f38": "Nutzung in ChatGPT mit deinem verbundenen Konto ansehen.",

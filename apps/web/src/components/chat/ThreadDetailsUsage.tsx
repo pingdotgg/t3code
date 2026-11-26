@@ -10,47 +10,48 @@ import {
   limitPoolNotice,
   paceOf,
   paceRemainingPercent,
+  projectRunOut,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
-import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
+import { formatDuration, formatRunsOutIn, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { Link } from "@tanstack/react-router";
-import type { MessageResolver } from "~/i18n/messages";
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
-import { BoxIcon, CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
+import { GaugeIcon, Minimize2Icon, TimerIcon, TrendingUpIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
-import { observeResize } from "../../lib/observeResize";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { providerClients } from "../settings/providerDriverMeta";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { ThreadDetailsControl } from "./ThreadDetailsControl";
+import { Text } from "../ui/text";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ContextWindowSegments } from "./ContextWindowMeter";
 import { contextWindowSegments } from "./compaction.logic";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./threadDetailsPanelStyles";
 import {
   foldLimitRows,
+  groupLimitRows,
+  isWideLimitLabel,
   limitTone,
   nextPoolReset,
   poolSources,
   resolveThreadDetailsLimits,
 } from "./ThreadDetailsUsage.logic";
 
-const USAGE_ROW_CLASS =
-  "col-span-full grid min-w-0 grid-cols-subgrid items-center gap-x-1.5 text-meta";
-
 const PACE_LABEL: Record<LimitPace, string> = {
   ahead: msg("Ahead of pace"),
   on: msg("On pace"),
   under: msg("Under pace"),
 };
+
 export interface ThreadDetailsUsageInput {
   readonly providerInstanceId: ProviderInstanceId | null;
   readonly model: string | null;
@@ -58,9 +59,8 @@ export interface ThreadDetailsUsageInput {
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
 }
-type UsageTone = ReturnType<typeof limitTone>;
 
-/** Provider limits share the canvas's icon and label columns; each row opens the usage page. */
+/** Provider limits grouped by provider as number-only chips; each opens the usage page. */
 export function ThreadDetailsUsage({
   providerInstanceId,
   model,
@@ -81,7 +81,8 @@ export function ThreadDetailsUsage({
         ? limitsNotice(limits, m)
         : null;
   const pool = resolved?.kind === "pool" ? resolved.windows : undefined;
-  const driver = providers.find((provider) => provider.instanceId === providerInstanceId)?.driver;
+  const activeProvider = providers.find((provider) => provider.instanceId === providerInstanceId);
+  const driver = activeProvider?.driver;
   const [folded, setFolded] = useLocalStorage(
     "thread-details:collapsed:Other limits",
     true,
@@ -90,15 +91,32 @@ export function ThreadDetailsUsage({
   const rows = pool
     ? pool.map((pooled) => {
         const from = poolSources(pooled);
+        const window = pooledWindow(pooled, now);
+        const pace = pooled.pace ?? paceOf(window, now);
+        const runsOutBeforeReset =
+          remainingPercent(window) > 0 &&
+          (pooled.members.length === 1 || pace === "ahead") &&
+          projectRunOut(window, now) !== null;
         return {
           driver: pooled.members[0]?.account.driver ?? driver,
-          window: pooledWindow(pooled, now),
+          window,
+          pace,
+          runsOutBeforeReset,
           accounts: pooled.members.length,
           sources: [...from.hubs, ...(from.signedIn ? [gt("Signed-in accounts")] : [])],
         };
       })
-    : (limits?.windows ?? []).map((window) => ({ driver, window, accounts: 1, sources: [] }));
+    : (limits?.windows ?? []).map((window) => ({
+        driver,
+        window,
+        pace: paceOf(window, now),
+        runsOutBeforeReset: remainingPercent(window) > 0 && projectRunOut(window, now) !== null,
+        accounts: 1,
+        sources: [],
+      }));
   const fold = foldLimitRows(rows, model);
+  const shown = folded ? fold.shown : rows;
+  const groups = groupLimitRows(shown);
   const poolNotice =
     providerInstanceId !== null && ownNotice !== null && !pool
       ? limitPoolNotice(providerInstanceId, providers, sources)
@@ -107,11 +125,9 @@ export function ThreadDetailsUsage({
   return (
     <ThreadDetailsSection title={gt("Usage limits")} variant="usage">
       {notice || !rows.length ? (
-        <UsageRow
+        <StatusTile
           label={gt("Limits", { $context: "usage limits row label" })}
-          icon={<TimerIcon />}
-          fill={null}
-          tone={null}
+          icon={<TimerIcon className="size-3.5 shrink-0" aria-hidden />}
           value={
             poolNotice && !sources.some((source) => source.error)
               ? gt("Not linked", { $context: "usage limits row value" })
@@ -121,32 +137,74 @@ export function ThreadDetailsUsage({
           opensUsage
         />
       ) : (
-        <>
-          {(folded ? fold.shown : rows).map(({ window, accounts, sources }) => (
-            <LimitRow
-              key={window.id}
-              window={window}
-              now={now}
-              pooledAccounts={accounts}
-              sources={sources}
-            />
-          ))}
+        <div className="flex flex-col gap-2">
+          {groups.map((group, groupIndex) => {
+            const providerLabel =
+              group.driver === activeProvider?.driver &&
+              !pool &&
+              activeProvider?.displayName?.trim()
+                ? activeProvider.displayName.trim()
+                : group.driver
+                  ? (providerClients.get(group.driver)?.label ?? String(group.driver))
+                  : gt("Limits", { $context: "usage limits row label" });
+            const maxAccounts = group.rows.reduce((max, row) => Math.max(max, row.accounts), 1);
+            return (
+              <div key={group.driver ?? "limits"} className="flex flex-col gap-1">
+                <div className="flex min-h-5 items-center gap-1.5 px-1.5">
+                  {group.driver ? (
+                    <ProviderInstanceIcon
+                      driverKind={group.driver}
+                      displayName={providerLabel}
+                      size="compact"
+                      className="size-4"
+                      iconClassName="size-3.5 text-muted-foreground"
+                    />
+                  ) : null}
+                  <span className="min-w-0 truncate text-caption text-muted-foreground">
+                    {providerLabel}
+                  </span>
+                  {maxAccounts > 1 ? (
+                    <span className="shrink-0 text-caption text-dim-foreground">
+                      <T>
+                        <Var>{maxAccounts}</Var> accounts, pooled
+                      </T>
+                    </span>
+                  ) : null}
+                  {groupIndex === 0 ? (
+                    <span className="ms-auto shrink-0 text-caption text-muted-foreground">
+                      {gt("Left", { $context: "remaining usage" })}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="grid grid-cols-2 gap-1">
+                  {group.rows.map(({ window, pace, runsOutBeforeReset, accounts, sources }) => (
+                    <LimitTile
+                      key={window.id}
+                      window={window}
+                      pace={pace}
+                      runsOutBeforeReset={runsOutBeforeReset}
+                      now={now}
+                      pooledAccounts={accounts}
+                      sources={sources}
+                      fullWidth={group.rows.length === 1}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
           {fold.hidden.length > 0 ? (
-            <ThreadDetailsControl
-              size="sm"
-              variant="ghost"
-              part="row"
-              tone="muted"
+            <Button
+              size="xs"
+              variant="ghost-muted"
               aria-expanded={!folded}
               onClick={() => setFolded(!folded)}
-              className="col-span-full"
+              className="self-start"
             >
-              <span className={cn("ms-3", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-                {folded ? gt("Show {count} more", { count: fold.hidden.length }) : gt("Show fewer")}
-              </span>
-            </ThreadDetailsControl>
+              {folded ? gt("Show {count} more", { count: fold.hidden.length }) : gt("Show fewer")}
+            </Button>
           ) : null}
-        </>
+        </div>
       )}
     </ThreadDetailsSection>
   );
@@ -174,11 +232,9 @@ export function ThreadDetailsContext({
   if (!usage) {
     return (
       <ThreadDetailsSection title={gt("Context window")} variant="usage">
-        <UsageRow
+        <StatusTile
           label={gt("Context", { $context: "context window row label" })}
-          icon={<GaugeIcon />}
-          fill={null}
-          tone={null}
+          icon={<GaugeIcon className="size-3.5 shrink-0" aria-hidden />}
           value={gt("N/A", { $context: "context usage not reported" })}
           tooltip={gt("The provider has not reported context usage.")}
         />
@@ -188,102 +244,124 @@ export function ThreadDetailsContext({
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used = maxTokens !== null ? Math.max(0, Math.min(100, usage.usedPercentage ?? 0)) : null;
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
+  const maxTokensFormatted = maxTokens !== null ? formatContextWindowTokens(maxTokens) : null;
   const contextLabel =
-    maxTokens !== null
+    maxTokensFormatted !== null
       ? used !== null
         ? gt("Context: {used} / {max} tokens, {percent}% used", {
             used: usedTokens,
-            max: formatContextWindowTokens(maxTokens),
+            max: maxTokensFormatted,
             percent: Math.round(used),
           })
         : gt("Context: {used} / {max} tokens used", {
             used: usedTokens,
-            max: formatContextWindowTokens(maxTokens),
+            max: maxTokensFormatted,
           })
       : gt("Context: {usedTokens} tokens used", { usedTokens });
   return (
     <ThreadDetailsSection title={gt("Context window")} variant="usage">
       <Collapsible
-        className="col-span-full grid grid-cols-subgrid"
+        className="flex min-w-0 flex-col"
         open={!collapsed}
         onOpenChange={(open) => setCollapsed(!open)}
       >
-        <div className={cn(USAGE_ROW_CLASS, "h-8")}>
+        <div className="flex min-w-0 items-center gap-1">
           <CollapsibleTrigger
-            render={<ThreadDetailsControl part="usage" />}
             aria-label={contextLabel}
+            render={
+              <Badge
+                size="lg"
+                variant="secondary"
+                className="min-w-0 flex-1"
+                render={<button type="button" />}
+              />
+            }
           >
-            <GaugeIcon className="size-4 shrink-0" />
-            <span className="flex h-6 items-center text-foreground">
-              {gt("Context", { $context: "context window row label" })}
-            </span>
-            <span className={cn("flex items-center gap-1.5", onCompact && "pe-7.5")}>
-              <span className="min-w-12 flex-1">
-                {used !== null ? <ContextWindowSegments usage={usage} minSegmentWidth={2} /> : null}
+            <span className="flex min-w-0 flex-1 items-center justify-between gap-1.5">
+              <span className="inline-flex min-w-0 items-center gap-1.5 text-foreground">
+                <GaugeIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="truncate">
+                  {gt("Context", { $context: "context window row label" })}
+                </span>
               </span>
-              <span className="shrink-0 text-end tabular-nums text-muted-foreground">
-                {used !== null ? `${Math.round(used)}%` : ""}
+              <span className="inline-flex shrink-0 items-center gap-1.5 tabular-nums">
+                {maxTokensFormatted !== null ? (
+                  <span className="text-caption text-muted-foreground">
+                    {gt("{used} / {max}", { used: usedTokens, max: maxTokensFormatted })}
+                  </span>
+                ) : (
+                  <span className="text-caption text-muted-foreground">{usedTokens}</span>
+                )}
+                {used !== null ? (
+                  <Text variant="meta" tone="strong" numeric emphasis>
+                    {Math.round(used)}%
+                  </Text>
+                ) : null}
               </span>
             </span>
           </CollapsibleTrigger>
-          <span className="col-start-3 row-start-1 flex justify-self-end">
-            {onCompact ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      size="icon-xs"
-                      variant="secondary"
-                      aria-label={gt("Compact context")}
-                      aria-disabled={compactUnavailableReason ? true : undefined}
-                      onClick={compactUnavailableReason ? undefined : onCompact}
-                    />
-                  }
-                >
-                  <Minimize2Icon className="size-[13px]" />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  {compactUnavailableReason ?? gt("Compact context")}
-                </TooltipPopup>
-              </Tooltip>
-            ) : null}
-          </span>
+          {onCompact ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="icon-xs"
+                    variant="secondary"
+                    aria-label={gt("Compact context")}
+                    aria-disabled={compactUnavailableReason ? true : undefined}
+                    onClick={compactUnavailableReason ? undefined : onCompact}
+                  />
+                }
+              >
+                <Minimize2Icon className="size-[13px]" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {compactUnavailableReason ?? gt("Compact context")}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
         </div>
-        <CollapsiblePanel className="col-span-full">
-          {/* Matches the usage grid's 1rem icon track + gap-x-1.5 without widening its label track. */}
-          <dl className="text-meta">
-            {contextWindowSegments(usage, m).map((segment) => (
-              <div key={segment.label} className="flex h-8 items-center justify-between gap-2">
+        <CollapsiblePanel>
+          <div className="ps-1.5 pe-1">
+            {used !== null ? (
+              <div className="pt-2 pb-0.5">
+                <ContextWindowSegments usage={usage} minSegmentWidth={2} />
+              </div>
+            ) : null}
+            <dl className="text-meta">
+              {contextWindowSegments(usage, m).map((segment) => (
+                <div key={segment.label} className="flex h-8 items-center justify-between gap-2">
+                  <dt className="flex min-w-0 items-center gap-1.5">
+                    <span className="flex size-4 shrink-0 items-center justify-center">
+                      <span aria-hidden className={cn("size-2 rounded-xs", segment.color)} />
+                    </span>
+                    <span className="truncate">{segment.label}</span>
+                  </dt>
+                  <dd className="shrink-0 text-caption tabular-nums text-muted-foreground">
+                    {segment.tokens.toLocaleString(locale)}
+                  </dd>
+                </div>
+              ))}
+              <div className="flex min-h-8 items-center justify-between gap-2">
                 <dt className="flex min-w-0 items-center gap-1.5">
-                  <span className="flex size-4 shrink-0 items-center justify-center">
-                    <span aria-hidden className={cn("size-2 rounded-xs", segment.color)} />
+                  <span aria-hidden className="size-4 shrink-0" />
+                  <span className="truncate">
+                    {maxTokens !== null
+                      ? gt("Used / max", { $context: "context window tokens" })
+                      : gt("Used", { $context: "context window tokens" })}
                   </span>
-                  <span className="truncate">{segment.label}</span>
                 </dt>
                 <dd className="shrink-0 text-caption tabular-nums text-muted-foreground">
-                  {segment.tokens.toLocaleString(locale)}
+                  {maxTokens !== null
+                    ? gt("{used} / {max}", {
+                        used: usage.usedTokens.toLocaleString(locale),
+                        max: maxTokens.toLocaleString(locale),
+                      })
+                    : usage.usedTokens.toLocaleString(locale)}
                 </dd>
               </div>
-            ))}
-            <div className="flex min-h-8 items-center justify-between gap-2">
-              <dt className="flex min-w-0 items-center gap-1.5">
-                <span aria-hidden className="size-4 shrink-0" />
-                <span className="truncate">
-                  {maxTokens !== null
-                    ? gt("Used / max", { $context: "context window tokens" })
-                    : gt("Used", { $context: "context window tokens" })}
-                </span>
-              </dt>
-              <dd className="shrink-0 text-caption tabular-nums text-muted-foreground">
-                {maxTokens !== null
-                  ? gt("{used} / {max}", {
-                      used: usage.usedTokens.toLocaleString(locale),
-                      max: maxTokens.toLocaleString(locale),
-                    })
-                  : usage.usedTokens.toLocaleString(locale)}
-              </dd>
-            </div>
-          </dl>
+            </dl>
+          </div>
         </CollapsiblePanel>
       </Collapsible>
     </ThreadDetailsSection>
@@ -292,232 +370,203 @@ export function ThreadDetailsContext({
 
 /** A pool's row: the share left across its accounts, and the next of their resets. */
 function pooledWindow(pooled: LimitPoolWindow, now: number): ServerProviderUsageWindow {
+  const durations = new Set(pooled.members.map((member) => member.window.windowDurationMins));
+  const [duration] = durations;
   return {
     id: pooled.id,
     kind: pooled.kind,
     label: pooled.label,
     usedPercent: 100 - pooled.remainingPercent,
+    ...(durations.size === 1 && duration !== undefined ? { windowDurationMins: duration } : {}),
     resetsAt: nextPoolReset(pooled, now)?.member.window.resetsAt,
   };
-}
-
-function resetLabel(
-  window: ServerProviderUsageWindow,
-  now: number,
-  resolve: MessageResolver,
-): string | null {
-  const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
-  const remainingMs = resetsAt - now;
-  if (!(remainingMs > 0)) return null;
-  return isWeeklyWindow(window)
-    ? new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(resetsAt)
-    : formatDuration(remainingMs, resolve);
 }
 
 function isWeeklyWindow(window: ServerProviderUsageWindow): boolean {
   return (window.windowDurationMins ?? 0) >= 24 * 60 || /week/i.test(window.label);
 }
 
-function LimitRow({
+function LimitTile({
   window,
+  pace,
+  runsOutBeforeReset,
   now,
   pooledAccounts,
   sources,
+  fullWidth,
 }: {
   readonly window: ServerProviderUsageWindow;
+  readonly pace: LimitPace | null;
+  readonly runsOutBeforeReset: boolean;
   readonly now: number;
   readonly pooledAccounts: number;
   readonly sources: ReadonlyArray<string>;
+  readonly fullWidth: boolean;
 }) {
   const gt = useGT();
   const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = remainingPercent(window);
-  const pace = paceOf(window, now);
   const timeLeft = paceRemainingPercent(window, now);
+  const runsOutText = runsOutBeforeReset ? formatRunsOutIn(window, now, m) : null;
+  const tone = limitTone(left, runsOutBeforeReset);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   const remainingMs = resetsAt - now;
+  const resetText =
+    window.resetsAt && remainingMs > 0
+      ? pooledAccounts > 1
+        ? gt("Next reset in {duration}", { duration: formatDuration(remainingMs, m) })
+        : gt("Resets in {duration}", { duration: formatDuration(remainingMs, m) })
+      : null;
   const weekly = isWeeklyWindow(window);
   const modelLabel =
     weekly && window.id.startsWith("seven_day_")
       ? /^Weekly\s*·\s*(.+)$/i.exec(window.label)?.[1]
       : undefined;
-  const reset = resetLabel(window, now, m);
+  const displayLabel = modelLabel ?? window.label;
+  const wide = fullWidth || isWideLimitLabel(displayLabel);
+  const ariaLabel = [
+    gt("{label}: {left}% left", { label: window.label, left }),
+    runsOutText,
+    !runsOutText && pace ? m(PACE_LABEL[pace]) : null,
+    resetText,
+    pooledAccounts > 1
+      ? gt("{count, plural, one {{count} account} other {{count} accounts}}", {
+          count: pooledAccounts,
+        })
+      : null,
+    sources.length > 0 ? gt("From {sources}", { sources: sources.join(", ") }) : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  const badgeVariant = tone === "error" ? "error" : tone === "warning" ? "warning" : "secondary";
   return (
-    <UsageRow
-      label={modelLabel ?? window.label}
-      shortLabel={weekly && !modelLabel ? window.label.replace(/\s*·\s*Weekly$/i, "") : undefined}
-      icon={modelLabel ? <BoxIcon /> : weekly ? <CalendarRangeIcon /> : <TimerIcon />}
-      fill={left}
-      tone={limitTone(left)}
-      tick={timeLeft}
-      value={`${left}%`}
-      ariaValue={gt("{left}% left", { left })}
-      opensUsage
-      trailing={
-        reset ? (
-          <span className="whitespace-nowrap text-caption text-dim-foreground">{reset}</span>
-        ) : undefined
-      }
-      tooltip={
-        <>
-          <span className="text-foreground">
-            {gt("{label}: {left}% left", { label: window.label, left })}
+    <div className={cn("min-w-0", wide && "col-span-2")}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Badge
+              size="lg"
+              variant={badgeVariant}
+              className="w-full min-w-0"
+              render={<Link to="/usage" aria-label={ariaLabel} />}
+            />
+          }
+        >
+          <span className="flex min-w-0 flex-1 items-center justify-between gap-1.5">
+            <span className={cn("truncate", tone === null && "text-foreground")}>
+              {displayLabel}
+            </span>
+            <span
+              className={cn(
+                "inline-flex shrink-0 items-center gap-1 tabular-nums",
+                tone === null && "text-strong-foreground",
+              )}
+            >
+              {runsOutBeforeReset ? (
+                <TrendingUpIcon className="size-3 shrink-0" aria-hidden />
+              ) : null}
+              <Text variant="meta" tone="inherit" numeric emphasis>
+                {left}%
+              </Text>
+            </span>
           </span>
-          {pace && timeLeft !== null ? (
-            <span>
-              <span className="block">{m(PACE_LABEL[pace])}</span>
-              <span className="block">{gt("{timeLeft}% of the window left", { timeLeft })}</span>
+        </TooltipTrigger>
+        <TooltipPopup side="left" sideOffset={12}>
+          <div className="flex flex-col gap-0.5 text-muted-foreground">
+            <span className="text-foreground">
+              {gt("{label}: {left}% left", { label: window.label, left })}
             </span>
-          ) : null}
-          {window.resetsAt && remainingMs > 0 ? (
-            <span>
-              <span className="block">
-                {pooledAccounts > 1
-                  ? gt("Next reset in {duration}", { duration: formatDuration(remainingMs, m) })
-                  : gt("Resets in {duration}", { duration: formatDuration(remainingMs, m) })}
+            {runsOutText ? (
+              <span
+                className={cn(
+                  tone === "error" ? "text-error-foreground" : "text-warning-foreground",
+                )}
+              >
+                {runsOutText}
               </span>
-              <span className="block">
-                {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
+            ) : null}
+            {pace && timeLeft !== null ? (
+              <span>
+                <span className="block">{m(PACE_LABEL[pace])}</span>
+                <span className="block">{gt("{timeLeft}% of the window left", { timeLeft })}</span>
               </span>
-            </span>
-          ) : null}
-          {pooledAccounts > 1 ? (
-            <span>
-              <T>
-                Across <Var>{pooledAccounts}</Var> accounts
-              </T>
-            </span>
-          ) : null}
-          {sources.length > 0 ? (
-            <span>{gt("From {sources}", { sources: sources.join(", ") })}</span>
-          ) : null}
-        </>
-      }
-    />
+            ) : pace ? (
+              <span>{m(PACE_LABEL[pace])}</span>
+            ) : null}
+            {resetText && window.resetsAt ? (
+              <span>
+                <span className="block">{resetText}</span>
+                <span className="block">
+                  {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
+                </span>
+              </span>
+            ) : null}
+            {pooledAccounts > 1 ? (
+              <span>
+                <T>
+                  Across <Var>{pooledAccounts}</Var> accounts
+                </T>
+              </span>
+            ) : null}
+            {sources.length > 0 ? (
+              <span>{gt("From {sources}", { sources: sources.join(", ") })}</span>
+            ) : null}
+            <span>{gt("Open usage")}</span>
+          </div>
+        </TooltipPopup>
+      </Tooltip>
+    </div>
   );
 }
 
-/** With `opensUsage` the row links to the usage page. */
-function UsageRow({
+function StatusTile({
   label,
-  shortLabel,
   icon,
-  fill,
-  tone,
-  tick = null,
   value,
-  ariaValue = value,
   tooltip,
-  trailing,
   opensUsage = false,
 }: {
   readonly label: string;
-  readonly shortLabel?: string | undefined;
   readonly icon: ReactNode;
-  readonly fill: number | null;
-  readonly tone: UsageTone;
-  readonly tick?: number | null;
   readonly value: string;
-  readonly ariaValue?: string;
   readonly tooltip: ReactNode;
-  readonly trailing?: ReactNode;
   readonly opensUsage?: boolean;
 }) {
   const gt = useGT();
-  const rowProps = {
-    "aria-label": gt("{label}: {value}", { label, value: ariaValue }),
-    className: cn(
-      "col-span-full grid min-w-0 grid-cols-subgrid items-center gap-x-1.5 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-      opensUsage ? "cursor-pointer" : "cursor-default",
-    ),
-  };
+  const ariaLabel = gt("{label}: {value}", { label, value });
   return (
     <Tooltip>
-      <div className={cn(USAGE_ROW_CLASS, "h-8")}>
-        <TooltipTrigger
-          render={
-            opensUsage ? <Link to="/usage" {...rowProps} /> : <div tabIndex={0} {...rowProps} />
-          }
-        >
-          <span className="shrink-0 text-muted-foreground [&>svg]:size-4">{icon}</span>
-          {shortLabel && shortLabel !== label ? (
-            <UsageLabel key={label} label={label} shortLabel={shortLabel} />
-          ) : (
+      <TooltipTrigger
+        render={
+          <Badge
+            size="lg"
+            variant="unavailable"
+            className="w-full min-w-0"
+            render={
+              opensUsage ? (
+                <Link to="/usage" aria-label={ariaLabel} />
+              ) : (
+                <span tabIndex={0} aria-label={ariaLabel} />
+              )
+            }
+          />
+        }
+      >
+        <span className="flex min-w-0 flex-1 items-center justify-between gap-1.5">
+          <span className="inline-flex min-w-0 items-center gap-1.5 text-foreground">
+            <span className="shrink-0 text-muted-foreground">{icon}</span>
             <span className="truncate">{label}</span>
-          )}
-          <span className="flex items-center justify-end gap-1.5">
-            {fill !== null ? (
-              <span className="relative h-1 min-w-12 flex-1 rounded-full bg-muted-foreground/20">
-                {fill > 0 ? (
-                  <span
-                    className={cn(
-                      "absolute inset-y-0 left-0 rounded-full",
-                      tone === "error"
-                        ? "bg-error"
-                        : tone === "warning"
-                          ? "bg-warning"
-                          : "bg-foreground/80",
-                    )}
-                    style={{ width: `max(${fill}%, 2px)` }}
-                  />
-                ) : null}
-                {tick !== null ? (
-                  <span
-                    aria-hidden
-                    className="absolute -top-[3px] h-2.5 w-0.5 rounded-sm bg-muted-foreground"
-                    style={{ left: `${tick}%` }}
-                  />
-                ) : null}
-              </span>
-            ) : null}
-            <span
-              className={cn(
-                "shrink-0 whitespace-nowrap text-end tabular-nums text-muted-foreground",
-                tone === "error" && "text-error-foreground",
-                tone === "warning" && "text-warning-foreground",
-              )}
-            >
-              {value}
-            </span>
-            {fill !== null && trailing ? <span className="shrink-0">{trailing}</span> : null}
           </span>
-        </TooltipTrigger>
-      </div>
-      <TooltipPopup side="left" sideOffset={16}>
+          <span className="shrink-0 text-muted-foreground tabular-nums">{value}</span>
+        </span>
+      </TooltipTrigger>
+      <TooltipPopup side="left" sideOffset={12}>
         <div className="flex flex-col gap-0.5 text-muted-foreground">
           {tooltip}
           {opensUsage ? <span>{gt("Open usage")}</span> : null}
         </div>
       </TooltipPopup>
     </Tooltip>
-  );
-}
-
-function UsageLabel({
-  label,
-  shortLabel,
-}: {
-  readonly label: string;
-  readonly shortLabel: string;
-}) {
-  const fullLabel = useRef<HTMLSpanElement>(null);
-  const [shortened, setShortened] = useState(false);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- chooses the shorter label only when the grid's measured space cannot fit the full label
-  useLayoutEffect(() => {
-    const element = fullLabel.current;
-    if (!element) return;
-    const measure = () => setShortened(element.scrollWidth > element.clientWidth);
-    measure();
-    return observeResize(element, measure);
-  }, []);
-  return (
-    <span className="relative min-w-0">
-      {/* The full label retains its intrinsic width so shortening cannot oscillate the grid. */}
-      <span ref={fullLabel} className={cn("block truncate", shortened && "invisible")}>
-        {label}
-      </span>
-      {shortened ? <span className="absolute inset-0 truncate">{shortLabel}</span> : null}
-    </span>
   );
 }

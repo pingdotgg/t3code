@@ -114,10 +114,15 @@ export function poolSources(window: LimitPoolWindow) {
   return { hubs: [...new Set(hubs)], signedIn };
 }
 
-export function limitTone(left: number): "error" | "warning" | null {
+export function limitTone(left: number, runsOutBeforeReset = false): "error" | "warning" | null {
   if (left <= 10) return "error";
-  if (left <= 20) return "warning";
+  if (left <= 20 || runsOutBeforeReset) return "warning";
   return null;
+}
+
+/** Short window names pair up two across; shared or compound labels span the card width. */
+export function isWideLimitLabel(label: string): boolean {
+  return label.length > 9 || label.includes("\u00b7");
 }
 
 type FoldedWindow = Pick<ServerProviderUsageWindow, "id" | "kind" | "label" | "usedPercent">;
@@ -142,12 +147,14 @@ function windowMetersModel(
 
 /**
  * The limit rows shown before "Show N more": those metering the thread's model when the windows
- * say, else the two nearest their limit, one per period. A row near its limit always shows.
+ * say, else the two nearest their limit, one per period. A row near its limit or running out
+ * before it resets always shows.
  */
 export function foldLimitRows<
   Row extends {
     readonly driver: ServerProvider["driver"] | undefined;
     readonly window: FoldedWindow;
+    readonly runsOutBeforeReset?: boolean;
   },
 >(rows: readonly Row[], model: string | null) {
   const meters = rows.map((row) => windowMetersModel(row.driver, row.window, model));
@@ -164,10 +171,52 @@ export function foldLimitRows<
       : [...perPeriod, ...nearest.filter((row) => !perPeriod.includes(row))].slice(0, 2),
   );
   for (const row of rows) {
-    if (limitTone(remainingPercent(row.window)) !== null) kept.add(row);
+    if (limitTone(remainingPercent(row.window), row.runsOutBeforeReset) !== null) kept.add(row);
   }
   return {
     shown: rows.filter((row) => kept.has(row)),
     hidden: rows.filter((row) => !kept.has(row)),
   };
+}
+
+function compareLimitTightness(
+  left: { readonly window: FoldedWindow; readonly runsOutBeforeReset?: boolean },
+  right: { readonly window: FoldedWindow; readonly runsOutBeforeReset?: boolean },
+): number {
+  return (
+    remainingPercent(left.window) - remainingPercent(right.window) ||
+    Number(Boolean(right.runsOutBeforeReset)) - Number(Boolean(left.runsOutBeforeReset))
+  );
+}
+
+/** Group limit rows by provider driver, ordering both groups and windows tightest first. */
+export function groupLimitRows<
+  Row extends {
+    readonly driver: ServerProvider["driver"] | undefined;
+    readonly window: FoldedWindow;
+    readonly runsOutBeforeReset?: boolean;
+  },
+>(
+  rows: readonly Row[],
+): ReadonlyArray<{
+  readonly driver: ServerProvider["driver"] | undefined;
+  readonly rows: readonly Row[];
+}> {
+  const byDriver = new Map<ServerProvider["driver"] | undefined, Row[]>();
+  for (const row of rows) {
+    const existing = byDriver.get(row.driver);
+    if (existing) existing.push(row);
+    else byDriver.set(row.driver, [row]);
+  }
+  return [...byDriver]
+    .map(([driver, entries]) => ({
+      driver,
+      rows: entries.toSorted(compareLimitTightness),
+    }))
+    .toSorted((left, right) => {
+      const a = left.rows[0];
+      const b = right.rows[0];
+      if (!a || !b) return 0;
+      return compareLimitTightness(a, b);
+    });
 }

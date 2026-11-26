@@ -360,16 +360,22 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                       />
                     ) : null}
                   </div>
-                  <div className="grid grid-cols-[1rem_minmax(0,max-content)_minmax(min-content,1fr)] gap-x-1.5 ps-3 pe-2">
-                    {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
-                    {visible.context ? (
-                      <ThreadDetailsContext
-                        usage={props.usage.contextWindow}
-                        onCompact={props.onCompactContext}
-                        compactUnavailableReason={props.compactUnavailableReason}
-                      />
-                    ) : null}
-                  </div>
+                  {visible.usage || visible.context ? (
+                    <div className="flex flex-col gap-1.5 pt-1.5 pb-0.5">
+                      {visible.usage ? <ThreadDetailsUsage {...props.usage} /> : null}
+                      {visible.context ? (
+                        <div
+                          className={visible.usage ? "border-t border-divider pt-1.5" : undefined}
+                        >
+                          <ThreadDetailsContext
+                            usage={props.usage.contextWindow}
+                            onCompact={props.onCompactContext}
+                            compactUnavailableReason={props.compactUnavailableReason}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </section>
               ) : null}
 

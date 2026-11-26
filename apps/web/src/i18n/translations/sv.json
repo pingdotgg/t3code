@@ -4609,6 +4609,7 @@
   "3e524e1c0141f4ad": "Inte länkad",
   "42a02a4b27828027": "Inte tillgänglig",
   "cfc49f96ba92c25c": "Inga användningsfönster rapporterade.",
+  "96ac6f028d358793": "Kvar",
   "31e3e8d137ca1b40": "Visa {count} till",
   "16fb3b76d0abbb2e": "Kontextfönster",
   "83bbceecef0f6872": "Kontext",
@@ -4617,17 +4618,24 @@
   "94478874c4070e6e": "Kontext: {used} / {max} token, {percent} % använt",
   "6f77d87bfd5139f8": "Kontext: {used} / {max} token använda",
   "4214d97447ddd9e9": "Kontext: {usedTokens} token använda",
+  "be78e52efeb9149b": "{used} / {max}",
   "47233ef369410b52": "Komprimera kontext",
   "5123f0f8e2c1b9fd": "Använt / max",
   "2668b03bc0c8e404": "Använt",
-  "be78e52efeb9149b": "{used} / {max}",
-  "ee3ae58c8b38a425": "{left} % kvar",
-  "ebb26f93fb83a71b": "{label}: {left} % kvar",
-  "1b16346722b65812": "{timeLeft} % av fönstret kvar",
   "21c657cae336b772": "Nästa återställning om {duration}",
   "c29a3a293c3f98c3": "Återställs om {duration}",
+  "ebb26f93fb83a71b": "{label}: {left} % kvar",
   "78c1d280f021a28f": "Från {sources}",
+  "1b16346722b65812": "{timeLeft} % av fönstret kvar",
   "e16b0b9b490c8bc7": "{label}: {value}",
+  "ec1e9343e1ba9349": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " konton, sammanslagna"
+  ],
   "d62967ed2aca3b27": [
     "Över ",
     {
@@ -12946,7 +12954,6 @@
   "7205c8b341454591": "Konto {initials}",
   "67ca0906f5c6c1ca": "Abonnemang",
   "69246abb2f659af2": "Via",
-  "96ac6f028d358793": "Kvar",
   "0d2c1db7fa27153e": "Återställs",
   "e164fc7ee32dd6a4": "Jämn takt",
   "f017b7b86d1968e8": "{timeLeft} % kvar vid det här laget",
@@ -12959,14 +12966,6 @@
   "fad55a528a32f80e": "nu",
   "a16b48709357a5a7": "Hantera användning",
   "a00e74aaa421c524": "kvar",
-  "ec1e9343e1ba9349": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " konton, sammanslagna"
-  ],
   "3ea294de7a865364": "Inga gränser att visa",
   "8bd6f07136317c8f": "Ingen leverantör i de valda miljöerna rapporterar abonnemangsgränser.",
   "87f5d0c61b335f38": "Visa användning i ChatGPT med ditt anslutna konto.",
