@@ -22,6 +22,7 @@ import { isHostPath } from "@t3tools/shared/path";
 
 import {
   breadcrumbPathOf,
+  breadcrumbRangePath,
   type FileBreadcrumb,
   fileBreadcrumbChildren,
   fileBreadcrumbParent,
@@ -310,7 +311,23 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
   const gt = useGT();
 
   return (
-    <nav aria-label={gt("File path")} className="flex h-full">
+    <nav
+      aria-label={gt("File path")}
+      className="flex h-full"
+      onCopy={(event) => {
+        // Crumbs are blocks, so the browser would copy one segment per line.
+        const selection = document.getSelection();
+        if (!selection) return;
+        const selected = [...event.currentTarget.querySelectorAll("[data-file-crumb]")].flatMap(
+          (crumb, index) => (selection.containsNode(crumb, true) ? [index] : []),
+        );
+        const first = selected[0];
+        const last = selected.at(-1);
+        if (first === undefined || last === undefined || first === last) return;
+        event.preventDefault();
+        event.clipboardData.setData("text/plain", breadcrumbRangePath(breadcrumbs, first, last));
+      }}
+    >
       <ol className="flex items-center">
         {breadcrumbs.map((crumb, index) => {
           const current = index === currentIndex;
