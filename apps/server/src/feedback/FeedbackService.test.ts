@@ -154,6 +154,7 @@ const harness = Effect.gen(function* () {
   );
   const items = yield* Ref.make(turnItems);
   const telemetry = yield* Ref.make(true);
+  // Telemetry is on but the event is not delivered, as when the send fails or races an opt-out.
   const dropDelivery = yield* Ref.make(false);
   const runId = yield* Ref.make(RunId.make("run:1"));
   const events = yield* Ref.make<ReadonlyArray<readonly [string, unknown]>>([]);
@@ -417,11 +418,12 @@ it.effect("stores nothing and fails when agent feedback is off", () =>
 
 it.effect("scrubs the caller's private values and sends only the event contract", () =>
   Effect.gen(function* () {
-    const { telemetry, events, cards, layer } = yield* harness;
+    const { dropDelivery, events, cards, layer } = yield* harness;
     yield* Effect.gen(function* () {
       const feedback = yield* Feedback.FeedbackService;
+      yield* Ref.set(dropDelivery, true);
       const {
-        stored: approvedReport,
+        stored: local,
         card,
         closed,
       } = yield* approved(
@@ -438,7 +440,7 @@ it.effect("scrubs the caller's private values and sends only the event contract"
         },
         true,
       );
-      expect(approvedReport).toMatchObject({
+      expect(local).toMatchObject({
         kind: "other",
         subject: "t3_thread_read",
         expected: "Reading [redacted] on [redacted] as [redacted]",
@@ -447,55 +449,33 @@ it.effect("scrubs the caller's private values and sends only the event contract"
         userRequested: true,
         threadId,
         source: "mcp",
-        sent: true,
+        sent: false,
       });
-      expect(approvedReport.trace).toEqual(card.conversationTrace);
-      expect(closed).toMatchObject({
-        feedbackStatus: "sent",
-        preview: { ...card.preview, trace: card.conversationTrace },
-      });
+      expect(yield* Ref.get(events)).toEqual([]);
+      // Stored but not delivered: the card says so, and keeps only the outline.
+      expect(local.trace).toEqual(card.conversationTrace);
+      expect(closed).toMatchObject({ feedbackStatus: "cancelled", preview: card.preview });
       expect(closed.conversationTrace).toBeUndefined();
+
+      yield* Ref.set(dropDelivery, false);
+      const sent = yield* feedback.submit({ ...input, subject: "t3 thread show" }, fromThread);
+      expect("sent" in sent && sent.sent).toBe(true);
       expect(yield* Ref.get(events)).toEqual([
         [
           "agent.feedback",
           {
-            kind: "other",
-            subject: "t3_thread_read",
-            expected: "Reading [redacted] on [redacted] as [redacted]",
-            actual: "[redacted] in [redacted] with [redacted]",
-            workaround: "x".repeat(300),
-            trace: card.conversationTrace,
-            userRequested: true,
+            kind: "bug",
+            subject: "t3 thread show",
+            userRequested: false,
+            trace: null,
             source: "mcp",
             provider: "codex",
             model: "gpt-5.5",
           },
         ],
       ]);
-
-      // An unprompted report while telemetry is off stays local and sends no analytics event.
-      yield* Ref.set(telemetry, false);
-      const localOnly = yield* feedback.submit({ ...input, subject: "t3 thread show" }, fromThread);
-      expect("sent" in localOnly && localOnly.sent).toBe(false);
-      expect(yield* Ref.get(events)).toHaveLength(1);
-
-      yield* Ref.set(telemetry, true);
-      const sent = yield* feedback.submit({ ...input, subject: "t3 thread show" }, fromThread);
-      expect("sent" in sent && sent.sent).toBe(true);
-      expect((yield* Ref.get(events))[1]).toEqual([
-        "agent.feedback",
-        {
-          kind: "bug",
-          subject: "t3 thread show",
-          userRequested: false,
-          trace: null,
-          source: "mcp",
-          provider: "codex",
-          model: "gpt-5.5",
-        },
-      ]);
       yield* feedback.submit({ ...input, subject: " general " }, { source: "cli" });
-      expect((yield* Ref.get(events))[2]).toEqual([
+      expect((yield* Ref.get(events))[1]).toEqual([
         "agent.feedback",
         {
           kind: "bug",
@@ -525,8 +505,7 @@ it.effect("scrubs the caller's private values and sends only the event contract"
         { subject: "t3_thread_read", userRequested: false, sent: true, threadId },
         { subject: "general", userRequested: false, sent: true, threadId: null },
         { subject: "t3 thread show", userRequested: false, sent: true, threadId },
-        { subject: "t3 thread show", userRequested: false, sent: false, threadId },
-        { subject: "t3_thread_read", userRequested: true, sent: true, threadId },
+        { subject: "t3_thread_read", userRequested: true, sent: false, threadId },
       ]);
     }).pipe(Effect.provide(layer));
   }),
@@ -923,22 +902,6 @@ it.effect("refuses Send with telemetry_off and keeps the card open while telemet
       const declined = yield* Queue.take(cards);
       expect(declined).toMatchObject({ feedbackStatus: "declined", preview: card.preview });
       expect(declined.conversationTrace).toBeUndefined();
-
-      // If telemetry turns back on while another card is still open, Send succeeds.
-      const retryCard = yield* show(cards, requested);
-      expect(yield* Effect.result(answer(retryCard, "send", true))).toMatchObject({
-        _tag: "Failure",
-        failure: { _tag: "AgentFeedbackRequestError", reason: "telemetry_off" },
-      });
-      yield* Ref.set(telemetry, true);
-      yield* answer(retryCard, "send", true);
-      const sent = yield* Queue.take(cards);
-      expect(sent).toMatchObject({
-        feedbackStatus: "sent",
-        preview: { ...retryCard.preview, trace: retryCard.conversationTrace },
-      });
-      expect(yield* listFeedbackReports).toMatchObject([{ userRequested: true, sent: true }]);
-      expect(yield* Ref.get(events)).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   }),
 );

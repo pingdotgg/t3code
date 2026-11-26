@@ -21,14 +21,7 @@ import type {
   EnvironmentId,
   OrchestrationV2ProjectedTurnItem,
 } from "@t3tools/contracts";
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  InfoIcon,
-  LockIcon,
-  MessageSquareIcon,
-  MinusIcon,
-} from "lucide-react";
+import { CheckIcon, ChevronDownIcon, LockIcon, MessageSquareIcon, MinusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useRef, useState } from "react";
 
@@ -145,18 +138,15 @@ function PendingFeedbackRequest(props: {
             <T>Send this report to the T3 team?</T>
           )}
         </h3>
-        {telemetryDisabled ? (
-          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-            <InfoIcon className="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden />
-            <span>{feedbackTelemetryDisabledNotice(m)}</span>
-          </p>
-        ) : (
-          <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
+          {telemetryDisabled ? (
+            feedbackTelemetryDisabledNotice(m)
+          ) : (
             <T>
               This is everything that leaves your machine. Nothing is sent unless you press Send.
             </T>
-          </p>
-        )}
+          )}
+        </p>
       </div>
       {props.item.conversationTrace !== undefined ? (
         <label className="flex min-w-0 items-center justify-between gap-3">

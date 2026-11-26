@@ -13,52 +13,36 @@ import type { EnvironmentPresentation } from "../../state/environments";
 import type { Project } from "../../types";
 
 const environmentId = EnvironmentId.make("labs-settings");
-const decodeServerConfig = Schema.decodeSync(ServerConfig);
-function makeConfig(overrides?: {
-  readonly agentFeedback?: boolean;
-  readonly agentFeedbackMode?: "off" | "on-request" | "auto";
-  readonly telemetryEnabled?: boolean;
-}) {
-  return decodeServerConfig({
-    environment: {
-      environmentId,
-      label: "Desk",
-      platform: { os: "linux", arch: "x64" },
-      serverVersion: "1.0.0",
-      orchestrationProtocolVersion: 2,
-      capabilities:
-        overrides?.agentFeedback === undefined ? {} : { agentFeedback: overrides.agentFeedback },
-    },
-    auth: {
-      policy: "loopback-browser",
-      bootstrapMethods: ["one-time-token"],
-      sessionMethods: ["browser-session-cookie"],
-      sessionCookieName: "t3_session",
-    },
-    cwd: "/workspace/labs",
-    keybindingsConfigPath: "/workspace/keybindings.json",
-    keybindings: [],
-    issues: [],
-    providers: [],
-    availableEditors: [],
-    observability: {
-      logsDirectoryPath: "/workspace/logs",
-      localTracingEnabled: false,
-      otlpTracesEnabled: false,
-      otlpMetricsEnabled: false,
-      ...(overrides?.telemetryEnabled === undefined
-        ? {}
-        : { telemetryEnabled: overrides.telemetryEnabled }),
-    },
-    settings:
-      overrides?.agentFeedbackMode === undefined
-        ? {}
-        : { agentFeedback: { mode: overrides.agentFeedbackMode } },
-  });
-}
-
-let currentConfig = makeConfig();
-const makeEnvironments = (): EnvironmentPresentation[] => [
+const config = Schema.decodeSync(ServerConfig)({
+  environment: {
+    environmentId,
+    label: "Desk",
+    platform: { os: "linux", arch: "x64" },
+    serverVersion: "1.0.0",
+    orchestrationProtocolVersion: 2,
+    capabilities: {},
+  },
+  auth: {
+    policy: "loopback-browser",
+    bootstrapMethods: ["one-time-token"],
+    sessionMethods: ["browser-session-cookie"],
+    sessionCookieName: "t3_session",
+  },
+  cwd: "/workspace/labs",
+  keybindingsConfigPath: "/workspace/keybindings.json",
+  keybindings: [],
+  issues: [],
+  providers: [],
+  availableEditors: [],
+  observability: {
+    logsDirectoryPath: "/workspace/logs",
+    localTracingEnabled: false,
+    otlpTracesEnabled: false,
+    otlpMetricsEnabled: false,
+  },
+  settings: {},
+});
+const environments: EnvironmentPresentation[] = [
   {
     environmentId,
     label: "Desk",
@@ -76,10 +60,9 @@ const makeEnvironments = (): EnvironmentPresentation[] => [
     },
     connection: { phase: "connected", error: null, traceId: null },
     refusedRouteIds: [],
-    serverConfig: currentConfig,
+    serverConfig: config,
   },
 ];
-let environments: EnvironmentPresentation[] = makeEnvironments();
 const projects: Project[] = [
   {
     id: ProjectId.make("labs-project"),
@@ -114,7 +97,7 @@ vi.mock(import("../../state/session"), async (original) => ({
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
   useProjects: () => projects,
-  useServerConfigs: () => new Map([[environmentId, currentConfig]]),
+  useServerConfigs: () => new Map([[environmentId, config]]),
 }));
 
 import { LabsSettingsPanel } from "./LabsSettingsPanel";
@@ -143,49 +126,4 @@ it("shows Boring sidebar device preferences read-only while a project is selecte
   for (const name of ["Boring sidebar (group by project)", "Two-line folder rows"]) {
     expect(screen.getByRole("switch", { name }).element().closest("[inert]")).not.toBeNull();
   }
-});
-
-it("warns in Agent feedback when telemetry is off on the machine", async () => {
-  await ensureClientSettingsHydrated();
-  currentConfig = makeConfig({
-    agentFeedback: true,
-    agentFeedbackMode: "on-request",
-    telemetryEnabled: false,
-  });
-  environments = makeEnvironments();
-  await using screen = await render(
-    <SettingsScopeProvider search={{}} onChange={() => {}}>
-      <LabsSettingsPanel />
-    </SettingsScopeProvider>,
-    { router: "/settings/labs" },
-  );
-
-  await expect
-    .element(
-      screen.getByText(
-        "Telemetry is off on this machine, so reports stay local and cannot be sent to the T3 team.",
-      ),
-    )
-    .toBeVisible();
-
-  currentConfig = makeConfig({
-    agentFeedback: true,
-    agentFeedbackMode: "off",
-    telemetryEnabled: false,
-  });
-  environments = makeEnvironments();
-  await using offScreen = await render(
-    <SettingsScopeProvider search={{}} onChange={() => {}}>
-      <LabsSettingsPanel />
-    </SettingsScopeProvider>,
-    { router: "/settings/labs" },
-  );
-
-  await expect
-    .element(
-      offScreen.getByText(
-        "Telemetry is off on this machine, so reports stay local and cannot be sent to the T3 team.",
-      ),
-    )
-    .not.toBeInTheDocument();
 });

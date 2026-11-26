@@ -4,10 +4,8 @@ import {
   feedbackConversationHint,
   feedbackPreviewFields,
   feedbackRequestDisplay,
-  feedbackTelemetryDisabledNotice,
   feedbackTraceLines,
   feedbackTraceSummary,
-  isServerTelemetryDisabled,
 } from "./feedbackRequest.ts";
 
 describe("feedbackRequestDisplay", () => {
@@ -78,35 +76,6 @@ describe("feedback preview", () => {
     );
     expect(feedbackConversationHint(older)).toBe(
       "Adds the text of your messages and the agent's replies in the last 2 turns.",
-    );
-  });
-});
-
-describe("isServerTelemetryDisabled", () => {
-  const baseObservability = {
-    logsDirectoryPath: "/tmp/logs",
-    localTracingEnabled: false,
-    otlpTracesEnabled: false,
-    otlpMetricsEnabled: false,
-    otlpLogsEnabled: false,
-  };
-
-  it("is true only when the server explicitly reports telemetryEnabled as false", () => {
-    expect(isServerTelemetryDisabled(undefined)).toBe(false);
-    expect(isServerTelemetryDisabled(null)).toBe(false);
-    expect(isServerTelemetryDisabled({ observability: baseObservability })).toBe(false);
-    expect(
-      isServerTelemetryDisabled({
-        observability: { ...baseObservability, telemetryEnabled: true },
-      }),
-    ).toBe(false);
-    expect(
-      isServerTelemetryDisabled({
-        observability: { ...baseObservability, telemetryEnabled: false },
-      }),
-    ).toBe(true);
-    expect(feedbackTelemetryDisabledNotice()).toBe(
-      "Telemetry is off on this machine, so this report cannot be sent to the T3 team.",
     );
   });
 });

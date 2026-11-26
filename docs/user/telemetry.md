@@ -27,6 +27,8 @@ Optional tool for agents to report T3 Code bugs or missing capabilities. Configu
 
 Approval cards show exact payloads (expected/actual/workaround, turn outline with no text, and optional **Include the conversation** up to 16 KB). File paths, usernames, hostnames, git remotes, and secret-like strings are scrubbed before saving, and reports use one-off random IDs. Inspect local reports with `t3 feedback list [--json]`.
 
+Agent feedback is delivered as a telemetry event, so it cannot be sent while telemetry is off on the host. Approval cards say so and only offer **Don't send**; automatic reports stay on your machine.
+
 ## Agent activity for mobile notifications
 
 **Settings → Sharing & access → Publish agent activity** sends project/thread titles, model names, and turn status to the T3 Connect relay for [mobile notifications and live activities](./mobile-notifications.md). This is independent of telemetry—turn it off directly on the host if you don't want it.

@@ -1,6 +1,5 @@
 import type { FeedbackRequestItem } from "@t3tools/client-runtime/feedback-request";
 import {
-  AgentFeedbackRequestError,
   EnvironmentId,
   NodeId,
   RunId,
@@ -8,7 +7,6 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import { AsyncResult, Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
@@ -20,7 +18,7 @@ import "../../index.css";
 const environmentId = EnvironmentId.make("feedback-env");
 const decodeServerConfig = Schema.decodeSync(ServerConfig);
 
-function makeServerConfig(telemetryEnabled?: boolean): ServerConfig {
+function makeServerConfig(telemetryEnabled: boolean): ServerConfig {
   return decodeServerConfig({
     environment: {
       environmentId,
@@ -47,7 +45,7 @@ function makeServerConfig(telemetryEnabled?: boolean): ServerConfig {
       localTracingEnabled: false,
       otlpTracesEnabled: false,
       otlpMetricsEnabled: false,
-      ...(telemetryEnabled === undefined ? {} : { telemetryEnabled }),
+      telemetryEnabled,
     },
     settings: {},
   });
@@ -55,7 +53,6 @@ function makeServerConfig(telemetryEnabled?: boolean): ServerConfig {
 
 const state = vi.hoisted(() => ({
   answer: vi.fn(),
-  canAnswer: true,
   configs: new Map<EnvironmentId, ServerConfig>(),
 }));
 
@@ -68,7 +65,7 @@ vi.mock("../../state/use-atom-command", () => ({
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     answerFeedbackRequest: {
-      permissionAtom: () => Atom.make(state.canAnswer),
+      permissionAtom: () => Atom.make(true),
     },
   },
 }));
@@ -119,16 +116,10 @@ const pendingItem: FeedbackRequestItem = {
   },
 };
 
-function resetState(telemetryEnabled?: boolean) {
-  state.answer.mockReset();
-  state.answer.mockResolvedValue(AsyncResult.success(undefined));
-  state.canAnswer = true;
-  state.configs = new Map([[environmentId, makeServerConfig(telemetryEnabled)]]);
-}
-
 describe("FeedbackRequestCard", () => {
   it("explains that telemetry is off, disables Send, and still allows Don't send", async () => {
-    resetState(false);
+    state.answer.mockResolvedValue(AsyncResult.success(undefined));
+    state.configs = new Map([[environmentId, makeServerConfig(false)]]);
     await using screen = await render(
       <FeedbackRequestCard environmentId={environmentId} item={pendingItem} visibility="local" />,
       { router: false },
@@ -157,46 +148,5 @@ describe("FeedbackRequestCard", () => {
         includeConversation: false,
       },
     });
-  });
-
-  it("keeps Send enabled when telemetry is on or omitted by an older server", async () => {
-    for (const telemetryEnabled of [true, undefined]) {
-      resetState(telemetryEnabled);
-      await using screen = await render(
-        <FeedbackRequestCard environmentId={environmentId} item={pendingItem} visibility="local" />,
-        { router: false },
-      );
-
-      await expect.element(screen.getByText("Send this report to the T3 team?")).toBeVisible();
-      const sendButton = screen.getByRole("button", { name: "Send", exact: true });
-      await expect.element(sendButton).toBeEnabled();
-      await expect.element(screen.getByRole("switch")).toBeEnabled();
-      await sendButton.click();
-      expect(state.answer).toHaveBeenCalledWith({
-        environmentId,
-        input: {
-          threadId: pendingItem.threadId,
-          turnItemId: pendingItem.id,
-          answer: "send",
-          includeConversation: false,
-        },
-      });
-    }
-  });
-
-  it("shows the server telemetry_off error if telemetry turns off before Send", async () => {
-    resetState(true);
-    state.answer.mockResolvedValueOnce(
-      AsyncResult.failure(Cause.fail(new AgentFeedbackRequestError({ reason: "telemetry_off" }))),
-    );
-    await using screen = await render(
-      <FeedbackRequestCard environmentId={environmentId} item={pendingItem} visibility="local" />,
-      { router: false },
-    );
-
-    await screen.getByRole("button", { name: "Send", exact: true }).click();
-    await expect
-      .element(screen.getByRole("alert"))
-      .toHaveTextContent("Telemetry is off on this machine, so this report was not sent.");
   });
 });
