@@ -26,7 +26,7 @@ type TextPart =
   | { notebookOutput: Iterable<string> };
 
 const NOTEBOOK_OUTPUT_HEADING = "\nOutput:\n";
-const hasNotebookOutputText = (value: string) => /[^\s\0]/u.test(value);
+const NOTEBOOK_OUTPUT_TEXT = /[^\s\0]/u;
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
 // Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
@@ -646,13 +646,13 @@ function* notebook(source: string): Generator<TextPart, void> {
         const plain = outputText(
           "text/plain" in output.data ? output.data["text/plain"] : undefined,
         );
-        yield "text/markdown" in output.data && !hasNotebookOutputText(plain)
+        yield "text/markdown" in output.data && !NOTEBOOK_OUTPUT_TEXT.test(plain)
           ? outputText(output.data["text/markdown"])
           : plain;
       } else if ("output_type" in output && output.output_type === "error") {
         const name = [...lines("ename" in output ? output.ename : undefined)].join("");
         const value = [...lines("evalue" in output ? output.evalue : undefined)].join("");
-        if (hasNotebookOutputText(NodeUtil.stripVTControlCharacters(name + value))) {
+        if (NOTEBOOK_OUTPUT_TEXT.test(NodeUtil.stripVTControlCharacters(name + value))) {
           yield name;
           if ("evalue" in output) yield ": " + value;
         }
@@ -1203,15 +1203,15 @@ export async function extractDocumentText(path: string, extension: string): Prom
         // Charge leading whitespace as it arrives, but render it only with readable output.
         let pending: string | undefined = "";
         for (const output of part.notebookOutput) {
-          const roomAfterHeading = remaining - NOTEBOOK_OUTPUT_HEADING.length;
-          if (
-            pending !== undefined &&
-            roomAfterHeading > 0 &&
-            hasNotebookOutputText(output.slice(0, roomAfterHeading))
-          ) {
-            result += takeRaw(NOTEBOOK_OUTPUT_HEADING) + pending;
-            pending = undefined;
-            midLine = false;
+          if (pending !== undefined) {
+            const firstText = output.slice(0, remaining).search(NOTEBOOK_OUTPUT_TEXT);
+            if (firstText !== -1) {
+              if (firstText >= remaining - NOTEBOOK_OUTPUT_HEADING.length)
+                throw new Truncation("Output budget");
+              result += takeRaw(NOTEBOOK_OUTPUT_HEADING) + pending;
+              pending = undefined;
+              midLine = false;
+            }
           }
           const value = takeRaw(output);
           if (pending !== undefined) pending += value;
