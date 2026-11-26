@@ -149,6 +149,15 @@ describe("cloneUrlForProtocol", () => {
       expect(cloneUrlForProtocol(scp, "https")).toBe(https);
       expect(cloneUrlForProtocol(`ssh://git@host.example/team/${encoded}`, "https")).toBe(https);
     }
+    for (const [literal, encoded] of [
+      ["repo#hash.git", "repo%23hash.git"],
+      ["repo?query.git", "repo%3Fquery.git"],
+      ["repo%20name#hash?.git", "repo%20name%23hash%3F.git"],
+    ]) {
+      expect(cloneUrlForProtocol(`ssh://git@host.example/team/${literal}`, "https")).toBe(
+        `https://host.example/team/${encoded}`,
+      );
+    }
   });
 
   it("keeps the URL as is for its own protocol and drops HTTPS credentials on switch", () => {
