@@ -1,3 +1,6 @@
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+
 import { maskMarkdownFrontmatter } from "./markdownFrontmatter.ts";
 
 // About one screen of rendered Markdown; parsing costs up to ~40 ms per KB with tables and math.
@@ -97,15 +100,15 @@ const FRONTMATTER_MAX_LINES = 1000;
 const hasFrontmatterClose = (lines: readonly string[]) =>
   lines.slice(1, FRONTMATTER_MAX_LINES + 1).some((line) => FRONTMATTER_CLOSE.test(line));
 
-// A one-line link reference definition; footnotes are left alone so each piece does not grow
-// a footnote section.
-const LINK_DEFINITION =
-  /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|([^\s<]\S*))(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
+// Footnotes are left alone so each piece does not grow a footnote section.
+const LINK_DEFINITION_LABEL = /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:/;
+const LINK_DEFINITION_DESTINATION =
+  /^[ \t]*(?:<[^<>\n]*>|([^\s<]\S*))(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
 
-function isLinkDefinition(line: string): boolean {
-  const match = LINK_DEFINITION.exec(line);
+function isLinkDefinitionDestination(text: string): boolean {
+  const match = LINK_DEFINITION_DESTINATION.exec(text);
   if (!match) return false;
   const bareDestination = match[1];
   if (bareDestination === undefined) return true;
@@ -121,6 +124,40 @@ function isLinkDefinition(line: string): boolean {
     }
   }
   return depth === 0;
+}
+
+const definitionParser = unified().use(remarkParse);
+
+function readLinkDefinition(lines: readonly string[], start: number, line: string) {
+  const label = LINK_DEFINITION_LABEL.exec(line)?.[0];
+  if (label === undefined) return;
+  const rest = line.slice(label.length);
+  if (isLinkDefinitionDestination(rest)) return { text: line, end: start };
+  if (!BLANK_LINE.test(rest)) return;
+
+  const destination = lines[start + 1];
+  if (destination === undefined || BLANK_LINE.test(destination)) return;
+  let text = `${line}\n${destination}`;
+  if (text.length >= SHARED_DEFINITIONS_MAX_CHARS) return;
+
+  // A title can continue onto more lines. Bound the lookahead to the definition budget.
+  if (/[ \t]["'(]/.test(destination.trimStart()) || /^[ \t]*["'(]/.test(lines[start + 2] ?? "")) {
+    for (let index = start + 2; index < lines.length; index++) {
+      const continuation = lines[index]!;
+      if (
+        BLANK_LINE.test(continuation) ||
+        text.length + continuation.length + 1 >= SHARED_DEFINITIONS_MAX_CHARS
+      )
+        break;
+      text += `\n${continuation}`;
+    }
+  }
+
+  const node = definitionParser.parse(text).children[0];
+  const end = node?.position?.end;
+  if (node?.type === "definition" && end?.offset !== undefined && end.line > 1) {
+    return { text: text.slice(0, end.offset), end: start + end.line - 1 };
+  }
 }
 
 export interface SplitMarkdown {
@@ -142,7 +179,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
   let afterBlankLine = false;
-  let afterDefinition = false;
+  let definitionEnd = -1;
   let afterHeading = false;
   let openedFence = false;
   let definitionChars = 0;
@@ -155,7 +192,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     heldCut = 0;
   };
   const sourceLines = text.split("\n");
-  for (const line of sourceLines) {
+  for (const [lineIndex, line] of sourceLines.entries()) {
     if (closes !== null) {
       if (closes(line)) closes = null;
     } else if (first && FRONTMATTER_OPEN.test(line) && hasFrontmatterClose(sourceLines)) {
@@ -163,7 +200,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         openedFence = FRONTMATTER_CLOSE.test(next);
         return openedFence;
       };
-    } else {
+    } else if (lineIndex > definitionEnd) {
       if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
       const cutPoint =
         chars >= targetChars &&
@@ -176,12 +213,15 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       openedFence = /^ ?[`~]/.test(line) && FENCE_OPEN.test(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
-      const definition: boolean =
-        (first || afterBlankLine || afterDefinition || afterHeading) && isLinkDefinition(line);
-      afterDefinition = definition;
-      if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
-        definitions.push(line.trim());
-        definitionChars += line.length + 1;
+      if (first || afterBlankLine || lineIndex === definitionEnd + 1 || afterHeading) {
+        const definition = readLinkDefinition(sourceLines, lineIndex, line);
+        if (definition) {
+          definitionEnd = definition.end;
+          if (definitionChars + definition.text.length < SHARED_DEFINITIONS_MAX_CHARS) {
+            definitions.push(definition.text.trim());
+            definitionChars += definition.text.length + 1;
+          }
+        }
       }
     }
     if (closes === closesAtBlankLine)
