@@ -4805,6 +4805,16 @@ describe("AcpAdapterV2", () => {
                       },
                     },
                   });
+                  // A repeated completion that carries only a summary keeps the page.
+                  yield* handler!({
+                    sessionId: "mock-session-1",
+                    update: {
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "html-stdin",
+                      status: "completed",
+                      rawOutput: "Rendered the page.",
+                    },
+                  });
                   return { stopReason: "end_turn" as const };
                 }),
             }),

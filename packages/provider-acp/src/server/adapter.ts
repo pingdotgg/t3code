@@ -5791,7 +5791,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               // Antigravity replaces MCP results with summaries, including on repeated completions.
               const previousPage = htmlRenderFromToolItem({
                 toolName,
-                output: acpMcpToolCallOutput(previous?.data.rawOutput ?? previous?.data.content),
+                output:
+                  (previous?.kind === "execute"
+                    ? terminalMcpResult(unknownRecord(previous.data.rawOutput))
+                    : undefined) ??
+                  acpMcpToolCallOutput(previous?.data.rawOutput ?? previous?.data.content),
               });
               const page = reportedPage
                 ? yield* mcpSessions.takeHtmlRender(context.input.threadId, input, reportedPage)
