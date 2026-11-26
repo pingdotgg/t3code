@@ -82,7 +82,7 @@ describe("Forgejo change request URLs", () => {
     expect(onHost(atThree!, link)).toBe(false);
   });
 
-  it("lets tea resolve the web port for SSH remotes, and honours a resolved web URL", () => {
+  it("lets gt resolve the web port for SSH remotes, and honours a resolved web URL", () => {
     const link = parse("http://forge.example:4000/git/team/repo/pulls/42");
     expect(
       definition.isChangeRequestInRepository(identity("git@forge.example:git/team/repo.git"), link),
@@ -137,25 +137,30 @@ describe("Forgejo remotes", () => {
 });
 
 describe("Forgejo CLI commands", () => {
-  it("recognizes shell merges and closes under every spelling tea accepts", () => {
+  it("recognizes shell merges and closes under every spelling gt, tea and fj accept", () => {
     for (const command of [
       "tea pulls merge 7",
       "tea pull merge 7",
       "tea pr m 7",
       "tea pull close 7",
       "fj pr close 7",
+      "gt pr merge 7",
+      "gt pr close 7",
     ]) {
       expect(definition.changeRequestCloseCommand.test(command), command).toBe(true);
     }
     expect(definition.changeRequestCloseCommand.test("tea pull checkout 7")).toBe(false);
+    expect(definition.changeRequestCloseCommand.test("gt pr checkout 7")).toBe(false);
   });
 
-  it("reads the change request from every checkout spelling tea accepts", () => {
+  it("reads the change request from every checkout spelling gt and tea accept", () => {
     for (const command of [
       "tea pulls checkout 7",
       "tea pull checkout 7",
       "tea pr co 7",
       "tea pull co 7",
+      "gt pr checkout 7",
+      "gt pr co 7",
     ]) {
       expect(definition.checkoutCommandArgument(command), command).toBe("7");
     }
