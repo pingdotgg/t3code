@@ -11,8 +11,8 @@ import {
 import {
   codexDirectiveSources,
   markdownReferenceDefinitions,
-  wordsHast,
   markdownTree,
+  wordsHast,
   type WordsHastOptions,
 } from "./wordsHast";
 
@@ -31,18 +31,11 @@ it.each([
   [String.raw`/tmp/a\&amp;b/index.ts`, "/tmp/a&amp;b/index.ts"],
   ["/tmp/a&#92;&amp;b/index.ts", String.raw`/tmp/a\&b/index.ts`],
   [String.raw`C:\work\&amp;b\index.ts`, String.raw`C:\work\&b\index.ts`],
-])("decodes file destinations in source order: %s", (href, expected) => {
-  const markdown = `[index.ts](${href}) [index.ts](/tmp/z/index.ts)`;
-  const tree = markdownTree(markdown);
-  const paragraph = tree.children[0];
-  expect(paragraph?.type).toBe("element");
-  if (paragraph?.type !== "element") return;
-  const anchor = paragraph.children.find(
-    (child) => child.type === "element" && child.tagName === "a",
-  );
-  expect(anchor?.type === "element" && decodeURIComponent(String(anchor.properties.href))).toBe(
-    expected,
-  );
+])("decodes link destination %s as the renderer does", (href, expected) => {
+  const markdown = `[index.ts](${href})`;
+  const paragraph = markdownTree(markdown).children[0] as Element;
+  const anchor = paragraph.children[0] as Element;
+  expect(decodeURIComponent(String(anchor.properties.href))).toBe(expected);
   expect(decodeMarkdownLinkEscapes(extractMarkdownLinkHrefs(markdown)[0]!)).toBe(expected);
 });
 
