@@ -9750,6 +9750,7 @@
   "543ef9fcaf8aa96f": "Desligado",
   "5173c50b0a60847c": "Atualização disponível: {serverVersion} → {clientVersion}",
   "987c5623ba70f390": "Rotas",
+  "36d52134b8b8d455": "{count, plural, one {{count} rota} other {{count} rotas}}",
   "80a2ef2c87f7f180": "servidor {label}",
   "08f54865b364957d": "Atualizar",
   "b426469630d60955": "Desligar {label}",

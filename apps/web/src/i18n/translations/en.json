@@ -9760,6 +9760,7 @@
   "543ef9fcaf8aa96f": "Switched off",
   "5173c50b0a60847c": "Update available: {serverVersion} → {clientVersion}",
   "987c5623ba70f390": "Routes",
+  "36d52134b8b8d455": "{count, plural, one {{count} route} other {{count} routes}}",
   "80a2ef2c87f7f180": "{label} server",
   "08f54865b364957d": "Update",
   "b426469630d60955": "Switch off {label}",

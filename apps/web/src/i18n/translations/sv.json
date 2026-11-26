@@ -9758,6 +9758,7 @@
   "543ef9fcaf8aa96f": "Avstängd",
   "5173c50b0a60847c": "Uppdatering tillgänglig: {serverVersion} → {clientVersion}",
   "987c5623ba70f390": "Rutter",
+  "36d52134b8b8d455": "{count, plural, one {{count} rutt} other {{count} rutter}}",
   "80a2ef2c87f7f180": "Servern {label}",
   "08f54865b364957d": "Uppdatera",
   "b426469630d60955": "Stäng av {label}",
