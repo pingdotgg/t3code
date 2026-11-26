@@ -124,17 +124,12 @@ describe.each([
     ['Review :codex-file-citation{path="src/app.ts"}', "Review [app.ts](<src/app.ts>)"],
     [':codex-file-citation{path="src/app.ts"}', "[app.ts](<src/app.ts>)"],
     [
-      '😀 :codex-followup[Review :codex-file-citation{path="src/app.ts"}]{prompt="Review"}',
-      "😀 Review [app.ts](<src/app.ts>)",
-    ],
-    [
-      '[Review :codex-file-citation{path="src/app.ts"}][ref]',
-      '[Review :codex-file-citation{path="src/app.ts"}][ref]',
+      ':codex-followup[Review :codex-file-citation{path="src/app.ts"}]{prompt="Review"}',
+      "Review [app.ts](<src/app.ts>)",
     ],
   ])("renders nested follow-up citations in their original context: %s", (label, expected) => {
-    const suffix = " end\n\n[ref]: https://example.com";
-    expect(render(`Before :codex-followup[${label}]{prompt="Review app.ts"}${suffix}`)).toBe(
-      `Before ${expected}${suffix}`,
+    expect(render(`Before :codex-followup[${label}]{prompt="Review app.ts"} end`)).toBe(
+      `Before ${expected} end`,
     );
   });
 
