@@ -22,7 +22,11 @@ describe("the pane beside a run", () => {
       ),
     ).toEqual({ pane: [issue, transcript, { thread: "t1" }], tab: 0 });
     // The last tab shows unless the address says another; one it cannot have shows the last.
-    expect(readWorkflowPane([issue, pullRequest], 7)).toEqual({ pane: [issue, pullRequest] });
+    for (const rawTab of [7, "", " ", null, false]) {
+      const state = readWorkflowPane([issue, pullRequest], rawTab);
+      expect(state).toEqual({ pane: [issue, pullRequest] });
+      expect(activeWorkflowPaneTab(state)).toEqual(pullRequest);
+    }
     expect(readWorkflowPane("nope", 0)).toEqual({});
   });
 

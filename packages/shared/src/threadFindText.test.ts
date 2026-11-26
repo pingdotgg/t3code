@@ -104,6 +104,12 @@ it("searches displayed prose and file-chip labels without hidden paths", () => {
     "label main.ts · L3:C2",
   ]);
   expect(assistantSegments("[label](src/main.ts#L3C2)")).toEqual(["label"]);
+  expect(
+    assistantSegments(
+      "[![a](https://example.com/a.png)](src/index.ts) [![b](https://example.com/b.png)](lib/index.ts)",
+      "/workspace/repo",
+    ),
+  ).toEqual(["index.ts · repo/src index.ts · repo/lib"]);
   for (const text of [
     "[a](/repo/app/(a)/page.tsx) and [b](/repo/app/(b)/page.tsx)",
     String.raw`[a](/repo/app/\(a\)/page.tsx) and [b](/repo/app/\(b\)/page.tsx)`,
@@ -233,6 +239,23 @@ it("indexes insight bodies without hidden fences and keeps user and plan text li
   expect(assistantSegments(`\`\`\`text\n${text}\n\`\`\``)?.join("\n")).toContain("★ Insight");
 });
 
+it("does not index the hidden marker of an alert written with CR-only line endings", () => {
+  expect(assistantSegments("> [!NOTE]\r> hi")).toEqual(["hi"]);
+});
+
+it("keeps insight line breaks for backticked openers on their own line, not in prose", () => {
+  expect(assistantSegments("`★ Insight ─────`\nfirst line\nsecond line\n`─────`")).toEqual([
+    "first line",
+    " second line",
+  ]);
+  expect(assistantSegments("`★ Insight ─────` opens a callout.\nfirst line\nsecond line")).toEqual([
+    "★ Insight ───── opens a callout. first line second line",
+  ]);
+  expect(
+    assistantSegments("`★ Insight ─────`\u2028opens a callout.\nfirst line\nsecond line"),
+  ).toEqual(["★ Insight ─────\u2028opens a callout. first line second line"]);
+});
+
 it("indexes image destinations rendered as file chips", () => {
   expect(
     assistantSegments(
@@ -240,4 +263,9 @@ it("indexes image destinations rendered as file chips", () => {
       "/workspace/repo",
     ),
   ).toEqual(["notes.ts · L42–64 "]);
+});
+
+it("projects carriage-return soft line breaks to a space outside code blocks", () => {
+  expect(assistantSegments("First\rsecond")).toEqual(["First second"]);
+  expect(assistantSegments("```text\nFirst\rsecond\n```")).toEqual(["First\rsecond\n"]);
 });

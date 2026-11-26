@@ -58,6 +58,15 @@ describe("upgradeLegacyContextMessage", () => {
     expect(result.records[0]).toMatchObject({ text: "Comment", diff, fenceLanguage: "diff" });
   });
 
+  it("keeps whitespace in review comment file paths and section ids", () => {
+    const text =
+      '<review_comment sectionId="file:foo.txt " filePath="foo.txt " startIndex="1" endIndex="1">note</review_comment>';
+    expect(upgradeLegacyContextMessage(text).records[0]).toMatchObject({
+      filePath: "foo.txt ",
+      sectionId: "file:foo.txt ",
+    });
+  });
+
   it("does not close a review fence at a shorter backtick run", () => {
     const diff = "```\n</review_comment>\n+ remaining source";
     const text = `<review_comment sectionId="s" filePath="f.ts" startIndex="1" endIndex="1">\nNote\n\`\`\`\`diff\n${diff}\n\`\`\`\`\n</review_comment>`;

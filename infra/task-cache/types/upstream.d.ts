@@ -9,4 +9,5 @@ declare global {
   type R2MultipartUpload = Cloudflare.R2MultipartUpload;
   type R2UploadedPart = Cloudflare.R2UploadedPart;
   type ExecutionContext = Cloudflare.ExecutionContext;
+  var FixedLengthStream: new (length: number) => TransformStream<Uint8Array, Uint8Array>;
 }

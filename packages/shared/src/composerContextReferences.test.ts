@@ -612,6 +612,25 @@ describe("threadLinkContextReferences", () => {
     ).toEqual([threadContextRecord(thread("env-9", "t9"), "Thread")]);
   });
 
+  it.each(["\r", "\r\n", "\n"])("keeps fenced examples literal with %j line endings", (eol) => {
+    for (const fence of ["~~~", "```"]) {
+      const text = [fence, "<t3-thread://v2/local/t>", fence].join(eol);
+      expect(threadLinkContextReferences(text, [], () => "Task")).toEqual({
+        text,
+        records: [],
+      });
+      const pasted = threadLinkContextReferences(
+        `${text}${eol}<t3-thread://v2/local/after>`,
+        [],
+        () => "Task",
+      );
+      expect(pasted).toEqual({
+        text: `${text}${eol}${reference("local", "after", "Task")}`,
+        records: [threadContextRecord(thread("local", "after"), "Task")],
+      });
+    }
+  });
+
   it("keeps links it may not chip, v1 links, and links in code as written", () => {
     const text = [
       "https://app.t3.codes/threads/elsewhere/t1",
