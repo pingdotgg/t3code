@@ -448,15 +448,31 @@ function parseFilePathLink(path: string, hash: string): FilePathPosition | null 
 
 const FENCED_CODE_SEGMENT_PATTERN = /(```[\s\S]*?(?:```|$))/;
 
-const INLINE_CODE_SPAN_PATTERN = /`([^`\n]+)`/g;
+const BACKTICK_RUN_PATTERN = /`+/g;
 
 export function extractInlineCodeSpans(text: string): string[] {
   const spans: string[] = [];
   const segments = text.split(FENCED_CODE_SEGMENT_PATTERN);
   for (let index = 0; index < segments.length; index += 2) {
-    for (const match of (segments[index] ?? "").matchAll(INLINE_CODE_SPAN_PATTERN)) {
-      const span = match[1]?.trim();
-      if (span) spans.push(span);
+    const segment = segments[index] ?? "";
+    if (!segment.includes("`")) continue;
+    for (const line of segment.split("\n")) {
+      const runs = line.includes("`") ? [...line.matchAll(BACKTICK_RUN_PATTERN)] : [];
+      if (runs.length < 2) continue;
+      const nextByLength = new Array<number>(runs.length);
+      const lastByLength = new Map<number, number>();
+      for (let i = runs.length - 1; i >= 0; i -= 1) {
+        const length = runs[i]![0].length;
+        nextByLength[i] = lastByLength.get(length) ?? -1;
+        lastByLength.set(length, i);
+      }
+      for (let i = 0; i < runs.length; i += 1) {
+        const close = nextByLength[i]!;
+        if (close < 0) continue;
+        const span = line.slice(runs[i]!.index + runs[i]![0].length, runs[close]!.index).trim();
+        if (span) spans.push(span);
+        i = close;
+      }
     }
   }
   return spans;
