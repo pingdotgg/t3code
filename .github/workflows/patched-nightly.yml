@@ -804,6 +804,8 @@ jobs:
           xcodebuild archive -workspace "$workspace" -scheme "$scheme" -configuration Release \
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/app.xcarchive" \
             DEVELOPMENT_TEAM="$TEAM_ID" CURRENT_PROJECT_VERSION="${{ github.run_number }}" "${auth[@]}"
+          # Without this, export replaces the run number with App Store Connect's latest build + 1,
+          # and the What to Test step could not find the build it just uploaded.
           cat > "$RUNNER_TEMP/export.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -812,6 +814,7 @@ jobs:
             <key>destination</key><string>upload</string>
             <key>teamID</key><string>$TEAM_ID</string>
             <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
           </dict></plist>
           EOF
           xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/app.xcarchive" \
