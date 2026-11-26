@@ -173,6 +173,18 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens(`see [${label}](src/${label}) ok`)).toEqual([]);
   });
 
+  it("collects a file link after an unclosed bracket", () => {
+    expect(collectComposerInlineTokens("See [WIP and [app.ts](src/app.ts) please")).toEqual([
+      {
+        type: "mention",
+        value: "src/app.ts",
+        source: "[app.ts](src/app.ts)",
+        start: 13,
+        end: 33,
+      },
+    ]);
+  });
+
   it("leaves a context reference link alone", () => {
     expect(
       collectComposerInlineTokens("see [checkout.png](t3-context://v1/image/ctx_abc) ok"),
@@ -201,6 +213,33 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
+  // regression: #41223 the composer's `./` is not part of the mention's path
+  it.each([
+    "C#/Program.cs",
+    "docs/R&D/notes.md",
+    "docs/Bob's notes.md",
+    "docs/a,b.ts",
+    "docs/100%.md",
+    "docs/why?.md",
+    "icon@2x.png",
+  ])("reads a link to the punctuated file %s as that file's path", (path) => {
+    const link = serializeComposerFileLink(path);
+    expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
+      { type: "mention", value: path, source: link },
+    ]);
+  });
+
+  // regression: #41223 a `./` the author wrote keeps its meaning, even where the parser rejects the rest
+  it.each([
+    ["[draft:notes.md](./draft:notes.md)", "./draft:notes.md"],
+    ["[scratch](./%2Fscratch)", ".//scratch"],
+    ["[a.ts](./src/a.ts)", "./src/a.ts"],
+  ])("keeps the authored link %s as its own path", (link, value) => {
+    expect(collectComposerInlineTokens(`fix ${link} please`)).toMatchObject([
+      { type: "mention", value, source: link },
+    ]);
+  });
+
   it.each(["app/routes/posts.$postId.tsx", "pages/posts/[id].tsx"])(
     "preserves a confirmed TeX-like pill when its trailing delimiter is removed: %s",
     (path) => {
@@ -224,11 +263,14 @@ describe("collectComposerInlineTokens", () => {
     expect(collectComposerInlineTokens(source)).toEqual([]);
   });
 
-  it("still finds a formula after a mention that starts the line", () => {
-    const link = serializeComposerFileLink("app/routes/posts.$postId.tsx");
-    expect(
-      composerMathRanges(`${link} sets $x_i$`, markdownMathRanges).map((formula) => formula.source),
-    ).toEqual(["$x_i$"]);
+  it.each([
+    [`${serializeComposerFileLink("app/routes/posts.$postId.tsx")} sets $x_i$`, ["$x_i$"]],
+    ["[Fix $x$ parsing](t3-context://v1/thread/thread_1) sets $x_i$", ["$x_i$"]],
+    ["Use $ui with [posts.$b.tsx](t3-context://v1/file/ctx_1) ", []],
+  ])("ignores TeX delimiters inside file links and context references: %s", (text, formulas) => {
+    expect(composerMathRanges(text, markdownMathRanges).map((formula) => formula.source)).toEqual(
+      formulas,
+    );
   });
 });
 
@@ -242,5 +284,8 @@ describe("composerFileLinksToPlainText", () => {
     );
     const links = "See [docs](https://example.com) and [the config](src/config.ts)";
     expect(composerFileLinksToPlainText(links)).toBe(links);
+    expect(composerFileLinksToPlainText("See [WIP and [app.ts](src/app.ts) please")).toBe(
+      "See [WIP and app.ts please",
+    );
   });
 });

@@ -20,6 +20,14 @@ type Field =
 
 type Option = OrchestrationV2UserInputQuestion["options"][number];
 
+/** A form as the user answers it, and the elicitation response their answers make. */
+export interface ElicitationQuestionForm {
+  readonly questions: ReadonlyArray<OrchestrationV2UserInputQuestion>;
+  readonly respond: (
+    answers: ProviderUserInputAnswers,
+  ) => EffectAcpSchema.CreateElicitationResponse;
+}
+
 export interface ElicitationForm {
   readonly questions: ReadonlyArray<OrchestrationV2UserInputQuestion>;
   /**
@@ -111,7 +119,7 @@ function parseField(
       const values = new Set(options.map(optionValue));
       const minItems = typeof property.minItems === "number" ? property.minItems : 0;
       const maxItems = typeof property.maxItems === "number" ? property.maxItems : Infinity;
-      // Clients require a selection, so empty-only questions cannot be answered.
+      // Empty-only questions carry no choice worth asking.
       if (maxItems === 0 || minItems > maxItems || minItems > values.size) return undefined;
       return { field: { kind: "multiChoice", values, minItems, maxItems }, options };
     }
@@ -176,6 +184,44 @@ function typedAnswer(
   }
 }
 
+function requiredIds(schema: Readonly<Record<string, unknown>> | undefined): ReadonlySet<string> {
+  return new Set(
+    Array.isArray(schema?.required)
+      ? schema.required.filter((key): key is string => typeof key === "string")
+      : [],
+  );
+}
+
+/**
+ * Applies the schema's `required` list to a form mapped outside `parseElicitationForm`: a single
+ * choice the schema leaves optional can be skipped, and one it requires must be answered.
+ */
+export function withOptionalChoices(
+  form: ElicitationQuestionForm,
+  requestedSchema: unknown,
+): ElicitationQuestionForm {
+  const schema = unknownRecord(requestedSchema);
+  const properties = unknownRecord(schema?.properties) ?? {};
+  const required = requiredIds(schema);
+  return {
+    questions: form.questions.map((question) =>
+      question.required === undefined &&
+      question.multiSelect !== true &&
+      question.options.length > 0 &&
+      Object.hasOwn(properties, question.id) &&
+      !required.has(question.id)
+        ? { ...question, required: false }
+        : question,
+    ),
+    respond: (answers) =>
+      form.questions.some(
+        (question) => required.has(question.id) && !Object.hasOwn(answers, question.id),
+      )
+        ? { action: "cancel" }
+        : form.respond(answers),
+  };
+}
+
 // Decline unaskable forms; validate types and selection counts, leaving other constraints to the agent.
 // `allowOther` lets single choices take typed text, sent as the field's value.
 export function parseElicitationForm(
@@ -184,11 +230,7 @@ export function parseElicitationForm(
   { allowOther = false }: { readonly allowOther?: boolean } = {},
 ): ElicitationForm | undefined {
   const schema = unknownRecord(requestedSchema);
-  const required = new Set(
-    Array.isArray(schema?.required)
-      ? schema.required.filter((key): key is string => typeof key === "string")
-      : [],
-  );
+  const required = requiredIds(schema);
   const fields = new Map<string, Field>();
   const parsedFields: Array<{
     readonly id: string;
@@ -203,18 +245,16 @@ export function parseElicitationForm(
     fields.set(id, parsed.field);
     parsedFields.push({ id, property, options: parsed.options });
   }
-  // An optional `<id>__other` text field (OMP's ask dialog) is the free-text answer to
-  // optional single choice `<id>`: ask them as one question and send custom text to the
-  // companion. Multi-select keeps both fields, since it can answer with options and text.
+  // An optional `<id>__other` or `<id>_other` text field is the free-text answer to optional
+  // single choice `<id>`: ask them as one question and send custom text to the companion.
+  // Multi-select keeps both fields, since it can answer with options and text.
   const companions = new Map<string, string>();
   for (const [id, field] of fields) {
-    const companionId = `${id}__other`;
-    if (
-      field.kind === "choice" &&
-      fields.get(companionId)?.kind === "text" &&
-      !required.has(id) &&
-      !required.has(companionId)
-    ) {
+    if (field.kind !== "choice" || required.has(id)) continue;
+    const companionId = [`${id}__other`, `${id}_other`].find(
+      (candidate) => fields.get(candidate)?.kind === "text" && !required.has(candidate),
+    );
+    if (companionId !== undefined) {
       companions.set(id, companionId);
     }
   }
@@ -222,7 +262,8 @@ export function parseElicitationForm(
   const questions: OrchestrationV2UserInputQuestion[] = [];
   for (const { id, property, options } of parsedFields) {
     if (folded.has(id)) continue;
-    const kind = fields.get(id)?.kind;
+    const field = fields.get(id);
+    const kind = field?.kind;
     questions.push({
       id,
       header: text(property.title) ?? `Question ${questions.length + 1}`,
@@ -235,7 +276,11 @@ export function parseElicitationForm(
         ? {}
         : { allowCustomAnswer: false }),
       ...(kind === "multiChoice" ? { multiSelect: true } : {}),
-      ...(kind === "text" && !required.has(id) ? { required: false } : {}),
+      // An empty selection answers "none" unless the schema demands a choice.
+      ...(field?.kind === "multiChoice" && field.minItems > 0 && required.has(id)
+        ? { required: true }
+        : {}),
+      ...(kind !== "multiChoice" && !required.has(id) ? { required: false } : {}),
     });
   }
   return {

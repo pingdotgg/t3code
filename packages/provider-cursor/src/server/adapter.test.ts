@@ -939,6 +939,12 @@ describe("CursorAdapterV2", () => {
       assert.equal(checkpointed.terminal?.status, "failed");
       assert.isUndefined(checkpointed.terminal?.promptDropped);
       assert.isUndefined(checkpointed.turn?.promptDropped);
+
+      // After a restart no turn ends to report it, so the next turn start asks instead.
+      const kept = (nativeTurnId: string) =>
+        runtime.nativeTurnKept!({ providerThread, nativeTurnId });
+      assert.isFalse(yield* kept("native-cursor-run-1"));
+      assert.isTrue(yield* kept("native-cursor-run-2"));
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -1410,6 +1416,13 @@ describe("CursorAdapterV2", () => {
       );
       assert(started.type === "provider_turn.updated");
       yield* runtime.interruptTurn({ providerThread, providerTurnId: started.providerTurn.id });
+      assert.isTrue(
+        yield* runtime.nativeTurnKept!({
+          providerThread,
+          nativeTurnId: started.providerTurn.nativeTurnRef!.nativeId!,
+        }),
+        "a live session replays the stopped request itself, so the server must not resend it too",
+      );
       yield* runtime.startTurn(turnInput(2, steerText));
 
       assert.lengthOf(sentMessages, 2);
@@ -1781,8 +1794,11 @@ describe("CursorAdapterV2", () => {
           toolCall: { type: "shell" as const, args: { command: callId } },
         })),
         {
-          type: "shell-output-delta",
-          event: { case: "stdout", value: { data: "tick 1\n" }, toolCallId: "slow-shell" },
+          type: "shell-tool-call-delta",
+          callId: "slow-shell",
+          modelCallId: "native-model-call",
+          stream: "stdout",
+          content: "tick 1\n",
         },
         {
           type: "shell-output-delta",
@@ -3275,7 +3291,7 @@ describe("CursorAdapterV2", () => {
         const workspace = path.join(scratch, "workspace");
         const home = path.join(scratch, "home");
         const loadServers = () =>
-          cursorWorkspaceMcpServers(cwd, { MCP_TYPE: "stdio" }).pipe(
+          cursorWorkspaceMcpServers(cwd, { MCP_TYPE: "stdio" }, { includeProject: true }).pipe(
             Effect.provideService(HostProcess.HomeDirectory, home),
             Effect.provideService(HostProcess.Environment, {}),
           );
@@ -3398,13 +3414,13 @@ describe("CursorAdapterV2", () => {
             Effect.provideService(HostProcess.Environment, {}),
           );
         const now = yield* DateTime.now;
-        const sendTurn = (ordinal: number) =>
+        const sendTurn = (ordinal: number, turnPolicy = runtimePolicy) =>
           runtime
             .startTurn({
               threadId,
               providerThread,
               modelSelection,
-              runtimePolicy,
+              runtimePolicy: turnPolicy,
               runId: RunId.make(`cursor-mcp-run-${ordinal}`),
               runOrdinal: ordinal,
               providerTurnOrdinal: ordinal,
@@ -3479,6 +3495,20 @@ describe("CursorAdapterV2", () => {
         );
         yield* sendTurn(3);
         assert.deepEqual(sentWith[2], t3Servers);
+        // A restricted turn starts no command the checkout names; the user's own file still applies.
+        yield* fileSystem.writeFileString(
+          path.join(home, ".cursor", "projects", projectDirectory, "mcp-disabled.json"),
+          "[]",
+        );
+        for (const [index, runtimeMode] of (
+          ["approval-required", "auto-accept-edits", "auto"] as const
+        ).entries()) {
+          yield* sendTurn(4 + index, { ...runtimePolicy, runtimeMode });
+          assert.deepEqual(sentWith[3 + index], {
+            repro: { command: "node", args: [`${home}/shadowed.mjs`], cwd: projectRoot },
+            ...t3Servers,
+          });
+        }
         yield* fileSystem.writeFileString(
           path.join(workspace, ".cursor", "mcp.json"),
           JSON.stringify({ mcpServers: { plain: { command: "node", args: ["server.mjs"] } } }),

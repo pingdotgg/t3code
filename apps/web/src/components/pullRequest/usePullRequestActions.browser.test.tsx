@@ -1,10 +1,12 @@
+import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ProjectId, ThreadId, type PullRequestRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../../test/render";
-import { useComposerDraftStore } from "~/composerDraftStore";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { readPendingWorkspaceDefault } from "~/lib/draftWorkspaceDefaults";
 import { ToastProvider } from "../ui/toast";
 import { usePullRequestActionRunner, usePullRequestHandoffs } from "./usePullRequestActions";
 
@@ -35,6 +37,7 @@ function MergeButton({ reference }: { reference: PullRequestRef }) {
   const { actionPending, pendingAction, perform } = usePullRequestActionRunner({
     environmentId: EnvironmentId.make("environment"),
     reference,
+    headSha: `head-${reference.number}`,
     terminology: sourceControlClients.get(undefined).changeRequest,
   });
   return (
@@ -81,6 +84,11 @@ it("keeps pending merges with their pull request when navigating between threads
   await expect.element(button).toBeEnabled();
   await userEvent.click(button);
   expect(state.runAction).toHaveBeenCalledTimes(2);
+  // Each merge is pinned to the head its own row showed.
+  expect(state.runAction.mock.calls.map(([call]) => call.input.expectedHeadSha)).toEqual([
+    "head-1",
+    "head-2",
+  ]);
 
   await screen.rerender(<MergeButton reference={first} />);
   await expect.element(button).toHaveTextContent("Merging...");
@@ -158,4 +166,81 @@ it("stops a pull request handoff when its loading toast is dismissed", async () 
   expect(useComposerDraftStore.getState().getComposerDraft("draft-2" as never)?.prompt ?? "").toBe(
     "",
   );
+});
+
+function CheckOutButton() {
+  const { startHandoff } = usePullRequestHandoffs({
+    environmentId: EnvironmentId.make("environment"),
+    detail: {
+      projectId: ProjectId.make("project"),
+      workspaceRoot: "/repo",
+      url: "https://github.com/owner/repo/pull/1",
+    },
+  });
+  return (
+    <button type="button" onClick={() => void startHandoff("checkout", null)}>
+      Check out
+    </button>
+  );
+}
+
+it("moves the draft the user typed into during a checkout onto the checkout", async () => {
+  setup();
+  const prepared = deferred<{
+    _tag: "Success";
+    value: {
+      branch: string;
+      worktreePath: string;
+      isOnPullRequestHead: boolean;
+      pullRequest: { url: string };
+    };
+  }>();
+  // Like the real handler: a draft with user content is not reused, so a later call opens another.
+  state.newThread.mockImplementation(
+    async (projectRef, options?: { branch?: string; worktreePath?: string }) => {
+      const store = useComposerDraftStore.getState();
+      const draftId = DraftId.make(options === undefined ? "draft-opened" : "draft-pointed");
+      store.setLogicalProjectDraftThreadId(scopedProjectKey(projectRef), projectRef, draftId, {
+        threadId: ThreadId.make(`thread-${draftId}`),
+        branch: options?.branch ?? null,
+        worktreePath: options?.worktreePath ?? null,
+      });
+      return { draftId, threadId: ThreadId.make(`thread-${draftId}`) };
+    },
+  );
+  state.prepareThread.mockReturnValueOnce(prepared.promise);
+  await using screen = await render(
+    <ToastProvider>
+      <CheckOutButton />
+    </ToastProvider>,
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Check out" }));
+  await expect.poll(() => state.prepareThread.mock.calls.length).toBe(1);
+  const opened = DraftId.make("draft-opened");
+  useComposerDraftStore.getState().setPrompt(opened, "Review this pull request");
+  // A send from this draft waits for the checkout.
+  expect(readPendingWorkspaceDefault(opened)).not.toBeNull();
+  await act(async () => {
+    prepared.resolve({
+      _tag: "Success",
+      value: {
+        branch: "pr-1",
+        worktreePath: "/repo-worktrees/pr-1",
+        isOnPullRequestHead: true,
+        pullRequest: { url: "https://github.com/owner/repo/pull/1" },
+      },
+    });
+    await prepared.promise;
+  });
+  await expect.element(screen.getByRole("dialog", { name: "Checked out" })).toBeVisible();
+
+  expect(useComposerDraftStore.getState().getComposerDraft(opened)?.prompt).toBe(
+    "Review this pull request",
+  );
+  expect(useComposerDraftStore.getState().getDraftSession(opened)).toMatchObject({
+    branch: "pr-1",
+    worktreePath: "/repo-worktrees/pr-1",
+  });
+  expect(readPendingWorkspaceDefault(opened)).toBeNull();
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  markdownForNativeParsing,
   markdownForNativeRendering,
   markdownHtmlContent,
   markdownWithHtml,
@@ -301,6 +302,38 @@ describe("file embeds in native thread and file Markdown", () => {
         }
       }
     }
+  });
+
+  it("gives each image on its own line its own native paragraph", async () => {
+    const images =
+      "![before](./before.png)\n![after light](./after-light.png) \\\n![after dark][dark]";
+    const source = `Shots:\n\n${images}\n\n![a](./a.svg) ![b](./b.svg)\n![c](./c.svg)\n\nNext\n\n[dark]: ./after-dark.png`;
+    const paragraphs = (
+      await parseMarkdown(markdownForNativeRendering(source, ENRICHED_INLINE_FILE_LINK_REGEX))
+    ).children?.map((block) => block.children?.map((child) => child.type).join(" "));
+    expect(paragraphs).toEqual([
+      "Text",
+      "Image",
+      "Image",
+      "Image",
+      "Image",
+      "Image",
+      "Image",
+      "Text",
+    ]);
+    expect(markdownForNativeParsing("![a](./a.png)\r\n![b](./b.png)")).toBe(
+      "![a](./a.png)\r\n\r\n![b](./b.png)",
+    );
+    expect(markdownForNativeParsing("![a](./a.png)\r![b](./b.png)")).toBe(
+      "![a](./a.png)\r\r![b](./b.png)",
+    );
+    expect(
+      markdownForNativeParsing(
+        "**Dialog** (native) ![a](./a.png)\n\n**Label**\n![b](./b.png)\nBuilt ![ci](./ci.svg) ok\n\nCI [![ci](./ci.svg)](https://ci)",
+      ),
+    ).toBe(
+      "**Dialog** (native)\n\n![a](./a.png)\n\n**Label**\n\n![b](./b.png)\n\nBuilt ![ci](./ci.svg) ok\n\nCI [![ci](./ci.svg)](https://ci)",
+    );
   });
 
   it("retains standalone audio players and image/video embeds in threads", () => {

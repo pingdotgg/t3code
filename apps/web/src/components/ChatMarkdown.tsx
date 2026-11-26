@@ -12,6 +12,7 @@ import {
   extractInlineCodeSpans,
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
+  parseMarkdownSandboxFileLink,
 } from "@t3tools/shared/markdownLinks";
 import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskEdits";
 import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
@@ -114,11 +115,11 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
-import { SharedTooltipProvider, SharedTooltipTrigger } from "./ui/shared-tooltip";
+import { SharedTooltipTrigger } from "./ui/shared-tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
-import { contextMenuSourceOf } from "../contextMenuSource";
+import { contextMenuSourceOf, openContextMenuFromKeyboard } from "../contextMenuSource";
 import {
   PreferredEditorEnvironmentRequiredError,
   useOpenInPreferredEditor,
@@ -249,6 +250,8 @@ interface ChatMarkdownProps {
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
+  /** Identifies a streaming reply across remounts, so text already shown does not fade in again. */
+  streamingId?: string | undefined;
   skills?: ReadonlyArray<ServerProviderSkill>;
   className?: string;
   lineBreaks?: boolean;
@@ -280,6 +283,7 @@ export interface ChatMarkdownContextReference {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 const NO_EXTENSIONS: MarkdownExtensions = {};
+const shownStreamingIds = new Set<string>();
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -443,6 +447,7 @@ function markdownUrlTransform(href: string) {
   if (parseThreadLinkHref(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
   if (isLocalEditorFileHref(href)) return href;
+  if (parseMarkdownSandboxFileLink(href)) return href;
   return rewriteMarkdownFileUriHref(href) ?? safeUrl(href);
 }
 
@@ -699,7 +704,7 @@ function useChatMarkdownState(
             target !== null &&
             resolveRemoteOpenState({
               target,
-              sshTarget: null,
+              routes: [],
               remoteOpenTargets: undefined,
               isDesktopRenderer: window.desktopBridge !== undefined,
               hostEnvironmentId: appAtomRegistry.get(hostEnvironmentIdAtom),
@@ -1427,7 +1432,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
               }) !== "app"
             ) {
               // Open desktop Alt-clicks before Chromium downloads them so link routers can read the held key.
-              if (isElectron && event.altKey) {
+              // Editor links also go over IPC: the desktop popup handler only passes web links.
+              if (isElectron && (event.altKey || isLocalEditorFileHref(href))) {
                 event.preventDefault();
                 event.stopPropagation();
                 void readLocalApi()
@@ -1452,6 +1458,22 @@ const CHAT_MARKDOWN_COMPONENTS = {
               if (isBrowserSettingsReadError(squashAtomCommandFailure(result))) return;
               void readLocalApi()?.shell.openExternal(href);
             });
+          }}
+          onAuxClick={(event) => {
+            // A middle-click raises no click event, and the desktop popup handler only passes web links.
+            if (!isElectron || event.button !== 1 || !href || !isLocalEditorFileHref(href)) return;
+            event.preventDefault();
+            void readLocalApi()
+              ?.shell.openExternal(href)
+              .catch((cause) =>
+                reportMarkdownActionFailure(
+                  { operation: "open-link-external", target: href },
+                  cause,
+                ),
+              );
+          }}
+          onKeyDown={(event) => {
+            if (href && faviconHost) openContextMenuFromKeyboard(event);
           }}
           onContextMenu={(event) => {
             if (!href || !faviconHost) return;
@@ -1580,7 +1602,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
       source.startsWith("[") && source.includes("](")
         ? source
         : `[${(label || fileLinkMeta.basename).replace(/[\\[\]]/g, "\\$&")}](${normalizedHref})`;
-    const chip = fileLinkChip(fileLinkMeta, copyMarkdown, normalizedHref);
+    // Media previews resolve the parsed host path; they do not understand the sandbox: scheme.
+    const chip = fileLinkChip(
+      fileLinkMeta,
+      copyMarkdown,
+      parseMarkdownSandboxFileLink(normalizedHref) ? undefined : normalizedHref,
+    );
     return isMarkdownFileLinkLabel(label, normalizedHref) ? (
       chip
     ) : (
@@ -2064,6 +2091,15 @@ function ChatMarkdown({
   renderInsights = false,
   ...props
 }: ChatMarkdownProps) {
+  const { isStreaming, streamingId } = props;
+  const [textAtMount] = useState(text);
+  const [remounted] = useState(
+    () => streamingId !== undefined && shownStreamingIds.has(streamingId),
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Records the reply outside React so the next mount after a thread switch or virtualized scroll knows it was shown.
+  useEffect(() => {
+    if (isStreaming && streamingId !== undefined) shownStreamingIds.add(streamingId);
+  }, [isStreaming, streamingId]);
   // Streaming re-renders only the last block; offsets for task edits, and extensions that read
   // the whole message, need the whole text.
   const streamingBlocks =
@@ -2093,22 +2129,22 @@ function ChatMarkdown({
           "text-sm leading-relaxed text-foreground/[calc(90%+var(--appearance-contrast-boost)/10)]",
         className,
       )}
-      data-streaming={componentState.isStreaming ? "" : undefined}
+      data-streaming={
+        componentState.isStreaming && (!remounted || text !== textAtMount) ? "" : undefined
+      }
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
-        <SharedTooltipProvider>
-          {blocks.map((source, index) => (
-            <MarkdownSource
-              // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
-              key={index}
-              text={source}
-              markdown={markdown}
-              // Every block before the last is finished, so its parse can be reused.
-              cache={!props.isStreaming || index < blocks.length - 1}
-            />
-          ))}
-        </SharedTooltipProvider>
+        {blocks.map((source, index) => (
+          <MarkdownSource
+            // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
+            key={index}
+            text={source}
+            markdown={markdown}
+            // Every block before the last is finished, so its parse can be reused.
+            cache={!props.isStreaming || index < blocks.length - 1}
+          />
+        ))}
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
         <ExpandedImageDialog preview={localMediaPreview} onClose={closeLocalMediaPreview} />
