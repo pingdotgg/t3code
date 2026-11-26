@@ -3982,6 +3982,29 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     "keeps restart-cancelled work through a stale run.updated",
     () => restartCancelledWorkSurvivesStaleRunUpdate,
   );
+  it.effect("keeps a run's explicit queue marker through a run.updated that omits it", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("explicit-queue-stale-update");
+      const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const update = (id: string, payload: typeof run) =>
+        store.apply({
+          id: EventId.make(`event:explicit-queue-stale-update:${id}`),
+          type: "run.updated",
+          threadId,
+          runId: run.id,
+          providerInstanceId,
+          occurredAt: now,
+          payload,
+        });
+      yield* update("marked", { ...run, explicitQueue: true });
+      yield* update("completed", { ...run, status: "completed", completedAt: now });
+      const updated = (yield* store.getThreadProjection(threadId)).runs[0];
+      assert.equal(updated?.status, "completed");
+      assert.equal(updated?.explicitQueue, true);
+    }),
+  );
   it.effect("records restart-cancelled work without regressing a run that completed since", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
