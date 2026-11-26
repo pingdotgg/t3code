@@ -12,7 +12,8 @@ const ATX_HEADING = /^ {0,3}#{1,6}(?:[ \t]|\r?$)/;
 const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})\r?$/;
 // A column-0 paragraph, quote or table after a blank line closes any open list, quote or table.
 const BLOCK_START = /^[\p{L}\p{N}`[!|>]/u;
-const LIST_ITEM = /^ {0,3}(?:[-*+]|\d{1,9}[.)])(?:[ \t]|\r?$)/;
+const LIST_ITEM = /^( {0,3}(?:[-*+]|\d{1,9}[.)]))([ \t]+|(?=\r?$))/;
+const BLOCK_QUOTE = /^ {0,3}>/;
 // CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
 const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<(?:script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
@@ -32,6 +33,19 @@ const HTML_STANDALONE_TAG =
   /^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:[ \t]+[A-Za-z_:][A-Za-z0-9_.:-]*(?:[ \t]*=[ \t]*(?:[^ \t\r"'=<>`]+|'[^']*'|"[^"]*"))?)*[ \t]*\/?>|<\/[A-Za-z][A-Za-z0-9-]*[ \t]*>)[ \t]*\r?$/;
 const BLANK_LINE = /^[ \t]*\r?$/;
 const closesAtBlankLine = (next: string) => BLANK_LINE.test(next);
+const CLOSES_ON_OPENING_LINE = Symbol();
+
+function listContentColumn(line: string, markerEnd: number, padding: string): number {
+  // CommonMark gives empty items and items starting with indented code one column of padding.
+  const contentStart = markerEnd + padding.length;
+  if (contentStart === line.length || line[contentStart] === "\r") return markerEnd + 1;
+  let column = markerEnd;
+  for (const character of padding) {
+    column += character === "\t" ? 4 - (column % 4) : 1;
+    if (column - markerEnd > 4) return markerEnd + 1;
+  }
+  return column;
+}
 
 // A <details> or <table> wraps the Markdown between its tags, across the blank lines that end
 // each HTML block, so a cut waits until the ones an HTML block opened are closed.
@@ -59,8 +73,10 @@ function openedWrappers(line: string): number {
   return opened;
 }
 
-/** Returns how to recognize the end of a block that `line` opens, or null for none. */
-function blockCloser(line: string): ((line: string) => boolean) | null {
+/** Returns how the block that `line` opens ends, or null for none. */
+function blockCloser(
+  line: string,
+): ((line: string) => boolean) | typeof CLOSES_ON_OPENING_LINE | null {
   const fence = FENCE_OPEN.exec(line)?.[1];
   if (fence) {
     return (next) => {
@@ -78,7 +94,9 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
   for (const [open, close] of SPANNING_BLOCKS) {
     const opener = open.exec(line)?.[0];
     if (opener === undefined) continue;
-    return close.test(line.slice(opener.length)) ? null : (next) => close.test(next);
+    return close.test(line.slice(opener.length))
+      ? CLOSES_ON_OPENING_LINE
+      : (next) => close.test(next);
   }
   // Other HTML blocks (CommonMark types 6 and 7) run until a blank line.
   return HTML_BLOCK_TAG.test(line) || HTML_STANDALONE_TAG.test(line) ? closesAtBlankLine : null;
@@ -145,7 +163,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterDefinition = false;
   let afterHeading = false;
   let openedFence = false;
-  let possibleList = false;
+  let listContentIndent = Infinity;
   let definitionChars = 0;
   let openWrappers = 0;
   let heldCut = 0;
@@ -172,23 +190,40 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           (afterBlankLine && BLOCK_START.test(line) && !LIST_ITEM.test(line)));
       if (cutPoint && openWrappers === 0) flush();
       else if (cutPoint) heldCut = lines.length;
-      closes = blockCloser(line);
+      const blockEnd = blockCloser(line);
+      closes = blockEnd === CLOSES_ON_OPENING_LINE ? null : blockEnd;
       const fence = FENCE_OPEN.test(line);
-      const shallowIndent = /^ ?[^ \t\r]/.test(line);
-      // Keep list context across blank lines and lazy paragraph continuations. A shallow
-      // block boundary ends it because list content needs at least two columns of indentation.
-      if (shallowIndent && (fence || ATX_HEADING.test(line) || THEMATIC_BREAK.test(line))) {
-        possibleList = false;
-      } else if (LIST_ITEM.test(line)) {
-        possibleList = true;
-      } else if (afterBlankLine && shallowIndent) {
-        possibleList = false;
+      const indent = /^ */.exec(line)![0].length;
+      const dedented = indent < listContentIndent && line[indent] !== "\t";
+      const afterFence = afterHeading && openedFence && dedented;
+      const thematicBreak = THEMATIC_BREAK.test(line);
+      const item = thematicBreak ? null : LIST_ITEM.exec(line);
+      if (dedented) {
+        if (item) {
+          listContentIndent = listContentColumn(line, item[1]!.length, item[2]!);
+        } else if (
+          !BLANK_LINE.test(line) &&
+          (afterBlankLine ||
+            afterFence ||
+            ATX_HEADING.test(line) ||
+            thematicBreak ||
+            BLOCK_QUOTE.test(line) ||
+            (blockEnd !== null && (blockEnd !== closesAtBlankLine || HTML_BLOCK_TAG.test(line))))
+        ) {
+          // Dedented prose can still be a lazy continuation until a block boundary.
+          listContentIndent = Infinity;
+        }
       }
-      openedFence = fence && (shallowIndent || !possibleList);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading,
       // a closing code fence or frontmatter, or another definition.
       const definition: boolean =
-        (first || afterBlankLine || afterDefinition || afterHeading) && isLinkDefinition(line);
+        (first ||
+          afterBlankLine ||
+          afterDefinition ||
+          afterFence ||
+          (afterHeading && !openedFence)) &&
+        isLinkDefinition(line);
+      openedFence = fence;
       afterDefinition = definition;
       if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
         definitions.push(line.trim());

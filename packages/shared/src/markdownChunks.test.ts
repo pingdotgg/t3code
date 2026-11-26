@@ -235,6 +235,22 @@ describe("splitMarkdown", () => {
     expect(result.chunks.map((chunk) => chunk.text)).toEqual([intro, appendix]);
   });
 
+  it.each([
+    ["an ordered item whose content starts farther right", "10. Item\n\n", ""],
+    ["an item padded to the next tab stop", "-\tItem\n\n", ""],
+    ["a one-space definition outside the list", "- Item\n", " "],
+    ["a column-zero definition outside the list", "- Item\n", ""],
+    ["a blockquote that ends the list", "- Item\n> quote\n", ""],
+    ["an HTML comment that ends the list", "- Item\n<!-- note -->\n", ""],
+    ["an HTML block that ends the list", "- Item\n<div>top level</div>\n\n", ""],
+    ["a math block that ends the list", "- Item\n$$\nx\n$$\n", ""],
+    ["an indented thematic break", "  - - -\n", ""],
+  ])("collects definitions after a fence following %s", (_, beforeFence, definitionIndent) => {
+    const definition = "[ref]: /target";
+    const text = beforeFence + "  ```sh\n  example\n  ```\n" + definitionIndent + definition;
+    expect(splitMarkdown(text).definitions).toBe(definition);
+  });
+
   it.each(["", " ", "  ", "   "])(
     "collects link definitions outside code with fence indent %j",
     (indent) => {
