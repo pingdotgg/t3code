@@ -1,4 +1,3 @@
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
@@ -51,25 +50,9 @@ describe("KeepAwake.inhibitorCommand", () => {
       command: "kde-inhibit",
       args: ["--power", "sh", "-c", 'echo && exec tail --pid="$0" -f /dev/null', "42"],
       stdin: "ignore",
-      refusedOn: "Inhibit failed",
     });
     expect(linuxCommand("X-Custom:KDE")?.command).toBe("kde-inhibit");
     expect(linuxCommand("ubuntu:GNOME")?.command).toBe("systemd-inhibit");
     expect(linuxCommand(undefined)?.command).toBe("systemd-inhibit");
   });
-});
-
-describe("KeepAwake.holdInhibitor", () => {
-  it.effect("fails while the helper keeps running when it reports a refused inhibitor", () =>
-    Effect.gen(function* () {
-      // kde-inhibit warns and still runs its command when PowerDevil refuses the inhibitor.
-      const error = yield* KeepAwake.holdInhibitor({
-        command: "sh",
-        args: ["-c", 'echo "Inhibit failed" >&2; echo; exec sleep 60'],
-        stdin: "ignore",
-        refusedOn: "Inhibit failed",
-      }).pipe(Effect.flip);
-      expect(error._tag).toBe("KeepAwakeInhibitorRefused");
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
 });

@@ -24,24 +24,22 @@ const RELEASE_GRACE = Duration.seconds(60);
 // ES_CONTINUOUS | ES_SYSTEM_REQUIRED, held by the calling thread until the script ends.
 const WINDOWS_HOLD_SCRIPT = `$t = Add-Type -Name Power -Namespace T3 -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$t::SetThreadExecutionState([uint32]2147483649); [Console]::Out.WriteLine()`;
 
-interface InhibitorCommand {
-  readonly command: string;
-  readonly args: ReadonlyArray<string>;
-  readonly stdin: "ignore" | "pipe";
-  readonly refusedOn?: string;
-}
-
 /**
  * Each command writes a line to stdout once it holds its inhibitor, holds it until it exits, and
- * exits on its own if the server dies. A command that keeps running after failing to take its
- * inhibitor names the stderr text it prints then in `refusedOn`.
+ * exits on its own if the server dies.
  */
 export function inhibitorCommand(
   platform: NodeJS.Platform,
   serverPid: number,
   isWsl: boolean,
   env: NodeJS.ProcessEnv,
-): InhibitorCommand | undefined {
+):
+  | {
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+      readonly stdin: "ignore" | "pipe";
+    }
+  | undefined {
   // logind inside the WSL VM cannot block Windows sleep. Windows cannot wait on a Linux pid, so
   // the hold ends when its stdin pipe closes, which also happens if the server dies.
   if (isWsl) {
@@ -68,12 +66,7 @@ export function inhibitorCommand(
       // KDE handles the lid itself by asking logind to suspend, which a logind sleep block refuses.
       // PowerDevil's own inhibitor blocks only idle sleep, like caffeinate -i.
       if (env.XDG_CURRENT_DESKTOP?.split(":").includes("KDE")) {
-        return {
-          command: "kde-inhibit",
-          args: ["--power", ...hold],
-          stdin: "ignore",
-          refusedOn: "Inhibit failed",
-        };
+        return { command: "kde-inhibit", args: ["--power", ...hold], stdin: "ignore" };
       }
       return {
         command: "systemd-inhibit",
@@ -138,15 +131,6 @@ const retryWithBackoff =
       Effect.retry(backoff),
     );
 
-class KeepAwakeInhibitorRefused extends Schema.TaggedError<KeepAwakeInhibitorRefused>()(
-  "KeepAwakeInhibitorRefused",
-  { stderr: Schema.String },
-) {
-  override get message(): string {
-    return `sleep inhibitor was refused: ${this.stderr}`;
-  }
-}
-
 class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExited>()(
   "KeepAwakeInhibitorExited",
   { exitCode: Schema.Number, stderr: Schema.String },
@@ -155,63 +139,6 @@ class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExit
     return `sleep inhibitor exited with code ${this.exitCode}${this.stderr ? `: ${this.stderr}` : ""}`;
   }
 }
-
-/** Holds `command`'s inhibitor until interrupted; fails when it exits or is refused. */
-export const holdInhibitor = Effect.fn("KeepAwake.holdInhibitor")(function* (
-  command: InhibitorCommand,
-) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const child = yield* spawner.spawn(
-    // Leave `detached` at its default (own process group off Windows): kde-inhibit leaves its
-    // child running on SIGTERM, so releasing the hold must signal the whole group.
-    ChildProcess.make(command.command, command.args, {
-      shell: false,
-      stdin: command.stdin,
-      stdout: "pipe",
-      stderr: "pipe",
-    }),
-  );
-  const stderr = yield* Ref.make("");
-  const { refusedOn } = command;
-  const readStderr = yield* child.stderr.pipe(
-    Stream.decodeText(),
-    Stream.runForEach((chunk) =>
-      Ref.updateAndGet(stderr, (text) => text + chunk).pipe(
-        Effect.flatMap((text) =>
-          refusedOn !== undefined && text.includes(refusedOn)
-            ? Effect.fail(new KeepAwakeInhibitorRefused({ stderr: text.trim() }))
-            : Effect.void,
-        ),
-      ),
-    ),
-    Effect.forkScoped,
-  );
-  const held = yield* Ref.make(false);
-  yield* Effect.addFinalizer(() =>
-    Effect.when(Effect.logInfo("keep-awake released sleep inhibitor"), Ref.get(held)),
-  );
-  yield* child.stdout.pipe(
-    Stream.take(1),
-    Stream.runForEach(() =>
-      Ref.set(held, true).pipe(
-        Effect.andThen(
-          Effect.logInfo("keep-awake holding sleep inhibitor", { pid: Number(child.pid) }),
-        ),
-      ),
-    ),
-    Effect.forkScoped,
-  );
-  const exited = Effect.gen(function* () {
-    const exitCode = yield* child.exitCode;
-    yield* Fiber.join(readStderr);
-    return yield* new KeepAwakeInhibitorExited({
-      exitCode: Number(exitCode),
-      stderr: (yield* Ref.get(stderr)).trim(),
-    });
-  });
-  // A refusal ends the hold at once so the retry runs, instead of waiting for the run to end.
-  return yield* Effect.raceFirst(exited, Fiber.join(readStderr).pipe(Effect.andThen(Effect.never)));
-}, Effect.scoped);
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -281,8 +208,44 @@ export const layer = Layer.effectDiscard(
       }),
     );
 
-    const hold = holdInhibitor(command).pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    const holdOnce = Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        // Leave `detached` at its default (own process group off Windows): kde-inhibit leaves its
+        // child running on SIGTERM, so releasing the hold must signal the whole group.
+        ChildProcess.make(command.command, command.args, {
+          shell: false,
+          stdin: command.stdin,
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+      const stderr = yield* child.stderr.pipe(
+        Stream.decodeText(),
+        Stream.mkString,
+        Effect.forkScoped,
+      );
+      const held = yield* Ref.make(false);
+      yield* Effect.addFinalizer(() =>
+        Effect.when(Effect.logInfo("keep-awake released sleep inhibitor"), Ref.get(held)),
+      );
+      yield* child.stdout.pipe(
+        Stream.take(1),
+        Stream.runForEach(() =>
+          Ref.set(held, true).pipe(
+            Effect.andThen(
+              Effect.logInfo("keep-awake holding sleep inhibitor", { pid: Number(child.pid) }),
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      const exitCode = yield* child.exitCode;
+      return yield* new KeepAwakeInhibitorExited({
+        exitCode: Number(exitCode),
+        stderr: (yield* Fiber.join(stderr)).trim(),
+      });
+    }).pipe(Effect.scoped);
+    const hold = holdOnce.pipe(
       retryWithBackoff("keep-awake sleep inhibitor stopped"),
       Effect.ignore,
     );
