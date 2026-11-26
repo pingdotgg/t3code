@@ -1,7 +1,9 @@
 import {
+  SPEECH_SYNTHESIS_LEVEL_STEPS,
   SPEECH_SYNTHESIS_MAX_TEXT,
   type EnvironmentId,
   type ReadAloudSettings,
+  type SpeechSynthesisLevels,
   type SpeechSynthesisTimings,
   type SpeechSynthesisWord,
 } from "@t3tools/contracts";
@@ -109,6 +111,34 @@ export type PlaybackClock = {
 };
 
 /**
+ * The loudness levels an environment measured for a synthesis, as they arrive, by seconds into its
+ * audio. Players whose audio sampling misses streamed audio draw their meter from these.
+ */
+export function createSpeechLevels() {
+  let windowSeconds = 0;
+  const values: number[] = [];
+  return {
+    /** Levels received so far, which the next request continues after. */
+    get count() {
+      return values.length;
+    },
+    add(levels: SpeechSynthesisLevels) {
+      // A batch that skips levels would misplace every later one.
+      if (levels.start > values.length || !(levels.windowSeconds > 0)) return;
+      windowSeconds = levels.windowSeconds;
+      values.length = levels.start;
+      for (const value of levels.values) values.push(value / SPEECH_SYNTHESIS_LEVEL_STEPS);
+    },
+    /** From 0 to 1; silent past the levels received; `undefined` until any arrive. */
+    at(seconds: number) {
+      if (!values.length) return undefined;
+      // The epsilon keeps a window's own start, such as 0.15 / 0.05, inside that window.
+      return values[Math.floor(Math.max(0, seconds) / windowSeconds + 1e-9)] ?? 0;
+    },
+  };
+}
+
+/**
  * Follows a synthesis' word timings on its audio clock. Players call `refresh` on each media event
  * that moves the clock; between events one timer waits for the next word, not a frame loop.
  * Words come from the environment; when it sends none, they are estimated once it reports the
@@ -116,10 +146,16 @@ export type PlaybackClock = {
  */
 export function createTimedWords(input: {
   readonly text: string;
-  readonly load: (after: number, signal: AbortSignal) => Promise<SpeechSynthesisTimings>;
+  /** `levelsAfter` asks for loudness levels too; loaders that ignore it get none. */
+  readonly load: (
+    after: number,
+    signal: AbortSignal,
+    levelsAfter: number,
+  ) => Promise<SpeechSynthesisTimings>;
   readonly clock: () => PlaybackClock;
 }) {
   const loading = new AbortController();
+  const levels = createSpeechLevels();
   const listeners = new Set<(word: SpokenWord | null) => void>();
   let words: ReadonlyArray<SpeechSynthesisWord> = [];
   let estimated = false;
@@ -153,8 +189,9 @@ export function createTimedWords(input: {
   const load = async () => {
     const received: SpeechSynthesisWord[] = [];
     for (;;) {
-      const timings = await input.load(received.length, loading.signal);
+      const timings = await input.load(received.length, loading.signal, levels.count);
       received.push(...timings.words);
+      if (timings.levels) levels.add(timings.levels);
       words = received;
       if (timings.done && words.length === 0 && timings.durationSeconds) {
         words = estimateWordTimings(input.text, timings.durationSeconds);
@@ -174,6 +211,8 @@ export function createTimedWords(input: {
       };
     },
     refresh,
+    /** How loud the audio is `seconds` in, from 0 to 1; `undefined` until levels arrive. */
+    levelAt: (seconds: number) => levels.at(seconds),
     /** When the word holding offset `at` starts, once its timing has arrived. */
     secondsAt: (at: number) => {
       // An estimate can land words early or late, so seeking to one skips or repeats speech.

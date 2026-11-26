@@ -3,6 +3,7 @@ import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId } from "@t3tools/contracts";
 import {
   createReadAloudController,
   createReadAloudWarmup,
+  createSpeechLevels,
   createTimedWords,
   type SpeechPlayback,
   type SpokenWord,
@@ -446,4 +447,40 @@ it("follows the environment's word timings on the audio clock and estimates them
   } finally {
     vi.useRealTimers();
   }
+});
+
+it("looks up the environment's loudness levels by seconds into the audio as batches arrive", () => {
+  const levels = createSpeechLevels();
+  expect(levels.at(0)).toBeUndefined();
+  levels.add({ windowSeconds: 0.05, start: 0, values: [0, 10, 20] });
+  expect([levels.at(0.01), levels.at(0.07), levels.at(0.149), levels.at(-1)]).toEqual([
+    0, 0.5, 1, 0,
+  ]);
+  // Past the levels received, the meter is silent until more arrive.
+  expect(levels.at(0.2)).toBe(0);
+  // A batch that skips levels is dropped; one that overlaps replaces the overlap.
+  levels.add({ windowSeconds: 0.05, start: 5, values: [20] });
+  expect(levels.count).toBe(3);
+  levels.add({ windowSeconds: 0.05, start: 2, values: [4, 8] });
+  expect([levels.count, levels.at(0.1), levels.at(0.15)]).toEqual([4, 0.2, 0.4]);
+});
+
+it("asks for levels after those it has and answers them on the audio clock", async () => {
+  const requests: number[] = [];
+  const batches = [
+    { words: [], done: false, levels: { windowSeconds: 0.05, start: 0, values: [10, 10] } },
+    { words: [], done: true, levels: { windowSeconds: 0.05, start: 2, values: [20] } },
+  ];
+  const timed = createTimedWords({
+    text: "one",
+    load: async (_after, _signal, levelsAfter) => {
+      requests.push(levelsAfter);
+      return batches[requests.length - 1]!;
+    },
+    clock: () => ({ seconds: 0, rate: 1, playing: true }),
+  });
+  await vi.waitFor(() => expect(timed.levelAt(0.11)).toBe(1));
+  expect(requests).toEqual([0, 2]);
+  expect(timed.levelAt(0.06)).toBe(0.5);
+  timed.stop();
 });

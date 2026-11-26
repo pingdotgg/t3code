@@ -1,11 +1,22 @@
-import { startSpeechSynthesis } from "@t3tools/client-runtime/voice-input";
-import { DEFAULT_READ_ALOUD_SETTINGS, EnvironmentId } from "@t3tools/contracts";
+import {
+  getSpeechSynthesisTimings,
+  startSpeechSynthesis,
+} from "@t3tools/client-runtime/voice-input";
+import {
+  DEFAULT_READ_ALOUD_SETTINGS,
+  EnvironmentId,
+  type SpeechSynthesisTimings,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import * as Speech from "expo-speech";
 import { AppState, Platform } from "react-native";
 import { createAudioPlayer, setAudioModeAsync, type AudioStatus } from "expo-audio";
 import { acquireAudioSession, releaseAudioSession } from "../../lib/audioSession";
 import { readAloudController } from "./playback";
+
+const timings = vi.hoisted(() => ({
+  next: (): SpeechSynthesisTimings => ({ words: [], done: true }),
+}));
 
 vi.mock("react-native", () => ({
   AppState: {
@@ -59,7 +70,7 @@ vi.mock("../voice-input/voiceDestination", async () => {
             speedAppliedByProvider: operation.provider !== "openrouter",
           }
         : operation.kind === "timings"
-          ? { words: [], done: true }
+          ? timings.next()
           : { url: "https://host.test/api/voice/synthesis/audio?token=stream", token: "stream" },
   };
 });
@@ -307,3 +318,50 @@ it.each(["system", "xai"] as const)(
     }
   },
 );
+
+it("draws the meter from the environment's levels on the audio clock", async () => {
+  using _timings = vi.spyOn(timings, "next").mockReturnValue({
+    words: [],
+    done: true,
+    levels: { windowSeconds: 0.05, start: 0, values: [0, 10, 20] },
+  });
+  const player = {
+    play: vi.fn(),
+    pause: vi.fn(),
+    release: vi.fn(),
+    setPlaybackRate: vi.fn(),
+    setActiveForLockScreen: vi.fn(),
+    addListener: vi.fn(),
+    isAudioSamplingSupported: false,
+    currentTime: 0.06,
+    playing: true,
+  };
+  vi.mocked(createAudioPlayer, { partial: true }).mockReturnValue(player);
+  const playing = Promise.withResolvers<void>();
+  const unsubscribe = readAloudController.subscribe(() => {
+    if (readAloudController.getSnapshot().status === "playing") playing.resolve();
+  });
+  const levels: number[] = [];
+  const loud = Promise.withResolvers<void>();
+  const unlevel = readAloudController.subscribeLevel((level) => {
+    levels.push(level);
+    if (level === 1) loud.resolve();
+  });
+  const run = readAloudController.start("levels", "reply", {
+    ...DEFAULT_READ_ALOUD_SETTINGS,
+    provider: "elevenlabs",
+    environmentId: EnvironmentId.make("host"),
+  });
+  try {
+    await playing.promise;
+    await vi.waitFor(() => expect(levels).toContain(0.5));
+    expect(getSpeechSynthesisTimings).toHaveBeenCalledWith(expect.anything(), "stream", 0, 0);
+    player.currentTime = 0.12;
+    await loud.promise;
+  } finally {
+    unlevel();
+    unsubscribe();
+    readAloudController.stop();
+    await run;
+  }
+});

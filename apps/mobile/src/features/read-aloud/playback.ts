@@ -26,7 +26,7 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentSession } from "../../state/session";
 import { createAudioPlaybackSession, disposeAudioPlayer } from "../../lib/audioSession";
 import { runSpeech } from "../voice-input/voiceDestination";
-import { throttleAudioLevels } from "./readAloudLevel";
+import { SPEECH_LEVEL_INTERVAL_MS, throttleAudioLevels } from "./readAloudLevel";
 
 function pauseInBackground(settings: ReadAloudSettings) {
   const shouldPause = !settings.backgroundPlayback && AppState.currentState !== "active";
@@ -196,8 +196,20 @@ export const readAloudController = createReadAloudController(
       settings.backgroundPlayback,
     );
     let timed: ReturnType<typeof createTimedWords> | null = null;
+    const timedWords = () =>
+      (timed ??= createTimedWords({
+        text,
+        load: (after, signal, levelsAfter) =>
+          runSpeech(getSpeechSynthesisTimings(prepared, token, after, levelsAfter), signal),
+        clock: () => ({
+          seconds: player.currentTime,
+          rate: player.playbackRate,
+          playing: player.playing,
+        }),
+      }));
     const levelListeners = new Set<(level: number) => void>();
     let sampling: { remove: () => void } | null = null;
+    let metering: ReturnType<typeof setInterval> | null = null;
     const reportLevel = (level: number) => {
       for (const listener of levelListeners) listener(level);
     };
@@ -206,6 +218,11 @@ export const readAloudController = createReadAloudController(
       sampling.remove();
       sampling = null;
       player.setAudioSamplingEnabled(false);
+    };
+    const stopLevels = () => {
+      stopSampling();
+      if (metering) clearInterval(metering);
+      metering = null;
       reportLevel(0);
     };
     let done: () => void = () => {};
@@ -247,7 +264,7 @@ export const readAloudController = createReadAloudController(
       },
       stop: () => {
         timed?.stop();
-        stopSampling();
+        stopLevels();
         levelListeners.clear();
         stopWatching();
         session.stop();
@@ -255,19 +272,7 @@ export const readAloudController = createReadAloudController(
         done();
       },
       finished,
-      words: (listener) => {
-        timed ??= createTimedWords({
-          text,
-          load: (after, signal) =>
-            runSpeech(getSpeechSynthesisTimings(prepared, token, after), signal),
-          clock: () => ({
-            seconds: player.currentTime,
-            rate: player.playbackRate,
-            playing: player.playing,
-          }),
-        });
-        return timed.subscribe(listener);
-      },
+      words: (listener) => timedWords().subscribe(listener),
       seek: (at) => {
         const seconds = timed?.secondsAt(at);
         // The synthesis stream has no byte ranges, so its length stays unknown (0) and a seek can
@@ -282,16 +287,31 @@ export const readAloudController = createReadAloudController(
       // Audio a provider made at `settings.speed` plays at 1 for that speed.
       setSpeed: (speed) => player.setPlaybackRate(speedApplied ? speed / settings.speed : speed),
       levels: (listener) => {
-        if (!player.isAudioSamplingSupported) return () => {};
         levelListeners.add(listener);
-        if (!sampling) {
-          // Android samples only with the microphone permission; without it the meter stays still.
+        const words = timedWords();
+        // The environment measures its audio's loudness; the meter follows it on the audio clock,
+        // since iOS never hands sample buffers of streamed audio to the player's tap.
+        metering ??= setInterval(() => {
+          const level = words.levelAt(player.currentTime);
+          if (level === undefined) return;
+          stopSampling();
+          if (player.playing) reportLevel(level);
+        }, SPEECH_LEVEL_INTERVAL_MS);
+        // Until levels arrive, and from environments that send none, the player samples its
+        // audio. Android samples only with the microphone permission; without it the meter stays
+        // still.
+        if (!sampling && player.isAudioSamplingSupported) {
           player.setAudioSamplingEnabled(true);
-          sampling = player.addListener("audioSampleUpdate", throttleAudioLevels(reportLevel));
+          sampling = player.addListener(
+            "audioSampleUpdate",
+            throttleAudioLevels((level) => {
+              if (words.levelAt(player.currentTime) === undefined) reportLevel(level);
+            }),
+          );
         }
         return () => {
           levelListeners.delete(listener);
-          if (levelListeners.size === 0) stopSampling();
+          if (levelListeners.size === 0) stopLevels();
         };
       },
     };

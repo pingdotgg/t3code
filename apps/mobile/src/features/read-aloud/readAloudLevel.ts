@@ -2,6 +2,8 @@
 const SILENCE_DECIBELS = -50;
 const PEAK_DECIBELS = -10;
 const LEVELS_PER_SECOND = 15;
+/** How often the meter reads the environment's levels while audio plays. */
+export const SPEECH_LEVEL_INTERVAL_MS = 80;
 
 type AudioChannels = ReadonlyArray<{ readonly frames: ReadonlyArray<number> }>;
 

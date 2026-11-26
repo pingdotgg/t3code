@@ -427,18 +427,26 @@ export const startSpeechSynthesis = (
   );
 };
 
-/** Word timings of a started synthesis after the first `after`; the environment holds the request until there are some. */
+/**
+ * Word timings of a started synthesis after the first `after`, and its loudness levels after the
+ * first `levelsAfter` when set; the environment holds the request until there are some.
+ */
 export const getSpeechSynthesisTimings = (
   prepared: PreparedConnection,
   token: string,
   after: number,
+  levelsAfter?: number,
 ) =>
   request({
     group: "voice",
     prepared,
     method: "POST",
     path: (urls) => urls.synthesisTimings(),
-    run: ({ client, headers }) => client.synthesisTimings({ headers, payload: { token, after } }),
+    run: ({ client, headers }) =>
+      client.synthesisTimings({
+        headers,
+        payload: { token, after, ...(levelsAfter === undefined ? {} : { levelsAfter }) },
+      }),
   });
 
 /** Loads the environment's local model ahead of playback; an empty model is its default. */
