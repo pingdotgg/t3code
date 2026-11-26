@@ -4497,6 +4497,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // against where this push goes as the last step before Git is started.
     const approved = options?.approved;
     const source = approved?.head ?? "HEAD";
+    // An approved push writes to the one remote the person was asked about, whatever Git's
+    // configuration says about pushing submodules along with it.
+    const onlyThere = approved === undefined ? [] : ["--recurse-submodules=no"];
     const notAsApproved = new GitCommandError({
       ...gitCommandContext({ operation: "GitVcsDriver.pushCurrentBranch", cwd, args: ["push"] }),
       detail: "The branch or where it is pushed changed after the push was approved.",
@@ -4536,7 +4539,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
-        ["push", "--", requestedRemoteName, `${source}:refs/heads/${publishBranch}`],
+        ["push", ...onlyThere, "--", requestedRemoteName, `${source}:refs/heads/${publishBranch}`],
         { timeoutMs: null, pushes: true },
       );
       return {
@@ -4654,7 +4657,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? "GitVcsDriver.pushCurrentBranch.pushOwnBranch"
           : "GitVcsDriver.pushCurrentBranch.pushWithUpstream",
         cwd,
-        ["push", "--", remoteName, `${source}:refs/heads/${publishBranch}`],
+        ["push", ...onlyThere, "--", remoteName, `${source}:refs/heads/${publishBranch}`],
         { timeoutMs: null, pushes: true },
       );
       return {
@@ -4669,7 +4672,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGitWithStableDiagnostics(
         "GitVcsDriver.pushCurrentBranch.pushUpstream",
         cwd,
-        ["push", "--", destination.remoteName, `${source}:refs/heads/${destination.branchName}`],
+        [
+          "push",
+          ...onlyThere,
+          "--",
+          destination.remoteName,
+          `${source}:refs/heads/${destination.branchName}`,
+        ],
         { timeoutMs: null, pushes: true },
       );
       return {

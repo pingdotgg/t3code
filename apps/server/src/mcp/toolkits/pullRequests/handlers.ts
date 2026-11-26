@@ -332,7 +332,12 @@ const openingAsks = (opening: GitManager.PullRequestOpening, isPrivate: boolean)
   const { push } = opening;
   if (push === null) {
     // Nothing is pushed, so the pull request is of the branch as its remote has it.
-    const on = opening.headRef === null ? "" : ` (${McpToolAccess.quoted(opening.headRef)})`;
+    // On a branch behind its remote, the pull request shows the remote's commits.
+    const at =
+      opening.headRefCommit === null || opening.headRefCommit === opening.head
+        ? ""
+        : ` at ${shortCommit(opening.headRefCommit)}`;
+    const on = opening.headRef === null ? "" : ` (${McpToolAccess.quoted(opening.headRef)}${at})`;
     return { action: "Open", target: `a pull request for ${branch}${on} ${base}` };
   }
   const to =

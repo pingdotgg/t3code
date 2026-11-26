@@ -11201,6 +11201,46 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("a push approved as named does not push submodules along with it", () =>
+      Effect.gen(function* () {
+        const repo = yield* repoToPush();
+        const as = ["-c", "user.email=test@example.com", "-c", "user.name=Test"];
+        const local = ["-c", "protocol.file.allow=always"];
+        // A submodule with a remote of its own, and a commit that remote does not have.
+        const subRemote = yield* makeTmpDir("git-submodule-remote-");
+        yield* git(subRemote, ["init", "--bare"]);
+        const seed = yield* makeTmpDir("git-submodule-seed-");
+        yield* git(seed, ["init"]);
+        NodeFS.writeFileSync(NodePath.join(seed, "a.txt"), "a\n");
+        yield* git(seed, ["add", "a.txt"]);
+        yield* git(seed, [...as, "commit", "-m", "First"]);
+        yield* git(seed, ["push", subRemote, "HEAD:refs/heads/main"]);
+        yield* git(repo.cwd, [...local, "submodule", "add", "-b", "main", subRemote, "sub"]);
+        const sub = NodePath.join(repo.cwd, "sub");
+        NodeFS.writeFileSync(NodePath.join(sub, "b.txt"), "b\n");
+        yield* git(sub, ["add", "b.txt"]);
+        yield* git(sub, [...as, "commit", "-m", "Unpublished"]);
+        yield* git(repo.cwd, ["add", "sub", ".gitmodules"]);
+        yield* git(repo.cwd, [...as, "commit", "-m", "Add submodule"]);
+        yield* git(repo.cwd, ["config", "push.recurseSubmodules", "on-demand"]);
+        const subRemoteHead = git(repo.cwd, ["ls-remote", subRemote, "refs/heads/main"]);
+        const before = yield* subRemoteHead;
+
+        const head = yield* git(repo.cwd, ["rev-parse", "HEAD"]);
+        const pushed = yield* repo.driver.pushCurrentBranch(repo.cwd, null, {
+          approved: {
+            branch: "topic",
+            head,
+            remoteName: "origin",
+            remoteBranch: "topic",
+            urls: yield* repo.driver.pushAddresses(repo.cwd, "origin"),
+          },
+        });
+        assert.deepInclude(pushed, { status: "pushed" });
+        assert.equal(yield* subRemoteHead, before);
+      }),
+    );
+
     it.effect("an approved push runs the approved hook files and no other", () =>
       Effect.gen(function* () {
         const repo = yield* repoToPush();
