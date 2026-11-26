@@ -20,16 +20,21 @@ function citationLabel(path: string): string {
   return normalized.slice(normalized.lastIndexOf("/") + 1) || normalized || "File";
 }
 
+const ABSOLUTE_OR_URI_PATH_PATTERN =
+  /^(?:[a-z]:[\\/]|[\\/]|[a-z][a-z\d+.-]*:\/\/|(?:file|sandbox):\/)/i;
+const COLON_BEFORE_SLASH_PATTERN = /^[^/]*:/;
+
 function markdownDestinationPath(path: string): string {
   const destination = path
     .replaceAll("%", "%25")
     .replaceAll("#", "%23")
     .replaceAll("?", "%3F")
     .replace(/^\s+|\s+$/g, (whitespace) => encodeURIComponent(whitespace));
-  // Only disambiguate rejected relative paths; recognized links keep workspace lookup behavior.
-  return parseMarkdownFileLink(destination) || /^(?:[a-z][a-z\d+.-]*:|[\\/])/i.test(path)
-    ? destination
-    : `./${destination}`;
+  if (ABSOLUTE_OR_URI_PATH_PATTERN.test(path)) return destination;
+  // Relative paths with a colon before the first slash look like URI schemes to HTML sanitizers.
+  return COLON_BEFORE_SLASH_PATTERN.test(path) || !parseMarkdownFileLink(destination)
+    ? `./${destination}`
+    : destination;
 }
 
 export function resolveCodexFileCitationLink(
