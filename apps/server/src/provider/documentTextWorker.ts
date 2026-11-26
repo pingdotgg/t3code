@@ -22,9 +22,14 @@ type TextPart =
   | typeof LINE_START
   | typeof THEMATIC_BREAK
   | { imageDescription: string }
-  | { fallback: string };
+  | { fallback: string }
+  | { notebookOutput: Iterable<string> };
+
+const NOTEBOOK_OUTPUT_HEADING = "\nOutput:\n";
+const NOTEBOOK_OUTPUT_TEXT = /[^\s\0]/u;
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
+const TRAILING_HIGH_SURROGATE = /[\uD800-\uDBFF]$/;
 // Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
 // phonetic guides, paragraph properties such as tab-stop definitions, drawing anchor layout
 // values and encoded field data.
@@ -612,7 +617,7 @@ async function archive(path: string): Promise<Map<string, string>> {
 
 const NOTEBOOK_CELL_TYPES = ["code", "markdown", "raw"];
 
-function* notebook(source: string): Generator<string, void> {
+function* notebook(source: string): Generator<TextPart, void> {
   const book: unknown = JSON.parse(source);
   if (!book || typeof book !== "object" || !("cells" in book) || !Array.isArray(book.cells))
     throw new Error("Invalid notebook");
@@ -628,6 +633,41 @@ function* notebook(source: string): Generator<string, void> {
     const plain = NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
     return stream ? terminalOutputCollapseRedraws(plain) : plain;
   }
+  function* cellOutputParts(outputs: readonly unknown[]): Generator<string, void> {
+    for (const output of outputs) {
+      if (!output || typeof output !== "object") continue;
+      if ("text" in output)
+        yield outputText(output.text, "output_type" in output && output.output_type === "stream");
+      else if (
+        "data" in output &&
+        output.data &&
+        typeof output.data === "object" &&
+        ("text/plain" in output.data || "text/markdown" in output.data)
+      ) {
+        const plain = outputText(
+          "text/plain" in output.data ? output.data["text/plain"] : undefined,
+        );
+        yield "text/markdown" in output.data && !NOTEBOOK_OUTPUT_TEXT.test(plain)
+          ? outputText(output.data["text/markdown"])
+          : plain;
+      } else if ("output_type" in output && output.output_type === "error") {
+        const name = [...lines("ename" in output ? output.ename : undefined)].join("");
+        const value = [...lines("evalue" in output ? output.evalue : undefined)].join("");
+        const plain = NodeUtil.stripVTControlCharacters(name + value);
+        if (NOTEBOOK_OUTPUT_TEXT.test(plain)) {
+          yield name;
+          if ("evalue" in output) yield ": " + value;
+        } else yield plain;
+        yield "\n";
+        if ("traceback" in output)
+          for (const line of lines(output.traceback)) {
+            yield NodeUtil.stripVTControlCharacters(line);
+            yield "\n";
+          }
+      }
+      yield "\n";
+    }
+  }
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
     if (!cell || typeof cell !== "object") continue;
@@ -635,39 +675,8 @@ function* notebook(source: string): Generator<string, void> {
     const kind = NOTEBOOK_CELL_TYPES.find((type) => type === cellType) ?? "markdown";
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
-    if ("outputs" in cell && Array.isArray(cell.outputs) && cell.outputs.length > 0) {
-      yield "\nOutput:\n";
-      for (const output of cell.outputs) {
-        if (!output || typeof output !== "object") continue;
-        if ("text" in output)
-          yield outputText(output.text, "output_type" in output && output.output_type === "stream");
-        else if (
-          "data" in output &&
-          output.data &&
-          typeof output.data === "object" &&
-          ("text/plain" in output.data || "text/markdown" in output.data)
-        ) {
-          const plain = outputText(
-            "text/plain" in output.data ? output.data["text/plain"] : undefined,
-          );
-          yield "text/markdown" in output.data && !plain.replaceAll("\0", "").trim()
-            ? outputText(output.data["text/markdown"])
-            : plain;
-        } else if ("output_type" in output && output.output_type === "error") {
-          if ("ename" in output) yield* lines(output.ename);
-          if ("evalue" in output) {
-            yield ": ";
-            yield* lines(output.evalue);
-          }
-          yield "\n";
-          if ("traceback" in output)
-            for (const line of lines(output.traceback)) {
-              yield NodeUtil.stripVTControlCharacters(line);
-              yield "\n";
-            }
-        }
-        yield "\n";
-      }
+    if ("outputs" in cell && Array.isArray(cell.outputs)) {
+      yield { notebookOutput: cellOutputParts(cell.outputs) };
     }
     yield "\n\n";
   }
@@ -1155,6 +1164,11 @@ export async function extractDocumentText(path: string, extension: string): Prom
   let endsWithWord = false;
   let afterImageDescription = false;
   let truncated = false;
+  const takeRaw = (raw: string) => {
+    const value = raw.slice(0, remaining).replaceAll("\0", "");
+    remaining -= Math.min(raw.length, remaining);
+    return value;
+  };
   try {
     // Charge raw text before normalization so repeated whitespace also exhausts the budget.
     for await (let part of document(path, extension)) {
@@ -1187,6 +1201,32 @@ export async function extractDocumentText(path: string, extension: string): Prom
       else if ("imageDescription" in part) {
         raw = part.imageDescription;
         isImageDescription = true;
+      } else if ("notebookOutput" in part) {
+        // Charge leading whitespace as it arrives, but render it only with readable output.
+        let pending: string | undefined = "";
+        for (const output of part.notebookOutput) {
+          if (pending !== undefined) {
+            if (NOTEBOOK_OUTPUT_TEXT.test(output.slice(0, remaining))) {
+              const roomAfterHeading = Math.max(0, remaining - NOTEBOOK_OUTPUT_HEADING.length);
+              const fittingOutput =
+                output.length < roomAfterHeading
+                  ? output
+                  : output.slice(0, roomAfterHeading).replace(TRAILING_HIGH_SURROGATE, "");
+              if (!NOTEBOOK_OUTPUT_TEXT.test(fittingOutput)) throw new Truncation("Output budget");
+              result += takeRaw(NOTEBOOK_OUTPUT_HEADING) + pending;
+              pending = undefined;
+              midLine = false;
+            }
+          }
+          const value = takeRaw(output);
+          if (pending !== undefined) pending += value;
+          else {
+            result += value;
+            midLine = endsMidLine(value) ?? midLine;
+          }
+          if (remaining === 0) throw new Truncation("Output budget");
+        }
+        continue;
       } else {
         if (started) continue;
         raw = part.fallback;
@@ -1211,8 +1251,7 @@ export async function extractDocumentText(path: string, extension: string): Prom
         /^\u00ad*[\p{L}\p{M}\p{N}_]/u.test(raw)
       )
         raw = " " + raw;
-      let value = raw.slice(0, remaining).replaceAll("\0", "");
-      remaining -= Math.min(raw.length, remaining);
+      let value = takeRaw(raw);
       if (cellDepth) {
         value = value.replaceAll(/\s+/g, " ");
         const trimmed = value.trim();
@@ -1247,5 +1286,5 @@ export async function extractDocumentText(path: string, extension: string): Prom
   }
   result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
   if (!result && !truncated) throw new Error("No text extracted");
-  return truncated ? result.replace(/[\uD800-\uDBFF]$/, "").trimEnd() + TRUNCATED : result;
+  return truncated ? result.replace(TRAILING_HIGH_SURROGATE, "").trimEnd() + TRUNCATED : result;
 }
