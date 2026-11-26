@@ -5177,12 +5177,20 @@ describe("AcpAdapterV2", () => {
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 1 }),
       );
-      const items = Array.from(
+      const events = Array.from(
         yield* runtime.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
         ),
-      ).flatMap((event) => (event.type === "turn_item.updated" ? [event.turnItem] : []));
+      );
+      const items = events.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const terminal = events.at(-1);
+      assert.isTrue(
+        terminal?.type === "turn.terminal" && terminal.status === "completed",
+        "an error notice does not fail the turn",
+      );
 
       const initialize = Array.from(yield* Queue.takeAll(protocolEvents)).find(
         (event) => event.direction === "outgoing" && rawProtocolMethod(event) === "initialize",
@@ -5199,8 +5207,16 @@ describe("AcpAdapterV2", () => {
       const title =
         "skill discovery warning: candidate was skipped because its metadata is invalid";
       assert.deepEqual(
-        items.flatMap((item) => (item.type === "system_notice" ? [item.message] : [])),
-        [title],
+        items.flatMap((item) =>
+          item.type === "system_notice" ? [{ message: item.message, level: item.level }] : [],
+        ),
+        [
+          { message: title, level: "info" },
+          { message: "warning notice", level: "warning" },
+          { message: "error notice", level: "error" },
+          { message: "_mock.custom notice", level: "info" },
+        ],
+        "ACP notice severities map to system notice levels",
       );
       const replies = new Map(
         items.flatMap((item) => (item.type === "assistant_message" ? [[item.id, item.text]] : [])),
