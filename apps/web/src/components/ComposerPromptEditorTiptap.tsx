@@ -556,6 +556,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
       if (!/\s/.test(doc.textBetween(end + 1, end + 2, undefined, "\uFFFC"))) {
         chain.command(({ tr }) => {
           tr.insertText(" ", end);
+          tr.setSelection(TextSelection.create(tr.doc, end + 1));
           return true;
         });
       }
