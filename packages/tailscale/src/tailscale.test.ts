@@ -15,6 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   ensureTailscaleServe,
   parseTailscaleExitNode,
+  parseTailscaleRoutedAddresses,
   parseTailscaleServeRootHolders,
   parseTailscaleServeRoutesTo,
   parseTailscaleSshEnabled,
@@ -313,6 +314,30 @@ describe("tailscale", () => {
       assert.deepEqual(unnamed, { name: null, online: false });
 
       assert.equal(yield* parseTailscaleExitNode(tailscaleStatusJson), null);
+    }),
+  );
+
+  it.effect("lists tailnet addresses only while Tailscale routes traffic to them", () =>
+    Effect.gen(function* () {
+      const status = (BackendState: string, TUN: boolean) =>
+        JSON.stringify({
+          BackendState,
+          TUN,
+          Self: { TailscaleIPs: ["100.101.0.1"] },
+          Peer: { "nodekey:box": { TailscaleIPs: ["100.105.1.20", "fd7a:115c:a1e0::5"] } },
+        });
+      assert.deepEqual(
+        [...(yield* parseTailscaleRoutedAddresses(status("Running", true)))],
+        ["100.101.0.1", "100.105.1.20", "fd7a:115c:a1e0::5"],
+      );
+      assert.equal((yield* parseTailscaleRoutedAddresses(status("Stopped", true))).size, 0);
+      // Userspace networking: the OS sends traffic for peers around Tailscale.
+      assert.equal((yield* parseTailscaleRoutedAddresses(status("Running", false))).size, 0);
+      assert.equal(
+        (yield* parseTailscaleRoutedAddresses(`{"BackendState":"Running","TUN":true,"Peer":null}`))
+          .size,
+        0,
+      );
     }),
   );
 
