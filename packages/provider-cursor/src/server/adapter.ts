@@ -3377,6 +3377,13 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               readonly providerThread: OrchestrationV2ProviderThread;
               readonly nativeTurnId: string;
             }) {
+              // This session still holds the stopped request and replays it on the next turn itself.
+              const interrupted = yield* Ref.get(interruptedPrompt);
+              if (
+                interrupted?.runId === keptInput.nativeTurnId &&
+                interrupted.agent === nativeThreadId(keptInput.providerThread)
+              )
+                return true;
               const agent = yield* openAgent({
                 operation: "resume",
                 agentId: nativeThreadId(keptInput.providerThread),
