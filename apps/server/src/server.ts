@@ -248,7 +248,10 @@ import { makePersistedServerRuntimeState } from "./serverRuntimeState.ts";
 import { closeNonPrivateNetworkConnections, loopbackUrlHostForAddress } from "./startupAccess.ts";
 import * as OrchestrationHttp from "./orchestration-v2/http.ts";
 import * as ProjectHttp from "./project/http.ts";
+import * as TeamAssetsRepository from "./team/TeamAssetsRepository.ts";
 import * as TeamHttp from "./team/http.ts";
+import * as TeamProviderManager from "./team/TeamProviderManager.ts";
+import * as TeamProviderProxyHttp from "./team/providerProxyHttp.ts";
 import * as TeamRepository from "./team/TeamRepository.ts";
 import * as TeamService from "./team/TeamService.ts";
 import * as NetService from "@t3tools/shared/Net";
@@ -857,9 +860,11 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(CodexManagedTokenBroker.layer),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(
-    TeamService.layer.pipe(
-      Layer.provide(TeamRepository.layer),
-      Layer.provide(layerServerEnvironment),
+    TeamService.layer.pipe(Layer.provide(layerServerEnvironment), Layer.provide(layerPersistence)),
+  ),
+  Layer.provideMerge(TeamProviderManager.layer),
+  Layer.provideMerge(
+    Layer.mergeAll(TeamRepository.layer, TeamAssetsRepository.layer).pipe(
       Layer.provide(layerPersistence),
     ),
   ),
@@ -933,6 +938,7 @@ const layerMakeRoutes = Layer.mergeAll(
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     PreviewTunnel.routeLayer,
+    TeamProviderProxyHttp.layer,
     ServerHttp.layerStaticAndDevRoute,
     Ws.layer,
     speechStreamRouteLayer,

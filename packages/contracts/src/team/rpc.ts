@@ -5,6 +5,7 @@ import {
   AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
   EnvironmentAuthorizationError,
 } from "../auth.ts";
 import {
@@ -15,6 +16,12 @@ import {
   TeamCreateInviteInput,
   TeamCreateThreadNoteInput,
   TeamCreateViewInput,
+  TeamDeletePrepromptInput,
+  TeamDeletePrepromptResult,
+  TeamDeleteProviderInput,
+  TeamDeleteProviderResult,
+  TeamDeleteSkillInput,
+  TeamDeleteSkillResult,
   TeamDeleteThreadNoteInput,
   TeamDeleteThreadNoteResult,
   TeamDeleteViewInput,
@@ -26,15 +33,23 @@ import {
   TeamInitializeInput,
   TeamInitializeResult,
   TeamInviteCreatedResult,
+  TeamIssueLocalSyncTokenResult,
   TeamListFollowedThreadsResult,
+  TeamListProviderUsageResult,
   TeamListThreadAttributionsResult,
   TeamListThreadNotesInput,
   TeamListThreadNotesResult,
   TeamMember,
+  TeamNotifyLocalAssetsUpdatedInput,
+  TeamNotifyLocalAssetsUpdatedResult,
   TeamOperationError,
+  TeamPreprompt,
   TeamProjectAssignment,
+  TeamProvider,
   TeamReleaseAcceptedNotesInput,
   TeamReleaseAcceptedNotesResult,
+  TeamRemoveLocalBindingInput,
+  TeamRemoveLocalBindingResult,
   TeamReserveAcceptedNotesInput,
   TeamReserveAcceptedNotesResult,
   TeamResolveThreadNoteInput,
@@ -42,8 +57,11 @@ import {
   TeamRevokeInviteResult,
   TeamSetThreadLockedInput,
   TeamSetThreadViewInput,
+  TeamSkill,
   TeamStateSnapshot,
   TeamStateStreamEvent,
+  TeamSyncLocalBindingInput,
+  TeamSyncLocalBindingResult,
   TeamSyncLocalThreadInput,
   TeamSyncLocalThreadResult,
   TeamThreadAttribution,
@@ -57,6 +75,9 @@ import {
   TeamUpdateMemberStatusInput,
   TeamUpdateMyPseudoInput,
   TeamUpdateViewInput,
+  TeamUpsertPrepromptInput,
+  TeamUpsertProviderInput,
+  TeamUpsertSkillInput,
   TeamView,
 } from "./schemas.ts";
 
@@ -92,6 +113,17 @@ export const TEAM_WS_METHODS = {
   teamReleaseAcceptedNotes: "team.releaseAcceptedNotes",
   teamConsumeAcceptedNotes: "team.consumeAcceptedNotes",
   teamListThreadNotes: "team.listThreadNotes",
+  teamUpsertProvider: "team.upsertProvider",
+  teamDeleteProvider: "team.deleteProvider",
+  teamListProviderUsage: "team.listProviderUsage",
+  teamUpsertSkill: "team.upsertSkill",
+  teamDeleteSkill: "team.deleteSkill",
+  teamUpsertPreprompt: "team.upsertPreprompt",
+  teamDeletePreprompt: "team.deletePreprompt",
+  teamIssueLocalSyncToken: "team.issueLocalSyncToken",
+  teamSyncLocalBinding: "team.syncLocalBinding",
+  teamRemoveLocalBinding: "team.removeLocalBinding",
+  teamNotifyLocalAssetsUpdated: "team.notifyLocalAssetsUpdated",
 } as const;
 
 export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
@@ -121,6 +153,16 @@ export const TEAM_CLIENT_GUARDED_RPC_SCOPES = {
   [TEAM_WS_METHODS.teamReserveAcceptedNotes]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamReleaseAcceptedNotes]: AuthOrchestrationOperateScope,
   [TEAM_WS_METHODS.teamConsumeAcceptedNotes]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamUpsertProvider]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamDeleteProvider]: AuthAccessWriteScope,
+  [TEAM_WS_METHODS.teamUpsertSkill]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamDeleteSkill]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamUpsertPreprompt]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamDeletePreprompt]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamIssueLocalSyncToken]: AuthOrchestrationOperateScope,
+  [TEAM_WS_METHODS.teamSyncLocalBinding]: AuthProvidersManageScope,
+  [TEAM_WS_METHODS.teamRemoveLocalBinding]: AuthProvidersManageScope,
+  [TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated]: AuthProvidersManageScope,
 } as const;
 
 export const TEAM_RPC_REQUIRED_SCOPES = {
@@ -130,6 +172,7 @@ export const TEAM_RPC_REQUIRED_SCOPES = {
   [TEAM_WS_METHODS.teamListThreadAttributions]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamListFollowedThreads]: AuthOrchestrationReadScope,
   [TEAM_WS_METHODS.teamListThreadNotes]: AuthOrchestrationReadScope,
+  [TEAM_WS_METHODS.teamListProviderUsage]: AuthAccessWriteScope,
 } as const;
 
 const TeamRpcError = Schema.Union([TeamOperationError, EnvironmentAuthorizationError]);
@@ -321,6 +364,72 @@ const WsTeamListThreadNotesRpc = Rpc.make(TEAM_WS_METHODS.teamListThreadNotes, {
   error: TeamRpcError,
 });
 
+const WsTeamUpsertProviderRpc = Rpc.make(TEAM_WS_METHODS.teamUpsertProvider, {
+  payload: TeamUpsertProviderInput,
+  success: TeamProvider,
+  error: TeamRpcError,
+});
+
+const WsTeamDeleteProviderRpc = Rpc.make(TEAM_WS_METHODS.teamDeleteProvider, {
+  payload: TeamDeleteProviderInput,
+  success: TeamDeleteProviderResult,
+  error: TeamRpcError,
+});
+
+const WsTeamListProviderUsageRpc = Rpc.make(TEAM_WS_METHODS.teamListProviderUsage, {
+  payload: Schema.Struct({}),
+  success: TeamListProviderUsageResult,
+  error: TeamRpcError,
+});
+
+const WsTeamUpsertSkillRpc = Rpc.make(TEAM_WS_METHODS.teamUpsertSkill, {
+  payload: TeamUpsertSkillInput,
+  success: TeamSkill,
+  error: TeamRpcError,
+});
+
+const WsTeamDeleteSkillRpc = Rpc.make(TEAM_WS_METHODS.teamDeleteSkill, {
+  payload: TeamDeleteSkillInput,
+  success: TeamDeleteSkillResult,
+  error: TeamRpcError,
+});
+
+const WsTeamUpsertPrepromptRpc = Rpc.make(TEAM_WS_METHODS.teamUpsertPreprompt, {
+  payload: TeamUpsertPrepromptInput,
+  success: TeamPreprompt,
+  error: TeamRpcError,
+});
+
+const WsTeamDeletePrepromptRpc = Rpc.make(TEAM_WS_METHODS.teamDeletePreprompt, {
+  payload: TeamDeletePrepromptInput,
+  success: TeamDeletePrepromptResult,
+  error: TeamRpcError,
+});
+
+const WsTeamIssueLocalSyncTokenRpc = Rpc.make(TEAM_WS_METHODS.teamIssueLocalSyncToken, {
+  payload: Schema.Struct({}),
+  success: TeamIssueLocalSyncTokenResult,
+  error: TeamRpcError,
+});
+
+const WsTeamSyncLocalBindingRpc = Rpc.make(TEAM_WS_METHODS.teamSyncLocalBinding, {
+  payload: TeamSyncLocalBindingInput,
+  success: TeamSyncLocalBindingResult,
+  error: TeamRpcError,
+});
+
+const WsTeamRemoveLocalBindingRpc = Rpc.make(TEAM_WS_METHODS.teamRemoveLocalBinding, {
+  payload: TeamRemoveLocalBindingInput,
+  success: TeamRemoveLocalBindingResult,
+  error: TeamRpcError,
+});
+
+const WsTeamNotifyLocalAssetsUpdatedRpc = Rpc.make(TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated, {
+  payload: TeamNotifyLocalAssetsUpdatedInput,
+  success: TeamNotifyLocalAssetsUpdatedResult,
+  error: TeamRpcError,
+});
+
 export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamGetStateRpc,
   WsTeamSubscribeStateRpc,
@@ -353,4 +462,15 @@ export const TeamWsRpcGroup = RpcGroup.make(
   WsTeamReleaseAcceptedNotesRpc,
   WsTeamConsumeAcceptedNotesRpc,
   WsTeamListThreadNotesRpc,
+  WsTeamUpsertProviderRpc,
+  WsTeamDeleteProviderRpc,
+  WsTeamListProviderUsageRpc,
+  WsTeamUpsertSkillRpc,
+  WsTeamDeleteSkillRpc,
+  WsTeamUpsertPrepromptRpc,
+  WsTeamDeletePrepromptRpc,
+  WsTeamIssueLocalSyncTokenRpc,
+  WsTeamSyncLocalBindingRpc,
+  WsTeamRemoveLocalBindingRpc,
+  WsTeamNotifyLocalAssetsUpdatedRpc,
 );

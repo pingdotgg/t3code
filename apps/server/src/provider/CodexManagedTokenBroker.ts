@@ -4,16 +4,18 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeCrypto from "node:crypto";
-import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import { EnvironmentId, isTeamProviderInstanceId, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
 import * as Protocol from "./CodexManagedTokenProtocol.ts";
 
@@ -47,6 +49,9 @@ const acquireListener = Effect.gen(function* () {
   const environmentId = yield* identity.getEnvironmentId;
   const platform = yield* HostProcess.Platform;
   const uid = yield* HostProcess.UserId;
+  const teamProviderManagerOption = yield* Effect.serviceOption(
+    TeamProviderManager.TeamProviderManager,
+  );
   const owned = yield* Effect.acquireRelease(
     io(async () => {
       if (platform === "win32")
@@ -149,6 +154,22 @@ const acquireListener = Effect.gen(function* () {
         runJob(
           Effect.scoped(
             Effect.gen(function* () {
+              // Virtual team Codex instances obtain ephemeral OAuth access tokens in memory via
+              // TeamProviderManager — zero team OAuth tokens or refresh tokens are ever written to disk.
+              if (
+                isTeamProviderInstanceId(request.instanceId) &&
+                Option.isSome(teamProviderManagerOption)
+              ) {
+                const lease = yield* teamProviderManagerOption.value
+                  .getLeasedAccessToken(request.instanceId)
+                  .pipe(Effect.timeout(Protocol.COMMAND_TIMEOUT_MS));
+                yield* Protocol.writeFrame(
+                  socket,
+                  encodeResponse({ token: lease.accessToken }),
+                  Protocol.RESPONSE_BYTES,
+                );
+                return;
+              }
               const auth = yield* makeCodexChatGptAuth({
                 instanceId: request.instanceId,
                 expectedProfileKey: request.profileKey,

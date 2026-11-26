@@ -1,5 +1,6 @@
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as SqlError from "effect/sql/SqlError";
 
@@ -277,40 +278,200 @@ export const TEAM_MIGRATIONS: ReadonlyArray<TeamMigration> = [
         `;
     }),
   },
+  {
+    id: 5,
+    name: "TeamProvidersSkillsAndPreprompts",
+    up: Effect.fn("TeamMigrations.TeamProvidersSkillsAndPreprompts")(function* (
+      sql: SqlClient.SqlClient,
+    ) {
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_providers (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            provider_instance_id TEXT NOT NULL,
+            driver TEXT NOT NULL,
+            display_name TEXT,
+            delivery_strategy TEXT NOT NULL CHECK (delivery_strategy IN ('proxy', 'token-lease', 'remote-only')),
+            upstream_base_url TEXT,
+            api_key_header TEXT,
+            api_key_prefix TEXT,
+            secret_key TEXT,
+            config_json TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+            updated_by_member_id TEXT NOT NULL REFERENCES team_members(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_team_providers_team_instance
+            ON team_providers (team_id, provider_instance_id)
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_provider_usage (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            provider_instance_id TEXT NOT NULL,
+            member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+            strategy TEXT NOT NULL CHECK (strategy IN ('proxy', 'token-lease')),
+            request_path TEXT,
+            status_code INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_provider_usage_team_member
+            ON team_provider_usage (team_id, member_id, provider_instance_id, created_at)
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_skills (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            slug TEXT NOT NULL,
+            provider_driver TEXT NOT NULL,
+            skill_md TEXT NOT NULL,
+            references_json TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+            revision INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            updated_by_member_id TEXT NOT NULL REFERENCES team_members(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_team_skills_team_slug_driver
+            ON team_skills (team_id, LOWER(slug), provider_driver)
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_preprompts (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            provider_driver TEXT NOT NULL,
+            injection_scope TEXT NOT NULL CHECK (injection_scope IN ('thread', 'turn')),
+            content TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+            revision INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            updated_by_member_id TEXT NOT NULL REFERENCES team_members(id),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_preprompts_team_driver
+            ON team_preprompts (team_id, provider_driver, injection_scope)
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_asset_revisions (
+            team_id TEXT PRIMARY KEY REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_asset_tombstones (
+            id TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            asset_kind TEXT NOT NULL CHECK (asset_kind IN ('skill', 'preprompt')),
+            asset_id TEXT NOT NULL,
+            deleted_at_revision INTEGER NOT NULL,
+            deleted_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_asset_tombstones_team_rev
+            ON team_asset_tombstones (team_id, deleted_at_revision)
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_local_sync_tokens (
+            token_hash TEXT PRIMARY KEY,
+            team_id TEXT NOT NULL REFERENCES team_workspaces(id) ON DELETE CASCADE,
+            member_id TEXT NOT NULL REFERENCES team_members(id) ON DELETE CASCADE,
+            session_id TEXT NOT NULL,
+            revoked_at TEXT,
+            created_at TEXT NOT NULL
+          )
+        `;
+      yield* sql`
+          CREATE INDEX IF NOT EXISTS idx_team_local_sync_tokens_member
+            ON team_local_sync_tokens (member_id)
+        `;
+      yield* sql`
+          CREATE TABLE IF NOT EXISTS team_local_bindings (
+            team_id TEXT PRIMARY KEY,
+            team_name TEXT NOT NULL,
+            team_server_url TEXT NOT NULL,
+            token_secret_key TEXT,
+            providers_json TEXT NOT NULL,
+            projects_json TEXT NOT NULL,
+            skills_json TEXT NOT NULL DEFAULT '[]',
+            preprompts_json TEXT NOT NULL DEFAULT '[]',
+            assets_revision INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+          )
+        `;
+    }),
+  },
 ];
+
+const migrationLocks = new WeakMap<SqlClient.SqlClient, Semaphore.Semaphore>();
+
+function getMigrationLock(sql: SqlClient.SqlClient): Semaphore.Semaphore {
+  let lock = migrationLocks.get(sql);
+  if (!lock) {
+    lock = Semaphore.makeUnsafe(1);
+    migrationLocks.set(sql, lock);
+  }
+  return lock;
+}
 
 /**
  * Runs independent `team_*` sidecar migrations tracked in `team_schema_migrations`.
  * Never touches upstream `effect_sql_migrations` or upstream tables.
+ * Serialized per `SqlClient` so parallel layer startup (`TeamRepository` + `TeamAssetsRepository`) is race-free.
  */
 export const runTeamMigrations = Effect.fn("TeamMigrations.run")(function* () {
   const sql = yield* SqlClient.SqlClient;
-  yield* sql`
-    CREATE TABLE IF NOT EXISTS team_schema_migrations (
-      id INTEGER PRIMARY KEY,
-      name TEXT NOT NULL,
-      applied_at TEXT NOT NULL
-    )
-  `;
-  const applied = yield* sql<{ readonly id: number }>`
-    SELECT id FROM team_schema_migrations
-  `;
-  const appliedIds = new Set(applied.map((row) => row.id));
-  const executed: Array<readonly [number, string]> = [];
+  const lock = getMigrationLock(sql);
+  return yield* lock.withPermits(1)(
+    Effect.gen(function* () {
+      yield* sql`
+        CREATE TABLE IF NOT EXISTS team_schema_migrations (
+          id INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at TEXT NOT NULL
+        )
+      `;
+      const applied = yield* sql<{ readonly id: number }>`
+        SELECT id FROM team_schema_migrations
+      `;
+      const appliedIds = new Set(applied.map((row) => row.id));
+      const executed: Array<readonly [number, string]> = [];
 
-  for (const migration of TEAM_MIGRATIONS) {
-    if (appliedIds.has(migration.id)) continue;
-    const appliedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* sql.withTransaction(
-      Effect.gen(function* () {
-        yield* migration.up(sql);
-        yield* sql`
-          INSERT INTO team_schema_migrations (id, name, applied_at)
-          VALUES (${migration.id}, ${migration.name}, ${appliedAt})
-        `;
-      }),
-    );
-    executed.push([migration.id, migration.name]);
-  }
-  return executed;
+      for (const migration of TEAM_MIGRATIONS) {
+        if (appliedIds.has(migration.id)) continue;
+        const appliedAt = DateTime.formatIso(yield* DateTime.now);
+        const didRun = yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const existing = yield* sql<{ readonly id: number }>`
+              SELECT id FROM team_schema_migrations WHERE id = ${migration.id} LIMIT 1
+            `;
+            if (existing.length > 0) return false;
+            yield* migration.up(sql);
+            yield* sql`
+              INSERT INTO team_schema_migrations (id, name, applied_at)
+              VALUES (${migration.id}, ${migration.name}, ${appliedAt})
+            `;
+            return true;
+          }),
+        );
+        if (didRun) {
+          executed.push([migration.id, migration.name]);
+        }
+      }
+      return executed;
+    }),
+  );
 });

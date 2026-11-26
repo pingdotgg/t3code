@@ -50,6 +50,8 @@ import { formatTeamRoleLabel } from "./TeamJoinForm";
 import { openTeamJoinDialog } from "./teamJoinDialogState";
 import { TeamEnvironmentsSettingsSection } from "./TeamEnvironmentsSettingsSection";
 import { TeamMembersSettingsSection } from "./TeamMembersSettingsSection";
+import { TeamProvidersSettingsSection } from "./TeamProvidersSettingsSection";
+import { TeamSkillsAndPrepromptsSettingsSection } from "./TeamSkillsAndPrepromptsSettingsSection";
 import { TeamViewsSettingsSection } from "./TeamViewsSettingsSection";
 
 function CopyableLinkRow({
@@ -757,6 +759,20 @@ export function TeamsSettings() {
 
           {selectedEnvironmentId !== null ? (
             <>
+              <TeamProvidersSettingsSection
+                environmentId={selectedEnvironmentId}
+                currentMember={currentMember}
+                memberById={teamState.memberById}
+                providers={teamState.providers}
+              />
+              <TeamSkillsAndPrepromptsSettingsSection
+                environmentId={selectedEnvironmentId}
+                currentMember={currentMember}
+                memberById={teamState.memberById}
+                skills={teamState.skills}
+                preprompts={teamState.preprompts}
+                assetsRevision={teamState.assetsRevision}
+              />
               <TeamEnvironmentsSettingsSection
                 environmentId={selectedEnvironmentId}
                 currentMember={currentMember}

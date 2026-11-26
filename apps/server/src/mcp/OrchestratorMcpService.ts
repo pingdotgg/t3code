@@ -52,6 +52,7 @@ import {
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
   type ProviderInteractionMode,
+  type ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   ProviderRequestKind,
@@ -63,6 +64,8 @@ import {
   type ServerProviderModel,
   ThreadId,
   isOrchestrationV2WorkActive,
+  isTeamProviderInstanceId,
+  isTeamProviderInstanceIdForTeam,
   latestProviderTurnForAttempt,
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
@@ -117,6 +120,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import { placeholderThreadTitle } from "../orchestration-v2/placeholderThreadTitle.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as TeamService from "../team/TeamService.ts";
+import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import { assertLocalAgentMcpExecutionAllowed } from "../team/hubOnly.ts";
 import * as TeamMcpAccess from "../team/mcpAccess.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1372,6 +1376,48 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+  const teamProviderManagerOption = yield* Effect.serviceOption(
+    TeamProviderManager.TeamProviderManager,
+  );
+
+  const resolveProjectTeamId = Effect.fn("OrchestratorMcpService.resolveProjectTeamId")(function* (
+    projectId: ProjectId,
+  ) {
+    if (Option.isNone(teamProviderManagerOption)) return Option.none();
+    const projectOpt = yield* projects
+      .getById(projectId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    const repoIdentityKey = Option.isSome(projectOpt)
+      ? (projectOpt.value.repositoryIdentity?.origin?.canonicalKey ??
+        projectOpt.value.repositoryIdentity?.canonicalKey ??
+        null)
+      : null;
+    return yield* teamProviderManagerOption.value.resolveTeamIdForProject({
+      projectId,
+      repoIdentityKey,
+    });
+  });
+
+  const assertProjectProviderAllowed = Effect.fn(
+    "OrchestratorMcpService.assertProjectProviderAllowed",
+  )(function* (projectId: ProjectId, instanceId: ProviderInstanceId) {
+    if (Option.isNone(teamProviderManagerOption)) return;
+    const projectOpt = yield* projects
+      .getById(projectId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    const repoIdentityKey = Option.isSome(projectOpt)
+      ? (projectOpt.value.repositoryIdentity?.origin?.canonicalKey ??
+        projectOpt.value.repositoryIdentity?.canonicalKey ??
+        null)
+      : null;
+    yield* teamProviderManagerOption.value
+      .assertProviderAllowedForProject({
+        projectId,
+        repoIdentityKey,
+        instanceId,
+      })
+      .pipe(Effect.mapError((error) => failure("capability_denied", error.message)));
+  });
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -1723,8 +1769,14 @@ const make = Effect.gen(function* () {
     const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
     let instanceId = requestedInstanceId;
 
+    const teamIdOpt = yield* resolveProjectTeamId(input.parent.thread.projectId);
+    const isolatedProviders = Option.isSome(teamIdOpt)
+      ? input.providers.filter((candidate) =>
+          isTeamProviderInstanceIdForTeam(candidate.instanceId, teamIdOpt.value),
+        )
+      : input.providers.filter((candidate) => !isTeamProviderInstanceId(candidate.instanceId));
     if (instanceId === undefined && requestedDriver !== undefined) {
-      const candidates = input.providers.filter(
+      const candidates = isolatedProviders.filter(
         (provider) =>
           provider.driver === requestedDriver &&
           orchestrationCapableInstanceIds.has(provider.instanceId),
@@ -1767,6 +1819,7 @@ const make = Effect.gen(function* () {
       }
     }
     instanceId ??= input.parent.thread.modelSelection.instanceId;
+    yield* assertProjectProviderAllowed(input.parent.thread.projectId, instanceId);
 
     const provider = input.providers.find((candidate) => candidate.instanceId === instanceId);
     if (provider === undefined) {
@@ -2468,6 +2521,7 @@ const make = Effect.gen(function* () {
       }
       const modelSelection =
         parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+      yield* assertProjectProviderAllowed(projectId, modelSelection.instanceId);
       // Never end on a lone high surrogate, which renders as a broken character.
       const derivedTitle = (input.prompt.split("\n")[0]?.trim() ?? "")
         .slice(0, 80)
@@ -2836,10 +2890,17 @@ const make = Effect.gen(function* () {
           discard: true,
         });
       }
-      const providers = withWorkspaceModels(
+      const allProviders = withWorkspaceModels(
         unscanned.length > 0 ? yield* loadProviders : machineProviders,
         cwd,
       );
+      const callerTeamIdOpt =
+        parent === undefined ? Option.none() : yield* resolveProjectTeamId(parent.thread.projectId);
+      const providers = Option.isSome(callerTeamIdOpt)
+        ? allProviders.filter((provider) =>
+            isTeamProviderInstanceIdForTeam(provider.instanceId, callerTeamIdOpt.value),
+          )
+        : allProviders.filter((provider) => !isTeamProviderInstanceId(provider.instanceId));
       const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),

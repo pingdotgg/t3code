@@ -179,6 +179,10 @@ describe("team notification gating helpers", () => {
       environments: [],
       environmentById: new Map(),
       threadNotesByThreadId: new Map(),
+      providers: [],
+      skills: [],
+      preprompts: [],
+      assetsRevision: 0,
       ...overrides,
     };
   };

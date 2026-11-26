@@ -579,6 +579,10 @@ it("gates team thread notifications by creator, follow state, and completing tur
     environments: [],
     environmentById: new Map(),
     threadNotesByThreadId: new Map(),
+    providers: [],
+    skills: [],
+    preprompts: [],
+    assetsRevision: 0,
   };
 
   state.teamStates.set("one", baseTeamState);
@@ -718,6 +722,10 @@ it("defers notifications and sound across team stream races without leaking coll
     environments: [],
     environmentById: new Map(),
     threadNotesByThreadId: new Map(),
+    providers: [],
+    skills: [],
+    preprompts: [],
+    assetsRevision: 0,
   };
 
   // Race A: Shell completes while team metadata is still loading -> must NOT notify or play sound.

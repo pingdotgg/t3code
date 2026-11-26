@@ -836,7 +836,14 @@ const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["s
       };
 };
 
-export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: ProviderInstanceId) {
+export const make = Effect.fn("OpenCode2Adapter.make")(function* (
+  instanceId: ProviderInstanceId,
+  options?: {
+    readonly makeSessionServer?: (
+      sessionEnvironmentOverride: Readonly<Record<string, string>>,
+    ) => Effect.Effect<OpenCode2Server.OpenCode2Server["Service"], never, Scope.Scope>;
+  },
+) {
   const server = yield* OpenCode2Server.OpenCode2Server;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
@@ -850,12 +857,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   const mcpServerNameFor = (threadId: string) =>
     t3McpServerName(threadId).pipe(Effect.provideService(Digest.Digest, crypto));
 
-  const borrow = Effect.gen(function* () {
+  const borrowFrom = Effect.fn("OpenCode2Adapter.borrow")(function* (
+    targetServer: OpenCode2Server.OpenCode2Server["Service"],
+  ) {
     const lent = yield* Deferred.make<
       OpenCode2Server.OpenCode2Connection,
       OpenCodeRuntime.OpenCodeRuntimeError
     >();
-    yield* server
+    yield* targetServer
       .withConnection((connection) =>
         Deferred.succeed(lent, connection).pipe(Effect.andThen(Effect.never)),
       )
@@ -871,6 +880,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     initial: {
       readonly connection: OpenCode2Server.OpenCode2Connection;
       readonly scope: Scope.Closeable;
+      readonly borrow: Effect.Effect<
+        OpenCode2Server.OpenCode2Connection,
+        OpenCodeRuntime.OpenCodeRuntimeError,
+        Scope.Scope
+      >;
     },
   ) {
     let connection = initial.connection;
@@ -3934,7 +3948,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // Release the borrow on every failure, including reconnect interruption, so spawned servers can idle-stop.
       const scope = yield* Scope.make();
       const { next, stream } = yield* Effect.gen(function* () {
-        const next = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
+        const next = yield* initial.borrow.pipe(Effect.provideService(Scope.Scope, scope));
         const events = next.events.pipe(Effect.provideService(Scope.Scope, scope));
         return { next, stream: yield* whileAlive(next.processExit, events) };
       }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
@@ -5650,10 +5664,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     // spawned server is not idle-stopped under a long tool call.
     openSession: Effect.fn("OpenCode2Adapter.borrowAndOpenSession")(
       function* (input) {
+        const sessionServer =
+          input.sessionEnvironmentOverride !== undefined &&
+          Object.keys(input.sessionEnvironmentOverride).length > 0 &&
+          options?.makeSessionServer !== undefined
+            ? yield* options.makeSessionServer(input.sessionEnvironmentOverride)
+            : server;
+        const borrowSession = borrowFrom(sessionServer);
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
-        const connection = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
-        return yield* openSession(input, { connection, scope });
+        const connection = yield* borrowSession.pipe(Effect.provideService(Scope.Scope, scope));
+        return yield* openSession(input, { connection, scope, borrow: borrowSession });
       },
       (effect, input) =>
         effect.pipe(

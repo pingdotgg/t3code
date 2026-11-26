@@ -2,6 +2,7 @@ import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { providerClients } from "@t3tools/client-runtime/provider-clients";
 import {
+  isTeamProviderInstanceId,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
@@ -328,7 +329,9 @@ export function useTextGenerationTargets(input: {
     ),
   );
   const providers = input.providers.filter(
-    (provider) => !Object.hasOwn(settings.textGenerators, provider.instanceId),
+    (provider) =>
+      !Object.hasOwn(settings.textGenerators, provider.instanceId) &&
+      (input.projectId !== null || !isTeamProviderInstanceId(provider.instanceId)),
   );
   return {
     providers: [...providers, ...generatorProviders],

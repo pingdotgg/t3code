@@ -71,6 +71,10 @@ const makeTeamState = (id: string, name: string, pseudo: string): TeamEnvironmen
     environments: [],
     environmentById: new Map(),
     threadNotesByThreadId: new Map(),
+    providers: [],
+    skills: [],
+    preprompts: [],
+    assetsRevision: 0,
   };
 };
 
@@ -137,6 +141,13 @@ vi.mock(import("../../state/team"), async (original) => ({
     attachEnvironment: { permissionAtom: () => alwaysAllowedAtom },
     updateEnvironment: { permissionAtom: () => alwaysAllowedAtom },
     detachEnvironment: { permissionAtom: () => alwaysAllowedAtom },
+    upsertProvider: { permissionAtom: () => alwaysAllowedAtom },
+    deleteProvider: { permissionAtom: () => alwaysAllowedAtom },
+    listProviderUsage: { permissionAtom: () => alwaysAllowedAtom },
+    upsertSkill: { permissionAtom: () => alwaysAllowedAtom },
+    deleteSkill: { permissionAtom: () => alwaysAllowedAtom },
+    upsertPreprompt: { permissionAtom: () => alwaysAllowedAtom },
+    deletePreprompt: { permissionAtom: () => alwaysAllowedAtom },
   } as never,
 }));
 

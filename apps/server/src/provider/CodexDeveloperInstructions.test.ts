@@ -79,6 +79,34 @@ describe("Codex device context", () => {
   });
 });
 
+describe("Codex team turn instructions", () => {
+  it("chunks multi-byte UTF-8 team turn instructions within Codex's 4,000-byte per-entry cap", () => {
+    const longEmojiRule = `${"🚀 Keep every secret on the server. ".repeat(220)}\n${"🔒 Always verify isolation.\n".repeat(160)}`;
+    const context = buildCodexAdditionalContext(
+      { model: "gpt-6.1-sol" },
+      { browser: true, device: false },
+      longEmojiRule,
+    );
+    const teamKeys = Object.keys(context)
+      .filter((key) => key.startsWith("t3_team_turn_instructions_"))
+      .toSorted();
+
+    NodeAssert.ok(teamKeys.length >= 2, `Expected >= 2 chunks, got ${teamKeys.length}`);
+    let reconstructed = "";
+    for (const key of teamKeys) {
+      const value = context[key]!.value;
+      const bytes = Buffer.byteLength(value, "utf8");
+      NodeAssert.ok(
+        bytes <= CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES,
+        `${key}: ${bytes} bytes exceeds cap ${CODEX_ADDITIONAL_CONTEXT_VALUE_MAX_BYTES}`,
+      );
+      reconstructed += value;
+    }
+    NodeAssert.ok(reconstructed.includes("🚀 Keep every secret on the server."));
+    NodeAssert.ok(reconstructed.includes("🔒 Always verify isolation."));
+  });
+});
+
 function runtimeInstructions(runtime: Parameters<typeof buildCodexAdditionalContext>[0]) {
   return buildCodexAdditionalContext(runtime).t3_code_runtime!.value;
 }

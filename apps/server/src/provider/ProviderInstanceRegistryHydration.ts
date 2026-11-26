@@ -15,6 +15,7 @@ import type * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as SqlClient from "effect/sql/SqlClient";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -22,6 +23,7 @@ import * as Stream from "effect/Stream";
 import * as ManagedProviders from "../policy/managedProviders.ts";
 import * as Settings from "../serverSettings.ts";
 import * as SecretResolver from "../secrets/SecretResolver.ts";
+import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
@@ -138,34 +140,44 @@ export const layerSettingsWatcher = (
   settingsChanges: Stream.Stream<ServerSettings>,
   // The settings the registry was built from: a change queued during startup differs from these.
   initialSettings: ServerSettings | undefined,
+  teamProviderManager?: TeamProviderManager.TeamProviderManager["Service"],
 ) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
       const mutator = yield* ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator;
       const serverSettings = yield* Settings.ServerSettingsService;
       let secretProviders = initialSettings && vaultConfigs(initialSettings);
-      yield* settingsChanges.pipe(
-        Stream.runForEach(() =>
-          // The subscription predates the seed read, so a queued change can be
-          // older than the seed. A failed current read must leave the registry intact.
-          serverSettings.getSettings.pipe(
-            Effect.flatMap((current) =>
-              Effect.gen(function* () {
-                yield* mutator.reconcile(deriveProviderInstanceConfigMap(current));
-                // Reconcile leaves instances parked on an unreadable secret alone,
-                // and a corrected secret provider is what can make them readable.
-                const next = vaultConfigs(current);
-                if (!NodeUtil.isDeepStrictEqual(secretProviders, next)) {
-                  secretProviders = next;
-                  yield* mutator.reloadSecrets();
-                }
-              }),
-            ),
-            Effect.catchCause((cause) =>
-              Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
-            ),
-          ),
+      const reconcileAll = serverSettings.getSettings.pipe(
+        Effect.flatMap((current) =>
+          Effect.gen(function* () {
+            const virtualConfigs = teamProviderManager
+              ? yield* teamProviderManager.getVirtualProviderConfigs
+              : ({} as ProviderInstanceConfigMap);
+            yield* mutator.reconcile({
+              ...deriveProviderInstanceConfigMap(current),
+              ...virtualConfigs,
+            } as ProviderInstanceConfigMap);
+            // Reconcile leaves instances parked on an unreadable secret alone,
+            // and a corrected secret provider is what can make them readable.
+            const next = vaultConfigs(current);
+            if (!NodeUtil.isDeepStrictEqual(secretProviders, next)) {
+              secretProviders = next;
+              yield* mutator.reloadSecrets();
+            }
+          }),
         ),
+        Effect.catchCause((cause) =>
+          Effect.logError("ProviderInstanceRegistry reconcile failed", cause),
+        ),
+      );
+      const triggerStream = teamProviderManager
+        ? Stream.merge(
+            Stream.map(settingsChanges, () => undefined),
+            teamProviderManager.streamVirtualProviderChanges,
+          )
+        : Stream.map(settingsChanges, () => undefined);
+      yield* triggerStream.pipe(
+        Stream.runForEach(() => reconcileAll),
         Effect.forkScoped,
       );
     }),
@@ -179,6 +191,10 @@ export const layer: Layer.Layer<
 > = Layer.unwrap(
   Effect.gen(function* () {
     const serverSettings = yield* Settings.ServerSettingsService;
+    const teamProviderManagerOption = yield* Effect.serviceOption(
+      TeamProviderManager.TeamProviderManager,
+    );
+    const teamProviderManager = Option.getOrUndefined(teamProviderManagerOption);
     yield* seedDevReplayInstance().pipe(
       Effect.catchCause((cause) => Effect.logWarning("Dev replay agent unavailable", cause)),
     );
@@ -187,10 +203,15 @@ export const layer: Layer.Layer<
     const initialSettings: ServerSettings | undefined = yield* serverSettings.getSettings.pipe(
       Effect.orElseSucceed(() => undefined),
     );
-    const initialConfigMap =
-      initialSettings === undefined
+    const virtualConfigs = teamProviderManager
+      ? yield* teamProviderManager.getVirtualProviderConfigs
+      : ({} as ProviderInstanceConfigMap);
+    const initialConfigMap = {
+      ...(initialSettings === undefined
         ? ({} as ProviderInstanceConfigMap)
-        : deriveProviderInstanceConfigMap(initialSettings);
+        : deriveProviderInstanceConfigMap(initialSettings)),
+      ...virtualConfigs,
+    } as ProviderInstanceConfigMap;
 
     // Drivers launch from the host environment, minus launch overrides a policy ignores.
     const hostEnvironment = ManagedProviders.providerHostEnvironment(
@@ -212,13 +233,8 @@ export const layer: Layer.Layer<
       Layer.provide(SecretResolver.layer),
     );
 
-    return layerSettingsWatcher(settingsChanges, initialSettings).pipe(
+    return layerSettingsWatcher(settingsChanges, initialSettings, teamProviderManager).pipe(
       Layer.provideMerge(layerMutable),
     );
   }),
-) as Layer.Layer<
-  | ProviderInstanceRegistry.ProviderInstanceRegistry
-  | ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator,
-  never,
-  ProviderInstanceRegistryHydrationEnv
->;
+);

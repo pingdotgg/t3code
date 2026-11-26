@@ -36,8 +36,11 @@ import {
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   AuthProvidersManageScope,
+  requiredScopesForServerSettingsPatch,
   type AuthEnvironmentScope,
   ProviderDriverKind,
+  type ProjectId,
+  type ProviderInstanceId,
   type ScheduledTaskListResult,
   WorkflowRequestError,
   AuthSessionId,
@@ -308,6 +311,7 @@ import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
+import * as TeamProviderManager from "./team/TeamProviderManager.ts";
 import * as TeamService from "./team/TeamService.ts";
 import {
   assertLocalAgentRpcExecutionAllowed,
@@ -1699,6 +1703,38 @@ export const layerWsRpc = (
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const relayClient = yield* RelayClient.RelayClient;
       const teamService = yield* TeamService.TeamService;
+      const teamProviderManagerOption = yield* Effect.serviceOption(
+        TeamProviderManager.TeamProviderManager,
+      );
+      const assertTeamProviderAllowedForProject = Effect.fn(
+        "Ws.assertTeamProviderAllowedForProject",
+      )(function* (projectId: ProjectId, instanceId: ProviderInstanceId) {
+        if (Option.isNone(teamProviderManagerOption)) return;
+        const projectOpt = yield* projectService
+          .getById(projectId)
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        const repoIdentityKey = Option.isSome(projectOpt)
+          ? (projectOpt.value.repositoryIdentity?.origin?.canonicalKey ??
+            projectOpt.value.repositoryIdentity?.canonicalKey ??
+            null)
+          : null;
+        yield* teamProviderManagerOption.value
+          .assertProviderAllowedForProject({
+            projectId,
+            repoIdentityKey,
+            instanceId,
+          })
+          .pipe(
+            Effect.mapError(
+              (error) =>
+                new EnvironmentAuthorizationError({
+                  message: error.message,
+                  requiredScope: AuthOrchestrationOperateScope,
+                  requiredPermission: "team:provider:use",
+                }),
+            ),
+          );
+      });
       // Webhook URLs start agents; expose them only to operate-scoped sessions while keeping tasks readable.
       const withVisibleWebhookUrls = (result: ScheduledTaskListResult): ScheduledTaskListResult =>
         currentSession.scopes.includes(AuthOrchestrationOperateScope)
@@ -2178,6 +2214,58 @@ export const layerWsRpc = (
             Effect.andThen(
               teamService.assertAndNormalizeDispatchCommand(currentSessionId, command),
             ),
+            Effect.tap((normalizedCommand) => {
+              if (normalizedCommand.type === "thread.create") {
+                return assertTeamProviderAllowedForProject(
+                  normalizedCommand.projectId,
+                  normalizedCommand.modelSelection.instanceId,
+                );
+              }
+              const threadScopedCheck: {
+                readonly threadId: ThreadId;
+                readonly instanceId: ProviderInstanceId;
+              } | null =
+                normalizedCommand.type === "message.dispatch" &&
+                normalizedCommand.modelSelection !== undefined
+                  ? {
+                      threadId: normalizedCommand.threadId,
+                      instanceId: normalizedCommand.modelSelection.instanceId,
+                    }
+                  : normalizedCommand.type === "thread.model-selection.set" ||
+                      normalizedCommand.type === "provider.switch"
+                    ? {
+                        threadId: normalizedCommand.threadId,
+                        instanceId: normalizedCommand.modelSelection.instanceId,
+                      }
+                    : normalizedCommand.type === "queued-run.edit" &&
+                        normalizedCommand.modelSelection !== undefined
+                      ? {
+                          threadId: normalizedCommand.threadId,
+                          instanceId: normalizedCommand.modelSelection.instanceId,
+                        }
+                      : normalizedCommand.type === "delegated_task.request"
+                        ? {
+                            threadId: normalizedCommand.parentThreadId,
+                            instanceId: normalizedCommand.modelSelection.instanceId,
+                          }
+                        : null;
+              if (threadScopedCheck !== null && Option.isSome(projectionStoreOption)) {
+                return projectionStoreOption.value
+                  .getThreadRecords(threadScopedCheck.threadId, [])
+                  .pipe(
+                    Effect.orElseSucceed(() => null),
+                    Effect.flatMap((records) =>
+                      records === null
+                        ? Effect.void
+                        : assertTeamProviderAllowedForProject(
+                            records.thread.projectId,
+                            threadScopedCheck.instanceId,
+                          ),
+                    ),
+                  );
+              }
+              return Effect.void;
+            }),
             Effect.flatMap((normalizedCommand) =>
               Effect.gen(function* () {
                 const { command: effectiveCommand, reservationToken } =
@@ -2525,6 +2613,9 @@ export const layerWsRpc = (
               }),
             ),
             Effect.andThen(
+              assertTeamProviderAllowedForProject(input.projectId, input.modelSelection.instanceId),
+            ),
+            Effect.andThen(
               Effect.gen(function* () {
                 const isTeam = yield* teamService.isTeamConfigured();
                 const resolvedThreadId =
@@ -2837,7 +2928,15 @@ export const layerWsRpc = (
         [WS_METHODS.scheduledTasksUpsert]: (input) =>
           teamService
             .assertCanUseScheduledTasks(currentSessionId)
-            .pipe(Effect.andThen(scheduledTasks.upsert(input))),
+            .pipe(
+              Effect.andThen(
+                assertTeamProviderAllowedForProject(
+                  input.projectId,
+                  input.modelSelection.instanceId,
+                ),
+              ),
+              Effect.andThen(scheduledTasks.upsert(input)),
+            ),
         [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(teamService.assertCanUseScheduledTasks(currentSessionId)),
@@ -3279,11 +3378,15 @@ export const layerWsRpc = (
         [WS_METHODS.providerAuthStart]: (input) =>
           teamService
             .assertCanAccessLocalEnvironment(currentSessionId)
-            .pipe(Effect.andThen(providerAuth.start(input, currentSessionId))),
+            .pipe(
+              Effect.andThen(teamService.assertCanManageServerProviders(currentSessionId)),
+              Effect.andThen(providerAuth.start(input, currentSessionId)),
+            ),
         [WS_METHODS.providerAuthRespond]: (input) =>
           teamService
             .assertCanAccessLocalEnvironment(currentSessionId)
             .pipe(
+              Effect.andThen(teamService.assertCanManageServerProviders(currentSessionId)),
               Effect.andThen(
                 Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(
                   Effect.andThen(providerAuth.respond(input, currentSessionId)),
@@ -3293,29 +3396,47 @@ export const layerWsRpc = (
         [WS_METHODS.providerAuthComplete]: (input) =>
           teamService
             .assertCanAccessLocalEnvironment(currentSessionId)
-            .pipe(Effect.andThen(providerAuth.complete(input, currentSessionId))),
+            .pipe(
+              Effect.andThen(teamService.assertCanManageServerProviders(currentSessionId)),
+              Effect.andThen(providerAuth.complete(input, currentSessionId)),
+            ),
         [WS_METHODS.chatGptReconnectProfile]: (input) =>
           teamService
             .assertCanAccessLocalEnvironment(currentSessionId)
-            .pipe(Effect.andThen(providerAuth.reconnectProfile(input))),
+            .pipe(
+              Effect.andThen(teamService.assertCanManageServerProviders(currentSessionId)),
+              Effect.andThen(providerAuth.reconnectProfile(input)),
+            ),
         [WS_METHODS.chatGptImportProfile]: (input) =>
           teamService
             .assertCanAccessLocalEnvironment(currentSessionId)
-            .pipe(Effect.andThen(providerAuth.importProfile(input))),
+            .pipe(
+              Effect.andThen(teamService.assertCanManageServerProviders(currentSessionId)),
+              Effect.andThen(providerAuth.importProfile(input)),
+            ),
         [WS_METHODS.chatGptHandoffSubscribe]: (input) =>
           subscribeChatGptHandoff(input, currentSessionId),
         [WS_METHODS.providerAuthCancel]: (input) =>
           teamService
             .assertCanAccessLocalEnvironment(currentSessionId)
-            .pipe(Effect.andThen(providerAuth.cancel(input, currentSessionId))),
+            .pipe(
+              Effect.andThen(teamService.assertCanManageServerProviders(currentSessionId)),
+              Effect.andThen(providerAuth.cancel(input, currentSessionId)),
+            ),
         [WS_METHODS.providerAuthRemoveMethod]: (input) =>
           teamService
             .assertCanAccessLocalEnvironment(currentSessionId)
-            .pipe(Effect.andThen(providerAuth.removeMethod(input))),
+            .pipe(
+              Effect.andThen(teamService.assertCanManageServerProviders(currentSessionId)),
+              Effect.andThen(providerAuth.removeMethod(input)),
+            ),
         [WS_METHODS.providerAuthLogout]: (input) =>
           teamService
             .assertCanAccessLocalEnvironment(currentSessionId)
-            .pipe(Effect.andThen(providerAuth.logout(input))),
+            .pipe(
+              Effect.andThen(teamService.assertCanManageServerProviders(currentSessionId)),
+              Effect.andThen(providerAuth.logout(input)),
+            ),
         [WS_METHODS.providerAuthSubscribe]: (input) =>
           providerAuth.subscribe(input, currentSessionId),
         [WS_METHODS.providerInstallStart]: (input) =>
@@ -3479,6 +3600,12 @@ export const layerWsRpc = (
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* ({ patch, providerInstanceMutation }) {
             yield* teamService.assertCanAccessLocalEnvironment(currentSessionId);
+            if (
+              providerInstanceMutation !== undefined ||
+              requiredScopesForServerSettingsPatch(patch).includes(AuthProvidersManageScope)
+            ) {
+              yield* teamService.assertCanManageServerProviders(currentSessionId);
+            }
             const deviceHosts = patch.deviceHosts
               ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
                   Effect.provide(deviceHostContext),
@@ -4797,6 +4924,9 @@ export const layerWsRpc = (
           ...(Option.isSome(eventSinkOption) ? { eventSink: eventSinkOption.value } : {}),
           ...(Option.isSome(projectionStoreOption)
             ? { projectionStore: projectionStoreOption.value }
+            : {}),
+          ...(Option.isSome(teamProviderManagerOption)
+            ? { teamProviderManager: teamProviderManagerOption.value }
             : {}),
         }),
       });

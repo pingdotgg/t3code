@@ -1,4 +1,5 @@
 import {
+  NonNegativeInt,
   TEAM_WS_METHODS,
   ThreadId,
   type AssetResource,
@@ -25,6 +26,7 @@ import type { ThreadLaunchResult } from "../orchestration-v2/ThreadLaunchService
 import type * as PeerClientPairing from "../peer/PeerClientPairing.ts";
 import type * as PeerLinks from "../peer/PeerLinks.ts";
 import type * as ProjectService from "../project/ProjectService.ts";
+import type * as TeamProviderManager from "./TeamProviderManager.ts";
 import * as TeamService from "./TeamService.ts";
 
 export interface TeamWsHandlerDeps {
@@ -33,6 +35,7 @@ export interface TeamWsHandlerDeps {
   readonly projectService?: ProjectService.ProjectService["Service"];
   readonly eventSink?: EventSink.EventSinkV2["Service"];
   readonly projectionStore?: ProjectionStore.ProjectionStoreV2["Service"];
+  readonly teamProviderManager?: TeamProviderManager.TeamProviderManager["Service"];
 }
 
 export function makeTeamWsRpcHandlers(
@@ -180,6 +183,79 @@ export function makeTeamWsRpcHandlers(
       payload: Parameters<typeof teamService.listThreadNotes>[0]["payload"],
     ) =>
       teamService.listThreadNotes({ sessionId, payload }).pipe(Effect.map((notes) => ({ notes }))),
+    [TEAM_WS_METHODS.teamUpsertProvider]: (
+      payload: Parameters<typeof teamService.upsertProvider>[0]["payload"],
+    ) => teamService.upsertProvider({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamDeleteProvider]: (
+      payload: Parameters<typeof teamService.deleteProvider>[0]["payload"],
+    ) => teamService.deleteProvider({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamListProviderUsage]: () =>
+      teamService.listProviderUsage(sessionId).pipe(Effect.map((usage) => ({ usage }))),
+    [TEAM_WS_METHODS.teamUpsertSkill]: (
+      payload: Parameters<typeof teamService.upsertSkill>[0]["payload"],
+    ) => teamService.upsertSkill({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamDeleteSkill]: (
+      payload: Parameters<typeof teamService.deleteSkill>[0]["payload"],
+    ) => teamService.deleteSkill({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamUpsertPreprompt]: (
+      payload: Parameters<typeof teamService.upsertPreprompt>[0]["payload"],
+    ) => teamService.upsertPreprompt({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamDeletePreprompt]: (
+      payload: Parameters<typeof teamService.deletePreprompt>[0]["payload"],
+    ) => teamService.deletePreprompt({ sessionId, payload }),
+    [TEAM_WS_METHODS.teamIssueLocalSyncToken]: () => teamService.issueLocalSyncToken(sessionId),
+    [TEAM_WS_METHODS.teamSyncLocalBinding]: (
+      payload: Parameters<
+        TeamProviderManager.TeamProviderManager["Service"]["syncLocalTeamBinding"]
+      >[0],
+    ) =>
+      teamService.assertLocalBindingHostAllowed().pipe(
+        Effect.andThen(
+          deps?.teamProviderManager !== undefined
+            ? deps.teamProviderManager.syncLocalTeamBinding(payload)
+            : Effect.succeed({
+                synced: false,
+                virtualInstanceIds: [],
+                assetsRevision: NonNegativeInt.make(0),
+              }),
+        ),
+      ),
+    [TEAM_WS_METHODS.teamRemoveLocalBinding]: (payload: {
+      readonly teamId: Parameters<
+        TeamProviderManager.TeamProviderManager["Service"]["removeLocalTeamBinding"]
+      >[0];
+    }) =>
+      teamService
+        .assertLocalBindingHostAllowed()
+        .pipe(
+          Effect.andThen(
+            deps?.teamProviderManager !== undefined
+              ? deps.teamProviderManager
+                  .removeLocalTeamBinding(payload.teamId)
+                  .pipe(Effect.map((removed) => ({ removed })))
+              : Effect.succeed({ removed: false }),
+          ),
+        ),
+    [TEAM_WS_METHODS.teamNotifyLocalAssetsUpdated]: (payload: {
+      readonly teamId: Parameters<
+        TeamProviderManager.TeamProviderManager["Service"]["syncLocalAssetsDelta"]
+      >[0];
+      readonly revision: number;
+    }) =>
+      teamService.assertLocalBindingHostAllowed().pipe(
+        Effect.andThen(
+          deps?.teamProviderManager !== undefined
+            ? deps.teamProviderManager
+                .syncLocalAssetsDelta(payload.teamId, { targetRevision: payload.revision })
+                .pipe(
+                  Effect.map((syncedRevision) => ({
+                    syncedRevision: NonNegativeInt.make(Math.max(0, syncedRevision)),
+                  })),
+                  Effect.orElseSucceed(() => ({ syncedRevision: NonNegativeInt.make(0) })),
+                )
+            : Effect.succeed({ syncedRevision: NonNegativeInt.make(0) }),
+        ),
+      ),
   };
 }
 

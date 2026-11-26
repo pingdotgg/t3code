@@ -26,8 +26,10 @@ import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageInt
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as TeamService from "../../../team/TeamService.ts";
+import * as TeamProviderManager from "../../../team/TeamProviderManager.ts";
 import { assertLocalAgentMcpExecutionAllowed } from "../../../team/hubOnly.ts";
 import * as TeamMcpAccess from "../../../team/mcpAccess.ts";
+import * as Project from "../../../project/ProjectService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { ThreadToolkit } from "./tools.ts";
 
@@ -288,6 +290,42 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           projection: { thread },
         } = yield* readThread(input.threadId);
         yield* TeamMcpAccess.assertCanPostInThread(thread.id);
+        const teamProviderManagerOpt = yield* Effect.serviceOption(
+          TeamProviderManager.TeamProviderManager,
+        );
+        if (Option.isSome(teamProviderManagerOpt)) {
+          const projectOpt = yield* Effect.serviceOption(Project.ProjectService).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.succeedNone,
+                onSome: (projects) =>
+                  projects
+                    .getById(thread.projectId)
+                    .pipe(Effect.orElseSucceed(() => Option.none())),
+              }),
+            ),
+          );
+          const repoIdentityKey = Option.isSome(projectOpt)
+            ? (projectOpt.value.repositoryIdentity?.origin?.canonicalKey ??
+              projectOpt.value.repositoryIdentity?.canonicalKey ??
+              null)
+            : null;
+          yield* teamProviderManagerOpt.value
+            .assertProviderAllowedForProject({
+              projectId: thread.projectId,
+              repoIdentityKey,
+              instanceId: modelSelection.instanceId,
+            })
+            .pipe(
+              Effect.mapError(
+                (error) =>
+                  new OrchestratorMcpFailure({
+                    code: "capability_denied",
+                    message: error.message,
+                  }),
+              ),
+            );
+        }
         const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
         const result = yield* threads
           .dispatch({ type, threadId: thread.id, commandId: yield* newCommandId(), modelSelection })

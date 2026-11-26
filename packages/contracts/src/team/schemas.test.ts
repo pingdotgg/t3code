@@ -8,8 +8,16 @@ import {
   canChangeThreadTeamView,
   canManageTeamEnvironments,
   canManageTeamInvites,
+  canManageTeamPreprompts,
   canManageTeamProjects,
+  canManageTeamProviders,
+  canManageTeamSkills,
   canManageTeamViews,
+  defaultTeamProviderDeliveryStrategy,
+  isTeamProviderInstanceId,
+  isTeamProviderInstanceIdForTeam,
+  makeTeamProviderInstanceId,
+  parseTeamProviderInstanceId,
   canMemberAccessTeamEnvironment,
   canMemberCreateThreadInTeamView,
   canMemberInterruptTeamTurn,
@@ -35,6 +43,7 @@ import {
   TeamThreadNoteId,
 } from "./schemas.ts";
 import { EnvironmentId, ThreadId } from "../baseSchemas.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "../providerInstance.ts";
 
 describe("team role hierarchy", () => {
   it("starts invite and role management at modo and caps assignments at actor role", () => {
@@ -638,6 +647,65 @@ describe("Milestone 5 environments, local boundary, and thread notes", () => {
     expect(effectiveTeamThreadNoteHash(editedNote)).toBe("hash-edit");
     expect(formatAcceptedTeamNoteForPrompt({ ...editedNote, approverPseudo: "alice" })).toBe(
       "[Note from bob (edited & approved by alice)]: Run only unit tests first",
+    );
+  });
+});
+
+describe("Milestone 6 team providers, skills, and pre-prompts contracts", () => {
+  it("restricts provider management to owner/admin and skills/pre-prompts to modo+", () => {
+    expect(canManageTeamProviders("owner")).toBe(true);
+    expect(canManageTeamProviders("admin")).toBe(true);
+    expect(canManageTeamProviders("modo")).toBe(false);
+    expect(canManageTeamProviders("regular")).toBe(false);
+
+    expect(canManageTeamSkills("owner")).toBe(true);
+    expect(canManageTeamSkills("admin")).toBe(true);
+    expect(canManageTeamSkills("modo")).toBe(true);
+    expect(canManageTeamSkills("regular")).toBe(false);
+
+    expect(canManageTeamPreprompts("owner")).toBe(true);
+    expect(canManageTeamPreprompts("admin")).toBe(true);
+    expect(canManageTeamPreprompts("modo")).toBe(true);
+    expect(canManageTeamPreprompts("regular")).toBe(false);
+  });
+
+  it("constructs and parses virtual team:<teamId>:<providerInstanceId> identifiers", () => {
+    const teamA = TeamId.make("team-alpha_1");
+    const teamB = TeamId.make("team-beta_2");
+    const source = ProviderInstanceId.make("antigravity");
+    const virtualId = makeTeamProviderInstanceId(teamA, source);
+    expect(virtualId).toBe("team:team-alpha_1:antigravity");
+    expect(isTeamProviderInstanceId(virtualId)).toBe(true);
+    expect(isTeamProviderInstanceId("antigravity")).toBe(false);
+    expect(isTeamProviderInstanceIdForTeam(virtualId, teamA)).toBe(true);
+    expect(isTeamProviderInstanceIdForTeam(virtualId, teamB)).toBe(false);
+    expect(parseTeamProviderInstanceId(virtualId)).toEqual({
+      teamId: teamA,
+      sourceInstanceId: source,
+    });
+    expect(parseTeamProviderInstanceId("codex")).toBeNull();
+  });
+
+  it("classifies default delivery strategies safely", () => {
+    expect(
+      defaultTeamProviderDeliveryStrategy(ProviderDriverKind.make("claudeAgent"), {
+        hasUpstreamBaseUrl: true,
+      }),
+    ).toBe("proxy");
+    expect(defaultTeamProviderDeliveryStrategy(ProviderDriverKind.make("antigravity"))).toBe(
+      "token-lease",
+    );
+    expect(defaultTeamProviderDeliveryStrategy(ProviderDriverKind.make("codex"))).toBe(
+      "token-lease",
+    );
+    expect(defaultTeamProviderDeliveryStrategy(ProviderDriverKind.make("claudeAgent"))).toBe(
+      "token-lease",
+    );
+    expect(defaultTeamProviderDeliveryStrategy(ProviderDriverKind.make("cursor"))).toBe(
+      "remote-only",
+    );
+    expect(defaultTeamProviderDeliveryStrategy(ProviderDriverKind.make("kiro"))).toBe(
+      "remote-only",
     );
   });
 });

@@ -65,6 +65,7 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
@@ -474,6 +475,7 @@ function unimplemented(detail: string) {
 const makeProviderAdapter = Effect.fnUntraced(function* (
   state: Ref.Ref<TestProviderRuntimeState>,
   options: {
+    readonly instanceId?: ProviderInstanceId;
     readonly failEventStream?: boolean;
     readonly normalizeThreadLoadModelSelection?: (selection: ModelSelection) => ModelSelection;
     readonly capabilities?: OrchestrationV2ProviderCapabilities;
@@ -484,6 +486,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly beforeOpen?: (input: {
       readonly providerSessionId: ProviderSessionId;
       readonly initialProviderItemIdentityVersion?: 2;
+      readonly sessionEnvironmentOverride?: Readonly<Record<string, string>>;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
@@ -517,8 +520,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
       : Deferred.succeed(options.scopeCloseReached, undefined)
     ).pipe(Effect.andThen(Effect.never)),
   );
+  const adapterInstanceId = options.instanceId ?? ProviderInstanceId.make("codex");
   return ProviderAdapter.ProviderAdapterV2.of({
-    instanceId: ProviderInstanceId.make("codex"),
+    instanceId: adapterInstanceId,
     driver: CODEX_DRIVER,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
@@ -547,6 +551,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             now,
             ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
           }),
+          providerInstanceId: adapterInstanceId,
           ...(options.extensionStatuses === undefined
             ? {}
             : { extensionStatuses: options.extensionStatuses }),
@@ -566,7 +571,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
         }
 
         return {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId: adapterInstanceId,
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           ...(options.normalizeThreadLoadModelSelection === undefined
@@ -653,6 +658,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
+  readonly instanceId?: ProviderInstanceId;
   readonly idleTimeoutMs?: number;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
@@ -665,6 +671,7 @@ function layerTest(input: {
   readonly beforeOpen?: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly initialProviderItemIdentityVersion?: 2;
+    readonly sessionEnvironmentOverride?: Readonly<Record<string, string>>;
   }) => Effect.Effect<void>;
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
@@ -692,6 +699,7 @@ function layerTest(input: {
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
   readonly serverConfigLayer?: Layer.Layer<ServerConfig.ServerConfig>;
+  readonly teamProviderManagerLayer?: Layer.Layer<TeamProviderManager.TeamProviderManager>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -710,6 +718,7 @@ function layerTest(input: {
               : layerTestEventSink;
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
+      ...(input.instanceId === undefined ? {} : { instanceId: input.instanceId }),
       failEventStream: input.failEventStream ?? false,
       ...(input.normalizeThreadLoadModelSelection === undefined
         ? {}
@@ -792,6 +801,7 @@ function layerTest(input: {
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
           ...(input.serverConfigLayer === undefined ? [] : [input.serverConfigLayer]),
+          ...(input.teamProviderManagerLayer === undefined ? [] : [input.teamProviderManagerLayer]),
         ),
       ),
     ),
@@ -6687,5 +6697,171 @@ it.effect(
         const error = Cause.squash(exit.cause) as { readonly cause?: unknown };
         assert.include(String(error.cause ?? error), "--team-hub-only");
       }
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 injects per-session proxy overrides on open, isolates member-targeted release, records lease generation, and preserves leases on author-switch recycle",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const teamInstanceId = ProviderInstanceId.make("team:team-psm-1:company-codex");
+      const teamModelSelection = {
+        instanceId: teamInstanceId,
+        model: "gpt-5.4",
+      } satisfies ModelSelection;
+      const aliceId = TeamMemberId.make("member-alice-proxy");
+      const bobId = TeamMemberId.make("member-bob-proxy");
+      const threadAlice = ThreadId.make("thread-team-proxy-alice");
+      const threadBob = ThreadId.make("thread-team-proxy-bob");
+      const observedOpens: Array<{
+        readonly providerSessionId: ProviderSessionId;
+        readonly override: Readonly<Record<string, string>> | undefined;
+      }> = [];
+      const recordedGenerations: Array<{
+        readonly providerSessionId: ProviderSessionId;
+        readonly generation: number | undefined;
+      }> = [];
+      const revokedSessions: Array<ProviderSessionId> = [];
+      let purgeCount = 0;
+      let tokenSeq = 0;
+      let leaseGen = 1;
+
+      const teamProviderManagerLayer = Layer.mock(TeamProviderManager.TeamProviderManager)({
+        issueInternalProxySessionToken: (input) =>
+          Effect.sync(() => {
+            tokenSeq += 1;
+            const token = `t3teamint_session_${tokenSeq}_${input.memberId ?? "auto"}`;
+            return {
+              T3_TEAM_PROXY_TOKEN: token,
+              OPENAI_API_KEY: token,
+              ANTHROPIC_API_KEY: token,
+              GEMINI_API_KEY: token,
+              GOOGLE_API_KEY: token,
+            };
+          }),
+        revokeInternalProxySessionToken: (providerSessionId) =>
+          Effect.sync(() => {
+            revokedSessions.push(providerSessionId);
+          }),
+        getLeaseGeneration: () => Effect.sync(() => leaseGen),
+        recordSessionLeaseGeneration: (_virtualInstanceId, providerSessionId, generation) =>
+          Effect.sync(() => {
+            recordedGenerations.push({ providerSessionId, generation });
+          }),
+        purgeEphemeralTokensForInstance: () =>
+          Effect.sync(() => {
+            purgeCount += 1;
+          }),
+      });
+
+      yield* Effect.gen(function* () {
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const baseSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: teamInstanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadAlice, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadBob, now }),
+          ],
+        });
+
+        // Open concurrent Alice & Bob sessions on the same base session ID.
+        const aliceRuntime = yield* manager.open({
+          threadId: threadAlice,
+          providerSessionId: baseSessionId,
+          modelSelection: teamModelSelection,
+          runtimePolicy,
+          actingMemberId: aliceId,
+        });
+        const bobRuntime = yield* manager.open({
+          threadId: threadBob,
+          providerSessionId: baseSessionId,
+          modelSelection: teamModelSelection,
+          runtimePolicy,
+          actingMemberId: bobId,
+        });
+
+        assert.strictEqual(observedOpens.length, 2);
+        assert.include(observedOpens[0]?.override?.OPENAI_API_KEY ?? "", "t3teamint_session_1_");
+        assert.include(observedOpens[1]?.override?.OPENAI_API_KEY ?? "", "t3teamint_session_2_");
+        assert.notStrictEqual(
+          observedOpens[0]?.override?.OPENAI_API_KEY,
+          observedOpens[1]?.override?.OPENAI_API_KEY,
+        );
+        assert.deepStrictEqual(recordedGenerations, [
+          { providerSessionId: aliceRuntime.providerSessionId, generation: 1 },
+          { providerSessionId: bobRuntime.providerSessionId, generation: 2 },
+        ]);
+
+        // Member-targeted release MUST release ONLY Bob's warm session while leaving Alice's live
+        // and preserving team ephemeral token files!
+        yield* manager.release({
+          providerSessionId: baseSessionId,
+          threadId: threadBob,
+          actingMemberId: bobId,
+          reason: "manual_shutdown",
+          preserveTeamEphemeralTokens: true,
+        });
+        assert.isTrue(yield* manager.isLive(aliceRuntime.providerSessionId));
+        assert.strictEqual(
+          yield* manager.resolveActiveSessionId({
+            providerSessionId: baseSessionId,
+            threadId: threadAlice,
+            actingMemberId: aliceId,
+          }),
+          aliceRuntime.providerSessionId,
+        );
+        assert.isNull(
+          yield* manager.resolveActiveSessionId({
+            providerSessionId: baseSessionId,
+            threadId: threadBob,
+            actingMemberId: bobId,
+          }),
+        );
+        assert.deepStrictEqual(revokedSessions, [bobRuntime.providerSessionId]);
+        assert.strictEqual(purgeCount, 0);
+
+        // Author-switch recycle inside `open` (Bob takes over Alice's single-attached session)
+        // MUST preserve team ephemeral tokens instead of purging them before reopen!
+        const switchedRuntime = yield* manager.open({
+          threadId: threadAlice,
+          providerSessionId: baseSessionId,
+          modelSelection: teamModelSelection,
+          runtimePolicy,
+          actingMemberId: bobId,
+        });
+        assert.strictEqual(purgeCount, 0);
+        assert.strictEqual(observedOpens.length, 3);
+        assert.include(observedOpens[2]?.override?.OPENAI_API_KEY ?? "", "t3teamint_session_3_");
+        assert.strictEqual(
+          recordedGenerations[2]?.providerSessionId,
+          switchedRuntime.providerSessionId,
+        );
+        // Generation snapshot captured BEFORE openSession must win even if lease rotated mid-startup!
+        assert.strictEqual(recordedGenerations[2]?.generation, 3);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            instanceId: teamInstanceId,
+            capabilities: CodexCapabilities,
+            teamProviderManagerLayer,
+            beforeOpen: (openInput) =>
+              Effect.sync(() => {
+                // Simulate a background lease rotation happening while adapter.openSession is starting!
+                leaseGen += 1;
+                observedOpens.push({
+                  providerSessionId: openInput.providerSessionId,
+                  override: openInput.sessionEnvironmentOverride,
+                });
+              }),
+          }),
+        ),
+      );
     }),
 );

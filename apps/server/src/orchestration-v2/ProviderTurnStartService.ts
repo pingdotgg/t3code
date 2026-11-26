@@ -85,6 +85,7 @@ import {
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import * as TeamService from "../team/TeamService.ts";
 import {
   isRestartNoteContinuation,
@@ -327,6 +328,9 @@ export const layer: Layer.Layer<
     const worktreeRestore = yield* ThreadWorktreeRestore;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const teamServiceOption = yield* Effect.serviceOption(TeamService.TeamService);
+    const teamProviderManagerOption = yield* Effect.serviceOption(
+      TeamProviderManager.TeamProviderManager,
+    );
 
     // Build draining callbacks outside startup scope so they cannot retain full thread history.
     const makeRunControls = (input: {
@@ -1088,6 +1092,73 @@ export const layer: Layer.Layer<
           return;
         }
         actingMemberId = resolvedAuthor.value;
+      }
+      let teamPrep: TeamProviderManager.TeamTurnPreparationResult = {
+        teamId: null,
+        recycleWarmSession: false,
+        turnPrepromptText: "",
+        genericThreadPrepromptText: "",
+      };
+      if (Option.isSome(teamProviderManagerOption)) {
+        const projectOpt = yield* projects
+          .getById(projection.thread.projectId, { includeDeleted: true })
+          .pipe(Effect.orElseSucceed(() => Option.none()));
+        const repoIdentityKey = Option.isSome(projectOpt)
+          ? (projectOpt.value.repositoryIdentity?.origin?.canonicalKey ??
+            projectOpt.value.repositoryIdentity?.canonicalKey ??
+            null)
+          : null;
+        const slashMessageIds = new Set(
+          projection.messages.filter(isSlashCommandMessage).map((candidate) => candidate.id),
+        );
+        const hasPriorTurnsOnProviderThread = projection.providerTurns.some((turn) => {
+          if (turn.providerThreadId !== providerThread.id || !isDeliveredProviderTurn(turn)) {
+            return false;
+          }
+          const turnRun = projection.runs.find((candidate) => candidate.rootNodeId === turn.nodeId);
+          return turnRun === undefined || !slashMessageIds.has(turnRun.userMessageId);
+        });
+        const activeWarmSessionId = yield* providerSessions.resolveActiveSessionId({
+          providerSessionId,
+          threadId: projection.thread.id,
+          ...(actingMemberId === undefined ? {} : { actingMemberId }),
+        });
+        const prepResult = yield* Effect.result(
+          teamProviderManagerOption.value.prepareForTurn({
+            projectId: projection.thread.projectId,
+            repoIdentityKey,
+            instanceId: run.providerInstanceId,
+            driver: providerThread.driver,
+            nativeThreadHasTurns: hasPriorTurnsOnProviderThread,
+            ...(activeWarmSessionId === null ? {} : { providerSessionId: activeWarmSessionId }),
+            ...(actingMemberId === undefined ? {} : { actingMemberId }),
+          }),
+        );
+        if (prepResult._tag === "Failure") {
+          yield* settleStartFailure({
+            signal: "team-provider-guard-failed",
+            title:
+              prepResult.failure._tag === "TeamProviderAccessRevokedError"
+                ? "Team access revoked"
+                : "Team provider unavailable",
+            error: prepResult.failure,
+            message: prepResult.failure.message,
+          });
+          return;
+        }
+        teamPrep = prepResult.success;
+        if (teamPrep.recycleWarmSession && activeWarmSessionId !== null) {
+          yield* providerSessions
+            .release({
+              providerSessionId: activeWarmSessionId,
+              threadId: projection.thread.id,
+              ...(actingMemberId === undefined ? {} : { actingMemberId }),
+              reason: "manual_shutdown",
+              detail: "Team OAuth lease rotated; recycling warm provider session.",
+              preserveTeamEphemeralTokens: true,
+            })
+            .pipe(Effect.ignore);
+        }
       }
       const sessionResult = yield* Effect.result(
         providerSessions.open({
@@ -2031,6 +2102,8 @@ export const layer: Layer.Layer<
         budget,
       } = handoffContext;
       const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
+      const carriesTeamTurnInstructions =
+        teamPrep.turnPrepromptText !== "" || teamPrep.genericThreadPrepromptText !== "";
       const carriesPendingContext =
         effectiveHandoffs.length > 0 ||
         retryHandoff.handoffs.length > 0 ||
@@ -2267,7 +2340,31 @@ export const layer: Layer.Layer<
             ),
             ...(sideChatContext === "" || sideChatHandoff === undefined ? [] : [sideChatHandoff]),
           ];
-          const context = [delivery.context, sideChatContext, restartNote]
+          const genericTeamThreadBlock =
+            teamPrep.genericThreadPrepromptText !== "" && !compact && !slashCommand
+              ? `<team_instructions>\n${teamPrep.genericThreadPrepromptText}\n</team_instructions>`
+              : "";
+          const nonCodexTeamTurnBlock =
+            session.driver !== "codex" &&
+            teamPrep.turnPrepromptText !== "" &&
+            !compact &&
+            !slashCommand
+              ? `<team_turn_instructions>\n${teamPrep.turnPrepromptText}\n</team_turn_instructions>`
+              : "";
+          const codexTeamTurnInstructions =
+            session.driver === "codex" &&
+            teamPrep.turnPrepromptText !== "" &&
+            !compact &&
+            !slashCommand
+              ? teamPrep.turnPrepromptText
+              : undefined;
+          const context = [
+            genericTeamThreadBlock,
+            nonCodexTeamTurnBlock,
+            delivery.context,
+            sideChatContext,
+            restartNote,
+          ]
             .filter((part) => part !== "")
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
@@ -2305,6 +2402,9 @@ export const layer: Layer.Layer<
                       ? {}
                       : { attachments: [...missedAttachments, ...turnInput.message.attachments] }),
                   },
+                  ...(codexTeamTurnInstructions === undefined
+                    ? {}
+                    : { teamTurnInstructions: codexTeamTurnInstructions }),
                   ...(text === userText
                     ? {}
                     : { inlineContextLength: text.length - userText.length }),
@@ -2370,9 +2470,10 @@ export const layer: Layer.Layer<
               }),
         ),
       );
-      const deliverySession = carriesPendingContext
-        ? makeDeliverySession(session, startWithHandoffs)
-        : session;
+      const deliverySession =
+        carriesPendingContext || carriesTeamTurnInstructions
+          ? makeDeliverySession(session, startWithHandoffs)
+          : session;
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
@@ -2433,6 +2534,19 @@ export const layer: Layer.Layer<
         },
         modelSelection: run.modelSelection,
         runtimePolicy: resolvedRuntimePolicy,
+        ...(actingMemberId === undefined ? {} : { actingMemberId }),
+        recycleSession: () =>
+          providerSessions
+            .release({
+              providerSessionId: activeProviderSessionId,
+              threadId: projection.thread.id,
+              ...(actingMemberId === undefined ? {} : { actingMemberId }),
+              reason: "manual_shutdown",
+              detail:
+                "Team OAuth lease rotated during active turn; recycling warm provider session.",
+              preserveTeamEphemeralTokens: true,
+            })
+            .pipe(Effect.ignore),
       });
     });
 

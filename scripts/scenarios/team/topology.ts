@@ -78,9 +78,25 @@ export interface TeamServerHandle {
   ) => Promise<string>;
 }
 
+export interface RecordedFakeLlmRequest {
+  readonly method: string;
+  readonly url: string;
+  readonly authorization: string | undefined;
+  readonly body: string;
+}
+
+export interface FakeTeamLlmHandle {
+  readonly origin: string;
+  readonly expectedApiKey: string;
+  readonly requests: () => ReadonlyArray<RecordedFakeLlmRequest>;
+  readonly oauthRefreshHits: () => number;
+  readonly reset: () => void;
+}
+
 export interface TeamTopology extends AsyncDisposable {
   readonly teamServer: TeamServerHandle;
   readonly extraRemoteEnvironments: ReadonlyArray<TeamServerHandle>;
+  readonly fakeTeamLlm?: FakeTeamLlmHandle;
   readonly members: Readonly<Record<string, TeamMemberHandle>>;
   readonly member: (pseudo: string) => TeamMemberHandle;
 }
@@ -200,6 +216,77 @@ export interface StartedServerHandle {
   readonly stop: () => Promise<void>;
 }
 
+function startFakeTeamLlmServer(input: {
+  readonly port: number;
+  readonly expectedApiKey: string;
+}): Promise<FakeTeamLlmHandle & { readonly close: () => Promise<void> }> {
+  return new Promise((resolve, reject) => {
+    const recorded: Array<RecordedFakeLlmRequest> = [];
+    let oauthHits = 0;
+    let completionSeq = 0;
+
+    const server = NodeHttp.createServer((req, res) => {
+      const chunks: Array<Buffer> = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        const url = req.url ?? "/";
+        if (req.method === "POST" && url === "/oauth/token") {
+          oauthHits += 1;
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              access_token: `leased-ephemeral-access-${oauthHits}`,
+              refresh_token: "COMPANY_MASTER_REFRESH_SECRET",
+              token_type: "Bearer",
+              expires_in: 3600,
+            }),
+          );
+          return;
+        }
+        recorded.push({
+          method: req.method ?? "GET",
+          url,
+          authorization: req.headers.authorization,
+          body,
+        });
+        if (req.headers.authorization !== `Bearer ${input.expectedApiKey}`) {
+          res.writeHead(401, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "unauthorized_missing_company_key" }));
+          return;
+        }
+        completionSeq += 1;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            id: `fake-llm-${completionSeq}`,
+            reply: `FAKE_TEAM_LLM_OK #${completionSeq}`,
+          }),
+        );
+      });
+    });
+
+    server.on("error", reject);
+    server.listen(input.port, "127.0.0.1", () =>
+      resolve({
+        origin: `http://127.0.0.1:${input.port}`,
+        expectedApiKey: input.expectedApiKey,
+        requests: () => [...recorded],
+        oauthRefreshHits: () => oauthHits,
+        reset: () => {
+          recorded.length = 0;
+          oauthHits = 0;
+        },
+        close: () =>
+          new Promise<void>((done) => {
+            server.closeAllConnections?.();
+            server.close(() => done());
+          }),
+      }),
+    );
+  });
+}
+
 export function startT3ServerProcess(input: {
   readonly home: string;
   readonly port: number;
@@ -207,6 +294,7 @@ export function startT3ServerProcess(input: {
   readonly allowedOrigins: ReadonlyArray<string>;
   readonly devAuthToken: string;
   readonly environmentLabel: string;
+  readonly userHomeOverride?: string;
   readonly extraArgs?: ReadonlyArray<string>;
   readonly settingsPatch?: Readonly<Record<string, unknown>>;
 }): Promise<StartedServerHandle> {
@@ -247,7 +335,7 @@ export function startT3ServerProcess(input: {
       ],
       env: {
         PATH: `${path.join(input.home, "bin")}:${hostEnvironment.PATH ?? ""}`,
-        HOME: hostEnvironment.HOME,
+        HOME: input.userHomeOverride ?? hostEnvironment.HOME,
         T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
         T3CODE_DEV_ALLOWED_ORIGINS: input.allowedOrigins.join(","),
         T3CODE_DEV_AUTH_TOKEN: input.devAuthToken,
@@ -342,6 +430,8 @@ export async function startTeamTopology(input: {
   readonly viteUrl: string;
   readonly members: ReadonlyArray<TeamMemberSpec>;
   readonly extraRemoteEnvironments?: number;
+  readonly fakeTeamLlm?: boolean;
+  readonly isolateMemberHome?: boolean;
   readonly teamServerSettingsPatch?: Readonly<Record<string, unknown>>;
 }): Promise<TeamTopology> {
   const stack = new AsyncDisposableStack();
@@ -362,6 +452,16 @@ export async function startTeamTopology(input: {
         }),
       );
     });
+
+    let fakeTeamLlm: (FakeTeamLlmHandle & { readonly close: () => Promise<void> }) | undefined;
+    if (input.fakeTeamLlm) {
+      const llmPort = await Effect.runPromise(reservePort);
+      fakeTeamLlm = await startFakeTeamLlmServer({
+        port: llmPort,
+        expectedApiKey: "TEAM_SECRET_KEY_M6",
+      });
+      stack.defer(() => fakeTeamLlm!.close());
+    }
 
     const teamServerPort = await Effect.runPromise(reservePort);
     const memberAllocations = await Promise.all(
@@ -504,6 +604,15 @@ export async function startTeamTopology(input: {
     const memberHandles: Record<string, TeamMemberHandle> = {};
 
     for (const allocation of memberAllocations) {
+      const userHomeOverride = input.isolateMemberHome ? `${allocation.home}/user-home` : undefined;
+      if (userHomeOverride) {
+        await runPromise(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            yield* fs.makeDirectory(userHomeOverride, { recursive: true });
+          }),
+        );
+      }
       const localServer = await startT3ServerProcess({
         home: allocation.home,
         port: allocation.localServerPort,
@@ -511,6 +620,7 @@ export async function startTeamTopology(input: {
         allowedOrigins: [allocation.origin],
         devAuthToken: allocation.devAuthToken,
         environmentLabel: `Local (${allocation.spec.pseudo})`,
+        ...(userHomeOverride ? { userHomeOverride } : {}),
         ...(input.teamServerSettingsPatch === undefined
           ? {}
           : { settingsPatch: input.teamServerSettingsPatch }),
@@ -664,6 +774,7 @@ export async function startTeamTopology(input: {
           }),
       },
       extraRemoteEnvironments,
+      ...(fakeTeamLlm ? { fakeTeamLlm } : {}),
       members: memberHandles,
       member: (pseudo) => {
         const handle = memberHandles[pseudo];
@@ -672,7 +783,19 @@ export async function startTeamTopology(input: {
         }
         return handle;
       },
-      [Symbol.asyncDispose]: () => stack.disposeAsync(),
+      [Symbol.asyncDispose]: async () => {
+        try {
+          await stack.disposeAsync();
+        } catch (error) {
+          if (error instanceof SuppressedError) {
+            throw new Error(
+              `Topology disposal SuppressedError: error=${String(error.error)} | suppressed=${String(error.suppressed)}`,
+              { cause: error },
+            );
+          }
+          throw error;
+        }
+      },
     };
   } catch (error) {
     await stack.disposeAsync();

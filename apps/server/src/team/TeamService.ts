@@ -8,6 +8,7 @@ import {
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthProvidersManageScope,
   AuthRelayWriteScope,
   AuthStandardClientScopes,
   canAssignTeamRole,
@@ -16,7 +17,10 @@ import {
   canManageTeamEnvironments,
   canManageTeamInvites,
   canManageTeamMembers,
+  canManageTeamPreprompts,
   canManageTeamProjects,
+  canManageTeamProviders,
+  canManageTeamSkills,
   canManageTeamViews,
   canMemberAccessTeamEnvironment,
   canMemberCreateThreadInTeamView,
@@ -33,19 +37,25 @@ import {
   EnvironmentAuthorizationError,
   EnvironmentId,
   formatAcceptedTeamNoteForPrompt,
+  isTeamProviderInstanceId,
   isValidTeamPseudo,
   normalizeTeamPseudo,
   resolveTeamThreadEnvironmentAccess,
   resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
+  NonNegativeInt,
   TEAM_ROLE_RANK,
   TeamEnvironmentRecordId,
   TeamId,
   TeamInviteId,
   TeamMemberId,
   TeamOperationError,
+  TeamPrepromptId,
+  TeamProviderId,
+  TeamSkillId,
   TeamThreadNoteId,
   TeamViewId,
+  defaultTeamProviderDeliveryStrategy,
   type AuthClientMetadata,
   type AuthEnvironmentScope,
   type AuthSessionId,
@@ -60,6 +70,12 @@ import {
   type TeamCreateInviteInput,
   type TeamCreateThreadNoteInput,
   type TeamCreateViewInput,
+  type TeamDeletePrepromptInput,
+  type TeamDeletePrepromptResult,
+  type TeamDeleteProviderInput,
+  type TeamDeleteProviderResult,
+  type TeamDeleteSkillInput,
+  type TeamDeleteSkillResult,
   type TeamDeleteThreadNoteInput,
   type TeamDeleteThreadNoteResult,
   type TeamDeleteViewInput,
@@ -73,9 +89,13 @@ import {
   type TeamInvite,
   type TeamInviteCreatedResult,
   type TeamInvitePreviewResult,
+  type TeamIssueLocalSyncTokenResult,
   type TeamListThreadNotesInput,
   type TeamMember,
+  type TeamPreprompt,
   type TeamProjectAssignment,
+  type TeamProvider,
+  type TeamProviderUsageSummary,
   type TeamPseudo,
   type TeamRedeemInviteResponse,
   type TeamReleaseAcceptedNotesInput,
@@ -88,6 +108,7 @@ import {
   type TeamRole,
   type TeamSetThreadLockedInput,
   type TeamSetThreadViewInput,
+  type TeamSkill,
   type TeamStateSnapshot,
   type TeamStateStreamEvent,
   type TeamSyncLocalThreadInput,
@@ -104,6 +125,9 @@ import {
   type TeamUpdateMemberStatusInput,
   type TeamUpdateMyPseudoInput,
   type TeamUpdateViewInput,
+  type TeamUpsertPrepromptInput,
+  type TeamUpsertProviderInput,
+  type TeamUpsertSkillInput,
   type TeamView,
   type TeamWorkspace,
   type ThreadId,
@@ -124,6 +148,7 @@ import {
   PENDING_ATTACHMENT_THREAD_SEGMENT,
   parseThreadSegmentFromAttachmentId,
 } from "../attachmentStore.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import type * as EventSink from "../orchestration-v2/EventSink.ts";
@@ -132,12 +157,23 @@ import * as PeerClientPairing from "../peer/PeerClientPairing.ts";
 import type * as PeerLinks from "../peer/PeerLinks.ts";
 import type * as ProjectService from "../project/ProjectService.ts";
 import { rpcInitialItems } from "../rpcInitialItems.ts";
+import * as TeamAssetsRepository from "./TeamAssetsRepository.ts";
 import {
   localSyncMirroredMessageId,
   localSyncMirroredRunId,
   mirrorLocalThreadSnapshotToEventSink,
 } from "./TeamLocalSyncService.ts";
+import {
+  clearTeamProviderRefreshLock,
+  readTeamProviderSecret,
+  removeTeamProviderSecret,
+  teamProviderSecretKey,
+  writeTeamProviderSecret,
+  type StoredTeamProviderSecret,
+} from "./TeamProviderLeaseService.ts";
+import * as TeamProviderManager from "./TeamProviderManager.ts";
 import * as TeamRepository from "./TeamRepository.ts";
+import { validateTeamPrepromptPayload, validateTeamSkillPayload } from "./TeamSkillValidation.ts";
 
 const DEFAULT_INVITE_EXPIRY_HOURS = 24 * 7;
 const MAX_INVITE_EXPIRY_HOURS = 24 * 90;
@@ -154,6 +190,7 @@ const hashNoteContent = (body: string): string =>
 const ADMIN_ONLY_SESSION_SCOPES: ReadonlySet<AuthEnvironmentScope> = new Set([
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthProvidersManageScope,
   AuthRelayWriteScope,
   AuthEnvironmentMaintainScope,
 ]);
@@ -719,6 +756,40 @@ export class TeamService extends Context.Service<
       readonly acceptedNotes: ReadonlyArray<TeamAcceptedNoteRef>;
       readonly reservationToken?: string | null;
     }) => Effect.Effect<void>;
+    readonly upsertProvider: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamUpsertProviderInput;
+    }) => Effect.Effect<TeamProvider, TeamOperationError>;
+    readonly deleteProvider: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamDeleteProviderInput;
+    }) => Effect.Effect<TeamDeleteProviderResult, TeamOperationError>;
+    readonly listProviderUsage: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<ReadonlyArray<TeamProviderUsageSummary>, TeamOperationError>;
+    readonly upsertSkill: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamUpsertSkillInput;
+    }) => Effect.Effect<TeamSkill, TeamOperationError>;
+    readonly deleteSkill: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamDeleteSkillInput;
+    }) => Effect.Effect<TeamDeleteSkillResult, TeamOperationError>;
+    readonly upsertPreprompt: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamUpsertPrepromptInput;
+    }) => Effect.Effect<TeamPreprompt, TeamOperationError>;
+    readonly deletePreprompt: (input: {
+      readonly sessionId: AuthSessionId;
+      readonly payload: TeamDeletePrepromptInput;
+    }) => Effect.Effect<TeamDeletePrepromptResult, TeamOperationError>;
+    readonly issueLocalSyncToken: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<TeamIssueLocalSyncTokenResult, TeamOperationError>;
+    readonly assertCanManageServerProviders: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<void, EnvironmentAuthorizationError>;
+    readonly assertLocalBindingHostAllowed: () => Effect.Effect<void, TeamOperationError>;
   }
 >()("t3/team/TeamService") {}
 
@@ -727,6 +798,13 @@ const make = Effect.gen(function* () {
   const sessionStore = yield* SessionStore.SessionStore;
   const random = yield* SecureRandom.SecureRandom;
   const serverEnvironmentOption = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
+  const assetsRepositoryOption = yield* Effect.serviceOption(
+    TeamAssetsRepository.TeamAssetsRepository,
+  );
+  const secretStoreOption = yield* Effect.serviceOption(ServerSecretStore.ServerSecretStore);
+  const providerManagerOption = yield* Effect.serviceOption(
+    TeamProviderManager.TeamProviderManager,
+  );
   const eventsPubSub = yield* PubSub.unbounded<TeamStateStreamEvent>();
   const notificationTriggersPubSub = yield* PubSub.unbounded<TeamNotificationTriggerEvent>();
   const accessChangesPubSub = yield* PubSub.unbounded<TeamAccessChangeEvent>();
@@ -1037,6 +1115,10 @@ const make = Effect.gen(function* () {
         teamProjects: [],
         environments: [],
         threadNotes: [],
+        providers: [],
+        skills: [],
+        preprompts: [],
+        assetsRevision: NonNegativeInt.make(0),
       } satisfies TeamStateSnapshot;
     }
     const team = workspaceOption.value;
@@ -1088,16 +1170,46 @@ const make = Effect.gen(function* () {
       readableThreadIds.has(note.threadId),
     );
 
-    const [invites, rawFollowedThreadIds] = yield* Effect.all([
-      currentMember !== null &&
-      currentMember.status === "active" &&
-      canManageTeamInvites(currentMember.role)
-        ? repository.listInvites(team.id).pipe(Effect.mapError(toInternalError))
-        : Effect.succeed<ReadonlyArray<TeamInvite>>([]),
-      currentMember !== null && currentMember.status === "active"
-        ? repository.listFollowedThreadIds(currentMember.id).pipe(Effect.mapError(toInternalError))
-        : Effect.succeed<ReadonlyArray<ThreadId>>([]),
-    ]);
+    const [invites, rawFollowedThreadIds, providers, skills, preprompts, assetsRevision] =
+      yield* Effect.all([
+        currentMember !== null &&
+        currentMember.status === "active" &&
+        canManageTeamInvites(currentMember.role)
+          ? repository.listInvites(team.id).pipe(Effect.mapError(toInternalError))
+          : Effect.succeed<ReadonlyArray<TeamInvite>>([]),
+        currentMember !== null && currentMember.status === "active"
+          ? repository
+              .listFollowedThreadIds(currentMember.id)
+              .pipe(Effect.mapError(toInternalError))
+          : Effect.succeed<ReadonlyArray<ThreadId>>([]),
+        currentMember !== null &&
+        currentMember.status === "active" &&
+        Option.isSome(assetsRepositoryOption)
+          ? assetsRepositoryOption.value.listProviders(team.id).pipe(
+              Effect.map((rows) => rows.map(TeamAssetsRepository.stripProviderSecretKey)),
+              Effect.mapError(toInternalError),
+            )
+          : Effect.succeed<ReadonlyArray<TeamProvider>>([]),
+        currentMember !== null &&
+        currentMember.status === "active" &&
+        Option.isSome(assetsRepositoryOption)
+          ? assetsRepositoryOption.value.listSkills(team.id).pipe(Effect.mapError(toInternalError))
+          : Effect.succeed<ReadonlyArray<TeamSkill>>([]),
+        currentMember !== null &&
+        currentMember.status === "active" &&
+        Option.isSome(assetsRepositoryOption)
+          ? assetsRepositoryOption.value
+              .listPreprompts(team.id)
+              .pipe(Effect.mapError(toInternalError))
+          : Effect.succeed<ReadonlyArray<TeamPreprompt>>([]),
+        currentMember !== null &&
+        currentMember.status === "active" &&
+        Option.isSome(assetsRepositoryOption)
+          ? assetsRepositoryOption.value
+              .getAssetsRevision(team.id)
+              .pipe(Effect.mapError(toInternalError))
+          : Effect.succeed(0),
+      ]);
     const attributedThreadIds = new Set(allThreadAttributions.map((item) => item.threadId));
     const followedThreadIds = rawFollowedThreadIds.filter(
       (threadId) => !attributedThreadIds.has(threadId) || readableThreadIds.has(threadId),
@@ -1115,6 +1227,10 @@ const make = Effect.gen(function* () {
       teamProjects,
       environments: visibleEnvironments,
       threadNotes: visibleThreadNotes,
+      providers,
+      skills,
+      preprompts,
+      assetsRevision: NonNegativeInt.make(Math.max(0, assetsRevision)),
     } satisfies TeamStateSnapshot;
   });
 
@@ -1211,6 +1327,19 @@ const make = Effect.gen(function* () {
               if (event.type === "threadNoteUpserted" || event.type === "threadNoteDeleted") {
                 const readable = yield* canReadThread(sessionId, event.payload.threadId);
                 return readable
+                  ? Option.some<TeamStateStreamEvent>(event)
+                  : Option.none<TeamStateStreamEvent>();
+              }
+              if (
+                event.type === "providerUpserted" ||
+                event.type === "providerDeleted" ||
+                event.type === "skillUpserted" ||
+                event.type === "skillDeleted" ||
+                event.type === "prepromptUpserted" ||
+                event.type === "prepromptDeleted" ||
+                event.type === "assetsUpdated"
+              ) {
+                return currentMember !== null && currentMember.status === "active"
                   ? Option.some<TeamStateStreamEvent>(event)
                   : Option.none<TeamStateStreamEvent>();
               }
@@ -1601,6 +1730,11 @@ const make = Effect.gen(function* () {
     }
     if (updated.value.status !== "active") {
       yield* revokeSessionsForMember(updated.value.id);
+      if (Option.isSome(assetsRepositoryOption)) {
+        yield* assetsRepositoryOption.value
+          .revokeLocalSyncTokensForMember(updated.value.id, updatedAt)
+          .pipe(Effect.ignore);
+      }
       if (input.peerClientPairing) {
         const envs = yield* repository
           .listEnvironments(team.id)
@@ -6147,6 +6281,523 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const requireAssetsRepository = () =>
+    Effect.fromOption(assetsRepositoryOption).pipe(
+      Effect.mapError(
+        () =>
+          new TeamOperationError({
+            code: "internal",
+            message: "Team assets repository is not available on this server.",
+          }),
+      ),
+    );
+
+  const notifyProviderManagerChanged = () =>
+    Option.isSome(providerManagerOption)
+      ? providerManagerOption.value.notifyTeamServerAssetsOrProvidersChanged()
+      : Effect.void;
+
+  const isValidHttpUrl = (value: string): boolean => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+
+  const upsertProvider = Effect.fn("TeamService.upsertProvider")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamUpsertProviderInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamProviders(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only team owners and admins can configure team providers.",
+      });
+    }
+    const assetsRepo = yield* requireAssetsRepository();
+    if (isTeamProviderInstanceId(input.payload.providerInstanceId)) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Team provider instance IDs must not already use the virtual team: prefix.",
+      });
+    }
+    const deliveryStrategy =
+      input.payload.deliveryStrategy ?? defaultTeamProviderDeliveryStrategy(input.payload.driver);
+    const upstreamBaseUrl =
+      input.payload.upstreamBaseUrl !== undefined && input.payload.upstreamBaseUrl !== null
+        ? input.payload.upstreamBaseUrl.trim()
+        : null;
+    if (deliveryStrategy === "proxy") {
+      if (!upstreamBaseUrl || !isValidHttpUrl(upstreamBaseUrl)) {
+        return yield* new TeamOperationError({
+          code: "invalid_input",
+          message: "Proxy providers require a valid http:// or https:// upstream base URL.",
+        });
+      }
+    } else if (
+      upstreamBaseUrl !== null &&
+      upstreamBaseUrl.length > 0 &&
+      !isValidHttpUrl(upstreamBaseUrl)
+    ) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "Upstream base URL must be a valid http:// or https:// URL.",
+      });
+    }
+    const oauthTokenEndpoint =
+      input.payload.oauthTokenEndpoint !== undefined && input.payload.oauthTokenEndpoint !== null
+        ? input.payload.oauthTokenEndpoint.trim()
+        : null;
+    if (
+      oauthTokenEndpoint !== null &&
+      oauthTokenEndpoint.length > 0 &&
+      !isValidHttpUrl(oauthTokenEndpoint)
+    ) {
+      return yield* new TeamOperationError({
+        code: "invalid_input",
+        message: "OAuth token endpoint must be a valid http:// or https:// URL.",
+      });
+    }
+
+    const existingOpt = yield* assetsRepo
+      .getProviderByInstanceId(team.id, input.payload.providerInstanceId)
+      .pipe(Effect.mapError(toInternalError));
+    const existing = Option.getOrNull(existingOpt);
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    const id = existing?.id ?? TeamProviderId.make(yield* random.uuidV4().pipe(Effect.orDie));
+
+    const hasIncomingSecret =
+      input.payload.apiKey !== undefined ||
+      input.payload.oauthAccessToken !== undefined ||
+      input.payload.oauthRefreshToken !== undefined ||
+      input.payload.oauthTokenEndpoint !== undefined ||
+      input.payload.oauthClientId !== undefined ||
+      input.payload.oauthClientSecret !== undefined ||
+      input.payload.oauthExpiresAt !== undefined ||
+      input.payload.oauthEmail !== undefined ||
+      input.payload.oauthAuthMethod !== undefined;
+
+    let secretKey: string | null = existing?.secretKey ?? null;
+    if (input.payload.clearSecret === true) {
+      if (secretKey !== null && Option.isSome(secretStoreOption)) {
+        yield* removeTeamProviderSecret(secretStoreOption.value, secretKey).pipe(Effect.ignore);
+        clearTeamProviderRefreshLock(secretKey);
+      }
+      secretKey = null;
+    }
+    if (hasIncomingSecret) {
+      if (Option.isNone(secretStoreOption)) {
+        return yield* new TeamOperationError({
+          code: "internal",
+          message: "Secret store is unavailable; cannot persist provider credentials.",
+        });
+      }
+      const key = secretKey ?? teamProviderSecretKey(team.id, input.payload.providerInstanceId);
+      const previousSecret =
+        secretKey !== null
+          ? yield* readTeamProviderSecret(secretStoreOption.value, secretKey).pipe(
+              Effect.orElseSucceed(() => null),
+            )
+          : null;
+      const nextSecret: StoredTeamProviderSecret = {
+        ...previousSecret,
+        ...(input.payload.apiKey !== undefined ? { apiKey: input.payload.apiKey } : {}),
+        ...(input.payload.oauthAccessToken !== undefined
+          ? { oauthAccessToken: input.payload.oauthAccessToken }
+          : {}),
+        ...(input.payload.oauthRefreshToken !== undefined
+          ? { oauthRefreshToken: input.payload.oauthRefreshToken }
+          : {}),
+        ...(input.payload.oauthExpiresAt !== undefined && input.payload.oauthExpiresAt !== null
+          ? { oauthExpiresAt: input.payload.oauthExpiresAt }
+          : {}),
+        ...(oauthTokenEndpoint !== null && oauthTokenEndpoint.length > 0
+          ? { oauthTokenEndpoint }
+          : {}),
+        ...(input.payload.oauthClientId !== undefined && input.payload.oauthClientId !== null
+          ? { oauthClientId: input.payload.oauthClientId }
+          : {}),
+        ...(input.payload.oauthClientSecret !== undefined
+          ? { oauthClientSecret: input.payload.oauthClientSecret }
+          : {}),
+        ...(input.payload.oauthEmail !== undefined && input.payload.oauthEmail !== null
+          ? { oauthEmail: input.payload.oauthEmail }
+          : {}),
+        ...(input.payload.oauthAuthMethod !== undefined && input.payload.oauthAuthMethod !== null
+          ? { oauthAuthMethod: input.payload.oauthAuthMethod }
+          : {}),
+      };
+      yield* writeTeamProviderSecret(secretStoreOption.value, key, nextSecret).pipe(
+        Effect.mapError(toInternalError),
+      );
+      secretKey = key;
+    }
+
+    const stored = yield* assetsRepo
+      .upsertProvider({
+        id,
+        teamId: team.id,
+        providerInstanceId: input.payload.providerInstanceId,
+        driver: input.payload.driver,
+        displayName:
+          input.payload.displayName !== undefined
+            ? input.payload.displayName?.trim() || null
+            : (existing?.displayName ?? null),
+        deliveryStrategy,
+        upstreamBaseUrl: upstreamBaseUrl && upstreamBaseUrl.length > 0 ? upstreamBaseUrl : null,
+        apiKeyHeader:
+          input.payload.apiKeyHeader !== undefined
+            ? input.payload.apiKeyHeader?.trim() || null
+            : (existing?.apiKeyHeader ?? null),
+        apiKeyPrefix:
+          input.payload.apiKeyPrefix !== undefined
+            ? input.payload.apiKeyPrefix
+            : (existing?.apiKeyPrefix ?? null),
+        secretKey,
+        config: input.payload.config ?? existing?.config ?? {},
+        enabled: input.payload.enabled ?? existing?.enabled ?? true,
+        updatedByMemberId: actor.id,
+        now: nowIso,
+      })
+      .pipe(Effect.mapError(toInternalError));
+
+    const publicProvider = TeamAssetsRepository.stripProviderSecretKey(stored);
+    yield* publish({ version: 1, type: "providerUpserted", payload: publicProvider });
+    yield* notifyProviderManagerChanged();
+    return publicProvider;
+  });
+
+  const deleteProvider = Effect.fn("TeamService.deleteProvider")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamDeleteProviderInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamProviders(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only team owners and admins can remove team providers.",
+      });
+    }
+    const assetsRepo = yield* requireAssetsRepository();
+    const removedOpt = yield* assetsRepo
+      .deleteProvider(team.id, input.payload.providerInstanceId)
+      .pipe(Effect.mapError(toInternalError));
+    if (Option.isNone(removedOpt)) {
+      return {
+        deleted: false,
+      } satisfies TeamDeleteProviderResult;
+    }
+    if (removedOpt.value.secretKey !== null && Option.isSome(secretStoreOption)) {
+      yield* removeTeamProviderSecret(secretStoreOption.value, removedOpt.value.secretKey).pipe(
+        Effect.ignore,
+      );
+      clearTeamProviderRefreshLock(removedOpt.value.secretKey);
+    }
+    yield* publish({
+      version: 1,
+      type: "providerDeleted",
+      payload: { providerInstanceId: input.payload.providerInstanceId },
+    });
+    yield* notifyProviderManagerChanged();
+    return {
+      deleted: true,
+    } satisfies TeamDeleteProviderResult;
+  });
+
+  const listProviderUsage = Effect.fn("TeamService.listProviderUsage")(function* (
+    sessionId: AuthSessionId,
+  ) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(sessionId);
+    if (actor.teamId !== team.id || !canManageTeamProviders(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only team owners and admins can inspect team provider usage.",
+      });
+    }
+    const assetsRepo = yield* requireAssetsRepository();
+    return yield* assetsRepo
+      .listProviderUsageSummary(team.id)
+      .pipe(Effect.mapError(toInternalError));
+  });
+
+  const upsertSkill = Effect.fn("TeamService.upsertSkill")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamUpsertSkillInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamSkills(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only modo, admin, and owner members can create or edit team skills.",
+      });
+    }
+    const validated = yield* validateTeamSkillPayload({
+      slug: input.payload.slug,
+      providerDriver: input.payload.providerDriver ?? "*",
+      skillMd: input.payload.skillMd,
+      enabled: input.payload.enabled ?? true,
+      ...(input.payload.references !== undefined ? { references: input.payload.references } : {}),
+    }).pipe(
+      Effect.mapError(
+        (error) => new TeamOperationError({ code: "invalid_input", message: error.message }),
+      ),
+    );
+    const assetsRepo = yield* requireAssetsRepository();
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    const id = input.payload.skillId ?? TeamSkillId.make(yield* random.uuidV4().pipe(Effect.orDie));
+    const { skill, revision } = yield* assetsRepo
+      .upsertSkill({
+        id,
+        teamId: team.id,
+        slug: validated.slug,
+        providerDriver: input.payload.providerDriver ?? "*",
+        skillMd: validated.skillMd,
+        references: validated.references,
+        enabled: input.payload.enabled ?? true,
+        contentHash: validated.contentHash,
+        updatedByMemberId: actor.id,
+        now: nowIso,
+      })
+      .pipe(
+        Effect.catchTags({
+          TeamSkillSlugConflictError: (error) =>
+            Effect.fail(
+              new TeamOperationError({ code: "skill_slug_taken", message: error.message }),
+            ),
+          TeamAssetsRepositoryError: (error) => Effect.fail(toInternalError(error)),
+        }),
+      );
+    yield* publish({ version: 1, type: "skillUpserted", payload: skill });
+    yield* publish({
+      version: 1,
+      type: "assetsUpdated",
+      payload: { teamId: team.id, revision: NonNegativeInt.make(revision) },
+    });
+    yield* notifyProviderManagerChanged();
+    return skill;
+  });
+
+  const deleteSkill = Effect.fn("TeamService.deleteSkill")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamDeleteSkillInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamSkills(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only modo, admin, and owner members can delete team skills.",
+      });
+    }
+    const assetsRepo = yield* requireAssetsRepository();
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    const tombstoneId = yield* random.uuidV4().pipe(Effect.orDie);
+    const result = yield* assetsRepo
+      .deleteSkill({
+        teamId: team.id,
+        skillId: input.payload.skillId,
+        tombstoneId,
+        now: nowIso,
+      })
+      .pipe(Effect.mapError(toInternalError));
+    if (result.deleted) {
+      yield* publish({
+        version: 1,
+        type: "skillDeleted",
+        payload: {
+          skillId: input.payload.skillId,
+          revision: NonNegativeInt.make(result.revision),
+        },
+      });
+      yield* publish({
+        version: 1,
+        type: "assetsUpdated",
+        payload: { teamId: team.id, revision: NonNegativeInt.make(result.revision) },
+      });
+      yield* notifyProviderManagerChanged();
+    }
+    return {
+      deleted: result.deleted,
+      revision: NonNegativeInt.make(result.revision),
+    } satisfies TeamDeleteSkillResult;
+  });
+
+  const upsertPreprompt = Effect.fn("TeamService.upsertPreprompt")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamUpsertPrepromptInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamPreprompts(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only modo, admin, and owner members can create or edit team pre-prompts.",
+      });
+    }
+    const validated = yield* validateTeamPrepromptPayload({
+      name: input.payload.name,
+      providerDriver: input.payload.providerDriver ?? "*",
+      injectionScope: input.payload.injectionScope ?? "thread",
+      content: input.payload.content,
+      enabled: input.payload.enabled ?? true,
+    }).pipe(
+      Effect.mapError(
+        (error) => new TeamOperationError({ code: "invalid_input", message: error.message }),
+      ),
+    );
+    const assetsRepo = yield* requireAssetsRepository();
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    const id =
+      input.payload.prepromptId ?? TeamPrepromptId.make(yield* random.uuidV4().pipe(Effect.orDie));
+    const { preprompt, revision } = yield* assetsRepo
+      .upsertPreprompt({
+        id,
+        teamId: team.id,
+        name: validated.name,
+        providerDriver: input.payload.providerDriver ?? "*",
+        injectionScope: input.payload.injectionScope ?? "thread",
+        content: validated.content,
+        enabled: input.payload.enabled ?? true,
+        contentHash: validated.contentHash,
+        updatedByMemberId: actor.id,
+        now: nowIso,
+      })
+      .pipe(Effect.mapError(toInternalError));
+    yield* publish({ version: 1, type: "prepromptUpserted", payload: preprompt });
+    yield* publish({
+      version: 1,
+      type: "assetsUpdated",
+      payload: { teamId: team.id, revision: NonNegativeInt.make(revision) },
+    });
+    yield* notifyProviderManagerChanged();
+    return preprompt;
+  });
+
+  const deletePreprompt = Effect.fn("TeamService.deletePreprompt")(function* (input: {
+    readonly sessionId: AuthSessionId;
+    readonly payload: TeamDeletePrepromptInput;
+  }) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(input.sessionId);
+    if (actor.teamId !== team.id || !canManageTeamPreprompts(actor.role)) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "Only modo, admin, and owner members can delete team pre-prompts.",
+      });
+    }
+    const assetsRepo = yield* requireAssetsRepository();
+    const nowIso = DateTime.formatIso(yield* DateTime.now);
+    const tombstoneId = yield* random.uuidV4().pipe(Effect.orDie);
+    const result = yield* assetsRepo
+      .deletePreprompt({
+        teamId: team.id,
+        prepromptId: input.payload.prepromptId,
+        tombstoneId,
+        now: nowIso,
+      })
+      .pipe(Effect.mapError(toInternalError));
+    if (result.deleted) {
+      yield* publish({
+        version: 1,
+        type: "prepromptDeleted",
+        payload: {
+          prepromptId: input.payload.prepromptId,
+          revision: NonNegativeInt.make(result.revision),
+        },
+      });
+      yield* publish({
+        version: 1,
+        type: "assetsUpdated",
+        payload: { teamId: team.id, revision: NonNegativeInt.make(result.revision) },
+      });
+      yield* notifyProviderManagerChanged();
+    }
+    return {
+      deleted: result.deleted,
+      revision: NonNegativeInt.make(result.revision),
+    } satisfies TeamDeletePrepromptResult;
+  });
+
+  const issueLocalSyncToken = Effect.fn("TeamService.issueLocalSyncToken")(function* (
+    sessionId: AuthSessionId,
+  ) {
+    const team = yield* requireWorkspace();
+    const actor = yield* requireActiveMember(sessionId);
+    if (actor.teamId !== team.id) {
+      return yield* new TeamOperationError({
+        code: "forbidden",
+        message: "This session does not belong to the active team.",
+      });
+    }
+    const assetsRepo = yield* requireAssetsRepository();
+    const now = yield* DateTime.now;
+    const nowIso = DateTime.formatIso(now);
+    const expiresAt = DateTime.formatIso(DateTime.addDuration(now, RENEWABLE_SESSION_WINDOW));
+    // Mint a dedicated opaque token accepted ONLY by /api/team/{provider-proxy,provider-lease,assets},
+    // never registered in SessionStore (so spawned agents reading env vars cannot access WS/HTTP APIs).
+    const token = `t3teamsync_${NodeCrypto.randomBytes(32).toString("base64url")}`;
+    yield* assetsRepo
+      .insertLocalSyncToken({
+        tokenHash: hashInviteToken(token),
+        teamId: team.id,
+        memberId: actor.id,
+        sessionId,
+        createdAt: nowIso,
+      })
+      .pipe(Effect.mapError(toInternalError));
+    return {
+      token,
+      teamId: team.id,
+      memberId: actor.id,
+      expiresAt,
+    } satisfies TeamIssueLocalSyncTokenResult;
+  });
+
+  const assertLocalBindingHostAllowed = Effect.fn("TeamService.assertLocalBindingHostAllowed")(
+    function* () {
+      const workspaceOpt = yield* repository
+        .getWorkspace()
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+      if (Option.isSome(workspaceOpt)) {
+        return yield* new TeamOperationError({
+          code: "forbidden",
+          message: "Local team provider bindings cannot be configured on a Team Server.",
+        });
+      }
+    },
+  );
+
+  const assertCanManageServerProviders = Effect.fn("TeamService.assertCanManageServerProviders")(
+    function* (sessionId: AuthSessionId) {
+      const workspaceOpt = yield* repository
+        .getWorkspace()
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamWorkspace>()));
+      if (Option.isNone(workspaceOpt)) return;
+      const memberOpt = yield* repository
+        .getMemberForSession(sessionId)
+        .pipe(Effect.orElseSucceed(() => Option.none<TeamMember>()));
+      const member = Option.getOrNull(memberOpt);
+      if (
+        member === null ||
+        member.teamId !== workspaceOpt.value.id ||
+        member.status !== "active" ||
+        !canManageTeamProviders(member.role)
+      ) {
+        return yield* teamAdminAuthError(
+          "Only team owners and admins can configure or authenticate providers on a Team Server.",
+          "team:provider:write",
+        );
+      }
+    },
+  );
+
   return TeamService.of({
     isTeamConfigured,
     getState,
@@ -6253,6 +6904,16 @@ const make = Effect.gen(function* () {
     releaseNoteReservationByToken,
     verifyAcceptedNotesForDispatch,
     finalizeNotesForDispatchedTurn,
+    upsertProvider,
+    deleteProvider,
+    listProviderUsage,
+    upsertSkill,
+    deleteSkill,
+    upsertPreprompt,
+    deletePreprompt,
+    issueLocalSyncToken,
+    assertCanManageServerProviders,
+    assertLocalBindingHostAllowed,
   });
 });
 

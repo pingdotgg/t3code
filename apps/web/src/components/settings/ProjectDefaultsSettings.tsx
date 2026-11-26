@@ -1,5 +1,9 @@
 import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
 import {
+  filterProviderEntriesForTeamProject,
+  resolveProjectTeamAssignment,
+} from "@t3tools/client-runtime/team";
+import {
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
   type WorktreeSubmodules,
@@ -15,9 +19,11 @@ import {
   getCustomModelOptionsByInstance,
 } from "../../modelSelection";
 import { providerInstanceEntriesFor } from "../../providerInstances";
+import { useProjects } from "../../state/entities";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { firstManagedDenial } from "../../state/managedPolicy";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { useTeamStatesByEnvironment } from "../../state/team";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
@@ -59,14 +65,30 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
   const { environments } = useEnvironments();
+  const allProjects = useProjects();
+  const teamStates = useTeamStatesByEnvironment();
   const providersByEnvironment = useEnvironmentProviders();
   const representative = target
     ? environments.find((environment) => environment.environmentId === target.environmentId)
     : undefined;
-  const providers =
+  const targetProject =
+    target?.projectId != null
+      ? allProjects.find(
+          (project) =>
+            project.id === target.projectId && project.environmentId === target.environmentId,
+        )
+      : undefined;
+  const targetTeamAssignment = targetProject
+    ? resolveProjectTeamAssignment({ project: targetProject, teamStates })
+    : null;
+  const rawProviders =
     (representative?.serverConfig
       ? providersByEnvironment.get(representative.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
+  const providers = filterProviderEntriesForTeamProject({
+    entries: rawProviders,
+    teamAssignment: targetTeamAssignment,
+  });
   const entries = providerInstanceEntriesFor(providers, settings, target?.projectId ?? null);
   const presentation = resolveDefaultModelSettingsPresentation(
     {

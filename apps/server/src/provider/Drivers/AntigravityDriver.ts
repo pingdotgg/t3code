@@ -79,7 +79,10 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  mergeProviderInstanceEnvironment,
+  ProviderSessionEnvironmentOverride,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 
@@ -227,6 +230,7 @@ export const AntigravityDriver: ProviderDriver<
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      explicitApiKeyOverride?: string,
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
@@ -253,10 +257,26 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      const sessionOverride = yield* ProviderSessionEnvironmentOverride;
+      const effectiveBaseEnv: NodeJS.ProcessEnv =
+        Object.keys(sessionOverride).length > 0 ? { ...baseEnv, ...sessionOverride } : baseEnv;
+      // Only override the configured instance key from an explicit per-session override, never from ambient process.env.
+      const sessionApiKey =
+        (typeof sessionOverride.GEMINI_API_KEY === "string" &&
+        sessionOverride.GEMINI_API_KEY.length > 0
+          ? sessionOverride.GEMINI_API_KEY
+          : undefined) ??
+        (typeof explicitApiKeyOverride === "string" && explicitApiKeyOverride.length > 0
+          ? explicitApiKeyOverride
+          : undefined);
+      const effectiveAuth: AntigravityAuthConfig =
+        auth.authMethod === "gemini-api-key" && sessionApiKey !== undefined
+          ? { ...auth, apiKey: sessionApiKey }
+          : auth;
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
-        baseEnv: processEnvironment,
-        auth,
+        baseEnv: effectiveBaseEnv,
+        auth: effectiveAuth,
         userHome,
         tempDirectory: directories.runtimeTemp,
       }).pipe(
@@ -304,8 +324,8 @@ export const AntigravityDriver: ProviderDriver<
           installation: executable,
           profile,
           cwd,
-          baseEnv,
-          auth,
+          baseEnv: effectiveBaseEnv,
+          auth: effectiveAuth,
           runtimeTempDirectory,
         }),
       };
@@ -326,6 +346,7 @@ export const AntigravityDriver: ProviderDriver<
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        threadEnvironment?.GEMINI_API_KEY,
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,

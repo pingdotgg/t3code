@@ -36,6 +36,7 @@ import * as ServerConfig from "../config.ts";
 import { refreshPathFromLoginShell, refreshWindowsPath } from "../os-jank.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
+import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import {
   hydrateCachedProvider,
   isCachedProviderCorrelated,
@@ -1355,6 +1356,35 @@ export const layer = Layer.effect(
         Effect.ignoreCause({ log: true }),
       ),
     ).pipe(Effect.forkScoped);
+
+    const teamProviderManagerOption = yield* Effect.serviceOption(
+      TeamProviderManager.TeamProviderManager,
+    );
+    if (Option.isSome(teamProviderManagerOption)) {
+      yield* teamProviderManagerOption.value.streamSkillCatalogRefreshes.pipe(
+        Stream.runForEach((instanceIds) =>
+          Effect.forEach(
+            instanceIds,
+            (instanceId) =>
+              Effect.gen(function* () {
+                const providers = yield* refreshInstance(instanceId).pipe(
+                  Effect.catchCause(recoverRefreshFailure),
+                );
+                const entry = providers.find((provider) => provider.instanceId === instanceId);
+                for (const snapshot of entry?.workspaceSnapshots ?? []) {
+                  yield* refreshWorkspaceSnapshot({
+                    instanceId,
+                    cwd: snapshot.cwd,
+                    fresh: true,
+                  }).pipe(Effect.ignoreCause({ log: true }));
+                }
+              }),
+            { concurrency: "unbounded", discard: true },
+          ),
+        ),
+        Effect.forkScoped,
+      );
+    }
 
     const invalidateModelCaches = Effect.fn("ProviderRegistry.invalidateModelCaches")(function* (
       input: Parameters<ProviderRegistry["Service"]["invalidateModelCaches"]>[0],

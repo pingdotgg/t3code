@@ -1,9 +1,11 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { ProviderSessionEnvironmentOverride } from "@t3tools/provider-core/server/instanceEnvironment";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   isOrchestrationV2WorkActive,
+  isTeamProviderInstanceId,
   ModelSelection,
   type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
@@ -81,6 +83,7 @@ import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
 } from "@t3tools/provider-core/server/subagentProjection";
+import * as TeamProviderManager from "../team/TeamProviderManager.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -272,6 +275,12 @@ export interface ProviderSessionManagerV2Shape {
     ProviderSessionManagerV2Error
   >;
   readonly isLive: (providerSessionId: ProviderSessionId) => Effect.Effect<boolean>;
+  /** Resolves the currently live effective session ID for `(providerSessionId, threadId, actingMemberId)`, or `null` when cold. */
+  readonly resolveActiveSessionId: (input: {
+    readonly providerSessionId: ProviderSessionId;
+    readonly threadId: ThreadId;
+    readonly actingMemberId?: TeamMemberId | null;
+  }) => Effect.Effect<ProviderSessionId | null>;
   readonly close: (
     providerSessionId: ProviderSessionId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -280,8 +289,11 @@ export interface ProviderSessionManagerV2Shape {
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   readonly release: (input: {
     readonly providerSessionId: ProviderSessionId;
+    readonly threadId?: ThreadId;
+    readonly actingMemberId?: TeamMemberId | null;
     readonly reason: ProviderSessionReleaseReason;
     readonly detail?: string;
+    readonly preserveTeamEphemeralTokens?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   readonly detach: (input: {
     readonly providerSessionId: ProviderSessionId;
@@ -585,6 +597,9 @@ export const layerWithOptions = (
           }),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      const teamProviderManagerOption = yield* Effect.serviceOption(
+        TeamProviderManager.TeamProviderManager,
+      );
       const activeSessionIdByThread = yield* Ref.make(new Map<ThreadId, ProviderSessionId>());
       const MEMBER_SESSION_SEPARATOR = "::member:";
       const canonicalBaseSessionId = (id: ProviderSessionId): ProviderSessionId => {
@@ -1601,6 +1616,7 @@ export const layerWithOptions = (
         readonly keepIf?: Effect.Effect<boolean>;
         readonly gracefulSubscribers?: boolean;
         readonly eventStreamCause?: Cause.Cause<ProviderAdapter.ProviderAdapterV2Error>;
+        readonly preserveTeamEphemeralTokens?: boolean;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1700,6 +1716,36 @@ export const layerWithOptions = (
                           : clearMcpSession(threadId, mcpCredentialId);
                       },
                       { discard: true },
+                    ).pipe(
+                      Effect.andThen(() => {
+                        const instanceId = entry.runtime.providerSession.providerInstanceId;
+                        if (
+                          Option.isNone(teamProviderManagerOption) ||
+                          !isTeamProviderInstanceId(instanceId)
+                        ) {
+                          return Effect.void;
+                        }
+                        const revokeSessionToken = teamProviderManagerOption.value
+                          .revokeInternalProxySessionToken(entry.runtime.providerSessionId)
+                          .pipe(Effect.ignore);
+                        if (input.preserveTeamEphemeralTokens === true) {
+                          return revokeSessionToken;
+                        }
+                        const stillInUse = Array.from(current.values()).some(
+                          (other) =>
+                            other !== entry &&
+                            other.runtime.providerSession.providerInstanceId === instanceId,
+                        );
+                        return stillInUse
+                          ? revokeSessionToken
+                          : revokeSessionToken.pipe(
+                              Effect.andThen(
+                                teamProviderManagerOption.value
+                                  .purgeEphemeralTokensForInstance(instanceId)
+                                  .pipe(Effect.ignore),
+                              ),
+                            );
+                      }),
                     ),
                   ),
                 ),
@@ -2552,6 +2598,7 @@ export const layerWithOptions = (
           detail: "Linked environments changed; reopening the provider session.",
           onlyIfIdleGeneration: generation,
           keepIf: hasUnfinishedRecords,
+          preserveTeamEphemeralTokens: true,
         }).pipe(logReleaseFailure(providerSessionId));
       });
 
@@ -3388,6 +3435,7 @@ export const layerWithOptions = (
                       reason: "manual_shutdown",
                       detail:
                         "Turn author changed; recycling warm provider session with rotated MCP token.",
+                      preserveTeamEphemeralTokens: true,
                     }).pipe(logReleaseFailure(previousSessionId));
                   } else {
                     const previousCredentialId = liveAfterLinks.mcpCredentialIdByThread.get(
@@ -3500,34 +3548,69 @@ export const layerWithOptions = (
               const sessionClosed = yield* Deferred.make<void>();
               yield* Scope.addFinalizer(sessionScope, Deferred.done(sessionClosed, Exit.void));
               yield* agentScope.clear(input.threadId);
+              const teamLeaseGenerationBeforeOpen =
+                Option.isSome(teamProviderManagerOption) &&
+                isTeamProviderInstanceId(input.modelSelection.instanceId)
+                  ? yield* teamProviderManagerOption.value
+                      .getLeaseGeneration(input.modelSelection.instanceId)
+                      .pipe(Effect.orElseSucceed(() => 0))
+                  : undefined;
+              const teamProxySessionEnv =
+                Option.isSome(teamProviderManagerOption) &&
+                isTeamProviderInstanceId(input.modelSelection.instanceId)
+                  ? yield* teamProviderManagerOption.value
+                      .issueInternalProxySessionToken({
+                        virtualInstanceId: input.modelSelection.instanceId,
+                        providerSessionId: effectiveProviderSessionId,
+                        memberId: input.actingMemberId ?? null,
+                      })
+                      .pipe(Effect.orElseSucceed(() => null))
+                  : null;
               const runtime = yield* installationGate
                 .execute(
                   input.modelSelection.instanceId,
-                  adapter.openSession({
-                    threadId: input.threadId,
-                    providerSessionId: effectiveProviderSessionId,
-                    modelSelection: input.modelSelection,
-                    runtimePolicy: input.runtimePolicy,
-                    promptSuggestions: promptSuggestionsEnabled,
-                    ...(input.resumeFromSession === undefined
-                      ? {}
-                      : { resumeFromSession: input.resumeFromSession }),
-                    ...(input.initialNativeThreadId === undefined
-                      ? {}
-                      : { initialNativeThreadId: input.initialNativeThreadId }),
-                    ...(input.initialProviderItemIdentityVersion === undefined
-                      ? {}
-                      : {
-                          initialProviderItemIdentityVersion:
-                            input.initialProviderItemIdentityVersion,
-                        }),
-                  }),
+                  adapter
+                    .openSession({
+                      threadId: input.threadId,
+                      providerSessionId: effectiveProviderSessionId,
+                      modelSelection: input.modelSelection,
+                      runtimePolicy: input.runtimePolicy,
+                      promptSuggestions: promptSuggestionsEnabled,
+                      ...(input.resumeFromSession === undefined
+                        ? {}
+                        : { resumeFromSession: input.resumeFromSession }),
+                      ...(input.initialNativeThreadId === undefined
+                        ? {}
+                        : { initialNativeThreadId: input.initialNativeThreadId }),
+                      ...(input.initialProviderItemIdentityVersion === undefined
+                        ? {}
+                        : {
+                            initialProviderItemIdentityVersion:
+                              input.initialProviderItemIdentityVersion,
+                          }),
+                      ...(teamProxySessionEnv === null
+                        ? {}
+                        : { sessionEnvironmentOverride: teamProxySessionEnv }),
+                    })
+                    .pipe(
+                      Effect.provideService(
+                        ProviderSessionEnvironmentOverride,
+                        teamProxySessionEnv ?? {},
+                      ),
+                    ),
                 )
                 .pipe(
                   Effect.provideService(Scope.Scope, sessionScope),
                   // Bound scope close after cleanup; a wedged finalizer must not hold the open lock or interrupter.
                   Effect.onError(() =>
                     dropReservation.pipe(
+                      Effect.andThen(
+                        Option.isSome(teamProviderManagerOption) && teamProxySessionEnv !== null
+                          ? teamProviderManagerOption.value
+                              .revokeInternalProxySessionToken(effectiveProviderSessionId)
+                              .pipe(Effect.ignore)
+                          : Effect.void,
+                      ),
                       Effect.andThen(
                         prepared.issued
                           ? clearMcpSession(input.threadId, mcpCredentialId)
@@ -3619,6 +3702,18 @@ export const layerWithOptions = (
                 ),
               );
               yield* startEventPump(entry, sessionClosed);
+              if (
+                Option.isSome(teamProviderManagerOption) &&
+                isTeamProviderInstanceId(input.modelSelection.instanceId)
+              ) {
+                yield* teamProviderManagerOption.value
+                  .recordSessionLeaseGeneration(
+                    input.modelSelection.instanceId,
+                    effectiveProviderSessionId,
+                    teamLeaseGenerationBeforeOpen,
+                  )
+                  .pipe(Effect.ignore);
+              }
               yield* scheduleIdleRelease(effectiveProviderSessionId);
               return exposedRuntime;
             }),
@@ -3628,6 +3723,44 @@ export const layerWithOptions = (
           Ref.get(sessions).pipe(
             Effect.map((current) => matchingSessionIds(current, providerSessionId).length > 0),
           ),
+        resolveActiveSessionId: Effect.fn("ProviderSessionManager.resolveActiveSessionId")(
+          function* (input) {
+            const current = yield* Ref.get(sessions);
+            const byThread = yield* Ref.get(activeSessionIdByThread);
+            const threadSessionId = resolveThreadSessionId(
+              byThread,
+              input.providerSessionId,
+              input.threadId,
+            );
+            const threadEntry = current.get(sessionKey(threadSessionId));
+            if (threadEntry !== undefined) {
+              if (
+                input.actingMemberId === undefined ||
+                threadEntry.ownerActingMemberId === (input.actingMemberId ?? null)
+              ) {
+                return threadEntry.runtime.providerSessionId;
+              }
+            }
+            const base = canonicalBaseSessionId(input.providerSessionId);
+            if (input.actingMemberId !== undefined && input.actingMemberId !== null) {
+              const memberEntry = current.get(
+                sessionKey(memberScopedSessionId(base, input.actingMemberId)),
+              );
+              if (memberEntry !== undefined) {
+                return memberEntry.runtime.providerSessionId;
+              }
+            }
+            const baseEntry = current.get(sessionKey(base));
+            if (
+              baseEntry !== undefined &&
+              (input.actingMemberId === undefined ||
+                baseEntry.ownerActingMemberId === (input.actingMemberId ?? null))
+            ) {
+              return baseEntry.runtime.providerSessionId;
+            }
+            return null;
+          },
+        ),
         get: Effect.fn("ProviderSessionManager.get")(
           function* (providerSessionId, threadId) {
             const effectiveSessionId =
@@ -3712,7 +3845,52 @@ export const layerWithOptions = (
             ),
         ),
         release: Effect.fn("ProviderSessionManager.release")(function* (input) {
-          const ids = matchingSessionIds(yield* Ref.get(sessions), input.providerSessionId);
+          const current = yield* Ref.get(sessions);
+          if (input.threadId !== undefined || input.actingMemberId !== undefined) {
+            let targetId: ProviderSessionId | null = null;
+            if (input.threadId !== undefined) {
+              const byThread = yield* Ref.get(activeSessionIdByThread);
+              const candidate = resolveThreadSessionId(
+                byThread,
+                input.providerSessionId,
+                input.threadId,
+              );
+              const entry = current.get(sessionKey(candidate));
+              if (
+                entry !== undefined &&
+                (input.actingMemberId === undefined ||
+                  entry.ownerActingMemberId === (input.actingMemberId ?? null))
+              ) {
+                targetId = entry.runtime.providerSessionId;
+              }
+            }
+            if (targetId === null) {
+              const base = canonicalBaseSessionId(input.providerSessionId);
+              if (input.actingMemberId !== undefined && input.actingMemberId !== null) {
+                const memberEntry = current.get(
+                  sessionKey(memberScopedSessionId(base, input.actingMemberId)),
+                );
+                if (memberEntry !== undefined) {
+                  targetId = memberEntry.runtime.providerSessionId;
+                }
+              }
+              if (targetId === null) {
+                const baseEntry = current.get(sessionKey(base));
+                if (
+                  baseEntry !== undefined &&
+                  (input.actingMemberId === undefined ||
+                    baseEntry.ownerActingMemberId === (input.actingMemberId ?? null))
+                ) {
+                  targetId = baseEntry.runtime.providerSessionId;
+                }
+              }
+            }
+            if (targetId !== null) {
+              yield* releaseEntry({ ...input, providerSessionId: targetId });
+            }
+            return;
+          }
+          const ids = matchingSessionIds(current, input.providerSessionId);
           const targets = ids.length > 0 ? ids : [input.providerSessionId];
           yield* Effect.forEach(
             targets,

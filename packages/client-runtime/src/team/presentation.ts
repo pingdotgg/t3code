@@ -10,15 +10,19 @@ import {
   canMemberSteerActiveTeamTurn,
   canToggleTeamThreadLock,
   isTeamAdminRole,
+  isTeamProviderInstanceId,
+  isTeamProviderInstanceIdForTeam,
   resolveTeamThreadEnvironmentAccess,
   resolveTeamThreadPostBlockReason,
   shouldNotifyTeamMemberForThread,
   type EnvironmentId,
   type ProjectId,
+  type ProviderInstanceId,
   type RepositoryIdentity,
   type TeamEnvironment,
   type TeamMemberId,
   type TeamProjectAssignment,
+  type TeamProvider,
   type TeamThreadEnvironmentAccess,
   type TeamThreadNote,
   type TeamThreadPostBlockReason,
@@ -680,4 +684,33 @@ export function resolveTeamThreadAcceptedNotes(input: {
   readonly threadId: ThreadId;
 }): ReadonlyArray<TeamThreadNote> {
   return resolveTeamThreadNotes(input).filter((note) => note.status === "accepted");
+}
+
+/**
+ * Enforces the strict Milestone 6 provider isolation invariant in the client model picker:
+ * - On any project assigned to team `T`, ONLY `team:<T>:*` virtual instances are exposed (never personal credentials).
+ * - On personal projects, all `team:*` virtual instances are excluded.
+ */
+export function filterProviderEntriesForTeamProject<
+  T extends { readonly instanceId: ProviderInstanceId },
+>(input: {
+  readonly entries: ReadonlyArray<T>;
+  readonly teamAssignment: ResolvedProjectTeamAssignment | null | undefined;
+}): ReadonlyArray<T> {
+  if (input.teamAssignment != null) {
+    const teamId = input.teamAssignment.team.id;
+    return input.entries.filter((entry) =>
+      isTeamProviderInstanceIdForTeam(entry.instanceId, teamId),
+    );
+  }
+  return input.entries.filter((entry) => !isTeamProviderInstanceId(entry.instanceId));
+}
+
+export function listRemoteOnlyTeamProviders(
+  teamAssignment: ResolvedProjectTeamAssignment | null | undefined,
+): ReadonlyArray<TeamProvider> {
+  if (teamAssignment == null) return [];
+  return teamAssignment.teamState.providers.filter(
+    (provider) => provider.enabled && provider.deliveryStrategy === "remote-only",
+  );
 }

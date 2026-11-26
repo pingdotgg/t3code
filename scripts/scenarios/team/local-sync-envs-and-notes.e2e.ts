@@ -13,6 +13,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   WsRpcGroup,
+  makeTeamProviderInstanceId,
   parseTeamJoinLink,
 } from "@t3tools/contracts";
 import { test } from "@e2e-dev/web";
@@ -24,6 +25,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } fr
 import { RpcClient, RpcSerialization } from "effect/rpc";
 import { Socket } from "effect/socket";
 
+import { TEAM_APP_DIR } from "../../e2e.team.config.ts";
 import { rpcClient, runPromise } from "../t3.ts";
 import { startTeamTopology, type TeamMemberHandle } from "./topology.ts";
 
@@ -437,6 +439,46 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
     pseudo: "clara",
   });
 
+  // Register team providers (strict M6 isolation requires team:<teamId>:* providers on team-assigned projects).
+  const claraInitialState = await callBearerRpc(
+    topology.teamServer.origin,
+    claraBearerToken,
+    (client) => client["team.getState"]({}),
+  );
+  if (!claraInitialState.ok || !claraInitialState.result.team) {
+    throw new Error("Expected initialized team state for Clara");
+  }
+  const teamId = claraInitialState.result.team.id;
+  const teamReplaySourceId = ProviderInstanceId.make("team-dev-replay");
+  const teamReplayVirtualId = makeTeamProviderInstanceId(teamId, teamReplaySourceId);
+  const teamProbeVirtualId = makeTeamProviderInstanceId(teamId, probeInstanceId);
+  const devReplayAgentPath = NodePath.resolve(
+    TEAM_APP_DIR,
+    "apps/server/scripts/dev-replay-agent.ts",
+  );
+
+  const upsertReplayRes = await callBearerRpc(
+    topology.teamServer.origin,
+    claraBearerToken,
+    (client) =>
+      client["team.upsertProvider"]({
+        providerInstanceId: teamReplaySourceId,
+        driver: ProviderDriverKind.make("acpRegistry"),
+        displayName: "Team Replay (dev)",
+        deliveryStrategy: "proxy",
+        upstreamBaseUrl: "http://127.0.0.1:1",
+        config: {
+          source: "local",
+          commandPath: process.execPath,
+          commandArgs: [devReplayAgentPath],
+        },
+        enabled: true,
+      }),
+  );
+  if (!upsertReplayRes.ok) {
+    throw new Error(`team.upsertProvider(team-dev-replay) failed: ${upsertReplayRes.error}`);
+  }
+
   // 3. Alice attaches extra remote environment ("GPU Runner") restricted to owner & admin ONLY via Settings -> Teams -> Environments.
   await alice.page
     .getByTestId("team-env-attach-open")
@@ -527,6 +569,27 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
   await notificationSelect.waitFor({ state: "visible", timeout: 15_000 });
   await notificationSelect.click();
   await bob.page.getByRole("option", { name: "Notifications only" }).click();
+
+  // Wait for Bob's local server to provision the synced virtual team provider (`team:<teamId>:team-dev-replay`).
+  await expect
+    .poll(
+      async () =>
+        await runPromise(
+          Effect.gen(function* () {
+            const client = yield* rpcClient(bob.home, bob.localServerOrigin);
+            const config = yield* client["server.getConfig"]({});
+            const found = config.providers.find(
+              (provider) => provider.instanceId === teamReplayVirtualId,
+            );
+            if (!found) {
+              return `missing(ids=${config.providers.map((p) => `${p.instanceId}:${p.status}`).join(",")})`;
+            }
+            return found.status === "ready" ? "ready" : `${found.status}:${found.message ?? ""}`;
+          }).pipe(Effect.scoped),
+        ),
+      { timeout: 25_000, interval: 500 },
+    )
+    .toBe("ready");
 
   await bob.open("/");
   await bob.setWindowFocused(false);
@@ -830,7 +893,7 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
       yield* client["server.updateSettings"]({
         patch: {
           defaultModelSelection: {
-            instanceId: ProviderInstanceId.make("devReplay"),
+            instanceId: teamReplayVirtualId,
             model: "approval",
           },
           defaultRuntimeMode: "approval-required",
@@ -838,6 +901,27 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
       });
     }).pipe(Effect.scoped),
   );
+  // Wait for Bob's local server to provision the synced virtual team provider (`team:<teamId>:team-dev-replay`).
+  await expect
+    .poll(
+      async () =>
+        await runPromise(
+          Effect.gen(function* () {
+            const client = yield* rpcClient(bob.home, bob.localServerOrigin);
+            const config = yield* client["server.getConfig"]({});
+            const found = config.providers.find(
+              (provider) => provider.instanceId === teamReplayVirtualId,
+            );
+            if (!found) {
+              return `missing(ids=${config.providers.map((p) => `${p.instanceId}:${p.status}`).join(",")})`;
+            }
+            return found.status === "ready" ? "ready" : `${found.status}:${found.message ?? ""}`;
+          }).pipe(Effect.scoped),
+        ),
+      { timeout: 25_000, interval: 500 },
+    )
+    .toBe("ready");
+
   await bob.open("/");
   await bob.page.getByRole("button", { name: "New thread" }).first().waitFor({
     state: "visible",
@@ -1045,16 +1129,53 @@ test("enforces Milestone 5 team projects, local-to-team sync, absolute local bou
     .toBe(true);
 
   // 13. Real MCP environment-ACL check on Team Server:
-  //     Switch Team Server default model to MCP Probe, let regular Dave start a Team Server thread,
-  //     and verify Dave's member-bound MCP token hides `restrictedRemote`, denies `t3_environment_read` on it,
-  //     and denies `t3_thread_send` onto Bob's local-synced thread!
+  //     Register MCP Probe as a team provider, switch Team Server default model to it, let regular Dave
+  //     start a Team Server thread, and verify Dave's member-bound MCP token hides `restrictedRemote`,
+  //     denies `t3_environment_read` on it, and denies `t3_thread_send` onto Bob's local-synced thread!
+  const upsertProbeRes = await callBearerRpc(
+    topology.teamServer.origin,
+    claraBearerToken,
+    (client) =>
+      client["team.upsertProvider"]({
+        providerInstanceId: probeInstanceId,
+        driver: ProviderDriverKind.make("acpRegistry"),
+        displayName: "Team MCP Probe",
+        deliveryStrategy: "proxy",
+        upstreamBaseUrl: "http://127.0.0.1:1",
+        config: {
+          source: "local",
+          commandPath: process.execPath,
+          commandArgs: [NodePath.join(teamProjectDir, "mcp-probe-agent.mjs")],
+        },
+        enabled: true,
+      }),
+  );
+  if (!upsertProbeRes.ok) {
+    throw new Error(`team.upsertProvider(mcp-probe) failed: ${upsertProbeRes.error}`);
+  }
+  await expect
+    .poll(
+      async () =>
+        await runPromise(
+          Effect.gen(function* () {
+            const client = yield* rpcClientForBearer(topology.teamServer.origin, claraBearerToken);
+            const config = yield* client["server.getConfig"]({});
+            return config.providers.some(
+              (provider) =>
+                provider.instanceId === teamProbeVirtualId && provider.status === "ready",
+            );
+          }).pipe(Effect.scoped),
+        ),
+      { timeout: 25_000, interval: 500 },
+    )
+    .toBe(true);
   const probeLogPath = NodePath.join(teamProjectDir, "mcp-probe-turns.jsonl");
   await runPromise(
     Effect.gen(function* () {
       const client = yield* rpcClientForBearer(topology.teamServer.origin, claraBearerToken);
       yield* client["server.updateSettings"]({
         patch: {
-          defaultModelSelection: { instanceId: probeInstanceId, model: "default" },
+          defaultModelSelection: { instanceId: teamProbeVirtualId, model: "default" },
         },
       });
     }).pipe(Effect.scoped),

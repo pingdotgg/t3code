@@ -1,18 +1,94 @@
 import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
-import { CodexSettings, ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CodexSettings,
+  isTeamProviderInstanceId,
+  ProviderSetupError,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ServerConfig from "../config.ts";
 import { resolveLocalOrigin } from "../startupAccess.ts";
 import * as CodexManagedTokenBroker from "./CodexManagedTokenBroker.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import * as CodexInstallation from "./CodexInstallation.ts";
-import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
+import { makeCodexChatGptAuth, type CodexChatGptCredentials } from "./CodexChatGptAuth.ts";
 import { COMMAND_TIMEOUT_MS } from "./CodexManagedTokenProtocol.ts";
 import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
+import * as TeamProviderManager from "../team/TeamProviderManager.ts";
+
+function makeTeamLeasedCodexAuth(
+  instanceId: ProviderInstanceId,
+  teamProviderManager: TeamProviderManager.TeamProviderManager["Service"],
+): Effect.Success<ReturnType<typeof makeCodexChatGptAuth>> {
+  const managedByTeamError = (operation: string) =>
+    new ProviderSetupError({
+      instanceId,
+      operation,
+      detail: "Authentication for this Codex provider is managed by your Team Server.",
+    });
+
+  const leaseToCredentials = Effect.fn("CodexManagedRuntime.teamLeaseToCredentials")(function* () {
+    const lease = yield* teamProviderManager.getLeasedAccessToken(instanceId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderSetupError({
+            instanceId,
+            operation: "auth",
+            detail: cause.message,
+            cause,
+          }),
+      ),
+    );
+    const nowMs = yield* Clock.currentTimeMillis;
+    const parsedExpiry = Date.parse(lease.expiresAt);
+    const expiresAt = Number.isFinite(parsedExpiry)
+      ? parsedExpiry
+      : nowMs + lease.expiresInSeconds * 1000;
+    return {
+      clientId: instanceId,
+      accessToken: lease.accessToken,
+      refreshToken: null,
+      expiresAt,
+      earliestRefreshAt: null,
+      scopes: ["chatgpt.tokens.use.direct"],
+      subject: lease.email ?? instanceId,
+      email: lease.email ?? null,
+    } satisfies CodexChatGptCredentials;
+  });
+
+  const controller: Effect.Success<ReturnType<typeof makeCodexChatGptAuth>>["controller"] = {
+    credentialBinding: { owner: "t3", key: instanceId },
+    withAccess: (task) => task,
+    start: () => Effect.fail(managedByTeamError("start")),
+    complete: () => Effect.fail(managedByTeamError("complete")),
+    cancel: () => Effect.fail(managedByTeamError("cancel")),
+    logout: () => Effect.fail(managedByTeamError("logout")),
+    subscribe: () => Stream.empty,
+    reconnectProfile: () => Effect.succeed(null),
+    importProfile: () => Effect.fail(managedByTeamError("import")),
+  };
+
+  return {
+    controller,
+    read: leaseToCredentials().pipe(
+      Effect.asSome,
+      Effect.catch(() => Effect.succeedNone),
+    ) as Effect.Effect<Option.Option<CodexChatGptCredentials>, ProviderSetupError>,
+    access: leaseToCredentials(),
+    // Keep revision stable across ephemeral lease rotations so CodexManagedProvider's
+    // revision check succeeds while CodexManagedTokenBroker delivers fresh tokens in memory.
+    profileKey: (_credentials: CodexChatGptCredentials) => Effect.succeed(instanceId as string),
+    exportProfile: Effect.fail(managedByTeamError("export")),
+    revoke: Effect.void as Effect.Effect<void, ProviderSetupError>,
+  };
+}
 
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
@@ -46,13 +122,19 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   const environmentIdentity = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* environmentIdentity.getEnvironmentId;
   const invocation = yield* resolveSelfInvocation();
-  const auth = yield* makeCodexChatGptAuth({
-    instanceId: options.instanceId,
-    defaultReturnUrl: new URL(
-      "/welcome",
-      config.devUrl ?? resolveLocalOrigin(config.host, config.port),
-    ).toString(),
-  });
+  const teamProviderManagerOption = yield* Effect.serviceOption(
+    TeamProviderManager.TeamProviderManager,
+  );
+  const auth =
+    isTeamProviderInstanceId(options.instanceId) && Option.isSome(teamProviderManagerOption)
+      ? makeTeamLeasedCodexAuth(options.instanceId, teamProviderManagerOption.value)
+      : yield* makeCodexChatGptAuth({
+          instanceId: options.instanceId,
+          defaultReturnUrl: new URL(
+            "/welcome",
+            config.devUrl ?? resolveLocalOrigin(config.host, config.port),
+          ).toString(),
+        });
   const homeLayout = yield* resolveManagedCodexHomeLayout(
     config.stateDir,
     options.instanceId,

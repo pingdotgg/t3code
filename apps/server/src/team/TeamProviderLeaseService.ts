@@ -1,0 +1,305 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Reads local provider token files when linked to a Team Server OAuth profile.
+import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
+
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  TeamOperationError,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type TeamProviderLeaseResponse,
+} from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import { HttpClient, HttpClientRequest } from "effect/http";
+
+import type * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+
+/** Refresh server-side when remaining lifetime is below 10 minutes. */
+const TEAM_SERVER_OAUTH_REFRESH_THRESHOLD_MS = 10 * 60 * 1000;
+
+export const StoredTeamProviderSecret = Schema.Struct({
+  apiKey: Schema.optionalKey(Schema.String),
+  oauthAccessToken: Schema.optionalKey(Schema.String),
+  oauthRefreshToken: Schema.optionalKey(Schema.String),
+  oauthExpiresAt: Schema.optionalKey(Schema.String),
+  oauthTokenType: Schema.optionalKey(Schema.String),
+  oauthTokenEndpoint: Schema.optionalKey(Schema.String),
+  oauthClientId: Schema.optionalKey(Schema.String),
+  oauthClientSecret: Schema.optionalKey(Schema.String),
+  oauthEmail: Schema.optionalKey(Schema.String),
+  oauthAuthMethod: Schema.optionalKey(Schema.String),
+});
+export type StoredTeamProviderSecret = typeof StoredTeamProviderSecret.Type;
+
+const decodeStoredSecret = Schema.decodeUnknownOption(
+  Schema.fromJsonString(StoredTeamProviderSecret),
+);
+const encodeStoredSecret = Schema.encodeSync(Schema.fromJsonString(StoredTeamProviderSecret));
+
+const OAuthRefreshResponse = Schema.Struct({
+  access_token: Schema.NonEmptyString,
+  refresh_token: Schema.optionalKey(Schema.String),
+  token_type: Schema.optionalKey(Schema.String),
+  expires_in: Schema.optionalKey(Schema.Finite),
+  expiry: Schema.optionalKey(Schema.String),
+});
+const decodeOAuthRefreshResponse = Schema.decodeUnknownEffect(OAuthRefreshResponse);
+
+const decodeAntigravityOAuthTokenFile = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      token: Schema.optionalKey(
+        Schema.Struct({
+          access_token: Schema.optionalKey(Schema.String),
+          refresh_token: Schema.optionalKey(Schema.String),
+          token_type: Schema.optionalKey(Schema.String),
+          expiry: Schema.optionalKey(Schema.String),
+        }),
+      ),
+      auth_method: Schema.optionalKey(Schema.String),
+      id_token_email: Schema.optionalKey(Schema.String),
+    }),
+  ),
+);
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+export function teamProviderSecretKey(teamId: string, providerInstanceId: string): string {
+  const safeInstance = providerInstanceId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return `team-provider-${teamId}-${safeInstance}`;
+}
+
+export const readTeamProviderSecret = Effect.fn("TeamProviderLease.readSecret")(function* (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+  secretKey: string,
+): Effect.fn.Return<StoredTeamProviderSecret | null, TeamOperationError> {
+  const raw = yield* secrets.get(secretKey).pipe(
+    Effect.mapError(
+      () =>
+        new TeamOperationError({
+          code: "internal",
+          message: "Could not read team provider credentials from secret store.",
+        }),
+    ),
+  );
+  if (Option.isNone(raw)) return null;
+  const parsed = decodeStoredSecret(decoder.decode(raw.value));
+  return Option.isSome(parsed) ? parsed.value : null;
+});
+
+export const writeTeamProviderSecret = Effect.fn("TeamProviderLease.writeSecret")(function* (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+  secretKey: string,
+  payload: StoredTeamProviderSecret,
+): Effect.fn.Return<void, TeamOperationError> {
+  const bytes = encoder.encode(encodeStoredSecret(payload));
+  yield* secrets.set(secretKey, bytes).pipe(
+    Effect.mapError(
+      () =>
+        new TeamOperationError({
+          code: "internal",
+          message: "Could not persist team provider credentials in secret store.",
+        }),
+    ),
+  );
+});
+
+export const removeTeamProviderSecret = Effect.fn("TeamProviderLease.removeSecret")(function* (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+  secretKey: string,
+): Effect.fn.Return<void, TeamOperationError> {
+  yield* secrets.remove(secretKey).pipe(
+    Effect.mapError(
+      () =>
+        new TeamOperationError({
+          code: "internal",
+          message: "Could not remove team provider credentials from secret store.",
+        }),
+    ),
+  );
+});
+
+const refreshLocks = new Map<string, Semaphore.Semaphore>();
+
+export function clearTeamProviderRefreshLock(lockKey: string): void {
+  refreshLocks.delete(lockKey);
+}
+
+function getRefreshLock(lockKey: string): Effect.Effect<Semaphore.Semaphore> {
+  const existing = refreshLocks.get(lockKey);
+  if (existing) return Effect.succeed(existing);
+  return Semaphore.make(1).pipe(
+    Effect.tap((sem) =>
+      Effect.sync(() => {
+        if (!refreshLocks.has(lockKey)) {
+          refreshLocks.set(lockKey, sem);
+        }
+      }),
+    ),
+    Effect.map(() => refreshLocks.get(lockKey)!),
+  );
+}
+
+/**
+ * Issues a short-lived ephemeral OAuth access token lease for a team provider.
+ * - Refreshes server-side under a per-provider lock when `forceRefresh` or `< 10 min` remains.
+ * - Persists rotated refresh/access tokens exclusively in the Team Server's `ServerSecretStore`.
+ * - Strictly strips `refresh_token`, `refreshToken`, and `clientSecret` before returning.
+ */
+export const issueEphemeralTeamProviderLease = Effect.fn("TeamProviderLease.issueLease")(
+  function* (input: {
+    readonly secrets: ServerSecretStore.ServerSecretStore["Service"];
+    readonly httpClient: HttpClient.HttpClient;
+    readonly secretKey: string;
+    readonly providerInstanceId: ProviderInstanceId;
+    readonly driver: ProviderDriverKind;
+    readonly forceRefresh?: boolean;
+    readonly fallbackAntigravityProfileDir?: string;
+  }): Effect.fn.Return<TeamProviderLeaseResponse, TeamOperationError> {
+    const lock = yield* getRefreshLock(input.secretKey);
+    return yield* lock.withPermits(1)(
+      Effect.gen(function* () {
+        let stored = yield* readTeamProviderSecret(input.secrets, input.secretKey);
+
+        // Optional fallback: import token metadata from Team Server's own Antigravity profile if configured.
+        if (stored === null && input.fallbackAntigravityProfileDir) {
+          const imported = yield* Effect.promise(
+            async (): Promise<StoredTeamProviderSecret | null> => {
+              const raw =
+                (await NodeFSP.readFile(
+                  NodePath.join(
+                    input.fallbackAntigravityProfileDir!,
+                    "antigravity-acp",
+                    "antigravity-oauth-token",
+                  ),
+                  "utf8",
+                ).catch(() => undefined)) ??
+                (await NodeFSP.readFile(
+                  NodePath.join(input.fallbackAntigravityProfileDir!, "antigravity-oauth-token"),
+                  "utf8",
+                ).catch(() => undefined));
+              if (!raw) return null;
+              const parsedOpt = decodeAntigravityOAuthTokenFile(raw);
+              if (Option.isNone(parsedOpt)) return null;
+              const parsed = parsedOpt.value;
+              if (!parsed.token?.access_token) return null;
+              return {
+                oauthAccessToken: parsed.token.access_token,
+                ...(parsed.token.refresh_token
+                  ? { oauthRefreshToken: parsed.token.refresh_token }
+                  : {}),
+                ...(parsed.token.token_type ? { oauthTokenType: parsed.token.token_type } : {}),
+                ...(parsed.token.expiry ? { oauthExpiresAt: parsed.token.expiry } : {}),
+                ...(parsed.auth_method ? { oauthAuthMethod: parsed.auth_method } : {}),
+                ...(parsed.id_token_email ? { oauthEmail: parsed.id_token_email } : {}),
+              };
+            },
+          );
+          if (imported !== null) {
+            stored = imported;
+          }
+        }
+
+        if (stored === null || (!stored.oauthAccessToken && !stored.oauthRefreshToken)) {
+          return yield* new TeamOperationError({
+            code: "not_found",
+            message: `No OAuth credentials are configured on the Team Server for provider "${input.providerInstanceId}".`,
+          });
+        }
+
+        const nowMs = yield* Clock.currentTimeMillis;
+        const parsedExpiryMs = stored.oauthExpiresAt ? Date.parse(stored.oauthExpiresAt) : NaN;
+        const remainingMs = Number.isFinite(parsedExpiryMs) ? parsedExpiryMs - nowMs : 0;
+        const needsRefresh =
+          !stored.oauthAccessToken ||
+          input.forceRefresh === true ||
+          remainingMs < TEAM_SERVER_OAUTH_REFRESH_THRESHOLD_MS;
+
+        if (needsRefresh && stored.oauthRefreshToken && stored.oauthTokenEndpoint) {
+          const form = new URLSearchParams({
+            grant_type: "refresh_token",
+            refresh_token: stored.oauthRefreshToken,
+            ...(stored.oauthClientId ? { client_id: stored.oauthClientId } : {}),
+            ...(stored.oauthClientSecret ? { client_secret: stored.oauthClientSecret } : {}),
+          });
+          const request = HttpClientRequest.post(stored.oauthTokenEndpoint).pipe(
+            HttpClientRequest.bodyText(form.toString(), "application/x-www-form-urlencoded"),
+            HttpClientRequest.setHeader("accept", "application/json"),
+          );
+          const response = yield* input.httpClient.execute(request).pipe(
+            Effect.timeout("15 seconds"),
+            Effect.mapError(
+              () =>
+                new TeamOperationError({
+                  code: "internal",
+                  message: `Failed to refresh OAuth token for team provider "${input.providerInstanceId}".`,
+                }),
+            ),
+          );
+          if (response.status < 200 || response.status >= 300) {
+            return yield* new TeamOperationError({
+              code: "internal",
+              message: `OAuth token refresh returned HTTP ${response.status} for team provider "${input.providerInstanceId}".`,
+            });
+          }
+          const json = yield* response.json.pipe(
+            Effect.flatMap(decodeOAuthRefreshResponse),
+            Effect.mapError(
+              () =>
+                new TeamOperationError({
+                  code: "internal",
+                  message: `OAuth token refresh returned an invalid response for "${input.providerInstanceId}".`,
+                }),
+            ),
+          );
+          const nextExpiresAtMs =
+            json.expiry && Number.isFinite(Date.parse(json.expiry))
+              ? Date.parse(json.expiry)
+              : nowMs + Math.max(60, Math.floor(json.expires_in ?? 3600)) * 1000;
+          const nextExpiresAtIso = DateTime.formatIso(DateTime.makeUnsafe(nextExpiresAtMs));
+          stored = {
+            ...stored,
+            oauthAccessToken: json.access_token,
+            ...(json.refresh_token ? { oauthRefreshToken: json.refresh_token } : {}),
+            ...(json.token_type ? { oauthTokenType: json.token_type } : {}),
+            oauthExpiresAt: nextExpiresAtIso,
+          };
+          yield* writeTeamProviderSecret(input.secrets, input.secretKey, stored);
+        }
+
+        if (!stored.oauthAccessToken) {
+          return yield* new TeamOperationError({
+            code: "not_found",
+            message: `No valid OAuth access token is available for team provider "${input.providerInstanceId}".`,
+          });
+        }
+
+        const finalExpiryMs =
+          stored.oauthExpiresAt && Number.isFinite(Date.parse(stored.oauthExpiresAt))
+            ? Date.parse(stored.oauthExpiresAt)
+            : nowMs + 3_600_000;
+        const expiresInSeconds = Math.max(0, Math.floor((finalExpiryMs - nowMs) / 1000));
+        const expiresAt = IsoDateTime.make(DateTime.formatIso(DateTime.makeUnsafe(finalExpiryMs)));
+
+        // Return ONLY short-lived access token metadata; refresh_token NEVER leaves the Team Server.
+        return {
+          providerInstanceId: input.providerInstanceId,
+          driver: input.driver,
+          accessToken: stored.oauthAccessToken,
+          tokenType: stored.oauthTokenType ?? "Bearer",
+          expiresAt,
+          expiresInSeconds: NonNegativeInt.make(expiresInSeconds),
+          ...(stored.oauthEmail !== undefined ? { email: stored.oauthEmail } : {}),
+          ...(stored.oauthAuthMethod !== undefined ? { authMethod: stored.oauthAuthMethod } : {}),
+        } satisfies TeamProviderLeaseResponse;
+      }),
+    );
+  },
+);

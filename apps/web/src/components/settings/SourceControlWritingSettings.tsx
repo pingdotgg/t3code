@@ -1,3 +1,7 @@
+import {
+  filterProviderEntriesForTeamProject,
+  resolveProjectTeamAssignment,
+} from "@t3tools/client-runtime/team";
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import {
@@ -28,8 +32,10 @@ import {
   resolveAppModelSelectionState,
   selectsPlanAgent,
 } from "../../modelSelection";
+import { useProjects } from "../../state/entities";
 import { useEnvironmentProviders } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { useTeamStatesByEnvironment } from "../../state/team";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -114,9 +120,22 @@ export function SourceControlWritingSettingsSection() {
     style.mode !== defaults.mode ||
     style.customInstructions !== defaults.customInstructions;
 
-  const textGenerationProviders = serverProviders.filter(
-    (provider) => provider.supportsTextGeneration !== false,
-  );
+  const allProjects = useProjects();
+  const teamStates = useTeamStatesByEnvironment();
+  const targetProject =
+    target?.projectId != null
+      ? allProjects.find(
+          (project) =>
+            project.id === target.projectId && project.environmentId === target.environmentId,
+        )
+      : undefined;
+  const targetTeamAssignment = targetProject
+    ? resolveProjectTeamAssignment({ project: targetProject, teamStates })
+    : null;
+  const textGenerationProviders = filterProviderEntriesForTeamProject({
+    entries: serverProviders.filter((provider) => provider.supportsTextGeneration !== false),
+    teamAssignment: targetTeamAssignment,
+  });
   const instanceEntries = providerInstanceEntriesFor(
     textGenerationProviders,
     settings,

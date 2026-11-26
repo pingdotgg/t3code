@@ -55,7 +55,12 @@ import { useProjectScriptEditing } from "./chat/useProjectScriptEditing";
 import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import {
+  filterProviderEntriesForTeamProject,
+  resolveProjectTeamAssignment,
+} from "@t3tools/client-runtime/team";
 import { resolveWorktreeRepositorySelection } from "@t3tools/client-runtime/state/thread-repositories";
+import { useTeamStatesByEnvironment } from "../state/team";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
@@ -1457,11 +1462,17 @@ export default function ChatView(props: ChatViewProps) {
     automaticEnvironment,
     autoUpdateEnvironments,
   });
-  const providerInstanceEntries = providerInstanceEntriesFor(
-    providerStatuses,
-    settings,
-    activeProject?.id ?? null,
-  );
+  const teamStatesByEnvironment = useTeamStatesByEnvironment();
+  const activeProjectTeamAssignment = activeProject
+    ? resolveProjectTeamAssignment({
+        project: activeProject,
+        teamStates: teamStatesByEnvironment,
+      })
+    : null;
+  const providerInstanceEntries = filterProviderEntriesForTeamProject({
+    entries: providerInstanceEntriesFor(providerStatuses, settings, activeProject?.id ?? null),
+    teamAssignment: activeProjectTeamAssignment,
+  });
   const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
   const { selectedProviderEntry, requestedDriverKind } = resolveComposerProviderSelection({
     entries: providerInstanceEntries,

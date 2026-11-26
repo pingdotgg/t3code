@@ -1,13 +1,22 @@
 import {
   ALL_TEAM_ROLES,
   EnvironmentId,
+  IsoDateTime,
+  NonNegativeInt,
   ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   TeamEnvironmentRecordId,
   TeamId,
   TeamMemberId,
+  TeamPrepromptId,
+  TeamProviderId,
+  TeamSkillId,
+  TeamSkillSlug,
   TeamThreadNoteId,
   TeamViewId,
   ThreadId,
+  makeTeamProviderInstanceId,
   type TeamMember,
   type TeamPseudo,
   type TeamStateStreamEvent,
@@ -31,6 +40,7 @@ import {
   canCurrentMemberToggleThreadLock,
   countFollowedTeamThreads,
   EMPTY_TEAM_ENVIRONMENT_STATE,
+  filterProviderEntriesForTeamProject,
   formatTeamThreadTitle,
   hasActiveTeamEnvironment,
   isFollowingTeamThread,
@@ -38,6 +48,7 @@ import {
   isTeamThreadLocked,
   listAccessibleTeamEnvironments,
   listAccessibleTeamViews,
+  listRemoteOnlyTeamProviders,
   resolveProjectTeamAssignment,
   resolveTeamQueuedRunAuthorPseudo,
   resolveTeamThreadAcceptedNotes,
@@ -1047,5 +1058,160 @@ describe("team client-runtime state and presentation", () => {
       payload: { noteId, threadId: bobThreadId },
     });
     expect(resolveTeamThreadNotes({ teamState: bobState, threadId: bobThreadId })).toHaveLength(0);
+  });
+
+  it("tracks Milestone 6 providers, skills, pre-prompts, assetsRevision, and strict team:<T>:* provider filtering", () => {
+    let state = applyTeamStreamEvent(EMPTY_TEAM_ENVIRONMENT_STATE, {
+      version: 1,
+      type: "snapshot",
+      payload: {
+        team,
+        currentMember: bob,
+        members: [alice, bob],
+        views: [defaultView],
+        invites: [],
+        threadAttributions: [],
+        followedThreadIds: [],
+        latestTurnAttributions: [],
+        providers: [],
+        skills: [],
+        preprompts: [],
+        assetsRevision: 0,
+      },
+    });
+
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "providerUpserted",
+      payload: {
+        id: TeamProviderId.make("tp-1"),
+        teamId,
+        providerInstanceId: ProviderInstanceId.make("team-proxy"),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        displayName: "Team Claude",
+        deliveryStrategy: "proxy",
+        hasSecret: true,
+        upstreamBaseUrl: "https://proxy.example",
+        apiKeyHeader: null,
+        apiKeyPrefix: null,
+        config: {},
+        enabled: true,
+        updatedByMemberId: aliceId,
+        createdAt: IsoDateTime.make("2026-01-01T00:00:00.000Z"),
+        updatedAt: IsoDateTime.make("2026-01-01T00:00:00.000Z"),
+      },
+    });
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "providerUpserted",
+      payload: {
+        id: TeamProviderId.make("tp-2"),
+        teamId,
+        providerInstanceId: ProviderInstanceId.make("team-cursor"),
+        driver: ProviderDriverKind.make("cursor"),
+        displayName: "Team Cursor",
+        deliveryStrategy: "remote-only",
+        hasSecret: false,
+        upstreamBaseUrl: null,
+        apiKeyHeader: null,
+        apiKeyPrefix: null,
+        config: {},
+        enabled: true,
+        updatedByMemberId: aliceId,
+        createdAt: IsoDateTime.make("2026-01-01T00:00:00.000Z"),
+        updatedAt: IsoDateTime.make("2026-01-01T00:00:00.000Z"),
+      },
+    });
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "skillUpserted",
+      payload: {
+        id: TeamSkillId.make("sk-1"),
+        teamId,
+        slug: TeamSkillSlug.make("review"),
+        providerDriver: "*",
+        skillMd: "---\nname: review\ndescription: Review\n---\nBody",
+        references: [],
+        enabled: true,
+        revision: NonNegativeInt.make(1),
+        contentHash: "a".repeat(64),
+        updatedByMemberId: aliceId,
+        createdAt: IsoDateTime.make("2026-01-01T00:00:00.000Z"),
+        updatedAt: IsoDateTime.make("2026-01-01T00:00:00.000Z"),
+      },
+    });
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "prepromptUpserted",
+      payload: {
+        id: TeamPrepromptId.make("pp-1"),
+        teamId,
+        name: "Rules",
+        providerDriver: "*",
+        injectionScope: "turn",
+        content: "Follow rules",
+        enabled: true,
+        revision: NonNegativeInt.make(2),
+        contentHash: "b".repeat(64),
+        updatedByMemberId: aliceId,
+        createdAt: IsoDateTime.make("2026-01-01T00:00:00.000Z"),
+        updatedAt: IsoDateTime.make("2026-01-01T00:00:00.000Z"),
+      },
+    });
+    state = applyTeamStreamEvent(state, {
+      version: 1,
+      type: "assetsUpdated",
+      payload: { teamId, revision: NonNegativeInt.make(3) },
+    });
+
+    expect(state.providers).toHaveLength(2);
+    expect(state.skills).toHaveLength(1);
+    expect(state.preprompts).toHaveLength(1);
+    expect(state.assetsRevision).toBe(3);
+
+    const teamAssignment = {
+      teamEnvironmentId: envId,
+      team,
+      teamState: state,
+      assignment: {
+        projectId: ProjectId.make("proj-1"),
+        teamId,
+        defaultViewId: viewId,
+        repoIdentityKey: null,
+        assignedByMemberId: aliceId,
+        createdAt: IsoDateTime.make("2026-01-01T00:00:00.000Z"),
+        updatedAt: IsoDateTime.make("2026-01-01T00:00:00.000Z"),
+      },
+    };
+    expect(listRemoteOnlyTeamProviders(teamAssignment).map((p) => p.providerInstanceId)).toEqual([
+      "team-cursor",
+    ]);
+
+    const personalEntry = { instanceId: ProviderInstanceId.make("codex") };
+    const teamProxyEntry = {
+      instanceId: makeTeamProviderInstanceId(teamId, ProviderInstanceId.make("team-proxy")),
+    };
+    const otherTeamEntry = {
+      instanceId: makeTeamProviderInstanceId(
+        TeamId.make("team-other"),
+        ProviderInstanceId.make("x"),
+      ),
+    };
+
+    // Strict isolation on team project: ONLY team:<T>:* is returned (never personal or another team).
+    expect(
+      filterProviderEntriesForTeamProject({
+        entries: [personalEntry, teamProxyEntry, otherTeamEntry],
+        teamAssignment,
+      }),
+    ).toEqual([teamProxyEntry]);
+
+    // Personal project (teamAssignment = null): hides team:<T>:* instances and keeps personal ones!
+    expect(
+      filterProviderEntriesForTeamProject({
+        entries: [personalEntry, teamProxyEntry, otherTeamEntry],
+        teamAssignment: null,
+      }),
+    ).toEqual([personalEntry]);
   });
 });

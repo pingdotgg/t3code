@@ -101,7 +101,8 @@ export const resolveProviderStatusCachePath = Effect.fn("resolveProviderStatusCa
     readonly instanceId: ProviderInstanceId;
   }): Effect.fn.Return<string, never, Path.Path> {
     const path = yield* Path.Path;
-    return path.join(input.cacheDir, `${input.instanceId}.json`);
+    const safeFileStem = input.instanceId.replaceAll(":", "__");
+    return path.join(input.cacheDir, `${safeFileStem}.json`);
   },
 );
 
