@@ -173,11 +173,21 @@ export function collectComposerInlineTokens(
     matches.length > 0 && options.findMath
       ? composerMathRanges(text, options.findMath, matches)
       : [];
-  return matches
+  const sorted = matches
     .filter(
       (match) => !math.some((formula) => match.start < formula.end && match.end > formula.start),
     )
-    .sort((left, right) => left.start - right.start);
+    .sort((left, right) => left.start - right.start || right.end - left.end);
+  const resolved: ComposerInlineToken[] = [];
+  let cursor = 0;
+  for (const token of sorted) {
+    if (token.start < cursor) {
+      continue;
+    }
+    resolved.push(token);
+    cursor = token.end;
+  }
+  return resolved;
 }
 
 /** Shows each `@`-file link by its file name, as its composer chip does, for one-line previews. */
