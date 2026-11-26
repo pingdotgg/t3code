@@ -161,13 +161,15 @@ export interface PullRequestOpening {
   readonly branch: string;
   /** The commit at the branch's tip: what a push sends, and what the pull request is of. */
   readonly head: string;
+  /** The branch on its remote the pull request is of, when no push puts it there; else null. */
+  readonly headRef: string | null;
   readonly baseBranch: string;
   /** The push it starts with; null when the branch is already where the pull request needs it. */
   readonly push: {
     /** Null for a private pull request: its host names the companion repository once asked to. */
     readonly remoteName: string | null;
     readonly remoteBranch: string;
-    /** Where the remote pushes to, without any login a URL carries. */
+    /** Every address the remote pushes to, each as `GitVcsDriver.pushAddress` names it. */
     readonly urls: ReadonlyArray<string>;
     /** The hooks the push would run; null when it would run none. */
     readonly hooks: GitVcsDriver.PushHooks | null;
@@ -1040,6 +1042,14 @@ export const make = Effect.gen(function* () {
           digest: cause.cause.digest,
         })
       : undefined;
+  const currentHead = (cwd: string) =>
+    gitCore
+      .execute({
+        operation: "GitManager.currentHead",
+        cwd,
+        args: ["rev-parse", "--verify", "HEAD^{commit}"],
+      })
+      .pipe(Effect.map((result) => result.stdout.trim()));
   const openingChanged = (cwd: string, cause?: unknown) =>
     new GitManagerError({
       operation: "createPullRequest",
@@ -3087,7 +3097,12 @@ export const make = Effect.gen(function* () {
       );
     }
     const { approved } = input;
-    if (approved !== undefined && (approved.branch !== branch || approved.push === null)) {
+    if (
+      approved !== undefined &&
+      (approved.branch !== branch ||
+        approved.push === null ||
+        (yield* currentHead(cwd)) !== approved.head)
+    ) {
       return yield* openingChanged(cwd);
     }
     yield* requireApprovedPushHooks(cwd, branch);
@@ -3097,6 +3112,20 @@ export const make = Effect.gen(function* () {
       preferredName: companion.repository.split("/")[0] || "private",
       url: companion.url,
     });
+    // A remote is reused by where it fetches from, which does not say where it pushes.
+    // Compared as repositories, so a rewritten scheme (`insteadOf`) still counts as the same.
+    const pushesTo = yield* gitCore.pushAddresses(cwd, remoteName);
+    const companionKey = sourceControlDefinitions.repositoryKeyFromRemote(companion.url);
+    if (
+      pushesTo.length !== 1 ||
+      (pushesTo[0] !== GitVcsDriver.pushAddress(companion.url) &&
+        (companionKey === null ||
+          sourceControlDefinitions.repositoryKeyFromRemote(pushesTo[0]!) !== companionKey))
+    ) {
+      return yield* fail(
+        `The remote ${remoteName} does not push only to ${companion.repository}. Nothing was pushed. Remove its pushurl, then try again.`,
+      );
+    }
     // Recorded before the push, so a later push of this branch, by T3 or by plain `git push`,
     // goes to the companion too and never publishes the branch.
     const pushRemoteKey = `branch.${branch}.pushRemote`;
@@ -3213,7 +3242,9 @@ export const make = Effect.gen(function* () {
     // Read again since the caller compared: a commit made in between must not add a push.
     if (
       approved !== undefined &&
-      (approved.branch !== status.branch || (approved.push !== null) !== needsPush)
+      (approved.branch !== status.branch ||
+        (approved.push !== null) !== needsPush ||
+        (yield* currentHead(input.cwd)) !== approved.head)
     ) {
       return yield* openingChanged(input.cwd);
     }
@@ -3225,6 +3256,7 @@ export const make = Effect.gen(function* () {
             head: approved.head,
             remoteName: approved.push.remoteName,
             remoteBranch: approved.push.remoteBranch,
+            urls: approved.push.urls,
           };
     if (needsPush && status.branch) {
       yield* ensurePrHeadIsNotBase(
@@ -3281,15 +3313,6 @@ export const make = Effect.gen(function* () {
     return result;
   });
 
-  const withoutLogin = (url: string) => {
-    if (!URL.canParse(url)) return url;
-    const parsed = new URL(url);
-    if (parsed.username === "" && parsed.password === "") return url;
-    parsed.username = "";
-    parsed.password = "";
-    return parsed.toString();
-  };
-
   const pullRequestOpening: GitManager["Service"]["pullRequestOpening"] = Effect.fn(
     "GitManager.pullRequestOpening",
   )(
@@ -3305,11 +3328,7 @@ export const make = Effect.gen(function* () {
       const status = yield* gitCore.statusDetails(cwd);
       const branch = status.branch;
       if (!branch) return yield* fail("Cannot create a pull request from detached HEAD.");
-      const head = (yield* gitCore.execute({
-        operation: "GitManager.pullRequestOpening.head",
-        cwd,
-        args: ["rev-parse", "--verify", "HEAD^{commit}"],
-      })).stdout.trim();
+      const head = yield* currentHead(cwd);
       const isPrivate = input.private === true;
       const pushes = isPrivate || (yield* createPrNeedsPush(cwd, status));
       const target =
@@ -3340,16 +3359,7 @@ export const make = Effect.gen(function* () {
       const baseBranch =
         input.baseBranch ??
         (yield* resolvePrBase(cwd, branch, status.upstreamRef, headContext)).baseBranch;
-      const pushUrls =
-        target === null
-          ? []
-          : (yield* gitCore.execute({
-              operation: "GitManager.pullRequestOpening.pushUrls",
-              cwd,
-              args: ["remote", "get-url", "--push", "--all", "--", target.remoteName],
-            })).stdout
-              .split("\n")
-              .filter((url) => url !== "");
+      const urls = target === null ? [] : yield* gitCore.pushAddresses(cwd, target.remoteName);
       // Only a push runs them, so only a push has to be able to read them.
       const hooks = pushes
         ? yield* gitCore
@@ -3360,11 +3370,12 @@ export const make = Effect.gen(function* () {
               ),
             )
         : null;
+      const headRef = pushes ? null : status.upstreamRef;
       const push = pushes
         ? {
             remoteName: target?.remoteName ?? null,
             remoteBranch: target?.branchName ?? branch,
-            urls: pushUrls.map(withoutLogin),
+            urls,
             hooks,
           }
         : null;
@@ -3374,11 +3385,12 @@ export const make = Effect.gen(function* () {
         head,
         baseBranch,
         isPrivate ? "private" : "public",
+        // Without a push the pull request's head is the branch's upstream as it is.
         ...(push === null
-          ? ["no push"]
+          ? ["no push", headRef ?? ""]
           : [push.remoteName ?? "", push.remoteBranch, hooks?.digest ?? "", ...push.urls]),
       ].join("\0");
-      return { branch, head, baseBranch, push, key } satisfies PullRequestOpening;
+      return { branch, head, headRef, baseBranch, push, key } satisfies PullRequestOpening;
     },
     // Nobody has been asked yet: Git starts none of the repository's hooks for these reads.
     Effect.provideService(GitVcsDriver.RepositoryHooks, { _tag: "none" }),
@@ -3410,6 +3422,8 @@ export const make = Effect.gen(function* () {
               : { _tag: "approved-push", digest: pushHooks.approvedDigest },
           ),
         );
+    // The person was asked about opening one. One already open is handed back as it is.
+    if (approved !== undefined && result.status === "opened_existing") return result;
     const openedAsDraft =
       result.status === "created" &&
       (yield* sourceControlProvider(input.cwd)).createsDraftChangeRequests === true;

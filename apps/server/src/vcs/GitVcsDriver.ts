@@ -378,7 +378,23 @@ export interface ApprovedPush {
   readonly head: string;
   readonly remoteName: string;
   readonly remoteBranch: string;
+  /** Every address the remote pushes to, each as `pushAddress` names it. */
+  readonly urls: ReadonlyArray<string>;
 }
+
+/**
+ * Where a push URL leads, as it is shown and compared: without the login, query or fragment a
+ * URL may carry, which can hold a credential and do not change where the push goes.
+ */
+export const pushAddress = (url: string) => {
+  if (!URL.canParse(url)) return url;
+  const parsed = new URL(url);
+  parsed.username = "";
+  parsed.password = "";
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+};
 
 /** A push was about to send another branch, or send it somewhere else, than was approved. */
 export class PushNotAsApprovedError extends Schema.TaggedError<PushNotAsApprovedError>()(
@@ -474,6 +490,11 @@ export class GitVcsDriver extends Context.Service<
         readonly approved?: ApprovedPush | undefined;
       },
     ) => Effect.Effect<GitPushResult, GitCommandError>;
+    /** Every address `remoteName` pushes to, each as `pushAddress` names it. */
+    readonly pushAddresses: (
+      cwd: string,
+      remoteName: string,
+    ) => Effect.Effect<ReadonlyArray<string>, GitCommandError>;
     /** The hooks a push from `cwd` would run now; null when it would run none. */
     readonly pushHooks: (cwd: string) => Effect.Effect<PushHooks | null, GitCommandError>;
     /** Where `pushCurrentBranch` would push the checked-out branch; null with no remote or when Git picks. */

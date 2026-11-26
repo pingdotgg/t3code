@@ -4445,6 +4445,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const pushAddresses: GitVcsDriver.GitVcsDriver["Service"]["pushAddresses"] = (cwd, remoteName) =>
+    runGitStdout("GitVcsDriver.pushAddresses", cwd, [
+      "remote",
+      "get-url",
+      "--push",
+      "--all",
+      "--",
+      remoteName,
+    ]).pipe(
+      Effect.map((stdout) =>
+        stdout
+          .split("\n")
+          .filter((url) => url !== "")
+          .map(GitVcsDriver.pushAddress),
+      ),
+    );
+
   const resolvePushTarget: GitVcsDriver.GitVcsDriver["Service"]["resolvePushTarget"] = Effect.fn(
     "resolvePushTarget",
   )(function* (cwd, current) {
@@ -4485,14 +4502,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       detail: "The branch or where it is pushed changed after the push was approved.",
       cause: new GitVcsDriver.PushNotAsApprovedError(),
     });
-    const asApproved = (to: { readonly remoteName: string; readonly branchName: string } | null) =>
-      approved === undefined ||
-      (to !== null &&
-        branch === approved.branch &&
-        to.remoteName === approved.remoteName &&
-        to.branchName === approved.remoteBranch)
-        ? Effect.void
-        : Effect.fail(notAsApproved);
+    const asApproved = Effect.fnUntraced(function* (
+      to: { readonly remoteName: string; readonly branchName: string } | null,
+    ) {
+      if (approved === undefined) return;
+      if (
+        to === null ||
+        branch !== approved.branch ||
+        to.remoteName !== approved.remoteName ||
+        to.branchName !== approved.remoteBranch
+      ) {
+        return yield* notAsApproved;
+      }
+      // Read here, not taken from the caller's earlier look: the name alone does not say where.
+      const urls = yield* pushAddresses(cwd, to.remoteName);
+      if (urls.length !== approved.urls.length || urls.some((url, i) => url !== approved.urls[i]))
+        return yield* notAsApproved;
+    });
+    // Nothing is sent, and nothing counts as already there, unless the branch is at that commit.
+    if (approved !== undefined) {
+      const head = yield* runGitStdout("GitVcsDriver.pushCurrentBranch.head", cwd, [
+        "rev-parse",
+        "--verify",
+        "HEAD^{commit}",
+      ]);
+      if (head.trim() !== approved.head) return yield* notAsApproved;
+    }
 
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
@@ -7837,6 +7872,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }),
     pushHooks,
     resolvePushTarget,
+    pushAddresses,
     pushCurrentBranch: Effect.fnUntraced(function* (cwd, fallbackBranch, options) {
       return yield* withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options));
     }),

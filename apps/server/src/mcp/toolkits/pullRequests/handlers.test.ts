@@ -1389,6 +1389,7 @@ describe("source control tools", () => {
         const read = {
           branch: now.branch,
           head: now.head,
+          headRef: push === null ? `origin/${now.branch}` : null,
           baseBranch: input.baseBranch ?? now.baseBranch,
           push,
         };
@@ -1909,7 +1910,7 @@ describe("source control tools", () => {
           const harness = yield* makeHarness({ thread: lowerThread(), git: pushed.git });
           const asked = yield* ask(harness, sessions, "pull_request_create", args);
           expect(asked.message).toMatch(
-            /^Open a pull request for "tools" at "1a2b3c4d5e" into "main" in T3Tools\/T3Code\? \(request [0-9a-f]{8}\)$/,
+            /^Open a pull request for "tools" at "1a2b3c4d5e" \("origin\/tools"\) into "main" in T3Tools\/T3Code\? \(request [0-9a-f]{8}\)$/,
           );
           expect(asked.kept?.pushHooks).toBeUndefined();
         }).pipe(Effect.provide(McpProviderSessions.layer)),
@@ -1935,7 +1936,9 @@ describe("source control tools", () => {
             .call("pull_request_create", args)
             .pipe(client.provide(sessions), Effect.flip);
           expect(pushed.attempts).toEqual([]);
-          expect(Ref.getUnsafe(client.request)?.requestState).not.toBe(asked.state);
+          const next = Ref.getUnsafe(client.request)?.requestState;
+          expect(next).toBeDefined();
+          expect(next).not.toBe(asked.state);
         }).pipe(Effect.provide(McpProviderSessions.layer)),
       );
 
@@ -2029,6 +2032,87 @@ describe("source control tools", () => {
         }).pipe(Effect.provide(McpProviderSessions.layer)),
       );
     });
+
+    it.effect(
+      "who a reviewer's name resolves to is settled before anything is asked or written",
+      () =>
+        Effect.gen(function* () {
+          const sessions = yield* shown;
+          const forge = recordingForge();
+          const requested: Array<unknown> = [];
+          let id = "user-1";
+          const harness = yield* makeHarness({
+            thread: lowerThread(),
+            pullRequests: {
+              ...forge.pullRequests,
+              reviewerCandidates: (input) =>
+                Effect.succeed({
+                  candidates:
+                    input.query === "octo"
+                      ? [{ id, kind: "user", login: "octo", name: null, avatarUrl: null }]
+                      : [],
+                } as never),
+              requestReviewers: (input) => Effect.sync(() => void requested.push(input.reviewers)),
+            },
+          });
+          // A name that matches nobody ends the call before the question, and before the title.
+          const unknown = asClient();
+          const failed = yield* harness
+            .call("pull_request_update", { number: 5, title: "New", requestReviewers: ["nobody"] })
+            .pipe(unknown.provide(sessions), Effect.flip);
+          expect(failed).toMatchObject({ _tag: "PullRequestForgeError" });
+          expect(Ref.getUnsafe(unknown.request)).toBeUndefined();
+          expect(forge.writes).toEqual([]);
+
+          const params = { number: 5, requestReviewers: ["octo"] };
+          const asked = yield* ask(harness, sessions, "pull_request_update", params);
+          yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+          // The name belongs to someone else by the time the person answers: asked again.
+          id = "user-2";
+          const client = asClient({ action: "accept", state: asked.state });
+          yield* harness
+            .call("pull_request_update", params)
+            .pipe(client.provide(sessions), Effect.flip);
+          const next = Ref.getUnsafe(client.request)?.requestState;
+          expect(next).toBeDefined();
+          expect(next).not.toBe(asked.state);
+          expect(requested).toEqual([]);
+        }).pipe(Effect.provide(McpProviderSessions.layer)),
+    );
+
+    it.effect("a review's line comments go where they were placed when the person was asked", () =>
+      Effect.gen(function* () {
+        const sessions = yield* shown;
+        const reviews: Array<unknown> = [];
+        let patch =
+          "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n";
+        const harness = yield* makeHarness({
+          thread: lowerThread(),
+          pullRequests: {
+            diff: () => Effect.succeed({ patch, truncated: false, nextCursor: null }),
+            submitReview: (input) => Effect.sync(() => void reviews.push(input)),
+          },
+        });
+        const params = {
+          number: 5,
+          verdict: "comment",
+          comments: [{ path: "a.ts", line: 1, body: "Why?" }],
+        } as const;
+        const asked = yield* ask(harness, sessions, "pull_request_review", params);
+        yield* sessions.answerApprovalRequests(THREAD_ID, asked.message, true);
+        // The pull request moved on: line 1 is now a line the diff only shows around the change.
+        patch =
+          "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,2 @@\n same\n-old\n+new\n";
+        const client = asClient({ action: "accept", state: asked.state });
+        yield* harness
+          .call("pull_request_review", params)
+          .pipe(client.provide(sessions), Effect.flip);
+        const next = Ref.getUnsafe(client.request)?.requestState;
+        expect(next).toBeDefined();
+        expect(next).not.toBe(asked.state);
+        expect(reviews).toEqual([]);
+      }).pipe(Effect.provide(McpProviderSessions.layer)),
+    );
 
     it.effect("a call bound for a linked environment is not sent below Full access", () =>
       Effect.gen(function* () {

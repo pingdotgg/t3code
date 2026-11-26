@@ -33,7 +33,9 @@ edit, a comment or a review.
 no "always allow" for these requests, and Plan mode asks too. An approval is for the call as it
 was asked: if the agent then asks for something else, or what it named has changed by the time
 you answer (a new commit, a pull request added to a stack), nothing is done and you are asked
-again. In **Full access** these tools run without asking, as commands and edits do.
+again. In **Full access** these tools run without asking, as commands and edits do. A thread
+set to Full access is still asked while it is in Plan mode, and when your administrator's limit
+on runtime modes is below Full access.
 
 Opening a pull request names the branch and the commit it is at, the base it is opened against
 and, when the branch has to be pushed first, the remote and address the push goes to. A private
@@ -56,7 +58,8 @@ those go on to run or read, such as a package script or another file a hook sour
 
 With Claude and Codex the request appears in T3 Code and the tool waits for your answer there.
 An agent of another provider is told that T3 Code could not ask you and does nothing: do the
-action yourself, or switch the thread to **Full access**. An MCP client from outside T3 Code has
+action yourself, or switch the thread to **Full access** (outside Plan mode, where your
+administrator allows it). An MCP client from outside T3 Code has
 no thread to ask you in, so it needs full access for these tools.
 
 These requests are for T3 Code's own tools only. An agent that runs `git push` or a command such

@@ -11160,28 +11160,44 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       Effect.gen(function* () {
         const repo = yield* repoToPush();
         const head = yield* git(repo.cwd, ["rev-parse", "HEAD"]);
-        const approved = { branch: "topic", head, remoteName: "origin", remoteBranch: "topic" };
+        const urls = yield* repo.driver.pushAddresses(repo.cwd, "origin");
+        const approved = {
+          branch: "topic",
+          head,
+          remoteName: "origin",
+          remoteBranch: "topic",
+          urls,
+        };
         const push = (named: typeof approved) =>
           repo.driver.pushCurrentBranch(repo.cwd, null, { approved: named });
-        const remoteTopic = git(repo.cwd, ["ls-remote", "origin", "refs/heads/topic"]);
+        const remoteRefs = git(repo.cwd, ["ls-remote", "origin"]);
 
-        // Somewhere else, or another branch, than was approved: nothing goes anywhere.
+        // Somewhere else, another branch or another commit than was approved: nothing moves.
         for (const other of [
           { ...approved, remoteName: "fork" },
           { ...approved, remoteBranch: "main" },
           { ...approved, branch: "other" },
+          { ...approved, urls: ["https://example.com/org/elsewhere.git"] },
+          { ...approved, head: "0".repeat(40) },
         ]) {
           const refused = yield* push(other).pipe(Effect.flip);
           assert.instanceOf(refused.cause, GitVcsDriver.PushNotAsApprovedError);
-          assert.equal(yield* remoteTopic, "");
+          assert.equal(yield* remoteRefs, "");
         }
 
-        // A commit made since the approval stays behind.
+        assert.deepInclude(yield* push(approved), { status: "pushed" });
+        assert.equal(yield* remoteRefs, `${head}\trefs/heads/topic`);
+
+        // A commit made since: neither sent, nor passed off as already there.
         NodeFS.writeFileSync(NodePath.join(repo.cwd, "later.txt"), "later\n");
         yield* git(repo.cwd, ["add", "later.txt"]);
         yield* git(repo.cwd, ["commit", "-m", "Later"]);
-        assert.deepInclude(yield* push(approved), { status: "pushed" });
-        assert.equal(yield* remoteTopic, `${head}\trefs/heads/topic`);
+        const moved = yield* push(approved).pipe(Effect.flip);
+        assert.instanceOf(moved.cause, GitVcsDriver.PushNotAsApprovedError);
+        // Even once the branch and its upstream agree on the newer commit.
+        yield* git(repo.cwd, ["push", "-u", "origin", "topic"]);
+        const agreed = yield* push(approved).pipe(Effect.flip);
+        assert.instanceOf(agreed.cause, GitVcsDriver.PushNotAsApprovedError);
       }),
     );
 

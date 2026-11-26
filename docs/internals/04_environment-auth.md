@@ -117,7 +117,8 @@ model.
   issue key that is not shaped like one, the state `set_issue_state` was given) goes in with
   `McpToolAccess.quoted`: in quotation marks, on one line, cut to a fixed length, with any
   character a screen would hide (controls, format characters such as direction overrides and
-  zero-width spaces, every space but U+0020) written out as its code point. Numbers, commit ids
+  zero-width spaces, marks Unicode says to draw as nothing, every space but U+0020) written
+  out as its code point. Numbers, commit ids
   and the repository and host a target resolved to go in as they are. Every field then passes
   through the same hidden-character and length check on its way out, whatever the handler did
   with it, so a value shown is always data inside the sentence and never more of the sentence.
@@ -137,17 +138,28 @@ model.
   what was asked and does nothing when they differ.
   `pull_request_create` is the case with the most to read. `GitManager.pullRequestOpening`
   reads the branch, the commit at its tip, the base, whether a push is needed, the remote and
-  branch it goes to with the remote's push URLs, and the hooks it would run, all with
-  repository hooks off, and reads the hooks only when there is a push. The question names
-  these (a private pull request's push is named as going to the repository's private
-  companion, which the host makes only when the push is under way). `createPullRequest` given
-  that reading back reads the checkout again and fails without pushing if any of it differs;
-  it then pushes that commit by its id to that branch of that remote (the driver checks the
-  destination once more as its last step, and refuses a push Git would have to pick the
-  destination of), never pushes when no push was approved, and opens against the approved
-  base. A remote's URL changed in the moment between that last look and Git starting is not
-  caught. Which repository the host's own tool opens the pull request in is the host's
-  configuration and is not read beforehand; the question names the project's repository.
+  branch it goes to with every address the remote pushes to (shown and compared without the
+  login, query or fragment a URL may carry), the branch on its remote the pull request is of
+  when nothing is pushed, and the hooks a push would run, all with repository hooks off, and
+  reads the hooks only when there is a push. The question names these (a private pull
+  request's push is named as going to the repository's private companion, which the host
+  makes only when the push is under way). `createPullRequest` given that reading back reads
+  the checkout again and fails without pushing if any of it differs. The driver then checks,
+  as its last step before Git starts, that the branch is at the approved commit and that the
+  remote still pushes to the approved addresses and branch, and sends that commit by its id;
+  it refuses a push Git would have to pick the destination of, and does not report a branch
+  as already pushed unless it is at that commit. No push is made when none was approved, a
+  private push goes only to a remote that pushes to the companion alone, the pull request is
+  opened against the approved base, and one already open for the branch is returned as it
+  is. A remote's address changed in the moment between that last check and Git starting is
+  not caught. Which repository the host's own tool opens the pull request in is the host's
+  configuration and is not read beforehand; the question names the project's repository and
+  host.
+  An update resolves each reviewer's name before the question, so a name nobody has ends the
+  call before anything is written, and who it resolved to is part of the state. A review's
+  line comments are placed in the diff before the question, and those placements are part of
+  the state. `ci_rerun` names the pull request; which of its checks have failed is read when
+  it runs.
   A stack merge names each layer it would merge with the head it is pinned to, and those
   numbers and heads are part of the state; the host is given the same list and refuses if the
   stack is not exactly that.
