@@ -411,6 +411,10 @@ export function useSelectedThreadRequests() {
         })),
       );
     }
+    const notesByQuestionId = buildPendingUserInputNotes(
+      activePendingUserInput.questions,
+      activePendingUserInputDrafts,
+    );
     userInputResponsesInFlight.current.add(responseKey);
     setRespondingUserInputId(activePendingUserInput.requestId);
     const result = await respondToUserInput({
@@ -422,10 +426,7 @@ export function useSelectedThreadRequests() {
         ...(attachmentsByQuestionId.size > 0
           ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
           : {}),
-        notesByQuestionId: buildPendingUserInputNotes(
-          activePendingUserInput.questions,
-          activePendingUserInputDrafts,
-        ),
+        ...(Object.keys(notesByQuestionId).length > 0 ? { notesByQuestionId } : {}),
       },
     });
     userInputResponsesInFlight.current.delete(responseKey);

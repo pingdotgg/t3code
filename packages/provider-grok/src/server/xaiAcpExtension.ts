@@ -1252,12 +1252,21 @@ function normalizeAnswerForXAi(
   };
 }
 
-function findQuestionAnswer<A>(
-  answers: Readonly<Record<string, A>>,
+function findQuestionAnswer(
+  answers: ProviderUserInputAnswers,
   question: XAiAskUserQuestionRequestParams["questions"][number],
-): A | undefined {
+): unknown {
   const key = question.id ?? question.question;
   return answers[key] ?? answers[question.question];
+}
+
+// Notes are keyed only by the question id T3 gave the question, and read as own keys.
+function findQuestionNote(
+  notesByQuestionId: UserInputNotes,
+  question: XAiAskUserQuestionRequestParams["questions"][number],
+): string | undefined {
+  const key = question.id ?? question.question;
+  return Object.hasOwn(notesByQuestionId, key) ? notesByQuestionId[key] : undefined;
 }
 
 export function makeXAiAskUserQuestionResponse(
@@ -1270,7 +1279,7 @@ export function makeXAiAskUserQuestionResponse(
     const entry = normalizeAnswerForXAi(
       question,
       findQuestionAnswer(answers, question),
-      findQuestionAnswer(notesByQuestionId, question),
+      findQuestionNote(notesByQuestionId, question),
     );
     return entry ? [entry] : [];
   });

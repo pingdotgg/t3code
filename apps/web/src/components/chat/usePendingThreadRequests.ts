@@ -417,7 +417,7 @@ export function usePendingThreadRequests(input: {
     const prepareAndRespond = async () => {
       const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
       const providerAnswers = { ...answers };
-      const providerNotes: Record<string, string> = {};
+      const providerNotes = new Map<string, string>();
       const threadDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       const questionDrafts = pendingInput.questions.map((question) => {
         const target = questionAttachmentDraftId(
@@ -438,10 +438,15 @@ export function usePendingThreadRequests(input: {
             answerContextRecords(draft, threadDraft),
           );
         }
-        const note = notes[question.id];
-        if (note !== undefined) {
-          providerNotes[question.id] = String(
-            projectPendingUserInputAnswer(note, answerContextRecords(draft, threadDraft)),
+        if (Object.hasOwn(notes, question.id)) {
+          providerNotes.set(
+            question.id,
+            String(
+              projectPendingUserInputAnswer(
+                notes[question.id],
+                answerContextRecords(draft, threadDraft),
+              ),
+            ),
           );
         }
         const attachments = draft ? [...draft.images, ...draft.files] : [];
@@ -499,7 +504,9 @@ export function usePendingThreadRequests(input: {
           ...(attachmentsByQuestionId.size > 0
             ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
             : {}),
-          ...(Object.keys(providerNotes).length > 0 ? { notesByQuestionId: providerNotes } : {}),
+          ...(providerNotes.size > 0
+            ? { notesByQuestionId: Object.fromEntries(providerNotes) }
+            : {}),
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

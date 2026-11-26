@@ -5924,6 +5924,7 @@ type PendingClaudeRuntimeRequest =
 
 export function claudeUserInputQuestions(
   input: unknown,
+  { takesNotes = true }: { readonly takesNotes?: boolean } = {},
 ): ReadonlyArray<OrchestrationV2UserInputQuestion> {
   const value =
     typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
@@ -5967,7 +5968,7 @@ export function claudeUserInputQuestions(
         question,
         options,
         multiSelect: record.multiSelect === true,
-        ...(options.length > 0 ? { supportsNote: true } : {}),
+        ...(takesNotes && options.length > 0 ? { supportsNote: true } : {}),
       },
     ];
   });
@@ -13331,7 +13332,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           toolName: Parameters<CanUseTool>[0],
           toolInput: Parameters<CanUseTool>[1],
           callbackOptions: Parameters<CanUseTool>[2],
-          options?: { readonly startToolCall?: boolean },
+          options?: {
+            readonly startToolCall?: boolean;
+            /** The caller reads only `answers`, so a note would be lost. */
+            readonly takesNotes?: false;
+          },
         ) {
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
@@ -13384,7 +13389,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (toolName === "AskUserQuestion") {
-            const questions = claudeUserInputQuestions(nativeToolInput);
+            const questions = claudeUserInputQuestions(nativeToolInput, {
+              takesNotes: options?.takesNotes !== false,
+            });
             const artifacts = yield* buildApprovalRequestArtifacts({
               context,
               nativeItemId: nativeRequestId,
@@ -13825,7 +13832,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 },
                 // The dialog is a control request, not a tool call, so no
                 // tool_result would ever settle a tool row started for it.
-                { startToolCall: false },
+                { startToolCall: false, takesNotes: false },
               );
               if (result.behavior !== "allow") return { behavior: "cancelled" as const };
               const answers =
