@@ -6866,8 +6866,6 @@
   "0e3eede94227c151": "Preparando el checkout de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}...",
   "f5fd3733da6e3556": "No se pudo abrir un hilo para el checkout",
   "09f38e303898401f": "No se pudo preparar el checkout de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}",
-  "853a77d42f86c918": "Checkout hecho, pero el hilo se quedó donde estaba",
-  "0746dfa692f895cc": "El checkout está listo en `{branch}`. Apunta un hilo a él desde el selector de ramas y vuelve a preguntar.",
   "88db70a96177d202": "Checkout hecho aquí",
   "baa66fde3613022b": "Checkout hecho",
   "10feb68552356a08": "Este repositorio está en la rama de la {term, select, mr {merge request} cr {solicitud de cambios} other {pull request}}, con un hilo abierto en ella.",

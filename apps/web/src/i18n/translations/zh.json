@@ -6878,8 +6878,6 @@
   "0e3eede94227c151": "正在准备 {term, select, mr {merge request} cr {change request} other {pull request}} 工作副本...",
   "f5fd3733da6e3556": "无法为工作副本打开会话",
   "09f38e303898401f": "无法准备 {term, select, mr {MR} cr {change request} other {PR}} 工作副本",
-  "853a77d42f86c918": "已检出，但会话仍在原处",
-  "0746dfa692f895cc": "工作副本已在 `{branch}` 上准备好。请从分支选择器将会话指向它，然后再次提问。",
   "88db70a96177d202": "已在此检出",
   "baa66fde3613022b": "已检出",
   "10feb68552356a08": "此仓库位于该 {term, select, mr {merge request} cr {change request} other {pull request}} 的分支上，并已在其上打开一个会话。",

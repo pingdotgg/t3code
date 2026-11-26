@@ -6866,8 +6866,6 @@
   "0e3eede94227c151": "{term, select, mr {Checkout des Merge Requests wird vorbereitet...} cr {Checkout der Änderungsanfrage wird vorbereitet...} other {Checkout des Pull Requests wird vorbereitet...}}",
   "f5fd3733da6e3556": "Für den Checkout konnte kein Thread geöffnet werden",
   "09f38e303898401f": "{term, select, mr {Checkout des Merge Requests konnte nicht vorbereitet werden} cr {Checkout der Änderungsanfrage konnte nicht vorbereitet werden} other {Checkout des Pull Requests konnte nicht vorbereitet werden}}",
-  "853a77d42f86c918": "Ausgecheckt, aber der Thread ist geblieben, wo er war",
-  "0746dfa692f895cc": "Der Checkout ist auf `{branch}` bereit. Richte einen Thread über die Branch-Auswahl darauf aus und frage dann erneut.",
   "88db70a96177d202": "Hier ausgecheckt",
   "baa66fde3613022b": "Ausgecheckt",
   "10feb68552356a08": "{term, select, mr {Dieses Repository ist auf dem Branch des Merge Requests, mit einem darauf geöffneten Thread.} cr {Dieses Repository ist auf dem Branch der Änderungsanfrage, mit einem darauf geöffneten Thread.} other {Dieses Repository ist auf dem Branch des Pull Requests, mit einem darauf geöffneten Thread.}}",

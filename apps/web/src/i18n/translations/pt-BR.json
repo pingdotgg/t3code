@@ -6866,8 +6866,6 @@
   "0e3eede94227c151": "Preparando o checkout {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}...",
   "f5fd3733da6e3556": "Não foi possível abrir uma thread para o checkout",
   "09f38e303898401f": "Não foi possível preparar o checkout {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}",
-  "853a77d42f86c918": "Checkout feito, mas a thread ficou onde estava",
-  "0746dfa692f895cc": "O checkout está pronto em `{branch}`. Aponte uma thread para ele pelo seletor de branch e pergunte novamente.",
   "88db70a96177d202": "Checkout feito aqui",
   "baa66fde3613022b": "Checkout feito",
   "10feb68552356a08": "Este repositório está no branch {term, select, mr {do merge request} cr {da solicitação de alteração} other {do pull request}}, com uma thread aberta nele.",

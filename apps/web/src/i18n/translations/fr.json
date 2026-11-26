@@ -6867,8 +6867,6 @@
   "0e3eede94227c151": "Préparation de l’extraction de la {term, select, mr {merge request} cr {demande de modification} other {pull request}}...",
   "f5fd3733da6e3556": "Impossible d’ouvrir un fil pour le checkout",
   "09f38e303898401f": "Impossible de préparer l’extraction de la {term, select, mr {merge request} cr {demande de modification} other {pull request}}",
-  "853a77d42f86c918": "Récupérée, mais le fil est resté où il était",
-  "0746dfa692f895cc": "Le checkout est prêt sur `{branch}`. Pointez un fil dessus depuis le sélecteur de branche, puis reposez la question.",
   "88db70a96177d202": "Récupérée ici",
   "baa66fde3613022b": "Récupérée",
   "10feb68552356a08": "Ce dépôt est sur la branche de la {term, select, mr {merge request} cr {demande de modification} other {pull request}}, avec un fil ouvert dessus.",
