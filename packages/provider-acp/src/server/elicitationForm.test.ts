@@ -80,6 +80,40 @@ describe("parseElicitationForm", () => {
       q1__other: "Only on Fridays",
     });
 
+    // Antigravity and other ACP CLIs use a single-underscore `<id>_other` companion field.
+    const singleUnderscore = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          q1: ask("Use Postgres for the new service?", "Database"),
+          q1_other: {
+            type: "string",
+            title: "Other",
+            description: "Optional free-form answer to: Use Postgres for the new service?",
+          },
+          q2: ask("Deploy to staging first?", "Deploy"),
+          q2_other: {
+            type: "string",
+            title: "Other",
+            description: "Optional free-form answer to: Deploy to staging first?",
+          },
+        },
+      },
+      "The agent has 2 questions.",
+    );
+    assert(singleUnderscore !== undefined);
+    assert.deepStrictEqual(
+      singleUnderscore.questions.map((question) => [question.id, question.allowCustomAnswer]),
+      [
+        ["q1", undefined],
+        ["q2", undefined],
+      ],
+    );
+    assert.deepStrictEqual(singleUnderscore.content({ q1: "Yes", q2: "Only on Fridays" }), {
+      q1: "Yes",
+      q2_other: "Only on Fridays",
+    });
+
     // A multi-select answer can carry options and free text together, so both fields stay.
     const multi = parseElicitationForm(
       {
