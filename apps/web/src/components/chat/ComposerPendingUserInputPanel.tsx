@@ -347,7 +347,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         lineBreaks
                         parseRawHtml={false}
                         extensions={OPTION_PREVIEW_MARKDOWN}
-                        className="question-option-preview w-auto ms-9 me-2 mb-1.5 rounded-md border border-border/60 bg-muted/30 px-2.5 py-2 font-mono text-xs text-foreground/70 sm:ms-8"
+                        className="question-option-preview ps-9 pe-2 pb-1.5 font-mono text-xs text-foreground/70 sm:ps-8"
                       />
                     ) : null}
                   </div>
