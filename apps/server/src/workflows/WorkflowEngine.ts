@@ -1357,7 +1357,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
             .slice(0, 500),
         );
       }
-      const runs = found.toSorted(newestFirst).map(toRun);
+      // The two lookups are separate reads, so a run that turned skipped between them can be in both.
+      const runs = [...new Map(found.map((row) => [row.run_id, row])).values()]
+        .toSorted(newestFirst)
+        .map(toRun);
       const about = new Set(runs.map((run) => run.runId));
       const open = yield* questions;
       return { runs, questions: open.filter((question) => about.has(question.runId)) };
