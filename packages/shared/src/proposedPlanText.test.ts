@@ -31,3 +31,14 @@ it("strips the displayed plan title and summary after leading blank lines", () =
   expect(proposedPlanTitle(markdown)).toBe("My Plan");
   expect(stripDisplayedPlanMarkdown(markdown)).toBe("Body text");
 });
+
+it("reads the plan title past a leading byte-order mark", () => {
+  for (const markdown of [
+    "\uFEFF# Rollout\n\nDeploy",
+    "\uFEFF   # Rollout\r\n\r\n## Summary\r\n\r\nDeploy",
+  ]) {
+    expect(proposedPlanTitle(markdown)).toBe("Rollout");
+    expect(stripDisplayedPlanMarkdown(markdown)).toBe("Deploy");
+  }
+  expect(proposedPlanTitle("\uFEFF    # Indented code")).toBeNull();
+});
