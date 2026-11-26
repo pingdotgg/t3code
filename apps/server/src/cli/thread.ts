@@ -7,6 +7,7 @@ import {
   OrchestratorMcpThreadWaitResult,
   ProjectId,
   RunId,
+  RuntimeMode,
   ThreadId,
   TrimmedNonEmptyString,
   type OrchestratorMcpThreadDetail,
@@ -957,6 +958,12 @@ const threadStartCommand = Command.make("start", {
     Flag.optional,
   ),
   outputSchema: outputSchemaFlag,
+  runtimeMode: Flag.Literals("runtime-mode", RuntimeMode.literals).pipe(
+    Flag.withDescription(
+      "Runtime mode for the new thread. Defaults to the project's defaultRuntimeMode.",
+    ),
+    Flag.optional,
+  ),
   wait: waitFlag,
   json: jsonFlag,
 }).pipe(
@@ -974,6 +981,7 @@ const threadStartCommand = Command.make("start", {
         flags,
         Effect.fn("cli.thread.start")(function* (tools) {
           const project = yield* resolveProject(tools, flags.project);
+          const runtimeMode = Option.getOrUndefined(flags.runtimeMode);
           const launched = yield* tools.call(
             "t3_thread_launch",
             {
@@ -984,6 +992,7 @@ const threadStartCommand = Command.make("start", {
               ...output,
               ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
               ...(modelSelection === undefined ? {} : { modelSelection }),
+              ...(runtimeMode === undefined ? {} : { runtimeMode }),
             },
             ThreadLaunchResult,
           );
