@@ -549,6 +549,37 @@ it("keeps mixed-case local editor file links by lowercasing the scheme before sa
   ]);
 });
 
+it("keeps uppercase HTTP(S) link and image URLs by lowercasing the scheme before sanitizing", () => {
+  const processor = unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS);
+  type Node = { tagName?: string; properties?: object; children?: Node[] };
+  const elements = (node: Node): Node[] => [
+    ...(node.tagName === "a" || node.tagName === "img" ? [node] : []),
+    ...(node.children ?? []).flatMap(elements),
+  ];
+  const tree = processor.runSync(
+    processor.parse(
+      [
+        "[upper](HTTPS://Example.com/A?Key=Value#Part) [mixed](hTtP://Example.com/B) [js](JAVASCRIPT:alert(1))",
+        "",
+        "![shot](HTTPS://Example.com/Shot.png)",
+        "",
+        '<picture><source media="(prefers-color-scheme: dark)" srcset="HTTPS://Example.com/Dark.png"><img src="HTTP://Example.com/Light.png"></picture>',
+      ].join("\n"),
+    ),
+  ) as Node;
+  expect(elements(tree).map((node) => node.properties)).toEqual([
+    { href: "https://Example.com/A?Key=Value#Part" },
+    { href: "http://Example.com/B" },
+    {},
+    { src: "https://Example.com/Shot.png", alt: "shot", dataStandalone: true },
+    { src: "http://Example.com/Light.png", dataDarkSrc: "https://Example.com/Dark.png" },
+  ]);
+});
+
 it("keeps backslashes that CommonMark would read as escapes in prose Windows paths", () => {
   const processor = unified()
     .use(remarkParse)

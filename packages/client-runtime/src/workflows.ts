@@ -958,24 +958,34 @@ export function workflowStepTime(ms: number): string {
  */
 export function workflowOneLine(text: string): string {
   let fence: string | null = null;
+  let fenceQuoteDepth = 0;
   let indented: string | undefined;
   const line =
     text
       .split("\n")
       .find((candidate) => {
-        const [, marker, rest] = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/.exec(candidate) ?? [];
+        const quote = /^(?: {0,3}>[ \t]?)+/.exec(candidate)?.[0] ?? "";
+        const quoteDepth = quote.replace(/[^>]/g, "").length;
+        const content = candidate.slice(quote.length);
+        const [, marker, rest] = /^ {0,3}(`{3,}|~{3,})([^\n]*)$/.exec(content) ?? [];
+        if (quoteDepth < fenceQuoteDepth) fence = null;
         if (fence !== null) {
-          if (marker?.startsWith(fence) && /^[ \t]*\r?$/.test(rest ?? "")) {
+          if (
+            quoteDepth === fenceQuoteDepth &&
+            marker?.startsWith(fence) &&
+            /^[ \t]*\r?$/.test(rest ?? "")
+          ) {
             fence = null;
           }
           return false;
         }
         if (marker !== undefined && !(marker[0] === "`" && rest?.includes("`"))) {
           fence = marker;
+          fenceQuoteDepth = quoteDepth;
           return false;
         }
-        if (/^\s*$|^[ \t]*[#|]/.test(candidate)) return false;
-        if (!/^(?: {4}| {0,3}\t)/.test(candidate)) return true;
+        if (/^\s*$/.test(content) || /^[ \t]*[#|]/.test(candidate)) return false;
+        if (!/^(?: {4}| {0,3}\t)/.test(content)) return true;
         indented ??= candidate;
         return false;
       })
@@ -984,7 +994,8 @@ export function workflowOneLine(text: string): string {
     "";
   const code: string[] = [];
   const plain = line
-    .replace(/^([-*>]|\d+\.)\s+/, "")
+    .replace(/^(?:>\s*)+/, "")
+    .replace(/^([-*]|\d+\.)\s+/, "")
     .replace(/(`+)(.+?)\1(?!`)/g, (_, _ticks, inner: string) => `\0${code.push(inner) - 1}\0`)
     .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/(?<![\p{L}\p{M}\p{N}_/])(__|_)(\S(?:.*?\S)?)\1(?![\p{L}\p{M}\p{N}_/])/gu, "$2")
