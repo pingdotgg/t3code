@@ -20,26 +20,19 @@ const LIST_MARKERS = String.raw`(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)*`;
 const QUOTE_PREFIX = new RegExp(String.raw`^([ \t]*${LIST_MARKERS})(>(?:[ \t]*>)+)`, "gm");
 const markdownParser = unified().use(remarkParse);
 
-function startsWithBomPrefixedFence(markdown: string): boolean {
-  if (!markdown.startsWith("\uFEFF")) return false;
-  const [firstLine = ""] = markdown.split(/\r\n?|\n/, 1);
-  let node: Nodes | undefined = markdownParser.parse(firstLine).children[0];
+function leadingCode(markdown: string) {
+  let node: Nodes | undefined = markdownParser.parse(markdown).children[0];
   while (node && "children" in node) node = node.children[0];
-  // A fence parsed from its opening line has no body. Indented code contains the marker.
-  return node?.type === "code" && node.value === "";
+  return node?.type === "code" ? node : undefined;
 }
 
-// Mask a leading BOM and move inter-marker spacing before the quote so fences match and offsets
-// stay intact. A label may span \r or U+2028, which multiline `^` follows, so labels and output
-// are read from the original.
+// Move inter-marker spacing before the quote so fence depth matches and offsets stay intact. A label
+// may span \r or U+2028, which multiline `^` follows, so labels and output are read from the original.
 const threadLinkSource = (markdown: string) =>
-  (startsWithBomPrefixedFence(markdown) ? ` ${markdown.slice(1)}` : markdown).replace(
-    QUOTE_PREFIX,
-    (_source, indent: string, quote: string) => {
-      const markers = quote.replace(/[ \t]/g, "");
-      return indent + " ".repeat(quote.length - markers.length) + markers;
-    },
-  );
+  markdown.replace(QUOTE_PREFIX, (_source, indent: string, quote: string) => {
+    const markers = quote.replace(/[ \t]/g, "");
+    return indent + " ".repeat(quote.length - markers.length) + markers;
+  });
 // CommonMark fences start on their own line (optional blockquotes, indentation, or list markers)
 // and close on a line with at least as many of the same marker; backtick info strings hold no `.
 // Quote markers are compared from the first `>`, so lines may indent them differently.
@@ -311,7 +304,16 @@ export function replaceThreadLinks(
   if (!hasThreadLinks(markdown)) return markdown;
   // Hermes' matchAll yields matches without `groups`; exec keeps them.
   const pattern = new RegExp(THREAD_LINK_OUTSIDE_CODE);
-  const source = threadLinkSource(markdown);
+  const firstLineCode = markdown.startsWith("\uFEFF")
+    ? leadingCode(markdown.split(/\r\n?|\n/, 1)[0]!)
+    : undefined;
+  // On a single line, a fence has no body. Mask its BOM, or skip the full indented block.
+  const source = threadLinkSource(firstLineCode?.value === "" ? ` ${markdown.slice(1)}` : markdown);
+  if (firstLineCode?.value) {
+    const codeEnd = leadingCode(markdown)?.position?.end.offset;
+    // Remark offsets exclude the BOM.
+    if (codeEnd !== undefined) pattern.lastIndex = codeEnd + 1;
+  }
   let result = "";
   let cursor = 0;
   let lines: ReturnType<typeof codeSpanLines> | undefined;
