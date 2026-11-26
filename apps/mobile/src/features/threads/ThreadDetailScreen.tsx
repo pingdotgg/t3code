@@ -148,6 +148,7 @@ import {
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { environmentCatalog } from "../../connection/catalog";
 import { useThreadDevicePreviewCount } from "../../state/device";
+import { useEnvironmentQuery } from "../../state/query";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../state/vcs";

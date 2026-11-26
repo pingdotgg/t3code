@@ -636,7 +636,7 @@ export const make = Effect.gen(function* () {
       { cwd },
       {
         ...remoteOptions,
-        ...(readPollInputs ? { refreshUpstream: false } : {}),
+        ...(poll !== null ? { refreshUpstream: false } : {}),
         ...(details?.branch === branch ? { statusDetails: details } : {}),
       },
     );
