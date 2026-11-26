@@ -7351,7 +7351,7 @@
   "c016508e99843b2e": "Coincidir palabra completa",
   "ee02309150562d1c": "Usar expresión regular",
   "ab8e1a4faff53e30": "Buscar en {project}",
-  "ac889a56a9aae911": "{fileCount, plural, one {{results}+ resultados en {files} archivo} other {{results}+ resultados en {files} archivos}}",
+  "ac889a56a9aae911": "{fileCount, plural, one {Más de {results} resultados en {files} archivo} other {Más de {results} resultados en {files} archivos}}",
   "32d209031d06c02d": "{resultCount, plural, one {{results} resultado} other {{results} resultados}} en {fileCount, plural, one {{files} archivo} other {{files} archivos}}",
   "a8813d3506d8df65": "Comprobando el acceso a los archivos…",
   "45c063246b34dde6": "No se encontraron resultados.",

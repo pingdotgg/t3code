@@ -7351,7 +7351,7 @@
   "c016508e99843b2e": "Palavra inteira",
   "ee02309150562d1c": "Usar expressão regular",
   "ab8e1a4faff53e30": "Pesquisar em {project}",
-  "ac889a56a9aae911": "{fileCount, plural, =1 {{results}+ resultados em {files} arquivo} other {{results}+ resultados em {files} arquivos}}",
+  "ac889a56a9aae911": "{fileCount, plural, =1 {Mais de {results} resultados em {files} arquivo} other {Mais de {results} resultados em {files} arquivos}}",
   "32d209031d06c02d": "{resultCount, plural, =1 {{results} resultado} other {{results} resultados}} em {fileCount, plural, =1 {{files} arquivo} other {{files} arquivos}}",
   "a8813d3506d8df65": "Verificando acesso aos arquivos…",
   "45c063246b34dde6": "Nenhum resultado encontrado.",
