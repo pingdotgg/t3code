@@ -292,6 +292,20 @@ describe("HtmlRender", () => {
         expect(yield* htmlRender.prepare(both, { imageRoots: [workspace] })).not.toContain(
           directory,
         );
+        // `link/..` leaves the folder the link points into, as the filesystem reads it.
+        const reports = path.join(workspace, "reports");
+        yield* fileSystem.makeDirectory(path.join(reports, "daily"), { recursive: true });
+        const reportsChart = new Uint8Array([...PNG_BYTES, 1]);
+        yield* fileSystem.writeFile(path.join(reports, "chart.png"), reportsChart);
+        yield* fileSystem.writeFile(path.join(workspace, "chart.png"), PNG_BYTES);
+        const alias = path.join(workspace, "alias");
+        yield* fileSystem.symlink(path.join(reports, "daily"), alias);
+        expect(
+          yield* htmlRender.prepare(`<img src="${alias}/../chart.png">`, {
+            imageRoots: [workspace],
+          }),
+        ).toContain(Base64.encode(reportsChart));
+
         // A missing image under the root's other spelling is missing, not outside.
         const missing = yield* htmlRender
           .prepare(`<img src="${path.join(linkedRoot, "missing.png")}">`, {

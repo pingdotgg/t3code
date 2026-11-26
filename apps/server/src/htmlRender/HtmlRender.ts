@@ -29,7 +29,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { onDiskPath, openMediaFile } from "../assets/MediaFile.ts";
+import { onDiskPath, openedFilePath, openMediaFile } from "../assets/MediaFile.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
@@ -305,29 +305,43 @@ const afterDoctype = (text: string, from: number) => {
 
 // Like `readPageFile`: open without following links and recheck the path, so a link swapped in
 // after the roots check is refused, and refuse a second hard link to a file outside the roots.
-// The size comes from that open file too, never from a path a link could redirect.
-const confinedImageSize = (filePath: string) =>
+// Where the platform names an open file's path (Linux), that path must be inside the roots too,
+// which no link swapped around the open can fake. Size and bytes come from this open file.
+const openConfinedImage = Effect.fn("HtmlRender.openConfinedImage")(function* (
+  filePath: string,
+  inRoots: (path: string) => boolean,
+) {
+  const file = yield* openMediaFile(filePath);
+  if (file === null || file.info.nlink !== 1n) return null;
+  const opened = yield* openedFilePath(file.handle);
+  return opened === null || inRoots(opened) ? file : null;
+});
+
+const confinedImageSize = (filePath: string, inRoots: (path: string) => boolean) =>
   Effect.scoped(
-    Effect.map(openMediaFile(filePath), (file) =>
-      file === null || file.info.nlink !== 1n ? undefined : Number(file.info.size),
+    Effect.map(openConfinedImage(filePath, inRoots), (file) =>
+      file === null ? undefined : Number(file.info.size),
     ),
   );
 
-const readConfinedImage = (filePath: string) =>
+const readConfinedImage = (filePath: string, inRoots: (path: string) => boolean) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const file = yield* openMediaFile(filePath);
-      if (file === null || file.info.nlink !== 1n) return Option.none<Uint8Array>();
+      const file = yield* openConfinedImage(filePath, inRoots);
+      if (file === null) return Option.none<Uint8Array>();
+      // Reads to the end, or one byte past the limit, so a file that grew is not cut short.
       return yield* Effect.tryPromise({
         try: async () => {
-          const buffer = Buffer.alloc(Math.min(Number(file.info.size), MAX_IMAGE_BYTES) + 1);
-          let filled = 0;
-          while (filled < buffer.length) {
-            const { bytesRead } = await file.handle.read(buffer, filled, buffer.length - filled);
+          const chunks: Array<Uint8Array> = [];
+          let total = 0;
+          while (total <= MAX_IMAGE_BYTES) {
+            const chunk = Buffer.alloc(Math.min(64 * 1024, MAX_IMAGE_BYTES + 1 - total));
+            const { bytesRead } = await file.handle.read(chunk, 0, chunk.length);
             if (bytesRead === 0) break;
-            filled += bytesRead;
+            chunks.push(chunk.subarray(0, bytesRead));
+            total += bytesRead;
           }
-          return Option.some(new Uint8Array(buffer.subarray(0, filled)));
+          return Option.some(new Uint8Array(Buffer.concat(chunks)));
         },
         catch: (cause) => new HtmlRenderFileError({ path: filePath, cause }),
       });
@@ -360,14 +374,15 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
       : yield* Effect.forEach(imageRoots, (root) => canonical(pathService.resolve(root)), {
           concurrency: "unbounded",
         });
+  const inRoots = (filePath: string) =>
+    realRoots !== undefined && realRoots.some((root) => isWithinRoot(pathService, filePath, root));
   const locate = Effect.fn(function* (path: string) {
-    if (realRoots === undefined) return { path, filePath: filePathFor(path), outside: false };
-    const filePath = yield* canonical(pathService.resolve(filePathFor(path)));
-    return {
-      path,
-      filePath,
-      outside: !realRoots.some((root) => isWithinRoot(pathService, filePath, root)),
-    };
+    const raw = filePathFor(path);
+    if (realRoots === undefined) return { path, filePath: raw, outside: false };
+    // The spelling as written goes to realpath first, so `link/..` leaves where the link points,
+    // as the filesystem reads it, rather than where the text would.
+    const filePath = yield* canonical(pathService.isAbsolute(raw) ? raw : pathService.resolve(raw));
+    return { path, filePath, outside: !inRoots(filePath) };
   });
   const located = yield* Effect.forEach(
     [...new Set(references.map((reference) => reference.path))],
@@ -382,7 +397,7 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
           Effect.map((info) => (info.type === "File" ? Number(info.size) : undefined)),
           Effect.orElseSucceed(() => undefined),
         )
-      : confinedImageSize(filePath).pipe(Effect.orElseSucceed(() => undefined));
+      : confinedImageSize(filePath, inRoots).pipe(Effect.orElseSucceed(() => undefined));
   const files = yield* Effect.forEach(
     located,
     (file) =>
@@ -423,7 +438,7 @@ const inlineLocalImages = Effect.fn("HtmlRender.inlineLocalImages")(function* (
           ? fileSystem
               .stream(file.filePath, { bytesToRead: MAX_IMAGE_BYTES + 1 })
               .pipe(Stream.mkUint8Array, Effect.option)
-          : readConfinedImage(file.filePath);
+          : readConfinedImage(file.filePath, inRoots);
         if (Option.isNone(read) || !isImageBytes(read.value)) return [];
         const bytes = read.value;
         if (bytes.byteLength > MAX_IMAGE_BYTES) {
