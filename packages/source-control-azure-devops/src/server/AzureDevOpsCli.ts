@@ -87,14 +87,10 @@ export class AzureDevOpsPullRequestNotFoundError extends Schema.TaggedError<Azur
 
 export class AzureDevOpsCommandFailedError extends Schema.TaggedError<AzureDevOpsCommandFailedError>()(
   "AzureDevOpsCommandFailedError",
-  {
-    ...azureDevOpsCommandErrorFields,
-    /** Why T3 refused the command before running az, shown in place of the generic detail. */
-    reason: Schema.optional(Schema.String),
-  },
+  azureDevOpsCommandErrorFields,
 ) {
   get detail(): string {
-    return this.reason ?? "Azure DevOps CLI command failed.";
+    return "Azure DevOps CLI command failed.";
   }
 
   override get message(): string {
@@ -199,12 +195,39 @@ export class AzureDevOpsRepositoryDecodeError extends Schema.TaggedError<AzureDe
   }
 }
 
+const AZURE_DEVOPS_ARGUMENT_DETAIL = {
+  "unsafe-name": "Azure DevOps names cannot hold quotes or control characters.",
+  "shared-stdin": "Only one name or filter in a request can start with @.",
+  "reads-file":
+    "Names or values that start with @ are not supported here: az would read them as a file.",
+} as const;
+
+/** T3 refused a value before running az because az would not take it as plain text. */
+export class AzureDevOpsArgumentError extends Schema.TaggedError<AzureDevOpsArgumentError>()(
+  "AzureDevOpsArgumentError",
+  {
+    command: Schema.Literal("az"),
+    cwd: Schema.String,
+    operation: Schema.String,
+    reason: Schema.Literals(["unsafe-name", "shared-stdin", "reads-file"]),
+  },
+) {
+  get detail(): string {
+    return AZURE_DEVOPS_ARGUMENT_DETAIL[this.reason];
+  }
+
+  override get message(): string {
+    return `Azure DevOps CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export const AzureDevOpsCliError = Schema.Union([
   AzureDevOpsCliUnavailableError,
   AzureDevOpsCliAuthenticationError,
   AzureDevOpsCliRateLimitError,
   AzureDevOpsPullRequestNotFoundError,
   AzureDevOpsCommandFailedError,
+  AzureDevOpsArgumentError,
   AzureDevOpsPullRequestListDecodeError,
   AzureDevOpsPullRequestDecodeError,
   AzureDevOpsRepositoryDecodeError,
@@ -288,40 +311,22 @@ function normalizeChangeRequestId(reference: string): string | null {
 // argument on Windows.
 const UNSAFE_NAME = /[\u0000-\u001f\u007f"]/;
 
-const invalidArgument = (cwd: string, reason: string) =>
-  new AzureDevOpsCommandFailedError({
-    operation: "execute",
-    command: "az",
-    cwd,
-    argumentCount: 0,
-    reason,
-    cause: new Error(reason),
-  });
-
 /** The name and project options naming a repository, as `textOption`s so neither reads a file. */
 function repositoryOptions(
   input: { readonly cwd: string; readonly repository: string },
+  operation: string,
   nameOption: string,
 ) {
-  if (UNSAFE_NAME.test(input.repository)) {
-    return Effect.fail(
-      invalidArgument(input.cwd, "Azure DevOps names cannot hold quotes or control characters."),
-    );
-  }
+  const refuse = (reason: AzureDevOpsArgumentError["reason"]) =>
+    Effect.fail(new AzureDevOpsArgumentError({ command: "az", cwd: input.cwd, operation, reason }));
+  if (UNSAFE_NAME.test(input.repository)) return refuse("unsafe-name");
   const repository = parseRepositorySpecifier(input.repository);
   const options = textOptions([
     [nameOption, repository.name],
     ...(repository.project ? [["--project", repository.project] as const] : []),
   ]);
   // az reads a value starting with `@` from stdin here, and it has one stdin.
-  return options === null
-    ? Effect.fail(
-        invalidArgument(
-          input.cwd,
-          "A project and repository whose names both start with @ are not supported.",
-        ),
-      )
-    : Effect.succeed(options);
+  return options === null ? refuse("shared-stdin") : Effect.succeed(options);
 }
 
 function toAzureStatus(state: "open" | "closed" | "merged" | "all"): string {
@@ -742,7 +747,7 @@ export const make = Effect.gen(function* () {
       );
     }),
     getRepositoryCloneUrls: Effect.fn("AzureDevOpsCli.getRepositoryCloneUrls")(function* (input) {
-      const repository = yield* repositoryOptions(input, "--repository");
+      const repository = yield* repositoryOptions(input, "getRepositoryCloneUrls", "--repository");
       return yield* executeJson({
         cwd: input.cwd,
         ...remoteOf(input),
@@ -762,7 +767,7 @@ export const make = Effect.gen(function* () {
       );
     }),
     createRepository: Effect.fn("AzureDevOpsCli.createRepository")(function* (input) {
-      const repository = yield* repositoryOptions(input, "--name");
+      const repository = yield* repositoryOptions(input, "createRepository", "--name");
       // Project/organization permissions control visibility; `az repos create` has no flag.
       return yield* executeJson({
         cwd: input.cwd,
@@ -801,7 +806,7 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.asVoid);
     }),
     getDefaultBranch: Effect.fn("AzureDevOpsCli.getDefaultBranch")(function* (input) {
-      const repository = yield* repositoryOptions(input, "--repository");
+      const repository = yield* repositoryOptions(input, "getDefaultBranch", "--repository");
       return yield* executeJson({
         cwd: input.cwd,
         ...remoteOf(input),

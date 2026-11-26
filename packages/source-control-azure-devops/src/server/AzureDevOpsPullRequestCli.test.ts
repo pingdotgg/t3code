@@ -313,7 +313,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       // az has one stdin, so two values that need it are refused without running az.
       const error = yield* Effect.flip(list("@web", "@ana"));
-      assert.strictEqual(error._tag, "AzureDevOpsPullRequestReadError");
+      assert.strictEqual(error._tag, "AzureDevOpsArgumentError");
       expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
@@ -1174,11 +1174,11 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
           const item = yield* Effect.flip(
             cli.readItemContent({ cwd: "/w", location, path: "README.md", commit: "a".repeat(40) }),
           );
-          assert.strictEqual(item._tag, "AzureDevOpsPullRequestReadError");
+          assert.strictEqual(item._tag, "AzureDevOpsArgumentError");
           const blobs = yield* Effect.flip(
             cli.readBlobs({ cwd: "/w", location, objectIds: ["a".repeat(40)] }),
           );
-          assert.strictEqual(blobs._tag, "AzureDevOpsPullRequestReadError");
+          assert.strictEqual(blobs._tag, "AzureDevOpsArgumentError");
           // What the user sees names the reason, not an unreadable response.
           expect(item.detail).toContain("start with @");
         }

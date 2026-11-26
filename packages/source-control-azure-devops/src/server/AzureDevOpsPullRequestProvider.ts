@@ -595,6 +595,7 @@ export const make = Effect.gen(function* () {
                 AzureDevOpsPullRequestNotFoundError: () => Effect.succeed(new Map()),
                 AzureDevOpsCommandFailedError: () => Effect.succeed(new Map()),
                 AzureDevOpsPullRequestReadError: () => Effect.succeed(new Map()),
+                AzureDevOpsArgumentError: () => Effect.succeed(new Map()),
               }),
             );
           }
@@ -613,6 +614,7 @@ export const make = Effect.gen(function* () {
                   AzureDevOpsPullRequestNotFoundError: () => Effect.succeed(null),
                   AzureDevOpsCommandFailedError: () => Effect.succeed(null),
                   AzureDevOpsPullRequestReadError: () => Effect.succeed(null),
+                  AzureDevOpsArgumentError: () => Effect.succeed(null),
                 }),
                 Effect.map((texts) => ({ change, texts })),
               ),

@@ -42,13 +42,11 @@ export class AzureDevOpsPullRequestReadError extends Schema.TaggedError<AzureDev
     command: Schema.Literal("az"),
     cwd: Schema.String,
     operation: Schema.String,
-    /** Why T3 refused the read before running az, shown in place of the generic detail. */
-    reason: Schema.optional(Schema.String),
     cause: Schema.Defect(),
   },
 ) {
   get detail(): string {
-    return this.reason ?? `Azure CLI returned an unreadable ${this.operation} response.`;
+    return `Azure CLI returned an unreadable ${this.operation} response.`;
   }
 
   override get message(): string {
@@ -344,17 +342,13 @@ export const make = Effect.gen(function* () {
       ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
     });
 
-  const namedWithAt = (cwd: string, operation: string) => {
-    const reason =
-      "Azure DevOps names or values that start with @ are not supported here: az would read them as a file.";
-    return new AzureDevOpsPullRequestReadError({
+  const namedWithAt = (cwd: string, operation: string) =>
+    new AzureDevOpsCli.AzureDevOpsArgumentError({
       command: "az",
       cwd,
       operation,
-      reason,
-      cause: new Error(reason),
+      reason: "reads-file",
     });
-  };
 
   /** Use the extension's credentials; `az rest` uses the default tenant. */
   const invoke = <A>(input: {
@@ -451,14 +445,11 @@ export const make = Effect.gen(function* () {
     ]);
     if (named === null) {
       return Effect.fail(
-        new AzureDevOpsPullRequestReadError({
+        new AzureDevOpsCli.AzureDevOpsArgumentError({
           command: "az",
           cwd: input.cwd,
           operation: "listPullRequests",
-          reason: "Only one of the repository, viewer and author filter can start with @.",
-          cause: new Error(
-            "Only one of the repository, viewer and author filter can start with @.",
-          ),
+          reason: "shared-stdin",
         }),
       );
     }
