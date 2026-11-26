@@ -4276,6 +4276,55 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("does not add back a repository pull request the user unlinked", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-unlinked-repository-pull-request");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("unlinked-repository-pr-create"),
+        threadId,
+        projectId: ProjectId.make("unlinked-repository-pr-project"),
+        title: "Review",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      // What the post-run tracked-repository lookup dispatches each time a turn ends.
+      const repositoryLookupLink = (suffix: string) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`server:thread-repository-pull-request:${threadId}:${suffix}`),
+          threadId,
+          host: "gitlab.com",
+          repository: "acme/repo-b",
+          number: 2,
+          url: "https://gitlab.com/acme/repo-b/-/merge_requests/2",
+          source: "created",
+        });
+      yield* repositoryLookupLink("first");
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.unlink",
+        commandId: CommandId.make("unlinked-repository-pr-unlink"),
+        threadId,
+        host: "gitlab.com",
+        repository: "acme/repo-b",
+        number: 2,
+      });
+      yield* repositoryLookupLink("next-turn");
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests
+          ?.filter((link) => link.source === "created")
+          .map((link) => `${link.repository}#${link.number}`) ?? [],
+        [],
+      );
+    }),
+  );
+
   it.effect("links an issue, syncs its snapshot, and unlinks it", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
